@@ -16,6 +16,39 @@ afterEach(async () => {
 })
 
 describe('EmbeddedBrowserBridge', () => {
+  test('reads full control for each operation and preserves user takeover', async () => {
+    const executorHome = await mkdtemp(join(tmpdir(), 'wework-browser-full-control-'))
+    const browser = fakeBrowser()
+    let enabled = true
+    const bridge = new EmbeddedBrowserBridge(browser.manager, executorHome, async () => enabled)
+    bridges.push(bridge)
+    await bridge.start()
+    const env = bridge.environment()
+    const fill = async () => {
+      const response = await fetch(env.WEWORK_EMBEDDED_BROWSER_BRIDGE_URL + '/browser', {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer ' + env.WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ action: 'fill', selector: '#editor', text: 'edit' }),
+      })
+      return response.json()
+    }
+    browser.evaluate.mockResolvedValue({ ok: true })
+    await expect(fill()).resolves.toMatchObject({ ok: true, data: { ok: true } })
+    expect(browser.evaluate.mock.calls[0]?.[1]).toContain('"riskApproved":true')
+    expect(browser.manager.registerAgentApproval).not.toHaveBeenCalled()
+    expect(browser.manager.waitForAgentApproval).not.toHaveBeenCalled()
+    enabled = false
+    await fill()
+    expect(browser.evaluate.mock.calls[1]?.[1]).not.toContain('"riskApproved":true')
+    enabled = true
+    vi.mocked(browser.manager.isAgentControlPaused).mockReturnValue(true)
+    await expect(fill()).resolves.toMatchObject({ data: { error: { code: 'user_control' } } })
+    expect(browser.evaluate).toHaveBeenCalledTimes(2)
+  })
+
   test.each([
     { approved: true, takeover: false },
     { approved: false, takeover: false },

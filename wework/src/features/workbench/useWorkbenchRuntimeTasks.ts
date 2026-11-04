@@ -95,6 +95,13 @@ export function useWorkbenchRuntimeTasks({
   const { t } = useTranslation('common')
   const openedRuntimeTaskKeysRef = useRef<Set<string>>(new Set())
   const currentRuntimeTaskRef = useRef<RuntimeTaskAddress | null>(null)
+  const openGeneration = useRef(0)
+  useEffect(
+    () => () => {
+      openGeneration.current += 1
+    },
+    [user.id]
+  )
 
   useEffect(() => {
     currentRuntimeTaskRef.current = state.currentRuntimeTask
@@ -152,6 +159,7 @@ export function useWorkbenchRuntimeTasks({
 
   const clearCurrentRuntimeTaskView = useCallback(
     (navigate = true) => {
+      openGeneration.current += 1
       currentRuntimeTaskRef.current = null
       dispatch({ type: 'current_task_cleared' })
       if (navigate) navigateTo('/')
@@ -211,20 +219,67 @@ export function useWorkbenchRuntimeTasks({
       address: RuntimeTaskAddress,
       options?: { fallbackProject?: ProjectWithTasks | null }
     ) => {
+      const generation = ++openGeneration.current
       const runtimeProjectWork = findRuntimeTaskProjectWork(state.runtimeWork, address)
       const project = runtimeProjectWork
         ? (state.projects.find(
             item => item.id === runtimeProjectUiId(runtimeProjectWork.project)
           ) ?? runtimeProjectToProject(runtimeProjectWork))
         : (options?.fallbackProject ?? null)
+      const listed = findRuntimeTask(state.runtimeWork, address)
+      const cached = listed ?? lifecycleStore.getTask(address)?.task
 
       writeLastProjectId(user.id, project?.id ?? null)
-      openRuntimeTaskView(address, project, {
-        markOpened: !openedRuntimeTaskKeysRef.current.has(getRuntimeTaskRouteKey(address)),
-        navigate: true,
-      })
+      openRuntimeTaskView(
+        !listed && cached ? taskAddressWithMetadata(address, cached) : address,
+        project,
+        {
+          markOpened: !openedRuntimeTaskKeysRef.current.has(getRuntimeTaskRouteKey(address)),
+          navigate: true,
+        }
+      )
+      if (listed) return
+      const stillOpening = () => {
+        const route = parseRuntimeTaskRoute(
+          stripAppBasePath(window.location.pathname),
+          window.location.search
+        )
+        return (
+          generation === openGeneration.current &&
+          isCurrentRuntimeTask(address) &&
+          Boolean(route && isSameRuntimeTaskIdentity(address, route))
+        )
+      }
+      try {
+        const result = await services.standInApi?.readTask(address.deviceId, address.taskId)
+        if (!stillOpening()) return
+        if (
+          !result?.success ||
+          !result.task ||
+          result.task.taskId !== address.taskId ||
+          (address.workspacePath && result.task.workspacePath !== address.workspacePath)
+        ) {
+          throw new Error(t('workbench.runtime_task_load_failed'))
+        }
+        const task = result.task
+        if (!lifecycleStore.syncRuntimeTask(address, task)) return
+        openRuntimeTaskView(taskAddressWithMetadata(address, task), project, { navigate: true })
+      } catch {
+        if (!stillOpening()) return
+        dispatch({ type: 'error_set', error: t('workbench.runtime_task_load_failed') })
+      }
     },
-    [openRuntimeTaskView, state.projects, state.runtimeWork, user.id]
+    [
+      dispatch,
+      isCurrentRuntimeTask,
+      lifecycleStore,
+      openRuntimeTaskView,
+      services.standInApi,
+      state.projects,
+      state.runtimeWork,
+      t,
+      user.id,
+    ]
   )
 
   const clearCurrentRuntimeTaskIfArchived = useCallback(
@@ -629,6 +684,21 @@ export function useWorkbenchRuntimeTasks({
     getRuntimeGoal,
     setRuntimeGoal,
     clearRuntimeGoal,
+  }
+}
+
+function taskAddressWithMetadata(
+  address: RuntimeTaskAddress,
+  task: RuntimeTaskSummary
+): RuntimeTaskAddress {
+  return {
+    ...address,
+    runtime: address.runtime ?? task.runtime,
+    threadId: address.threadId ?? task.threadId,
+    workspacePath: address.workspacePath ?? task.workspacePath,
+    workspaceKind: address.workspaceKind ?? task.workspaceKind,
+    worktreeId: address.worktreeId ?? task.worktreeId,
+    runtimeHandle: task.runtimeHandle ?? address.runtimeHandle,
   }
 }
 

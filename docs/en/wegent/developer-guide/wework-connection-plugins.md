@@ -142,6 +142,24 @@ The built-in manifest explicitly depends on `dingtalk@wegent`. Copies in other m
 
 ## Verification
 
+### Generic email
+
+The built-in `@wegent/dsh-connection-runtime/email` source connects password or app-password IMAP/SMTP accounts. Configure the servers, ports and TLS or STARTTLS under **Connections → Email**, verify both protocols, then save stand-in settings. Connections require encryption and certificate verification. Credentials are encrypted through `weworkSecureStorage` on the execution device and never enter stand-in configuration, model context or the provider catalog. Configure remote-device credentials on that device.
+
+Credential updates retain account IDs and role subscriptions. Deleting credentials requires confirmation of the impact on all subscribed roles. Deletion waits for an already started send to settle and blocks later operations. Disconnecting a role retains the shared account. Email connections always require native confirmation before sending; profile proposals cannot disable this requirement.
+
+Intake uses a server position rather than message dates or client timestamps. Ordinary settings saves, accepted proposals and project role reuse acquire `UIDVALIDITY` and `UIDNEXT - 1` inside the user configuration gate, outside the SQLite transaction. This snapshot is the activation linearization point. A successful save persists the `{ partition, sequence }` boundary with the role configuration. Client-supplied boundaries cannot replace trusted boundaries. New roles preserve other roles' boundaries and the shared collection checkpoint; re-enabling a role takes a new snapshot. Initialization failures reject the save.
+
+Events carry server positions. Intake and execution use the same eligibility check: the partition must match and the sequence must exceed the role's boundary. This handles messages within the same second and messages arriving before the first poll. Collection pages contain at most 20 messages; body reads are bounded and truncated content is labeled. Collection does not mark mail read or download attachments. A UIDVALIDITY change fails explicitly; remove and save the connection, then reconnect and save to establish a fresh boundary.
+
+Recognized IMAP transport interruptions preserve the collection checkpoint, show an automatic retry notice and resume on a later poll without saving settings again. Authentication, certificate and message parsing failures still pause the affected source to avoid repeatedly issuing invalid requests. Other sources remain independent.
+
+The source-bound `wework_stand_in.send_email` tool uses native approval in the original work conversation, displaying sender, recipient, subject and the complete body. Cancellation never submits mail. Replies validate the original UID and Reply-To/From and preserve thread headers. Persistent write-ahead records prevent duplicate delivery. Definite failures before delivery can be repaired and submitted for a new approval; unknown or partial delivery must not be retried blindly.
+
+Email previews use the tool identity, exact arguments and pending lifecycle from the same native approval. The built-in tool declares the stable top-level `title` `Wework: Send email`. Email confirmation requires the matching server, title and approval kind; it never infers approval identity from asynchronously settled tool display state.
+
+Mail libraries ship with the selected Harness runtime. Core plugin code resolves them from that runtime's `package.json`, rather than from the copied user profile directory. The shared `stand-in-email` desktop checkpoint exercises these user stories with an isolated real GreenMail IMAP/SMTP service and a temporary trusted certificate, mocking only the model service. This does not establish compatibility with every external mail provider.
+
 Node tests cover protocol and dependency resolution, DingTalk collection contracts and callback authentication. The existing Wework test discovery includes these files. Executor's `stand_in_identity_contract` covers settings/checkpoint migration, stable work identity and provider namespace isolation. Existing source-content and confirmation assertions remain in place. Desktop regression coverage uses the shared checkpoint runner; execute E2E and real-desktop verification only when explicitly requested.
 
 Bridge coverage includes SDK dependency isolation and legacy read contracts, Executor discovery pagination and ownership, dependency changes, deadline/error cleanup and cleanup after caller cancellation. Tests live in `connection-runtime/mcp.test.mjs`, `runtime_work/connection_mcp_tests.rs` and `agents/codex/connection_mcp.rs`. The CI-registered `stand-in-mcp` desktop checkpoint uses the actual host and Executor to verify cross-dependency rejection and catalog recovery.

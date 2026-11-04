@@ -106,7 +106,7 @@ const UI_PLUGINS = [
     directory: 'wework-ui-automations',
     slot: 'wework.route',
     contributions: ['automations.root'],
-    navigation: null,
+    navigation: { id: 'automations.navigation', testId: 'automation-button' },
     route: '/automations',
     testId: 'create-automation-button',
   },
@@ -230,7 +230,7 @@ export async function verifyCoreDshUiPluginComposition({
     if (plugin.name === '@wegent/dsh-ui-automations') {
       assert.equal(
         (await readSlots(control))['wework.sidebar.navigation']?.includes('automations.navigation'),
-        false
+        true
       )
     }
     if (plugin.name === '@wegent/dsh-conversation-export') {

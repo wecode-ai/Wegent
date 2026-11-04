@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, test, vi } from 'vitest'
 import type { HttpClient } from './http'
 import { createProjectIncomingHookApi } from './projectIncomingHooks'

@@ -19,7 +19,7 @@ for (const moduleType of ['cjs', 'mjs']) {
     child.stdout.on('data', chunk => {
       output += chunk
     })
-    const exited = once(child, 'exit')
+    const exited = once(child, 'exit', { signal: AbortSignal.timeout(20_000) })
     const diagnostics = []
     try {
       await inspectBeforeStart(
@@ -53,7 +53,7 @@ test('reports a child that exits before the inspector is available', async () =>
   const child = spawn(process.execPath, ['--eval', 'process.exit(17)'], {
     stdio: ['ignore', 'pipe', 'pipe'],
   })
-  const exited = once(child, 'exit')
+  const exited = once(child, 'exit', { signal: AbortSignal.timeout(20_000) })
   try {
     await assert.rejects(
       inspectBeforeStart(child, 'globalThis.testSetup = true'),

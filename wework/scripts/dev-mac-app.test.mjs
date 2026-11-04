@@ -1,4 +1,7 @@
+// @vitest-environment node
+
 import { readFile } from 'node:fs/promises'
+import { spawnSync } from 'node:child_process'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, test } from 'vitest'
@@ -6,6 +9,44 @@ import { describe, expect, test } from 'vitest'
 const scriptPath = resolve(dirname(fileURLToPath(import.meta.url)), 'dev-mac-app.sh')
 
 describe('dev-mac-app', () => {
+  test.runIf(process.platform === 'darwin')(
+    'drops inherited release activation before starting an isolated development app',
+    async () => {
+      const source = await readFile(scriptPath, 'utf8')
+      expect(source.indexOf('wework_clear_release_environment')).toBeGreaterThan(
+        source.indexOf('export WEWORK_USER_DATA_DIR')
+      )
+      const variables = [
+        'WEWORK_RELEASE_ROOT',
+        'WEWORK_RELEASE_SUPERVISED',
+        'WEWORK_ACTIVE_RELEASE_ID',
+        'WEWORK_COMPONENT_DATA_DIRECTORY',
+      ]
+      const launch = spawnSync(
+        'bash',
+        [
+          '-c',
+          'source "$1"; wework_clear_release_environment; shift; node -e "$1" "${@:2}"',
+          'bash',
+          resolve(dirname(scriptPath), 'lib/wework-mac-env.sh'),
+          'process.stdout.write(JSON.stringify(Object.fromEntries(process.argv.slice(1).map(key => [key, process.env[key] ?? null]))))',
+          ...variables,
+        ],
+        {
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            WEWORK_DRY_RUN: '1',
+            ...Object.fromEntries(variables.map(key => [key, '/installed-release'])),
+          },
+        }
+      )
+      expect(launch.status, launch.stderr).toBe(0)
+      expect(JSON.parse(launch.stdout)).toEqual(
+        Object.fromEntries(variables.map(key => [key, null]))
+      )
+    }
+  )
   test('rejects release data sharing and keeps isolated development data after exit', async () => {
     const source = await readFile(scriptPath, 'utf8')
     expect(source).toContain("development apps cannot share the release app's Executor Home")

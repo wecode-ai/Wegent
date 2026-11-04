@@ -18,7 +18,41 @@
   "dependencies": {
     "semver": "7.8.5"
   },
+  "wework": {
+    "connections": {
+      "apiVersion": 1,
+      "dependencies": {},
+      "providers": [
+        {
+          "id": "email",
+          "displayName": "邮箱",
+          "uses": [],
+          "collectionModes": [
+            "poll"
+          ],
+          "resourceKinds": [
+            "inbox"
+          ],
+          "resourceLabels": {
+            "inbox": "收件箱"
+          },
+          "eventTypes": [
+            "mail.received"
+          ],
+          "locales": {
+            "en": {
+              "displayName": "Email",
+              "resourceLabels": {
+                "inbox": "Inbox"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
   "peerDependencies": {
+    "@wegent/dsh-secure-storage": "0.1.0",
     "@deepseek-ai/cordis": "~4.0.4",
     "@wegent/dsh-plugin-runtime": "0.1.0",
     "@wegent/dsh-executor-runtime": "0.1.0"

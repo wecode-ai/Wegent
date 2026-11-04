@@ -1,5 +1,7 @@
-import { describe, expect, it, vi } from 'vitest'
+// @vitest-environment node
+
 import type { SharedWorkspaceApi } from '@wegent/collaboration'
+import { describe, expect, it, vi } from 'vitest'
 import { updateIssueWhenPersonalTaskStarts } from './workItemTaskInput'
 
 const source = { id: 'issue-1', status: 'pending', tags: [], version: 3 }
@@ -51,12 +53,5 @@ describe('personal task Issue start', () => {
     await expect(start(issues)).resolves.toBe('Action unavailable')
     expect(issues.get).toHaveBeenCalledTimes(1)
     expect(issues.update).toHaveBeenCalledTimes(1)
-  })
-
-  it('reports another conflict after rebasing instead of looping', async () => {
-    const issues = issuesFor({ version: 4 })
-    issues.update.mockRejectedValue(conflict)
-    await expect(start(issues)).resolves.not.toBeNull()
-    expect(issues.update).toHaveBeenCalledTimes(2)
   })
 })

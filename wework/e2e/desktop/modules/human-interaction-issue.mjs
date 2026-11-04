@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
 import { requestExecutor } from './executor-rpc.mjs'
 import { readProjectChatMessages } from './project-chat-snapshot.mjs'
+import { runChecked } from './shared.mjs'
 
 /** Real persisted Issue comments and server-owned execution, with only the model mocked. */
 export async function startHumanInteractionIssue({
@@ -10,6 +11,7 @@ export async function startHumanInteractionIssue({
   control,
   prompt,
   timeoutMs,
+  workspacePath,
 }) {
   const request = async (path, body) => {
     const response = await fetch(`${cloud.backendUrl}${path}`, {
@@ -38,10 +40,14 @@ export async function startHumanInteractionIssue({
     device_id: device.id,
   })
   project = await request(`/api/v1/cloud-projects/${project.id}`)
-  await request(`/api/v1/cloud-projects/${project.id}/execution-environment/initialize`, {
+  project = await request(`/api/v1/cloud-projects/${project.id}/execution-environment/initialize`, {
     device_id: device.id,
     version: project.version,
   })
+  const prepared = project.execution_environment.devices[device.execution_target_id]
+  assert.equal(prepared.status, 'ready')
+  assert.ok(prepared.workspace_path)
+  await runChecked('git', ['clone', '--no-hardlinks', workspacePath, prepared.workspace_path])
   const catalog = await requestExecutor(control, 'runtime.runner.catalog', {}, timeoutMs)
   const model = catalog.models.find(model => model.runtime === 'codex' && model.is_default)
   assert.ok(model)

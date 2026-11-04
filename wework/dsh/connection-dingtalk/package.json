@@ -49,10 +49,6 @@
           "eventTypes": [
             "message.received"
           ],
-          "authTarget": {
-            "pluginKey": "dingtalk",
-            "connectorSlug": "dingtalk"
-          },
           "resourceLabels": {
             "group": "群聊中 @我",
             "direct": "私聊消息"
@@ -63,12 +59,16 @@
               "resourceLabels": {
                 "group": "Group mentions",
                 "direct": "Direct messages"
-              }
+              },
+              "allResourceLabels": {
+                "group": "Mentions in all groups",
+                "direct": "Direct messages from all contacts"
+              },
+              "allResourceLabel": "All messages"
             }
           },
           "cliReadTools": {
             "dingtalk": {
-              "connectorSlug": "dingtalk",
               "outputArgs": [
                 "--format",
                 "json"
@@ -133,9 +133,19 @@
                     "profile": "--profile"
                   }
                 }
-              }
+              },
+              "toolId": "dws"
             }
-          }
+          },
+          "allResourceKinds": [
+            "group",
+            "direct"
+          ],
+          "allResourceLabels": {
+            "group": "所有群聊中 @我",
+            "direct": "所有联系人私聊"
+          },
+          "allResourceLabel": "全部消息"
         }
       ]
     }

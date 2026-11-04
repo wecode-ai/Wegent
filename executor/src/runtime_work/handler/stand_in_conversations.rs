@@ -30,8 +30,21 @@ impl RuntimeWorkRpcHandler {
             let accept = payload["accept"]
                 .as_bool()
                 .ok_or_else(|| AppIpcError::new("bad_request", "accept is required"))?;
+            let prepared = if accept {
+                let previous = store
+                    .personal_stand_in(user, &self.device_id)
+                    .map_err(settings_error)?;
+                let mut settings = store
+                    .stand_in_proposal_settings(user, id)
+                    .map_err(settings_error)?;
+                self.prepare_connection_boundaries(&mut settings, &previous)
+                    .await?;
+                Some(settings)
+            } else {
+                None
+            };
             store
-                .resolve_stand_in_proposal(user, &self.device_id, id, accept)
+                .resolve_stand_in_proposal(user, &self.device_id, id, accept, prepared)
                 .map_err(settings_error)
         } else {
             store

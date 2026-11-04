@@ -49,6 +49,7 @@ import { useRuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runti
 import { CloudTodoWorkspace } from '@/features/todo/CloudTodoWorkspace'
 import { TaskBoardView } from '@/features/todo/TaskBoardView'
 import { PersonalStandInWorkspace } from '@/features/todo/PersonalStandInWorkspace'
+import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { WeworkCollaborationPlatform } from '@/features/todo/WeworkCollaborationPlatform'
 import { LOCAL_USER } from '@/api/local/localSession'
 import { resolveLocalTodoProjects } from '@/features/todo/localTodoProjects'
@@ -65,7 +66,11 @@ import { WorkbenchBackground } from '@/features/appearance'
 import { useResizableSidebar } from './useResizableSidebar'
 import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
-import { requestWorkbenchComposerFocus } from '@/lib/workbenchComposerFocus'
+import {
+  consumeNewChatComposerRequest,
+  requestWorkbenchComposerFocus,
+  WORKBENCH_NEW_CHAT_FOCUS_EVENT,
+} from '@/lib/workbenchComposerFocus'
 import {
   archiveLocalHarnessSession,
   closeLocalTerminal,
@@ -296,7 +301,11 @@ export function DesktopWorkbenchLayout({
       : `${currentPath}${window.location.search}`
   const standInContentRoute =
     ownedWorkspaceTab?.contentRoute ?? `${currentPath}${window.location.search}`
-  const standInOpen = !routeWorkItemsOpen && standInContentRoute.split('?')[0] === '/stand-in'
+  const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
+  const standInOpen =
+    experimentalFeaturesEnabled &&
+    !routeWorkItemsOpen &&
+    standInContentRoute.split('?')[0] === '/stand-in'
   const taskBoardOpen = !standInOpen && taskView === 'default-work-items'
   const routedDefaultWorkItemsOpen =
     routeWorkItemsOpen && projectSpaceRouteTargetsDefaultWorkItems(activeProjectSpaceContentRoute)
@@ -474,18 +483,29 @@ export function DesktopWorkbenchLayout({
       currentView === 'default-work-items' ? 'workbench' : 'default-work-items'
     )
   }, [])
+  const activateBlankComposer = useCallback(() => {
+    setTaskView('workbench')
+    setActiveLocalHarnessSessionId(null)
+    activateSplitPane(blankPaneKey)
+  }, [activateSplitPane, blankPaneKey])
+  useEffect(() => {
+    const activateRequestedComposer = () => {
+      if (consumeNewChatComposerRequest(workspaceTabId)) activateBlankComposer()
+    }
+    activateRequestedComposer()
+    window.addEventListener(WORKBENCH_NEW_CHAT_FOCUS_EVENT, activateRequestedComposer)
+    return () => {
+      window.removeEventListener(WORKBENCH_NEW_CHAT_FOCUS_EVENT, activateRequestedComposer)
+    }
+  }, [activateBlankComposer, workspaceTabId])
   const startNewChatOutsideHarness = useCallback(() => {
-    setTaskView('workbench')
-    setActiveLocalHarnessSessionId(null)
-    activateSplitPane(blankPaneKey)
+    activateBlankComposer()
     onNewChat()
-  }, [activateSplitPane, blankPaneKey, onNewChat])
+  }, [activateBlankComposer, onNewChat])
   const startStandaloneChatOutsideHarness = useCallback(() => {
-    setTaskView('workbench')
-    setActiveLocalHarnessSessionId(null)
-    activateSplitPane(blankPaneKey)
+    activateBlankComposer()
     onStartStandaloneChat()
-  }, [activateSplitPane, blankPaneKey, onStartStandaloneChat])
+  }, [activateBlankComposer, onStartStandaloneChat])
   const selectProjectOutsideHarness = useCallback(
     (projectId: number) => {
       setTaskView('workbench')

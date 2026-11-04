@@ -321,6 +321,18 @@ average between samples; its initial value is `null`.
 each start and completion, making overlap visible independently of the configured
 worker limit. Compare shard durations and these metrics after increasing
 concurrency to identify CPU, memory, or I/O contention.
+Every signal the runner delivers to an application process or process group is
+logged as a single-line `[desktop-e2e-signal]` JSON record with an ISO timestamp,
+covering process stops, process-group termination, crash-injection freeze/kill,
+and forced in-scenario application kills. Chromium's `Network service crashed`
+lines in `app.log` use runner-local time, so correlating both records attributes
+each crash to harness teardown or leaves it as an unexplained event that needs
+further investigation. When a checkpoint step fails, the runner also captures
+`failure-followup.json` three seconds after the failure with a repeated UI
+snapshot and workbench debug state, distinguishing a slow asynchronous update
+that settled after the timeout from a stuck state. Set
+`WEWORK_E2E_FAILURE_FOLLOWUP_MS` to adjust the observation delay or `0` to
+disable the capture.
 Drawer animation checks sample from before the action until movement is observed
 and the track animation completes, then stop explicitly within the shared step
 timeout. Command transport and rendering delays cannot exhaust a fixed 800ms

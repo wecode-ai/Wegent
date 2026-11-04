@@ -1,7 +1,7 @@
-import { fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react'
-import { afterEach, expect, test, vi } from 'vitest'
-import { AssistantMarkdown, MarkdownServicesProvider } from '@wegent/collaboration/markdown'
 import { useDesktopMarkdownServices } from '@/components/chat/useDesktopMarkdownServices'
+import { fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react'
+import { AssistantMarkdown, MarkdownServicesProvider } from '@wegent/collaboration/markdown'
+import { afterEach, expect, test, vi } from 'vitest'
 import { useCollaborationMarkdownServices } from './useCollaborationMarkdownServices'
 
 const mocks = vi.hoisted(() => ({
@@ -16,24 +16,6 @@ afterEach(() => {
   delete window.__WEWORK_RUNTIME_CONFIG__
   vi.clearAllMocks()
   vi.restoreAllMocks()
-})
-
-test('routes both comment link types through desktop link preferences', () => {
-  const { result } = renderHook(useCollaborationMarkdownServices)
-  render(
-    <MarkdownServicesProvider value={result.current}>
-      <AssistantMarkdown content="[wecode-ai/Wegent#3966](https://github.com/wecode-ai/Wegent/pull/3966)\n\n[docs](https://example.com/docs)" />
-    </MarkdownServicesProvider>
-  )
-
-  fireEvent.click(screen.getByTestId('composer-link-chip'))
-  fireEvent.click(screen.getByTestId('assistant-markdown-link'))
-
-  expect(mocks.openExternalUrl).toHaveBeenNthCalledWith(
-    1,
-    'https://github.com/wecode-ai/Wegent/pull/3966'
-  )
-  expect(mocks.openExternalUrl).toHaveBeenNthCalledWith(2, 'https://example.com/docs')
 })
 
 test.each(['composer-link-chip', 'assistant-markdown-link'])(

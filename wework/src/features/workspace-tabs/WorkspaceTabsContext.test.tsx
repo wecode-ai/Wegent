@@ -7,7 +7,7 @@ import type { WorkspaceTabActivity, WorkspaceTabsContextValue } from './workspac
 import { WORKSPACE_TABS_CLOSED_EVENT, type WorkspaceTabsClosedEventDetail } from './workspaceTabs'
 import { WORKSPACE_TAB_RETURN_PREFIX } from './workspaceWindow'
 import { defaultAppPreferences } from '@/desktop/appPreferences'
-import { installDshUiTestContributions } from '@/test/setup'
+import { installDshUiTestContributions } from '@/test/setup.dom'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 
 const preferencesApi = vi.hoisted(() => ({ get: vi.fn(), update: vi.fn() }))
@@ -38,6 +38,30 @@ describe('WorkspaceTabsProvider routing', () => {
     expect(screen.getByTestId('active-tab-kind')).toHaveTextContent('auxiliary')
     expect(screen.getByTestId('active-tab-title')).toHaveTextContent('插件')
     expect(screen.getByTestId('active-tab-route')).toHaveTextContent('/plugins')
+  })
+
+  test('preserves the fixed pending inbox when starting on another auxiliary page', () => {
+    window.history.replaceState({}, '', '/sites?app_type=smart_app')
+    const pendingTab = {
+      id: 'pending-interactions',
+      kind: 'auxiliary' as const,
+      title: '待你处理',
+      contentRoute: '/pending-interactions',
+      fixed: true,
+    }
+    let current!: WorkspaceTabsContextValue
+    render(
+      <RoutingHarness
+        fixedTabs={[pendingTab]}
+        restoreSessionTabs={false}
+        onContextValue={value => {
+          current = value
+        }}
+      />
+    )
+    expect(current.tabs.find(tab => tab.id === pendingTab.id)).toEqual(pendingTab)
+    expect(current.activeTab.contentRoute).toBe('/sites?app_type=smart_app')
+    expect(current.activeTabId).not.toBe(pendingTab.id)
   })
 
   test.each([true, false])(

@@ -31,6 +31,8 @@ import {
 
 // Real MySQL, Python API, gateway, Executor and Electron. Only the network
 // transport is faulted; no plugin responses or cache state are synthesized.
+// The partial-inventory checkpoint fixes host pressure so concurrent CI work
+// cannot prevent the real idle scheduler from exercising the inventory guard.
 export async function createDesktopScenario({
   checkpoint,
   captureScreenshot,
@@ -42,6 +44,9 @@ export async function createDesktopScenario({
   workbenchReadyTimeoutMs,
 }) {
   const appEnvironment = { ELECTRON_ENABLE_LOGGING: '1' }
+  if (checkpoint === 'plugin-uninstall-lost-response') {
+    appEnvironment.WEWORK_E2E_SYSTEM_PRESSURE = 'idle'
+  }
   const evidence = []
   const objectStorage =
     checkpoint === 'plugin-write-coordination'

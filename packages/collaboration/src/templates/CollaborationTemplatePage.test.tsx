@@ -59,7 +59,7 @@ async function click(testId: string) {
   await act(async () => target!.click())
 }
 
-it('selects an Agent coordinator instead of the current human for the builtin workflow', async () => {
+it('preconfigures a new Agent coordinator instead of requiring an existing Agent', async () => {
   const document = builtinCollaborationTemplates()[0].document
   await act(async () =>
     root.render(
@@ -88,7 +88,7 @@ it('selects an Agent coordinator instead of the current human for the builtin wo
   )
   expect(
     container.querySelector<HTMLSelectElement>('[data-testid="template-role-main-role-0"]')!.value
-  ).toBe('agent:coordinator')
+  ).toBe('agent:template-agent:main-role-0')
 })
 
 it('downloads the version shown in preview instead of using an older cached definition', async () => {

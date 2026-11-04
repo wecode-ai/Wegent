@@ -1,4 +1,5 @@
 import { verifyNativeMcpCloudRouting } from './mcp-app-cloud-routing.mjs'
+import { packagedComponentRoots } from './packaged-component-resources.mjs'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 
@@ -492,8 +493,17 @@ async function prepareHarnessRuntimeRoots(appBinary) {
     await readFile(dshEntry)
   }
 
+  const components = JSON.parse(
+    await readFile(join(packagedResourcesRoot, 'components.json'), 'utf8')
+  )
+  const componentRoots = await packagedComponentRoots({
+    appBinary,
+    resourcesRoot: packagedResourcesRoot,
+    components: components.components,
+    resultDir,
+  })
   return {
-    corePluginsRoot: join(packagedResourcesRoot, 'wework-core-plugins'),
+    corePluginsRoot: componentRoots.weworkCorePlugins,
     harnessRuntimeRoot: runtimeRoot,
   }
 }

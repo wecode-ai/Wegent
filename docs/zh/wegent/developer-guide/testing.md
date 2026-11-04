@@ -17,6 +17,13 @@ sidebar_position: 4
 - **执行器管理器** (任务管理): pytest + pytest-mock + pytest-cov
 - **共享模块** (工具库): pytest + pytest-cov
 - **前端** (Next.js + React 19): Jest + @testing-library/react
+- **Wework** (Electron + React): Vitest + @testing-library/react，以及 Node.js 测试运行器
+
+## Wework 单元测试维护
+
+使用 `pnpm --filter wework test <测试文件>` 运行相关测试。测试清理按参数化展开后的用例数统计，不以文件数或 `test()` 声明数代替，也不通过跳过用例、合并测试或改变发现规则减少数量。
+
+优先保留任务创建与发送、权限和资源归属、持久化、故障恢复、状态机及升级回滚的行为覆盖。重复的输入、操作和断言可以删除；纯颜色、间距、图标和普通显示格式的独立测试可按维护需求裁剪。代码覆盖证据用于检查遗漏，不能单独证明两个用例的行为等价。清理后运行受影响的测试并核对断言，保留安全断言及独立的关键边界场景。
 
 ## 当前测试覆盖率
 
@@ -231,6 +238,11 @@ frontend/src/__tests__/
 
 ## Wework 单元测试
 
+单元测试聚焦任务状态与消息一致性、账号和权限边界、持久化、设备与运行时路由、
+输入提交及失败恢复。不要为 CSS 类名、图标、文案排列、源码关键词、固定元数据
+或诊断日志格式单独增加用例；混合场景只保留对实际业务结果有约束的断言。
+遥测保留授权、拒绝收集、脱敏与账号隔离覆盖，不为统计标签和调试快照单独建测试。
+
 从仓库根目录运行全部 Wework 单元测试：
 
 ```bash
@@ -248,6 +260,19 @@ pnpm --dir wework test -- runtimePaneMessages.test.ts
 测试脚本会兼容性地移除参数开头的一个独立 `--`，再把其余文件过滤条件和 Vitest
 选项原样传递给测试运行器。运行聚焦测试时，应确认输出中的 `Test Files` 数量符合
 预期，避免误跑全量测试。
+
+不依赖 DOM 的纯逻辑测试应在文件顶部声明 `// @vitest-environment node`。
+这类测试不加载 `src/test/setup.dom.ts` 中的浏览器模拟、存储和插件 UI 初始化；
+需要浏览器行为的测试保留默认 jsdom 环境。组件测试所需的插件 UI 辅助函数
+从 `@/test/setup.dom` 导入。
+
+Wework CI 执行测试但不再默认采集覆盖率，避免 Istanbul 插桩开销。
+需要排查覆盖率时可定向执行 `pnpm --dir wework exec vitest run <测试文件> --coverage`。
+完整 renderer push 检查每 15 秒输出当前 shard 的通过文件数，完整诊断仍保留在日志中。
+
+运行中的 Executor 会并发写入 `tasks.sqlite`。直接写入该数据库的桌面 E2E fixture
+应在独立连接上设置 `PRAGMA busy_timeout = 10000`，等待正常写事务释放锁。
+锁等待仅作用于 fixture 数据库连接；业务断言与全局 UI 超时保持原有约束。
 
 ### 异步提问模型桩
 

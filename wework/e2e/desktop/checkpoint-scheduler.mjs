@@ -1,3 +1,24 @@
+// These checkpoints materialize packaged runtimes or repeatedly reload the full
+// renderer. Run them alone so Chromium's network service stays stable on the
+// four-vCPU desktop E2E runners. CI shard estimates must account for this prefix.
+export const RESOURCE_EXCLUSIVE_CHECKPOINTS = new Set([
+  'background-terminals',
+  'release-package-startup',
+  'collaboration-issue-task-discovery',
+  // Its partial-inventory guard must run through the real system-idle scheduler.
+  // Parallel Electron workloads keep CPU pressure above the production limit.
+  'plugin-uninstall-lost-response',
+])
+
+export const LINUX_CORE_HISTORY_CHECKPOINT = 'running-conversation-history'
+
+export function isResourceExclusiveCheckpoint(checkpoint, linuxCore = false) {
+  return (
+    RESOURCE_EXCLUSIVE_CHECKPOINTS.has(checkpoint) ||
+    (linuxCore && checkpoint === LINUX_CORE_HISTORY_CHECKPOINT)
+  )
+}
+
 export async function runWithCheckpointResources({
   checkpoints,
   workerCount,
