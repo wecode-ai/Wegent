@@ -231,7 +231,14 @@ def test_append_group_notification_instruction_requires_bound_group() -> None:
     assert "【通知路由控制规则】" in appended
     assert "本规则仅控制群聊通知路由，不改变私聊通知" in appended
     assert "群聊静默不得影响私聊，不要调用 silent_exit" in appended
-    assert "只要启用了群聊通知，默认必须向已绑定群聊发送通知" in appended
+    assert (
+        "对已启用群聊通知且支持群聊投递的已绑定群聊，默认必须发送群聊通知"
+        in appended
+    )
+    assert "不支持群聊投递的绑定不会发送群聊通知，不影响私聊通知" in appended
+    assert "否则对支持群聊投递的绑定一律正常发送" in appended
+    assert "只要启用了群聊通知，默认必须向已绑定群聊发送通知" not in appended
+    assert "card_template_id" not in appended
     assert "除非任务或用户明确要求本次不通知群聊" in appended
     assert "不得根据消息是否例行、是否测试、是否成功、是否有异常" in appended
     assert "【静默】或【silent】" in appended

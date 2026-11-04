@@ -59,8 +59,9 @@ pub(crate) const GROUP_NOTIFICATION_CONTROL_INSTRUCTION: &str = concat!(
     "【通知路由控制规则】\n",
     "本规则仅控制群聊通知路由，不改变私聊通知；",
     "群聊静默不得影响私聊，不要调用 silent_exit 取消已启用的通知。\n\n",
-    "只要启用了群聊通知，默认必须向已绑定群聊发送通知。\n",
-    "除非任务或用户明确要求本次不通知群聊，否则一律正常发送。\n",
+    "对已启用群聊通知且支持群聊投递的已绑定群聊，默认必须发送群聊通知；",
+    "不支持群聊投递的绑定不会发送群聊通知，不影响私聊通知。\n",
+    "除非任务或用户明确要求本次不通知群聊，否则对支持群聊投递的绑定一律正常发送。\n",
     "不得根据消息是否例行、是否测试、是否成功、是否有异常等自行决定静默。\n",
     "只有明确要求群聊静默时，才在最终回答最后单独一行输出【静默】或【silent】。\n",
     "需要 @ 用户时，在最终回答最后单独一行输出【@列表:1234,1235】或【mention:1234,1235】，",
@@ -206,7 +207,13 @@ mod tests {
         assert!(prompt.contains("【通知路由控制规则】"));
         assert!(prompt.contains("本规则仅控制群聊通知路由，不改变私聊通知"));
         assert!(prompt.contains("群聊静默不得影响私聊，不要调用 silent_exit"));
-        assert!(prompt.contains("只要启用了群聊通知，默认必须向已绑定群聊发送通知"));
+        assert!(
+            prompt.contains("对已启用群聊通知且支持群聊投递的已绑定群聊，默认必须发送群聊通知")
+        );
+        assert!(prompt.contains("不支持群聊投递的绑定不会发送群聊通知，不影响私聊通知"));
+        assert!(prompt.contains("否则对支持群聊投递的绑定一律正常发送"));
+        assert!(!prompt.contains("只要启用了群聊通知，默认必须向已绑定群聊发送通知"));
+        assert!(!prompt.contains("card_template_id"));
         assert!(prompt.contains("除非任务或用户明确要求本次不通知群聊"));
         assert!(prompt.contains("不得根据消息是否例行、是否测试、是否成功、是否有异常"));
         assert!(prompt.contains("【静默】或【silent】"));
