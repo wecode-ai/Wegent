@@ -47,6 +47,8 @@ Missing CLIs, required login, insufficient permissions, rate limits, network err
 
 The `stand-in-git` desktop CI protocol integration scenario covers signature validation, deduplication, fetching, acknowledgment and takeover fencing through real Wework Backend, Redis and Executor services. It uses no real GitHub/GitLab account and does not establish live provider compatibility. Validate login, supported event flags, delivery and native write approval against the target instance before rollout.
 
+On an execution device already signed in through `gh`, explicitly setting `WEWORK_GIT_READONLY_REPOSITORY=owner/repository` enables the same scenario's live GitHub read-only extension: read the repository with the real account, submit a signed event to the internal ingress while the device is stopped, resume collection and repository reads after restart, and reject native external-write approval. Only model responses are simulated. This extension does not install a provider Webhook or verify live personal-event polling or successful writes. Live GitLab account integration requires separate verification.
+
 ## Implementation boundaries
 
 Rust Backend implements the new APIs and selects them in `backend-rs/config/routes.toml`, reusing existing Redis without new database tables or migrations. Redis stores subscription identity, device generation, encrypted receiver secrets and acknowledgment positions. Sorted sets order pending deliveries, hashes hold opaque payloads, and expiring delivery markers deduplicate ingress. Acknowledgments immediately delete confirmed payloads; pending events have a 30-day retention window. Subscription metadata retains the last sequence so expired or lost queues produce explicit gaps.
