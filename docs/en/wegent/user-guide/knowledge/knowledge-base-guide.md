@@ -25,6 +25,22 @@ Knowledge Base is a document storage and retrieval system that enables RAG. It a
 
 ---
 
+## Finding Knowledge Bases
+
+The knowledge page lists active libraries you can currently access directly.
+
+| Entry | Contents |
+| --- | --- |
+| Created by me | Libraries you created in personal, team, or company spaces, including those you have shared |
+| Shared with me | Libraries created by others and accessible through user, team, or other grants, excluding company-space libraries |
+| Company knowledge | Libraries that belong to company spaces |
+
+Use the team filter to find libraries owned by or shared with a team. Multiple access paths produce one row per library; sharing does not change its actual space. Entries can overlap, so their counts cannot be added together. Search, type, and team filters affect the result count, while sidebar counts remain independent of these local filters.
+
+On mobile, expand navigation and use the vertical list to see names, spaces, permissions, and actions. The permissions action shows your effective access and its sources; managers can also manage members and roles. Existing library links, code libraries, and migration actions remain available.
+
+---
+
 ## 🆕 Creating Knowledge Bases
 
 ### Step 1: Navigate to Knowledge Base
@@ -63,6 +79,14 @@ See [Knowledge Base Types](./knowledge-base-types.md) for detailed comparison.
 2. Choose source type (File / Text / URL / External Table)
 3. Configure chunking settings (optional)
 4. Click **Upload**
+
+---
+
+### Space and Authorization After Creation
+
+New libraries default to personal space. Choose another space where you can create libraries under More settings. If you have filtered by a team where you can create, the dialog selects that team and explains that team permissions are inherited. If creation is unavailable there, explicitly choose personal space or another authorized space.
+
+After creation, Library created confirms that the library is saved. Authorize people, teams, or other supported targets immediately, or finish later; closing authorization does not delete the library. Retry only failed grants. If a result is uncertain, existing grants are verified before another write. A failed list refresh can be retried separately without creating another library. Existing role choices and permission restrictions still apply.
 
 ---
 
