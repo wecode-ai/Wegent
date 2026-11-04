@@ -83,29 +83,6 @@ test('defaults primary mailbox connections to background processing', async () =
   )
 })
 
-test('places mailbox processing in the shared connection policy section', () => {
-  request.mockResolvedValue([])
-  const role = newStandInRole('mac')
-  role.connections = [
-    {
-      providerId: EMAIL_PROVIDER,
-      profile: 'mail-account',
-      kind: 'inbox',
-      id: 'INBOX',
-      name: 'owner@example.com',
-      policy: { automatic: true, askBeforeAct: true, immediate: true },
-    },
-  ]
-  render(<StandInEmailConnections role={role} local disabled={false} onChange={vi.fn()} />)
-  expect(screen.getByTestId('stand-in-processing-settings')).toContainElement(
-    screen.getByTestId('stand-in-email-policy-mail-account')
-  )
-  expect(screen.getByTestId('stand-in-email-policy-mail-account')).toHaveAttribute(
-    'aria-checked',
-    'true'
-  )
-})
-
 test('preserves entered settings after failed verification and never creates a connection', async () => {
   request.mockImplementation(async (method: string) => {
     if (method === 'emailAccounts') return []

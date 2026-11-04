@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import assert from 'node:assert/strict'
 import { once } from 'node:events'
 import { createServer, request } from 'node:http'

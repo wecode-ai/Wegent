@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import type { ProcessingBlock, RuntimeConversationTurn, WorkbenchMessage } from '@/types/workbench'
 import { describe, expect, test, vi } from 'vitest'
 import {

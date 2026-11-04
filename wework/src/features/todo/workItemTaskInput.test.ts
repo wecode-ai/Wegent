@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import type { SharedWorkspaceApi } from '@wegent/collaboration'
 import { describe, expect, it, vi } from 'vitest'
 import { updateIssueWhenPersonalTaskStarts } from './workItemTaskInput'

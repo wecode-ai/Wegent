@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { PassThrough } from 'node:stream'
 import { gzipSync } from 'node:zlib'
 import { expect, test, vi } from 'vitest'
