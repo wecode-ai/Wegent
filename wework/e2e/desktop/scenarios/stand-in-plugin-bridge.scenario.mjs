@@ -5,6 +5,10 @@ import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { fetchLocalRuntime } from '../modules/runtime-request.mjs'
 import { withTimeout } from '../modules/shared.mjs'
 import { waitForBundledMarketplaceRegistration } from '../modules/plugin-flows.mjs'
+import {
+  verifyStandInResourceScopes,
+  verifyStandInCalendarPolicy,
+} from '../modules/stand-in-resource-scope-flows.mjs'
 
 const PACKAGE = '@test/connection-source'
 const PROVIDER = `${PACKAGE}/records`
@@ -107,6 +111,7 @@ export function createDesktopScenario({
                   uses: ['source'],
                   collectionModes: ['poll'],
                   resourceKinds: ['record'],
+                  allResourceKinds: ['record'],
                   resourceLabels: { record: 'Records' },
                   eventTypes: ['record.received'],
                 },
@@ -173,6 +178,15 @@ export function createDesktopScenario({
         calls.map(call => call.name),
         ['read_record']
       )
+      await writeFile(
+        records,
+        JSON.stringify([
+          { id: 'record-1', value: 'existing-plugin-value' },
+          { id: 'record-2', value: 'second-record' },
+        ])
+      )
+      await verifyStandInResourceScopes(control, rpc, PROVIDER)
+      await verifyStandInCalendarPolicy(control, rpc)
       await assert.rejects(
         codex(control, 'plugin/uninstall', { pluginId: PLUGIN }),
         /Disable connection plugin/

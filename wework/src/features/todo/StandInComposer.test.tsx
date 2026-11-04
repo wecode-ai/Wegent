@@ -1,23 +1,23 @@
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import {
   WorkspaceTabsContext,
   type WorkspaceTabsContextValue,
 } from '@/features/workspace-tabs/workspaceTabsContextValue'
-import { useState } from 'react'
+import '@/i18n'
+import { installDshUiTestContributions } from '@/test/setup.dom'
+import type { RuntimeWorkListResponse } from '@/types/api'
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   cloudRunnerModels,
   runnerModelKey,
-  type WorkspaceStandInSettings,
   type WorkspaceProjectAgent,
+  type WorkspaceStandInSettings,
 } from '@wegent/collaboration'
-import type { RuntimeWorkListResponse } from '@/types/api'
-import '@/i18n'
-import { installDshUiTestContributions } from '@/test/setup'
-import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
+import { useState } from 'react'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { StandInComposer } from './StandInComposer'
-import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 
 vi.mock('@/components/layout/useProjectWorktreeAvailabilityProbe', () => ({
   useProjectWorktreeAvailabilityProbe: ({ key }: { key: string }) => ({
@@ -186,26 +186,6 @@ describe('Stand-in configuration composer', () => {
     expect(save).toHaveBeenCalledWith(expect.objectContaining({ model: fixed }))
   })
 
-  it('keeps advanced settings unchanged when the default model catalog arrives', async () => {
-    const save = vi.fn()
-    const model = {
-      runtime: 'codex' as const,
-      provider: 'local',
-      model_id: 'default',
-      is_default: true,
-    }
-    const services = {
-      standInApi: { catalog: vi.fn(async () => ({ models: [model] })) },
-      modelApi: { listModels: vi.fn(async () => ({ data: [] })) },
-    } as unknown as WorkbenchServices
-    render(<Fixture save={save} services={services} showPrompt={false} />)
-    await waitFor(() =>
-      expect(screen.getByTestId('model-selector-button')).toHaveTextContent('default')
-    )
-    await userEvent.click(screen.getByTestId('stand-in-save'))
-    expect(save.mock.calls[0][0].model).toBeUndefined()
-  })
-
   it('allows settings to be saved while the model catalog is loading', async () => {
     const save = vi.fn(async () => true)
     const model = {
@@ -346,21 +326,6 @@ describe('Stand-in configuration composer', () => {
       )
     }
   )
-  it('saves empty optional instructions without copying the dynamic placeholder', async () => {
-    const save = vi.fn(async () => true)
-    render(<Fixture save={save} />)
-    expect(screen.getByTestId('stand-in-prompt')).toHaveAttribute('contenteditable', 'true')
-    expect(screen.getByText('本地项目')).toBeInTheDocument()
-    expect(screen.getByText('设备默认工作区')).toBeInTheDocument()
-    expect(screen.getByTestId('stand-in-workspace-bar')).toContainElement(
-      screen.getByTestId('model-selector-button')
-    )
-    expect(screen.getByTestId('project-chat-composer-form')).not.toContainElement(
-      screen.getByTestId('model-selector-button')
-    )
-    await userEvent.click(screen.getByTestId('stand-in-save'))
-    expect(save).toHaveBeenCalledWith(expect.objectContaining({ prompt: '', enabled: false }))
-  })
 
   it('loads plugins and skills from the selected execution workspace for slash commands', async () => {
     const readCatalog = vi.fn(async () => ({

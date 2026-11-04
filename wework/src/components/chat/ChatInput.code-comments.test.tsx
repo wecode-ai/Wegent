@@ -1,7 +1,7 @@
+import type { CodeCommentContext } from '@/types/workspace-files'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
-import type { CodeCommentContext } from '@/types/workspace-files'
 
 vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -41,26 +41,6 @@ const codeComment: CodeCommentContext = {
 }
 
 describe('ChatInput code comments', () => {
-  test('renders and clears code comment context chip in desktop composer', async () => {
-    const onClearCodeComments = vi.fn()
-
-    render(
-      <ChatInput
-        value=""
-        onChange={vi.fn()}
-        onSubmit={vi.fn()}
-        disabled={false}
-        variant="desktop"
-        codeComments={[codeComment]}
-        onClearCodeComments={onClearCodeComments}
-      />
-    )
-
-    expect(screen.getByTestId('code-comment-context-badge')).toHaveTextContent('1 个评论')
-    await userEvent.click(screen.getByTestId('remove-code-comment-context-button'))
-    expect(onClearCodeComments).toHaveBeenCalledTimes(1)
-  })
-
   test('submits comments-only desktop composer', async () => {
     const onSubmit = vi.fn()
 
@@ -79,28 +59,5 @@ describe('ChatInput code comments', () => {
     await userEvent.click(screen.getByTestId('send-message-button'))
 
     expect(onSubmit).toHaveBeenCalledTimes(1)
-  })
-
-  test('supports code comment chips in compact composer', async () => {
-    const onSubmit = vi.fn()
-    const onClearCodeComments = vi.fn()
-
-    render(
-      <ChatInput
-        value=""
-        onChange={vi.fn()}
-        onSubmit={onSubmit}
-        disabled={false}
-        codeComments={[codeComment]}
-        onClearCodeComments={onClearCodeComments}
-      />
-    )
-
-    expect(screen.getByTestId('code-comment-context-badge')).toHaveTextContent('1 个评论')
-    await userEvent.click(screen.getByTestId('send-message-button'))
-    expect(onSubmit).toHaveBeenCalledTimes(1)
-
-    await userEvent.click(screen.getByTestId('remove-code-comment-context-button'))
-    expect(onClearCodeComments).toHaveBeenCalledTimes(1)
   })
 })

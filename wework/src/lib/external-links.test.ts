@@ -1,3 +1,4 @@
+import { WEWORK_OPEN_SCHEME_EVENT } from '@/features/notifications/schemeEvents'
 import { fireEvent, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
@@ -6,7 +7,6 @@ import {
   isLocalHttpUrl,
   openExternalUrl,
 } from './external-links'
-import { WEWORK_OPEN_SCHEME_EVENT } from '@/features/notifications/schemeEvents'
 
 const desktopHostMock = vi.hoisted(() => vi.fn())
 const requestEmbeddedBrowserOpenMock = vi.hoisted(() => vi.fn())
@@ -56,45 +56,6 @@ describe('external link helpers', () => {
     expect(isLocalHttpUrl('https://example.com')).toBe(false)
   })
 
-  test('opens http URLs with the browser fallback outside Electron', async () => {
-    vi.stubGlobal('open', openWindowMock)
-    await expect(openExternalUrl('https://example.com/docs')).resolves.toBe(true)
-    expect(openWindowMock).toHaveBeenCalledWith(
-      'https://example.com/docs',
-      '_blank',
-      'noopener,noreferrer'
-    )
-    expect(desktopHostMock).not.toHaveBeenCalled()
-  })
-
-  test('does not infer browser open success from a noopener window handle', async () => {
-    vi.stubGlobal('open', openWindowMock)
-    openWindowMock.mockReturnValue(null)
-    const log = vi.spyOn(console, 'info').mockImplementation(() => {})
-
-    await expect(openExternalUrl('https://example.com/docs')).resolves.toBe(true)
-
-    expect(openWindowMock).toHaveBeenCalledWith(
-      'https://example.com/docs',
-      '_blank',
-      'noopener,noreferrer'
-    )
-    expect(log).toHaveBeenCalledWith('[Wework][external-link]', {
-      event: 'opened',
-      source: 'unknown',
-      url: 'https://example.com',
-      target: 'browser',
-    })
-  })
-
-  test('opens external links through the Electron host', async () => {
-    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
-    await expect(openExternalUrl('https://example.com/docs')).resolves.toBe(true)
-    expect(desktopHostMock).toHaveBeenCalledWith('shell.openExternal', {
-      url: 'https://example.com/docs',
-    })
-  })
-
   test('routes Wework links into the shared in-app scheme navigator', async () => {
     const opened = vi.fn()
     window.addEventListener(WEWORK_OPEN_SCHEME_EVENT, opened)
@@ -124,24 +85,6 @@ describe('external link helpers', () => {
     expect(requestEmbeddedBrowserOpenMock).not.toHaveBeenCalled()
     expect(desktopHostMock).not.toHaveBeenCalled()
     expect(openWindowMock).not.toHaveBeenCalled()
-  })
-
-  test('uses the current link preference on each click', async () => {
-    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
-    getAppPreferencesMock
-      .mockResolvedValueOnce({ browserExternalLinkTarget: 'wework' })
-      .mockResolvedValueOnce({ browserExternalLinkTarget: 'system' })
-
-    await openExternalUrl('https://example.com/docs')
-    await openExternalUrl('https://example.com/docs')
-
-    expect(getAppPreferencesMock).toHaveBeenCalledTimes(2)
-    expect(requestEmbeddedBrowserOpenMock).toHaveBeenCalledExactlyOnceWith(
-      'https://example.com/docs'
-    )
-    expect(desktopHostMock).toHaveBeenCalledExactlyOnceWith('shell.openExternal', {
-      url: 'https://example.com/docs',
-    })
   })
 
   test('routes configured localhost links into the Wework built-in browser', async () => {

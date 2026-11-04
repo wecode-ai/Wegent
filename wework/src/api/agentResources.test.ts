@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, it, vi } from 'vitest'
 
 import type { HttpClient } from './http'
@@ -166,6 +168,7 @@ describe('createAgentResourceApi', () => {
     const api = createAgentResourceApi(client)
 
     await expect(api.getAgent(52)).resolves.toEqual({
+      botCount: 2,
       teamId: 52,
       botId: 71,
       name: 'review-agent',

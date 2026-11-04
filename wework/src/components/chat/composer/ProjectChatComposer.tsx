@@ -49,6 +49,7 @@ interface ProjectChatComposerProps {
   onCompositionEnd?: () => void
   onSubmit: (submittedValue?: string, options?: ComposerSubmitOptions) => void
   disabled: boolean
+  showPluginPicker?: boolean
   pluginPickerIconOnly?: boolean
   submitDisabled?: boolean
   requireText?: boolean
@@ -137,6 +138,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       onCompositionEnd,
       onSubmit,
       disabled,
+      showPluginPicker = true,
       pluginPickerIconOnly = false,
       submitDisabled = false,
       requireText = false,
@@ -403,6 +405,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
               showSubmitButton={presentation !== 'configuration'}
               showAttachmentActions={presentation !== 'configuration'}
               disabled={disabled}
+              showPluginPicker={showPluginPicker}
               pluginPickerIconOnly={pluginPickerIconOnly}
               showExecutionTools={showExecutionTools}
               showModelSelector={showModelSelector}

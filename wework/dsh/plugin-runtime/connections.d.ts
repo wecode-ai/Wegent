@@ -56,6 +56,7 @@ export interface ConnectionResource {
 }
 
 export interface ConnectionSource extends ConnectionResource {
+  boundary?: { partition: string; sequence: number }
   enabledAfter: string
   policy: { automatic: boolean; askBeforeAct: boolean }
 }
@@ -73,6 +74,7 @@ export interface ConnectionResourcePage {
 }
 
 export interface ConnectionEvent {
+  position?: { partition: string; sequence: number }
   id: string
   text: string
   at: string

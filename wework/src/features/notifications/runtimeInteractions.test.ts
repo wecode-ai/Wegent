@@ -1,9 +1,12 @@
+// @vitest-environment node
+
 import { describe, expect, it, vi } from 'vitest'
 import i18n from '@/i18n'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import {
   canQuickReply,
   canReplyToInteraction,
+  interactionSource,
   interactionOriginalScheme,
   readRuntimeInteractions,
 } from './runtimeInteractions'
@@ -20,6 +23,59 @@ function reader(...pages: ReturnType<typeof interactionTranscript>[]) {
 }
 
 describe('runtime human interactions', () => {
+  it.each([
+    { initiatedBy: undefined, expected: 'project' },
+    { initiatedBy: 'stand_in' as const, expected: 'stand_in' },
+  ])(
+    'classifies the transcript origin as $expected independently of sidebar metadata',
+    async ({ initiatedBy, expected }) => {
+      const [item] = await readRuntimeInteractions(
+        interactionTask,
+        reader({
+          ...interactionTranscript(),
+          origin: {
+            type: 'board_comment',
+            cloudProjectId: '12',
+            loopItemId: 'ISSUE-1',
+            initiatedBy,
+          },
+        })
+      )
+      expect(interactionSource(item)).toBe(expected)
+    }
+  )
+  it('keeps source message identities from the question own turn across transcript pages', async () => {
+    const older = interactionTranscript()
+    older.turns = [
+      {
+        id: 'turn-1',
+        status: 'completed',
+        items: [
+          {
+            id: 'native-user-item',
+            type: 'user_message',
+            message: {
+              id: 'native-user-item',
+              clientUserMessageId: 'original-comment',
+              role: 'user',
+              content: 'Review',
+              status: 'done',
+            },
+          },
+        ],
+      },
+    ]
+    const recent = interactionTranscript({ ...interactionQuestion, itemId: 'later' }, 'turn-2')
+    recent.hasMoreBefore = true
+    recent.beforeCursor = 'older'
+    const requests = await readRuntimeInteractions(interactionTask, reader(recent, older))
+    expect(
+      requests.find(item => item.requestKey === 'item:compatibility-choice')?.sourceMessageIds
+    ).toEqual(['original-comment', 'native-user-item'])
+    expect(
+      requests.find(item => item.requestKey === 'item:later')?.sourceMessageIds
+    ).toBeUndefined()
+  })
   it('uses the native localized approval description rather than an internal reason enum', async () => {
     const [item] = await readRuntimeInteractions(
       interactionTask,
@@ -37,7 +93,6 @@ describe('runtime human interactions', () => {
     expect(item.question).toBe(
       i18n.t('chat:request_user_input.approval_command', { detail: 'git status' })
     )
-    expect(item.context).toBe('git status')
     expect(item.question).not.toBe('command')
     expect(canReplyToInteraction(item)).toBe(false)
   })

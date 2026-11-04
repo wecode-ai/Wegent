@@ -1256,6 +1256,28 @@ fn mcp_form_elicitation_maps_enum_names_to_request_user_input_options() {
 }
 
 #[test]
+fn native_mcp_approval_preserves_its_exact_tool_arguments() {
+    let mut params = json!({
+        "serverName": "wework_stand_in", "mode": "form",
+        "message": "Allow the tool?", "requestedSchema": {"properties": {}},
+        "_meta": {"codex_approval_kind": "mcp_tool_call", "tool_title": "Wework: Send email", "tool_params": {
+            "from": "owner@example.com", "to": "sender@example.com",
+            "subject": "Re: Review", "text": "Complete reply\nFinal paragraph"
+        }}
+    });
+    let payload = mcp_server_elicitation_request_user_input_params(&params).unwrap();
+    assert_eq!(payload["approvalKind"], "mcp_tool_call");
+    assert_eq!(payload["toolTitle"], "Wework: Send email");
+    assert_eq!(payload["toolArguments"], params["_meta"]["tool_params"]);
+    assert_eq!(payload["questions"][0]["id"], "__mcp_approval");
+    params["_meta"]["codex_approval_kind"] = json!("other");
+    let payload = mcp_server_elicitation_request_user_input_params(&params).unwrap();
+    assert!(payload.get("toolArguments").is_none());
+    assert!(payload.get("toolTitle").is_none());
+    assert!(payload.get("approvalKind").is_none());
+}
+
+#[test]
 fn mcp_url_elicitation_is_visible_and_requires_explicit_consent() {
     let params = json!({
         "serverName": "codex_apps", "mode": "url",
@@ -2477,6 +2499,49 @@ fn configured_inference_provider_reads_the_unmodified_user_config() {
     );
 
     let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn stand_in_custom_provider_uses_authenticated_protocol_adapter() {
+    let _lock = crate::test_env::lock();
+    let root = tempfile::tempdir().unwrap();
+    let _home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
+    env::set_var(WEGENT_CODEX_HOME_ENV, root.path());
+    fs::write(
+        root.path().join("config.toml"),
+        r#"model_provider = "openai"
+[model_providers.custom]
+base_url = "http://127.0.0.1:3456/v1"
+experimental_bearer_token = "synthetic-custom-token"
+upstream_api_format = "openai-chat-completions"
+wire_api = "responses"
+"#,
+    )
+    .unwrap();
+    let model = json!({"runtime":"codex","provider":"custom","model_id":"custom-model"});
+    let catalog = json!({"models":[{
+        "runtime":"codex","provider":"custom","model_id":"custom-model",
+        "local_model_id":"custom-model"
+    }]});
+    let mut payload = json!({
+        "taskId":"stand-in-custom-provider", "message":"Reply OK",
+        "origin":{"initiatedBy":"stand_in"},
+        "runnerPolicy":{"runtime":"codex","execution_policy":{"mode":"fixed","environment_id":"mac"},"model_policy":{"mode":"user_select"}},
+        "runnerSelection":{"model":model}
+    });
+    crate::task_runtime::runner_routing::resolve_pending(&mut payload, Some(&catalog), "mac")
+        .unwrap();
+    let request: ExecutionRequest =
+        serde_json::from_value(payload["executionRequest"].clone()).unwrap();
+    let launch = build_codex_launch_config(&request).unwrap();
+    assert_eq!(
+        launch.model_provider.as_deref(),
+        Some(codex_model_catalog::PROVIDER_ID)
+    );
+    assert!(launch.local_proxy_registration.is_some());
+    let upstream = configured_codex_provider("custom", None).unwrap();
+    assert_eq!(upstream.api_key, "synthetic-custom-token");
+    assert_eq!(upstream.api_format, "openai-chat-completions");
 }
 
 #[test]

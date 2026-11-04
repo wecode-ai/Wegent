@@ -43,6 +43,10 @@ export function isCurrentDeviceCollaborationAgent(
 }
 
 export interface WorkspaceResourceCommands {
+  loadTemplateAgents?(
+    group: CollaborationGroup,
+  ): Promise<import("../ports/SharedWorkspaceApi").WorkspaceProjectAgent[]>;
+
   createTemplateGroups?(
     document: import("../templates/types").CollaborationTemplate,
     drafts: import("../project-create/types").ProjectCreateCollaborationGroupDraft[],
@@ -855,8 +859,12 @@ export function WorkspaceCollaborationGroupsConfiguration({
                 ))}
               </div>
 
-              {detailTab === "sharing" && (
-                <GroupTemplateActions group={selectedGroup} locale={locale} />
+              {detailTab === "sharing" && commands.loadTemplateAgents && (
+                <GroupTemplateActions
+                  group={selectedGroup}
+                  locale={locale}
+                  loadAgents={commands.loadTemplateAgents}
+                />
               )}
               {detailTab === "members" ? (
                 <section className="collaboration-group-detail-section collaboration-group-detail-tab-panel">

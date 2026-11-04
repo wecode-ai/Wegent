@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { subscribeDesktopHostEvents } from '@/api/dsh/desktopHost'
+import { subscribeDesktopHostEvents, type DesktopHostEvent } from '@/api/dsh/desktopHost'
 import { useWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import { getDesktopWindowLabel } from '@/lib/runtime-environment'
 import { isSettingsRoute, navigateTo } from '@/lib/navigation'
@@ -9,6 +9,17 @@ import {
   APPLICATION_MENU_CAPABILITIES,
   type ApplicationMenuCapabilityState,
 } from './applicationMenuModel'
+
+// Retain consumption across bridge remounts, including StrictMode's effect replay.
+let lastWorkspaceMenuSequence = 0
+
+function isPendingWorkspaceMenuEvent(event: DesktopHostEvent): boolean {
+  return (
+    event.type === 'application-menu.action' &&
+    event.payload.windowLabel === getDesktopWindowLabel() &&
+    event.sequence > lastWorkspaceMenuSequence
+  )
+}
 
 /**
  * Owns the application-menu actions that need the workspace tab context and
@@ -35,53 +46,45 @@ export function ApplicationMenuWorkspaceBridge({ pathname }: { pathname: string 
 
   useEffect(
     () =>
-      subscribeDesktopHostEvents(event => {
-        if (
-          event.type !== 'application-menu.action' ||
-          event.payload.windowLabel !== getDesktopWindowLabel()
-        ) {
-          return
-        }
-        const { tabs: current, pathname: currentPathname } = stateRef.current
-        const action = event.payload.action
-        if (action === APPLICATION_MENU_ACTIONS.newTaskTab) {
-          current.openTab('task')
-        } else if (action === APPLICATION_MENU_ACTIONS.newProjectSpaceTab) {
-          current.openTab('board')
-        } else if (action === APPLICATION_MENU_ACTIONS.closeTab) {
-          if (!current.activeTab.fixed) current.closeTab(current.activeTabId)
-        } else if (
-          action === APPLICATION_MENU_ACTIONS.openTasks ||
-          action === APPLICATION_MENU_ACTIONS.openProjectSpaces
-        ) {
-          const kind = action === APPLICATION_MENU_ACTIONS.openTasks ? 'task' : 'board'
-          const existing = current.tabs.find(tab => tab.kind === kind)
-          // Settings replaces the surface without changing the active tab, so
-          // re-select it to restore its workspace route when leaving settings.
-          if (existing) {
-            if (existing.id !== current.activeTabId || isSettingsRoute(currentPathname)) {
-              current.selectTab(existing.id)
-            }
-          } else {
-            current.openTab(kind)
-          }
-        } else if (typeof action === 'string' && action in APPLICATION_MENU_WORK_ROUTES) {
-          let route = APPLICATION_MENU_WORK_ROUTES[action]
-          if (
-            action === APPLICATION_MENU_ACTIONS.openAutomations &&
-            currentPathname === '/stand-in'
+      subscribeDesktopHostEvents(
+        event => {
+          if (!isPendingWorkspaceMenuEvent(event)) return
+          lastWorkspaceMenuSequence = event.sequence
+          const { tabs: current, pathname: currentPathname } = stateRef.current
+          const action = event.payload.action
+          console.debug('[application-menu] workspace action', {
+            action,
+            sequence: event.sequence,
+            pathname: currentPathname,
+          })
+          if (action === APPLICATION_MENU_ACTIONS.newTaskTab) {
+            current.openTab('task')
+          } else if (action === APPLICATION_MENU_ACTIONS.newProjectSpaceTab) {
+            current.openTab('board')
+          } else if (action === APPLICATION_MENU_ACTIONS.closeTab) {
+            if (!current.activeTab.fixed) current.closeTab(current.activeTabId)
+          } else if (
+            action === APPLICATION_MENU_ACTIONS.openTasks ||
+            action === APPLICATION_MENU_ACTIONS.openProjectSpaces
           ) {
-            const query = new URLSearchParams('view=scheduled')
-            const currentQuery = new URLSearchParams(window.location.search)
-            for (const key of ['profileId', 'deviceId']) {
-              const value = currentQuery.get(key)
-              if (value) query.set(key, value)
+            const kind = action === APPLICATION_MENU_ACTIONS.openTasks ? 'task' : 'board'
+            const existing = current.tabs.find(tab => tab.kind === kind)
+            // Settings replaces the surface without changing the active tab, so
+            // re-select it to restore its workspace route when leaving settings.
+            if (existing) {
+              if (existing.id !== current.activeTabId || isSettingsRoute(currentPathname)) {
+                current.selectTab(existing.id)
+              }
+            } else {
+              current.openTab(kind)
             }
-            route = `/stand-in?${query.toString()}`
+          } else if (typeof action === 'string' && action in APPLICATION_MENU_WORK_ROUTES) {
+            const route = APPLICATION_MENU_WORK_ROUTES[action]
+            navigateTo(route)
           }
-          navigateTo(route)
-        }
-      }),
+        },
+        { replay: isPendingWorkspaceMenuEvent }
+      ),
     []
   )
 

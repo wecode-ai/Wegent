@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { WeworkInbox } from '@/api/notifications'
 import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
-import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
+import { getStandInErrorMessage, reportStandInError } from '@/lib/stand-in-error-message'
+import { isAppDevice, isUsableDevice } from '@/lib/device-capabilities'
 import type { TaskSource } from './NotificationTaskSourceContext'
 import { getWorkbenchDeviceIds } from '@/lib/workbench-device'
+import { useTranslation } from '@/hooks/useTranslation'
 
 const EMPTY_ITEMS: RuntimeTaskReminderItem[] = []
 
@@ -14,6 +16,7 @@ export function useStandInAssignmentTasks(
   accountKey: string,
   enabled: boolean
 ) {
+  const { t } = useTranslation('common')
   const api = source?.services?.standInApi
   const identity = source?.services?.getLocalRuntimeSidebarIdentity
   const userId = source?.userId
@@ -35,19 +38,19 @@ export function useStandInAssignmentTasks(
   )
   const devices = JSON.stringify(
     (source?.devices ?? [])
-      .filter(device => device.status !== 'offline')
+      .filter(device => isUsableDevice(device) && !isAppDevice(device))
       .map(device => ({ id: device.device_id, aliases: getWorkbenchDeviceIds(device) }))
   )
   const visibleKeys = JSON.stringify(source?.items.map(item => item.key) ?? [])
+  // Inbox and sidebar refreshes revalidate this scope without hiding resolved history.
   const scope = useMemo(
     () => ({ accountKey, userId, api, identity, assignments, devices }),
     [accountKey, userId, api, identity, assignments, devices]
   )
-  const request = useMemo(() => ({ scope, visibleKeys, inbox }), [scope, visibleKeys, inbox])
   const [loaded, setLoaded] = useState<{
-    request: typeof request
+    scope: typeof scope
     items: RuntimeTaskReminderItem[]
-    error?: string
+    error?: { cause: unknown; deviceId?: string }
   } | null>(null)
   const available = enabled && api && identity && userId != null && assignments !== '[]'
 
@@ -56,50 +59,70 @@ export function useStandInAssignmentTasks(
     let active = true
     void (async () => {
       const local = await identity()
-      if (!local) throw new Error('Stand-in executor is unavailable')
+      if (!local) throw new Error('Executor identity is unavailable')
       const online: Array<{ id: string; aliases: string[] }> = JSON.parse(devices)
-      const targets = new Set<string>([
-        local.deviceId,
-        ...online
-          .filter(device => !device.aliases.includes(local.deviceId))
-          .map(device => device.id),
-      ])
+      // Other app devices cannot serve this RPC over the cloud relay.
+      const targets = [
+        ...new Set([
+          local.deviceId,
+          ...online
+            .filter(device => !device.aliases.includes(local.deviceId))
+            .map(device => device.id),
+        ]),
+      ]
       const results = await Promise.allSettled(
-        [...targets].map(async deviceId => {
-          const response = await api.assignmentTasks(userId, deviceId, JSON.parse(assignments))
-          return response.items.map(task => ({
-            key: `${deviceId}\0${task.taskId}`,
-            address: { deviceId, taskId: task.taskId },
-            task,
-            workspace: {
-              deviceId,
-              available: true,
-              workspacePath: task.workspacePath,
-              tasks: [task],
-            },
-            projectName: '',
-          }))
+        targets.map(async deviceId => {
+          try {
+            const response = await api.assignmentTasks(userId, deviceId, JSON.parse(assignments))
+            return response.items.map(task => ({
+              key: `${deviceId}\0${task.taskId}`,
+              address: { deviceId, taskId: task.taskId },
+              task,
+              workspace: {
+                deviceId,
+                available: true,
+                workspacePath: task.workspacePath,
+                tasks: [task],
+              },
+              projectName: '',
+            }))
+          } catch (cause) {
+            reportStandInError('lookup_assignment_tasks', cause, deviceId)
+            throw cause
+          }
         })
       )
       if (!active) return
-      const failure = results.find(result => result.status === 'rejected')
+      const failureIndex = results.findIndex(result => result.status === 'rejected')
+      const failure = results[failureIndex]
       setLoaded({
-        request,
+        scope,
         items: results.flatMap(result => (result.status === 'fulfilled' ? result.value : [])),
-        error: failure?.status === 'rejected' ? getStandInErrorMessage(failure.reason) : undefined,
+        error:
+          failure?.status === 'rejected'
+            ? { cause: failure.reason, deviceId: targets[failureIndex] }
+            : undefined,
       })
     })().catch(cause => {
-      if (active) setLoaded({ request, items: [], error: getStandInErrorMessage(cause) })
+      if (active) setLoaded({ scope, items: [], error: { cause } })
     })
     return () => {
       active = false
     }
-  }, [available, api, identity, userId, assignments, devices, request])
+  }, [available, api, identity, userId, assignments, devices, scope, inbox, visibleKeys])
 
-  const current = available && loaded?.request.scope === scope ? loaded : null
+  const current = available && loaded?.scope === scope ? loaded : null
+  const failure = current?.error
   return {
     items: current?.items ?? EMPTY_ITEMS,
     pending: Boolean(available && !current),
-    error: current?.error,
+    error: failure
+      ? failure.deviceId
+        ? t('standIn.errors.assignment_lookup_failed', {
+            deviceId: failure.deviceId,
+            error: getStandInErrorMessage(failure.cause),
+          })
+        : getStandInErrorMessage(failure.cause)
+      : undefined,
   }
 }

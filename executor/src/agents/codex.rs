@@ -710,7 +710,10 @@ impl CodexAppServerClient {
             Some(process) => process.pending.lock().await.len(),
             None => 0,
         };
-        if state.process.is_some()
+        // Control and live-reload requests belong to the existing process.
+        // Apply launch-environment changes only when a request may start a process.
+        if start_if_missing
+            && state.process.is_some()
             && codex_process_environment_requires_restart(
                 "rpc_request",
                 &state.process_environment,
@@ -7232,6 +7235,15 @@ pub(crate) fn mcp_server_elicitation_request_user_input_params(params: &Value) -
         "message": params.get("message").cloned().unwrap_or(Value::Null),
         "questions": questions,
     });
+    if is_tool_approval {
+        payload["approvalKind"] = json!("mcp_tool_call");
+        if let Some(title) = meta.and_then(|meta| meta.get("tool_title")) {
+            payload["toolTitle"] = title.clone();
+        }
+        if let Some(arguments) = meta.and_then(|meta| meta.get("tool_params")) {
+            payload["toolArguments"] = arguments.clone();
+        }
+    }
     elicitation::copy_lifecycle(params, &mut payload);
     Some(payload)
 }

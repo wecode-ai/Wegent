@@ -420,6 +420,41 @@ mod tests {
     }
 
     #[test]
+    fn workspace_response_preserves_restored_directory_inside_a_git_worktree() {
+        let _guard = crate::test_env::lock();
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let git_dir = directory.path().join("repo/.git/worktrees/outer");
+        let worktree = directory.path().join("outer");
+        std::fs::create_dir_all(&git_dir).expect("worktree metadata");
+        std::fs::create_dir_all(&worktree).expect("worktree directory");
+        std::fs::write(
+            worktree.join(".git"),
+            format!("gitdir: {}\n", git_dir.display()),
+        )
+        .expect("worktree git pointer");
+        let executor_home = worktree.join("executor-home");
+        let restored = executor_home.join("restored-workspaces/task-1");
+        std::fs::create_dir_all(&restored).expect("restored workspace");
+        let restored_path = normalize_workspace_path(&restored.to_string_lossy());
+        let mut moved = task("restored", Some("target"));
+        moved.workspace_path = restored_path.clone();
+        moved.group_workspace_path = Some("/srv/work".to_owned());
+        moved.preserve_execution_path = true;
+        let previous = std::env::var_os("WEGENT_EXECUTOR_HOME");
+        std::env::set_var("WEGENT_EXECUTOR_HOME", &executor_home);
+
+        let rows = workspace_response(vec![moved], vec![project("target", None)]);
+
+        match previous {
+            Some(value) => std::env::set_var("WEGENT_EXECUTOR_HOME", value),
+            None => std::env::remove_var("WEGENT_EXECUTOR_HOME"),
+        }
+        assert_eq!(rows[0]["tasks"][0]["workspacePath"], restored_path);
+        assert_eq!(rows[0]["tasks"][0]["workspaceKind"], "workspace");
+        assert!(rows[0]["tasks"][0].get("worktreeId").is_none());
+    }
+
+    #[test]
     fn workspace_response_preserves_assigned_worktree_root_for_a_nested_cwd() {
         let directory = tempfile::tempdir().expect("repository directory");
         let git_dir = directory

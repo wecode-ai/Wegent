@@ -51,6 +51,7 @@ interface PreviewClampMeasurement {
 }
 
 export function MessageTurnNavigation({
+  messageTarget,
   translate: t,
   messages,
   turnNavigation,
@@ -66,6 +67,8 @@ export function MessageTurnNavigation({
   const portalTheme = useCollaborationPortalTheme()
   const insetPx = Math.max(0, Math.round(bottomInsetPx))
   const [markers, setMarkers] = useState<MessageTurnMarker[]>([])
+  const locatedRequest = useRef<string | null>(null)
+  const locatingRequest = useRef<string | null>(null)
   const [activeMarkerIds, setActiveMarkerIds] = useState<string[]>([])
   const [hoveredMarkerId, setHoveredMarkerId] = useState<string | null>(null)
   const [loadingMarkerId, setLoadingMarkerId] = useState<string | null>(null)
@@ -94,6 +97,8 @@ export function MessageTurnNavigation({
   }, [])
 
   const cancelNavigation = useCallback(() => {
+    if (locatingRequest.current) locatedRequest.current = locatingRequest.current
+    locatingRequest.current = null
     loadOwnerRef.current = null
     const scroller = scrollRef.current
     if (navigationCleanupRef.current && scroller)
@@ -124,7 +129,10 @@ export function MessageTurnNavigation({
     )
     for (const target of targets)
       for (const type of ['wheel', 'pointerdown', 'touchstart', 'keydown'])
-        target.addEventListener(type, cancelForInput, { capture: true, passive: true })
+        target.addEventListener(type, cancelForInput, {
+          capture: true,
+          passive: true,
+        })
     return () => {
       for (const target of targets)
         for (const type of ['wheel', 'pointerdown', 'touchstart', 'keydown'])
@@ -133,7 +141,12 @@ export function MessageTurnNavigation({
   }, [cancelNavigation, interactionRef, scrollRef])
 
   const scrollToMessageId = useCallback(
-    (scroller: HTMLDivElement, messageId: string, behavior: ScrollBehavior = 'auto') => {
+    (
+      scroller: HTMLDivElement,
+      messageId: string,
+      behavior: ScrollBehavior = 'auto',
+      onLocated?: () => void
+    ) => {
       clearNavigationPosition()
       const initialAnchor = findMessageAnchor(contentRef, messageId)
       if (!initialAnchor) {
@@ -162,6 +175,7 @@ export function MessageTurnNavigation({
       let settled = false
       let frame: SafeAnimationFrameHandle | null = null
       const cleanup = () => {
+        settled = true
         if (frame) cancelSafeAnimationFrame(frame)
         observer.disconnect()
         scroller.removeEventListener('scrollend', finish)
@@ -169,8 +183,13 @@ export function MessageTurnNavigation({
       }
       const finish = () => {
         if (settled) return
-        settled = true
         cleanup()
+        const anchor = findMessageAnchor(contentRef, messageId)
+        if (
+          anchor &&
+          Math.abs(scroller.scrollTop - getMessageAnchorTargetTop(scroller, anchor)) < 1
+        )
+          onLocated?.()
         onNavigationScrollTargetChange?.(null)
       }
       const check = () => {
@@ -202,6 +221,53 @@ export function MessageTurnNavigation({
     },
     [clearNavigationPosition, contentRef, onNavigationScrollTargetChange]
   )
+
+  const targetMessageId = messageTarget?.messageId
+  const targetRequestKey = messageTarget?.requestKey
+  useLayoutEffect(() => {
+    const content = contentRef.current
+    const scroller = scrollRef.current
+    if (!targetMessageId || !targetRequestKey || !content || !scroller) return
+    const key = JSON.stringify([targetRequestKey, targetMessageId])
+    if (locatedRequest.current === key) return
+    clearNavigationPosition()
+    locatingRequest.current = key
+    const owner = {}
+    loadOwnerRef.current = owner
+    const cleanup = () => observer.disconnect()
+    let ownedCleanup: (() => void) | null = cleanup
+    const locate = () => {
+      if (loadOwnerRef.current !== owner || !findMessageAnchor(contentRef, targetMessageId)) return
+      scrollToMessageId(scroller, targetMessageId, 'auto', () => {
+        if (locatingRequest.current !== key) return
+        locatedRequest.current = key
+        locatingRequest.current = null
+      })
+      ownedCleanup = navigationCleanupRef.current
+    }
+    const observer = new MutationObserver(locate)
+    observer.observe(content, { childList: true, subtree: true })
+    navigationCleanupRef.current = cleanup
+    onNavigationScrollTargetChange?.(targetMessageId)
+    locate()
+    return () => {
+      observer.disconnect()
+      if (ownedCleanup && navigationCleanupRef.current === ownedCleanup) {
+        loadOwnerRef.current = null
+        locatingRequest.current = null
+        clearNavigationPosition()
+        onNavigationScrollTargetChange?.(null)
+      }
+    }
+  }, [
+    targetMessageId,
+    targetRequestKey,
+    clearNavigationPosition,
+    contentRef,
+    onNavigationScrollTargetChange,
+    scrollRef,
+    scrollToMessageId,
+  ])
 
   const nextUserTurns = buildUserTurnsForNavigation(messages, turnNavigation)
   const userTurnsSignature = getUserTurnsSignature(nextUserTurns)
@@ -543,7 +609,7 @@ export function MessageTurnNavigation({
     ]
   )
 
-  useEffect(
+  useLayoutEffect(
     () => () => {
       clearNavigationPosition()
       onNavigationScrollTargetChange?.(null)

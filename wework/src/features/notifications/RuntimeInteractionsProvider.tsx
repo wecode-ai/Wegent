@@ -19,6 +19,7 @@ import { useNotificationTaskSource } from './NotificationTaskSourceContext'
 import {
   interactionResponse,
   interactionId,
+  interactionSource,
   interactionOriginalScheme,
   canReplyToInteraction,
   interactionAllowsNativeReply,
@@ -27,11 +28,11 @@ import {
 } from './runtimeInteractions'
 import {
   INTERACTIONS_PATH,
-  INTERACTIONS_TAB_ID,
   RuntimeInteractionsContext,
   type InteractionHistory,
   type RuntimeInteractionsValue,
 } from './RuntimeInteractionsContext'
+import { openRuntimeInteractionsTab } from './runtimeInteractionsNavigation'
 import { createStandInRecordStore } from './standInNotificationStorage'
 import {
   readActiveNotificationPreferences,
@@ -171,10 +172,12 @@ function RuntimeInteractionsState({
       await navigator.locks.request(historyKey, () => {
         const next = archiveInteraction(readInteractionHistory(historyKey), {
           id: item.id,
+          source: interactionSource(item),
           title: item.task.task.title,
           question: item.question,
           address: item.task.address,
           originalUrl: interactionOriginalScheme(item),
+          sourceMessageIds: item.sourceMessageIds,
           answeredAt,
         })
         saveInteractionState(historyKey, next)
@@ -185,6 +188,13 @@ function RuntimeInteractionsState({
   )
   useEffect(() => {
     const update = (event: StorageEvent) => {
+      if (event.key?.startsWith(acceptancePrefix) && event.newValue !== null) {
+        submittedRef.current = new Set(submittedRef.current).add(
+          event.key.slice(acceptancePrefix.length)
+        )
+        setSubmitted(submittedRef.current)
+        return
+      }
       if (event.key !== historyKey) return
       const next = readInteractionHistory(historyKey)
       setHistory(next)
@@ -193,7 +203,7 @@ function RuntimeInteractionsState({
     }
     window.addEventListener('storage', update)
     return () => window.removeEventListener('storage', update)
-  }, [historyKey])
+  }, [acceptancePrefix, historyKey])
 
   const refresh = useCallback(
     async (force = true) => {
@@ -242,6 +252,11 @@ function RuntimeInteractionsState({
             ...nextInventory,
           ].map(item => [item.key, item])
         )
+        // Discovery owns persisted pending state; live sources supply turn identity.
+        for (const item of current.items) {
+          const candidate = candidates.get(item.key)!
+          if (item.lifecycle) candidates.set(item.key, { ...candidate, lifecycle: item.lifecycle })
+        }
         const items = [...candidates.values()].filter(
           item =>
             (item.lifecycle?.interactionStatus ?? item.task.interactionStatus) ||
@@ -317,7 +332,6 @@ function RuntimeInteractionsState({
                               task: item,
                               payload: { kind: 'request_user_input' },
                               question: t('interactions.needs_reply'),
-                              context: t('interactions.load_failed'),
                               createdAt: new Date(item.task.updatedAt ?? 0).getTime() || 0,
                               answered: false,
                             },
@@ -342,6 +356,9 @@ function RuntimeInteractionsState({
       item.lifecycle?.interactionStatus,
       item.task.interactionStatus,
       item.task.updatedAt,
+      item.lifecycle?.turn.id,
+      item.lifecycle?.turn.latestId,
+      item.lifecycle?.turn.phase,
     ])
   )
   useEffect(() => {
@@ -351,13 +368,14 @@ function RuntimeInteractionsState({
   }, [refresh, signature, source?.services?.runtimeWorkApi])
 
   const pending = useMemo(() => {
-    const visible = new Map([...inventory, ...(source?.items ?? [])].map(item => [item.key, item]))
+    const visible = new Map([...(source?.items ?? []), ...inventory].map(item => [item.key, item]))
     return Object.values(loaded)
       .flat()
       .filter(
         item =>
           !item.answered &&
           !submitted.has(item.id) &&
+          localStorage.getItem(acceptancePrefix + item.id) === null &&
           visible.has(item.task.key) &&
           (!item.payload.expiresAtUnixMs || item.payload.expiresAtUnixMs > Date.now())
       )
@@ -372,7 +390,7 @@ function RuntimeInteractionsState({
         }
       })
       .sort((a, b) => b.createdAt - a.createdAt)
-  }, [errors, inventory, loaded, source?.items, submitted])
+  }, [acceptancePrefix, errors, inventory, loaded, source?.items, submitted])
 
   useEffect(() => {
     saveInteractionState(cacheKey, pendingInteractionCache(pending))
@@ -386,11 +404,44 @@ function RuntimeInteractionsState({
       return next
     })
   }, [])
+  const markHandled = useCallback(
+    (id: string) => {
+      submittedRef.current = new Set(submittedRef.current).add(id)
+      setSubmitted(submittedRef.current)
+      setDraft(id, '')
+      setNoticeIds(current => current.filter(value => value !== id))
+      setErrors(current => {
+        const next = { ...current }
+        delete next[id]
+        return next
+      })
+    },
+    [setDraft]
+  )
+  const dismiss = useCallback(
+    async (item: RuntimeInteraction) => {
+      if (inFlight.current.has(item.id)) return
+      inFlight.current.add(item.id)
+      setBusy(new Set(inFlight.current))
+      try {
+        await navigator.locks.request(historyKey + ':' + item.id, async () => {
+          saveInteractionState(acceptancePrefix + item.id, true)
+          await archive(item, Date.now())
+          if (!mounted.current) return
+          markHandled(item.id)
+        })
+      } finally {
+        inFlight.current.delete(item.id)
+        if (mounted.current) setBusy(new Set(inFlight.current))
+      }
+    },
+    [acceptancePrefix, archive, historyKey, markHandled]
+  )
   const respond = useCallback(
     async (
       item: RuntimeInteraction,
       answer: string,
-      clientMessageId?: string
+      options?: { clientMessageId?: string; send?: () => Promise<boolean> }
     ): Promise<boolean> => {
       const api = sourceRef.current?.services?.runtimeWorkApi
       if (!api || !answer.trim() || !canReplyToInteraction(item) || inFlight.current.has(item.id))
@@ -432,60 +483,54 @@ function RuntimeInteractionsState({
           })
           const previousClient = clientIds.current.get(item.id)
           const id =
-            clientMessageId ??
+            options?.clientMessageId ??
             (previousClient?.answer === answer ? previousClient.id : crypto.randomUUID())
           clientIds.current.set(item.id, { answer, id })
           const message = requestUserInputResponseText(response)
           const asyncInput = isAsyncRequestUserInputPayload(live.payload)
-          const result = live.project
-            ? await replyToInteractionProject(
-                live,
-                message,
-                id,
-                sourceRef.current!.services!,
-                t('interactions.failed')
-              ).then(() => ({ accepted: true, error: undefined }))
-            : asyncInput && (live.running ?? live.task.lifecycle?.turn.active ?? false)
-              ? await api.guideRuntimeTask({
-                  address: live.task.address,
+          const result = options?.send
+            ? { accepted: await options.send(), error: undefined }
+            : live.project
+              ? await replyToInteractionProject(
+                  live,
                   message,
-                  clientGuidanceId: id,
-                })
-              : await api.sendRuntimeMessage(
-                  await prepareRuntimeContinuationModel(
-                    {
-                      address: live.task.address,
-                      message,
-                      ...(asyncInput
-                        ? {
-                            queueIfBusy: true,
-                          }
-                        : { requestUserInputResponse: response }),
-                      clientUserMessageId: id,
-                    },
-                    {
-                      projects: [],
-                      chats: [{ ...live.task.workspace, tasks: [live.task.task] }],
-                      totalTasks: 1,
-                    },
-                    () => api.listRuntimeWork()
+                  id,
+                  sourceRef.current!.services!,
+                  t('interactions.failed')
+                ).then(() => ({ accepted: true, error: undefined }))
+              : asyncInput && (live.running ?? live.task.lifecycle?.turn.active ?? false)
+                ? await api.guideRuntimeTask({
+                    address: live.task.address,
+                    message,
+                    clientGuidanceId: id,
+                  })
+                : await api.sendRuntimeMessage(
+                    await prepareRuntimeContinuationModel(
+                      {
+                        address: live.task.address,
+                        message,
+                        ...(asyncInput
+                          ? {
+                              queueIfBusy: true,
+                            }
+                          : { requestUserInputResponse: response }),
+                        clientUserMessageId: id,
+                      },
+                      {
+                        projects: [],
+                        chats: [{ ...live.task.workspace, tasks: [live.task.task] }],
+                        totalTasks: 1,
+                      },
+                      () => api.listRuntimeWork()
+                    )
                   )
-                )
           const accepted = result.accepted ?? ('success' in result && result.success)
           if (!accepted) throw new Error(result.error || t('notifications.failed'))
           saveInteractionState(acceptancePrefix + item.id, true)
           await archive(item, Date.now())
           if (!mounted.current) return true
-          submittedRef.current = new Set(submittedRef.current).add(item.id)
-          setSubmitted(submittedRef.current)
+          markHandled(item.id)
           setReplyNotice(t('interactions.reply_success'))
-          setDraft(item.id, '')
-          setNoticeIds(current => current.filter(id => id !== item.id))
-          setErrors(current => {
-            const next = { ...current }
-            delete next[item.id]
-            return next
-          })
           // Refresh failure must never turn an accepted answer into a failed send.
           void sourceRef.current?.refresh?.().catch(console.error)
           void refresh()
@@ -513,20 +558,13 @@ function RuntimeInteractionsState({
         if (mounted.current) setBusy(new Set(inFlight.current))
       }
     },
-    [acceptancePrefix, archive, historyKey, refresh, setDraft, t]
+    [acceptancePrefix, archive, historyKey, markHandled, refresh, setDraft, t]
   )
 
   const open = useCallback(
     (id?: string) => {
       const contentRoute = `${INTERACTIONS_PATH}${id ? `?${new URLSearchParams({ interaction: id })}` : ''}`
-      const existing = tabs.tabs.find(tab => tab.id === INTERACTIONS_TAB_ID)
-      if (existing) tabs.selectTab(existing.id, { contentRoute })
-      else
-        tabs.openTab('auxiliary', {
-          id: INTERACTIONS_TAB_ID,
-          title: t('interactions.title'),
-          contentRoute,
-        })
+      openRuntimeInteractionsTab(tabs, t('interactions.title'), contentRoute)
       setNoticeIds(current => (id ? current.filter(value => value !== id) : []))
     },
     [tabs, t]
@@ -540,15 +578,7 @@ function RuntimeInteractionsState({
     for (const item of pending) {
       if (records[item.id]) continue
       const alreadyViewed = focused && [...views.current.values()].includes(item.id)
-      const origin = item.task.task.runtimeHandle?.origin
-      const category =
-        item.project ||
-        (origin &&
-          typeof origin === 'object' &&
-          'initiatedBy' in origin &&
-          origin.initiatedBy === 'stand_in')
-          ? 'collaboration'
-          : 'tasks'
+      const category = interactionSource(item) === 'task' ? 'tasks' : 'collaboration'
       // An inactive window with system notifications disabled has delivered nothing.
       // Keep the request eligible for its in-app reminder when the user returns.
       const systemAvailable = isElectronRuntime() && preferences[category].system
@@ -617,7 +647,7 @@ function RuntimeInteractionsState({
           // Cached entries cannot authorize a response; leave the host reply queued.
           if (!item || item.cached || inFlight.current.has(item.id)) continue
           setDraft(item.id, reply.text)
-          const accepted = await respond(item, reply.text, reply.id)
+          const accepted = await respond(item, reply.text, { clientMessageId: reply.id })
           // Accepted sends must be acknowledged even if a refresh replaced this effect.
           // Failed sends remain editable drafts, unless their account has unmounted.
           if (accepted || mounted.current) {
@@ -657,6 +687,13 @@ function RuntimeInteractionsState({
   const notice = focused
     ? (noticeIds.map(id => pending.find(item => item.id === id)).find(Boolean) ?? null)
     : null
+  useEffect(() => {
+    if (import.meta.env.VITE_WEWORK_E2E === 'true')
+      console.info(
+        '[interaction-focus-state]',
+        JSON.stringify({ focused, pendingIds: pending.map(item => item.id), noticeIds })
+      )
+  }, [focused, pending, noticeIds])
   const dismissNotice = useCallback(
     () => setNoticeIds(current => current.filter(id => id !== notice?.id)),
     [notice?.id]
@@ -671,6 +708,7 @@ function RuntimeInteractionsState({
       loading,
       setDraft,
       respond,
+      dismiss,
       refresh,
       open,
       notice,
@@ -686,6 +724,7 @@ function RuntimeInteractionsState({
       loading,
       setDraft,
       respond,
+      dismiss,
       refresh,
       open,
       notice,

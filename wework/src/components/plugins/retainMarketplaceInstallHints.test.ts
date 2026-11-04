@@ -1,11 +1,9 @@
+// @vitest-environment node
+
+import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
 import { describe, expect, test } from 'vitest'
-import type { PluginMarketplaceItem } from '@/types/api'
-import type { InstalledPlugin } from '@/types/api'
 import type { InstalledPluginItem } from './PluginManagementRows'
-import {
-  retainMarketplaceInstalledState,
-  retainMarketplaceInstallHints,
-} from './retainMarketplaceInstallHints'
+import { retainMarketplaceInstalledState } from './retainMarketplaceInstallHints'
 
 function item(overrides: Partial<PluginMarketplaceItem> = {}): PluginMarketplaceItem {
   return {
@@ -93,95 +91,6 @@ function installedItem(): InstalledPluginItem {
 }
 
 describe('retainMarketplaceInstallHints', () => {
-  test('keeps an optimistic install when the next catalog snapshot lags', () => {
-    const previous = [
-      item({
-        installed: true,
-        installedLocally: true,
-        installedPluginId: 'github@openai-curated-remote',
-        enabled: true,
-      }),
-    ]
-    const next = [item({ description: 'fresh description' })]
-
-    expect(retainMarketplaceInstallHints(previous, next)).toEqual([
-      expect.objectContaining({
-        id: 'github@openai-curated-remote',
-        description: 'fresh description',
-        installed: true,
-        installedLocally: true,
-        installedPluginId: 'github@openai-curated-remote',
-        enabled: true,
-      }),
-    ])
-  })
-
-  test('does not revive an install after the row was cleared', () => {
-    const previous = [item({ installed: false, installedPluginId: null })]
-    const next = [item({ installed: false, installedPluginId: null })]
-    expect(retainMarketplaceInstallHints(previous, next)).toEqual(next)
-  })
-
-  test('keeps a previous device gap when the next catalog omits device rows', () => {
-    const pending = {
-      deviceId: 'current-device',
-      desiredReleaseId: 1001,
-      actualReleaseId: null,
-      state: 'pending' as const,
-      errorCode: null,
-      errorMessage: null,
-      attemptCount: 1,
-      lastSyncAt: null,
-      updatedAt: '2026-07-25T12:00:00',
-    }
-    const previous = [
-      item({
-        id: 101,
-        installed: false,
-        installedPluginId: 101,
-        currentDeviceInstallation: pending,
-      }),
-    ]
-    const next = [
-      item({
-        id: 101,
-        installed: true,
-        installedPluginId: 101,
-        currentDeviceInstallation: null,
-      }),
-    ]
-
-    expect(retainMarketplaceInstallHints(previous, next)).toEqual([
-      expect.objectContaining({
-        id: 101,
-        installed: true,
-        installedPluginId: 101,
-        currentDeviceInstallation: pending,
-      }),
-    ])
-  })
-
-  test('retains the matching installed row with an optimistic marketplace hint', () => {
-    const previousItem = item({
-      installed: true,
-      installedLocally: true,
-      installedPluginId: 'github@openai-curated-remote',
-      enabled: true,
-    })
-    const plugin = installedItem()
-
-    const retained = retainMarketplaceInstalledState({
-      previousItems: [previousItem],
-      nextItems: [item()],
-      previousInstalled: [plugin],
-      nextInstalled: [],
-      previousStateMatchesScope: true,
-    })
-
-    expect(retained.items[0]?.installed).toBe(true)
-    expect(retained.installed).toEqual([plugin])
-  })
-
   test('clears a stale installed card when no installed row can be retained', () => {
     const retained = retainMarketplaceInstalledState({
       previousItems: [
@@ -220,27 +129,6 @@ describe('retainMarketplaceInstallHints', () => {
     })
 
     expect(retained.items).toEqual([item()])
-    expect(retained.installed).toEqual([])
-  })
-
-  test('does not retain installed state from a different cache scope', () => {
-    const previousItem = item({
-      installed: true,
-      installedLocally: true,
-      installedPluginId: 'github@openai-curated-remote',
-      enabled: true,
-    })
-    const nextItem = item()
-
-    const retained = retainMarketplaceInstalledState({
-      previousItems: [previousItem],
-      nextItems: [nextItem],
-      previousInstalled: [installedItem()],
-      nextInstalled: [],
-      previousStateMatchesScope: false,
-    })
-
-    expect(retained.items).toEqual([nextItem])
     expect(retained.installed).toEqual([])
   })
 

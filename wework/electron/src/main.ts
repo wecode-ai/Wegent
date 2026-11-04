@@ -506,6 +506,17 @@ app.on('web-contents-created', (_event, contents) => {
     if (process.env.VITE_WEWORK_E2E === 'true' && message.startsWith('[desktop-e2e-key] ')) {
       console.info(redactLog(message).slice(0, 1024))
     }
+    if (
+      process.env.VITE_WEWORK_E2E === 'true' &&
+      message.startsWith('[process-explorer-snapshot] ')
+    ) {
+      console.info('[process-explorer-renderer]', {
+        webContentsId: contents.id,
+        message: redactLog(message).slice(0, 1024),
+      })
+    }
+    if (process.env.VITE_WEWORK_E2E === 'true' && message.startsWith('[interaction-focus-state]'))
+      console.info(redactLog(message).slice(0, 4096))
     if (process.env.VITE_WEWORK_E2E === 'true' && level === 3) {
       recordReleaseDiagnostic('renderer-error', {
         message: redactLog(message).slice(0, 4096),
@@ -1730,6 +1741,7 @@ function installApplicationMenu(): void {
     },
     openDevTools: window => openWindowDevTools(window),
     openLogDirectory: openApplicationLogDirectory,
+    openProcessExplorer: openProcessExplorerWindow,
     showMain: reactivateMainWindow,
     quit: () => requestApplicationShutdown(() => app.quit()),
     openExternal: url => shell.openExternal(url),
@@ -2135,7 +2147,8 @@ async function configureDesktopRuntime(): Promise<void> {
   })
   embeddedBrowserBridge = new EmbeddedBrowserBridge(
     embeddedBrowser,
-    environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
+    environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework'),
+    async () => (await preferences?.read())?.browserFullControl === true
   )
   startupProgress.report('services')
   logStartupStep('embedded-browser-bridge', 'started')
@@ -2755,9 +2768,19 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
   const runtimeRoot = configuredRuntimeRoot
     ? configuredRuntimeRoot
     : components
-      ? await materializeBundledRuntimes(components.coreDsh, packagedHarnessRuntimePaths().cache, [
-          'core',
-        ])
+      ? await materializeBundledRuntimes(
+          components.coreDsh,
+          packagedHarnessRuntimePaths().cache,
+          ['core'],
+          {
+            onProgress: ({ stage, phase, elapsedMs, role, archiveBytes }) =>
+              logStartupStep(`core-runtime-${stage}`, phase, {
+                phaseElapsedMs: elapsedMs,
+                role,
+                archiveBytes,
+              }),
+          }
+        )
       : developmentRuntimeRoot
   logStartupStep('core-runtime-materialize', 'completed')
   logStartupStep('node-runtime-prepare', 'started')

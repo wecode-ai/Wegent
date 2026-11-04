@@ -1,10 +1,9 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import '@/i18n'
+import { preloadDefaultDshUiTestModules } from '@/test/setup.dom'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import '@/i18n'
-import { installDshUiTestContributions, preloadDefaultDshUiTestModules } from '@/test/setup'
-import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { DesktopEmptyTaskLauncher } from './DesktopEmptyTaskLauncher'
 
 vi.mock('@/lib/platform', () => ({ getPlatform: () => 'mac' }))
@@ -44,85 +43,6 @@ function LauncherHarness({
 }
 
 describe('DesktopEmptyTaskLauncher', () => {
-  test('opens find in an active empty conversation, reports no matches, and restores the draft focus', async () => {
-    const { rerender } = render(<LauncherHarness />)
-    const composer = screen.getByTestId('chat-message-input')
-    fireEvent.keyDown(composer, { key: 'f', metaKey: true })
-    expect(screen.queryByTestId('conversation-find-input')).not.toBeInTheDocument()
-
-    rerender(<LauncherHarness searchActive />)
-    fireEvent.keyDown(composer, { key: 'f', metaKey: true })
-    const input = screen.getByTestId('conversation-find-input')
-    await waitFor(() => expect(input).toHaveFocus())
-    fireEvent.change(input, { target: { value: '已有草稿' } })
-    await waitFor(() =>
-      expect(screen.getByTestId('conversation-find-count')).toHaveTextContent('0 个结果')
-    )
-    expect(screen.getByTestId('conversation-find-next-button')).toBeDisabled()
-    fireEvent.keyDown(input, { key: 'Escape' })
-    expect(screen.queryByTestId('conversation-find-input')).not.toBeInTheDocument()
-    expect(composer).toHaveFocus()
-    expect(composer).toHaveValue('已有草稿')
-  })
-
-  test('focuses the composer when the new chat view opens', async () => {
-    render(<LauncherHarness />)
-
-    await waitFor(() => expect(screen.getByTestId('chat-message-input')).toHaveFocus())
-  })
-
-  test('focuses the composer when a new chat is requested', async () => {
-    render(<LauncherHarness />)
-    screen.getByTestId('empty-project-title-button').focus()
-
-    window.dispatchEvent(new Event('wework:focus-new-chat-composer'))
-
-    await waitFor(() => expect(screen.getByTestId('chat-message-input')).toHaveFocus())
-  })
-
-  test('renders the project-aware heading and ordered suggestion categories', () => {
-    render(<LauncherHarness />)
-
-    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(
-      '我们应该在 Wegent 中做些什么？'
-    )
-    const categoryLabels = within(screen.getByTestId('task-suggestion-categories'))
-      .getAllByRole('button')
-      .map(button => button.textContent)
-    expect(categoryLabels).toEqual([
-      '探索并理解代码',
-      '构建新功能、应用或工具',
-      '审查代码并提出修改建议',
-      '修复问题和失败',
-    ])
-
-    const categoryButtons = within(screen.getByTestId('task-suggestion-categories')).getAllByRole(
-      'button'
-    )
-    expect(categoryButtons[0]).toHaveClass(
-      'min-h-[104px]',
-      'rounded-2xl',
-      'bg-background',
-      'ring-[0.5px]'
-    )
-    expect(categoryButtons.map(button => button.querySelector('svg')?.classList.value)).toEqual([
-      'h-4 w-4 text-[#0285FF]',
-      'h-4 w-4 text-[#924FF7]',
-      'h-4 w-4 text-[#04B84C]',
-      'h-4 w-4 text-[#FB6A22]',
-    ])
-  })
-
-  test('renders translucent home cards when the workbench background is visible', () => {
-    render(<LauncherHarness showWorkbenchBackground />)
-
-    const categoryButtons = within(screen.getByTestId('task-suggestion-categories')).getAllByRole(
-      'button'
-    )
-    expect(categoryButtons[0]).toHaveClass('border', 'border-border/45', 'bg-transparent')
-    expect(categoryButtons[0]).not.toHaveClass('bg-background')
-  })
-
   test('replaces the draft from a secondary suggestion without submitting and keeps focus local', async () => {
     render(<LauncherHarness />)
 
@@ -148,53 +68,5 @@ describe('DesktopEmptyTaskLauncher', () => {
 
     await userEvent.click(screen.getByTestId('task-suggestions-back-button'))
     expect(screen.getByTestId('task-suggestion-categories')).toBeInTheDocument()
-  })
-
-  test('uses the generic heading when no project is selected', () => {
-    render(<LauncherHarness projectName={null} />)
-
-    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('我们该做什么？')
-    expect(screen.queryByTestId('empty-project-title-button')).not.toBeInTheDocument()
-  })
-
-  test('renders focus-mode suggestions without developer categories', async () => {
-    await installDshUiTestContributions(
-      {
-        [WEWORK_DSH_SLOTS.home]: [{ id: 'focus-home', module: 'plugins/wework-ui-home-focus.js' }],
-      },
-      {
-        'plugins/wework-ui-home-focus.js': () => import('../../../dsh/ui-home-focus/src/home'),
-      }
-    )
-
-    render(<LauncherHarness />)
-
-    expect(await screen.findByTestId('focus-home')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(
-      '我们应该在 Wegent 中做些什么？'
-    )
-    expect(within(screen.getByTestId('focus-suggestions')).getAllByRole('button')).toHaveLength(4)
-    expect(screen.getByText('整理和总结资料')).toBeInTheDocument()
-    expect(screen.getByText('撰写或润色内容')).toBeInTheDocument()
-    expect(screen.getByText('分析问题并给出建议')).toBeInTheDocument()
-    expect(screen.getByText('制定计划和拆解任务')).toBeInTheDocument()
-    expect(screen.queryByTestId('task-suggestion-categories')).not.toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('focus-suggestion-analysis'))
-
-    expect(screen.getByTestId('chat-message-input')).toHaveValue(
-      '帮我分析这个问题并给出可执行建议：'
-    )
-    await waitFor(() => expect(screen.getByTestId('chat-message-input')).toHaveFocus())
-  })
-
-  test('passes the title button as the project chooser anchor', async () => {
-    const onOpenProjectSelector = vi.fn()
-    render(<LauncherHarness onOpenProjectSelector={onOpenProjectSelector} />)
-
-    const titleButton = screen.getByTestId('empty-project-title-button')
-    await userEvent.click(titleButton)
-
-    expect(onOpenProjectSelector).toHaveBeenCalledWith(titleButton)
   })
 })

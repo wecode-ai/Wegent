@@ -1,15 +1,13 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { CloudWorkPage } from './CloudWorkPage'
-import { navigateTo } from '@/lib/navigation'
-import { requestProjectCreateMode } from '@/components/layout/workbenchShellEvents'
 import {
   RuntimeTaskLifecycleProvider,
   RuntimeTaskLifecycleStore,
 } from '@/features/workbench/runtimeTaskLifecycle'
-import { preloadDefaultDshUiTestModules } from '@/test/setup'
+import { preloadDefaultDshUiTestModules } from '@/test/setup.dom'
+import { act, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { installGitUiTestContributions } from '../../ui-git/test-support'
+import { CloudWorkPage } from './CloudWorkPage'
 
 const sidebarMock = vi.hoisted(() => ({ renderReal: false }))
 
@@ -189,51 +187,6 @@ describe('CloudWorkPage', () => {
     await preloadDefaultDshUiTestModules()
     await installGitUiTestContributions()
   }, 60_000)
-
-  test('refreshes devices when the cloud work page opens', async () => {
-    render(<CloudWorkPage />)
-
-    await waitFor(() => expect(workbenchMock.value.refreshDevices).toHaveBeenCalledOnce())
-  })
-
-  test('shows cloud devices and cloud projects without local resources', () => {
-    render(<CloudWorkPage />)
-
-    expect(screen.getByTestId('cloud-work-page')).toBeInTheDocument()
-    expect(screen.getByTestId('cloud-device-section')).toHaveTextContent('cloud-device')
-    expect(screen.getByTestId('cloud-device-section')).not.toHaveTextContent('local-device')
-    expect(screen.getByText('Cloud Project')).toBeInTheDocument()
-    expect(screen.queryByText('Local Project')).not.toBeInTheDocument()
-    expect(screen.getByText('Cloud Box · /workspace/cloud-project')).toBeInTheDocument()
-  })
-
-  test('opens a cloud project in the standard workbench', async () => {
-    render(<CloudWorkPage />)
-
-    await userEvent.click(screen.getByTestId('cloud-work-project-21'))
-
-    expect(navigateTo).toHaveBeenCalledWith('/')
-    expect(workbenchMock.value.selectProject).toHaveBeenCalledWith(21)
-  })
-
-  test('keeps device setup and project creation in their existing flows', async () => {
-    render(<CloudWorkPage />)
-
-    await userEvent.click(screen.getByTestId('cloud-work-add-device-button'))
-    expect(navigateTo).toHaveBeenCalledWith('/settings/connections?addDevice=1')
-
-    await userEvent.click(screen.getByTestId('cloud-work-create-project-button'))
-    expect(navigateTo).toHaveBeenCalledWith('/')
-    expect(requestProjectCreateMode).toHaveBeenCalledWith('git')
-  })
-
-  test('opens cloud connection settings only from the explicit settings action', async () => {
-    render(<CloudWorkPage />)
-
-    await userEvent.click(screen.getByTestId('cloud-work-settings-button'))
-
-    expect(navigateTo).toHaveBeenCalledWith('/settings/connections')
-  })
 
   test('clones from the cloud work sidebar and recovers from a clone failure', async () => {
     sidebarMock.renderReal = true

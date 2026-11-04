@@ -11,6 +11,7 @@ import {
   UPGRADE_CHECKPOINT_GROUP,
   UPGRADE_PACKAGE_CHECKPOINTS,
   UPGRADE_DIAGNOSTIC_CHECKPOINTS,
+  upgradeVerificationCheckpoint,
 } from './upgrade-suite.mjs'
 
 test('Responses retains standalone selection and shares an existing CI Cloud lifecycle', () => {
@@ -23,8 +24,19 @@ test('Responses retains standalone selection and shares an existing CI Cloud lif
   }
 })
 
-test('upgrade verification has one maintained group for all supported operating systems', () => {
+test('Windows certifies the core round trip while macOS retains complete recovery coverage', () => {
   assert.deepEqual(expandDesktopCheckpoints([UPGRADE_CHECKPOINT_GROUP]), UPGRADE_CHECKPOINTS)
+  assert.deepEqual(expandDesktopCheckpoints([upgradeVerificationCheckpoint('windows')]), [
+    'app-rollback',
+  ])
+  assert.deepEqual(
+    expandDesktopCheckpoints([upgradeVerificationCheckpoint('macos')]),
+    UPGRADE_CHECKPOINTS
+  )
+  assert.throws(
+    () => upgradeVerificationCheckpoint('linux'),
+    /Unsupported upgrade verification platform/
+  )
   for (const checkpoint of UPGRADE_CHECKPOINTS) assert.ok(DESKTOP_CHECKPOINTS.includes(checkpoint))
 })
 

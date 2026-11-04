@@ -143,7 +143,7 @@ export function createDesktopScenario({
                   projects: [{ id: project.id, store: 'local' }],
                   excludedProjects: [],
                   tags: [],
-                  policy: { automatic: true, askBeforeAct: true, immediate: false },
+                  policy: { automatic: true, askBeforeAct: true, immediate: true },
                 },
               },
             ],

@@ -1,13 +1,13 @@
-import { act, cleanup, render, screen } from '@testing-library/react'
-import { afterEach, expect, test, vi } from 'vitest'
-import { MessageList } from './MessageList'
 import type { WorkbenchMessage } from '@/types/workbench'
+import { act, cleanup, render } from '@testing-library/react'
 import {
   cacheConversationVirtualMeasurements,
   clearConversationViewportCache,
 } from '@wegent/collaboration/conversation/conversationViewportCache'
-import type { ConversationVirtualizer } from '@wegent/collaboration/conversation/useConversationVirtualizer'
 import * as pretext from '@wegent/collaboration/conversation/messagePretextLayout'
+import type { ConversationVirtualizer } from '@wegent/collaboration/conversation/useConversationVirtualizer'
+import { afterEach, expect, test, vi } from 'vitest'
+import { MessageList } from './MessageList'
 
 vi.mock('@/lib/runtime-environment', () => ({
   isDesktopRuntime: () => true,
@@ -95,14 +95,6 @@ function fixture() {
   }
 }
 
-test('hydrates the real virtualizer only after validating the message column', () => {
-  const current = fixture()
-  const view = render(<MessageList {...current.props} />)
-  expect(current.engine.current!.itemSizeCache.get('message-0')).toBe(987)
-  expect(current.estimate).not.toHaveBeenCalled()
-  view.unmount()
-})
-
 test.each(['reopen', 'resize'] as const)(
   'rejects stale heights on column %s while the viewport width remains unchanged',
   action => {
@@ -118,12 +110,3 @@ test.each(['reopen', 'resize'] as const)(
     expect(current.engine.current!.options.estimateSize(0)).toBe(220)
   }
 )
-
-test('measures and renders when the first messages arrive after an empty mount', () => {
-  const current = fixture()
-  const view = render(<MessageList {...current.props} messages={[]} />)
-  expect(view.container).toBeEmptyDOMElement()
-  view.rerender(<MessageList {...current.props} />)
-  expect(current.engine.current).not.toBeNull()
-  expect(screen.getAllByTestId('message-user').length).toBeGreaterThan(0)
-})

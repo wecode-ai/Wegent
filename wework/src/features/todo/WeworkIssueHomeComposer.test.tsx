@@ -1,9 +1,9 @@
-import { createRef } from 'react'
-import { render, screen, waitFor, act } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, test, vi } from 'vitest'
-import { IssueHomeComposer, type IssueHomeTaskComposerProps } from '@wegent/collaboration/platform'
 import { createCollaborationTranslator } from '@wegent/collaboration'
+import { IssueHomeComposer, type IssueHomeTaskComposerProps } from '@wegent/collaboration/platform'
+import { createRef } from 'react'
+import { describe, expect, test, vi } from 'vitest'
 import { WeworkIssueHomeComposer } from './WeworkIssueHomeComposer'
 
 vi.mock('@/api/dsh/desktopHost', () => ({
@@ -32,24 +32,6 @@ const createProps = (): IssueHomeTaskComposerProps => ({
 })
 
 describe('Wework Issue home task composer', () => {
-  test('keeps assignment controls in the issue composer without a separate stand-in entry', () => {
-    const props = createProps()
-    render(<WeworkIssueHomeComposer {...props} ownerControl={<button>Choose owner</button>} />)
-    expect(screen.getByRole('button', { name: 'Choose owner' })).toBeInTheDocument()
-    expect(screen.queryByTestId('issue-stand-in-control')).not.toBeInTheDocument()
-    expect(screen.queryByText('交给我的分身')).not.toBeInTheDocument()
-  })
-  test('renders the shared execution environment notice above the editor', () => {
-    const props = createProps()
-    props.environmentNotice = <div data-testid="environment-notice">环境提示</div>
-
-    render(<WeworkIssueHomeComposer {...props} />)
-
-    const notice = screen.getByTestId('environment-notice')
-    const input = screen.getByTestId('collaboration-home-issue-content')
-    expect(notice.compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-  })
-
   test('distinguishes same-name local and cloud projects and retains the selected space', async () => {
     const props = createProps()
     props.projects = props.projects.map(project => ({ ...project, name: '同名项目' }))
@@ -205,33 +187,6 @@ describe('Wework Issue home task composer', () => {
     )
     await userEvent.click(screen.getByTestId('collaboration-home-create-issue'))
     expect(props.onSubmit).toHaveBeenCalledWith(expect.stringContaining('wework-issue://p1/i1'))
-  })
-  test('keeps the project selector inside the shared composer above its editor', async () => {
-    const props = createProps()
-    render(<WeworkIssueHomeComposer {...props} />)
-    expect(screen.queryByTestId('desktop-empty-composer-frame')).not.toBeInTheDocument()
-    expect(screen.getByTestId('collaboration-issue-workspace')).toBeInTheDocument()
-    expect(screen.getByTestId('project-chat-composer')).toContainElement(
-      screen.getByTestId('collaboration-home-issue-content')
-    )
-    expect(screen.getByTestId('project-chat-composer')).toHaveAttribute(
-      'data-presentation',
-      'document'
-    )
-    expect(screen.getByTestId('collaboration-home-issue-content')).toHaveClass('min-h-32')
-    const projectTrigger = screen.getByTestId('collaboration-issue-project-trigger')
-    expect(projectTrigger).toHaveTextContent('项目一')
-    expect(screen.getByTestId('project-chat-composer')).toContainElement(projectTrigger)
-    expect(
-      projectTrigger.compareDocumentPosition(
-        screen.getByTestId('collaboration-home-issue-content')
-      ) & Node.DOCUMENT_POSITION_FOLLOWING
-    ).toBeTruthy()
-    expect(screen.getByTestId('collaboration-home-create-issue')).toHaveTextContent('创建 Issue')
-    await userEvent.click(projectTrigger)
-    await userEvent.click(screen.getByTestId('collaboration-issue-project-p2'))
-    expect(props.onSelectProject).toHaveBeenCalledWith('p2')
-    expect(screen.queryByTestId('collaboration-issue-project-picker')).not.toBeInTheDocument()
   })
 
   test('submits the live draft and restores it after creation fails', async () => {

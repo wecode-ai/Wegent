@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { access, cp, mkdir, mkdtemp, rm, symlink } from 'node:fs/promises'
