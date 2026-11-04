@@ -69,6 +69,12 @@ export function createDesktopScenario({
       assert.equal(workCalls, 0)
       assert.equal(coordinatorCalls, 0)
     } finally {
+      const latest = await rpc(control, 'todos.get', { project_id: projectId, task_id: issue.id })
+      await rpc(control, 'todos.update', {
+        project_id: projectId,
+        task_id: issue.id,
+        todo: { version: latest.version, status: 'completed', assignee_user_id: null },
+      })
       await rpc(control, 'todos.archive', { project_id: projectId, task_id: issue.id })
     }
   }

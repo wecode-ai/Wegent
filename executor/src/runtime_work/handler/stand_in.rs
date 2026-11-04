@@ -504,9 +504,7 @@ impl RuntimeWorkRpcHandler {
                 if self.stand_in_task_is_handled(
                     config,
                     &task_id,
-                    bindings.iter().any(|binding| {
-                        binding.task_id == task_id && binding.device_id != self.device_id
-                    }),
+                    bindings.iter().any(|binding| binding.task_id == task_id),
                 ) {
                     continue;
                 }
@@ -699,9 +697,14 @@ impl RuntimeWorkRpcHandler {
             );
             return Ok(());
         }
-        // A binding on this device can reserve queued work before a Runtime task exists.
-        self.execute_stand_in_task(config, issue, binding, false)
-            .await
+        // Only a validated intake action may start work reserved before Runtime creation.
+        self.execute_stand_in_task(
+            config,
+            issue,
+            binding,
+            bound.is_some() && config["intakeRouted"] != true,
+        )
+        .await
     }
 
     pub(super) async fn create_stand_in_task(
