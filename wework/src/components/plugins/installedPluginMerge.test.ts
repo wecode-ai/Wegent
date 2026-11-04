@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { collectPluginDeviceStatusReports } from '@/features/plugins/pluginDeviceAutoSync'
 import type { InstalledPlugin } from '@/types/api'
 import {

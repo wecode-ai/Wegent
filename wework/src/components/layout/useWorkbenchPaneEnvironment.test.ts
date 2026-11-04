@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import type { ProjectWithTasks } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
 import { describe, expect, test } from 'vitest'

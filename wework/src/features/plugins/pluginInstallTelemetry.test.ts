@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { subscribeBusinessEvents } from '@/telemetry/businessEvents'
 import { subscribeOperationResults } from '@/telemetry/operationBus'
 import type { InstalledPlugin } from '@/types/api'

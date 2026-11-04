@@ -29,6 +29,124 @@ afterEach(async () => {
 })
 
 describe('materializeBundledRuntimes', () => {
+  test('reports active phases and omits archive work when the runtime is already ready', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-runtime-progress-'))
+    roots.push(root)
+    const resources = join(root, 'resources')
+    const cache = join(root, 'cache')
+    await mkdir(resources)
+    const core = await runtimeArchive(resources, 'core', '0.2.0-rc.2', 'a', ['core', 'workbench'])
+    await writeFile(
+      join(resources, 'runtimes.json'),
+      JSON.stringify({ runtimes: [core, { ...core, role: 'workbench' }] })
+    )
+    const events: { stage: string; phase: string; elapsedMs: number }[] = []
+    const options = { onProgress: (event: (typeof events)[number]) => events.push(event) }
+
+    await expect(materializeBundledRuntimes(resources, cache, ['core'], options)).resolves.toBe(
+      cache
+    )
+    for (const stage of [
+      'catalog-read',
+      'runtime-probe',
+      'archive-resolve',
+      'archive-extract',
+      'runtime-publish',
+      'catalog-write',
+    ]) {
+      expect(events.filter(event => event.stage === stage).map(event => event.phase)).toEqual([
+        'started',
+        'completed',
+      ])
+    }
+    expect(events.every(event => event.elapsedMs >= 0)).toBe(true)
+    expect(JSON.stringify(events)).not.toContain(root)
+    const identity = await readFile(join(cache, core.sourceFingerprint, 'runtime.json'), 'utf8')
+    expect(JSON.parse(identity).roles).toEqual(['core', 'workbench'])
+
+    events.length = 0
+    await materializeBundledRuntimes(resources, cache, ['core'], options)
+    expect(events.some(event => event.stage === 'archive-extract')).toBe(false)
+    expect(
+      events.some(event => event.stage === 'catalog-write' && event.phase === 'completed')
+    ).toBe(true)
+  })
+
+  test('retains integrity failures when progress diagnostics throw', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-runtime-progress-error-'))
+    roots.push(root)
+    const resources = join(root, 'resources')
+    const cache = join(root, 'cache')
+    await mkdir(resources)
+    const core = await runtimeArchive(resources, 'core', '0.2.0-rc.2', 'a', ['core', 'workbench'])
+    await writeFile(
+      join(resources, 'runtimes.json'),
+      JSON.stringify({ runtimes: [core, { ...core, role: 'workbench' }] })
+    )
+    await writeFile(join(resources, core.assetName), 'corrupt archive')
+    const phases: string[] = []
+    await expect(
+      materializeBundledRuntimes(resources, cache, ['core'], {
+        onProgress: (event: { stage: string; phase: string }) => {
+          phases.push(`${event.stage}:${event.phase}`)
+          throw new Error('Diagnostic sink unavailable')
+        },
+      })
+    ).rejects.toThrow('Bundled DSH runtime integrity mismatch')
+    expect(phases).toContain('archive-resolve:failed')
+    expect(phases).toContain('runtime-publish:failed')
+    expect(phases).not.toContain('catalog-write:completed')
+    await expect(readFile(join(cache, core.sourceFingerprint, 'runtime.json'))).rejects.toThrow()
+  })
+
+  test.each(['reuseRoot', 'immutableRoot'] as const)(
+    'reports delivered archive checks with %s without hiding failures or extracting a warm runtime',
+    async mode => {
+      const f = await downloadableRuntimeFixture()
+      const source = join(f.root, 'source')
+      const shared = join(f.root, 'prepared')
+      await materializeBundledRuntimes(
+        f.resources,
+        source,
+        ['core'],
+        mode === 'immutableRoot' ? { immutableRoot: shared } : {}
+      )
+      const options = mode === 'reuseRoot' ? { reuseRoot: source } : { immutableRoot: shared }
+      const events: { stage: string; phase: string; elapsedMs: number }[] = []
+      await materializeBundledRuntimes(f.resources, join(f.root, 'target'), ['core'], {
+        ...options,
+        onProgress: event => events.push(event),
+      })
+      expect(
+        events.filter(event => event.stage === 'archive-resolve').map(event => event.phase)
+      ).toEqual(['started', 'completed'])
+      expect(events.some(event => event.stage === 'archive-extract')).toBe(false)
+      expect(events.every(event => event.elapsedMs >= 0)).toBe(true)
+      expect(JSON.stringify(events)).not.toContain(f.root)
+
+      const archive = join(f.resources, f.core.assetName)
+      const bytes = await readFile(archive)
+      bytes[0] ^= 1
+      await writeFile(archive, bytes)
+      const failed = join(f.root, 'failed-target')
+      const phases: string[] = []
+      await expect(
+        materializeBundledRuntimes(f.resources, failed, ['core'], {
+          ...options,
+          onProgress: event => {
+            phases.push(`${event.stage}:${event.phase}`)
+            throw new Error('Diagnostic sink unavailable')
+          },
+        })
+      ).rejects.toThrow('integrity mismatch')
+      expect(phases).toContain('archive-resolve:failed')
+      expect(phases).toContain('runtime-publish:failed')
+      await expect(stat(join(failed, f.core.sourceFingerprint))).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
+    }
+  )
+
   test('shares one extracted archive across roles and later launches', async () => {
     const root = await mkdtemp(join(tmpdir(), 'wework-shared-runtime-materializer-'))
     roots.push(root)

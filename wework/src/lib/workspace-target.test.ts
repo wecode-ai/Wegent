@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import type { DeviceInfo, ProjectWithTasks } from '@/types/api'
 import type { WorkspaceTarget } from '@/types/workspace-files'
 import { describe, expect, test, vi } from 'vitest'

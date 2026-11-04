@@ -12,7 +12,7 @@ desktop_build_flows="$repo_root/wework/e2e/desktop/modules/desktop-build-flows.m
 desktop_checkpoint_runner="$repo_root/wework/e2e/desktop/run-checkpoints.mjs"
 memory_tool_flows="$repo_root/wework/e2e/desktop/modules/memory-tool-flows.mjs"
 notification_isolation_scenario="$repo_root/wework/e2e/desktop/scenarios/codex-notification-isolation.scenario.mjs"
-backend_rs_runtime_inputs="hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/examples/**', '.github/runtime-images/backend-rs-e2e.Dockerfile')"
+backend_rs_runtime_inputs="hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/examples/**', '.github/runtime-images/backend-rs-e2e.Dockerfile', '.github/runtime-images/backend-rs-builder.Dockerfile', '.github/ci/rust-toolchain', '.github/actions/setup-rust-cache/action.yml')"
 for runtime_workflow in e2e-tests.yml wework-e2e.yml ci-cache-warmup.yml; do
   if ! grep -Fq "$backend_rs_runtime_inputs" "$repo_root/.github/workflows/$runtime_workflow"; then
     printf 'Backend Rust runtime producer and consumers must hash the same source inputs: %s\n' \
@@ -405,11 +405,44 @@ assert_case "explicit all modules" "$all_true" --all
 assert_case "workflow changes validate all modules" "$all_true" \
   ".github/workflows/test.yml"
 
-assert_case "shared CI actions validate all modules" "$all_true" \
+rust_cache_expected="${backend_rs_expected/executor=false/executor=true}"
+assert_case "Rust cache actions validate Rust and both runtime consumers" "$rust_cache_expected" \
   ".github/actions/setup-sccache/action.yml"
 
-assert_case "artifact downloader validates its runtime producers and consumers" "$all_true" \
+runtime_consumers="${all_false/platform_e2e=false/platform_e2e=true}"
+runtime_consumers="${runtime_consumers/wework_e2e=false/wework_e2e=true}"
+assert_case "artifact downloader validates its runtime producers and consumers" "$runtime_consumers" \
   ".github/scripts/download-actions-artifact.sh"
+assert_case "verified OCI transport validates both complete-build consumers" "$runtime_consumers" \
+  ".github/scripts/verified-build-oci.mjs"
+
+assert_case "Node cache follows workspace and E2E consumers" "$collaboration_package" \
+  ".github/actions/setup-node-workspace/action.yml"
+for path in .github/actions/build-frontend-e2e/action.yml \
+  .github/scripts/frontend-e2e-build.mjs .github/scripts/frontend-e2e-build-oci.mjs \
+  .github/scripts/frontend-e2e-build.test.mjs .github/scripts/restore-frontend-ci-build.mjs; do
+  assert_case "Frontend complete build validates its consumers: $path" \
+    "${all_false/platform_e2e=false/platform_e2e=true}" "$path"
+done
+for path in .github/actions/build-wework-core-e2e/action.yml \
+  .github/actions/build-wework-macos-e2e/action.yml \
+  .github/actions/build-wework-windows-e2e/action.yml \
+  .github/actions/build-minio-e2e/action.yml .github/actions/setup-minio-e2e/action.yml \
+  .github/scripts/macos-e2e-build.mjs .github/scripts/macos-e2e-build.test.mjs \
+  .github/scripts/restore-macos-ci-build.mjs; do
+  assert_case "Desktop build actions select desktop consumers: $path" \
+    "${all_false/wework_e2e=false/wework_e2e=true}" "$path"
+done
+for path in .github/ci/wework-unit-test-durations.json \
+  .github/scripts/balance-wework-unit-tests.mjs wework/scripts/ci-test-sequencer.mjs \
+  wework/scripts/ci-test-sequencer.test.mjs; do
+  assert_case "Unit scheduling changes select the existing unit suite: $path" \
+    "${all_false/wework=false/wework=true}" "$path"
+done
+assert_case "Unknown shared actions remain conservative" "$all_true" \
+  ".github/actions/future-shared-action/action.yml"
+assert_case "Runtime contract fixtures run in the unconditional configuration gate" "$all_false" \
+  ".github/scripts/runtime-artifact.test.mjs"
 
 assert_case "shared apt helper validates all modules" "$all_true" \
   ".github/scripts/lib/apt-packages.sh"
@@ -455,6 +488,9 @@ assert_case "Wework workflow changes run Wework E2E" "$wework_e2e_expected" \
 
 assert_case "Wework artifact scripts run Wework E2E" "$wework_e2e_expected" \
   ".github/scripts/archive-wework-core-e2e-build.sh"
+
+assert_case "Wework transport retains E2E coverage" "$wework_e2e_expected" \
+  ".github/scripts/wework-core-e2e-transport.mjs"
 
 assert_case "Wework E2E image changes run Wework E2E" "$wework_e2e_expected" \
   "docker/wework-e2e/desktop.Dockerfile"
@@ -1753,6 +1789,10 @@ assert_desktop_case "Core artifact changes retain full coverage" \
   "$full_desktop_expected" \
   ".github/scripts/archive-wework-core-e2e-build.sh"
 
+assert_desktop_case "Core transport changes retain full coverage" \
+  "$full_desktop_expected" \
+  ".github/scripts/wework-core-e2e-transport.mjs"
+
 assert_desktop_case "Core build action changes retain full coverage" \
   "$full_desktop_expected" \
   ".github/actions/build-wework-core-e2e/action.yml"
@@ -2618,10 +2658,7 @@ if [[ "$(grep -c "github.event.action != 'labeled'" "$wework_workflow")" -lt 2 ]
   exit 1
 fi
 
-if ! grep -q "github.event.label.name || 'code'" "$wework_workflow"; then
-  printf 'Wework label events must not cancel code-change E2E runs\n' >&2
-  exit 1
-fi
+node --test "$script_dir/ci-scheduling.test.mjs"
 
 if ! grep -q "name: Platform E2E Summary" \
   "$script_dir/../workflows/e2e-tests.yml"; then
@@ -2939,6 +2976,7 @@ fi
 wework_memory_job="$(
   sed -n '/^  wework-desktop-memory-e2e:/,$p' "$wework_workflow"
 )"
+wework_memory_job+="$(cat "$repo_root/.github/actions/build-wework-macos-e2e/action.yml")"
 memory_step_gate="$(
   sed -n '/^      - name: Run Wework desktop memory E2E$/{n;p;}' "$wework_workflow"
 )"
@@ -3056,7 +3094,10 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/scenarios/ordinary-mcp-regression.mjs"
 
-assert_desktop_case "native lifecycle regression is covered by the shared Core CI runner" \
+for native_scenario in \
+  wework/e2e/desktop/scenarios/native-lifecycle.scenario.mjs \
+  wework/e2e/desktop/scenarios/native-guidance.scenario.mjs; do
+  assert_desktop_case "native lifecycle regression is covered by the shared Core CI runner: $native_scenario" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
 wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"native-lifecycle"}]}
@@ -3064,7 +3105,8 @@ wework_desktop_cloud_e2e=false
 wework_desktop_cloud_e2e_matrix={"include":[]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
-  "wework/e2e/desktop/scenarios/native-lifecycle.scenario.mjs"
+  "$native_scenario"
+done
 
 for telemetry_scenario in \
   wework/e2e/desktop/scenarios/telemetry-policy.scenario.mjs \

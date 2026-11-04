@@ -1,3 +1,4 @@
+import { MockScopeStore } from './mock-scope'
 import type { IncomingMessage, ServerResponse } from 'http'
 import { writeAnthropicJsonResponse, writeAnthropicStreamingResponse } from './mock-anthropic'
 import {
@@ -24,8 +25,8 @@ type Scenario = {
   requests: Array<{ kind: string; timestamp: number; body: MessageRequest }>
 }
 
-const scenarios = new Map<string, Scenario>()
-const pendingChildren = new Map<string, () => void>()
+const scenarios = new MockScopeStore(() => new Map<string, Scenario>())
+const pendingChildren = new MockScopeStore(() => new Map<string, () => void>())
 const LARGE_CHILD_BYTES = 1100 * 1024
 
 function json(res: ServerResponse, status: number, body: unknown): void {
@@ -98,6 +99,7 @@ function respondLargeOutput(
   child: boolean
 ): void {
   const childMarker = `BG_LARGE_CHILD_${scenario.model}`
+  const children = pendingChildren.current()
   if (child) {
     const finishChild = () => {
       scenario.childFinished = true
@@ -107,8 +109,8 @@ function respondLargeOutput(
     if (scenario.parentYielded) finishChild()
     else {
       // Keep the child pending until the parent's early end_turn has been sent.
-      pendingChildren.set(scenario.model, finishChild)
-      res.once('close', () => pendingChildren.delete(scenario.model))
+      children.set(scenario.model, finishChild)
+      res.once('close', () => children.delete(scenario.model))
     }
   } else if (scenario.parentCalls === 1) {
     const agent = body.tools?.find(tool => tool.name === 'Agent')
@@ -129,8 +131,8 @@ function respondLargeOutput(
   } else if (scenario.parentCalls === 2) {
     res.once('finish', () => {
       scenario.parentYielded = true
-      const pendingChild = pendingChildren.get(scenario.model)
-      pendingChildren.delete(scenario.model)
+      const pendingChild = children.get(scenario.model)
+      children.delete(scenario.model)
       pendingChild?.()
     })
     text(res, body, `BG_LARGE_PARENT_WAITING_${scenario.model}`)
@@ -157,8 +159,8 @@ function respond(res: ServerResponse, body: MessageRequest, scenario: Scenario):
     if (scenario.childCalls === 1) {
       // Start the real two-second command only after the parent's early end_turn.
       if (scenario.parentCalls < 2) {
-        pendingChildren.set(scenario.model, () => startChildWork(res, body))
-        res.on('close', () => pendingChildren.delete(scenario.model))
+        pendingChildren.current().set(scenario.model, () => startChildWork(res, body))
+        res.on('close', () => pendingChildren.current().delete(scenario.model))
       } else startChildWork(res, body)
     } else {
       scenario.childFinished = true
@@ -191,8 +193,8 @@ function respond(res: ServerResponse, body: MessageRequest, scenario: Scenario):
         ? `BG_PARENT_DONE_${scenario.model}`
         : `BG_PARENT_WAITING_${scenario.model}`
     )
-    const pendingChild = pendingChildren.get(scenario.model)
-    pendingChildren.delete(scenario.model)
+    const pendingChild = pendingChildren.current().get(scenario.model)
+    pendingChildren.current().delete(scenario.model)
     pendingChild?.()
   }
 }
@@ -211,7 +213,7 @@ export function handleClaudeBackgroundRequest(
         json(res, 400, { error: 'A model and background lifecycle mode are required' })
         return true
       }
-      scenarios.set(input.model, {
+      scenarios.current().set(input.model, {
         ...input,
         parentCalls: 0,
         childCalls: 0,
@@ -222,18 +224,18 @@ export function handleClaudeBackgroundRequest(
       })
       json(res, 200, { configured: true })
     } else if (req.method === 'DELETE') {
-      scenarios.delete(url.searchParams.get('model') || '')
-      pendingChildren.delete(url.searchParams.get('model') || '')
+      scenarios.current().delete(url.searchParams.get('model') || '')
+      pendingChildren.current().delete(url.searchParams.get('model') || '')
       json(res, 200, { deleted: true })
     } else {
-      const scenario = scenarios.get(url.searchParams.get('model') || '')
+      const scenario = scenarios.current().get(url.searchParams.get('model') || '')
       json(res, scenario ? 200 : 404, scenario || { error: 'Scenario not found' })
     }
     return true
   }
   if (!url.pathname.endsWith('/messages') || req.method !== 'POST') return false
   const body = JSON.parse(rawBody) as MessageRequest
-  const scenario = scenarios.get(body.model || '')
+  const scenario = scenarios.current().get(body.model || '')
   if (!scenario) return false
   try {
     respond(res, body, scenario)
