@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import type { WeworkWorkspaceRuntimePort } from '@wegent/collaboration'
 import { describe, expect, test, vi } from 'vitest'
 

@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import type { RuntimeTaskAddress, RuntimeTaskArchiveResponse } from '@/types/api'
 import { describe, expect, it, vi } from 'vitest'
 import {

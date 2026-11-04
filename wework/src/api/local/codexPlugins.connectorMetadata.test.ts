@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { emptyPluginComponents } from '@/features/plugins/slimPluginComponents'
 import type { InstalledPlugin } from '@/types/api'
 import { beforeEach, expect, test, vi } from 'vitest'

@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { afterEach, expect, test, vi } from 'vitest'
 import { readFile } from 'node:fs/promises'
 import { waitForCatalogRestart } from '../e2e/desktop/scenarios/codex-catalog-context.mjs'

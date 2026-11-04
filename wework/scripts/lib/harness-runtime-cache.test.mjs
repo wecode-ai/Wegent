@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { join, resolve } from 'node:path'
 import { describe, expect, test } from 'vitest'
 

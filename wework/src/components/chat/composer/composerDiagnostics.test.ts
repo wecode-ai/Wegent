@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { beforeEach, describe, expect, test } from 'vitest'
 import {
   classifyComposerInputData,

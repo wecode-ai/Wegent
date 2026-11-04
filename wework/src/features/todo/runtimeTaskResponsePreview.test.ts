@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import type { RuntimeConversationTurn } from '@/types/workbench'
 import { describe, expect, test } from 'vitest'
 import { getRuntimeTaskResponsePreview } from './runtimeTaskResponsePreview'

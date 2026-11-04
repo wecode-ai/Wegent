@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import type { InstalledPlugin } from '@/types/api'
 import { describe, expect, test, vi } from 'vitest'
 import { PluginInstallationInspectionError, preparePluginTrial } from './preparePluginTrial'
