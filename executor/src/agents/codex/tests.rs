@@ -2532,6 +2532,49 @@ fn configured_inference_provider_reads_the_unmodified_user_config() {
 }
 
 #[test]
+fn stand_in_custom_provider_uses_authenticated_protocol_adapter() {
+    let _lock = crate::test_env::lock();
+    let root = tempfile::tempdir().unwrap();
+    let _home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
+    env::set_var(WEGENT_CODEX_HOME_ENV, root.path());
+    fs::write(
+        root.path().join("config.toml"),
+        r#"model_provider = "openai"
+[model_providers.custom]
+base_url = "http://127.0.0.1:3456/v1"
+experimental_bearer_token = "synthetic-custom-token"
+upstream_api_format = "openai-chat-completions"
+wire_api = "responses"
+"#,
+    )
+    .unwrap();
+    let model = json!({"runtime":"codex","provider":"custom","model_id":"custom-model"});
+    let catalog = json!({"models":[{
+        "runtime":"codex","provider":"custom","model_id":"custom-model",
+        "local_model_id":"custom-model"
+    }]});
+    let mut payload = json!({
+        "taskId":"stand-in-custom-provider", "message":"Reply OK",
+        "origin":{"initiatedBy":"stand_in"},
+        "runnerPolicy":{"runtime":"codex","execution_policy":{"mode":"fixed","environment_id":"mac"},"model_policy":{"mode":"user_select"}},
+        "runnerSelection":{"model":model}
+    });
+    crate::task_runtime::runner_routing::resolve_pending(&mut payload, Some(&catalog), "mac")
+        .unwrap();
+    let request: ExecutionRequest =
+        serde_json::from_value(payload["executionRequest"].clone()).unwrap();
+    let launch = build_codex_launch_config(&request).unwrap();
+    assert_eq!(
+        launch.model_provider.as_deref(),
+        Some(codex_model_catalog::PROVIDER_ID)
+    );
+    assert!(launch.local_proxy_registration.is_some());
+    let upstream = configured_codex_provider("custom", None).unwrap();
+    assert_eq!(upstream.api_key, "synthetic-custom-token");
+    assert_eq!(upstream.api_format, "openai-chat-completions");
+}
+
+#[test]
 fn user_configured_provider_routes_inference_through_the_local_router() {
     let _lock = crate::test_env::lock();
     let root = unique_test_path("configured-provider-router");

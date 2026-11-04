@@ -93,7 +93,7 @@ fn shared_startup_timeout_can_cancel_without_a_turn_id() {
             };
             let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
             let other_request = ExecutionRequest {
-                prompt: json!("other-turn"),
+                prompt: json!("live-other-turn"),
                 ..request.clone()
             };
             let options = CodexAppServerTurnOptions {
@@ -212,6 +212,10 @@ while IFS= read -r line; do
         delayed_thread=$thread_id
       else
         printf '{"id":%s,"result":{"turn":{"id":"turn-%s","status":"inProgress"}}}\n' "$request_id" "$thread_id"
+      fi
+      if printf '%s' "$line" | grep -q live-other-turn; then
+        # Keep the other turn live after cancellation removes the stalled target.
+        printf '{"method":"item/started","params":{"threadId":"%s","turnId":"turn-%s","item":{"id":"answer","type":"agentMessage"}}}\n' "$thread_id" "$thread_id"
       fi
       ;;
     *'"method":"thread/settings/update"'*)
