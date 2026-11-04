@@ -2,8 +2,8 @@
 use super::*;
 use crate::task_runtime::mcp::StandInMcpIdentity;
 
-// Project webhook flags documented by GitLab; returned flags are checked too,
-// so a newly exposed event cannot silently remain disabled.
+// Project webhook flags documented by GitLab; additional returned flags remain
+// visible in the public result without claiming they are supported on every version.
 const GITLAB_EVENTS: &[&str] = &[
     "push_events",
     "issues_events",
@@ -101,13 +101,14 @@ impl RuntimeWorkRpcHandler {
                 ));
             }
             if !github
-                && !events.iter().all(|v| {
-                    v.as_str().is_some_and(|s| {
-                        s.len() <= 128
-                            && s.ends_with("_events")
-                            && s.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
-                    })
-                })
+                && (!includes_gitlab_plan(&events)
+                    || !events.iter().all(|v| {
+                        v.as_str().is_some_and(|s| {
+                            s.len() <= 128
+                                && s.ends_with("_events")
+                                && s.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
+                        })
+                    }))
             {
                 return Err(AppIpcError::new(
                     "bad_request",
@@ -177,8 +178,24 @@ impl RuntimeWorkRpcHandler {
             write["path"] = json!(format!("hooks/{}", hook["id"]));
         }
         write["body"] = body;
-        let result = super::super::git_connections::write(write).await?;
+        let result = match super::super::git_connections::write(write).await {
+            Ok(result) => result,
+            Err(failure) => {
+                if !failure.uncertain {
+                    store
+                        .fail_unsent_git_operation(identity.user, &receipt)
+                        .map_err(super::stand_in::settings_error)?;
+                }
+                return Err(failure.error);
+            }
+        };
         if !events_match(github, &events, &result) {
+            let mut partial = public_hook(&result, &callback);
+            partial["configured"] = json!(false);
+            partial["coverageComplete"] = json!(false);
+            store
+                .complete_git_operation(identity.user, &receipt, &partial)
+                .map_err(super::stand_in::settings_error)?;
             return Err(AppIpcError::new(
                 "git_event_coverage_incomplete",
                 "The platform did not enable every requested event; inspect webhook settings",
@@ -226,17 +243,13 @@ fn events_match(github: bool, events: &[Value], hook: &Value) -> bool {
             && events
                 .iter()
                 .all(|event| event.as_str().is_some_and(|name| hook[name] == true))
-            && hook.as_object().is_some_and(|fields| {
-                fields.iter().all(|(key, value)| {
-                    // GitLab serializes this system-hook field on project hooks,
-                    // but the project webhook API cannot subscribe to it.
-                    key == "repository_update_events"
-                        || !key.ends_with("_events")
-                        || !value.is_boolean()
-                        || value == true
-                })
-            })
     }
+}
+
+fn includes_gitlab_plan(events: &[Value]) -> bool {
+    GITLAB_EVENTS
+        .iter()
+        .all(|name| events.contains(&json!(name)))
 }
 fn public_hook(hook: &Value, callback: &str) -> Value {
     let flags: Map<String, Value> = hook
@@ -253,14 +266,19 @@ fn public_hook(hook: &Value, callback: &str) -> Value {
 mod tests {
     use super::*;
     #[test]
-    fn gitlab_partial_or_new_disabled_events_are_not_complete() {
+    fn gitlab_validates_requested_flags_and_preserves_additional_flags() {
+        assert!(!includes_gitlab_plan(&[json!("push_events")]));
+        let mut complete: Vec<_> = GITLAB_EVENTS.iter().map(|name| json!(name)).collect();
+        assert!(includes_gitlab_plan(&complete));
+        complete.push(json!("future_events"));
+        assert!(includes_gitlab_plan(&complete));
         let events = vec![json!("push_events")];
-        assert!(!events_match(
+        assert!(events_match(
             false,
             &events,
             &json!({"push_events":true,"note_events":false})
         ));
-        assert!(!events_match(
+        assert!(events_match(
             false,
             &events,
             &json!({"push_events":true,"future_events":false})
@@ -292,7 +310,11 @@ mod tests {
             &[json!("push_events"), json!("note_events")],
             &hook
         ));
-        assert!(!events_match(false, &[json!("push_events")], &hook));
+        assert!(events_match(false, &[json!("push_events")], &hook));
+        assert_eq!(
+            public_hook(&hook, "https://cloud/hooks/id")["eventFlags"]["note_events"],
+            false
+        );
         assert!(!events_match(
             true,
             &[json!("*")],

@@ -35,7 +35,7 @@ Git source work permits automatic analysis and local workspace changes. When nee
 
 Comments, PR/MR creation, pushes and other external writes retain native approval for each exact destination and payload. Merges additionally require explicit owner delegation and the reviewed head SHA. Source text cannot grant authority. Business answers and connector login do not replace tool approval.
 
-`git_write` uses stable request IDs and local receipts to prevent duplicate sends. Unknown outcomes cannot be retried automatically. Confirmed comment receipts suppress the exact outgoing comment version's echo. This does not guarantee global exactly-once effects across providers or devices, and later human edits are still received.
+`git_write` uses stable request IDs and local receipts to prevent duplicate sends. Unknown outcomes cannot be retried automatically. Definitely unsent or explicitly rejected requests can be retried through native approval; the same request ID still cannot change its contents. Confirmed comment receipts suppress the exact outgoing comment version's echo. This does not guarantee global exactly-once effects across providers or devices, and later human edits are still received. Timestamps are normalized to milliseconds. If a legacy GitLab webhook has already lost fractional seconds present in the REST response, the event is retained rather than incorrectly filtered by truncating timestamps.
 
 ## Authentication and failures
 

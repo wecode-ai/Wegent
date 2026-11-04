@@ -12,6 +12,37 @@ enum MessageGrouping<'a> {
 mod git_operation_tests {
     use super::*;
     #[test]
+    fn definite_failure_can_retry_without_weakening_uncertain_or_owner_guards() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        let action = json!({"profile":"account","instance":"https://github.com","repository":"org/repo","events":["*"]});
+        let (id, _) = store
+            .begin_git_subscription_operation(7, "hook", "request", &action)
+            .unwrap();
+        store.fail_unsent_git_operation(8, &id).unwrap();
+        assert!(store
+            .begin_git_subscription_operation(7, "hook", "new-request", &action)
+            .is_err());
+        store.fail_unsent_git_operation(7, &id).unwrap();
+        let mut changed = action.clone();
+        changed["repository"] = json!("other/repo");
+        assert!(store
+            .begin_git_subscription_operation(7, "hook", "request", &changed)
+            .is_err());
+        let (retry, previous) = store
+            .begin_git_subscription_operation(7, "hook", "request", &action)
+            .unwrap();
+        assert_eq!(retry, id);
+        assert!(previous.is_none());
+        assert!(store
+            .begin_git_subscription_operation(7, "hook", "new-request", &action)
+            .is_err());
+        store.fail_unsent_git_operation(7, &id).unwrap();
+        assert!(store
+            .begin_git_subscription_operation(7, "hook", "new-request", &action)
+            .is_ok());
+    }
+    #[test]
     fn git_canonical_events_deduplicate_across_scopes_but_not_users_or_roles() {
         let root = tempfile::tempdir().unwrap();
         let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
@@ -274,10 +305,11 @@ impl LocalTaskStore {
             if row["status"] == "succeeded" {
                 return Ok((id, Some(row["result"].clone())));
             }
-            return Err(TaskRuntimeError::Invalid(
-                "Git write outcome is uncertain; inspect the remote result before another write"
-                    .into(),
-            ));
+            if row["status"] != "failed" {
+                return Err(TaskRuntimeError::Invalid(
+                    "Git write outcome is uncertain; inspect the remote result before another write".into(),
+                ));
+            }
         }
         // Only fields that change the remote effect identify an uncertain write.
         // Request IDs, consumer generations and unused arguments cannot bypass it.
@@ -329,6 +361,18 @@ impl LocalTaskStore {
         row["status"] = json!("succeeded");
         row["result"] = result.clone();
         write_record(&connection, id, "stand_in_git_operation", &row)
+    }
+
+    pub(crate) fn fail_unsent_git_operation(
+        &self,
+        user: i64,
+        id: &str,
+    ) -> Result<(), TaskRuntimeError> {
+        self.connection()?.execute(
+            "UPDATE loop_items SET metadata=json_set(metadata,'$.status','failed') WHERE id=?1 AND resource_type='stand_in_git_operation' AND json_extract(metadata,'$.userId')=?2 AND json_extract(metadata,'$.status')='sending'",
+            params![id, user],
+        )?;
+        Ok(())
     }
 
     pub(crate) fn git_sent_event(

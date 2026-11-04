@@ -146,7 +146,12 @@ fn endpoint(platform: &str, input: &Value) -> Result<String, AppIpcError> {
                     && s.len() <= 2048
                     && !s.starts_with('/')
                     && !s.contains(['\\', '\0', '#'])
-                    && !s.split(['/', '?']).any(|part| part == "." || part == "..")
+                    && !s
+                        .split('?')
+                        .next()
+                        .unwrap_or("")
+                        .split('/')
+                        .any(|part| part.is_empty() || part == "." || part == "..")
                     && !s.contains('%')
             })
             .ok_or_else(|| invalid("Invalid repository-relative API path"))?;
@@ -196,6 +201,41 @@ fn endpoint(platform: &str, input: &Value) -> Result<String, AppIpcError> {
 struct ApiReply {
     data: Value,
     poll_interval: u64,
+}
+
+pub(crate) struct GitRequestError {
+    pub(crate) error: AppIpcError,
+    pub(crate) uncertain: bool,
+}
+
+impl GitRequestError {
+    fn not_sent(error: AppIpcError) -> Self {
+        Self {
+            error,
+            uncertain: false,
+        }
+    }
+}
+
+impl From<AppIpcError> for GitRequestError {
+    fn from(error: AppIpcError) -> Self {
+        Self {
+            error,
+            uncertain: true,
+        }
+    }
+}
+
+async fn api(
+    platform: &str,
+    instance: &str,
+    method: &str,
+    endpoint: &str,
+    body: Option<&Value>,
+) -> Result<ApiReply, AppIpcError> {
+    api_request(platform, instance, method, endpoint, body)
+        .await
+        .map_err(|failure| failure.error)
 }
 
 async fn bounded_output<R: AsyncRead + Unpin>(
@@ -304,26 +344,38 @@ fn decode_reply(raw: &[u8]) -> Result<DecodedReply<'_>, AppIpcError> {
     })
 }
 
-async fn api(
+async fn api_request(
     platform: &str,
     instance: &str,
     method: &str,
     endpoint: &str,
     body: Option<&Value>,
-) -> Result<ApiReply, AppIpcError> {
+) -> Result<ApiReply, GitRequestError> {
     let hostname = instance
         .strip_prefix("https://")
-        .ok_or_else(|| invalid("Invalid instance"))?;
+        .ok_or_else(|| GitRequestError::not_sent(invalid("Invalid instance")))?;
+    let serialized = body
+        .map(serde_json::to_vec)
+        .transpose()
+        .map_err(|_| GitRequestError::not_sent(invalid("Invalid Git request")))?;
+    if serialized
+        .as_ref()
+        .is_some_and(|body| body.len() > 256 * 1024)
+    {
+        return Err(GitRequestError::not_sent(invalid(
+            "Git request body is too large",
+        )));
+    }
     if rate_limits()
         .lock()
         .ok()
         .and_then(|limits| limits.get(instance).copied())
         .is_some_and(|at| at > chrono::Utc::now().timestamp_millis())
     {
-        return Err(AppIpcError::new(
+        return Err(GitRequestError::not_sent(AppIpcError::new(
             "git_rate_limited",
             "Git API rate limit is active; retry after the platform deadline",
-        ));
+        )));
     }
     let mut command = Command::new(if platform == "github" { "gh" } else { "glab" });
     command.args([
@@ -357,21 +409,19 @@ async fn api(
         .stderr(Stdio::piped())
         .kill_on_drop(true);
     let mut child = command.spawn().map_err(|e| {
-        AppIpcError::new(
+        GitRequestError::not_sent(AppIpcError::new(
             if e.kind() == std::io::ErrorKind::NotFound {
                 "git_cli_missing"
             } else {
                 "git_cli_failed"
             },
             "Git platform CLI is unavailable on this device",
-        )
+        ))
     })?;
     let mut stdout = child.stdout.take().unwrap();
     let mut stderr = child.stderr.take().unwrap();
     tokio::time::timeout(Duration::from_secs(45),async {
-        if let Some(body)=body {
-            let serialized=serde_json::to_vec(body).map_err(|_|invalid("Invalid Git request"))?;
-            if serialized.len()>256*1024{return Err(invalid("Git request body is too large"));}
+        if let Some(serialized)=serialized {
             let mut stdin=child.stdin.take().unwrap();
             stdin.write_all(&serialized).await.map_err(|_|invalid("Git submission failed; inspect remote state"))?;
         }
@@ -380,16 +430,24 @@ async fn api(
         let DecodedReply { status: http_status, poll_interval, retry_at: retry, body: response_body } = decode_reply(&out)?;
         if http_status==429 || (http_status==403 && retry.is_some()) {
             if let Ok(mut limits)=rate_limits().lock(){limits.insert(instance.to_owned(),retry.unwrap_or_else(||chrono::Utc::now().timestamp_millis()+60000));}
-            return Err(AppIpcError::new("git_rate_limited","Git API rate limit reached; waiting for the platform deadline"));
+            return Err(GitRequestError::not_sent(AppIpcError::new("git_rate_limited","Git API rate limit reached; waiting for the platform deadline")));
         }
         if !status.success(){
             let text=String::from_utf8_lossy(&err).to_lowercase();
             let auth=http_status==401||status.code()==Some(4)||text.contains("auth login");
-            return Err(AppIpcError::new(if auth{"connector_auth_required"}else if http_status==403{"git_permission_denied"}else if http_status==429{"git_rate_limited"}else{"git_cli_failed"},"Git operation failed; check account permissions and connectivity. Inspect remote state before repeating a write."));
+            let error = AppIpcError::new(if auth{"connector_auth_required"}else if http_status==403{"git_permission_denied"}else if http_status==404{"git_not_found"}else{"git_cli_failed"},"Git operation failed; check account permissions and connectivity. Inspect remote state before repeating a write.");
+            return Err(GitRequestError {error, uncertain: !definite_rejection(http_status)});
         }
         let data=if response_body.is_empty(){json!({"success":true})}else{serde_json::from_slice(response_body).map_err(|_|invalid("Invalid Git CLI JSON response; inspect remote state before repeating a write"))?};
         Ok(ApiReply{data,poll_interval})
-    }).await.map_err(|_|AppIpcError::new("git_cli_timeout","Git request timed out; inspect remote state before repeating a write"))?
+    }).await.map_err(|_|GitRequestError::from(AppIpcError::new("git_cli_timeout","Git request timed out; inspect remote state before repeating a write")))?
+}
+
+fn definite_rejection(status: u16) -> bool {
+    matches!(
+        status,
+        400 | 401 | 403 | 404 | 405 | 409 | 410 | 415 | 422 | 429
+    )
 }
 
 pub(crate) async fn read(input: Value) -> Result<Value, AppIpcError> {
@@ -518,15 +576,15 @@ pub(crate) fn write_target(input: &Value) -> Result<(&str, String), AppIpcError>
     Ok((method, path))
 }
 
-pub(crate) async fn write(input: Value) -> Result<Value, AppIpcError> {
-    let platform = provider(&input)?;
-    let instance = instance(&input, platform)?;
+pub(crate) async fn write(input: Value) -> Result<Value, GitRequestError> {
+    let platform = provider(&input).map_err(GitRequestError::not_sent)?;
+    let instance = instance(&input, platform).map_err(GitRequestError::not_sent)?;
     // Verify the exact bound account immediately before the approved operation.
     let mut check = input.clone();
     check["operation"] = json!("identity");
-    read(check).await?;
-    let (method, path) = write_target(&input)?;
-    let mut result = api(platform, &instance, method, &path, Some(&input["body"]))
+    read(check).await.map_err(GitRequestError::not_sent)?;
+    let (method, path) = write_target(&input).map_err(GitRequestError::not_sent)?;
+    let mut result = api_request(platform, &instance, method, &path, Some(&input["body"]))
         .await?
         .data;
     let parts: Vec<_> = input["path"].as_str().unwrap_or("").split('/').collect();
@@ -569,9 +627,14 @@ fn comment_event_id(
     let identity = if deleted {
         json!([platform, instance, repository, "comment", id, "deleted"])
     } else {
-        let version = comment["updated_at"]
+        let raw = comment["updated_at"]
             .as_str()
             .or(comment["created_at"].as_str())?;
+        let normalized = raw.replace(" UTC", "Z").replacen(' ', "T", 1);
+        let version = chrono::DateTime::parse_from_rfc3339(&normalized)
+            .ok()?
+            .timestamp_millis()
+            .to_string();
         let body = comment["body"].as_str().or(comment["note"].as_str())?;
         json!([platform, instance, repository, "comment", id, version, body, "upsert"])
     };
@@ -584,6 +647,76 @@ fn comment_event_id(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn preflight_failures_are_definitely_unsent() {
+        let oversized = json!({"body":"x".repeat(256*1024)});
+        let failure = api_request(
+            "github",
+            "https://github.com",
+            "POST",
+            "repos/org/repo/issues",
+            Some(&oversized),
+        )
+        .await
+        .err()
+        .unwrap();
+        assert!(!failure.uncertain);
+        let host = "https://git-preflight-limit.invalid";
+        rate_limits()
+            .lock()
+            .unwrap()
+            .insert(host.into(), chrono::Utc::now().timestamp_millis() + 60000);
+        let result =
+            api_request("gitlab", host, "POST", "projects/1/hooks", Some(&json!({}))).await;
+        rate_limits().lock().unwrap().remove(host);
+        let failure = result.err().unwrap();
+        assert_eq!(failure.error.code, "git_rate_limited");
+        assert!(!failure.uncertain);
+    }
+    #[test]
+    fn merge_paths_cannot_bypass_head_validation_with_empty_segments() {
+        for path in ["pulls/9/merge/", "pulls//9/merge", "pulls/9/merge/?a=b"] {
+            assert!(write_target(&json!({"providerId":format!("{PACKAGE}github"),"repository":"org/repo","path":path,"method":"PUT","body":{}})).is_err());
+        }
+        assert!(write_target(&json!({"providerId":format!("{PACKAGE}github"),"repository":"org/repo","path":"pulls/9/merge?mode=squash","method":"PUT","body":{}})).is_err());
+        assert!(write_target(&json!({"providerId":format!("{PACKAGE}github"),"repository":"org/repo","path":"pulls/9/merge?mode=squash","method":"PUT","body":{"sha":"a".repeat(40)}})).is_ok());
+    }
+
+    #[test]
+    fn rejection_certainty_never_infers_success_from_network_or_server_errors() {
+        for status in [400, 401, 403, 404, 422, 429] {
+            assert!(definite_rejection(status));
+        }
+        for status in [0, 200, 302, 408, 500, 502, 503, 504] {
+            assert!(!definite_rejection(status));
+        }
+        assert!(GitRequestError::from(invalid("output truncated")).uncertain);
+        assert!(!GitRequestError::not_sent(invalid("preflight failed")).uncertain);
+    }
+
+    #[test]
+    fn canonical_comment_versions_match_equivalent_timestamp_formats() {
+        let id = |version: &str| {
+            comment_event_id(
+                "gitlab",
+                "https://gitlab.example",
+                "org/repo",
+                &json!({"id":11,"updated_at":version,"note":"same reply"}),
+                false,
+            )
+        };
+        assert_eq!(
+            id("2026-02-01T00:00:00Z").as_deref(),
+            Some("git-canonical:30bddc52cd52d15c6015b7dae9db9c383e6795bfd2c02a85d4512bf4798d08a2")
+        );
+        assert_eq!(
+            id("2026-02-01 00:00:00 UTC"),
+            id("2026-02-01T00:00:00.000Z")
+        );
+        assert_eq!(id("2026-02-01T01:00:00+01:00"), id("2026-02-01T00:00:00Z"));
+        assert_ne!(id("2026-02-01T00:00:00.001Z"), id("2026-02-01T00:00:00Z"));
+        assert_eq!(id("invalid"), None);
+    }
     #[test]
     fn http_metadata_distinguishes_rate_limits_from_permission_denials() {
         let DecodedReply {

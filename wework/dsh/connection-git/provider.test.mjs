@@ -289,3 +289,169 @@ test('CI events with an explicit single PR keep its topic and exact head SHA', (
   assert.equal(event.topicId, 'https://github.com/org/repo/pull/9')
   assert.equal(event.external.headSha, 'reviewed-head')
 })
+
+test('idle repository collection uses cloud polling without repeated platform identity reads', async () => {
+  let reads = 0
+  const ctx = {
+    git: {
+      read: async () => {
+        reads++
+        return { data: { id: 42 } }
+      },
+      inbox: async () => ({ items: [], hasMore: false, gapBefore: 0 }),
+    },
+  }
+  const provider = createProvider('github')
+  let checkpoint = (await provider.collect(ctx, { source, checkpoint: { sequence: 0 } }))
+    .nextCheckpoint
+  assert.equal(reads, 1)
+  checkpoint.nextCheckAt = 0
+  checkpoint = (await provider.collect(ctx, { source, checkpoint })).nextCheckpoint
+  assert.equal(reads, 1)
+  checkpoint.nextCheckAt = 0
+  checkpoint.identityCheckedAt = Date.now() - 3600001
+  await provider.collect(ctx, { source, checkpoint })
+  assert.equal(reads, 2)
+  checkpoint.nextCheckAt = 0
+  await assert.rejects(
+    provider.collect(
+      { git: { ...ctx.git, read: async () => ({ data: { id: 99 } }) } },
+      { source, checkpoint }
+    ),
+    /Repository identity changed/
+  )
+})
+
+test('inaccessible tracked targets advance while transient failures retain the checkpoint', async () => {
+  const target = {
+    url: 'https://github.com/org/repo/issues/9',
+    repository: 'org/repo',
+    number: 9,
+    entityKind: 'issue',
+  }
+  const checkpoint = {
+    after: personal.enabledAfter,
+    until: '2026-03-01T00:00:00Z',
+    stream: 3,
+    page: 2,
+    trackStep: 0,
+    tracked: { [target.url]: target },
+  }
+  const provider = createProvider('github')
+  for (const code of ['git_not_found', 'git_permission_denied']) {
+    const ctx = {
+      git: {
+        read: async () => {
+          throw Object.assign(new Error('gone'), { code })
+        },
+      },
+    }
+    const result = await provider.collect(ctx, { source: personal, checkpoint })
+    assert.equal(result.nextCheckpoint.trackIndex, 1)
+    assert.equal(result.nextCheckpoint.trackStep, 0)
+    assert.equal(result.nextCheckpoint.page, 1)
+    assert.equal(result.nextCheckpoint.tracked[target.url].finished, true)
+    const finished = await provider.collect(ctx, {
+      source: personal,
+      checkpoint: result.nextCheckpoint,
+    })
+    assert.equal(finished.nextCheckpoint.stream, 0)
+    assert.deepEqual(finished.nextCheckpoint.tracked, {})
+  }
+  for (const code of [
+    'git_rate_limited',
+    'git_cli_timeout',
+    'connector_auth_required',
+    'git_cli_failed',
+  ])
+    await assert.rejects(
+      provider.collect(
+        {
+          git: {
+            read: async () => {
+              throw Object.assign(new Error('retry'), { code })
+            },
+          },
+        },
+        { source: personal, checkpoint }
+      ),
+      { code }
+    )
+  assert.equal(checkpoint.page, 2)
+  assert.equal(checkpoint.tracked[target.url].finished, undefined)
+})
+
+test('denied CI details do not unsubscribe an otherwise accessible pull request', async () => {
+  const target = {
+    url: 'https://github.com/org/repo/pull/9',
+    repository: 'org/repo',
+    number: 9,
+    entityKind: 'change_request',
+    sha: 'a'.repeat(40),
+  }
+  const checkpoint = {
+    after: personal.enabledAfter,
+    until: '2026-03-01T00:00:00Z',
+    stream: 3,
+    page: 2,
+    trackStep: 2,
+    tracked: { [target.url]: target },
+  }
+  const provider = createProvider('github')
+  for (const code of ['git_not_found', 'git_permission_denied']) {
+    const result = await provider.collect(
+      {
+        git: {
+          read: async () => {
+            throw Object.assign(new Error('CI not available'), { code })
+          },
+        },
+      },
+      { source: personal, checkpoint }
+    )
+    assert.equal(result.nextCheckpoint.trackStep, 3)
+    assert.equal(result.nextCheckpoint.page, 1)
+    assert.equal(result.nextCheckpoint.tracked[target.url].finished, undefined)
+    const calls = []
+    const reviews = await provider.collect(
+      {
+        git: {
+          read: async input => {
+            calls.push(input)
+            return { data: [] }
+          },
+        },
+      },
+      { source: personal, checkpoint: result.nextCheckpoint }
+    )
+    assert.equal(calls[0].path, 'pulls/9/reviews')
+    const finished = await provider.collect(
+      {},
+      { source: personal, checkpoint: reviews.nextCheckpoint }
+    )
+    assert.equal(finished.nextCheckpoint.stream, 0)
+    assert.deepEqual(finished.nextCheckpoint.tracked[target.url], target)
+  }
+})
+
+test('GitLab canonical comments normalize equivalent legacy and ISO timestamp formats', () => {
+  const gl = { ...source, profile: JSON.stringify(['https://gitlab.example', '7']) }
+  const normalize = updated_at =>
+    normalizeWebhook('gitlab', gl, {
+      id: 'delivery',
+      eventType: 'Note Hook',
+      receivedAt: '2026-02-01T00:00:00Z',
+      payload: {
+        object_kind: 'note',
+        issue: { iid: 9 },
+        object_attributes: { id: 11, note: 'same reply', updated_at },
+      },
+    }).id
+  assert.equal(normalize('2026-02-01 00:00:00 UTC'), normalize('2026-02-01T00:00:00.000Z'))
+  assert.equal(
+    normalize('2026-02-01T00:00:00Z'),
+    'git-canonical:30bddc52cd52d15c6015b7dae9db9c383e6795bfd2c02a85d4512bf4798d08a2'
+  )
+  assert.equal(normalize('2026-02-01T01:00:00+01:00'), normalize('2026-02-01T00:00:00Z'))
+  assert.notEqual(normalize('2026-02-01T00:00:00.001Z'), normalize('2026-02-01 00:00:00 UTC'))
+})

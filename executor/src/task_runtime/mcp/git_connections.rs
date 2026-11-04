@@ -121,9 +121,17 @@ pub(super) async fn call(
     if let Some(existing) = existing {
         return Ok(existing);
     }
-    let result = crate::runtime_work::git_connections::write(args)
-        .await
-        .map_err(|e| format!("{}: {}", e.code, e.message))?;
+    let result = match crate::runtime_work::git_connections::write(args).await {
+        Ok(result) => result,
+        Err(failure) => {
+            if !failure.uncertain {
+                store
+                    .fail_unsent_git_operation(identity.user, &id)
+                    .map_err(|e| e.to_string())?;
+            }
+            return Err(format!("{}: {}", failure.error.code, failure.error.message));
+        }
+    };
     store
         .complete_git_operation(identity.user, &id, &result)
         .map_err(|e| e.to_string())?;

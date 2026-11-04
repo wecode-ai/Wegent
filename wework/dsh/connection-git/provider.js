@@ -117,13 +117,17 @@ export function createProvider(platform) {
         return { events: [], nextCheckpoint: checkpoint, hasMore: false }
       if (source.kind === 'repository') {
         const { instance } = parseProfile(source.profile)
-        const repository = await ctx.git.read({
-          operation: 'repository',
-          instance,
-          profile: source.profile,
-          repository: source.name,
-        })
-        if (String(repository.data.id) !== source.id) throw invalid('Repository identity changed')
+        const identityDue =
+          !checkpoint.identityCheckedAt || Date.now() - checkpoint.identityCheckedAt >= 3600000
+        if (identityDue) {
+          const repository = await ctx.git.read({
+            operation: 'repository',
+            instance,
+            profile: source.profile,
+            repository: source.name,
+          })
+          if (String(repository.data.id) !== source.id) throw invalid('Repository identity changed')
+        }
         const binding = { subscriptionId: source.subscriptionId, generation: source.generation }
         // This checkpoint was read from durable Executor storage. Acknowledging
         // here never advances cloud state before local persistence succeeds.
@@ -146,6 +150,7 @@ export function createProvider(platform) {
           nextCheckpoint: {
             ...checkpoint,
             sequence: response.items.at(-1)?.sequence ?? checkpoint.sequence,
+            identityCheckedAt: identityDue ? Date.now() : checkpoint.identityCheckedAt,
             nextCheckAt: response.hasMore ? 0 : Date.now() + 15000,
           },
           hasMore: response.hasMore,
@@ -397,15 +402,27 @@ async function collectTracked(ctx, platform, source, next) {
               : `merge_requests/${target.number}/approvals`,
         }
       : {}
-  const response = await ctx.git.read({
-    ...target,
-    ...parseProfile(source.profile),
-    profile: source.profile,
-    operation,
-    page: next.page ?? 1,
-    sha: target.sha,
-    ...extra,
-  })
+  let response
+  try {
+    response = await ctx.git.read({
+      ...target,
+      ...parseProfile(source.profile),
+      profile: source.profile,
+      operation,
+      page: next.page ?? 1,
+      sha: target.sha,
+      ...extra,
+    })
+  } catch (error) {
+    if (!['git_not_found', 'git_permission_denied'].includes(error?.code)) throw error
+    if (step === 0) {
+      next.tracked[target.url].finished = true
+      next.trackIndex = (next.trackIndex ?? 0) + 1
+      next.trackStep = 0
+      next.page = 1
+    } else advanceTracked(next, steps)
+    return { events: [], nextCheckpoint: next, hasMore: true }
+  }
   if (step === 0) {
     next.tracked[target.url].sha =
       response.data.head?.sha ?? response.data.sha ?? response.data.diff_refs?.head_sha
@@ -454,15 +471,17 @@ async function collectTracked(ctx, platform, source, next) {
     })
   }
   if (rows.length === 100) next.page = (next.page ?? 1) + 1
-  else {
-    next.page = 1
-    next.trackStep = step + 1
-    if (next.trackStep >= steps) {
-      next.trackIndex = (next.trackIndex ?? 0) + 1
-      next.trackStep = 0
-    }
-  }
+  else advanceTracked(next, steps)
   return { events, nextCheckpoint: next, hasMore: true }
+}
+
+function advanceTracked(next, steps) {
+  next.page = 1
+  next.trackStep = (next.trackStep ?? 0) + 1
+  if (next.trackStep >= steps) {
+    next.trackIndex = (next.trackIndex ?? 0) + 1
+    next.trackStep = 0
+  }
 }
 
 function renderEvent(platform, repository, type, payload) {
@@ -487,7 +506,10 @@ function renderEvent(platform, repository, type, payload) {
 function canonicalCommentId(platform, source, repository, comment, action) {
   if (comment.id !== undefined && action === 'deleted')
     return `git-canonical:${fingerprint([platform, parseProfile(source.profile).instance, repository, 'comment', String(comment.id), 'deleted'])}`
-  const version = comment.updated_at ?? comment.created_at
+  const raw = comment.updated_at ?? comment.created_at
+  const timestamp =
+    typeof raw === 'string' ? Date.parse(raw.replace(/ UTC$/, 'Z').replace(' ', 'T')) : NaN
+  const version = Number.isFinite(timestamp) ? String(timestamp) : undefined
   const body = comment.body ?? comment.note
   if (comment.id === undefined || typeof version !== 'string' || typeof body !== 'string')
     return undefined
