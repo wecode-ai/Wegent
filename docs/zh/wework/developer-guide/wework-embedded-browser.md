@@ -18,6 +18,8 @@ Executor 启动 Codex 时会注入 browser MCP server 配置。模型调用浏�
 
 历史读取、上下文压缩和 MCP App 操作也可能通过 `thread/resume` 冷恢复 Codex 会话。恢复时必须复用正常启动的任务级 MCP 配置，包括浏览器的任务 label、认证环境变量以及项目空间上下文，同时保留会话已有的模型设置。原生 Goal 可以在恢复后立即续跑；若只恢复 shell 环境而遗漏 MCP，浏览器面板仍可能显示页面，但模型拿不到浏览器工具。`embedded-browser` 桌面检查点会重启真实 app-server、刷新历史，并验证同一线程的浏览器和项目空间 MCP 均已连接，无需再发送用户消息。
 
+后台任务的页面检查和 DOM 操作统一通过 Chromium `Runtime.evaluate` 返回结果，复用现有 debugger session 租约。隐藏 guest 中 Electron `executeJavaScript` 的脚本可能已经执行，但 isolated world 的回复 Promise 仍不完成；不得通过再次执行原操作唤醒回复，以免重复修改页面。求值必须等待页面 Promise、按值返回结果、传播异常，并保留已有 inspector 的连接。
+
 每个 Wework 进程启动时都会绑定独立的随机本地桥接端口，并把 bridge identity 原子写入当前 Executor home 的 `runtime/embedded-browser-bridge.json`。identity 包含 schema 版本、进程 PID、loopback 地址、认证 token 和启动时间。文件目录权限应限制为当前用户可读写，token 不得写入日志。MCP server 每次请求前读取最新 identity，并只接受 loopback 地址，避免同时运行的多个 Wework 实例把浏览器请求发送到错误窗口。
 
 Electron 启动 bridge 后必须把 runtime 文件路径传给托管 Executor。Executor 生成 Codex browser MCP 配置时只传递该文件路径，不得把当前 bridge URL 或 token 固化到配置中；否则 Electron 使用随机端口或 bridge 重启后，MCP 会继续连接过期地址，并绕过 runtime identity 的刷新机制。
