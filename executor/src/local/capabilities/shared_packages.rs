@@ -381,6 +381,7 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
             json!({
                 "managed": true, "name": spec.name, "skill_id": spec.skill_id,
                 "namespace": spec.namespace, "is_public": spec.is_public,
+                "bind_shells": spec.bind_shells,
                 "content_hash": package.archive_hash, "store_path": package.path,
                 "runtime": { "claude_link": links[0], "codex_link": links[1] },
                 "previous": previous, "updated_at": now_rfc3339_like(),

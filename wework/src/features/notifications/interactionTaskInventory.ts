@@ -12,18 +12,27 @@ export async function readInteractionTaskInventory(source: TaskSource): Promise<
 }> {
   const api = source.services?.runtimeWorkApi
   if (!api) return { items: [], failedDevices: new Set(), refreshedDevices: new Set() }
+  const localIdentity = await source.services?.getLocalRuntimeSidebarIdentity?.().catch(error => {
+    console.error('[Wework] Could not discover local runtime identity for pending work', { error })
+    return null
+  })
   const devices: Array<string | undefined> = [
-    ...new Set(
-      source.devices
+    ...new Set([
+      ...(localIdentity ? [localIdentity.deviceId] : []),
+      ...(source.devices
         ?.filter(device => ['online', 'busy'].includes(device.status))
-        .map(device => device.device_id)
-    ),
+        .map(device => device.device_id) ?? []),
+    ]),
   ]
   if (!devices.length) devices.push(undefined)
   const items: RuntimeTaskReminderItem[] = []
   const refreshedDevices = new Set<string>()
   const failedDevices = new Set(
-    source.devices?.filter(device => device.status === 'offline').map(device => device.device_id)
+    source.devices
+      ?.filter(
+        device => device.status === 'offline' && device.device_id !== localIdentity?.deviceId
+      )
+      .map(device => device.device_id)
   )
   let index = 0
   await Promise.all(

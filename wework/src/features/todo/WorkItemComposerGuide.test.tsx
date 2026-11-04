@@ -1,4 +1,4 @@
-import type { CloudProject } from '@/api/deliveries'
+import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import '@/i18n'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -71,6 +71,54 @@ describe('WorkItemComposerGuide', () => {
     expect(onSelectProject).toHaveBeenCalledExactlyOnceWith(teamProject)
   })
 
+  test.each(['work-item-open-details', 'work-item-open-board-menu'])(
+    'dismisses the project picker through %s and allows reopening it',
+    async actionTestId => {
+      const item = {
+        id: 'WORK-1',
+        title: '完成默认工作项流程',
+        status: 'in_review',
+        assignee_name: '张三',
+        assignee_agent_name: null,
+        ai_state: null,
+      } as CloudLoopItem
+      const user = userEvent.setup()
+      const onOpen = vi.fn()
+      const onOpenBoard = vi.fn()
+      const onSelectProject = vi.fn()
+      render(
+        <WorkItemComposerGuide
+          project={project}
+          item={item}
+          projects={[teamProject]}
+          onSelectProject={onSelectProject}
+          onOpen={onOpen}
+          onOpenBoard={onOpenBoard}
+        />
+      )
+      const trigger = screen.getByTestId('work-item-change-board')
+      await user.click(trigger)
+      expect(screen.getByTestId('work-item-context-menu')).toBeVisible()
+
+      const navigationAction = screen.getByTestId(actionTestId)
+      await user.click(navigationAction)
+
+      const navigatesToDetails = actionTestId === 'work-item-open-details'
+      expect(onOpen).toHaveBeenCalledTimes(navigatesToDetails ? 1 : 0)
+      expect(onOpenBoard).toHaveBeenCalledTimes(navigatesToDetails ? 0 : 1)
+      expect(onSelectProject).not.toHaveBeenCalled()
+      expect(screen.queryByTestId('work-item-context-menu')).not.toBeInTheDocument()
+      expect(trigger).toHaveAttribute('aria-expanded', 'false')
+      expect(navigationAction).toHaveFocus()
+
+      await user.click(trigger)
+      await user.click(screen.getByTestId('work-item-workspace-option-team-work'))
+
+      expect(onSelectProject).toHaveBeenCalledExactlyOnceWith(teamProject)
+      expect(screen.queryByTestId('work-item-context-menu')).not.toBeInTheDocument()
+    }
+  )
+
   test('filters by space and search together and recovers from an empty result', async () => {
     const user = userEvent.setup()
     const onRemoveProject = vi.fn()
@@ -110,6 +158,7 @@ describe('WorkItemComposerGuide', () => {
     await user.click(screen.getByTestId('clear-project-space-context-button'))
     expect(onRemoveProject).toHaveBeenCalledOnce()
     expect(screen.queryByTestId('work-item-context-menu')).not.toBeInTheDocument()
+    expect(screen.getByTestId('project-space-context-pill')).toHaveFocus()
   })
 
   test('uses storage as part of project identity when IDs and names collide', async () => {
@@ -169,15 +218,18 @@ describe('WorkItemComposerGuide', () => {
     expect(onSelectProject).toHaveBeenCalledExactlyOnceWith(pickerProjects[1])
   })
 
-  test('supports keyboard selection, ignores IME confirmation and restores focus on Escape', async () => {
+  test('restores focus for keyboard dismissal and preserves native focus on outside clicks', async () => {
     const user = userEvent.setup()
     const onSelectProject = vi.fn()
     render(
-      <WorkItemComposerGuide
-        project={project}
-        projects={pickerProjects}
-        onSelectProject={onSelectProject}
-      />
+      <>
+        <WorkItemComposerGuide
+          project={project}
+          projects={pickerProjects}
+          onSelectProject={onSelectProject}
+        />
+        <button type="button">Outside action</button>
+      </>
     )
     const trigger = screen.getByTestId('project-space-context-pill')
     await user.click(trigger)
@@ -195,5 +247,18 @@ describe('WorkItemComposerGuide', () => {
     await user.keyboard('{Escape}')
     expect(screen.queryByTestId('work-item-context-menu')).not.toBeInTheDocument()
     expect(trigger).toHaveFocus()
+
+    await user.click(trigger)
+    await waitFor(() => expect(screen.getByTestId('project-space-picker-search')).toHaveFocus())
+    await user.click(document.body)
+    expect(screen.queryByTestId('work-item-context-menu')).not.toBeInTheDocument()
+    expect(document.body).toHaveFocus()
+
+    await user.click(trigger)
+    await waitFor(() => expect(screen.getByTestId('project-space-picker-search')).toHaveFocus())
+    const outsideAction = screen.getByRole('button', { name: 'Outside action' })
+    await user.click(outsideAction)
+    expect(screen.queryByTestId('work-item-context-menu')).not.toBeInTheDocument()
+    expect(outsideAction).toHaveFocus()
   })
 })

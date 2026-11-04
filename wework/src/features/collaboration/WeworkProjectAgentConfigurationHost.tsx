@@ -39,9 +39,14 @@ export function createWeworkProjectAgentConfigurationHost(
             let environmentId = current.id
             if (location === 'cloud') {
               if (!agentResourceApi) throw new Error('template_environment_unavailable')
+              const currentDeviceKeys = [current.device_key, current.app_device_id].filter(
+                (key): key is string => Boolean(key)
+              )
               const authorized = (await agentResourceApi.listEnvironments(projectId)).filter(
                 environment =>
-                  environment.device_key === current.device_key &&
+                  currentDeviceKeys.some(
+                    key => environment.device_key === key || environment.app_device_id === key
+                  ) &&
                   (!projectId || environment.project_authorized)
               )
               if (authorized.length !== 1) throw new Error('template_environment_unavailable')
