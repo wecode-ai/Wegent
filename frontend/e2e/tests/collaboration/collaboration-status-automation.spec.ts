@@ -5,6 +5,7 @@
 import { expect } from '@playwright/test'
 import { projectTest, type Resource } from '../../utils/collaboration-project-fixture'
 import { webApi } from '../../utils/collaboration-test-support'
+import { sleep } from '../../utils/helpers'
 
 interface StatusRule extends Resource {
   prompt: string
@@ -24,6 +25,18 @@ interface StatusRun {
   status: string
   taskId: string
   eventType: string
+}
+
+interface IncomingHook {
+  id: string
+  sourceType: string
+  collectionMode: string
+}
+
+interface StatusEvent {
+  id: string
+  status: string
+  normalizedEvents: Array<{ event_type: string; subject: { id: string } }>
 }
 
 projectTest(
@@ -97,30 +110,105 @@ projectTest(
 
     const runsPath = `${rulesPath}/${rule.id}/runs`
     const runs = () => webApi<StatusRun[]>(page, runsPath)
+    const statusEvents = async () => {
+      const hooksPath = `/api/v1/cloud-projects/${projectId}/incoming-hooks`
+      const hooks = await webApi<IncomingHook[]>(page, hooksPath)
+      const internalHooks = hooks.filter(
+        hook => hook.sourceType === 'wework' && hook.collectionMode === 'internal'
+      )
+      const events = await Promise.all(
+        internalHooks.map(hook =>
+          webApi<StatusEvent[]>(page, `${hooksPath}/${hook.id}/events?limit=200`)
+        )
+      )
+      return events
+        .flat()
+        .filter(event =>
+          event.normalizedEvents.some(
+            normalized =>
+              normalized.event_type === 'task.status_changed' && normalized.subject.id === issueId
+          )
+        )
+    }
+    let settledEvents = await statusEvents()
     const changeStatus = async (status: string) => {
-      const current = await webApi<Resource>(page, issuePath)
+      const before = await statusEvents()
+      expect(before.map(event => event.id).sort()).toEqual(
+        settledEvents.map(event => event.id).sort()
+      )
+      expect(before.map(event => event.status)).toEqual(before.map(() => 'processed'))
+      const previousIds = new Set(before.map(event => event.id))
+      const current = await webApi<Resource & { status: string }>(page, issuePath)
       await webApi(page, issuePath, {
         method: 'PATCH',
         body: { version: current.version, status },
       })
+      if (current.status !== status) {
+        // PATCH may return after the background poller claims this event. Wait
+        // for that exact transition to finish before changing the Issue again.
+        let transitionEvents: StatusEvent[] = []
+        await expect
+          .poll(
+            async () => {
+              transitionEvents = (await statusEvents()).filter(event => !previousIds.has(event.id))
+              return transitionEvents.map(event => event.status)
+            },
+            { message: `The ${current.status} → ${status} event must finish processing` }
+          )
+          .toEqual(['processed'])
+        settledEvents = [...before, ...transitionEvents]
+        expect(await webApi(page, issuePath)).toMatchObject({ status })
+      } else {
+        expect((await statusEvents()).map(event => event.id).sort()).toEqual(
+          [...previousIds].sort()
+        )
+      }
+    }
+    const expectRunsUnchanged = async (expected: StatusRun[]) => {
+      expect(settledEvents.map(event => event.status)).toEqual(settledEvents.map(() => 'processed'))
+      const eventIds = settledEvents.map(event => event.id).sort()
+      const deadline = Date.now() + 1000
+      // Assert every sample throughout the window; an unexpected run or event
+      // fails immediately rather than being retried until it disappears.
+      do {
+        const [observedRuns, observedEvents] = await Promise.all([runs(), statusEvents()])
+        expect(observedRuns.map(run => run.id)).toEqual(expected.map(run => run.id))
+        expect(observedEvents.map(event => event.id).sort()).toEqual(eventIds)
+        expect(observedEvents.map(event => event.status)).toEqual(
+          observedEvents.map(() => 'processed')
+        )
+        if (Date.now() >= deadline) break
+        await sleep(100)
+      } while (true)
     }
     const enabled = page.getByTestId(`automatic-processing-enabled-${rule.id}`)
     await enabled.click()
     await expect.poll(async () => (await readRule()).enabled).toBe(false)
     expect((await readRule()).prompt).toBe(updatedPrompt)
     await changeStatus('completed')
+    await expectRunsUnchanged([])
     expect(await runs()).toEqual([])
     await enabled.click()
     await expect.poll(async () => (await readRule()).enabled).toBe(true)
     expect((await readRule()).eventConfig.statuses).toEqual(['completed'])
     expect((await readRule()).prompt).toBe(updatedPrompt)
+    await expectRunsUnchanged([])
     expect(await runs()).toEqual([])
 
     await changeStatus('completed')
+    await expectRunsUnchanged([])
     expect(await runs()).toEqual([])
     await changeStatus('in_review')
+    await expectRunsUnchanged([])
     expect(await runs()).toEqual([])
     await changeStatus('completed')
+    await expect.poll(runs).toEqual([
+      expect.objectContaining({
+        status: 'succeeded',
+        taskId: issueId,
+        eventType: 'task.status_changed',
+      }),
+    ])
     const firstRuns = await runs()
     expect(firstRuns).toEqual([
       expect.objectContaining({
@@ -134,15 +222,30 @@ projectTest(
       status: 'completed',
     })
     await changeStatus('completed')
+    await expectRunsUnchanged(firstRuns)
     expect((await runs()).map(run => run.id)).toEqual(firstRuns.map(run => run.id))
     await changeStatus('inbox')
+    await expectRunsUnchanged(firstRuns)
     expect((await runs()).map(run => run.id)).toEqual(firstRuns.map(run => run.id))
     await changeStatus('completed')
+    await expect.poll(runs).toEqual([
+      expect.objectContaining({
+        status: 'succeeded',
+        taskId: issueId,
+        eventType: 'task.status_changed',
+      }),
+      expect.objectContaining({
+        status: 'succeeded',
+        taskId: issueId,
+        eventType: 'task.status_changed',
+      }),
+    ])
     const repeatedRuns = await runs()
     expect(repeatedRuns).toHaveLength(2)
     expect(new Set(repeatedRuns.map(run => run.id)).size).toBe(2)
     expect(repeatedRuns.every(run => run.status === 'succeeded' && run.taskId === issueId)).toBe(
       true
     )
+    await expectRunsUnchanged(repeatedRuns)
   }
 )
