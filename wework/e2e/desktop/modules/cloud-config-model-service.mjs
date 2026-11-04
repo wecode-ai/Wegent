@@ -114,6 +114,7 @@ export function createCloudConfigModelService() {
       // Let production create and own the managed link/copy on every platform.
       await rm(join(codexHome, 'auth.json'), { force: true })
       appEnvironment.CODEX_HOME = nativeHome
+      appEnvironment.WEWORK_E2E_NATIVE_CODEX_HOME = nativeHome
       // This checkpoint selects its configured native provider through real RPC.
       // Avoid unrelated custom catalog reconciliation: its restart endpoint must
       // preflight model/list, which would consume the failure before thread/resume.

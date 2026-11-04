@@ -59,11 +59,27 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
           `Task ${taskId} did not reach ${status}`,
           RECOVERY_TIMEOUT_MS
         )
+      const executionRequest = (taskId, marker, { official = false, followup = false } = {}) => {
+        const provider = official ? 'openai' : MODEL_PROVIDER_ID
+        const modelId = official ? OFFICIAL_MODEL : DEFAULT_MODEL_ID
+        return {
+          task_id: taskId,
+          subtask_id: `${taskId}-${followup ? 'followup' : 'initial'}`,
+          prompt: marker,
+          new_session: !followup,
+          project_workspace_path: workspacePath,
+          bot: [{ shell_type: 'Codex', name: 'Cloud configuration recovery' }],
+          model_config: {
+            model_id: modelId,
+            model_provider: provider,
+            ...(official ? { wework_model_kind: 'codex-official' } : {}),
+          },
+        }
+      }
       const create = async (name, { official = false, goal = false } = {}) => {
         const marker = `${PREFIX}_${name}`
         const taskId = `cloud-config-${name.toLowerCase()}`
-        const provider = official ? 'openai' : MODEL_PROVIDER_ID
-        const modelId = official ? OFFICIAL_MODEL : DEFAULT_MODEL_ID
+        const request = executionRequest(taskId, marker, { official })
         const result = await rpc('runtime.tasks.create', {
           taskId,
           title: marker,
@@ -72,24 +88,12 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
           message: marker,
           clientUserMessageId: `${taskId}-initial`,
           modelSelection: {
-            modelName: modelId,
+            modelName: request.model_config.model_id,
             modelType: 'runtime',
-            options: { runnerModelProvider: provider },
+            options: { runnerModelProvider: request.model_config.model_provider },
           },
           ...(goal ? { initialGoal: { objective: marker, status: 'active' } } : {}),
-          executionRequest: {
-            task_id: taskId,
-            subtask_id: `${taskId}-initial`,
-            prompt: marker,
-            new_session: true,
-            project_workspace_path: workspacePath,
-            bot: [{ shell_type: 'Codex', name: 'Cloud configuration recovery' }],
-            model_config: {
-              model_id: modelId,
-              model_provider: provider,
-              ...(official ? { wework_model_kind: 'codex-official' } : {}),
-            },
-          },
+          executionRequest: request,
         })
         assert.equal(result.accepted, true, JSON.stringify(result))
         addresses.set(taskId, { deviceId: result.deviceId, taskId, runtime: 'codex' })
@@ -171,12 +175,15 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
       const oldTask = await create('OLD')
       const original = await completed(oldTask, `${PREFIX}_OLD`)
       const oldThread = (await task(oldTask)).threadId
+      const authenticatedSetup = model.diagnostics()
+      assert.ok(authenticatedSetup.bundleSuccesses > 0, JSON.stringify(authenticatedSetup))
       const resumeFault = await startFault()
       model.plan(`${PREFIX}_FOLLOWUP`)
       const sent = await rpc('runtime.tasks.send', {
         address: address(oldTask),
         message: `${PREFIX}_FOLLOWUP`,
         clientUserMessageId: 'cloud-config-old-followup',
+        executionRequest: executionRequest(oldTask, `${PREFIX}_FOLLOWUP`, { followup: true }),
       })
       assert.equal(sent.accepted, true, JSON.stringify(sent))
       const continued = await completed(oldTask, `${PREFIX}_FOLLOWUP`)
