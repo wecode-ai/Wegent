@@ -892,6 +892,12 @@ export function GeneralSettingsPage() {
               'workbench.general_settings_prevent_sleep_while_tasks_running_description'
             ),
           })}
+          {renderSwitchRow({
+            preferenceKey: 'performanceRecordingEnabled',
+            testId: 'general-performance-recording-toggle',
+            label: t('workbench.general_settings_performance_recording'),
+            description: t('workbench.general_settings_performance_recording_description'),
+          })}
           <SettingsRow
             label={
               <span className="flex items-center gap-2">

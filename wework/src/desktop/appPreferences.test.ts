@@ -28,6 +28,7 @@ const mergedDefaultPreferences = {
   localCodexSubscriptionEnabled: true,
   telemetryConsentAsked: false,
   telemetryEnabled: false,
+  performanceRecordingEnabled: false,
   supervisorPrinciples: '',
   supervisorModelSelection: null,
   projectAiModelSelection: null,
@@ -112,6 +113,35 @@ describe('appPreferences', () => {
     await expect(getAppPreferences()).resolves.toEqual({
       ...mergedDefaultPreferences,
       showMainWindowOnLaunch: false,
+    })
+  })
+
+  test.each([
+    [undefined, false],
+    [null, false],
+    ['true', false],
+    [true, true],
+    [false, false],
+  ])('loads performance recording preference %j as %j', async (stored, expected) => {
+    invokeMock.mockResolvedValue({ performanceRecordingEnabled: stored })
+
+    const { getAppPreferences } = await import('./appPreferences')
+
+    await expect(getAppPreferences()).resolves.toMatchObject({
+      performanceRecordingEnabled: expected,
+    })
+  })
+
+  test('persists performance recording through desktop preferences', async () => {
+    invokeMock.mockResolvedValue({ performanceRecordingEnabled: true })
+
+    const { updateAppPreferences } = await import('./appPreferences')
+
+    await expect(
+      updateAppPreferences({ performanceRecordingEnabled: true })
+    ).resolves.toMatchObject({ performanceRecordingEnabled: true })
+    expect(invokeMock).toHaveBeenCalledWith('preferences.update', {
+      patch: { performanceRecordingEnabled: true },
     })
   })
 
