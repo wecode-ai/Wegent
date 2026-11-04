@@ -525,7 +525,11 @@ describe('Wework collaboration workspace API', () => {
   it.each(['local', 'backend'] as const)(
     'exposes device-owned source rules in the active %s project host',
     async projectStore => {
-      const connectionRules = vi.fn(() => ({ list: vi.fn().mockResolvedValue([]), save: vi.fn() }))
+      const connectionRules = vi.fn(() => ({
+        ownerScope: 'account-7/current-native',
+        list: vi.fn().mockResolvedValue([]),
+        save: vi.fn(),
+      }))
       render(
         createElement(WeworkSharedProject, {
           api: {
@@ -557,7 +561,7 @@ describe('Wework collaboration workspace API', () => {
         'data-has-source-rules',
         'true'
       )
-      expect(connectionRules).toHaveBeenCalledWith(7)
+      expect(connectionRules).toHaveBeenCalledWith(7, { authority: '/api' })
     }
   )
 
