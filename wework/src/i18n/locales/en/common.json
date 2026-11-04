@@ -1174,6 +1174,8 @@
     "remote_project_git_cloning": "Cloning",
     "remote_project_git_opening": "Adding",
     "remote_project_git_failed": "Clone failed",
+    "remote_project_device_unavailable": "Device unavailable",
+    "reselect_device": "Choose another device",
     "remote_project_git_open_failed": "Add failed",
     "remote_project_device_offline": "Device offline",
     "remote_project_git_clone_failed": "Failed to clone Git repository",

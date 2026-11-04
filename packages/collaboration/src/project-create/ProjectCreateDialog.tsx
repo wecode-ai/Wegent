@@ -4,6 +4,7 @@
 
 import { DialogForm } from "../controls/DialogForm";
 import { TemplateCreateSection } from "../templates/TemplateCreateSection";
+import { TemplateEnvironmentSelection } from "../templates/TemplateEnvironmentSelection";
 
 import * as Popover from "@radix-ui/react-popover";
 import {
@@ -974,6 +975,19 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
               }}
             />
           )}
+          {templateSelected &&
+            resourceSetup?.requiresTemplateEnvironmentSelection && (
+              <TemplateEnvironmentSelection
+                environments={resourceSetup.executionEnvironments ?? []}
+                selected={state.executionEnvironmentDeviceIds}
+                locale={labels.locale}
+                disabled={state.saving || Boolean(state.createdProject)}
+                onChange={commands.setExecutionEnvironmentDeviceIds}
+                loading={resourceSetup.executionEnvironmentLoading}
+                error={resourceSetup.executionEnvironmentError}
+                onRetry={resourceSetup.retryExecutionEnvironments}
+              />
+            )}
           <label className="collaboration-project-create-field">
             <span>{labels.name}</span>
             <input

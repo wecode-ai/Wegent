@@ -324,11 +324,21 @@ fn accepted_work_loses_authority_when_issue_is_reassigned_or_archived() {
                 .is_err(),
             "{change}"
         );
+        let reconciled = fixture
+            .store
+            .reconcile_project_coordination_authority()
+            .unwrap();
+        if change == "reassign" {
+            assert_eq!(reconciled[0].status, "cancelled");
+        } else {
+            assert!(
+                reconciled.is_empty(),
+                "Archive cancels the run in its transaction"
+            );
+        }
         assert_eq!(
-            fixture
-                .store
-                .reconcile_project_coordination_authority()
-                .unwrap()[0]
+            execution_row(&fixture.store.connection().unwrap(), claimed.id)
+                .unwrap()
                 .status,
             "cancelled"
         );

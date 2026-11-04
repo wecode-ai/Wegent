@@ -212,18 +212,19 @@ fn context_with(context_type: &str, type_data: Value) -> ContextRow {
     }
 }
 
+/// The current DTO includes artifact members, including null defaults.
 #[test]
-fn non_artifact_contexts_preserve_explicit_null_artifact_fields() {
+fn context_brief_includes_current_artifact_fields() {
     for kind in ["attachment", "knowledge_base"] {
-        let brief = context_brief(&context_with(kind, json!({})));
+        let brief = context_brief(&context_with(kind, json!({}))).unwrap();
         let value = serde_json::to_value(brief).unwrap();
-
         for field in ["remote_task_id", "remote_path", "modified_at", "sha256"] {
             assert_eq!(value.get(field), Some(&Value::Null), "{kind}.{field}");
         }
     }
 }
 
+/// Model conversion preserves the metadata used by artifact download cards.
 #[test]
 fn artifact_context_preserves_download_card_metadata() {
     let brief = context_brief(&context_with(
@@ -238,7 +239,8 @@ fn artifact_context_preserves_download_card_metadata() {
             "sha256": "a".repeat(64),
             "source": {"workspace_root": "/private/workspace"},
         }),
-    ));
+    ))
+    .unwrap();
 
     let value = serde_json::to_value(brief).unwrap();
 
@@ -264,16 +266,17 @@ fn conversation_context_exposes_reference_identity() {
     );
 
     assert_eq!(conversation_task_id(&row), Some(42));
-    let brief = context_brief(&row);
+    let brief = context_brief(&row).unwrap();
     assert_eq!(brief.task_id.get(), "42");
     assert_eq!(brief.task_updated_at.get(), "\"2026-10-20T19:15:03\"");
-    assert_eq!(brief.remote_task_id.get(), "null");
-    assert_eq!(brief.remote_path.get(), "null");
 
     let attachment = context_with("attachment", json!({"task_id": 42}));
     assert_eq!(conversation_task_id(&attachment), None);
-    assert_eq!(context_brief(&attachment).task_id.get(), "null");
-    assert_eq!(context_brief(&attachment).task_updated_at.get(), "null");
+    assert_eq!(context_brief(&attachment).unwrap().task_id.get(), "null");
+    assert_eq!(
+        context_brief(&attachment).unwrap().task_updated_at.get(),
+        "null"
+    );
 }
 
 /// A viewer without access to the referenced task never receives its title.
@@ -302,7 +305,8 @@ fn selected_documents_context_renders_document_id_count() {
     let brief = context_brief(&context_with(
         "selected_documents",
         json!({"document_ids": [11, 12], "document_count": 99}),
-    ));
+    ))
+    .unwrap();
     assert_eq!(brief.document_count.get(), "2");
     assert_eq!(brief.knowledge_id.get(), "null");
     assert_eq!(brief.document_ids.get(), "null");
@@ -314,12 +318,14 @@ fn selected_documents_context_renders_document_id_count() {
             "selected_documents",
             json!({"document_ids": "11,12"})
         ))
+        .unwrap()
         .document_count
         .get(),
         "0"
     );
     assert_eq!(
         context_brief(&context_with("selected_documents", json!({})))
+            .unwrap()
             .document_count
             .get(),
         "0"
@@ -333,7 +339,8 @@ fn knowledge_base_context_keeps_stored_document_count() {
     let brief = context_brief(&context_with(
         "knowledge_base",
         json!({"document_ids": [11, 12], "document_count": 99}),
-    ));
+    ))
+    .unwrap();
     assert_eq!(brief.document_count.get(), "99");
 }
 
@@ -351,4 +358,77 @@ fn public_model_whitelist_admits_only_listed_users() {
     assert!(!public_model_admitted(&restricted, Some("wuding")));
     assert!(!public_model_admitted(&restricted, None));
     assert!(!public_model_admitted(&restricted, Some("")));
+}
+
+fn context_row(context_type: &str) -> ContextRow {
+    ContextRow {
+        subtask_contexts_id: 1,
+        subtask_contexts_subtask_id: 7,
+        subtask_contexts_context_type: context_type.to_owned(),
+        subtask_contexts_name: Some(String::new()),
+        subtask_contexts_status: None,
+        subtask_contexts_type_data: None,
+    }
+}
+
+/// Every current Python context type converts without dropping DTO fields.
+#[test]
+fn current_context_types_convert() {
+    for context_type in CONTEXT_TYPES {
+        let row = context_row(context_type);
+        let brief = context_brief(&row)
+            .unwrap_or_else(|error| panic!("{context_type} should convert: {error}"));
+        assert_eq!(brief.context_type, context_type);
+        assert_eq!(
+            serde_json::to_value(&brief).unwrap(),
+            serde_json::to_value(context_brief_fields(&row)).unwrap()
+        );
+    }
+}
+
+/// Values outside the current Python enum must still fail conversion.
+#[test]
+fn unknown_context_type_raises_at_conversion() {
+    for context_type in ["external_web_content", "table", "other"] {
+        let error = context_brief(&context_row(context_type))
+            .expect_err("an unknown context type must not convert");
+        assert!(error.contains(context_type), "{error}");
+    }
+}
+
+/// `convert_subtasks_to_dict` serializes each subtask's contexts during the
+/// conversion, so one rejected context fails the whole conversion instead of
+/// silently dropping the context or the subtask.
+#[test]
+fn subtask_conversion_fails_with_a_rejected_context() {
+    let rejected = context_row("other");
+    let subtask_row = || SubtaskRow {
+        id: 7,
+        user_id: 1,
+        task_id: 2,
+        team_id: None,
+        title: None,
+        bot_ids: json!([]).into(),
+        role: "ASSISTANT".into(),
+        executor_namespace: None,
+        executor_name: None,
+        prompt: None,
+        message_id: 1,
+        parent_id: None,
+        status: "COMPLETED".into(),
+        progress: 0,
+        result: None,
+        error_message: None,
+        created_at: None,
+        updated_at: None,
+        completed_at: None,
+        sender_type: None,
+        sender_user_id: None,
+        reply_to_subtask_id: None,
+    };
+    assert!(subtask_responses(&[subtask_row()], &[rejected], &[], &[]).is_err());
+
+    let accepted = context_row("remote_workspace_artifact");
+    let converted = subtask_responses(&[subtask_row()], &[accepted], &[], &[]).unwrap();
+    assert_eq!(converted[0].contexts.len(), 1);
 }

@@ -735,7 +735,7 @@ const sharedMessages: Record<
     "todo.archive_issue_title": "归档任务？",
     "todo.archive_issue_description": "“{{title}}”将从看板中归档。",
     "todo.archive_issue_children_description":
-      "“{{title}}”及同批已完成子任务将从看板中归档。",
+      "“{{title}}”及其子任务将从看板中归档。",
     "todo.archive_issue_restore_hint": "归档后可从当前项目的归档箱恢复。",
     "todo.archive_issue_failed_count": "{{count}} 个任务归档失败，请重试。",
     "todo.archive_completed_tasks": "归档已完成任务",
@@ -1303,7 +1303,7 @@ const sharedMessages: Record<
     "todo.archive_issue_description":
       "“{{title}}” will be archived from the board.",
     "todo.archive_issue_children_description":
-      "“{{title}}” and completed child issues archived with it will be removed from the board.",
+      "“{{title}}” and its child issues will be removed from the board.",
     "todo.archive_issue_restore_hint":
       "You can restore it later from this project's archive.",
     "todo.archive_issue_failed_count":

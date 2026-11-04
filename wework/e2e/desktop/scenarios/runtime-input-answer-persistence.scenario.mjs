@@ -1,3 +1,4 @@
+import { createDesktopScenario as createConsecutiveQuestions } from './consecutive-questions.scenario.mjs'
 import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -285,7 +286,7 @@ async function startNewChat(control, composer, timeoutMs) {
   await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, WORKBENCH)
 }
 
-export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTimeoutMs }) {
+function createPersistenceScenario({ resultDir, uiTimeoutMs, modelResponseTimeoutMs }) {
   const evidencePath = join(resultDir, 'runtime-input-answer-evidence.jsonl')
   const pendingGates = new Set()
   let activeContinuationGate = null
@@ -594,6 +595,22 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTim
         'An archived conversation was restored by its late input answer',
         taskTimeoutMs
       )
+    },
+  }
+}
+
+export function createDesktopScenario(options) {
+  const persistence = createPersistenceScenario(options)
+  const consecutive = createConsecutiveQuestions(options)
+  return {
+    ...persistence,
+    async handleHttp(request, response, url) {
+      if (await consecutive.handleHttp(request, response, url)) return true
+      return persistence.handleHttp(request, response, url)
+    },
+    async verify(control) {
+      await persistence.verify(control)
+      await consecutive.verify(control)
     },
   }
 }
