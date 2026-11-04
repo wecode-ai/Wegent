@@ -385,7 +385,13 @@ impl LocalTaskStore {
         let project_id = required(&rule["project"], "id")?;
         let project = get_item_from(&connection, project_id, "project")?
             .ok_or(TaskRuntimeError::ProjectNotFound)?;
-        let input = serde_json::from_value(json!({"title":publication["title"],"description":publication["description"],"tags":["automation"]})).map_err(|e|TaskRuntimeError::Invalid(e.to_string()))?;
+        let input = serde_json::from_value(json!({
+            "title": publication["title"],
+            "description": publication["description"],
+            "status": project_status::initial_status(&project.metadata)?,
+            "tags": ["automation"],
+        }))
+        .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))?;
         let shared_rule = project.metadata["automatic_processing_rules"]
             .as_array()
             .into_iter()

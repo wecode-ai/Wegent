@@ -158,6 +158,10 @@ export function eventLabel(value: string, locale: "zh-CN" | "en") {
     "change_request.merge_conflict": ["发生合并冲突", "Merge conflict"],
     "change_request.review_submitted": ["提交代码评审", "Review submitted"],
     "change_request.comment_created": ["新增代码评论", "Comment created"],
+    "connection.result_published": [
+      "连接结果已发布",
+      "Connection result published",
+    ],
     "document.changed": ["外部文档变化", "External document changed"],
   };
   const label = labels[value];

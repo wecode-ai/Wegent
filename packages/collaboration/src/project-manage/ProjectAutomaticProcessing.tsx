@@ -16,7 +16,6 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { type AutomationEventType } from "../automation/types";
 import { ConnectionRulesPanel } from "../automation/ConnectionRulesPanel";
 import { AutomationInstructionField } from "../automation/AutomationInstructionField";
 import type {

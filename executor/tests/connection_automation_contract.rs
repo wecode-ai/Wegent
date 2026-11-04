@@ -342,6 +342,51 @@ fn group_dispatch_retains_the_authored_processing_instruction_in_manager_context
 }
 
 #[test]
+fn publication_uses_the_projects_initial_status_on_a_custom_board() {
+    let (_root, store, rule) = fixture();
+    let project = store.list_projects().unwrap().remove(0);
+    store
+        .update_project(
+            &project.id,
+            ProjectUpdate {
+                version: project.version,
+                board_config: Some(json!({"group_by":"status", "statuses":[
+                    {"id":"new","name":"New","color":"gray"},
+                    {"id":"doing","name":"Doing","color":"blue"},
+                    {"id":"done","name":"Done","color":"green"}
+                ]})),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    store
+        .enqueue_connection_rule(7, &rule, &rule["source"], &event("custom-board"))
+        .unwrap();
+    let run = store.connection_rule_runs(7).unwrap().remove(0);
+    store
+        .publish_connection_rule_locally(
+            7,
+            &rule,
+            &run,
+            &json!({"title":"Result","description":"Approved summary"}),
+        )
+        .unwrap();
+    let run = store.connection_rule_runs(7).unwrap().remove(0);
+    let issue = store
+        .get_task(&project.id, run["issueId"].as_str().unwrap())
+        .unwrap();
+    assert_eq!(issue.status.as_deref(), Some("new"));
+    assert_eq!(issue.description, "Approved summary");
+    assert_eq!(
+        store
+            .list_executions(&project.id, None, None, true)
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[test]
 fn account_evidence_is_persistent_and_bound_to_the_exact_device_and_connection() {
     let (root, store, _) = fixture();
     store

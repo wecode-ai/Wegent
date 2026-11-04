@@ -407,7 +407,6 @@ fn dispatch(
         }
         "collaboration_group" => {
             let group = collaboration_group(project, target_id)?;
-            let description = format!("{}\n\n{}", text(rule, "prompt"), task.description);
             let execution = dispatch_collaboration_group_assignment(
                 connection,
                 CollaborationGroupExecutionInput {
@@ -415,7 +414,7 @@ fn dispatch(
                     project_id: &project.id,
                     group: &group,
                     issue_title: task.title.as_deref().unwrap_or_default(),
-                    issue_description: &description,
+                    issue_description: &task.description,
                     issue_status: task.status.as_deref(),
                     prompt: Some(text(rule, "prompt")),
                     priority: task.priority.as_deref().unwrap_or("none"),

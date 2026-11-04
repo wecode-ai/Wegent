@@ -179,6 +179,71 @@ fn shared_startup_timeout_retries_recovery_after_other_turn_finishes() {
     });
 }
 
+#[test]
+fn late_start_response_retains_its_extended_watchdog_after_the_other_turn_finishes() {
+    shared_test_runtime().block_on(async {
+        let _lock = env_lock().await;
+        let _timeout = EnvGuard::set("WEGENT_CODEX_TURN_STARTUP_TIMEOUT_SECONDS", "1");
+        let root = tempfile::tempdir().unwrap();
+        let client = client(&root);
+        let request = ExecutionRequest {
+            prompt: json!("other-turn"),
+            bot: json!([{"shell_type":"ClaudeCode"}]),
+            ..ExecutionRequest::default()
+        };
+        let first_client = client.clone();
+        let first_request = request.clone();
+        let first = tokio::spawn(async move {
+            first_client
+                .run_turn_with_cancel(first_request, CodexAppServerTurnOptions::default())
+                .await
+        });
+        let second_client = client.clone();
+        let mut second = tokio::spawn(async move {
+            second_client
+                .run_turn_with_cancel(
+                    ExecutionRequest {
+                        prompt: json!("delay-target"),
+                        ..request
+                    },
+                    CodexAppServerTurnOptions::default(),
+                )
+                .await
+        });
+        wait_for_fixture_events(&root.path().join("codex"), "ready", 2).await;
+        tokio::time::sleep(Duration::from_millis(1100)).await;
+        client
+            .request("test/finish-first", json!({}))
+            .await
+            .unwrap();
+        assert!(matches!(
+            first.await.unwrap().unwrap().outcome,
+            ExecutionOutcome::Completed { .. }
+        ));
+        client
+            .request("test/ack-delayed", json!({}))
+            .await
+            .expect("The late start acknowledgement must preserve the server");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), &mut second)
+                .await
+                .is_err(),
+            "The late acknowledgement must retain the extended startup budget"
+        );
+        client.request("test/release", json!({})).await.unwrap();
+        assert_eq!(
+            second.await.unwrap().unwrap().outcome,
+            ExecutionOutcome::Completed {
+                content: "late answer".into()
+            }
+        );
+        assert_eq!(
+            client.request("test/count", json!({})).await.unwrap()["turnCount"],
+            2
+        );
+    });
+}
+
 const SERVER: &str = r#"#!/bin/sh
 thread_count=0
 turn_count=0
@@ -237,6 +302,11 @@ while IFS= read -r line; do
       ;;
     *'"method":"test/interrupt-count"'*)
       printf '{"id":%s,"result":{"count":%s,"emptyCount":%s}}\n' "$request_id" "$interrupt_count" "$empty_interrupt_count"
+      ;;
+    *'"method":"test/ack-delayed"'*)
+      printf '{"id":%s,"result":{"turn":{"id":"turn-%s","status":"inProgress"}}}\n' "$delayed_id" "$delayed_thread"
+      delayed_id=
+      printf '{"id":%s,"result":{}}\n' "$request_id"
       ;;
     *'"method":"test/finish-first"'*)
       complete_thread "$other_index"
