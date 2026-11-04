@@ -172,7 +172,7 @@ export function KnowledgeSidebar({
             variant="ghost"
             size="sm"
             onClick={onCollapse}
-            className="h-8 w-8 p-0 flex-shrink-0"
+            className="min-h-11 min-w-11 p-0 flex-shrink-0"
             title={t('document.tree.collapseTree')}
             data-testid="knowledge-sidebar-collapse-button"
           >

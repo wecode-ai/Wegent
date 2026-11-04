@@ -29,16 +29,29 @@ interface AddUserDialogProps {
   onOpenChange: (open: boolean) => void
   kbId: number
   onSuccess?: () => void
+  onChanged?: () => void
+  onAccessDenied?: () => void
 }
 
-export function AddUserDialog({ open, onOpenChange, kbId, onSuccess }: AddUserDialogProps) {
+export function AddUserDialog({
+  open,
+  onOpenChange,
+  kbId,
+  onSuccess,
+  onChanged,
+  onAccessDenied,
+}: AddUserDialogProps) {
   const { t } = useTranslation('knowledge')
   const [selectedUsers, setSelectedUsers] = useState<SearchUser[]>([])
   const [role, setRole] = useState<MemberRole>('Reporter')
   const [localError, setLocalError] = useState<string | null>(null)
   const [batchResult, setBatchResult] = useState<BatchPermissionAddResponse | null>(null)
 
-  const { batchAddPermission, loading, error } = useKnowledgePermissions({ kbId })
+  const { batchAddPermission, loading, error } = useKnowledgePermissions({
+    kbId,
+    onChanged,
+    onAccessDenied,
+  })
 
   // Build a user_id -> user_name map from selectedUsers for result display
   const userNameMap = new Map(selectedUsers.map(u => [u.id, u.user_name]))
@@ -113,7 +126,10 @@ export function AddUserDialog({ open, onOpenChange, kbId, onSuccess }: AddUserDi
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent
+        className="max-h-[90dvh] overflow-y-auto sm:max-w-md"
+        closeButtonProps={{ className: 'min-h-11 min-w-11 flex items-center justify-center' }}
+      >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <UserPlus className="w-5 h-5" />
@@ -145,12 +161,18 @@ export function AddUserDialog({ open, onOpenChange, kbId, onSuccess }: AddUserDi
         )}
 
         <DialogFooter>
-          <Button type="button" variant="outline" onClick={handleClose}>
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-11 min-w-11"
+            onClick={handleClose}
+          >
             {t('common:actions.cancel')}
           </Button>
           <Button
             type="button"
             variant="primary"
+            className="min-h-11 min-w-11"
             disabled={loading || selectedUsers.length === 0}
             onClick={handleAddClick}
           >

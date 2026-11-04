@@ -835,6 +835,19 @@ export interface PendingRequestInfo {
   requested_at: string
 }
 
+export interface MyPermissionSourcesResponse {
+  has_access: boolean
+  effective_role: MemberRole | null
+  is_creator: boolean
+  sources: Array<{
+    source_type: string
+    display_name: string | null
+    role: MemberRole
+    entity_type?: string | null
+    entity_id?: string | null
+  }>
+}
+
 export interface MyPermissionResponse {
   has_access: boolean
   role: MemberRole | null

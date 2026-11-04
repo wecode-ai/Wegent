@@ -17,17 +17,7 @@ import { useState, useMemo, useCallback, useEffect } from 'react'
 import { matchesKnowledgeTeam } from '../navigation'
 import { Input } from '@/components/ui/input'
 import { getKbShareSourceText } from '@/features/knowledge/utils/share-source'
-import {
-  ArrowLeft,
-  Plus,
-  FolderOpen,
-  Star,
-  ChevronDown,
-  ChevronUp,
-  Pencil,
-  Trash2,
-  FolderOutput,
-} from 'lucide-react'
+import { ArrowLeft, Plus, FolderOpen, Star, ChevronDown, ChevronUp } from 'lucide-react'
 import { KnowledgeBaseIcon } from './KnowledgeBaseIcon'
 import {
   isInKnowledgeBaseCategory,
@@ -52,15 +42,17 @@ import type {
   KnowledgeBaseType,
   KnowledgeBaseWithGroupInfo,
   KbGroupInfo,
-  MemberRole,
 } from '@/types/knowledge'
-import { ROLE_DISPLAY_NAMES } from '@/types/base-role'
+import { KnowledgeBaseActions } from './KnowledgeBaseActions'
+import { KnowledgeMobileList } from './KnowledgeMobileList'
 import { hasAdvancedKnowledgeBases } from '../hooks/useAdvancedKnowledgeMode'
 
 /** Union type for KB data that can be either KnowledgeBase or KnowledgeBaseWithGroupInfo */
 export type KbDataItem = KnowledgeBase | KnowledgeBaseWithGroupInfo
 
 export interface KnowledgeGroupListPageProps {
+  mobile?: boolean
+  onViewPermissions?: (kb: KbDataItem) => void
   /** Group ID (null for "All" mode) */
   groupId: string | null
   /** Group display name */
@@ -168,6 +160,8 @@ function formatDateTime(dateStr: string | undefined, locale: string): string {
 }
 
 export function KnowledgeGroupListPage({
+  mobile = false,
+  onViewPermissions,
   groupId: _groupId,
   groupName,
   knowledgeBases,
@@ -452,6 +446,7 @@ export function KnowledgeGroupListPage({
           key={kb.id}
           kb={kb}
           onClick={() => onSelectKb(kb)}
+          onPermissions={onViewPermissions ? () => onViewPermissions(kb) : undefined}
           onEdit={onEditKb && canManageKb?.(kb) ? () => onEditKb(kb) : undefined}
           onDelete={onDeleteKb && canManageKb?.(kb) ? () => onDeleteKb(kb) : undefined}
           onMigrate={onMigrateKb ? () => onMigrateKb(kb) : undefined}
@@ -598,11 +593,13 @@ export function KnowledgeGroupListPage({
 
   return (
     <div
-      className="flex flex-col h-full overflow-hidden pl-4"
+      className={`flex flex-col h-full overflow-hidden ${mobile ? '' : 'pl-4'}`}
       data-testid="knowledge-group-list-page"
     >
       {/* Header */}
-      <div className="flex flex-wrap items-center gap-3 px-6 py-4 border-b border-border ml-2">
+      <div
+        className={`flex flex-wrap items-center gap-3 py-4 border-b border-border ${mobile ? 'px-4' : 'px-6 ml-2'}`}
+      >
         {/* Back button - only show in group mode */}
         {!isAllMode && onBack && (
           <Button
@@ -654,6 +651,36 @@ export function KnowledgeGroupListPage({
             onCheckedChange={onShowAdvancedKnowledgeChange}
           />
         )}
+        {mobile && (
+          <>
+            <select
+              className="min-h-11 min-w-11 max-w-full rounded border border-border bg-base px-3"
+              data-testid="knowledge-sort"
+              aria-label={t('document.navigation.sortLabel')}
+              value={sortBy}
+              onChange={event => setSortBy(event.target.value as SortBy)}
+            >
+              {(['name', 'group', 'permission', 'created', 'updated'] as SortBy[]).map(value => (
+                <option key={value} value={value}>
+                  {t('document.navigation.sort.' + value)}
+                </option>
+              ))}
+            </select>
+            <Button
+              variant="outline"
+              className="min-h-11 min-w-11"
+              data-testid="knowledge-sort-direction"
+              aria-label={t(
+                sortOrder === 'asc'
+                  ? 'document.navigation.ascending'
+                  : 'document.navigation.descending'
+              )}
+              onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
+            >
+              {sortOrder === 'asc' ? <ChevronUp /> : <ChevronDown />}
+            </Button>
+          </>
+        )}
         {onCreateKbInSpace && (
           <Button
             variant="primary"
@@ -668,6 +695,7 @@ export function KnowledgeGroupListPage({
           <Button
             variant="primary"
             size="sm"
+            className="min-h-11 min-w-11"
             onClick={() => onCreateKb('notebook')}
             data-testid="create-kb-button"
           >
@@ -691,6 +719,21 @@ export function KnowledgeGroupListPage({
           renderGroupSectionContent()
         ) : filteredKbs.length === 0 ? (
           renderEmptyState()
+        ) : mobile ? (
+          <KnowledgeMobileList
+            items={filteredKbs}
+            onSelect={onSelectKb}
+            getSpace={getKbGroupInfo}
+            renderActions={kb => (
+              <KnowledgeBaseActions
+                kbId={kb.id}
+                onPermissions={onViewPermissions ? () => onViewPermissions(kb) : undefined}
+                onMigrate={onMigrateKb && canMigrate?.(kb) ? () => onMigrateKb(kb) : undefined}
+                onEdit={onEditKb && canManageKb?.(kb) ? () => onEditKb(kb) : undefined}
+                onDelete={onDeleteKb && canManageKb?.(kb) ? () => onDeleteKb(kb) : undefined}
+              />
+            )}
+          />
         ) : (
           <Table className="w-full table-fixed min-w-0">
             {renderTableHeader(isAllMode, showFromColumn)}
@@ -706,6 +749,7 @@ export function KnowledgeGroupListPage({
 interface KnowledgeBaseRowProps {
   kb: KbDataItem
   onClick: () => void
+  onPermissions?: () => void
   onEdit?: () => void
   onDelete?: () => void
   onMigrate?: () => void
@@ -718,6 +762,7 @@ interface KnowledgeBaseRowProps {
 }
 
 function KnowledgeBaseRow({
+  onPermissions,
   kb,
   onClick,
   onEdit,
@@ -766,7 +811,7 @@ function KnowledgeBaseRow({
 
       {/* Permission column */}
       <TableCell className="px-6 py-3 text-text-secondary whitespace-nowrap">
-        {'my_role' in kb && kb.my_role ? ROLE_DISPLAY_NAMES[kb.my_role as MemberRole] : '--'}
+        {'my_role' in kb && kb.my_role ? t(`document.permission.role.${kb.my_role}`) : '--'}
       </TableCell>
 
       {/* Created at column */}
@@ -781,53 +826,13 @@ function KnowledgeBaseRow({
 
       {/* Actions column - Migrate, Edit and Delete */}
       <TableCell className="px-6 py-3">
-        <div className="flex items-center justify-end gap-1">
-          {canMigrate && onMigrate && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
-              onClick={e => {
-                e.stopPropagation()
-                onMigrate()
-              }}
-              title={t('document.migrate.title', '迁移到群组')}
-              data-testid={`migrate-kb-${kb.id}`}
-            >
-              <FolderOutput className="w-4 h-4 text-text-muted hover:text-primary transition-colors" />
-            </Button>
-          )}
-          {onEdit && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
-              onClick={e => {
-                e.stopPropagation()
-                onEdit()
-              }}
-              title={t('document.table.edit', '编辑')}
-              data-testid={`edit-kb-${kb.id}`}
-            >
-              <Pencil className="w-4 h-4 text-text-muted" />
-            </Button>
-          )}
-          {onDelete && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
-              onClick={e => {
-                e.stopPropagation()
-                onDelete()
-              }}
-              title={t('document.table.delete', '删除')}
-              data-testid={`delete-kb-${kb.id}`}
-            >
-              <Trash2 className="w-4 h-4 text-text-muted hover:text-error" />
-            </Button>
-          )}
-        </div>
+        <KnowledgeBaseActions
+          kbId={kb.id}
+          onPermissions={onPermissions}
+          onMigrate={canMigrate ? onMigrate : undefined}
+          onEdit={onEdit}
+          onDelete={onDelete}
+        />
       </TableCell>
     </TableRow>
   )

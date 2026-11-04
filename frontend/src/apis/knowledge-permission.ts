@@ -10,6 +10,7 @@ import type {
   KBShareInfo,
   MemberRole,
   MyPermissionResponse,
+  MyPermissionSourcesResponse,
   PermissionAddRequest,
   PermissionApplyRequest,
   PermissionApplyResponse,
@@ -52,6 +53,9 @@ import client from './client'
 import { ApiError } from './client'
 
 export const knowledgePermissionApi = {
+  getMyPermissionSources: (kbId: number): Promise<MyPermissionSourcesResponse> =>
+    client.get<MyPermissionSourcesResponse>(`/share/KnowledgeBase/${kbId}/my-permission-sources`),
+
   /**
    * Apply for knowledge base access permission
    */

@@ -58,7 +58,7 @@ export function CollapsibleSection({
         <button
           type="button"
           onClick={onToggle}
-          className="flex-1 flex items-center gap-2 min-w-0 text-left"
+          className="flex-1 min-h-11 min-w-11 flex items-center gap-2 min-w-0 text-left"
           aria-expanded={isExpanded}
         >
           {/* Expand/collapse icon */}

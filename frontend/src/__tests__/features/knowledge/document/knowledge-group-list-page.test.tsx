@@ -295,3 +295,46 @@ it('reports the search result count without changing the relationship title', as
   expect(screen.getByTestId('knowledge-result-count')).toHaveTextContent('0')
   expect(screen.getByRole('heading', { level: 2 })).toHaveTextContent('Created by me')
 })
+
+it('uses readable vertical mobile rows with space, role, permission and migration controls', async () => {
+  const name = 'A very long library title that must remain fully readable on a small phone'
+  const kb = {
+    ...createKnowledgeBase(71, name, 'notebook'),
+    group_id: 'default',
+    group_name: 'Personal',
+    group_type: 'personal' as const,
+    my_role: 'Owner' as const,
+  }
+  const permission = jest.fn(),
+    migrate = jest.fn()
+  render(
+    <KnowledgeGroupListPage
+      mobile
+      groupId={null}
+      groupName="Created by me"
+      knowledgeBases={[]}
+      knowledgeBasesWithGroupInfo={[kb]}
+      isLoading={false}
+      onSelectKb={jest.fn()}
+      getKbGroupInfo={() => ({
+        groupId: 'default',
+        groupName: 'Personal space',
+        groupType: 'personal',
+      })}
+      onViewPermissions={permission}
+      onMigrateKb={migrate}
+      canMigrate={() => true}
+    />
+  )
+  expect(screen.queryByRole('table')).not.toBeInTheDocument()
+  const row = screen.getByTestId('kb-row-71')
+  expect(row).toHaveTextContent(name)
+  expect(row).toHaveTextContent('Personal space')
+  expect(row).toHaveTextContent('document.permission.role.Owner')
+  expect(screen.getByRole('button', { name })).toHaveClass('break-words')
+  expect(screen.getByTestId('permission-kb-71')).toHaveClass('min-h-11', 'min-w-11')
+  await userEvent.setup().click(screen.getByTestId('permission-kb-71'))
+  expect(permission).toHaveBeenCalledWith(kb)
+  await userEvent.setup().click(screen.getByTestId('migrate-kb-71'))
+  expect(migrate).toHaveBeenCalledWith(kb)
+})

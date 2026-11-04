@@ -48,6 +48,7 @@ export function AddUserForm({
             onSelectedUsersChange={onSelectedUsersChange}
             placeholder={t('document.permission.searchUserPlaceholder')}
             multiple={true}
+            className="[&_input]:min-h-11 [&_button]:min-h-11 [&_button]:min-w-11"
           />
         </div>
 
@@ -55,7 +56,7 @@ export function AddUserForm({
         <div className="space-y-2">
           <Label htmlFor="role">{t('document.permission.role.label')}</Label>
           <Select value={role} onValueChange={v => onRoleChange(v as MemberRole)}>
-            <SelectTrigger id="role">
+            <SelectTrigger id="role" className="min-h-11 min-w-11">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

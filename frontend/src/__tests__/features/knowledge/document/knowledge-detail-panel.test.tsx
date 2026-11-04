@@ -42,7 +42,7 @@ jest.mock('@/features/tasks/session/TaskSession', () => ({
 
 jest.mock('@/features/knowledge/permission/hooks/useKnowledgePermissions', () => ({
   useKnowledgePermissions: () => ({
-    myPermission: { role: 'Editor' },
+    myPermission: { has_access: true, role: 'Developer', is_creator: false },
     fetchMyPermission: mockFetchPermission,
   }),
 }))
@@ -114,11 +114,13 @@ jest.mock('@/features/knowledge/document/components/KnowledgeBaseSummaryCard', (
 }))
 
 jest.mock('@/features/knowledge/document/components/DocumentList', () => ({
-  DocumentList: () => null,
+  DocumentList: ({ headerActions }: { headerActions?: React.ReactNode }) => (
+    <div data-testid="mock-classic-document-list">{headerActions}</div>
+  ),
 }))
 
 jest.mock('@/features/knowledge/permission/components/PermissionManagementTab', () => ({
-  PermissionManagementTab: () => null,
+  PermissionManagementTab: () => <div data-testid="mock-classic-permissions" />,
 }))
 
 jest.mock('@/apis/knowledge', () => ({
@@ -198,4 +200,22 @@ describe('KnowledgeDetailPanel workspace', () => {
       })
     )
   })
+})
+
+it('exits the classic permission view when the list confirms management downgrade', () => {
+  const classic = { ...knowledgeBase, kb_type: 'classic' as const }
+  const { rerender } = render(
+    <KnowledgeDetailPanel selectedKb={classic} currentView="documents" verifiedRole="Maintainer" />
+  )
+  const trigger = screen.getByTestId('knowledge-detail-permissions-tab')
+  expect(trigger).toHaveClass('min-h-11', 'min-w-11')
+  fireEvent.mouseDown(trigger, { button: 0 })
+  expect(screen.getByTestId('mock-classic-permissions')).toBeInTheDocument()
+  const calls = mockFetchPermission.mock.calls.length
+  rerender(
+    <KnowledgeDetailPanel selectedKb={classic} currentView="documents" verifiedRole="Reporter" />
+  )
+  expect(screen.queryByTestId('knowledge-detail-permissions-tab')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('mock-classic-permissions')).not.toBeInTheDocument()
+  expect(mockFetchPermission.mock.calls.length).toBeGreaterThan(calls)
 })

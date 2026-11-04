@@ -973,7 +973,28 @@
       "space": "Space",
       "unknownSpace": "Unknown space",
       "personalSpace": "Personal space",
-      "createInSpace": "Create in this space"
+      "createInSpace": "Create in this space",
+      "permissionDetails": "Permissions",
+      "permissionDescription": "Your effective access and its sources in Wegent.",
+      "permissionFailed": "Unable to load permission sources",
+      "effectivePermission": "My permission",
+      "permissionSource": "Permission source",
+      "savePermission": "Save permission",
+      "cancelPermission": "Cancel permission edit",
+      "browse": "Browse knowledge",
+      "sortLabel": "Sort libraries",
+      "sort": {
+        "name": "Name",
+        "group": "Space",
+        "permission": "Permission",
+        "created": "Created time",
+        "updated": "Updated time"
+      },
+      "ascending": "Ascending",
+      "descending": "Descending",
+      "managementUnavailable": "Management access changed. Verify your permissions again.",
+      "dismissError": "Dismiss error",
+      "membersFailed": "Unable to load members. Please retry."
     }
   },
   "add_repository": "Add Repository",

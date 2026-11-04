@@ -973,7 +973,28 @@
       "space": "所在空间",
       "unknownSpace": "未知空间",
       "personalSpace": "个人空间",
-      "createInSpace": "在此空间创建"
+      "createInSpace": "在此空间创建",
+      "permissionDetails": "权限详情",
+      "permissionDescription": "查看你在 Wegent 的有效权限及来源。",
+      "permissionFailed": "权限来源加载失败",
+      "effectivePermission": "我的权限",
+      "permissionSource": "授权来源",
+      "savePermission": "保存权限",
+      "cancelPermission": "取消修改权限",
+      "browse": "浏览知识",
+      "sortLabel": "知识库排序",
+      "sort": {
+        "name": "名称",
+        "group": "所在空间",
+        "permission": "权限",
+        "created": "创建时间",
+        "updated": "更新时间"
+      },
+      "ascending": "升序",
+      "descending": "降序",
+      "managementUnavailable": "管理权限已变化，请重新核验。",
+      "dismissError": "关闭错误提示",
+      "membersFailed": "成员列表加载失败，请重试。"
     }
   },
   "add_repository": "添加仓库",

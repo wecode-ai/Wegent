@@ -5,6 +5,8 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import client from '@/apis/client'
+import { useUser } from '@/features/common/UserContext'
 import { Check, X, UserPlus, Pencil, Trash2, User, Users, Clock } from 'lucide-react'
 
 import { getPermissionTabs, subscribePermissionTabs } from '../permission-tab-registry'
@@ -48,6 +50,8 @@ function buildRoleGroups(
 
 interface PermissionManagementTabProps {
   kbId: number
+  onChanged?: () => void
+  onAccessDenied?: () => void
   /** The namespace this KB belongs to; groups in this namespace are excluded from group authorization */
   kbNamespace?: string
   /**
@@ -61,10 +65,18 @@ interface PermissionManagementTabProps {
   }>
 }
 
-export function PermissionManagementTab({
+export function PermissionManagementTab(props: PermissionManagementTabProps) {
+  const { user } = useUser()
+  const scope = JSON.stringify([user?.id, client.getCacheScope(), props.kbId, props.kbNamespace])
+  return <PermissionManagementSession key={scope} {...props} />
+}
+
+function PermissionManagementSession({
   kbId,
   kbNamespace,
   extensionTabs,
+  onChanged,
+  onAccessDenied,
 }: PermissionManagementTabProps) {
   const { t } = useTranslation('knowledge')
 
@@ -91,7 +103,12 @@ export function PermissionManagementTab({
     updatePermission,
     deletePermission,
     clearError,
-  } = useKnowledgePermissions({ kbId, includePendingRequests: true })
+  } = useKnowledgePermissions({ kbId, includePendingRequests: true, onChanged, onAccessDenied })
+
+  const handleExternalChanged = () => {
+    onChanged?.()
+    void fetchPermissions()
+  }
 
   // Fetch permissions on mount
   useEffect(() => {
@@ -176,10 +193,24 @@ export function PermissionManagementTab({
     return subscribePermissionTabs(() => setExternalTabs(getPermissionTabs()))
   }, [])
 
-  if (loading && !permissions) {
+  if (!permissions) {
     return (
-      <div className="flex items-center justify-center py-12">
-        <Spinner />
+      <div className="p-4" role={error ? 'alert' : 'status'}>
+        {error ? (
+          <>
+            <p>{t('document.navigation.membersFailed')}</p>
+            <Button
+              variant="outline"
+              className="min-h-11 min-w-11"
+              data-testid="retry-knowledge-members"
+              onClick={() => void fetchPermissions()}
+            >
+              {t('document.navigation.retry')}
+            </Button>
+          </>
+        ) : (
+          <Spinner />
+        )}
       </div>
     )
   }
@@ -251,18 +282,32 @@ export function PermissionManagementTab({
       {error && (
         <div className="bg-error/10 text-error px-4 py-2 rounded-lg text-sm flex justify-between items-center">
           <span>{error}</span>
-          <button onClick={clearError} className="text-error/70 hover:text-error">
+          <Button
+            variant="outline"
+            className="min-h-11 min-w-11"
+            data-testid="retry-knowledge-members"
+            onClick={() => void fetchPermissions()}
+          >
+            {t('document.navigation.retry')}
+          </Button>
+          <button
+            type="button"
+            onClick={clearError}
+            className="min-h-11 min-w-11 flex items-center justify-center text-error/70 hover:text-error"
+            data-testid="permission-dismiss-error"
+            aria-label={t('document.navigation.dismissError')}
+          >
             <X className="w-4 h-4" />
           </button>
         </div>
       )}
 
       {/* Tabs */}
-      <div className="flex border-b border-border">
+      <div className="flex overflow-x-auto border-b border-border">
         <button
           type="button"
           onClick={() => setActiveTab('user')}
-          className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
+          className={`flex min-h-11 min-w-11 shrink-0 items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
             activeTab === 'user'
               ? 'border-primary text-primary'
               : 'border-transparent text-text-muted hover:text-text-primary'
@@ -280,7 +325,7 @@ export function PermissionManagementTab({
         <button
           type="button"
           onClick={() => setActiveTab('namespace')}
-          className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
+          className={`flex min-h-11 min-w-11 shrink-0 items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
             activeTab === 'namespace'
               ? 'border-primary text-primary'
               : 'border-transparent text-text-muted hover:text-text-primary'
@@ -301,9 +346,10 @@ export function PermissionManagementTab({
           return (
             <button
               key={tabValue}
+              data-testid={`permission-tab-${tabValue}`}
               type="button"
               onClick={() => setActiveTab(tabValue)}
-              className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
+              className={`flex min-h-11 min-w-11 shrink-0 items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
                 activeTab === tabValue
                   ? 'border-primary text-primary'
                   : 'border-transparent text-text-muted hover:text-text-primary'
@@ -324,9 +370,10 @@ export function PermissionManagementTab({
           return (
             <button
               key={tabValue}
+              data-testid={`permission-tab-${tabValue}`}
               type="button"
               onClick={() => setActiveTab(tabValue)}
-              className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
+              className={`flex min-h-11 min-w-11 shrink-0 items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
                 activeTab === tabValue
                   ? 'border-primary text-primary'
                   : 'border-transparent text-text-muted hover:text-text-primary'
@@ -368,7 +415,7 @@ export function PermissionManagementTab({
                 {permissions?.pending.map(permission => (
                   <div
                     key={permission.id}
-                    className="flex items-center justify-between p-3 bg-muted rounded-lg"
+                    className="flex flex-wrap items-center justify-between gap-3 p-3 bg-muted rounded-lg"
                   >
                     <div className="flex-1">
                       <div className="font-medium text-sm">{permission.username}</div>
@@ -404,6 +451,8 @@ export function PermissionManagementTab({
                         variant="ghost"
                         size="icon"
                         className="h-11 min-w-[44px] text-success hover:text-success hover:bg-success/10"
+                        data-testid={`permission-approve-${permission.id}`}
+                        aria-label={t('document.permission.approve')}
                         onClick={() => handleApprove(permission)}
                         disabled={loading}
                       >
@@ -413,6 +462,8 @@ export function PermissionManagementTab({
                         variant="ghost"
                         size="icon"
                         className="h-11 min-w-[44px] text-error hover:text-error hover:bg-error/10"
+                        data-testid={`permission-reject-${permission.id}`}
+                        aria-label={t('document.permission.reject')}
                         onClick={() => handleReject(permission)}
                         disabled={loading}
                       >
@@ -427,7 +478,7 @@ export function PermissionManagementTab({
 
           {/* Approved Users Section */}
           <Card padding="default" className="space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2 text-sm font-medium">
                 <Users className="w-4 h-4 text-primary" />
                 {t('document.permission.approvedUsers')}
@@ -437,7 +488,12 @@ export function PermissionManagementTab({
                   </span>
                 )}
               </div>
-              <Button variant="outline" size="sm" onClick={() => setShowAddUser(true)}>
+              <Button
+                variant="outline"
+                className="min-h-11 min-w-11"
+                data-testid="permission-add-user"
+                onClick={() => setShowAddUser(true)}
+              >
                 <UserPlus className="w-4 h-4 mr-2" />
                 {loc('document.permission.addUser', '添加用户')}
               </Button>
@@ -534,7 +590,7 @@ export function PermissionManagementTab({
       {activeTab === 'namespace' && (
         <div className="space-y-4">
           <Card padding="default" className="space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2 text-sm font-medium">
                 <Users className="w-4 h-4 text-primary" />
                 {loc('document.permission.namespaceMembers', '群组')}
@@ -544,7 +600,12 @@ export function PermissionManagementTab({
                   </span>
                 )}
               </div>
-              <Button variant="outline" size="sm" onClick={() => setShowAddNamespace(true)}>
+              <Button
+                variant="outline"
+                className="min-h-11 min-w-11"
+                data-testid="permission-add-namespace"
+                onClick={() => setShowAddNamespace(true)}
+              >
                 <UserPlus className="w-4 h-4 mr-2" />
                 {loc('document.permission.addNamespace', '添加群组')}
               </Button>
@@ -653,12 +714,13 @@ export function PermissionManagementTab({
         return activeTab === tabValue ? (
           <div key={tabValue} className="space-y-4">
             <Card padding="default" className="space-y-4">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2 text-sm font-medium">
                   {tab.icon}
                   {loc(tab.labelKey, tab.label || tab.type)}
                 </div>
-                {tab.renderAddButton && tab.renderAddButton({ kbId, onSuccess: fetchPermissions })}
+                {tab.renderAddButton &&
+                  tab.renderAddButton({ kbId, onSuccess: handleExternalChanged })}
               </div>
               {tabCount === 0 ? (
                 <p className="text-sm text-text-muted py-4 text-center">
@@ -754,6 +816,8 @@ export function PermissionManagementTab({
         onOpenChange={setShowAddUser}
         kbId={kbId}
         onSuccess={fetchPermissions}
+        onChanged={onChanged}
+        onAccessDenied={onAccessDenied}
       />
 
       {/* Add Namespace Dialog */}
@@ -828,6 +892,8 @@ export function PermissionGroup({
                   variant="ghost"
                   size="icon"
                   className="h-11 min-w-[44px] text-success"
+                  aria-label={t('document.navigation.savePermission')}
+                  data-testid={`permission-save-${user.id}`}
                   onClick={() => onUpdateRole(user.id, editingRole)}
                   disabled={loading}
                 >
@@ -837,6 +903,8 @@ export function PermissionGroup({
                   variant="ghost"
                   size="icon"
                   className="h-11 min-w-[44px]"
+                  aria-label={t('document.navigation.cancelPermission')}
+                  data-testid={`permission-cancel-${user.id}`}
                   onClick={onCancelEditing}
                   disabled={loading}
                 >
@@ -844,11 +912,13 @@ export function PermissionGroup({
                 </Button>
               </div>
             ) : (
-              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100">
+              <div className="flex items-center gap-1 md:opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100">
                 <Button
                   variant="ghost"
                   size="icon"
                   className="h-11 min-w-[44px]"
+                  data-testid={`permission-edit-${user.id}`}
+                  aria-label={t('document.permission.modify')}
                   onClick={() => onStartEditing(user)}
                   title={t('document.permission.modify')}
                 >
@@ -858,6 +928,8 @@ export function PermissionGroup({
                   variant="ghost"
                   size="icon"
                   className="h-11 min-w-[44px] text-error hover:text-error"
+                  data-testid={`permission-delete-${user.id}`}
+                  aria-label={t('document.permission.remove')}
                   onClick={() => onDelete(user.id)}
                   title={t('document.permission.remove')}
                 >

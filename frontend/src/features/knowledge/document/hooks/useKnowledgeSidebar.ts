@@ -93,6 +93,7 @@ export interface UseKnowledgeSidebarReturn {
   selectGroups: () => void
   selectSourceView: (sourceViewId: string) => void
   clearSelection: () => void
+  removeInaccessibleKnowledgeBase: (kbId: number) => void
 
   // View mode
   viewMode: ViewMode
@@ -645,6 +646,44 @@ export function useKnowledgeSidebar({
     setFilterGroupId(null)
   }, [])
 
+  const removeInaccessibleKnowledgeBase = useCallback(
+    (kbId: number) => {
+      if (scopeRef.current !== scope) return
+      requestRef.current++
+      setIsLoading(false)
+      if (latestSelectedKbIdRef.current === kbId) latestSelectedKbIdRef.current = null
+      setSelectedKb(prev => (prev?.id === kbId ? null : prev))
+      setSelectedKbId(prev => (prev === kbId ? null : prev))
+      const retain = (items: KnowledgeBaseWithGroupInfo[]) => items.filter(item => item.id !== kbId)
+      setAllGroupedData(prev =>
+        prev
+          ? {
+              ...prev,
+              personal: {
+                created_by_me: retain(prev.personal.created_by_me),
+                shared_with_me: retain(prev.personal.shared_with_me),
+              },
+              groups: prev.groups.map(group => ({
+                ...group,
+                knowledge_bases: retain(group.knowledge_bases),
+              })),
+              organization: {
+                ...prev.organization,
+                knowledge_bases: retain(prev.organization.knowledge_bases),
+              },
+            }
+          : prev
+      )
+      setFavorites(prev => prev.filter(item => item.id !== kbId))
+      setRecentAccessItems(prev => {
+        const next = prev.filter(item => item.kbId !== kbId)
+        saveRecentAccess(recentKey, next)
+        return next
+      })
+    },
+    [scope, recentKey]
+  )
+
   // Refresh all data
   const refreshAll = useCallback(async () => {
     await loadInitialData()
@@ -679,6 +718,7 @@ export function useKnowledgeSidebar({
     selectGroups,
     selectSourceView,
     clearSelection,
+    removeInaccessibleKnowledgeBase,
 
     // View mode
     viewMode,

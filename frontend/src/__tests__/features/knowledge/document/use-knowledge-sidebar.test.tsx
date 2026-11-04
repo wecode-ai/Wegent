@@ -361,3 +361,40 @@ it('offers the real source team for an accessible library without namespace memb
     'former-team',
   ])
 })
+
+it('removes a confirmed inaccessible library from selection, rows, counts, and recent entries', async () => {
+  mockUser = { id: 1 }
+  mockScope = 'backend:session-1'
+  mockGetAllGrouped.mockResolvedValue(dataset())
+  jest.mocked(getKnowledgeBase).mockResolvedValueOnce({ id: 1 } as never)
+  const { result } = renderHook(() => useKnowledgeSidebar())
+  await waitFor(() => expect(result.current.hasLoaded).toBe(true))
+  await act(async () => result.current.selectKb(result.current.allKnowledgeBases[0]))
+  expect(result.current.recentItems.map(kb => kb.id)).toContain(1)
+  act(() => result.current.removeInaccessibleKnowledgeBase(1))
+  expect(result.current.selectedKb).toBeNull()
+  expect(result.current.allKnowledgeBases.map(kb => kb.id)).not.toContain(1)
+  expect(result.current.recentItems.map(kb => kb.id)).not.toContain(1)
+  expect(result.current.summary?.total_count).toBe(3)
+})
+
+it('cannot restore revoked rows from a refresh issued before the access check', async () => {
+  mockUser = { id: 1 }
+  mockScope = 'backend:session-1'
+  mockGetAllGrouped.mockResolvedValueOnce(dataset())
+  const { result } = renderHook(() => useKnowledgeSidebar())
+  await waitFor(() => expect(result.current.hasLoaded).toBe(true))
+  const old = pending<AllGroupedKnowledgeResponse>()
+  mockGetAllGrouped.mockReturnValueOnce(old.promise)
+  let request!: Promise<void>
+  act(() => {
+    request = result.current.refreshAll()
+  })
+  act(() => result.current.removeInaccessibleKnowledgeBase(1))
+  await act(async () => {
+    old.resolve(dataset())
+    await request
+  })
+  expect(result.current.allKnowledgeBases.map(kb => kb.id)).not.toContain(1)
+  expect(result.current.isGroupsLoading).toBe(false)
+})

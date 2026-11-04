@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto'
 import { test, expect } from '@playwright/test'
 import { createApiClient } from '../../utils/api-client'
 import { buildStorageState, getJwtExpiryMs } from '../../utils/auth-state'
-import { ADMIN_USER } from '../../config/test-users'
+import { ADMIN_USER, REGULAR_USER } from '../../config/test-users'
 
 test('relationship navigation deduplicates libraries and filters every receiving team', async ({
   page,
@@ -104,5 +104,93 @@ test('relationship navigation deduplicates libraries and filters every receiving
       }
     }
     if (errors.length) throw new AggregateError(errors, 'Knowledge navigation cleanup failed')
+  }
+})
+
+test('read-only permissions stay scoped on mobile and desktop without exposing members', async ({
+  browser,
+  request,
+  baseURL,
+}) => {
+  const owner = createApiClient(request)
+  expect((await owner.login(ADMIN_USER.username, ADMIN_USER.password, 1)).status).toBe(200)
+  const reader = createApiClient(request)
+  const login = await reader.login(REGULAR_USER.username, REGULAR_USER.password, 1)
+  expect(login.status).toBe(200)
+  const identity = await reader.get<{ id: number }>('/api/users/me')
+  expect(identity.status).toBe(200)
+  let id: number | undefined
+  let context: Awaited<ReturnType<typeof browser.newContext>> | undefined
+  try {
+    const created = await owner.post<{ id: number }>('/api/knowledge-bases', {
+      name: 'e2e-mobile-permissions-' + randomUUID(),
+      namespace: 'default',
+      summary_enabled: false,
+      direct_access_requirement: 'read',
+    })
+    id = created.data?.id
+    expect(created.status).toBe(201)
+    expect(id).toBeGreaterThan(0)
+    const grant = await owner.post('/api/share/KnowledgeBase/' + id + '/members', {
+      user_id: identity.data!.id,
+      role: 'Reporter',
+    })
+    expect(grant.status).toBe(200)
+    context = await browser.newContext({
+      baseURL,
+      storageState: buildStorageState(
+        baseURL!,
+        login.data!.access_token,
+        getJwtExpiryMs(login.data!.access_token)
+      ),
+    })
+    const page = await context.newPage()
+    const memberRequests: string[] = []
+    page.on('request', request => {
+      if (
+        new RegExp('/share/KnowledgeBase/' + id + '/(members|requests)(?:[/?]|$)').test(
+          new URL(request.url()).pathname
+        )
+      )
+        memberRequests.push(request.url())
+    })
+    for (const width of [375, 767, 1024]) {
+      await page.setViewportSize({ width, height: 900 })
+      await page.goto('/knowledge?type=document&group=shared')
+      const row = page.getByTestId('kb-row-' + id)
+      await expect(row).toBeVisible()
+      if (width <= 767) {
+        await expect(page.getByTestId('knowledge-mobile-list')).toBeVisible()
+        await expect(row.getByTestId('open-kb-' + id)).toBeVisible()
+      }
+      const trigger = row.getByTestId('permission-kb-' + id)
+      const bounds = await trigger.boundingBox()
+      expect(bounds!.width).toBeGreaterThanOrEqual(44)
+      expect(bounds!.height).toBeGreaterThanOrEqual(44)
+      await trigger.click()
+      await expect(page.getByTestId('knowledge-permission-sources')).toBeVisible()
+      await expect(page.getByTestId('perm-tab-user')).toHaveCount(0)
+      await page.keyboard.press('Escape')
+      await expect(page.getByRole('dialog')).toHaveCount(0)
+      await expect(trigger).toBeFocused()
+    }
+    expect(memberRequests).toEqual([])
+  } finally {
+    const errors: unknown[] = []
+    if (context) {
+      try {
+        await context.close()
+      } catch (error) {
+        errors.push(error)
+      }
+    }
+    if (id) {
+      try {
+        expect((await owner.delete('/api/knowledge-bases/' + id)).status).toBe(204)
+      } catch (error) {
+        errors.push(error)
+      }
+    }
+    if (errors.length) throw new AggregateError(errors, 'Permission scenario cleanup failed')
   }
 })

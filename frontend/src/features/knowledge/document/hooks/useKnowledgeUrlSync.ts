@@ -15,6 +15,7 @@ import { buildKbUrl, parseKbUrl } from '@/utils/knowledgeUrl'
 import type { KnowledgeBase } from '@/types/knowledge'
 
 interface UseKnowledgeUrlSyncParams {
+  organizationNamespaces?: string[]
   scopeKey?: string
   initialKbNamespace?: string
   initialKbName?: string
@@ -29,6 +30,7 @@ interface UseKnowledgeUrlSyncParams {
 
 export function useKnowledgeUrlSync({
   scopeKey,
+  organizationNamespaces,
   initialKbNamespace,
   initialKbName,
   allKnowledgeBases,
@@ -74,7 +76,9 @@ export function useKnowledgeUrlSync({
         )
       } else {
         found = allKnowledgeBases.find(
-          kb => kb.name.toLowerCase() === parsedKbUrl.kbName.toLowerCase()
+          kb =>
+            organizationNamespaces?.includes(kb.namespace) === true &&
+            kb.name.toLowerCase() === parsedKbUrl.kbName.toLowerCase()
         )
       }
       if (found) {
@@ -118,6 +122,7 @@ export function useKnowledgeUrlSync({
     setInitialUrlSyncDone(true)
   }, [
     scopeKey,
+    organizationNamespaces,
     pathname,
     searchParams,
     allKnowledgeBases,

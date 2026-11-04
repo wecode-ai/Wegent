@@ -28,6 +28,7 @@ import {
 import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
 import { knowledgePermissionApi } from '@/apis/knowledge-permission'
+import { ApiError } from '@/apis/client'
 import { searchGroups } from '@/apis/groups'
 import type { MemberRole } from '@/types/knowledge'
 import type { Group } from '@/types/group'
@@ -37,6 +38,8 @@ interface AddNamespaceDialogProps {
   onOpenChange: (open: boolean) => void
   kbId: number
   onSuccess?: () => void
+  onChanged?: () => void
+  onAccessDenied?: () => void
   /** Namespace ID to exclude from search (the KB's owning namespace) */
   excludedNamespaceId?: string
   /** Namespace IDs already bound to the KB — marked as disabled in the picker */
@@ -48,6 +51,8 @@ export function AddNamespaceDialog({
   onOpenChange,
   kbId,
   onSuccess,
+  onChanged,
+  onAccessDenied,
   excludedNamespaceId,
   boundNamespaceIds,
 }: AddNamespaceDialogProps) {
@@ -166,6 +171,17 @@ export function AddNamespaceDialog({
         }
       })
 
+      if (succeededIds.length > 0) onChanged?.()
+      if (
+        results.some(
+          result =>
+            result.status === 'rejected' &&
+            result.reason instanceof ApiError &&
+            (result.reason.status === 403 || result.reason.status === 404)
+        )
+      )
+        onAccessDenied?.()
+
       if (failedGroups.length > 0) {
         // Keep only failed groups in selection for retry
         setSelectedGroups(failedGroups)
@@ -201,7 +217,10 @@ export function AddNamespaceDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent
+        className="max-h-[90dvh] overflow-y-auto sm:max-w-md"
+        closeButtonProps={{ className: 'min-h-11 min-w-11 flex items-center justify-center' }}
+      >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Users className="w-5 h-5" />
@@ -228,7 +247,7 @@ export function AddNamespaceDialog({
                     setShowDropdown(true)
                   }}
                   placeholder={loc('document.permission.searchGroupPlaceholder', '搜索群组...')}
-                  className="pl-9"
+                  className="min-h-11 pl-9"
                   data-testid="add-namespace-group-search"
                 />
               </div>
@@ -260,7 +279,7 @@ export function AddNamespaceDialog({
                           type="button"
                           onClick={() => !isBound && handleToggleGroup(group)}
                           disabled={isBound || selected}
-                          className="w-full flex items-center gap-3 p-3 hover:bg-surface cursor-pointer text-left disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="w-full min-h-11 flex items-center gap-3 p-3 hover:bg-surface cursor-pointer text-left disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           <div className="flex-1 min-w-0">
                             <div className="font-medium text-sm text-text-primary truncate">
@@ -294,8 +313,8 @@ export function AddNamespaceDialog({
                     </span>
                     <button
                       type="button"
-                      aria-label="Remove group"
-                      className="ml-1 hover:bg-accent rounded-full p-0.5"
+                      aria-label={t('document.permission.remove')}
+                      className="ml-1 min-h-11 min-w-11 flex items-center justify-center hover:bg-accent rounded-full"
                       onClick={() => handleRemoveGroup(group.id)}
                     >
                       <X className="h-3 w-3" />
@@ -310,7 +329,7 @@ export function AddNamespaceDialog({
           <div className="space-y-2">
             <Label htmlFor="namespace-role">{loc('document.permission.role.label', '角色')}</Label>
             <Select value={role} onValueChange={v => setRole(v as MemberRole)}>
-              <SelectTrigger id="namespace-role">
+              <SelectTrigger id="namespace-role" className="min-h-11 min-w-11">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -358,12 +377,18 @@ export function AddNamespaceDialog({
           )}
 
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={handleClose}>
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11 min-w-11"
+              onClick={handleClose}
+            >
               {t('common:actions.cancel')}
             </Button>
             <Button
               type="submit"
               variant="primary"
+              className="min-h-11 min-w-11"
               disabled={loading || selectedGroups.length === 0}
             >
               {loading ? <Spinner className="w-4 h-4" /> : loc('document.permission.add', '添加')}

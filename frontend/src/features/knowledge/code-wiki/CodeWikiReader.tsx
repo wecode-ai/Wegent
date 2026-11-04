@@ -436,7 +436,7 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
           size="sm"
           onClick={() => router.push('/knowledge?type=document')}
           data-testid="code-wiki-back-to-list"
-          className="h-11 sm:h-9"
+          className="h-11 min-w-11 md:h-9"
         >
           <ArrowLeft className="mr-1.5 h-4 w-4" />
           {projectName || wiki.name}
@@ -450,7 +450,7 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
             disabled={control.disabled}
             title={control.hint || undefined}
             data-testid="code-wiki-regenerate"
-            className="h-11 sm:h-9"
+            className="h-11 min-w-11 md:h-9"
           >
             <RefreshCw className={`mr-1.5 h-4 w-4 ${control.busy ? 'animate-spin' : ''}`} />
             {hasPublishedVersion ? t('codeWiki.reader.update') : control.label}
