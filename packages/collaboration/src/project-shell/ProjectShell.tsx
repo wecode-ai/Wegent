@@ -109,12 +109,14 @@ export function ProjectShell({
   const assistantRef = useRef<HTMLButtonElement>(null)
   const searchRef = useRef<HTMLButtonElement>(null)
   const addRef = useRef<HTMLButtonElement>(null)
+  const rightActionsRef = useRef<HTMLDivElement>(null)
   const naturalWidthsRef = useRef({
     add: 0,
     assistant: 0,
     search: 0,
     title: 0,
     viewSwitcher: 0,
+    additionalActions: 0,
   })
   const [level, setLevel] = useState(0)
 
@@ -149,6 +151,14 @@ export function ProjectShell({
       const assistantWidth = assistantOpen ? 0 : rememberWidth('assistant', assistantRef.current)
       const searchWidth = rememberWidth('search', searchRef.current)
       const addWidth = rememberWidth('add', addRef.current)
+      const additionalActionsWidth = Math.max(
+        naturalWidthsRef.current.additionalActions,
+        (rightActionsRef.current?.getBoundingClientRect().width ?? 0) -
+          (addRef.current?.getBoundingClientRect().width ?? 0) -
+          (searchRef.current?.getBoundingClientRect().width ?? 0)
+      )
+      // Compact labels must not release the width that caused them to collapse.
+      naturalWidthsRef.current.additionalActions = additionalActionsWidth
       setLevel(
         resolveProjectShellLevel({
           assistantOpen,
@@ -157,7 +167,7 @@ export function ProjectShell({
           widths: {
             add: addWidth,
             assistant: assistantWidth,
-            available: availableWidth,
+            available: Math.max(0, availableWidth - additionalActionsWidth),
             search: searchWidth,
             title: titleWidth,
             viewSwitcher: viewSwitcherWidth,
@@ -170,6 +180,7 @@ export function ProjectShell({
     if (typeof ResizeObserver === 'undefined') return
     const observer = new ResizeObserver(compute)
     observer.observe(header)
+    if (rightActionsRef.current) observer.observe(rightActionsRef.current)
     return () => observer.disconnect()
   })
 
@@ -215,14 +226,20 @@ export function ProjectShell({
         {assistantAction?.renderTooltip && assistantButton
           ? assistantAction.renderTooltip(assistantButton, assistantAction.label)
           : assistantButton}
-        {renderRightActions({
-          actionRefs: {
-            add: addRef,
-            search: searchRef,
-          },
-          level,
-          showLabels: level < 1,
-        })}
+        <div
+          ref={rightActionsRef}
+          data-testid="cloud-project-header-actions"
+          className="relative z-10 flex shrink-0 items-center gap-2 whitespace-nowrap"
+        >
+          {renderRightActions({
+            actionRefs: {
+              add: addRef,
+              search: searchRef,
+            },
+            level,
+            showLabels: level < 1,
+          })}
+        </div>
         {searchPanel}
       </header>
       {children}

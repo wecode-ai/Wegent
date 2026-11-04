@@ -24,6 +24,8 @@
     "packages/collaboration/src/i18n.*",
     "packages/collaboration/src/issue-detail/*",
     "packages/collaboration/src/project-board/*",
+    "packages/collaboration/src/project-shell/*",
+    "packages/collaboration/src/platform/platform.css",
     "packages/collaboration/src/workspace-header/ProjectViewSwitcher.*",
     "packages/collaboration/src/platform/WorkspaceResourceConfiguration*",
     "packages/collaboration/src/project-agent-config/*",

@@ -106,7 +106,7 @@ export function MilestoneBulkAction({
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <div className="flex max-w-full shrink-0 flex-wrap items-center gap-2">
       <MilestonePicker
         api={api.milestones}
         query={query}
@@ -129,7 +129,7 @@ export function MilestoneBulkAction({
         type="button"
         data-testid="milestone-bulk-apply"
         disabled={busy || value === undefined || query.loading || query.error}
-        className="min-h-11 rounded-md border border-border px-3 text-sm md:min-h-8"
+        className="min-h-11 shrink-0 whitespace-nowrap rounded-md border border-border px-3 text-sm md:min-h-8"
         onClick={() => void apply()}
       >
         {failures.length ? m.retryFailed : m.apply}

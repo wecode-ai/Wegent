@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { createCollaborationBoardIssue } from '../modules/collaboration-board-issue.mjs'
+import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 import {
   createLocalCollaborationProject,
   configureFirstProjectExecutionEnvironment,
@@ -62,6 +63,48 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     await control.command('select', scoped('milestone-bulk-select'), { value: id ?? '' })
     await control.command('clickWhenEnabled', scoped('milestone-bulk-apply'))
     await control.command('waitFor', `${scoped('milestone-bulk-apply')}:enabled`)
+  }
+  const assertCompactActions = async (control, table = false) => {
+    await waitForValue(
+      async () => ({
+        header: JSON.parse(
+          await control.command('getElementMetrics', scoped('cloud-project-header'))
+        )[0],
+        actions: JSON.parse(
+          await control.command('getElementMetrics', scoped('cloud-project-header-actions'))
+        )[0],
+      }),
+      ({ header, actions }) => actions.left >= header.left && actions.right <= header.right + 1,
+      'Project actions must fit the header after responsive layout settles',
+      uiTimeoutMs
+    )
+    const selectors = [`${scoped('cloud-project-header-actions')} button`]
+    if (table) selectors.push(`${scoped('collaboration-issue-table-batch')} button`)
+    for (const selector of selectors) {
+      const metrics = JSON.parse(await control.command('getElementMetrics', selector))
+      const visible = metrics.filter(item => item.width > 0 && item.height > 0)
+      assert.ok(visible.length > 0, `Expected visible actions: ${selector}`)
+      for (const item of visible) {
+        assert.ok(item.height <= 44, `Action text must stay on one line: ${JSON.stringify(item)}`)
+        assert.ok(
+          item.scrollHeight <= item.clientHeight + 1,
+          'Action text must not overflow vertically'
+        )
+        assert.ok(
+          item.scrollWidth <= item.clientWidth + 1,
+          'Action text must not overflow horizontally'
+        )
+      }
+    }
+    if (table) {
+      const [count] = JSON.parse(
+        await control.command(
+          'getElementMetrics',
+          `${scoped('collaboration-issue-table-batch')} strong`
+        )
+      )
+      assert.ok(count.height <= 24, 'The selection count must stay on one line')
+    }
   }
 
   return {
@@ -224,6 +267,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       assert.ok(localProject)
       await configureFirstProjectExecutionEnvironment(control, CONTENT, uiTimeoutMs)
       await openMilestones(control)
+      await control.command('waitFor', scoped('milestones-page'), { text: '暂无里程碑' })
       await captureScreenshot(control, 'milestones-04-local-empty.png', 'body')
       await control.command('click', scoped('milestone-create'))
       await control.command('fill', scoped('milestone-title'), { value: 'Local release' })
@@ -292,6 +336,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       const windowSize = await control.command('setMainWindowSize', 'body', {
         value: JSON.stringify({ width: 900, height: 760 }),
       })
+      await assertCompactActions(control)
       await captureScreenshot(control, 'milestones-07b-local-narrow.png', 'body')
       const [narrowPage] = JSON.parse(
         await control.command('getElementMetrics', scoped('milestones-page'))
@@ -361,6 +406,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await control.command('waitFor', `${scoped('issue-milestone')}:enabled`)
       assert.equal(await control.command('getValue', scoped('issue-milestone')), '')
       await control.command('select', scoped('issue-milestone'), { value: followUp.id })
+      await waitForValue(
+        () => control.command('getValue', scoped('issue-milestone')),
+        value => value === followUp.id,
+        'The selected milestone must appear before capturing the creation draft',
+        uiTimeoutMs
+      )
       await captureScreenshot(control, 'milestones-08e-context-create.png', 'body')
       await control.command('clickWhenEnabled', scoped('cloud-todo-create-confirm'))
       await control.command('waitFor', scoped('collaboration-issue-detail'), {
@@ -369,6 +420,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await control.command('click', scoped('cloud-todo-detail-close'))
       await control.command('click', scoped('milestones-back'))
       await bulkMilestone(control, followUp.id)
+      await assertCompactActions(control, true)
       await captureScreenshot(control, 'milestones-08c-local-table-bulk.png', 'body')
       await openMilestones(control)
       await control.command('waitFor', scoped(`milestone-${followUp.id}`), { text: '50%' })
@@ -425,6 +477,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await control.command('waitFor', scoped(`cloud-todo-card-${child.id}`), {
         text: 'Cross-milestone child',
       })
+      await control.command('scrollIntoView', scoped(`cloud-todo-card-${child.id}`))
+      await assertCompactActions(control)
       await captureScreenshot(control, 'milestones-08f-cross-milestone-children.png', 'body')
       await control.command(
         'clickWhenEnabled',

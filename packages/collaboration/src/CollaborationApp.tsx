@@ -430,6 +430,26 @@ export function CollaborationApp({
     project &&
     ["local", "backend"].includes(project.task_provider),
   );
+  const milestoneFilterControl =
+    milestonesEnabled && project ? (
+      <div className="min-w-0 max-w-full shrink-0">
+        <MilestonePicker
+          api={api.milestones}
+          projectId={project.id}
+          value={currentMilestoneFilter}
+          onChange={(value) =>
+            setMilestoneFilter({ projectId: project.id, value })
+          }
+          label={milestoneLabels.title}
+          noneLabel={milestoneLabels.none}
+          allLabel={milestoneLabels.all}
+          errorLabel={milestoneLabels.error}
+          retryLabel={milestoneLabels.retry}
+          onMissingValue={() => setMilestoneFilter(null)}
+          testId="milestone-filter"
+        />
+      </div>
+    ) : null;
 
   const renderIssueTable = (
     tableIssues: CollaborationIssue[],
@@ -444,6 +464,7 @@ export function CollaborationApp({
     return (
       <ProjectIssueTable
         issues={tableIssues}
+        toolbarAction={view === "table" ? milestoneFilterControl : null}
         renderBulkActions={
           milestonesEnabled
             ? (selected) => (
@@ -812,26 +833,6 @@ export function CollaborationApp({
               }
               renderRightActions={({ actionRefs, showLabels }) => (
                 <>
-                  {milestonesEnabled &&
-                  (host.location.view === "board" ||
-                    host.location.view === "table") ? (
-                    <MilestonePicker
-                      api={api.milestones}
-                      projectId={project.id}
-                      value={currentMilestoneFilter}
-                      onChange={(value) =>
-                        setMilestoneFilter({ projectId: project.id, value })
-                      }
-                      label={milestoneLabels.title}
-                      noneLabel={milestoneLabels.none}
-                      allLabel={milestoneLabels.all}
-                      errorLabel={milestoneLabels.error}
-                      retryLabel={milestoneLabels.retry}
-                      compact={!showLabels}
-                      onMissingValue={() => setMilestoneFilter(null)}
-                      testId="milestone-filter"
-                    />
-                  ) : null}
                   {host.renderProjectHeaderAction?.(project)}
                   {host.location.view === "board" ||
                   host.location.view === "calendar" ||
@@ -841,6 +842,8 @@ export function CollaborationApp({
                       type="button"
                       className="relative z-10 ml-2 flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg bg-text-primary px-3 text-sm font-medium text-background"
                       data-testid={collaborationTestIds.createIssue}
+                      aria-label={messages.createIssue}
+                      title={messages.createIssue}
                       onClick={requestIssueCreate}
                     >
                       <span aria-hidden="true">＋</span>
@@ -852,6 +855,8 @@ export function CollaborationApp({
                       type="button"
                       className="relative z-10 ml-2 flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background px-3 text-sm text-text-primary hover:bg-muted"
                       data-testid={action.testId}
+                      aria-label={action.label}
+                      title={action.label}
                       key={action.id}
                       onClick={() => action.invoke(project)}
                     >
@@ -912,7 +917,12 @@ export function CollaborationApp({
                           </div>
                         </div>
                       }
-                      toolbarAction={host.renderBoardToolbarAction?.(project)}
+                      toolbarAction={
+                        <>
+                          {milestoneFilterControl}
+                          {host.renderBoardToolbarAction?.(project)}
+                        </>
+                      }
                       onMarkRead={(issue) => void commands.markIssueRead(issue)}
                       runtime={api.runtime}
                       previewDisabled={Boolean(selectedIssue)}

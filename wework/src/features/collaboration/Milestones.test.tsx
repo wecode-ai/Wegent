@@ -462,6 +462,6 @@ describe('Milestones', () => {
     await screen.findByRole('alert')
     view.rerender(<MilestoneBulkAction {...props} issues={[{ ...failed, id: 'I-2' }]} />)
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
-    expect(screen.getByTestId('milestone-bulk-apply')).toHaveTextContent('Apply')
+    expect(screen.getByTestId('milestone-bulk-apply')).toHaveTextContent(/^Apply milestone$/)
   })
 })
