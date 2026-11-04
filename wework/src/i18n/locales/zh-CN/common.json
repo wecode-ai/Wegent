@@ -6007,6 +6007,6 @@
     "editor": "来源规则",
     "query_placeholder": "输入关键词，或留空列出资源",
     "publication_visibility": "按此要求生成的 Issue 内容将对项目成员可见。",
-    "no_issue_rules": "暂无 Issue / 定时规则"
+    "no_issue_rules": "暂无自动处理规则（Issue / 定时）"
   }
 }

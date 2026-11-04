@@ -701,7 +701,7 @@ export function ProjectAutomaticProcessing({
               <div className="py-12 text-center text-sm text-text-secondary">
                 {translate(
                   "automation_rules.no_issue_rules",
-                  "暂无 Issue / 定时规则",
+                  "暂无自动处理规则（Issue / 定时）",
                 )}
               </div>
             ) : null}

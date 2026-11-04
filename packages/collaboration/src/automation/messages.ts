@@ -87,7 +87,7 @@ export const automationRuleMessages: Record<
     "automation_rules.query_placeholder": "输入关键词，或留空列出资源",
     "automation_rules.publication_visibility":
       "按此要求生成的 Issue 内容将对项目成员可见。",
-    "automation_rules.no_issue_rules": "暂无 Issue / 定时规则",
+    "automation_rules.no_issue_rules": "暂无自动处理规则（Issue / 定时）",
   },
   en: {
     "automation_rules.conditions": "When conditions match",

@@ -322,6 +322,22 @@ export function createDesktopScenario({
             `${root} [data-testid="connection-rule-issue-${runs.items[0].id}"]`
           )
           await control.command('waitFor', `${root} [data-testid="cloud-todo-detail-close"]`)
+          await control.command('finishAnimations', 'body')
+          await waitFor(
+            async () =>
+              JSON.parse(
+                await control.command(
+                  'getElementMetrics',
+                  `${root} [data-testid="cloud-todo-detail"]`
+                )
+              )[0],
+            panel =>
+              panel &&
+              panel.width > 0 &&
+              panel.left >= 0 &&
+              panel.right <= panel.viewportWidth + 1 &&
+              panel.bottom <= panel.viewportHeight + 1
+          )
           await captureScreenshot(control, 'connection-rules-05b-opened-issue.png')
           await control.command(
             'clickWhenEnabled',
@@ -407,7 +423,7 @@ export function createDesktopScenario({
             'Rechecking a source must preserve the collection checkpoint'
           )
           await captureScreenshot(control, 'connection-rules-06c-source-recovered.png')
-          await verifyPersonalRule(control, rpc, resource, captureScreenshot)
+          await verifyPersonalRule(control, rpc, resource, captureScreenshot, waitFor)
         } finally {
           database.close()
         }
@@ -430,7 +446,7 @@ export function createDesktopScenario({
   }
 }
 
-async function verifyPersonalRule(control, rpc, resource, capture) {
+async function verifyPersonalRule(control, rpc, resource, capture, waitFor) {
   const original = await rpc(control, 'runtime.stand_in.personal.get', { userId: USER })
   const prefix = `stand-in-connection-${PROVIDER}-policy-${resource.id}`
   try {
@@ -467,13 +483,26 @@ async function verifyPersonalRule(control, rpc, resource, capture) {
     await control.command('fill', `[data-testid="${prefix}-rule-instruction"]`, {
       value: 'Prepare a private reminder for me.',
     })
+    await control.command('scrollIntoView', `[data-testid="${prefix}-rule-instruction"]`)
+    await control.command('finishAnimations', 'body')
     await capture(control, 'connection-rules-07-personal-editor.png')
+    await control.command('scrollIntoView', `[data-testid="${prefix}-enabled"]`)
     await control.command('click', `[data-testid="${prefix}-enabled"]`)
     assert.equal(
       await control.command('getAttribute', `[data-testid="${prefix}-enabled"]`, {
         value: 'aria-checked',
       }),
       'false'
+    )
+    await control.command('finishAnimations', 'body')
+    await waitFor(
+      async () =>
+        Promise.all([
+          control.command('getElementMetrics', `[data-testid="${prefix}-enabled"] > span`),
+          control.command('getElementMetrics', `[data-testid="${prefix}-enabled"] > span > span`),
+        ]).then(values => values.map(value => JSON.parse(value)[0])),
+      ([track, thumb]) =>
+        track && thumb && Math.abs(thumb.left - track.left - (track.height - thumb.height) / 2) <= 1
     )
     await capture(control, 'connection-rules-08-personal-paused.png')
     await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-save"]')
