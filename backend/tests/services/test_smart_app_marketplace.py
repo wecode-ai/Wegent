@@ -770,6 +770,30 @@ def test_new_version_without_images_keeps_the_current_icon_and_screenshots(
     assert list(app.screenshots_json or []) == screenshot_keys
 
 
+def test_draft_app_cannot_be_published_without_an_icon(test_db, test_user, monkeypatch):
+    recipient = _user(test_db, "draft-icon-recipient")
+    package = _package()
+    _mock_storage(monkeypatch)
+    first = smart_app_marketplace_service.init_submission(
+        test_db, user_id=test_user.id, request=_submission(package, recipient)
+    )
+    smart_app_marketplace_service.cancel_submission(
+        test_db, submission_id=first.submissionId, user_id=test_user.id
+    )
+
+    next_package = _package(version="1.1.0")
+    request = _submission(next_package, recipient, version="1.1.0")
+    request.smartAppId = first.smartAppId
+    request.iconDataUrl = None
+
+    with pytest.raises(HTTPException) as error:
+        smart_app_marketplace_service.init_submission(
+            test_db, user_id=test_user.id, request=request
+        )
+
+    assert error.value.status_code == 422
+
+
 def test_uploaded_package_hash_must_match_submission(test_db, test_user, monkeypatch):
     recipient = _user(test_db, "hash-recipient")
     package = _package()

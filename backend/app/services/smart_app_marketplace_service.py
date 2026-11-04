@@ -183,6 +183,8 @@ class SmartAppMarketplaceService:
             name=request.name,
             display_name=request.displayName,
         )
+        if icon is None and not app.icon_storage_key:
+            raise HTTPException(status_code=422, detail="Smart app icon is required")
         scope = request.scope or app.visibility
         targets = []
         if scope == "restricted":
