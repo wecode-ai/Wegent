@@ -163,6 +163,28 @@ test.each(['pending', 'rollback-selected'])(
   }
 )
 
+test('hands the selected legacy host its physical userData before native launch', async () => {
+  startup.bridge = process.execPath
+  startup.activeRelease = {
+    id: 'installed-source',
+    executable: join(startup.home, 'legacy/WeWork.exe'),
+  }
+  startup.legacyUserData = join(startup.home, '.wegent/workbench/wework/default/user-data')
+  startup.ready.mockResolvedValue(undefined)
+
+  await import('./bootstrap.js')
+
+  await vi.waitFor(() => expect(startup.relaunch).toHaveBeenCalled())
+  expect(startup.bridgeHandoff).toHaveBeenCalledWith(
+    expect.anything(),
+    startup.activeRelease.executable,
+    startup.legacyUserData
+  )
+  expect(process.env.WEWORK_USER_DATA_DIR).toBe(startup.legacyUserData)
+  expect(process.env.WEWORK_RELEASE_ROOT).toBe(join(startup.legacyUserData, 'releases'))
+  expect(startup.showErrorBox).not.toHaveBeenCalled()
+})
+
 if (process.platform === 'darwin') {
   test('macOS rollback uses the loaded bootstrap installer rather than the legacy bridge launcher', async () => {
     const resources = join(startup.home, 'installed.app/Contents/Resources')

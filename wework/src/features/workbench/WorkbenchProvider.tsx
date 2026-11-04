@@ -160,6 +160,7 @@ import {
   RuntimeTaskLifecycleProvider,
   RuntimeTaskLifecycleStore,
   useRuntimeTaskLifecycleStoreSnapshot,
+  useRuntimeTaskSummaryResolver,
 } from './runtimeTaskLifecycle'
 import {
   applyRuntimeConversationSubagentActivity,
@@ -185,7 +186,6 @@ import {
   findSelectableProject,
   findProjectDeviceWorkspace,
   findProjectMetadataDeviceWorkspace,
-  findRuntimeTask,
   getRememberedStandaloneDeviceId,
   getDefaultProjectDeviceWorkspaceId,
   readLastProjectId,
@@ -315,6 +315,10 @@ export function WorkbenchProvider({
     }
   }, [])
   const [state, dispatch] = useReducer(workbenchReducer, initialWorkbenchState)
+  const resolveRuntimeTaskSummary = useRuntimeTaskSummaryResolver(
+    state.runtimeWork,
+    sharedLifecycleStore
+  )
   // The cloud connection context falls back to a synthetic "backend" user when
   // no real cloud provider is mounted; never let that placeholder override the
   // authenticated user. With a real connection, the cloud identity is the one
@@ -853,13 +857,13 @@ export function WorkbenchProvider({
   const modelSelectionConfig = useMemo(() => {
     if (state.currentRuntimeTask) {
       return (
-        findRuntimeTask(state.runtimeWork, state.currentRuntimeTask)?.modelSelection ??
+        resolveRuntimeTaskSummary(state.currentRuntimeTask)?.modelSelection ??
         modelSelectionFromRuntimeHandle(state.currentRuntimeTask.runtimeHandle) ??
         null
       )
     }
     return projectModelSelection ?? getNewChatModelSelection(currentUser) ?? null
-  }, [currentUser, projectModelSelection, state.currentRuntimeTask, state.runtimeWork])
+  }, [currentUser, projectModelSelection, resolveRuntimeTaskSummary, state.currentRuntimeTask])
   const defaultModelSelectionConfig = useCallback(
     (models: UnifiedModel[]) => defaultNewChatModelSelection(models),
     []
@@ -982,8 +986,7 @@ export function WorkbenchProvider({
         currentRuntimeTask: null,
         standaloneChatKey: nextStandaloneChatKey,
       })
-      const sourceTitle =
-        findRuntimeTask(state.runtimeWork, sourceTask)?.title.trim() || sourceTask.taskId
+      const sourceTitle = resolveRuntimeTaskSummary(sourceTask)?.title.trim() || sourceTask.taskId
       const reference = createConversationMentionReference(sourceTitle, sourceTask)
       const currentDraft = (source?.draft ?? draftInputByScope[projectChatScopeKey] ?? '').trim()
       const nextDraft = currentDraft
@@ -1030,10 +1033,10 @@ export function WorkbenchProvider({
       selectModelForScope,
       projectChatScopeKey,
       projectModelSelection,
+      resolveRuntimeTaskSummary,
       setDraftInputForScope,
       state.currentProject,
       state.currentRuntimeTask,
-      state.runtimeWork,
       state.selectedDeviceWorkspaceId,
       state.standaloneChatKey,
       state.standaloneDeviceId,
@@ -1049,7 +1052,7 @@ export function WorkbenchProvider({
     setRuntimeTaskSelectedModelOption,
   } = useRuntimeTaskModelSelection({
     userId: user.id,
-    runtimeWork: state.runtimeWork,
+    resolveTask: resolveRuntimeTaskSummary,
     modelStore: modelSelection,
   })
   const conversationModels = modelSelection.models
@@ -1805,7 +1808,7 @@ export function WorkbenchProvider({
       if (!resolvedServices.runtimeWorkApi) {
         return Promise.reject(new Error('Runtime work API is unavailable'))
       }
-      const task = findRuntimeTask(state.runtimeWork, address)
+      const task = resolveRuntimeTaskSummary(address)
       const taskTitle = task?.title.trim()
       if (!taskTitle) {
         return Promise.reject(new Error('Runtime task title is unavailable'))
@@ -1831,7 +1834,7 @@ export function WorkbenchProvider({
         ...(taskModelSelection ? { modelSelection: taskModelSelection } : {}),
       })
     },
-    [modelSelection.models, resolvedServices, state.runtimeWork]
+    [modelSelection.models, resolveRuntimeTaskSummary, resolvedServices]
   )
 
   const getImNotificationSettings = useCallback(() => {
@@ -1928,7 +1931,7 @@ export function WorkbenchProvider({
   const resolveRuntimeContextUsage = useCallback(
     (address: RuntimeTaskAddress, usage: RuntimeContextUsage): RuntimeContextUsage => {
       const taskSelection =
-        findRuntimeTask(state.runtimeWork, address)?.modelSelection ??
+        resolveRuntimeTaskSummary(address)?.modelSelection ??
         modelSelectionFromRuntimeHandle(address.runtimeHandle) ??
         null
       const selectedModel = modelSelection.selectedModel
@@ -1942,12 +1945,12 @@ export function WorkbenchProvider({
 
       return applyModelContextWindowOverride(usage, taskModel ?? matchingSelectedModel)
     },
-    [modelSelection.models, modelSelection.selectedModel, state.runtimeWork]
+    [modelSelection.models, modelSelection.selectedModel, resolveRuntimeTaskSummary]
   )
   const resolveModelForAddress = useCallback(
     (address: RuntimeTaskAddress): UnifiedModel | null => {
       const taskSelection =
-        findRuntimeTask(state.runtimeWork, address)?.modelSelection ??
+        resolveRuntimeTaskSummary(address)?.modelSelection ??
         modelSelectionFromRuntimeHandle(address.runtimeHandle) ??
         null
       const selectedModel = modelSelection.selectedModel
@@ -1960,7 +1963,7 @@ export function WorkbenchProvider({
           : null
       return taskModel ?? matchingSelectedModel
     },
-    [modelSelection.models, modelSelection.selectedModel, state.runtimeWork]
+    [modelSelection.models, modelSelection.selectedModel, resolveRuntimeTaskSummary]
   )
   const knownModelIds = useMemo(() => {
     const ids = new Set<string>()

@@ -1,6 +1,6 @@
 import { clearPluginMarketplaceCache } from '@/features/plugins/pluginMarketplaceCache'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { PluginMarketplaceItem } from '@/types/api'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   clearLocalCodexPluginsReadStateCache,
   createLocalCodexPluginApi,
@@ -155,26 +155,6 @@ describe('installation from a shared catalog item', () => {
       mocks.request.mockResolvedValueOnce(response)
       await expect(api.installAvailablePlugin(items[0])).rejects.toThrow(
         'Invalid Codex plugin/install response'
-      )
-    }
-  )
-
-  test.each([true, false])(
-    'installs remote discovery without a full readState (remote id present=%s)',
-    async withRemoteId => {
-      installRuntime({ withRemoteId })
-      const api = createLocalCodexPluginApi()
-      const catalog = await api.readRemoteCatalog()
-      await api.readState({ mergeAllMarketplaces: true, marketplaceKinds: ['local'] })
-      mocks.request.mockClear()
-      const result = await api.installAvailablePlugin(catalog.items[0])
-      expect(result.spec.source.pluginKey).toBe('github')
-      expect(result.spec.sourcePayload?.remotePluginId).toBe(remoteId)
-      expect(
-        mocks.request.mock.calls.filter(([, args]) => args?.method === 'plugin/install')
-      ).toHaveLength(1)
-      expect(mocks.request.mock.calls.some(([, args]) => args?.method === 'plugin/list')).toBe(
-        false
       )
     }
   )

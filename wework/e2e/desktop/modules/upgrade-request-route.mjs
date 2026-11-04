@@ -20,11 +20,13 @@ export async function routeUpgradeRequests(child, origin, logPath) {
       console.error('[desktop-e2e-inspector] Cannot retain transport diagnostics:', error.code)
     }
   }
-  await inspectBeforeStart(
-    child,
-    `(() => {
+  await inspectBeforeStart(child, upgradeTransportScript(origin, pauseArgument), log)
+}
+
+export function upgradeTransportScript(origin, pauseArgument) {
+  return `(() => {
     const require = process.getBuiltinModule('module').createRequire(process.execPath)
-    const {app, session} = require('electron')
+    const {app, session, dialog} = require('electron')
     const pauseArgument = ${JSON.stringify(pauseArgument)}
     const launchArguments = process.argv.slice(1).filter(argument => argument !== pauseArgument)
     process.argv = [process.argv[0], ...launchArguments]
@@ -38,6 +40,13 @@ export async function routeUpgradeRequests(child, origin, logPath) {
       args: (options?.args ?? launchArguments).filter(argument => argument !== pauseArgument)
     })
     if (${Boolean(process.env.WEWORK_UPGRADE_DIAGNOSTIC_CHECKPOINT)}) {
+      // Startup failures can occur before product logging is initialized. Keep
+      // the native error dialog and retain its exact message in CI diagnostics.
+      const showErrorBox = dialog.showErrorBox.bind(dialog)
+      dialog.showErrorBox = (title, content) => {
+        console.error('[desktop-e2e-startup-error]', JSON.stringify({title, content}))
+        return showErrorBox(title, content)
+      }
       const report = () => console.log('[desktop-e2e-startup]', JSON.stringify({
         pid: process.pid, ready: app.isReady(), userData: app.getPath('userData')
       }))
@@ -53,8 +62,8 @@ export async function routeUpgradeRequests(child, origin, logPath) {
         ${JSON.stringify(origin + '/')} + request.url.slice(${publishedBase.length})})
     )
     if (app.isReady()) install()
-    else app.once('ready', install)
-  })()`,
-    log
-  )
+    // Join the same promise before application code registers its first fetch.
+    // Electron can resolve it before notifying ready-event observers.
+    else app.whenReady().then(install)
+  })()`
 }

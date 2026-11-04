@@ -11,6 +11,7 @@ import { acquireProcessLock } from '../../scripts/lib/process-lock.mjs'
 import identityModule from './build-identity.cjs'
 import builderConfig from '../electron-builder.config.cjs'
 import macosAppIcon from './macos-app-icon.cjs'
+import bundledComponentLayout from './bundled-component-layout.cjs'
 import { wrapWindowsScriptCommand } from '../../scripts/child-process-command.mjs'
 
 // Electron-as-Node otherwise treats app.asar as a virtual directory during cleanup.
@@ -105,9 +106,9 @@ try {
       join(electronRoot, 'resources', 'harness-runtime'),
       join(electronRoot, 'resources', 'bin'),
       join(electronRoot, 'resources', 'codex'),
-      join(electronRoot, 'resources', 'wework-core-plugins'),
-      join(electronRoot, 'resources', 'wework-app-static'),
-      join(electronRoot, 'resources', 'bundled-plugins'),
+      ...bundledComponentLayout.directories.map(name =>
+        join(electronRoot, 'resources', `${name}.tar.gz`)
+      ),
       join(electronRoot, 'resources', 'components.json'),
       join(sharedResourcesRoot, 'licenses'),
       join(sharedResourcesRoot, 'icons'),

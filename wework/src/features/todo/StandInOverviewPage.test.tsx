@@ -1,7 +1,3 @@
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
-import { expect, it, vi } from 'vitest'
-import type { CollaborationProject, SharedWorkspaceApi } from '@wegent/collaboration'
 import {
   newStandInRole,
   publishPersonalStandIn,
@@ -9,12 +5,16 @@ import {
   type StandInRole,
 } from '@/api/personalStandIn'
 import type { StandInInboxWork } from '@/api/standIn'
+import { runtimeItem } from '@/features/notifications/standInNotifications.fixtures'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import type { WorkbenchContextValue } from '@/features/workbench/workbenchContextTypes'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import { runtimeItem } from '@/features/notifications/standInNotifications.fixtures'
 import '@/i18n'
 import { WORKSPACE_NAVIGATION_EVENT } from '@/lib/navigation'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import type { CollaborationProject, SharedWorkspaceApi } from '@wegent/collaboration'
+import { expect, it, vi } from 'vitest'
 import { StandInOverviewPage } from './StandInOverviewPage'
 const menuMocks = vi.hoisted(() => ({ leave: vi.fn((action: () => void) => action()) }))
 vi.mock('@/features/automations/AutomationsPage', async () => {
@@ -91,6 +91,12 @@ function fixture(roles: StandInRole[] = [newStandInRole('device', 'default')]) {
   return { props, personalAgents, personalSave }
 }
 
+async function openRoles() {
+  const selector = await screen.findByTestId('stand-in-role-selector')
+  await waitFor(() => expect(screen.getByTestId('stand-in-settings-open')).toBeEnabled())
+  expect(selector).toBeVisible()
+}
+
 it('lists existing stand-ins without execution history and keeps project names separate', async () => {
   const role = newStandInRole('device', 'default')
   role.collaboration = {
@@ -102,6 +108,7 @@ it('lists existing stand-ins without execution history and keeps project names s
   const { props } = fixture([role])
   props.projects[0].name = 'Downloads'
   render(<StandInOverviewPage {...props} />)
+  await openRoles()
   const row = await screen.findByTestId('stand-in-overview-role-default')
   expect(within(row).getByText('默认分身')).toBeInTheDocument()
   expect(within(row).getByText('Downloads')).toBeInTheDocument()
@@ -116,6 +123,7 @@ it('opens settings for the selected stand-in and reflects its renamed identity',
   const { props } = fixture([first, second])
   const user = userEvent.setup()
   render(<StandInOverviewPage {...props} />)
+  await openRoles()
   await user.click(await screen.findByTestId('stand-in-overview-role-second'))
   expect(await screen.findByTestId('stand-in-activity')).toHaveTextContent('尚无处理记录')
   expect(screen.queryByTestId('stand-in-settings')).not.toBeInTheDocument()
@@ -130,6 +138,7 @@ it('opens settings for the selected stand-in and reflects its renamed identity',
   await user.clear(name)
   await user.type(name, '代码审查')
   await user.click(screen.getByTestId('stand-in-save'))
+  await openRoles()
   await waitFor(() =>
     expect(screen.getByTestId('stand-in-overview-role-second')).toHaveTextContent('代码审查')
   )
@@ -218,6 +227,7 @@ it('hides empty message associations while preserving existing execution history
     sourceErrors: [],
   })
   render(<StandInOverviewPage {...props} />)
+  await openRoles()
   await userEvent.click(await screen.findByTestId('stand-in-overview-role-default'))
   expect(await screen.findByTestId('stand-in-activity-task-history')).toHaveTextContent(
     'Completed work'
@@ -246,7 +256,9 @@ it.each(['primary', 'role', 'memory'] as const)(
     const { props } = fixture()
     const user = userEvent.setup()
     render(<StandInOverviewPage {...props} />)
+    await openRoles()
     await screen.findByTestId('stand-in-overview-role-default')
+    await openRoles()
     if (panel === 'role') await user.click(screen.getByTestId('stand-in-overview-role-default'))
     await user.click(
       screen.getByTestId(panel === 'memory' ? 'stand-in-memory-open' : 'stand-in-settings-open')
@@ -267,6 +279,7 @@ it('keeps the drawer open when a text selection ends outside it', async () => {
   const { props } = fixture()
   const user = userEvent.setup()
   render(<StandInOverviewPage {...props} />)
+  await openRoles()
   await screen.findByTestId('stand-in-overview-role-default')
   await user.click(screen.getByTestId('stand-in-settings-open'))
   fireEvent.mouseDown(await screen.findByTestId('stand-in-primary-profile'))
@@ -284,7 +297,9 @@ it.each(['primary', 'role', 'create', 'memory'] as const)(
     const { props, personalSave } = fixture()
     const user = userEvent.setup()
     render(<StandInOverviewPage {...props} />)
+    await openRoles()
     await screen.findByTestId('stand-in-overview-role-default')
+    await openRoles()
     if (panel === 'role') await user.click(screen.getByTestId('stand-in-overview-role-default'))
     await user.click(
       screen.getByTestId(
@@ -364,6 +379,7 @@ it('groups actual stand-in executions by project, excludes ordinary tasks, and o
       <StandInOverviewPage {...props} onOpenTask={onOpenTask} />
     </WorkbenchContext.Provider>
   )
+  await openRoles()
   await user.click(await screen.findByTestId('stand-in-overview-role-default'))
   const group = await screen.findByTestId('stand-in-activity-project')
   expect(group).toHaveTextContent('Example project')
@@ -383,11 +399,12 @@ it('preserves the mounted conversation when settings refresh fails', async () =>
   const settings = await api.personalGet(7, 'device')
   render(<StandInOverviewPage {...props} />)
   const conversation = await screen.findByTestId('identity-conversation')
+  await openRoles()
   await screen.findByTestId('stand-in-overview-role-default')
   vi.mocked(api.personalGet).mockRejectedValue(new Error('settings unavailable'))
   act(() => publishPersonalStandIn(settings))
   expect(await screen.findByRole('alert')).toHaveTextContent(
-    '分身操作失败，请稍后重试；如仍失败，请查看执行设备日志。'
+    '未能加载分身设置。请检查执行设备是否在线，再点击「重新加载」。'
   )
   expect(screen.getByTestId('identity-conversation')).toBe(conversation)
   vi.mocked(api.personalGet).mockResolvedValue(settings)
@@ -470,15 +487,39 @@ it('keeps unsaved settings mounted when the menu requests scheduled work', async
   expect(screen.getByRole('dialog', { name: '有未保存的修改，是否放弃？' })).toBeInTheDocument()
 })
 
+it('waits for the primary settings before mounting a calendar deep link', async () => {
+  const { props } = fixture()
+  const getSettings = vi.mocked(props.services.standInApi!.personalGet)
+  const settings = await getSettings(7, 'device')
+  getSettings.mockClear()
+  let finishLoading!: () => void
+  getSettings.mockImplementationOnce(
+    () => new Promise(resolve => (finishLoading = () => resolve(settings)))
+  )
+  const user = userEvent.setup()
+  render(<StandInOverviewPage {...props} initialWorkView="scheduled" />)
+  await waitFor(() => expect(getSettings).toHaveBeenCalledTimes(1))
+  expect(screen.queryByTestId('stand-in-settings')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('stand-in-calendar-connection')).not.toBeInTheDocument()
+  await act(async () => finishLoading())
+  const primary = await screen.findByTestId('stand-in-primary-profile')
+  expect(screen.getByTestId('stand-in-calendar-connection')).toBeVisible()
+  await user.click(screen.getByTestId('stand-in-connections-back'))
+  expect(await screen.findByTestId('stand-in-time-connections')).toBeVisible()
+  expect(screen.getByTestId('stand-in-primary-profile')).toBe(primary)
+  expect(screen.queryByTestId('stand-in-calendar-connection')).not.toBeInTheDocument()
+})
+
 it('opens the calendar as a connection and protects its draft on every repeated menu request', async () => {
   const { props } = fixture()
   render(<StandInOverviewPage {...props} />)
+  await openRoles()
   await screen.findByTestId('stand-in-overview-role-default')
   expect(screen.queryByTestId('stand-in-work-view-scheduled')).not.toBeInTheDocument()
   requestScheduledWork()
   expect(await screen.findByTestId('stand-in-calendar-connection')).toBeInTheDocument()
   expect(screen.getByTestId('stand-in-primary-profile')).toHaveTextContent('连接')
-  expect(screen.queryByTestId('stand-in-primary-save')).not.toBeInTheDocument()
+  expect(screen.getByTestId('stand-in-primary-save')).toBeVisible()
   const calendar = screen.getByTestId('stand-in-calendar-connection')
   menuMocks.leave.mockImplementationOnce(() => {})
   const before = menuMocks.leave.mock.calls.length
@@ -515,6 +556,7 @@ it('locates the requested role after a different role was selected inside the pa
     <StandInOverviewPage {...props} initialProfileId="default" settingsRequestKey="first" />
   )
   await user.click(await screen.findByTestId('stand-in-cancel'))
+  await openRoles()
   await user.click(screen.getByTestId('stand-in-overview-role-other'))
   view.rerender(
     <StandInOverviewPage {...props} initialProfileId="default" settingsRequestKey="second" />
@@ -556,6 +598,7 @@ it('refreshes external configuration and returns to the primary identity on expl
   const api = props.services.standInApi!
   const settings = await api.personalGet(7, 'device')
   render(<StandInOverviewPage {...props} />)
+  await openRoles()
   await user.click(await screen.findByTestId('stand-in-overview-role-default'))
   const external = { ...newStandInRole('device', 'external'), name: 'External configuration' }
   vi.mocked(api.personalGet).mockResolvedValue({
@@ -569,6 +612,8 @@ it('refreshes external configuration and returns to the primary identity on expl
       })
     )
   })
+  await openRoles()
+  await openRoles()
   expect(await screen.findByTestId('stand-in-overview-role-external')).toHaveTextContent(
     'External configuration'
   )

@@ -17,6 +17,13 @@ sidebar_position: 4
 - **执行器管理器** (任务管理): pytest + pytest-mock + pytest-cov
 - **共享模块** (工具库): pytest + pytest-cov
 - **前端** (Next.js + React 19): Jest + @testing-library/react
+- **Wework** (Electron + React): Vitest + @testing-library/react，以及 Node.js 测试运行器
+
+## Wework 单元测试维护
+
+使用 `pnpm --filter wework test <测试文件>` 运行相关测试。测试清理按参数化展开后的用例数统计，不以文件数或 `test()` 声明数代替，也不通过跳过用例、合并测试或改变发现规则减少数量。
+
+优先保留任务创建与发送、权限和资源归属、持久化、故障恢复、状态机及升级回滚的行为覆盖。重复的输入、操作和断言可以删除；纯颜色、间距、图标和普通显示格式的独立测试可按维护需求裁剪。代码覆盖证据用于检查遗漏，不能单独证明两个用例的行为等价。清理后运行受影响的测试并核对断言，保留安全断言及独立的关键边界场景。
 
 ## 当前测试覆盖率
 

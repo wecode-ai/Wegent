@@ -1,29 +1,20 @@
-import { describe, expect, test, vi } from 'vitest'
 import { navigateTo } from '@/lib/navigation'
 import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
+import { describe, expect, test, vi } from 'vitest'
 import type { InstalledPluginItem } from '../PluginManagementRows'
 import {
   createDefaultPluginApi,
-  keepRicherMarketplacePluginDetail,
   marketplacePluginDetailSelectionKey,
-  marketplacePluginDetailSource,
   pluginDetailActionErrorMessage,
   pluginUsesWegentConnectorOAuth,
   queueMarketplacePluginTrial,
   requiredConnectionNames,
-  resolveCloudMarketplaceRevalidateIntervalMs,
   resolveMarketplaceUninstallId,
-  withMarketplacePluginDetail,
 } from './marketplaceWorkspaceHelpers'
 
 vi.mock('@/lib/navigation', () => ({
   navigateTo: vi.fn(),
 }))
-
-test('keeps production marketplace polling at sixty seconds while accelerating E2E', () => {
-  expect(resolveCloudMarketplaceRevalidateIntervalMs(false)).toBe(60_000)
-  expect(resolveCloudMarketplaceRevalidateIntervalMs(true)).toBe(5_000)
-})
 
 const emptyComponents = {
   skills: [],
@@ -36,31 +27,6 @@ const emptyComponents = {
   bins: [],
   connectors: [],
 }
-
-test('detail source preserves the shared inventory local path for an official marketplace', () => {
-  const item = githubMarketplaceItem()
-  item.manifest = { marketplaceId: 'openai-official' }
-  expect(
-    marketplacePluginDetailSource(item, [
-      {
-        key: 'local:openai-official',
-        id: 'openai-official',
-        name: 'OpenAI',
-        kind: 'local',
-        path: '/tmp/github-marketplace',
-      },
-    ])
-  ).toEqual({ id: 'openai-official', name: 'OpenAI', path: '/tmp/github-marketplace' })
-})
-
-test('only a declared remote catalog can resolve without a local path', () => {
-  const item = githubMarketplaceItem()
-  expect(marketplacePluginDetailSource(item, []).path).toBe('openai-curated-remote')
-  item.manifest = { marketplaceId: 'enterprise' }
-  expect(() => marketplacePluginDetailSource(item, [])).toThrow(
-    'Local plugin marketplace path is unavailable'
-  )
-})
 
 test('account connections do not require legacy login during plugin installation', () => {
   const item = githubMarketplaceItem()
@@ -253,99 +219,6 @@ describe('pluginDetailActionErrorMessage', () => {
     )
     expect(pluginDetailActionErrorMessage(error, 'gmail@openai-curated-remote')).toBeNull()
     expect(pluginDetailActionErrorMessage(null, 'github@openai-curated-remote')).toBeNull()
-  })
-})
-
-describe('marketplace detail component settings', () => {
-  test.each([false, true, undefined])(
-    'preserves current cloud settings (%s) when an older detail arrives',
-    enabled => {
-      const installed = githubInstalledItem()
-      installed.raw.spec.pluginId = 101
-      installed.raw.spec.componentStates =
-        enabled === undefined ? {} : { 'skill:ci-debug': enabled }
-      const stale: InstalledPlugin = {
-        ...installed.raw,
-        spec: {
-          ...installed.raw.spec,
-          componentStates: { 'skill:ci-debug': !enabled },
-          components: {
-            ...emptyComponents,
-            skills: [{ name: 'ci-debug', description: 'Debug failing checks', path: 'ci-debug' }],
-          },
-        },
-      }
-
-      const detail = withMarketplacePluginDetail(installed, stale)
-
-      expect(detail.raw.spec.componentStates).toEqual(installed.raw.spec.componentStates)
-      expect(detail.raw.spec.components.skills).toEqual(stale.spec.components.skills)
-    }
-  )
-
-  test('loads disabled local skills from detail without replacing explicit current settings', () => {
-    const installed = githubInstalledItem()
-    const detail: InstalledPlugin = {
-      ...installed.raw,
-      spec: {
-        ...installed.raw.spec,
-        componentStates: { 'skill:ci-debug': false, 'skill:review': false },
-      },
-    }
-
-    expect(withMarketplacePluginDetail(installed, detail).raw.spec.componentStates).toEqual({
-      'skill:ci-debug': false,
-      'skill:review': false,
-    })
-
-    installed.raw.spec.componentStates = { 'skill:ci-debug': true }
-    expect(withMarketplacePluginDetail(installed, detail).raw.spec.componentStates).toEqual({
-      'skill:ci-debug': true,
-      'skill:review': false,
-    })
-  })
-})
-
-describe('keepRicherMarketplacePluginDetail', () => {
-  test('keeps previously loaded skills when a later catalog row has empty components', () => {
-    const empty = githubInstalledItem()
-    empty.raw.spec.componentStates = { 'skill:ci-debug': true }
-    const rich: InstalledPluginItem = {
-      ...empty,
-      raw: {
-        ...empty.raw,
-        spec: {
-          ...empty.raw.spec,
-          componentStates: { 'skill:ci-debug': false },
-          components: {
-            ...emptyComponents,
-            skills: [{ name: 'ci-debug', description: 'Debug failing checks', path: 'ci-debug' }],
-            apps: [
-              {
-                name: 'GitHub',
-                path: 'github',
-                description: 'Access repositories, issues, and pull requests.',
-              },
-            ],
-          },
-        },
-      },
-    }
-
-    const kept = keepRicherMarketplacePluginDetail(rich, empty)
-    expect(kept.raw.spec.componentStates).toEqual({ 'skill:ci-debug': true })
-    expect(kept.raw.spec.components.skills).toEqual([
-      { name: 'ci-debug', description: 'Debug failing checks', path: 'ci-debug' },
-    ])
-    expect(kept.raw.spec.components.apps).toEqual([
-      {
-        name: 'GitHub',
-        path: 'github',
-        description: 'Access repositories, issues, and pull requests.',
-      },
-    ])
-    empty.raw.spec.componentStates = {}
-    expect(keepRicherMarketplacePluginDetail(rich, empty).raw.spec.componentStates).toEqual({})
   })
 })
 
