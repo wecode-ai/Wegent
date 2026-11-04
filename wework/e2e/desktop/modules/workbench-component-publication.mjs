@@ -61,6 +61,8 @@ import { basename, dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 const input = JSON.parse(process.argv[2])
 app.setPath('userData', join(input.root, 'electron'))
+const compositionRoot = join(input.root, 'data', 'managed-components', 'composed', 'wework-core-plugins')
+const runtimeRoot = join(input.root, 'runtimes')
 const originalSymlink = fs.symlink
 let child
 let closed
@@ -91,24 +93,27 @@ async function holdPath(path, { releaseAfterMs = 0, directory = false } = {}) {
   })]).finally(() => clearTimeout(timer))
 }
 fs.symlink = async (source, target, type) => {
-  if (basename(source).startsWith('.content-')) {
-    const file = basename(dirname(target)) === 'wework-core-plugins'
-      ? join('wework-app', 'client.js') : 'runtime.json'
-    // The rename targets the directory. An open descendant alone did not
-    // prevent the rename on the Windows runner.
-    await holdPath(source, { directory: true })
+  const parent = dirname(target)
+  const file = parent === compositionRoot ? join('wework-app', 'client.js') :
+    parent === runtimeRoot ? 'runtime.json' : null
+  if (!file || !basename(source).startsWith('.content-'))
+    return originalSymlink(source, target, type)
+
+  // The rename targets the directory. An open descendant alone did not
+  // prevent the rename on the Windows runner.
+  await holdPath(source, { directory: true })
+  try {
     await assert.rejects(fs.rename(source, source + '.blocked'), error =>
       ['EPERM', 'EACCES', 'EBUSY'].includes(error.code))
     await originalSymlink(source, target, type)
     assert.equal(await fs.readFile(join(target, file), 'utf8'),
       await fs.readFile(join(source, file), 'utf8'))
     occupiedPublications++
+  } finally {
     child.stdin.end('release' + String.fromCharCode(10))
     assert.equal(await closed, 0)
     child = null
-    return
   }
-  return originalSymlink(source, target, type)
 }
 syncBuiltinESMExports()
 try {
@@ -120,13 +125,12 @@ try {
   const paths = await new ComponentUpdateManager(options).prepareStartup()
   assert.equal(occupiedPublications, 1)
   assert.equal((await fs.lstat(paths.weworkCorePlugins)).isSymbolicLink(), true)
-  const entries = await fs.readdir(join(input.root, 'data', 'managed-components', 'composed', 'wework-core-plugins'))
+  const entries = await fs.readdir(compositionRoot)
   const restart = await new ComponentUpdateManager(options).prepareStartup()
   assert.equal(restart.weworkCorePlugins, paths.weworkCorePlugins)
-  assert.deepEqual(await fs.readdir(join(input.root, 'data', 'managed-components', 'composed', 'wework-core-plugins')), entries)
+  assert.deepEqual(await fs.readdir(compositionRoot), entries)
   const { materializeBundledRuntimes } = await import(pathToFileURL(join(input.resources,
     'app.asar/dist/runtime/bundled-runtime-materializer.js')).href)
-  const runtimeRoot = join(input.root, 'runtimes')
   await materializeBundledRuntimes(join(input.resources, 'harness-runtime'), runtimeRoot, ['core'])
   assert.equal(occupiedPublications, 2)
   await materializeBundledRuntimes(join(input.resources, 'harness-runtime'), runtimeRoot, ['core'])

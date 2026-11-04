@@ -76,6 +76,10 @@
           "project": "chromium"
         },
         {
+          "file": "settings-bot-shell-identity.spec.ts",
+          "project": "chromium"
+        },
+        {
           "file": "settings-bot.spec.ts",
           "project": "chromium"
         },
