@@ -1513,4 +1513,98 @@ describe('SmartAppPublishDialog', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('请完整填写发布包、简介、标签和图标')
     expect(smartAppsApi.publish).not.toHaveBeenCalled()
   })
+
+  test('sends only the new icon when an update replaces the icon', async () => {
+    const current = item({
+      accessRole: 'owner',
+      iconUrl: 'https://download.test/current-icon.png',
+    })
+    const smartAppsApi = api([current])
+    vi.mocked(smartAppsApi.publish).mockResolvedValue({
+      submission: {
+        id: 1,
+        smartAppId: 7,
+        version: '1.3.0',
+        status: 'published',
+        error: '',
+        createdAt: '2026-11-04T00:00:00Z',
+      },
+      item: current,
+    })
+
+    render(
+      <SmartAppPublishDialog
+        api={smartAppsApi}
+        item={current}
+        installation={null}
+        tags={[]}
+        onClose={vi.fn()}
+        onPublished={vi.fn()}
+      />
+    )
+
+    fireEvent.change(screen.getByTestId('smart-app-publish-package'), {
+      target: { files: [await packageFile('research-desk', '1.3.0')] },
+    })
+    await screen.findByText('research-desk · v1.3.0')
+    fireEvent.change(screen.getByTestId('smart-app-publish-icon'), {
+      target: {
+        files: [
+          new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'icon.png', { type: 'image/png' }),
+        ],
+      },
+    })
+    fireEvent.click(screen.getByTestId('smart-app-publish-submit'))
+
+    await waitFor(() => expect(smartAppsApi.publish).toHaveBeenCalledOnce())
+    const [, metadata] = vi.mocked(smartAppsApi.publish).mock.calls[0]
+    expect(metadata.iconDataUrl).toMatch(/^data:image\/png;base64,/)
+    expect(metadata.screenshotDataUrls).toBeUndefined()
+  })
+
+  test('sends only new screenshots when an update replaces the screenshots', async () => {
+    const current = item({
+      accessRole: 'owner',
+      iconUrl: 'https://download.test/current-icon.png',
+    })
+    const smartAppsApi = api([current])
+    vi.mocked(smartAppsApi.publish).mockResolvedValue({
+      submission: {
+        id: 1,
+        smartAppId: 7,
+        version: '1.3.0',
+        status: 'published',
+        error: '',
+        createdAt: '2026-11-04T00:00:00Z',
+      },
+      item: current,
+    })
+
+    render(
+      <SmartAppPublishDialog
+        api={smartAppsApi}
+        item={current}
+        installation={null}
+        tags={[]}
+        onClose={vi.fn()}
+        onPublished={vi.fn()}
+      />
+    )
+
+    fireEvent.change(screen.getByTestId('smart-app-publish-package'), {
+      target: { files: [await packageFile('research-desk', '1.3.0')] },
+    })
+    await screen.findByText('research-desk · v1.3.0')
+    fireEvent.change(screen.getByTestId('smart-app-publish-screenshots'), {
+      target: {
+        files: [new File([new Uint8Array([1, 2, 3])], 'screenshot.png', { type: 'image/png' })],
+      },
+    })
+    fireEvent.click(screen.getByTestId('smart-app-publish-submit'))
+
+    await waitFor(() => expect(smartAppsApi.publish).toHaveBeenCalledOnce())
+    const [, metadata] = vi.mocked(smartAppsApi.publish).mock.calls[0]
+    expect(metadata.iconDataUrl).toBeUndefined()
+    expect(metadata.screenshotDataUrls).toEqual([expect.stringMatching(/^data:image\/png;base64,/)])
+  })
 })

@@ -3006,7 +3006,11 @@ export function SmartAppPublishDialog({
           <Button variant="ghost" onClick={onClose}>
             {t('common.cancel', '取消')}
           </Button>
-          <Button disabled={publishing} onClick={() => void publish()}>
+          <Button
+            data-testid="smart-app-publish-submit"
+            disabled={publishing}
+            onClick={() => void publish()}
+          >
             {publishing ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin" />
