@@ -6,6 +6,7 @@ import { createCloudRuntimeIpcClient } from "./runtime-ipc";
 import { createSocketClient } from "./socket";
 
 const socket = {
+  connected: true,
   emit: vi.fn(),
   on: vi.fn(),
   off: vi.fn(),
@@ -27,6 +28,7 @@ vi.mock("./socket", () => ({
 
 describe("createCloudRuntimeIpcClient", () => {
   beforeEach(() => {
+    socket.connected = true;
     socket.emit.mockReset();
     socket.on.mockReset();
     socket.off.mockReset();
@@ -290,6 +292,37 @@ describe("createCloudRuntimeIpcClient", () => {
       ).resolves.toEqual({ success: true });
       expect(vi.getTimerCount()).toBe(0);
       expect(socket.off).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects if the connection closes before the request resumes from ensureConnected", async () => {
+    vi.useFakeTimers();
+    const connected = Promise.resolve();
+    ensureConnected.mockReturnValueOnce(connected);
+    void connected.then(() => {
+      socket.connected = false;
+    });
+    const client = createCloudRuntimeIpcClient({
+      socketBaseUrl: "https://cloud.example.com",
+      socketPath: "/socket.io",
+      getToken: () => "token",
+    });
+    try {
+      const request = client
+        .request("runtime.tasks.list", {}, "cloud-device", 10)
+        .catch((error) => error);
+      await vi.advanceTimersByTimeAsync(10);
+      expect(await request).toMatchObject({
+        message: "runtime.tasks.list connection closed",
+      });
+      expect(socket.emit).not.toHaveBeenCalled();
+      expect(socket.off).toHaveBeenCalledWith(
+        "disconnect",
+        expect.any(Function),
+      );
+      expect(vi.getTimerCount()).toBe(0);
     } finally {
       vi.useRealTimers();
     }

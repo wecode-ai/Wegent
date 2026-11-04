@@ -185,6 +185,10 @@ async function emitRuntimeRequest<T>(
     }, acknowledgementTimeoutMs);
 
     client.socket.on("disconnect", onDisconnect);
+    if (!client.socket.connected) {
+      onDisconnect("connection closed before request");
+      return;
+    }
     client.socket.emit(
       REQUEST_EVENT,
       {
