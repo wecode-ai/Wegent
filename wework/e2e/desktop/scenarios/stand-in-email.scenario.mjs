@@ -6,6 +6,7 @@ import { startRealMailServer } from '../modules/real-mail-server.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
+import { openConnectionTypePicker } from '../modules/stand-in-flows.mjs'
 import {
   assistantMessage,
   createSse,
@@ -194,11 +195,14 @@ export function createDesktopScenario({
         'personal-stand-in-button',
         'stand-in-settings-open',
         'stand-in-primary-connections-open',
-        'stand-in-add-connection',
-        `stand-in-add-${PROVIDER}-connection`,
-        'stand-in-email-add',
       ])
         await control.command('clickWhenEnabled', `[data-testid="${target}"]`)
+      await openConnectionTypePicker(control)
+      await control.command(
+        'clickWhenEnabled',
+        `[data-testid="stand-in-add-${PROVIDER}-connection"]`
+      )
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-email-add"]')
       await captureScreenshot(control, '01-mailbox-configuration.png')
       await control.command('fill', '[data-testid="stand-in-email-email"]', {
         value: mail.config.email,
@@ -206,7 +210,7 @@ export function createDesktopScenario({
       await control.command('click', '[data-testid="stand-in-connections-back"]')
       await control.command('waitFor', '[data-testid="stand-in-email-discard"]')
       await control.command('click', '[data-testid="stand-in-email-discard-cancel-button"]')
-      await control.command('click', '[data-testid="stand-in-primary-back-to-settings"]')
+      await control.command('click', '[data-testid="stand-in-connections-back"]')
       await control.command('waitFor', '[data-testid="stand-in-email-discard"]')
       await captureScreenshot(control, '01a-unsaved-mailbox-protected.png')
       await control.command('click', '[data-testid="stand-in-email-discard-cancel-button"]')

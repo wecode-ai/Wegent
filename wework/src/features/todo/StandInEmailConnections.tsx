@@ -1,9 +1,10 @@
 import { useEffect, useImperativeHandle, useState, type FormEvent, type Ref } from 'react'
-import { Plus, X } from 'lucide-react'
+import { Mail, Plus, X } from 'lucide-react'
 import type { StandInRole } from '@/api/personalStandIn'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getDshExtensionHost } from '@/features/dsh-runtime/dshExtensions'
-import { StandInImmediateSwitch } from './StandInImmediateSwitch'
+import { StandInConnectionHeader } from './StandInConnectionHeader'
+import { StandInProcessingSettings } from './StandInProcessingSettings'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import type { AutomationNavigationHandle } from '@/features/automations/AutomationsPage'
 
@@ -89,7 +90,7 @@ export function StandInEmailConnections({
           id: 'INBOX',
           kind: 'inbox',
           name: account.email,
-          policy: { automatic: true, askBeforeAct: true, immediate: false },
+          policy: { automatic: true, askBeforeAct: true, immediate: role.id !== '@primary' },
         },
       ],
     })
@@ -154,26 +155,15 @@ export function StandInEmailConnections({
   }
   return (
     <section className="space-y-4" data-testid="stand-in-email-connections">
-      <h3 className="font-medium">{t('standIn.email.title')}</h3>
-      <p className="text-sm text-text-muted">{t('standIn.email.help')}</p>
+      <StandInConnectionHeader
+        icon={Mail}
+        title={t('standIn.email.title')}
+        description={t('standIn.email.help')}
+      />
       {!local && <p role="status">{t('standIn.email.local_device')}</p>}
       {rows.map(row => (
         <div key={row.profile} className="flex items-center gap-2 border-b border-border py-2">
           <span className="min-w-0 flex-1 truncate text-sm">{row.name}</span>
-          <StandInImmediateSwitch
-            policy={row.policy}
-            disabled={disabled || busy}
-            label={t('standIn.workspace.handling_for', { name: row.name })}
-            testId={`stand-in-email-policy-${row.profile}`}
-            onChange={policy =>
-              onChange({
-                ...role,
-                connections: (role.connections ?? []).map(value =>
-                  value === row ? { ...value, policy: { ...policy, askBeforeAct: true } } : value
-                ),
-              })
-            }
-          />
           <button
             type="button"
             data-testid={`stand-in-email-remove-${row.profile}`}
@@ -407,6 +397,22 @@ export function StandInEmailConnections({
           )}
         </div>
       )}
+      <StandInProcessingSettings
+        disabled={disabled || busy}
+        rows={rows.map(row => ({
+          key: row.profile,
+          name: row.name,
+          testId: `stand-in-email-policy-${row.profile}`,
+          policy: row.policy,
+          onChange: policy =>
+            onChange({
+              ...role,
+              connections: (role.connections ?? []).map(value =>
+                value === row ? { ...value, policy: { ...policy, askBeforeAct: true } } : value
+              ),
+            }),
+        }))}
+      />
       <ConfirmDialog
         open={Boolean(pendingNavigation)}
         title={t('standIn.email.discard_title')}

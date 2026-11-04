@@ -84,3 +84,33 @@ async fn manual_delegation_does_not_report_a_deleted_task_as_running() {
     let error = handler.run_stand_in(json!({"projectId":project.id,"issueId":issue.id,"userId":7,"projectStore":"local","standInId":"review"})).await.unwrap_err();
     assert_eq!(error.code, "assignment_already_handled");
 }
+
+#[tokio::test]
+async fn project_background_policy_queues_once_and_routed_work_does_not_reenter_intake() {
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    let mut config = json!({"id":"review","projectId":"project","projectStore":"local","userId":7,"workspace":{"projectKey":"unregistered-project"},"handlingPolicy":{"automatic":true,"askBeforeAct":true,"immediate":false}});
+    let issue = json!({"id":"issue","title":"Review"});
+    let binding = json!({"humanAssignmentId":"human"});
+    for _ in 0..2 {
+        handler
+            .execute_stand_in_task(&config, &issue, &binding, false)
+            .await
+            .unwrap();
+    }
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    let events = store.stand_in_events(7).unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["kind"], "assignment");
+    assert_eq!(events[0]["assignmentId"], "human");
+    assert!(handler.local_task_links(true).is_empty());
+    config["intakeRouted"] = json!(true);
+    let error = handler
+        .execute_stand_in_task(&config, &issue, &binding, false)
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "workspace_unavailable");
+    assert_eq!(store.stand_in_events(7).unwrap().len(), 1);
+}

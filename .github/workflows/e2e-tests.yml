@@ -871,7 +871,8 @@ jobs:
       - name: Start Mock Model Server
         working-directory: ./frontend
         run: |
-          pnpm exec tsx e2e/utils/mock-model-server.ts > mock-model-server.log 2>&1 &
+          # Workspace dependencies are already restored; start their installed CLI directly.
+          node ./node_modules/tsx/dist/cli.mjs e2e/utils/mock-model-server.ts > mock-model-server.log 2>&1 &
           echo $! > mock-server.pid
 
       - name: Start Knowledge Doc Converter
@@ -1702,7 +1703,8 @@ jobs:
       - name: Start Mock Model Server
         working-directory: ./frontend
         run: |
-          pnpm exec tsx e2e/utils/mock-model-server.ts > mock-model-server.log 2>&1 &
+          # Workspace dependencies are already restored; start their installed CLI directly.
+          node ./node_modules/tsx/dist/cli.mjs e2e/utils/mock-model-server.ts > mock-model-server.log 2>&1 &
           echo $! > mock-server.pid
 
       - name: Start Local Executor

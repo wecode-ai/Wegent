@@ -1,6 +1,8 @@
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@/i18n'
-import { afterEach, describe, expect, it } from 'vitest'
-import { getStandInErrorMessage } from './stand-in-error-message'
+import enCommon from '@/i18n/locales/en/common.json'
+import zhCommon from '@/i18n/locales/zh-CN/common.json'
+import { getStandInErrorMessage, reportStandInError } from './stand-in-error-message'
 
 const originalLanguage = i18n.language
 
@@ -9,6 +11,96 @@ afterEach(async () => {
 })
 
 describe('stand-in error localization', () => {
+  it('records the failing operation and transport code without logging error contents', () => {
+    const log = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      reportStandInError(
+        'load_environment',
+        {
+          code: 'executor_disconnected',
+          status: 503,
+          message: 'private request contents',
+          token: 'secret-token',
+        },
+        'device'
+      )
+      expect(log).toHaveBeenCalledWith(
+        '[Stand-in] Operation failed',
+        expect.objectContaining({
+          operation: 'load_environment',
+          deviceId: 'device',
+          code: 'executor_disconnected',
+          status: 503,
+        })
+      )
+      expect(JSON.stringify(log.mock.calls)).not.toMatch(/private request contents|secret-token/)
+    } finally {
+      log.mockRestore()
+    }
+  })
+  it('distinguishes device transport and service failures without exposing raw internals', async () => {
+    await i18n.changeLanguage('zh-CN')
+    for (const [error, key] of [
+      [{ code: 'executor_disconnected' }, 'executor_unavailable'],
+      [new Error('local-sidebar-runtime-changed'), 'executor_restarted'],
+      [{ code: 'protocol_mismatch' }, 'executor_update_required'],
+      [{ status: 401 }, 'authentication_required'],
+      [{ code: 'http_503' }, 'service_unavailable'],
+      [{ status: 403 }, 'permission_denied'],
+      [new Error('executor-not-found:device'), 'executor_unavailable'],
+      [new Error('executor-offline:device'), 'device_offline'],
+      [new Error('ambiguous-executor-identity:device'), 'executor_ambiguous'],
+    ] as const) {
+      expect(getStandInErrorMessage(error)).toBe(i18n.t(`common:standIn.errors.${key}`))
+    }
+  })
+
+  it('identifies the failed operation even after an inner boundary localized an unknown error', async () => {
+    for (const language of ['zh-CN', 'en']) {
+      await i18n.changeLanguage(language)
+      const error = getStandInErrorMessage(new Error('internal database path'))
+      for (const operation of [
+        'load_settings_failed',
+        'save_settings_failed',
+        'load_environment_failed',
+        'load_projects_failed',
+      ] as const) {
+        expect(getStandInErrorMessage(error, operation)).toBe(
+          i18n.t(`common:standIn.errors.${operation}`)
+        )
+      }
+      expect(getStandInErrorMessage({ code: 'permission_denied' }, 'load_environment_failed')).toBe(
+        i18n.t('common:standIn.errors.permission_denied')
+      )
+    }
+  })
+  it('provides recovery guidance for every registered error in both languages', async () => {
+    expect(Object.keys(enCommon.standIn.errors).sort()).toEqual(
+      Object.keys(zhCommon.standIn.errors).sort()
+    )
+    for (const language of ['en', 'zh-CN']) {
+      await i18n.changeLanguage(language)
+      const messages = language === 'en' ? enCommon.standIn.errors : zhCommon.standIn.errors
+      for (const [code, message] of Object.entries(messages)) {
+        expect(getStandInErrorMessage({ code, message: 'internal error' })).toBe(message)
+      }
+    }
+  })
+  it('localizes the reported assignment error in both languages', async () => {
+    const error = Object.assign(
+      new Error('This assignment has already been handled or is no longer active'),
+      {
+        code: 'assignment_already_handled',
+      }
+    )
+    await i18n.changeLanguage('zh-CN')
+    expect(getStandInErrorMessage(error)).toBe('本次分配已处理或已失效，请刷新任务并查看最新分配。')
+    await i18n.changeLanguage('en')
+    expect(getStandInErrorMessage(error)).toBe(
+      i18n.t('common:standIn.errors.assignment_already_handled')
+    )
+  })
+
   it('explains how to recover a persisted missing source dependency in both languages', async () => {
     const error = { code: 'dependency_missing', message: 'Dependency dingtalk is missing' }
     await i18n.changeLanguage('zh-CN')

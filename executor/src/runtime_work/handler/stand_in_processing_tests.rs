@@ -734,3 +734,26 @@ async fn primary_created_work_feedback_stays_owned_and_requires_semantic_assessm
         "Completion feedback must not echo an automatic continuation into itself"
     );
 }
+
+#[tokio::test]
+async fn direct_connection_intake_supplies_a_native_dispatch_without_starting_assessment() {
+    let root = tempfile::tempdir().unwrap();
+    let (handler, store, mut settings) = fixture(root.path());
+    settings["roles"][0]["connections"][0]["policy"]["immediate"] = json!(true);
+    store.save_personal_stand_in(7, "mac", settings).unwrap();
+    store
+        .enqueue_stand_in_event(7, json!("direct-input"), connection_event())
+        .unwrap();
+    let snapshot = handler
+        .coordination_snapshot_for_test(&store, 7)
+        .await
+        .unwrap();
+    assert_eq!(
+        snapshot["events"][0]["dispatch"],
+        json!({"roleId":"default"})
+    );
+    assert_eq!(snapshot["events"][0]["processingMode"], "immediate");
+    assert!(handler.local_task_links(true).is_empty());
+    assert!(store.stand_in_actions(7).unwrap().is_empty());
+    assert!(store.stand_in_processing_state(7).unwrap()["batchId"].is_null());
+}

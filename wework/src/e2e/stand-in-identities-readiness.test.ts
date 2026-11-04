@@ -2,6 +2,13 @@ import { expect, test, vi } from 'vitest'
 
 import { createDesktopScenario } from '../../e2e/desktop/scenarios/stand-in-identities.scenario.mjs'
 
+vi.mock('../../e2e/desktop/modules/stand-in-dingtalk-fixture.mjs', () => ({
+  createStandInDingTalkFixture: () => ({
+    prepareApp: vi.fn(),
+    install: vi.fn().mockResolvedValue(undefined),
+  }),
+}))
+
 vi.mock('../../e2e/desktop/modules/shared.mjs', () => ({
   selectE2EModel: vi.fn(),
 }))
@@ -69,15 +76,18 @@ test('waits for role settings to load before opening source connections', async 
       waitingStarted()
       await loading
     }
-    if (selector === '[data-testid="stand-in-add-connection"]') throw reachedConnections
+    if (selector === '[data-testid="stand-in-connection-type-picker"]') throw reachedConnections
   })
   const verified = expect(scenario.verify({ command })).rejects.toBe(reachedConnections)
 
   await waiting
-  expect(command).not.toHaveBeenCalledWith('click', '[data-testid="stand-in-add-connection"]')
+  expect(command).not.toHaveBeenCalledWith(
+    'waitFor',
+    '[data-testid="stand-in-connection-type-picker"]'
+  )
   settingsLoaded()
   await verified
-  expect(command).toHaveBeenCalledWith('click', '[data-testid="stand-in-add-connection"]')
+  expect(command).toHaveBeenCalledWith('waitFor', '[data-testid="stand-in-connection-type-picker"]')
 })
 
 test('waits for the asynchronous provider catalog before opening DingTalk connections', async () => {
@@ -90,7 +100,7 @@ test('waits for the asynchronous provider catalog before opening DingTalk connec
   const waiting = new Promise<void>(resolve => {
     providerRequested = resolve
   })
-  const sourceEditor = '[data-testid="stand-in-dingtalk-add"]'
+  const sourceEditor = '[data-testid="stand-in-dingtalk-scope-selected"]'
   const reachedSourceEditor = new Error('The source editor is ready')
   const command = vi.fn(async (action: string, selector: string) => {
     if (selector === '[data-testid="stand-in-add-dingtalk-connection"]') {

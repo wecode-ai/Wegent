@@ -39,6 +39,8 @@ Wework 支持从一个正在运行的 Wework 内置 Terminal 中启动另一个�
 - `WEWORK_APP_IDENTIFIER`: 自动生成的 Electron 应用身份，根据当前 worktree 路径生成，用于隔离单实例锁、应用数据和 macOS 菜单栏图标位置。启动脚本会忽略从父 App 继承的身份；只有明确需要复用身份时才使用 `WEWORK_DEV_APP_IDENTIFIER` 覆盖。
 - `WEWORK_USER_DATA_DIR`: 自动生成的 Electron 用户数据目录。启动脚本会忽略从父 App 继承的目录；需要明确覆盖时使用 `WEWORK_DEV_USER_DATA_DIR`。
 
+开发启动会清除从正式版继承的 `WEWORK_RELEASE_ROOT`、`WEWORK_RELEASE_SUPERVISED`、`WEWORK_ACTIVE_RELEASE_ID` 和 `WEWORK_COMPONENT_DATA_DIRECTORY`，避免独立开发目录误用正式版的发布状态或组件数据。
+
 macOS 开发启动脚本会为每个显示名称准备写时复制的 Electron App Bundle。任务
 shell 直接使用注入的标题；从已有 runtime worktree 启动的终端也可以从本地运行时
 索引恢复标题。脚本随后设置 Bundle 元数据，并将主可执行文件重命名为

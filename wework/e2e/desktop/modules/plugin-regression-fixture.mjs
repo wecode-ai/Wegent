@@ -5,12 +5,12 @@ import { fetchLocalRuntime } from './runtime-request.mjs'
 
 export const testId = value => `[data-testid="${value}"]`
 
-export async function until(read, accept, message, timeoutMs = 10_000, pollIntervalMs = 100) {
+export async function until(read, accept, message, timeoutMs = 10_000) {
   const deadline = Date.now() + timeoutMs
   do {
     const result = await read()
     if (accept(result)) return result
-    await new Promise(resolve => setTimeout(resolve, pollIntervalMs))
+    await new Promise(resolve => setTimeout(resolve, 100))
   } while (Date.now() < deadline)
   throw new Error(message)
 }
