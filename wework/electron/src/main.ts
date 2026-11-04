@@ -2137,7 +2137,8 @@ async function configureDesktopRuntime(): Promise<void> {
   })
   embeddedBrowserBridge = new EmbeddedBrowserBridge(
     embeddedBrowser,
-    environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
+    environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework'),
+    async () => (await preferences?.read())?.browserFullControl === true
   )
   startupProgress.report('services')
   logStartupStep('embedded-browser-bridge', 'started')
