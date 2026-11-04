@@ -18,7 +18,10 @@ from sqlalchemy.orm import Session
 from app.models.kind import Kind
 from app.schemas.kind import Shell
 from app.services.capability_lookup import ExecutionCapabilityLookup
-from app.services.capability_reference_service import get_referenced_capability
+from app.services.capability_reference_service import (
+    get_referenced_capability,
+    list_referenced_capabilities_by_namespace,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -408,10 +411,9 @@ def get_shells_by_names_batch(
     user_id: int,
 ) -> Dict[Tuple[str, str], Kind]:
     """
-    Batch-fetch shells by (name, namespace) keys.
-
-    First queries user's custom shells from kinds table, then queries public shells
-    for any missing keys.
+    Batch-fetch shells by (name, namespace) keys using the same precedence as
+    ``get_shell_by_name``: user-owned direct Shell, referenced Shell, direct
+    group Shell, then public Shell fallback.
 
     Args:
         db: Database session
@@ -425,24 +427,25 @@ def get_shells_by_names_batch(
         return {}
 
     shell_map: Dict[Tuple[str, str], Kind] = {}
+    lookup = ExecutionCapabilityLookup(db, user_id)
 
-    # Build OR filter for user shells
-    def build_user_shell_or_filters(keys: Set[Tuple[str, str]]):
+    def build_exact_filters(keys: Set[Tuple[str, str]]):
+        """Build exact name-and-namespace filters for a Shell batch."""
         return (
             or_(*[and_(Kind.name == n, Kind.namespace == ns) for (n, ns) in keys])
             if keys
             else None
         )
 
-    # Query user's custom shells first
-    user_shell_filter = build_user_shell_or_filters(shell_keys)
+    # 1. User-owned direct Shells have the highest precedence.
+    user_shell_filter = build_exact_filters(shell_keys)
     if user_shell_filter is not None:
         user_shells = (
             db.query(Kind)
             .filter(
                 Kind.user_id == user_id,
                 Kind.kind == "Shell",
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .filter(user_shell_filter)
             .all()
@@ -451,38 +454,100 @@ def get_shells_by_names_batch(
         for shell in user_shells:
             shell_map[(shell.name, shell.namespace)] = shell
 
-    # Find missing keys and query public shells
-    found_keys = set(shell_map.keys())
-    missing_keys = shell_keys - found_keys
-
+    # 2. Resolve only the reference namespaces represented by missing Bot keys.
+    missing_keys = shell_keys - set(shell_map)
     if missing_keys:
-
-        def build_public_shell_or_filters(keys: Set[Tuple[str, str]]):
-            return (
-                or_(*[and_(Kind.name == n, Kind.namespace == ns) for (n, ns) in keys])
-                if keys
-                else None
+        requested_namespaces = list(
+            dict.fromkeys(namespace for _, namespace in missing_keys)
+        )
+        references_by_namespace = list_referenced_capabilities_by_namespace(
+            db,
+            kind="Shell",
+            user_id=user_id,
+            namespaces=requested_namespaces,
+        )
+        for name, namespace in missing_keys:
+            referenced_shell = next(
+                (
+                    shell
+                    for shell in references_by_namespace.get(namespace, [])
+                    if shell.name == name
+                ),
+                None,
             )
+            if referenced_shell:
+                shell_map[(name, namespace)] = referenced_shell
 
-        public_shell_filter = build_public_shell_or_filters(missing_keys)
-        if public_shell_filter is not None:
-            public_shells = (
-                db.query(Kind)
-                .filter(
-                    Kind.kind == "Shell",
-                    Kind.is_active == True,
-                )
-                .filter(public_shell_filter)
-                .all()
+    # 3. Group Shells are direct namespace resources owned by any group member.
+    missing_keys = shell_keys - set(shell_map)
+    group_keys = {
+        (name, namespace)
+        for name, namespace in missing_keys
+        if namespace in lookup.groups
+    }
+    group_shell_filter = build_exact_filters(group_keys)
+    if group_shell_filter is not None:
+        group_shells = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "Shell",
+                Kind.is_active.is_(True),
             )
+            .filter(group_shell_filter)
+            .all()
+        )
+        for shell in group_shells:
+            shell_map[(shell.name, shell.namespace)] = shell
 
-            for shell in public_shells:
-                shell_map[(shell.name, shell.namespace)] = shell
+    # 4. Public Shells are the final fallback by name.
+    missing_keys = shell_keys - set(shell_map)
+    missing_names = {name for name, _ in missing_keys}
+    if missing_names:
+        public_shells = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == 0,
+                Kind.kind == "Shell",
+                Kind.namespace == "default",
+                Kind.is_active.is_(True),
+                Kind.name.in_(missing_names),
+            )
+            .all()
+        )
+        public_shells_by_name = {shell.name: shell for shell in public_shells}
+        for name, namespace in missing_keys:
+            public_shell = public_shells_by_name.get(name)
+            if public_shell:
+                shell_map[(name, namespace)] = public_shell
 
-    logger.debug(
-        f"Batch fetched {len(shell_map)} shells for {len(shell_keys)} keys "
-        f"(user: {len(shell_map) - len(missing_keys) + len(found_keys)}, "
-        f"public: {len(shell_map) - len(found_keys)})"
-    )
+    logger.debug(f"Batch fetched {len(shell_map)} shells for {len(shell_keys)} keys")
 
+    return shell_map
+
+
+def get_shells_by_owners_batch(
+    db: Session,
+    shell_keys: Set[Tuple[int, str, str]],
+) -> Dict[Tuple[int, str, str], Kind]:
+    """
+    Batch-fetch shells by (owner_id, name, namespace) keys, resolving each
+    owner's references with that owner's identity.
+
+    Args:
+        db: Database session
+        shell_keys: Set of (owner_id, name, namespace) tuples to query
+
+    Returns:
+        Dict mapping (owner_id, name, namespace) to Kind objects
+    """
+    keys_by_owner: Dict[int, Set[Tuple[str, str]]] = {}
+    for owner_id, name, namespace in shell_keys:
+        keys_by_owner.setdefault(owner_id, set()).add((name, namespace))
+
+    shell_map: Dict[Tuple[int, str, str], Kind] = {}
+    for owner_id, owner_keys in keys_by_owner.items():
+        for (name, namespace), shell in get_shells_by_names_batch(
+            db, owner_keys, owner_id
+        ).items():
+            shell_map[(owner_id, name, namespace)] = shell
     return shell_map
