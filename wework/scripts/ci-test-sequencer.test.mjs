@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { loadConfigFromFile } from 'vite'
 import { BaseSequencer } from 'vitest/node'
 
-test('the real Vite configuration supplies a constructor and retains exact shard coverage', async () => {
+test('the real Vitest configuration supplies a constructor and retains exact shard coverage', async () => {
   const root = fileURLToPath(new URL('../', import.meta.url))
   const previous = process.env.WEWORK_CI_BALANCED_SHARDS
   try {
@@ -13,10 +13,10 @@ test('the real Vite configuration supplies a constructor and retains exact shard
       process.env.WEWORK_CI_BALANCED_SHARDS = String(enabled)
       const result = await loadConfigFromFile(
         { command: 'serve', mode: 'test' },
-        resolve(root, 'vite.config.ts'),
+        resolve(root, 'vitest.config.ts'),
         root
       )
-      assert.ok(result, 'The real Vite configuration must load')
+      assert.ok(result, 'The real Vitest configuration must load')
       const sequence = result.config.test.sequence
       if (!enabled) {
         assert.equal(sequence, undefined)

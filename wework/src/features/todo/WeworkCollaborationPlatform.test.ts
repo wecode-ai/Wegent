@@ -2249,7 +2249,7 @@ describe('Wework collaboration workspace API', () => {
   })
 
   it('keeps the local resource catalog available when default-Agent provisioning fails', async () => {
-    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     const detailServices = {
       ...createLocalDetailServices(),
       localProjectChatAgentApi: {
@@ -2261,12 +2261,24 @@ describe('Wework collaboration workspace API', () => {
     const api = createLocalWorkspaceApi(createLocalDeliveryApi(), 1, 'admin', null, detailServices)!
 
     await expect(api.resources!.list()).resolves.toMatchObject({ agents: [] })
-    expect(warning).toHaveBeenCalledWith('[Wework] Failed to list local Agents', expect.any(Error))
-    expect(warning).toHaveBeenCalledWith(
-      '[Wework] Failed to ensure the default local Agent',
-      expect.any(Error)
+    expect(
+      diagnostic.mock.calls.map(([prefix, record]) => [prefix, JSON.parse(String(record))])
+    ).toEqual(
+      ['agents', 'default-agent'].map(catalog => [
+        '[Wework] Local workspace catalog failed',
+        {
+          source: 'local',
+          catalog,
+          status: 'rejected',
+          elapsedMs: expect.any(Number),
+          errorName: 'Error',
+          reason: 'rejected',
+          httpStatus: null,
+        },
+      ])
     )
-    warning.mockRestore()
+    expect(JSON.stringify(diagnostic.mock.calls)).not.toMatch(/list unavailable|agent unavailable/)
+    diagnostic.mockRestore()
   })
 
   it('shares one default-Agent bootstrap across concurrent local resource reads', async () => {

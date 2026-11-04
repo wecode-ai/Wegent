@@ -25,6 +25,7 @@ const defaultPreferences: AppPreferences = {
   experimentalFeaturesEnabled: false,
   telemetryConsentAsked: true,
   telemetryEnabled: true,
+  performanceRecordingEnabled: false,
   trayUnreadEnabled: true,
   trayRunningEnabled: true,
   trayUsageEnabled: true,
@@ -90,6 +91,7 @@ vi.mock('@/desktop/appPreferences', () => ({
     experimentalFeaturesEnabled: false,
     telemetryConsentAsked: true,
     telemetryEnabled: true,
+    performanceRecordingEnabled: false,
     trayUnreadEnabled: true,
     trayRunningEnabled: true,
     trayUsageEnabled: true,
@@ -450,6 +452,56 @@ describe('GeneralSettingsPage', () => {
       expect(updateAppPreferencesMock).toHaveBeenCalledWith({
         preventSleepWhileTasksRunning: false,
       })
+    })
+  })
+
+  test('keeps performance recording off by default and persists enabling it', async () => {
+    render(<GeneralSettingsPage />)
+
+    const toggle = await screen.findByTestId('general-performance-recording-toggle')
+    await waitFor(() => expect(toggle).toBeEnabled())
+    expect(toggle).toHaveAttribute('aria-checked', 'false')
+
+    await userEvent.click(toggle)
+
+    await waitFor(() => {
+      expect(updateAppPreferencesMock).toHaveBeenCalledWith({ performanceRecordingEnabled: true })
+      expect(toggle).toHaveAttribute('aria-checked', 'true')
+    })
+  })
+
+  test('shows a saved performance recording preference and persists disabling it', async () => {
+    getAppPreferencesMock.mockResolvedValue({
+      ...defaultPreferences,
+      performanceRecordingEnabled: true,
+    })
+    render(<GeneralSettingsPage />)
+
+    const toggle = await screen.findByTestId('general-performance-recording-toggle')
+    await waitFor(() => expect(toggle).toBeEnabled())
+    expect(toggle).toHaveAttribute('aria-checked', 'true')
+
+    await userEvent.click(toggle)
+
+    await waitFor(() => {
+      expect(updateAppPreferencesMock).toHaveBeenCalledWith({ performanceRecordingEnabled: false })
+      expect(toggle).toHaveAttribute('aria-checked', 'false')
+    })
+  })
+
+  test('restores the performance recording toggle when saving fails', async () => {
+    updateAppPreferencesMock.mockRejectedValue(new Error('save failed'))
+    render(<GeneralSettingsPage />)
+
+    const toggle = await screen.findByTestId('general-performance-recording-toggle')
+    await waitFor(() => expect(toggle).toBeEnabled())
+    await userEvent.click(toggle)
+
+    await waitFor(() => {
+      expect(toggle).toHaveAttribute('aria-checked', 'false')
+      expect(screen.getByTestId('general-settings-status')).toHaveTextContent(
+        'workbench.general_settings_save_failed'
+      )
     })
   })
 

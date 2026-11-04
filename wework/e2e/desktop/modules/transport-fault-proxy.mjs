@@ -236,7 +236,21 @@ export class TransportFaultProxy {
               }
               response.once('finish', () => resolve(true))
               response.once('close', () => resolve(entry.responseCompleted === true))
-              response.writeHead(reply.status, reply.headers)
+              let headers = reply.headers
+              if (entry.responseTimingId) {
+                assert.match(entry.responseTimingId, /^[a-zA-Z0-9-]+$/)
+                headers = {
+                  ...headers,
+                  'server-timing': [
+                    headers['server-timing'],
+                    `wework-e2e-response;desc="${entry.responseTimingId}"`,
+                  ]
+                    .filter(Boolean)
+                    .join(', '),
+                  'timing-allow-origin': request.headers.origin ?? '*',
+                }
+              }
+              response.writeHead(reply.status, headers)
               response.end(reply.body)
               entry.released = true
             })
