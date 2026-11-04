@@ -688,8 +688,8 @@ export function WeworkSharedProject({
     }
     return running
   }, [runtimeTaskLifecycle, runtimeWork])
-  // Stop any in-flight run bound to the Issue before it leaves the board, so an
-  // archived Issue never keeps an orphaned execution running on a device.
+  // Local archives require the Runtime to stop first. Cloud archives own the
+  // tombstone and cancellation transaction in the Backend before stopping work.
   const prepareIssueArchive = useCallback(
     async (issue: CollaborationIssue) => {
       if (!onCancelRuntimeTask) return
@@ -1132,7 +1132,9 @@ export function WeworkSharedProject({
           showProjectBack={false}
           refreshProjectRequestKey={refreshProjectRequestKey}
           issueArchiveEnabled
-          onPrepareIssueArchive={prepareIssueArchive}
+          onPrepareIssueArchive={
+            project.project_store === 'local' ? prepareIssueArchive : undefined
+          }
           onCreateTask={
             runtimePort ? async (_taskProject, issue) => openNewTaskConversation(issue) : undefined
           }
