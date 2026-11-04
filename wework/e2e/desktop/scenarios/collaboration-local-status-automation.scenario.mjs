@@ -235,8 +235,7 @@ function createStatusAutomation({ uiTimeoutMs, workbenchReadyTimeoutMs, modelRes
       await click('automatic-processing-cancel')
 
       await click('collaboration-tab-board')
-      await wait(`cloud-todo-card-${issueId}`, { visible: true })
-      await click(`cloud-todo-card-${issueId}`)
+      await control.command('clickWhenEnabled', scoped(`cloud-todo-card-${issueId}`))
       await wait('collaboration-issue-detail', { text: MARKER })
       await control.command('select', scoped('cloud-todo-detail-status'), { value: 'acceptance' })
       await control.command('clickWhenEnabled', scoped('cloud-todo-save'))

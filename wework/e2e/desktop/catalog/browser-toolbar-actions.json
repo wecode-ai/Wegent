@@ -1,0 +1,12 @@
+{
+  "order": 206000,
+  "scenario": "./scenarios/embedded-browser-toolbar-actions.scenario.mjs",
+  "resources": ["macos-inspector-foreground"],
+  "ci": {
+    "core": {
+      "order": 152000,
+      "shard": 6,
+      "position": 12000
+    }
+  }
+}

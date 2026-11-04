@@ -1,0 +1,12 @@
+{
+  "order": 29000,
+  "scenario": "./scenarios/collaboration-local-status-automation.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 29000,
+      "shard": 5,
+      "position": 7000
+    }
+  }
+}

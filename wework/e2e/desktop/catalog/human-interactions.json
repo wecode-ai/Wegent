@@ -1,0 +1,12 @@
+{
+  "order": 6000,
+  "scenario": "./scenarios/human-interactions.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 5000,
+      "shard": 2,
+      "position": 20000
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "order": 25000,
+  "scenario": "./scenarios/collaboration-group-onboarding.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 25000,
+      "shard": 2,
+      "position": 13000
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "order": 63000,
+  "scenario": "./scenarios/collaboration-issue-comment-mention.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 56000,
+      "shard": 4,
+      "position": 15000
+    }
+  }
+}
