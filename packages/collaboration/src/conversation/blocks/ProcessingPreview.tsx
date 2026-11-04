@@ -23,8 +23,8 @@ import { getProcessingDetailStateKey } from "./processingExpansionState";
 import {
   useProcessingSummaryDuration,
   type ProcessingSummaryTiming,
-} from "./useProcessingSummaryDuration";
-import type { countProcessingActivityKinds } from "./ProcessingActivity";
+} from './useProcessingSummaryDuration'
+import type { countProcessingActivityKinds } from './ProcessingActivity'
 import {
   ToolActivityGroup,
   ContextCompactionIndicator,
@@ -43,17 +43,17 @@ export function ProcessingSummaryHeader({
   labels,
 }: {
   canToggle: boolean;
-  timing?: ProcessingSummaryTiming;
+  timing?: ProcessingSummaryTiming
   expanded: boolean;
   isRunning: boolean;
   rows: ProcessingDisplayRow[];
-  stats: ReturnType<typeof countProcessingActivityKinds>;
+  stats: ReturnType<typeof countProcessingActivityKinds>
   onToggle: () => void;
   title: string;
   announceTitle?: boolean;
   labels: ToolActivityLabels;
 }) {
-  const duration = useProcessingSummaryDuration(timing);
+  const duration = useProcessingSummaryDuration(timing)
   const titleContent = (
     <>
       {rows.length > 0 ? (
@@ -118,7 +118,7 @@ function ToolActivityStats({
   stats,
   labels,
 }: {
-  stats: ReturnType<typeof countProcessingActivityKinds>;
+  stats: ReturnType<typeof countProcessingActivityKinds>
   labels: ToolActivityLabels;
 }) {
   const items = [

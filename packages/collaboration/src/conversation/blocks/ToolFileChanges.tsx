@@ -356,11 +356,11 @@ export function ToolDurationText({
   fallbackEndAt,
   isRunning,
 }: {
-  startedAt: number;
-  fallbackEndAt: number | undefined;
-  isRunning: boolean;
+  startedAt: number
+  fallbackEndAt: number | undefined
+  isRunning: boolean
 }) {
-  return useToolDuration(startedAt, fallbackEndAt, isRunning);
+  return useToolDuration(startedAt, fallbackEndAt, isRunning)
 }
 
 function useToolDuration(
