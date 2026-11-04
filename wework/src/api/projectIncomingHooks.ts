@@ -64,6 +64,7 @@ export interface ProjectIncomingEvent {
   matchedRuns: string[]
   reason: string | null
   attemptCount: number
+  nextRetryAt: string | null
   createdAt: string
   updatedAt: string
 }

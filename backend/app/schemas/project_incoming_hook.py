@@ -106,6 +106,7 @@ class ProjectIncomingEventView(ProjectChatSchema):
     matched_runs: list[str] = Field(default_factory=list)
     reason: str | None = None
     attempt_count: int = 0
+    next_retry_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 

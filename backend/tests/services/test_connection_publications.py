@@ -165,3 +165,27 @@ async def test_private_envelopes_are_rejected_before_project_event_persistence(
         )
         == []
     )
+
+
+def test_event_view_distinguishes_scheduled_and_exhausted_retries() -> None:
+    from datetime import datetime
+
+    from app.api.endpoints.project_incoming_hooks import _event_view
+
+    now = datetime(2026, 11, 4)
+    event = ProjectIncomingEvent(
+        id="event",
+        parent_id="hook",
+        source="connection",
+        status="failed",
+        metadata_json={"attempt_count": 1},
+        created_at=now,
+        updated_at=now,
+        due_at=now,
+    )
+    assert _event_view(event).next_retry_at == now
+    event.due_at = None
+    assert _event_view(event).next_retry_at is None
+    event.status = "processed"
+    event.due_at = now
+    assert _event_view(event).next_retry_at is None

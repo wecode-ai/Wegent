@@ -543,6 +543,17 @@ impl RuntimeWorkRpcHandler {
             ));
         };
         if event["status"] == "failed" {
+            if event
+                .get("nextRetryAt")
+                .or_else(|| event.get("next_retry_at"))
+                .is_none_or(Value::is_null)
+            {
+                run["retryable"] = json!(false);
+                return Err(AppIpcError::new(
+                    "publication_processing_failed",
+                    "Project could not process the published result",
+                ));
+            }
             run["error"] = json!("publication_processing_failed");
             run["retryable"] = json!(false);
             return store
@@ -819,6 +830,80 @@ mod tests {
             "connection_account_changed"
         );
         assert_eq!(posts.load(Ordering::SeqCst), 0);
+        server.abort();
+    }
+    #[tokio::test]
+    async fn receipt_observation_waits_for_scheduled_retries_and_reports_terminal_failure() {
+        let phase = Arc::new(AtomicUsize::new(0));
+        let state = phase.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let router = Router::new()
+            .route("/api/users/me", get(|| async { Json(json!({"id":7})) }))
+            .route("/api/v1/cloud-projects/project/incoming-hooks/hook/events", get(move || {
+                let phase = state.load(Ordering::SeqCst);
+                async move { Json(match phase {
+                    0 => json!([{"id":"receipt","status":"failed","nextRetryAt":"2099-01-01T00:00:00"}]),
+                    1 => json!([{"id":"receipt","status":"failed","nextRetryAt":null}]),
+                    _ => json!([{"id":"receipt","status":"processed","matchedRuns":["project-run"]}]),
+                }) }
+            }))
+            .route("/api/v1/cloud-projects/project/automations/shared-rule/runs", get(|| async { Json(json!([{"id":"project-run","status":"running","taskId":"published-issue"}])) }));
+        let server = tokio::spawn(async { axum::serve(listener, router).await.unwrap() });
+        let root = tempfile::tempdir().unwrap();
+        let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+        handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+        let connection = ConnectionConfig {
+            backend_url: base,
+            auth_token: "account-a".into(),
+            ..Default::default()
+        };
+        handler
+            .update_local_account_identity(Some(&connection))
+            .unwrap();
+        *handler.backend_connection.lock().unwrap() = Some(connection);
+        let actor = handler.verify_local_connection_actor(7).await.unwrap();
+        let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+        let rule = store.save_connection_rule(7, "mac", json!({"id":"rule","version":0,"name":"Source","enabled":true,"source":{"providerId":"@test/source","id":"records","profile":"account","kind":"record","name":"Records"},"eventType":"record.received","project":{"id":"project","store":"cloud"},"targetKind":"human","targetId":"7","cloudRuleId":"shared-rule","cloudHookId":"hook","publication":{"title":"Allowed result","instruction":"Approved summary only"}})).unwrap();
+        store
+            .enqueue_connection_rule(
+                7,
+                &rule,
+                &rule["source"],
+                &json!({"id":"event","eventType":"record.received","text":"Private original"}),
+            )
+            .unwrap();
+        let mut run = store.connection_rule_runs(7).unwrap().remove(0);
+        run["status"] = json!("delivered");
+        run["receiptId"] = json!("receipt");
+        store.save_connection_rule_run(7, &run).unwrap();
+        handler
+            .refresh_connection_publication(&store, 7, &actor, &rule, &mut run)
+            .await
+            .unwrap();
+        assert_eq!(
+            store.connection_rule_runs(7).unwrap()[0]["status"],
+            "delivered"
+        );
+        phase.store(1, Ordering::SeqCst);
+        assert_eq!(
+            handler
+                .refresh_connection_publication(&store, 7, &actor, &rule, &mut run)
+                .await
+                .unwrap_err()
+                .code,
+            "publication_processing_failed"
+        );
+        assert_eq!(run["retryable"], false);
+        phase.store(2, Ordering::SeqCst);
+        handler
+            .refresh_connection_publication(&store, 7, &actor, &rule, &mut run)
+            .await
+            .unwrap();
+        let final_run = store.connection_rule_runs(7).unwrap().remove(0);
+        assert_eq!(final_run["status"], "published");
+        assert_eq!(final_run["issueId"], "published-issue");
+        assert!(final_run["error"].is_null());
         server.abort();
     }
 }

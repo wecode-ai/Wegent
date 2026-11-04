@@ -367,6 +367,46 @@ export function createDesktopScenario({
             1
           )
           assert.equal(summaries, 1)
+          await writeFile(join(packagePath, 'events.json'), '{')
+          await waitFor(
+            () =>
+              rpc(control, 'runtime.connection_rules.list', {
+                userId: USER,
+                project: input.project,
+              }),
+            result => result.items.some(rule => rule.id === excluded.id && rule.collectionError)
+          )
+          await control.command(
+            'waitFor',
+            `${root} [data-testid="connection-rule-retry-source-${excluded.id}"]`
+          )
+          await captureScreenshot(control, 'connection-rules-06b-source-error.png')
+          await writeFile(
+            join(packagePath, 'events.json'),
+            JSON.stringify([event, { ...event, id: 'event-two' }])
+          )
+          await control.command(
+            'clickWhenEnabled',
+            `${root} [data-testid="connection-rule-retry-source-${excluded.id}"]`
+          )
+          await waitFor(
+            () =>
+              rpc(control, 'runtime.connection_rules.list', {
+                userId: USER,
+                project: input.project,
+              }),
+            result => result.items.every(rule => !rule.collectionError)
+          )
+          const recovered = database
+            .prepare(
+              "SELECT metadata FROM loop_items WHERE resource_type='stand_in_source' AND json_extract(metadata,'$.source.providerId')=?"
+            )
+            .all(PROVIDER)
+          assert.ok(
+            recovered.some(row => JSON.parse(row.metadata).checkpoint?.cursor === 2),
+            'Rechecking a source must preserve the collection checkpoint'
+          )
+          await captureScreenshot(control, 'connection-rules-06c-source-recovered.png')
           await verifyPersonalRule(control, rpc, resource, captureScreenshot)
         } finally {
           database.close()
