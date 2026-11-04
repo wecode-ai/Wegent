@@ -59,6 +59,31 @@ async function click(testId: string) {
   await act(async () => target!.click())
 }
 
+it('keeps the use action available after adding a marketplace template to the account', async () => {
+  const backend = remote()
+  const record: TemplateRecord = {
+    ...structuredClone(builtinCollaborationTemplates()[0]),
+    id: 42,
+    ownerId: 8,
+    source: 'downloaded',
+  }
+  record.document.metadata = { name: 'shared-workflow', namespace: 'default' }
+  const store = new CollaborationTemplateStore({
+    scope: 'backend:7', ownerId: 7, remote: backend,
+    persistence: { read: async () => [record], write: async () => {} },
+  })
+  const onUse = vi.fn()
+  await act(async () => root.render(
+    <CollaborationTemplatePage store={store} locale="en" mode="marketplace" onUse={onUse} />
+  ))
+  await click('template-details-shared-workflow')
+  await click('template-account-add')
+  expect(backend.install).toHaveBeenCalledWith(42)
+  expect(container.querySelector('[data-testid="template-use"]')?.textContent).toBe('Use template')
+  await click('template-use')
+  expect(onUse).toHaveBeenCalledWith(record)
+})
+
 it('preconfigures a new Agent coordinator instead of requiring an existing Agent', async () => {
   const document = builtinCollaborationTemplates()[0].document
   await act(async () =>
