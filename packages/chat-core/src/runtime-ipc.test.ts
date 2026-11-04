@@ -249,6 +249,52 @@ describe("createCloudRuntimeIpcClient", () => {
     }
   });
 
+  it("rejects in-flight discovery on disconnect and permits a fresh request", async () => {
+    vi.useFakeTimers();
+    let disconnected: ((reason: string) => void) | undefined;
+    let acknowledge:
+      | ((ack: { ok: true; result: { success: boolean } }) => void)
+      | undefined;
+    socket.on.mockImplementation((event, handler) => {
+      if (event === "disconnect") disconnected = handler;
+    });
+    socket.emit.mockImplementation((_event, _request, callback) => {
+      acknowledge = callback;
+    });
+    const client = createCloudRuntimeIpcClient({
+      socketBaseUrl: "https://cloud.example.com",
+      socketPath: "/socket.io",
+      getToken: () => "token",
+    });
+    try {
+      const request = client.request(
+        "runtime.tasks.list",
+        { pendingOnly: true },
+        "cloud-device",
+      );
+      const rejected = expect(request).rejects.toThrow(
+        "runtime.tasks.list connection closed",
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(disconnected).toBeTypeOf("function");
+      disconnected!("transport close");
+      await rejected;
+      expect(socket.off).toHaveBeenCalledWith("disconnect", disconnected);
+      expect(vi.getTimerCount()).toBe(0);
+      acknowledge?.({ ok: true, result: { success: true } });
+      socket.emit.mockImplementation((_event, _request, callback) => {
+        callback({ ok: true, result: { success: true } });
+      });
+      await expect(
+        client.request("runtime.tasks.list", {}, "cloud-device"),
+      ).resolves.toEqual({ success: true });
+      expect(vi.getTimerCount()).toBe(0);
+      expect(socket.off).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("uses the requested device command timeout for the relay and acknowledgement", async () => {
     const timeoutSpy = vi.spyOn(window, "setTimeout");
     socket.emit.mockImplementation((_event, payload, ack) => {

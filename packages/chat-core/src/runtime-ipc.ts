@@ -154,9 +154,27 @@ async function emitRuntimeRequest<T>(
 
   return new Promise<T>((resolve, reject) => {
     let settled = false;
+    const cleanup = () => {
+      globalThis.clearTimeout(timeout);
+      client.socket.off("disconnect", onDisconnect);
+    };
+    const onDisconnect = (reason: string) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      console.warn("[Wework] Cloud runtime RPC connection closed", {
+        request_id: requestId,
+        method,
+        device_id: targetDeviceId,
+        elapsed_ms: Date.now() - startedAt,
+        reason,
+      });
+      reject(new Error(`${method} connection closed`));
+    };
     const timeout = globalThis.setTimeout(() => {
       if (settled) return;
       settled = true;
+      cleanup();
       console.warn("[Wework] Cloud runtime RPC request timed out", {
         request_id: requestId,
         method,
@@ -166,6 +184,7 @@ async function emitRuntimeRequest<T>(
       reject(new Error(`${method} timed out`));
     }, acknowledgementTimeoutMs);
 
+    client.socket.on("disconnect", onDisconnect);
     client.socket.emit(
       REQUEST_EVENT,
       {
@@ -190,7 +209,7 @@ async function emitRuntimeRequest<T>(
           return;
         }
         settled = true;
-        globalThis.clearTimeout(timeout);
+        cleanup();
         if (!ack) {
           console.warn(
             "[Wework] Cloud runtime RPC returned an empty acknowledgement",
