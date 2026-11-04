@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import type { RuntimeGoal, RuntimeTaskSummary } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
 import { describe, expect, test } from 'vitest'

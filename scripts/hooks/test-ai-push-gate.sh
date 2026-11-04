@@ -378,8 +378,8 @@ bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$WEWORK_FULL_TEST_OUT
 refs/heads/topic $WEWORK_FULL_LOCAL_SHA refs/heads/topic $WEWORK_FULL_BASE_SHA
 EOF
 
-if ! grep -qE '^pnpm --filter wework exec vitest run --dir src --pool=threads --maxWorkers 1 --testTimeout 15000 --shard=1/2$' "$CALL_LOG" ||
-    ! grep -qE '^pnpm --filter wework exec vitest run --dir src --pool=threads --maxWorkers 1 --testTimeout 15000 --shard=2/2$' "$CALL_LOG"; then
+if ! grep -qE '^pnpm --filter wework exec vitest run --dir src --pool=threads --maxWorkers 1 --testTimeout 15000 --reporter=default --shard=1/2$' "$CALL_LOG" ||
+    ! grep -qE '^pnpm --filter wework exec vitest run --dir src --pool=threads --maxWorkers 1 --testTimeout 15000 --reporter=default --shard=2/2$' "$CALL_LOG"; then
     echo "Expected full renderer tests to exclude Electron-owned test files and use two shards."
     echo "Calls:"
     cat "$CALL_LOG"
@@ -391,6 +391,14 @@ if ! grep -qE 'Running full renderer unit tests in 2 shards with 1 worker each' 
     cat "$WEWORK_FULL_TEST_OUT"
     exit 1
 fi
+
+for shard in 1 2; do
+    if ! grep -q "wework_test_shard_${shard}: finished (exit 0)" "$WEWORK_FULL_TEST_OUT"; then
+        echo "Expected renderer shard $shard to report completion."
+        cat "$WEWORK_FULL_TEST_OUT"
+        exit 1
+    fi
+done
 
 assert_renderer_tests_follow_static_checks
 
@@ -415,7 +423,7 @@ if [ "$(cat "$CALL_LOG.renderer-order")" != "$(printf 'start 1\nfinish 1\nstart 
     exit 1
 fi
 for shard in 1 2; do
-    if ! grep -qE "^pnpm --filter wework exec vitest run --dir src --pool=threads --maxWorkers 1 --testTimeout 15000 --shard=$shard/2$" "$CALL_LOG"; then
+    if ! grep -qE "^pnpm --filter wework exec vitest run --dir src --pool=threads --maxWorkers 1 --testTimeout 15000 --reporter=default --shard=$shard/2$" "$CALL_LOG"; then
         echo "Expected serialized execution to retain renderer shard $shard and its original budget."
         exit 1
     fi

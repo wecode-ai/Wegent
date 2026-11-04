@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import { describe, expect, it } from 'vitest'
 import { dingtalkAITableRuntimeContext, parseDingTalkAITableLink } from './projectProviderConfig'

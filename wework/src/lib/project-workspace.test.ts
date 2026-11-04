@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import type { ProjectWithTasks } from '@/types/api'
 import { describe, expect, test, vi } from 'vitest'
 import { resolveProjectWorkspacePath } from './project-workspace'

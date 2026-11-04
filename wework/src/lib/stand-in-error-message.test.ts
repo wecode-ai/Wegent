@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@/i18n'
 import enCommon from '@/i18n/locales/en/common.json'
