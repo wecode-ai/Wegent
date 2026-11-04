@@ -1,0 +1,11 @@
+{
+  "order": 204000,
+  "scenario": "./scenarios/embedded-browser-multi-tabs.scenario.mjs",
+  "ci": {
+    "cloud": {
+      "order": 17000,
+      "shard": 1,
+      "position": 8000
+    }
+  }
+}
