@@ -306,7 +306,7 @@ export function StandInOverviewPage({
           <button
             type="button"
             data-testid="stand-in-settings-open"
-            disabled={(!state.saved && state.loading) || state.saving}
+            disabled={state.loading || state.saving}
             onClick={() => {
               setCalendarRequest(0)
               setProfile(role ? 'role' : 'primary')
