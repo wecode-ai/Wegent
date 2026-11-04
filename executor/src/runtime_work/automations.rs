@@ -19,6 +19,9 @@ use uuid::Uuid;
 
 use super::store::runtime_work_dir;
 
+mod stand_in_review;
+pub(crate) use stand_in_review::{weekly_review, WEEKLY_REVIEW_TEMPLATE};
+
 const AUTOMATION_STORE_VERSION: u64 = 2;
 const DEFAULT_TIMEZONE: &str = "UTC";
 const MAX_RUNS_PER_AUTOMATION: usize = 100;
@@ -39,6 +42,7 @@ struct AutomationState {
     version: u64,
     automations: HashMap<String, Automation>,
     runs: Vec<AutomationRun>,
+    stand_in_onboarding: HashMap<i64, Value>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -223,6 +227,9 @@ impl AutomationStore {
         if state.automations.contains_key(&automation.id) {
             return Err("automation already exists".to_owned());
         }
+        if stand_in_review::duplicate_review(&state, &automation) {
+            return Err("weekly review already exists".into());
+        }
         state
             .automations
             .insert(automation.id.clone(), automation.clone());
@@ -233,6 +240,9 @@ impl AutomationStore {
     pub fn update(&self, automation: Automation) -> Result<Automation, String> {
         validate_automation(&automation)?;
         let mut state = self.lock_state()?;
+        if stand_in_review::duplicate_review(&state, &automation) {
+            return Err("weekly review already exists".into());
+        }
         let existing = state
             .automations
             .get(&automation.id)
@@ -631,6 +641,9 @@ fn standard_day_of_week_name(value: &str) -> Option<&str> {
 fn validate_automation(automation: &Automation) -> Result<(), String> {
     if let Some(calendar) = automation.task_request.get("standInCalendar") {
         let owner = &automation.task_request["standInOwner"];
+        if calendar["template"] == WEEKLY_REVIEW_TEMPLATE && owner["roleId"] != "@primary" {
+            return Err("weekly review belongs to the primary stand-in".into());
+        }
         if !calendar.is_object()
             || !owner["userId"].as_i64().is_some_and(|id| id >= 0)
             || !owner["roleId"].as_str().is_some_and(|id| !id.is_empty())

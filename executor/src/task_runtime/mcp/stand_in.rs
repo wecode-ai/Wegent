@@ -20,10 +20,14 @@ pub(crate) struct StandInMcpIdentity {
     pub ask_before_act: bool,
     pub coordinator_batch: Option<String>,
     pub project: Option<Value>,
+    pub review: bool,
 }
 
 pub(crate) fn stand_in_identity(request: &ExecutionRequest) -> Option<StandInMcpIdentity> {
     let origin = request.extra.get("origin")?;
+    if origin["type"] == "stand_in_schedule" && origin["weeklyReview"] != true {
+        return None;
+    }
     if !matches!(
         origin["type"].as_str(),
         Some(
@@ -32,6 +36,7 @@ pub(crate) fn stand_in_identity(request: &ExecutionRequest) -> Option<StandInMcp
                 | "connection_work"
                 | "stand_in_coordinator"
                 | "project_coordinator"
+                | "stand_in_schedule"
         )
     ) {
         return None;
@@ -42,6 +47,7 @@ pub(crate) fn stand_in_identity(request: &ExecutionRequest) -> Option<StandInMcp
         .filter(|id| !id.is_empty())?
         .to_owned();
     Some(StandInMcpIdentity {
+        review: origin["type"] == "stand_in_schedule",
         task_id: origin["runtimeTaskId"]
             .as_str()
             .unwrap_or(&request.task_id)
@@ -101,6 +107,13 @@ pub(super) fn tools(context: &SpaceMcpRequestContext) -> Vec<Value> {
     if context
         .stand_in
         .as_ref()
+        .is_some_and(|identity| identity.review)
+    {
+        return super::stand_in_tasks::review_tools();
+    }
+    if context
+        .stand_in
+        .as_ref()
         .is_some_and(|identity| identity.project.is_some())
     {
         return vec![
@@ -149,6 +162,7 @@ pub(super) fn tools(context: &SpaceMcpRequestContext) -> Vec<Value> {
     }) {
         tools.extend(super::stand_in_tasks::tools());
         tools.extend(super::stand_in_tasks::schedule_tools());
+        tools.extend(super::stand_in_tasks::review_tools());
     }
     tools
 }
@@ -166,6 +180,7 @@ pub(super) async fn call(
         && super::stand_in_tasks::tools()
             .into_iter()
             .chain(super::stand_in_tasks::schedule_tools())
+            .chain(super::stand_in_tasks::review_tools())
             .any(|tool| tool["name"] == name)
     {
         return match super::stand_in_tasks::call(identity.clone(), name.to_owned(), arguments).await
@@ -400,6 +415,21 @@ mod memory_tests {
     use super::*;
 
     #[test]
+    fn stand_in_review_has_only_read_history_and_other_schedules_have_no_identity() {
+        let mut request: ExecutionRequest = serde_json::from_value(json!({"task_id":"review","origin":{"type":"stand_in_schedule","userId":7,"deviceId":"mac","standInId":"@primary"}})).unwrap();
+        assert!(stand_in_identity(&request).is_none());
+        request.extra.get_mut("origin").unwrap()["weeklyReview"] = json!(true);
+        let identity = stand_in_identity(&request).unwrap();
+        let mut context = SpaceMcpRequestContext::new(None, String::new(), String::new());
+        context.stand_in = Some(identity);
+        let names: Vec<_> = tools(&context)
+            .into_iter()
+            .map(|tool| tool["name"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(names, vec!["read_review_history"]);
+    }
+
+    #[test]
     fn stand_in_memory_tools_enforce_role_and_external_work_boundaries() {
         let directory = tempfile::tempdir().unwrap();
         let store = LocalTaskStore::open(directory.path().join("tasks.db")).unwrap();
@@ -412,6 +442,7 @@ mod memory_tests {
             role: None,
             work: None,
             project: None,
+            review: false,
             ask_before_act: true,
             coordinator_batch: None,
         };

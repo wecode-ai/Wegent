@@ -166,6 +166,7 @@ mod stand_in_execution;
 mod stand_in_ingress;
 mod stand_in_memory;
 mod stand_in_processing;
+mod stand_in_review;
 mod stand_in_schedules;
 mod stand_in_tasks;
 mod stand_in_telemetry;
@@ -1294,6 +1295,7 @@ fn should_resume_persisted_turns_before_rpc(method: &str) -> bool {
     // Connection discovery and transport must never resume unrelated model work.
     if method.starts_with("runtime.connections.")
         || method.starts_with("runtime.stand_in.telemetry.")
+        || method.starts_with("runtime.stand_in.onboarding.")
         || method == "runtime.stand_in.processing.status"
     {
         return false;

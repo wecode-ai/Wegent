@@ -222,6 +222,12 @@ impl RuntimeWorkRpcHandler {
         }
         let mut payload = payload;
         payload["origin"] = json!({"type":"stand_in_schedule","initiatedBy":"stand_in","userId":user,"standInId":role_id,"automationId":automation.id,"deviceId":self.device_id,"askBeforeAct":true});
+        if role_id == "@primary"
+            && automation.task_request["standInCalendar"]["template"]
+                == crate::runtime_work::automations::WEEKLY_REVIEW_TEMPLATE
+        {
+            payload["origin"]["weeklyReview"] = json!(true);
+        }
         let mut prepared = self.prepare_stand_in_execution(payload, &config).await?;
         let system = prepared["executionRequest"]["system_prompt"]
             .as_str()
@@ -314,6 +320,7 @@ mod tests {
             ask_before_act: true,
             coordinator_batch: None,
             project: None,
+            review: false,
         };
         let args = json!({"requestId":"event","title":"Review","message":"Review outstanding items","at":"2099-01-01T00:00:00Z","timezone":"UTC"});
         let saved = handler

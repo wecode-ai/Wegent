@@ -24,6 +24,7 @@ import { standInWorkRole } from './standInWork'
 import { StandInMemoryPanel } from './StandInMemoryPanel'
 import { StandInPrimaryProfile } from './StandInPrimaryProfile'
 import { StandInProcessingNotice } from './StandInProcessingNotice'
+import { StandInOnboarding } from './StandInOnboarding'
 import { StandInProposalCard } from './StandInProposalCard'
 import { inboxRuntimeItem, useStandInInbox } from './useStandInInbox'
 
@@ -196,7 +197,7 @@ export function StandInOverviewPage({
       setChatting(false)
       setProfile(null)
     })
-  return (
+  const content = (
     <section
       className="relative flex h-full min-h-0 min-w-0 text-base text-text-primary"
       data-testid="stand-in-overview"
@@ -571,5 +572,18 @@ export function StandInOverviewPage({
           )}
       </main>
     </section>
+  )
+  return api && active && (deviceId || !state.error) ? (
+    <StandInOnboarding
+      key={`${props.userId}:${deviceId}`}
+      api={api}
+      userId={props.userId}
+      deviceId={deviceId ?? ''}
+      onClose={props.onCancel}
+    >
+      {content}
+    </StandInOnboarding>
+  ) : (
+    content
   )
 }
