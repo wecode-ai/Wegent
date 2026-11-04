@@ -212,6 +212,80 @@ describe('PerformanceRecorder', () => {
     expect((await records()).filter(value => value.type === 'performance-sample')).toHaveLength(2)
   })
 
+  test('reuses timed-out collectors without delaying later samples and recovers when they settle', async () => {
+    const recoveredSnapshot = { ...snapshot, capturedAt: 987654, degraded: [] }
+    const recoveredMemory = {
+      total: 32000,
+      free: 8000,
+      available: 9000,
+      active: 23000,
+      swaptotal: 8000,
+      swapused: 1000,
+      swapfree: 7000,
+    }
+    let completeProcesses!: (value: ProcessSnapshot) => void
+    const pendingProcesses = new Promise<ProcessSnapshot>(resolve => {
+      completeProcesses = resolve
+    })
+    let completeMemory!: (value: typeof recoveredMemory) => void
+    const pendingMemory = new Promise<typeof recoveredMemory>(resolve => {
+      completeMemory = resolve
+    })
+    const processSnapshot = create(
+      vi.fn().mockReturnValueOnce(pendingProcesses).mockResolvedValue(recoveredSnapshot)
+    )
+    mocks.mem.mockReturnValueOnce(pendingMemory).mockResolvedValue(recoveredMemory)
+
+    try {
+      await recorder.setEnabled(true)
+      const startedAt = Date.now()
+      await vi.advanceTimersByTimeAsync(10_000)
+      await waitForSamples(1)
+      for (let count = 2; count <= 4; count += 1) {
+        await vi.advanceTimersByTimeAsync(5000)
+        await waitForSamples(count)
+        expect(processSnapshot).toHaveBeenCalledOnce()
+        expect(mocks.mem).toHaveBeenCalledOnce()
+      }
+      const degradedSamples = (await records()).filter(value => value.type === 'performance-sample')
+      expect(degradedSamples.map(value => value.timestamp - startedAt)).toEqual([
+        10_000, 15_000, 20_000, 25_000,
+      ])
+      expect(
+        degradedSamples.every(
+          value =>
+            value.processes.length === 0 &&
+            value.system.memoryActiveBytes === null &&
+            value.degraded.includes('process-snapshot-failed') &&
+            value.degraded.includes('system-memory-failed')
+        )
+      ).toBe(true)
+
+      completeProcesses(recoveredSnapshot)
+      completeMemory(recoveredMemory)
+      await vi.advanceTimersByTimeAsync(5000)
+      await waitForSamples(5)
+      expect(processSnapshot).toHaveBeenCalledTimes(2)
+      expect(mocks.mem).toHaveBeenCalledTimes(2)
+      expect((await records()).at(-1)).toMatchObject({
+        timestamp: startedAt + 30_000,
+        processSnapshotCapturedAt: recoveredSnapshot.capturedAt,
+        system: {
+          memoryTotalBytes: 32000,
+          memoryAvailableBytes: 9000,
+          memoryActiveBytes: 23000,
+          swapUsedBytes: 1000,
+        },
+        processes: [{ pid: 100, memoryBytes: 123000 }],
+        degraded: [],
+      })
+    } finally {
+      completeProcesses(recoveredSnapshot)
+      completeMemory(recoveredMemory)
+      await recorder.stop()
+    }
+  })
+
   test('reports the first write failure and permits a later retry without a poisoned log queue', async () => {
     const processSnapshot = create()
     await mkdir(join(directory, 'performance.log'))

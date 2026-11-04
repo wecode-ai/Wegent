@@ -126,21 +126,25 @@ export class PerformanceRecorder {
   }
 
   private readProcesses(): Promise<ProcessSnapshot> {
-    this.pendingProcesses ??= Promise.resolve()
-      .then(this.options.processSnapshot)
-      .finally(() => {
-        this.pendingProcesses = null
-      })
-    return withCollectionTimeout(this.pendingProcesses)
+    this.pendingProcesses ??= withCollectionTimeout(
+      Promise.resolve()
+        .then(this.options.processSnapshot)
+        .finally(() => {
+          this.pendingProcesses = null
+        })
+    )
+    return this.pendingProcesses
   }
 
   private readMemory(): Promise<Systeminformation.MemData> {
-    this.pendingMemory ??= Promise.resolve()
-      .then(() => mem())
-      .finally(() => {
-        this.pendingMemory = null
-      })
-    return withCollectionTimeout(this.pendingMemory)
+    this.pendingMemory ??= withCollectionTimeout(
+      Promise.resolve()
+        .then(() => mem())
+        .finally(() => {
+          this.pendingMemory = null
+        })
+    )
+    return this.pendingMemory
   }
 
   private metadata(type: string) {
