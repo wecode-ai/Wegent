@@ -165,8 +165,14 @@ export async function startRealMailServer(directory, runtimeRoot) {
     }
   }
   const ready = new Promise((resolve, reject) => {
+    const startupOutput = () => output.slice(-4096).replaceAll(fixturePassword, '[redacted]')
     const timer = setTimeout(
-      () => reject(new Error('GreenMail did not announce IMAPS/SMTPS readiness')),
+      () =>
+        reject(
+          new Error(
+            `GreenMail did not announce IMAPS/SMTPS readiness. Startup output: ${startupOutput() || '(empty)'}`
+          )
+        ),
       15000
     )
     const observe = () => {
@@ -181,9 +187,13 @@ export async function startRealMailServer(directory, runtimeRoot) {
       clearTimeout(timer)
       reject(error)
     })
-    child.once('exit', code => {
+    child.once('close', (code, signal) => {
       clearTimeout(timer)
-      reject(new Error(`GreenMail exited ${code}`))
+      reject(
+        new Error(
+          `GreenMail exited with ${code ?? signal}. Startup output: ${startupOutput() || '(empty)'}`
+        )
+      )
     })
     observe()
   })

@@ -124,8 +124,10 @@ export function createCatalogAutoCompactionVerification({
     })
     return waitForWorkbenchDebugState(
       control,
-      snapshot => snapshot.pane?.status?.isBusy === false,
-      `${fixture.id} turn ${turn} did not settle`
+      snapshot =>
+        snapshot.pane?.status?.isBusy === false &&
+        Boolean(snapshot.workbench.currentRuntimeTask?.threadId),
+      `${fixture.id} turn ${turn} did not settle with a Codex thread identity`
     )
   }
 

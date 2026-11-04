@@ -12,12 +12,37 @@ export async function verifyWindowsComponentPublication({ resources, environment
   await writeFile(
     holder,
     `
-param([string]$Path, [int]$ReleaseAfterMs = 0)
-$handle = [System.IO.File]::Open($Path, 'Open', 'Read', 'ReadWrite')
+param([string]$Path, [int]$ReleaseAfterMs = 0, [switch]$Directory)
+$ErrorActionPreference = 'Stop'
+if ($Directory) {
+  Add-Type -TypeDefinition @'
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+
+public static class DirectoryLock {
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
+    private static extern SafeFileHandle CreateFileW(string path, uint access, uint share,
+        System.IntPtr security, uint disposition, uint flags, System.IntPtr template);
+
+    public static SafeFileHandle Open(string path) {
+        const uint ListDirectory = 1, ShareReadWrite = 3, OpenExisting = 3;
+        const uint BackupSemantics = 0x02000000;
+        var handle = CreateFileW(path, ListDirectory, ShareReadWrite,
+            System.IntPtr.Zero, OpenExisting, BackupSemantics, System.IntPtr.Zero);
+        if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+        return handle;
+    }
+}
+'@
+  $handle = [DirectoryLock]::Open($Path)
+} else {
+  $handle = [System.IO.File]::Open($Path, 'Open', 'Read', 'ReadWrite')
+}
 try {
   [Console]::Out.WriteLine('held')
   [Console]::Out.Flush()
-  [Console]::In.ReadLine() | Out-Null
+  if ([Console]::In.ReadLine() -ne 'release') { throw 'Native holder lost its release channel' }
   if ($ReleaseAfterMs -gt 0) { [System.Threading.Thread]::Sleep($ReleaseAfterMs) }
 } finally { $handle.Dispose() }
 `
@@ -40,39 +65,45 @@ const originalSymlink = fs.symlink
 let child
 let closed
 let occupiedPublications = 0
-async function holdFile(file, releaseAfterMs = 0) {
+async function holdPath(path, { releaseAfterMs = 0, directory = false } = {}) {
   child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-File', input.holder,
-    '-Path', file, '-ReleaseAfterMs', String(releaseAfterMs)],
+    '-Path', path, '-ReleaseAfterMs', String(releaseAfterMs), ...(directory ? ['-Directory'] : [])],
     { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
+  let stderr = ''
+  child.stderr.on('data', data => { stderr += data.toString() })
   closed = new Promise((accept, reject) => {
     child.once('error', reject)
-    child.once('close', code => code === 0 ? accept(code) : reject(new Error('Native holder failed')))
+    child.once('close', code => code === 0 ? accept(code) :
+      reject(new Error('Native holder failed: ' + stderr.trim())))
   })
-  child.stderr.resume()
-  await new Promise((accept, reject) => {
+  let timer
+  const ready = new Promise((accept, reject) => {
     let output = ''
-    const timer = setTimeout(() => reject(new Error('Native file holder did not start')), 10000)
-    child.once('error', error => { clearTimeout(timer); reject(error) })
+    timer = setTimeout(() => reject(new Error('Native holder did not start')), 10000)
     child.stdout.on('data', data => {
       output += data.toString()
       if (!output.includes(String.fromCharCode(10))) return
-      clearTimeout(timer)
       output.trim() === 'held' ? accept() : reject(new Error('Invalid native holder acknowledgement'))
     })
   })
+  await Promise.race([ready, closed.then(() => {
+    throw new Error('Native holder exited before acquiring its handle')
+  })]).finally(() => clearTimeout(timer))
 }
 fs.symlink = async (source, target, type) => {
   if (basename(source).startsWith('.content-')) {
     const file = basename(dirname(target)) === 'wework-core-plugins'
       ? join('wework-app', 'client.js') : 'runtime.json'
-    await holdFile(join(source, file))
+    // The rename targets the directory. An open descendant alone did not
+    // prevent the rename on the Windows runner.
+    await holdPath(source, { directory: true })
     await assert.rejects(fs.rename(source, source + '.blocked'), error =>
       ['EPERM', 'EACCES', 'EBUSY'].includes(error.code))
     await originalSymlink(source, target, type)
     assert.equal(await fs.readFile(join(target, file), 'utf8'),
       await fs.readFile(join(source, file), 'utf8'))
     occupiedPublications++
-    child.stdin.end()
+    child.stdin.end('release' + String.fromCharCode(10))
     assert.equal(await closed, 0)
     child = null
     return
@@ -106,7 +137,7 @@ try {
   const pending = journal + '.tmp'
   await fs.writeFile(journal, 'pending')
   await fs.writeFile(pending, 'completed')
-  await holdFile(journal, 250)
+  await holdPath(journal, { releaseAfterMs: 250 })
   assert.throws(() => fsSync.renameSync(pending, journal), error =>
     ['EPERM', 'EACCES', 'EBUSY'].includes(error.code))
   child.stdin.end('release' + String.fromCharCode(10))
