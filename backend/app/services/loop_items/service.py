@@ -2560,6 +2560,13 @@ class LoopItemService:
             self._require_item_access(
                 db, descendant, user_id, action=IssueAction.EDIT_CONTENT
             )
+        for archived_item in archived_items:
+            archived_item.deleted_at = archived_at
+            archived_item.version += 1
+        # Terminal cancellation reloads the Issue before projecting its activity.
+        # Persist every tombstone first so that projection observes the archive
+        # and preserves the Issue's business status in this same transaction.
+        db.flush()
         # An archived Issue must not leave a Run owning a real process. Cancel
         # every cancellable Run of the archived subtree in the same transaction
         # so the recycle-bin rows never disagree with the execution queue.
@@ -2568,9 +2575,6 @@ class LoopItemService:
             item_ids=[archived_item.id for archived_item in archived_items],
             note="Issue was archived while the Run was active",
         )
-        for archived_item in archived_items:
-            archived_item.deleted_at = archived_at
-            archived_item.version += 1
         db.commit()
         db.refresh(item)
         if cancelled_runs:
