@@ -223,6 +223,7 @@ impl RuntimeWorkRpcHandler {
         force_start: bool,
     ) -> Result<(), AppIpcError> {
         let turn = SpawnTurnRequest {
+            task_kind: None,
             local_task_id,
             runtime: "claude_code".to_owned(),
             request,
@@ -246,6 +247,7 @@ impl RuntimeWorkRpcHandler {
         request: ExecutionRequest,
     ) -> Result<(), AppIpcError> {
         self.queue_turn(SpawnTurnRequest {
+            task_kind: None,
             local_task_id,
             runtime: "claude_code".to_owned(),
             request,

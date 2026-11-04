@@ -3,6 +3,7 @@ import { ensureLocalExecutorStarted, requestLocalExecutor } from '@/desktop/loca
 import type { InstalledPluginComponents, PluginLocalAuthDefinition } from '@/types/api'
 import { isOpenAiOfficialMarketplaceId } from '@/features/plugins/marketplaceIdentity'
 import { GITHUB_CLI_TARGET, isGithubCliTarget } from './githubCli'
+import { notifyLocalConnectorAuthChanged } from './localConnectorAuthEvents'
 
 export type LocalConnectorAuthStatus =
   | 'ok'
@@ -102,6 +103,7 @@ function healthCacheKey(target: LocalConnectorAuthTarget): string {
 export function clearLocalConnectorAuthHealthCache(): void {
   healthCacheRevision += 1
   okHealthCache.clear()
+  notifyLocalConnectorAuthChanged()
 }
 
 async function callLocalConnectorAuth(
@@ -110,13 +112,20 @@ async function callLocalConnectorAuth(
   sessionId?: string | null
 ): Promise<LocalConnectorAuthResult> {
   await ensureLocalExecutorStarted()
-  return requestLocalExecutor<LocalConnectorAuthResult>(`runtime.local_connector_auth.${method}`, {
-    pluginKey: target.pluginKey,
-    connectorSlug: target.connectorSlug,
-    pluginRoot: target.pluginRoot ?? undefined,
-    sessionId: sessionId ?? undefined,
-    ...(target.instance ? { instance: target.instance } : {}),
-  })
+  const result = await requestLocalExecutor<LocalConnectorAuthResult>(
+    `runtime.local_connector_auth.${method}`,
+    {
+      pluginKey: target.pluginKey,
+      connectorSlug: target.connectorSlug,
+      pluginRoot: target.pluginRoot ?? undefined,
+      sessionId: sessionId ?? undefined,
+      ...(target.instance ? { instance: target.instance } : {}),
+    }
+  )
+  if (result?.status === 'ok' && ['start', 'poll', 'logout'].includes(method)) {
+    notifyLocalConnectorAuthChanged()
+  }
+  return result
 }
 
 export function localConnectorAuthHealth(

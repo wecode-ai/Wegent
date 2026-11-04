@@ -289,21 +289,35 @@ pub(crate) fn restore_cloud_project_id(request: &mut ExecutionRequest, runtime_h
     }
 }
 
+pub(crate) fn runtime_origin(runtime_handle: &Value) -> Option<&Value> {
+    runtime_handle
+        .get("origin")
+        .filter(|value| value.is_object())
+        .or_else(|| {
+            runtime_handle
+                .pointer("/executionRequest/origin")
+                .filter(|value| value.is_object())
+        })
+}
+
 pub(crate) fn restore_origin(request: &mut ExecutionRequest, runtime_handle: &Value) {
     if let Some(delegation) = runtime_handle.pointer("/executionRequest/standInDelegation") {
         request
             .extra
             .insert("standInDelegation".into(), delegation.clone());
     }
-    if runtime_handle["origin"]["initiatedBy"] == "stand_in"
-        || runtime_handle["origin"]["initiatedBy"] == "stand_in_identity"
-        || runtime_handle["origin"]["type"] == "issue_dispatch"
+    let Some(stored_origin) = runtime_origin(runtime_handle) else {
+        return;
+    };
+    if stored_origin["initiatedBy"] == "stand_in"
+        || stored_origin["initiatedBy"] == "stand_in_identity"
+        || stored_origin["type"] == "issue_dispatch"
         || matches!(
-            runtime_handle["origin"]["type"].as_str(),
+            stored_origin["type"].as_str(),
             Some("dingtalk_work" | "connection_work" | "stand_in_coordinator")
         )
     {
-        let mut origin = runtime_handle["origin"].clone();
+        let mut origin = stored_origin.clone();
         if request
             .extra
             .get("origin")
@@ -312,17 +326,8 @@ pub(crate) fn restore_origin(request: &mut ExecutionRequest, runtime_handle: &Va
             origin["askBeforeAct"] = json!(true);
         }
         request.extra.insert("origin".into(), origin);
-        return;
-    }
-    if request.extra.contains_key("origin") {
-        return;
-    }
-    if let Some(origin) = runtime_handle
-        .get("origin")
-        .filter(|value| value.is_object())
-        .cloned()
-    {
-        request.extra.insert("origin".to_owned(), origin);
+    } else if !request.extra.contains_key("origin") {
+        request.extra.insert("origin".into(), stored_origin.clone());
     }
 }
 
