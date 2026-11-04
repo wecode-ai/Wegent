@@ -1167,7 +1167,7 @@ async fn codex_app_server_starts_beyond_windows_max_path() {
     let mut child = spawn_codex_app_server(
         binary.to_str().unwrap(),
         &config,
-        CodexAuthMode::WeworkRouter,
+        Some(CodexAuthMode::WeworkRouter),
     )
     .unwrap();
     let status = tokio::time::timeout(Duration::from_secs(10), child.wait())
