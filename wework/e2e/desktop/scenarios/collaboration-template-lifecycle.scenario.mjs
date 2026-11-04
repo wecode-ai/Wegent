@@ -321,10 +321,7 @@ export function createDesktopScenario({
       await control.command('clickWhenEnabled', selector('template-customize-main'), {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('waitFor', selector('template-role-main-role-0'), {
-        visible: true,
-        timeoutMs: uiTimeoutMs,
-      })
+      await wait('template-role-main-role-0')
       const leaderValue = await control.command('getValue', selector('template-role-main-role-0'))
       assert.ok(leaderValue.startsWith('agent:'), 'Default coordinator must be an agent')
       await control.command('select', selector('template-role-main-role-0'), {
