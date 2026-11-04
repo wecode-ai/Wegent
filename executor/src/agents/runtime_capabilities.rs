@@ -44,6 +44,7 @@ mod codex_mcp;
 mod execution_snapshot;
 mod home_skills;
 mod skill_archive;
+mod skill_shells;
 pub use codex::prepare_codex_runtime;
 pub(crate) use codex::prepare_codex_runtime_locked;
 pub(super) use execution_snapshot::publish_agent_selection;
@@ -563,6 +564,7 @@ async fn deploy_request_skills(
     request: &ExecutionRequest,
     skills_dir: &Path,
 ) -> Result<(), String> {
+    skill_shells::validate_shells(request)?;
     let required_skills = required_skill_names(request);
     let Some(primary_bot) = primary_bot(request) else {
         return required_skills

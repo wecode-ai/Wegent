@@ -5,9 +5,11 @@ import { setTimeout as delay } from 'node:timers/promises'
 
 import { CLOUD_DEVICE_ID, CLOUD_PUBLIC_MODEL_NAME, CLOUD_PUBLIC_MODEL_OPTIONS } from './shared.mjs'
 import { createZipFixture } from './zip-fixtures.mjs'
+import { verifySkillCatalogBindings } from './skill-catalog-bindings.mjs'
 
 const NAME = 'concurrent-home-skill'
 const TEAM = 'Concurrent Claude Agent'
+const FORMATS = ['docx', 'xlsx', 'pptx', 'pdf']
 
 // Hold the first real Claude inside its model request while a second execution
 // activates a different version of the same Skill in the shared Agent Home.
@@ -24,6 +26,11 @@ export function createConcurrentClaudeHomes({
     const serialized = JSON.stringify(body)
     const turn = turns.find(candidate => serialized.includes(candidate.prompt))
     if (!turn) return false
+    assert.equal(
+      serialized.includes('CHAT_ONLY_BROWSER_FIXTURE'),
+      false,
+      'A Chat-only default leaked into the native runtime'
+    )
     const output = (body.input ?? []).find(
       item => item.type === 'function_call_output' && item.call_id === turn.callId
     )
@@ -32,6 +39,13 @@ export function createConcurrentClaudeHomes({
         JSON.stringify(output).includes(`CONCURRENT_SKILL_${turn.version}`),
         "A running task read another execution's Skill version"
       )
+      for (const format of FORMATS) {
+        assert.ok(
+          JSON.stringify(output).includes(`CONCURRENT_DOCUMENT_${format}_${turn.version}`),
+          `The ${format} Skill or its resources changed during execution`
+        )
+      }
+      assert.equal(JSON.stringify(output).includes('/root/.claude'), false)
       turn.completed = true
       writeText(response, `${turn.callId}-done`, turn.completion)
     } else {
@@ -65,8 +79,9 @@ export function createConcurrentClaudeHomes({
         signal: AbortSignal.timeout(10_000),
       })
       assert.ok(response.ok, `${path}: ${response.status} ${await response.clone().text()}`)
-      return response.json()
+      return response.status === 204 ? null : response.json()
     }
+    await verifySkillCatalogBindings(cloud, resultDir, request)
     const upload = async (version, id) => {
       const path = join(resultDir, `${NAME}-${version}.zip`)
       await createZipFixture(path, {
@@ -82,14 +97,65 @@ export function createConcurrentClaudeHomes({
         form
       )
     }
+    const formats = FORMATS
+    const formatIds = {}
+    const uploadFormats = async version => {
+      for (const format of formats) {
+        const path = join(resultDir, `${format}-${version}.zip`)
+        await createZipFixture(path, {
+          [`${format}/SKILL.md`]: `---\nname: ${format}\ndescription: Native format fixture\nbindShells: [ClaudeCode, Codex]\n---\nCONCURRENT_DOCUMENT_${format}_${version}\n`,
+          [`${format}/scripts/resource.txt`]: `CONCURRENT_DOCUMENT_${format}_${version}\n`,
+        })
+        const form = new FormData()
+        form.set(
+          'file',
+          new Blob([await readFile(path)], { type: 'application/zip' }),
+          `${format}.zip`
+        )
+        form.set('name', format)
+        form.set('namespace', 'default')
+        const id = formatIds[format]
+        const skill = await request(
+          id ? `v1/kinds/skills/${id}` : 'v1/kinds/skills/upload',
+          id ? 'PUT' : 'POST',
+          form
+        )
+        formatIds[format] = Number(skill.metadata.labels.id)
+      }
+    }
+    await uploadFormats('V1')
+    const browserArchive = join(resultDir, 'chat-only-browser.zip')
+    await createZipFixture(browserArchive, {
+      'browser/SKILL.md':
+        '---\nname: browser\ndescription: CHAT_ONLY_BROWSER_FIXTURE\nbindShells:\n  - Chat\n---\nCHAT_ONLY_BROWSER_FIXTURE\n',
+    })
+    const browserForm = new FormData()
+    browserForm.set(
+      'file',
+      new Blob([await readFile(browserArchive)], { type: 'application/zip' }),
+      'browser.zip'
+    )
+    browserForm.set('name', 'browser')
+    browserForm.set('namespace', 'default')
+    const browser = await request('v1/kinds/skills/upload', 'POST', browserForm)
+    const browserId = Number(browser.metadata.labels.id)
     const first = await upload('V1')
     const skillId = Number(first.metadata.labels.id)
     const bot = await request('bots', 'POST', {
       name: 'Concurrent Claude Bot',
       shell_name: 'ClaudeCode',
       agent_config: { bind_model: CLOUD_PUBLIC_MODEL_NAME, bind_model_type: 'public' },
-      skills: [NAME],
-      skill_refs: { [NAME]: { skill_id: skillId, namespace: 'default', is_public: false } },
+      skills: [NAME, ...formats, 'browser'],
+      skill_refs: {
+        [NAME]: { skill_id: skillId, namespace: 'default', is_public: false },
+        ...Object.fromEntries(
+          formats.map(format => [
+            format,
+            { skill_id: formatIds[format], namespace: 'default', is_public: false },
+          ])
+        ),
+        browser: { skill_id: browserId, namespace: 'default', is_public: false },
+      },
     })
     const team = await request('teams', 'POST', {
       name: TEAM,
@@ -101,7 +167,10 @@ export function createConcurrentClaudeHomes({
       [1, 'V1'],
       [2, 'V2'],
     ]) {
-      if (index === 2) await upload(version, skillId)
+      if (index === 2) {
+        await upload(version, skillId)
+        await uploadFormats(version)
+      }
       const turn = {
         index,
         version,
@@ -159,6 +228,7 @@ export function createConcurrentClaudeHomes({
     const snapshots = await readdir(join(home, 'runtime/executions'))
     assert.equal(snapshots.length, 2)
     const packages = []
+    const formatPackages = Object.fromEntries(formats.map(format => [format, []]))
     for (const name of snapshots) {
       const snapshot = join(home, 'runtime/executions', name)
       assert.equal(
@@ -167,19 +237,37 @@ export function createConcurrentClaudeHomes({
       )
       for (const file of ['mcp.json', 'settings.json', 'execution.json'])
         assert.ok((await readFile(join(snapshot, file))).length > 0)
+      assert.equal(
+        (await readdir(join(snapshot, 'skills'))).includes('browser'),
+        false,
+        'A Chat-only default was distributed into a native execution snapshot'
+      )
       packages.push(await realpath(join(snapshot, 'skills', NAME)))
+      for (const format of formats) {
+        const packagePath = await realpath(join(snapshot, 'skills', format))
+        formatPackages[format].push(packagePath)
+        const instructions = await readFile(join(packagePath, 'SKILL.md'), 'utf8')
+        const resource = await readFile(join(packagePath, 'scripts/resource.txt'), 'utf8')
+        assert.ok(
+          instructions.includes(resource.trim()),
+          'Format instructions and resources must share a version'
+        )
+      }
     }
     assert.notEqual(
       packages[0],
       packages[1],
       'Different Skill versions must retain different immutable packages'
     )
+    for (const format of formats) {
+      assert.notEqual(formatPackages[format][0], formatPackages[format][1])
+    }
     for (const { response, turn } of pending.values()) {
       writeBashToolCall(
         response,
         `${turn.callId}-read`,
         turn.callId,
-        `cat "$CLAUDE_CONFIG_DIR/skills/${NAME}/SKILL.md"`
+        `cat "$CLAUDE_CONFIG_DIR/skills/${NAME}/SKILL.md" && cat "$CLAUDE_CONFIG_DIR/skills/docx/SKILL.md" "$CLAUDE_CONFIG_DIR/skills/docx/scripts/resource.txt" && cat "$CLAUDE_CONFIG_DIR/skills/xlsx/SKILL.md" "$CLAUDE_CONFIG_DIR/skills/xlsx/scripts/resource.txt" && cat "$CLAUDE_CONFIG_DIR/skills/pptx/SKILL.md" "$CLAUDE_CONFIG_DIR/skills/pptx/scripts/resource.txt" && cat "$CLAUDE_CONFIG_DIR/skills/pdf/SKILL.md" "$CLAUDE_CONFIG_DIR/skills/pdf/scripts/resource.txt"`
       )
     }
     pending.clear()

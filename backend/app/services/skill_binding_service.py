@@ -447,6 +447,7 @@ class SkillBindingService:
         db: Session,
         user_id: int,
         context: SkillBindingContext | None = None,
+        shell_type: str | None = None,
     ) -> list[dict[str, Any]]:
         """Return active runtime Skill refs for the user's default enabled Skills."""
         refs: list[dict[str, Any]] = []
@@ -469,12 +470,17 @@ class SkillBindingService:
             skill = self._get_active_skill(db, skill_id)
             if not skill:
                 continue
+            shells = skill.json.get("spec", {}).get("bindShells")
+            if shell_type and shells and shell_type not in shells:
+                continue
             ref = {
                 "skill_id": skill.id,
                 "name": skill.name,
                 "namespace": skill.namespace,
                 "is_public": skill.user_id == 0,
             }
+            if shells:
+                ref["bind_shells"] = list(shells)
             if self._extract_force_preload(binding):
                 ref["force_preload"] = True
             refs.append(ref)

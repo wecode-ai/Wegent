@@ -130,7 +130,7 @@ export function createSharedSkillRuntime({
             }
           : {}
       await createZipFixture(archivePath, {
-        [`${NAME}/SKILL.md`]: `---\nname: ${NAME}\ndescription: Shared skill ${version}\nmcpServers: ${JSON.stringify(mcps)}\n---\nWEWORK_SHARED_SKILL_${version}\n`,
+        [`${NAME}/SKILL.md`]: `---\nname: ${NAME}\ndescription: Shared skill ${version}\nbindShells: [ClaudeCode, Codex]\nmcpServers: ${JSON.stringify(mcps)}\n---\nWEWORK_SHARED_SKILL_${version}\n`,
       })
       const bytes = await readFile(archivePath)
       const form = new FormData()

@@ -220,6 +220,7 @@ class SkillKindsService:
         user_id: int,
         source: Optional[Dict[str, Any]] = None,
         add_to_user_default: bool = True,
+        commit: bool = True,
     ) -> Skill:
         """
         Create a new Skill with ZIP package.
@@ -361,7 +362,8 @@ class SkillKindsService:
                     created_by=user_id,
                     commit=False,
                 )
-            db.commit()
+            if commit:
+                db.commit()
             return result
 
         # Create new Skill Kind
@@ -397,7 +399,8 @@ class SkillKindsService:
                 created_by=user_id,
                 commit=False,
             )
-        db.commit()
+        if commit:
+            db.commit()
 
         return result
 
@@ -684,6 +687,7 @@ class SkillKindsService:
         file_content: bytes,
         file_name: str,
         source: Optional[Dict[str, Any]] = None,
+        commit: bool = True,
     ) -> Skill:
         """
         Update Skill ZIP package.
@@ -775,7 +779,8 @@ class SkillKindsService:
 
         # Build result before commit to avoid lazy loading issues
         result = self._kind_to_skill(skill_kind)
-        db.commit()
+        if commit:
+            db.commit()
 
         return result
 

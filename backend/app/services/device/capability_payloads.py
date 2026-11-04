@@ -344,6 +344,7 @@ class CapabilityPayloadResolver:
             "name": name,
             "namespace": namespace,
             "is_public": skill.user_id == 0,
+            "bind_shells": (skill.json or {}).get("spec", {}).get("bindShells"),
             "content_hash": f"sha256:{file_hash}" if file_hash else None,
             "download_path": (
                 f"/api/v1/kinds/skills/{skill.id}/download?namespace={namespace}"
