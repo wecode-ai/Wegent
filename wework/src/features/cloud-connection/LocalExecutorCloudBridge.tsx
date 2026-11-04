@@ -75,7 +75,7 @@ export function LocalExecutorCloudBridge({
     }
 
     const scheduleRetry = () => {
-      if (!isCurrentConnectionAttempt() || !connected) return
+      if (!isCurrentConnectionAttempt()) return
       if (refreshTimer) clearTimeout(refreshTimer)
       refreshTimer = setTimeout(() => void applyConnection(), 30_000)
     }
@@ -128,6 +128,7 @@ export function LocalExecutorCloudBridge({
           '[CloudConnection] Failed to disconnect runtime task service from cloud',
           error
         )
+        scheduleRetry()
       }
     }
 

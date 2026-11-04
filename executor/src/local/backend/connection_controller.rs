@@ -147,7 +147,20 @@ impl LocalBackendConnectionController {
             return Ok(false);
         }
         if let Some(handler) = &self.runtime_work_handler {
-            handler.update_local_account_identity(profile.as_ref().map(|p| &p.connection))?;
+            let handler = Arc::clone(handler);
+            let connection = profile.as_ref().map(|value| value.connection.clone());
+            // Keep configuration serialized until its durable account epoch commits.
+            // Ignoring a failed write could revive old evidence on an A -> B -> A switch.
+            tokio::task::spawn_blocking(move || {
+                handler.update_local_account_identity(connection.as_ref())
+            })
+            .await
+            .map_err(|_| {
+                AppIpcError::new(
+                    "identity_update_failed",
+                    "Local account identity could not be updated",
+                )
+            })??;
         }
         if !changed {
             return Ok(false);
@@ -523,6 +536,133 @@ mod tests {
         config::device::{ConnectionConfig, DeviceConfig},
         local::app_ipc::BackendConnectionHandler,
     };
+
+    #[derive(Default)]
+    struct IdentityUpdateProbe {
+        fail: std::sync::atomic::AtomicBool,
+        entered: tokio::sync::Notify,
+        release: std::sync::Mutex<Option<std::sync::mpsc::Receiver<()>>>,
+    }
+
+    impl crate::local::app_ipc::RuntimeWorkHandler for IdentityUpdateProbe {
+        fn update_local_account_identity(
+            &self,
+            connection: Option<&ConnectionConfig>,
+        ) -> Result<(), crate::local::app_ipc::AppIpcError> {
+            if self.fail.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(crate::local::app_ipc::AppIpcError::new(
+                    "identity_store_unavailable",
+                    "Identity store unavailable",
+                ));
+            }
+            if connection.is_some() {
+                if let Some(release) = self.release.lock().unwrap().take() {
+                    self.entered.notify_one();
+                    release
+                        .recv_timeout(std::time::Duration::from_secs(2))
+                        .map_err(|_| {
+                            crate::local::app_ipc::AppIpcError::new(
+                                "identity_store_timeout",
+                                "Identity update blocked the runtime",
+                            )
+                        })?;
+                }
+            }
+            Ok(())
+        }
+        fn handle_runtime_rpc<'a>(
+            &'a self,
+            _data: serde_json::Value,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = Result<serde_json::Value, crate::local::app_ipc::AppIpcError>,
+                    > + Send
+                    + 'a,
+            >,
+        > {
+            Box::pin(async { Ok(serde_json::Value::Null) })
+        }
+    }
+
+    async fn identity_controller(
+        probe: std::sync::Arc<IdentityUpdateProbe>,
+    ) -> LocalBackendConnectionController {
+        LocalBackendConnectionController::start_internal(
+            DeviceConfig::default(),
+            Some(probe),
+            None,
+            std::sync::Arc::new(std::sync::Mutex::new(None)),
+            std::sync::Arc::new(std::sync::Mutex::new(None)),
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn failed_identity_updates_keep_connection_changes_uncommitted_and_retryable() {
+        let probe = std::sync::Arc::new(IdentityUpdateProbe::default());
+        let controller = identity_controller(probe.clone()).await;
+        let profile = json!({"backend_url":"http://127.0.0.1:1","auth_token":"test"});
+        probe.fail.store(true, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(
+            controller
+                .configure_backend(profile.clone())
+                .await
+                .unwrap_err()
+                .code,
+            "identity_store_unavailable"
+        );
+        assert!(controller.connection_snapshot().lock().unwrap().is_none());
+        assert_eq!(
+            controller.backend_status().await.unwrap()["configured"],
+            false
+        );
+        probe.fail.store(false, std::sync::atomic::Ordering::SeqCst);
+        controller.configure_backend(profile).await.unwrap();
+        let committed = controller.connection_snapshot().lock().unwrap().clone();
+        assert!(committed.is_some());
+        probe.fail.store(true, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(
+            controller
+                .configure_backend(json!({}))
+                .await
+                .unwrap_err()
+                .code,
+            "identity_store_unavailable"
+        );
+        assert_eq!(*controller.connection_snapshot().lock().unwrap(), committed);
+        probe.fail.store(false, std::sync::atomic::Ordering::SeqCst);
+        controller.configure_backend(json!({})).await.unwrap();
+        assert!(controller.connection_snapshot().lock().unwrap().is_none());
+        assert_eq!(
+            controller.backend_status().await.unwrap()["configured"],
+            false
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_pending_identity_write_does_not_block_the_async_runtime() {
+        let probe = std::sync::Arc::new(IdentityUpdateProbe::default());
+        let controller = identity_controller(probe.clone()).await;
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        *probe.release.lock().unwrap() = Some(release_rx);
+        let worker = controller.clone();
+        let configuring = tokio::spawn(async move {
+            worker
+                .configure_backend(json!({"backend_url":"http://127.0.0.1:1","auth_token":"test"}))
+                .await
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            probe.entered.notified().await;
+            release_tx
+                .send(())
+                .expect("Runtime must remain responsive while the identity store is busy");
+            configuring.await.unwrap().unwrap();
+        })
+        .await
+        .expect("Identity persistence blocked the async runtime");
+        controller.configure_backend(json!({})).await.unwrap();
+    }
 
     #[tokio::test]
     async fn publishes_the_initial_connection_to_the_shared_snapshot() {

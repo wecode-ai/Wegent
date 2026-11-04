@@ -272,6 +272,17 @@ function ConnectionRulesWorkspace({
                   ? ` · ${translate("automation_rules.source_failed", "来源连接中断，请检查授权或网络后重新检查")}`
                   : ""}
               </span>
+              {rule.cloudSyncError && (
+                <span
+                  className="block text-xs text-text-secondary"
+                  data-testid={`connection-rule-cloud-sync-${rule.id}`}
+                >
+                  {translate(
+                    "automation_rules.project_unavailable",
+                    "云项目暂时无法同步，请检查网络或项目权限。",
+                  )}
+                </span>
+              )}
               <span className="block text-xs text-text-secondary">
                 {[
                   rule.condition?.contains &&

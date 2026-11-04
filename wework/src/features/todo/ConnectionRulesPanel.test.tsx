@@ -184,4 +184,49 @@ describe('Connection rules', () => {
     await waitFor(() => expect(api.list).toHaveBeenCalledTimes(2))
     await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
   })
+  it('keeps cached cloud rules visible with a scoped sync error and clears it on recovery', async () => {
+    vi.useFakeTimers()
+    const api = fixture()
+    const cloudProject = { id: 'cloud', store: 'cloud' as const }
+    const rule = {
+      id: 'cloud-rule',
+      version: 1,
+      name: 'Cloud snapshot',
+      enabled: true,
+      source,
+      project: cloudProject,
+      eventType: 'mail.received',
+      targetKind: 'agent',
+      targetId: 'agent',
+      publication: { title: 'Summary', instruction: 'Anonymize' },
+      cloudSyncError: 'cloud_unavailable',
+    }
+    api.list.mockResolvedValue([rule])
+    const view = render(
+      <ConnectionRulesPanel
+        api={api}
+        project={cloudProject}
+        targets={targets}
+        translate={translate}
+      />
+    )
+    try {
+      await act(async () => {})
+      expect(screen.getByTestId('connection-rule-edit-cloud-rule')).toBeEnabled()
+      expect(screen.getByTestId('connection-rule-cloud-sync-cloud-rule')).toHaveTextContent(
+        '云项目暂时无法同步'
+      )
+      api.list.mockResolvedValue([
+        { ...rule, cloudSyncError: undefined, name: 'Current project rule' },
+      ])
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000)
+      })
+      expect(screen.queryByTestId('connection-rule-cloud-sync-cloud-rule')).not.toBeInTheDocument()
+      expect(screen.getByText('Current project rule')).toBeInTheDocument()
+    } finally {
+      view.unmount()
+      vi.useRealTimers()
+    }
+  })
 })

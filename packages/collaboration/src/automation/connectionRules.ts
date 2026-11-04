@@ -60,6 +60,7 @@ export interface ConnectionAutomationRule extends ConnectionRuleProcessing {
   deviceId?: string;
   lastRunStatus?: string;
   collectionError?: string;
+  cloudSyncError?: string;
   cloudRuleId?: string;
   cloudRuleVersion?: number;
   sharedRuleVersion?: number;

@@ -69,6 +69,8 @@ export const automationRuleMessages: Record<
     "automation_rules.configure_runner": "检查或配置执行环境和模型",
     "automation_rules.runner_agent_policy":
       "遵循 Agent 策略；需要选择的环境或模型将在保存时配置。",
+    "automation_rules.project_unavailable":
+      "云项目暂时无法同步，请检查网络或项目权限。",
     "automation_rules.source_failed":
       "来源连接中断，请检查授权或网络后重新检查",
     "automation_rules.recheck_source": "重新检查来源",
@@ -163,6 +165,8 @@ export const automationRuleMessages: Record<
       "Check or configure environment and model",
     "automation_rules.runner_agent_policy":
       "Uses Agent policies. Deferred environment or model choices are configured when saving.",
+    "automation_rules.project_unavailable":
+      "Cloud project cannot be synced. Check your connection or project access.",
     "automation_rules.source_failed":
       "Source disconnected. Check authorization or network, then recheck.",
     "automation_rules.recheck_source": "Recheck source",

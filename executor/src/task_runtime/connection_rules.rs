@@ -7,6 +7,14 @@ const RULE: &str = "connection_rule";
 const RUN: &str = "connection_rule_run";
 const EVENT: &str = "connection_event";
 
+fn clear_view_state(rule: &mut Value) {
+    if let Some(fields) = rule.as_object_mut() {
+        for field in ["lastRunStatus", "collectionError", "cloudSyncError"] {
+            fields.remove(field);
+        }
+    }
+}
+
 fn project_rule(rule: &Value) -> Value {
     json!({"id":rule["id"],"name":rule["name"],"prompt":rule["instruction"].as_str().filter(|s|!s.trim().is_empty()).unwrap_or("Process the published Issue and record the result."),
         "triggerType":"event","eventType":"connection.result_published","eventConfig":{"executionTarget":"create_issue"},
@@ -22,8 +30,13 @@ fn update_project_rule(
         return Ok(());
     }
     let project_id = required(&rule["project"], "id")?.to_owned();
-    let project = get_item_from(connection, &project_id, "project")?
-        .ok_or(TaskRuntimeError::ProjectNotFound)?;
+    let Some(project) = get_item_from(connection, &project_id, "project")? else {
+        return if remove {
+            Ok(())
+        } else {
+            Err(TaskRuntimeError::ProjectNotFound)
+        };
+    };
     let mut metadata = project.metadata.clone();
     let mut rules = metadata["automatic_processing_rules"]
         .as_array()
@@ -153,6 +166,7 @@ impl LocalTaskStore {
     }
 
     pub fn connection_rule_view(&self, mut rule: Value) -> Result<Value, TaskRuntimeError> {
+        clear_view_state(&mut rule);
         if rule["project"]["store"] == "local" {
             if let Some(project) = get_item_from(
                 &*self.connection()?,
@@ -197,6 +211,7 @@ impl LocalTaskStore {
         device: &str,
         mut rule: Value,
     ) -> Result<Value, TaskRuntimeError> {
+        clear_view_state(&mut rule);
         validate_rule_fields(&rule)?;
         let mut guard = self.connection()?;
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;

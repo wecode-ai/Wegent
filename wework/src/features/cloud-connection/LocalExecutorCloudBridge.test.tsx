@@ -539,6 +539,26 @@ describe('LocalExecutorCloudBridge', () => {
     ).not.toHaveProperty('authToken')
   })
 
+  test('retries a failed identity retirement while remaining disconnected', async () => {
+    vi.useFakeTimers()
+    mocks.disconnect.mockRejectedValueOnce(new Error('Identity store busy'))
+    const view = render(
+      <LocalExecutorCloudBridge preferencesLoaded isConnected={false} token={null} />
+    )
+    try {
+      await flushAsyncEffects()
+      expect(mocks.disconnect).toHaveBeenCalledTimes(1)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000)
+      })
+      expect(mocks.disconnect).toHaveBeenCalledTimes(2)
+      expect(mocks.connect).not.toHaveBeenCalled()
+    } finally {
+      view.unmount()
+      vi.useRealTimers()
+    }
+  })
+
   test('disconnects the executor and clears connector state when cloud is unavailable', async () => {
     render(<LocalExecutorCloudBridge preferencesLoaded isConnected={false} token={null} />)
 

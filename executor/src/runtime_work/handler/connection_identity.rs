@@ -191,11 +191,15 @@ impl RuntimeWorkRpcHandler {
         let response = Self::stand_in_request_on(&connection, method, path, body).await?;
         self.check_connection_actor(user, actor)?;
         if !response.status().is_success() {
-            if path == "/users/me" && matches!(response.status().as_u16(), 401 | 403) {
+            if matches!(response.status().as_u16(), 401 | 403) {
                 LocalTaskStore::open(self.task_store_path.as_ref())
                     .map_err(settings_error)?
                     .forget_connection_user(&self.device_id)
                     .map_err(settings_error)?;
+                return Err(AppIpcError::new(
+                    "permission_denied",
+                    "Project authorization was denied",
+                ));
             }
             return Err(AppIpcError::new(
                 "cloud_request_failed",

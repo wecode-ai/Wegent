@@ -33,7 +33,9 @@ The device where a rule is configured collects its source. Collection pauses whi
 the device is closed or asleep and resumes from its persisted position. Open **Run history**
 beside a rule to inspect runs and open published Issues. Failed
 publications that support recovery can be retried from the rule history, reusing the same
-run and any prepared result. Changing or disabling a rule cancels older runs that
+run and any prepared result. Failed runs already accepted by the project recover
+through the existing project retry flow without delivering the message again.
+Changing or disabling a rule cancels older runs that
 have not been delivered. Work already delivered remains in the project run history. New source rules do not replay messages from before they were enabled.
 
 Local source rules may continue during a cloud transport outage using the same previously

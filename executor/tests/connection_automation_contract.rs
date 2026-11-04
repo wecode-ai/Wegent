@@ -482,3 +482,31 @@ fn restarting_without_a_connection_retires_the_previous_accounts_offline_evidenc
         None
     );
 }
+
+#[test]
+fn an_owned_rule_can_be_removed_after_its_local_project_is_archived() {
+    let (_root, store, rule) = fixture();
+    store
+        .enqueue_connection_rule(7, &rule, &rule["source"], &event("before-archive"))
+        .unwrap();
+    let project = store.list_projects().unwrap().remove(0);
+    store.archive_project(&project.id, project.version).unwrap();
+    assert!(store
+        .remove_connection_rule(8, rule["id"].as_str().unwrap(), 1)
+        .is_err());
+    assert!(store
+        .remove_connection_rule(7, rule["id"].as_str().unwrap(), 2)
+        .is_err());
+    store
+        .remove_connection_rule(7, rule["id"].as_str().unwrap(), 1)
+        .unwrap();
+    assert!(store.connection_rules(7).unwrap().is_empty());
+    assert_eq!(
+        store.connection_rule_runs(7).unwrap()[0]["status"],
+        "cancelled"
+    );
+    store
+        .enqueue_connection_rule(7, &rule, &rule["source"], &event("after-archive"))
+        .unwrap();
+    assert_eq!(store.connection_rule_runs(7).unwrap().len(), 1);
+}

@@ -5935,6 +5935,7 @@
     "entity_unavailable": "This entity cannot be displayed here. Open its original location."
   },
   "automation_rules": {
+    "project_unavailable": "Cloud project cannot be synced. Check your connection or project access.",
     "conditions": "When conditions match",
     "contains": "Message contains (optional)",
     "sender": "Sender ID (optional)",

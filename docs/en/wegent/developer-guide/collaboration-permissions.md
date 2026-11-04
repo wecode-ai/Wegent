@@ -176,6 +176,14 @@ transport outage. `connection_identity::tests` and `connection_automation_contra
 cover offline use, switching, denial, persistence and absence of persisted credentials,
 preserving CP15's current cloud execution authorization.
 
+Account changes serialize the durable identity epoch before updating the connection
+snapshot. Storage failures preserve the previous state and permit retries; they must
+not be ignored to continue switching. Persistence runs on a blocking thread to keep
+the async Runtime responsive. Unfiltered rule lists isolate ordinary cloud failures
+per project, returning only the current user's cached configuration with a sync error
+until recovery. Explicit 401/403 responses still invalidate identity evidence; cached
+configuration grants no project authority.
+
 ## Incident and recovery evidence
 
 Development startup automatically runs Alembic. The original permission migration was automatically applied while under development and failed serializing backup data. MySQL retained completed DDL while rolling back project-parent backfill. Startup swallowed the failure, and queries against the empty new parent column hid projects. The earlier claim that no real database had been migrated was inaccurate.
