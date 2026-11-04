@@ -6,6 +6,7 @@ import { useWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContext
 import type { WorkspaceTab } from '@/features/workspace-tabs/workspaceTabs'
 import { WeworkSchemeBridge } from './WeworkSchemeBridge'
 import { openWeworkScheme } from './schemeEvents'
+import { weworkInteractionScheme } from './scheme'
 import {
   CloudConnectionContext,
   type CloudConnectionContextValue,
@@ -60,6 +61,38 @@ beforeEach(() => {
   window.history.replaceState({}, '', '/todo')
 })
 afterEach(cleanup)
+
+test('interaction deep links reuse a restored pending-route tab when the canonical tab points elsewhere', () => {
+  render(
+    <Harness
+      tabs={[
+        { id: 'boards', kind: 'board', title: 'Boards', contentRoute: '/todo', fixed: true },
+        {
+          id: 'pending-interactions',
+          kind: 'auxiliary',
+          title: 'Sites',
+          contentRoute: '/sites',
+          fixed: true,
+        },
+        {
+          id: 'restored-inbox',
+          kind: 'auxiliary',
+          title: 'Pending',
+          contentRoute: '/pending-interactions?interaction=old',
+          fixed: false,
+        },
+      ]}
+    />
+  )
+  act(() =>
+    openWeworkScheme(weworkInteractionScheme({ deviceId: 'device', taskId: 'task' }, 'request'))
+  )
+  expect(screen.getByTestId('tab-count')).toHaveTextContent('3')
+  expect(screen.getByTestId('active-tab')).toHaveTextContent('restored-inbox')
+  expect(new URLSearchParams(window.location.search).get('interaction')).toBe(
+    JSON.stringify(['device', 'task', 'request'])
+  )
+})
 
 test('repeated comment notifications update real tab routing without duplicating the board', () => {
   render(

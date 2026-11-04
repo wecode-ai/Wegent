@@ -2096,6 +2096,59 @@ export function TodoEditor(props: TodoEditorProps) {
   // activity rail on the right. Edit mode with a project always gets this
   // layout so the task detail shape matches the design even before chat
   // connectivity is available.
+  const assigneeOptions: Array<{
+    value: IssueAssigneeTarget;
+    label: string;
+    group?: string;
+  }> = [
+    {
+      value: "",
+      label: t("todo.unassigned", "未指派"),
+    },
+    ...projectGroups.map((group) => ({
+      value: `group:${group.id}` as IssueAssigneeTarget,
+      label: group.name,
+      group: t("issue_creation.group", "协作小组"),
+    })),
+    ...(item?.assignee_group_id &&
+    !projectGroups.some((group) => group.id === item.assignee_group_id)
+      ? [
+          {
+            value: `group:${item.assignee_group_id}` as IssueAssigneeTarget,
+            label: item.assignee_group_name || item.assignee_group_id,
+            group: t("issue_creation.group", "协作小组"),
+          },
+        ]
+      : []),
+    ...projectMembers
+      .filter(
+        (member) =>
+          member.can_be_assignee !== false && member.role !== "Viewer",
+      )
+      .map((member) => ({
+        value: `user:${member.user_id}` as IssueAssigneeTarget,
+        label: member.user_name,
+        group: t("todo.members", "成员"),
+      })),
+    ...projectAgents.map((agent) => ({
+      value: `agent:${agent.id}` as IssueAssigneeTarget,
+      label: agent.name,
+      group: t("todo.agents", "机器人"),
+    })),
+    ...workspaceAgents.map((agent) => ({
+      value: `resource:${agent.id}` as IssueAssigneeTarget,
+      label: agent.name,
+      group: t("todo.workspace_agents", "空间智能体"),
+    })),
+    ...wegentTeams
+      .filter((team) => projectAgents.some((agent) => agent.teamId === team.id))
+      .map((team) => ({
+        value: `team:${team.id}` as IssueAssigneeTarget,
+        label: team.displayName || team.name,
+        group: t("todo.agent_teams", "Wegent 智能体"),
+      })),
+  ];
+
   const activityView =
     item &&
     editProps?.project &&
@@ -2106,17 +2159,29 @@ export function TodoEditor(props: TodoEditorProps) {
           editable,
           commentAssignment: canAssign
             ? {
-                members: projectMembers,
-                assign: async (userId) => {
+                options: assigneeOptions
+                  .filter((option) => option.value !== "")
+                  .map((option) => ({
+                    ...option,
+                    // Preserve the comment selector's existing human target IDs.
+                    value: option.value.startsWith("user:")
+                      ? option.value.slice(5)
+                      : option.value,
+                  })),
+                assign: async (value) => {
+                  const target = assigneeOptions.find(
+                    (option) =>
+                      (option.value.startsWith("user:")
+                        ? option.value.slice(5)
+                        : option.value) === value,
+                  )?.value;
+                  if (!target)
+                    throw new Error("Assignee is no longer available");
                   if (!canAssign || saving)
                     throw new Error(t("todo.saving", "保存中…"));
                   const current = await editorPort.issues.get(item.id);
-                  if (current.assignee_user_id === userId) return;
-                  const updated = await persistAssignee(
-                    current,
-                    `user:${userId}`,
-                    true,
-                  );
+                  if (issueAssigneeTarget(current) === target) return;
+                  const updated = await persistAssignee(current, target, true);
                   editProps.onUpdated(updated);
                 },
               }
@@ -2229,56 +2294,7 @@ export function TodoEditor(props: TodoEditorProps) {
       showAllLabel={(_group, count) =>
         t("todo.view_all_count", "查看全部 {{count}} 个", { count })
       }
-      options={[
-        {
-          value: "",
-          label: t("todo.unassigned", "未指派"),
-        },
-        ...projectGroups.map((group) => ({
-          value: `group:${group.id}` as IssueAssigneeTarget,
-          label: group.name,
-          group: t("issue_creation.group", "协作小组"),
-        })),
-        ...(item?.assignee_group_id &&
-        !projectGroups.some((group) => group.id === item.assignee_group_id)
-          ? [
-              {
-                value: `group:${item.assignee_group_id}` as IssueAssigneeTarget,
-                label: item.assignee_group_name || item.assignee_group_id,
-                group: t("issue_creation.group", "协作小组"),
-              },
-            ]
-          : []),
-        ...projectMembers
-          .filter(
-            (member) =>
-              member.can_be_assignee !== false && member.role !== "Viewer",
-          )
-          .map((member) => ({
-            value: `user:${member.user_id}` as IssueAssigneeTarget,
-            label: member.user_name,
-            group: t("todo.members", "成员"),
-          })),
-        ...projectAgents.map((agent) => ({
-          value: `agent:${agent.id}` as IssueAssigneeTarget,
-          label: agent.name,
-          group: t("todo.agents", "机器人"),
-        })),
-        ...workspaceAgents.map((agent) => ({
-          value: `resource:${agent.id}` as IssueAssigneeTarget,
-          label: agent.name,
-          group: t("todo.workspace_agents", "空间智能体"),
-        })),
-        ...wegentTeams
-          .filter((team) =>
-            projectAgents.some((agent) => agent.teamId === team.id),
-          )
-          .map((team) => ({
-            value: `team:${team.id}` as IssueAssigneeTarget,
-            label: team.displayName || team.name,
-            group: t("todo.agent_teams", "Wegent 智能体"),
-          })),
-      ]}
+      options={assigneeOptions}
     />
   );
   const notificationAvailable =

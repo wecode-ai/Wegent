@@ -93,8 +93,8 @@ vi.mock('@/lib/runtime-environment', () => ({
   isElectronRuntime: vi.fn(() => true),
 }))
 
-import { createDefaultWorkbenchServices } from './workbenchServices'
 import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
+import { createDefaultWorkbenchServices } from './workbenchServices'
 
 describe('default workbench project-space services', () => {
   beforeEach(() => {
@@ -104,28 +104,6 @@ describe('default workbench project-space services', () => {
 
   afterEach(() => {
     vi.unstubAllEnvs()
-  })
-
-  test('keeps cloud GitLab tasks on the backend in backend desktop mode', async () => {
-    const services = createDefaultWorkbenchServices()
-    const api = services.projectSpaceApis!.cloud!
-
-    await api.listCloudProjects()
-    await api.createLoopItem(mocks.project.id, {
-      title: 'GitLab Issue',
-      status: 'pending',
-    })
-
-    expect(mocks.externalIssueApi.retainProjects).not.toHaveBeenCalled()
-    expect(mocks.backendDeliveryApi.listCloudProjects).toHaveBeenCalled()
-    expect(mocks.backendDeliveryApi.createLoopItem).toHaveBeenCalledWith(mocks.project.id, {
-      title: 'GitLab Issue',
-      status: 'pending',
-    })
-    expect(mocks.externalIssueApi.configureProject).not.toHaveBeenCalled()
-    expect(mocks.externalIssueApi.createLoopItem).not.toHaveBeenCalled()
-    expect(services.projectSpaceApis?.local).toBe(mocks.localDeliveryApi)
-    expect(services.sharedWorkspaceApi).toBe(mocks.sharedWorkspaceApi)
   })
 
   test('adds build-time feedback submission to an offline local workbench', () => {

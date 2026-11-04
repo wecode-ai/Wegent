@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import dingtalkManifest from '../../dsh/connection-dingtalk/package.json'
 import { expect, it, vi } from 'vitest'
 import type { ConnectionProviderDescriptor } from './standIn'
@@ -49,7 +51,7 @@ function fixture() {
 it('installs the official default-market dependency through the existing device installer and verifies runtime readiness', async () => {
   const f = fixture()
   await installStandInConnectionDependencies(f.options)
-  expect(f.listMarketplacePlugins).toHaveBeenCalledWith({ source: 'wegent', deviceId: 'device' })
+  expect(f.listMarketplacePlugins).toHaveBeenCalledWith({ deviceId: 'device' })
   expect(f.installMarketplacePlugin).toHaveBeenCalledWith(42, 'device')
   expect(f.options.catalog).toHaveBeenCalledTimes(2)
   expect(f.options.installNative).not.toHaveBeenCalled()
@@ -61,6 +63,17 @@ it('requires a cloud connection instead of attempting a native install for a clo
     installStandInConnectionDependencies({ ...f.options, plugins: undefined })
   ).rejects.toMatchObject({ code: 'dependency_cloud_required' })
   expect(f.options.installNative).not.toHaveBeenCalled()
+})
+
+it('finds official mirrors without filtering by their different response source label', async () => {
+  const f = fixture()
+  // The catalog filters the stored "wework" provider but serializes it as "wegent".
+  f.listMarketplacePlugins.mockImplementation(async (...args: unknown[]) => {
+    const params = args[0] as { source?: string }
+    return { items: params.source && params.source !== 'wework' ? [] : [f.item] }
+  })
+  await installStandInConnectionDependencies(f.options)
+  expect(f.installMarketplacePlugin).toHaveBeenCalledWith(42, 'device')
 })
 
 it.each(['user', 'codex'])(

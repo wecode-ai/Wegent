@@ -1,5 +1,6 @@
 import { APIRequestContext, expect, Page, request as playwrightRequest } from '@playwright/test'
 import { ADMIN_USER } from '../config/test-users'
+import { executorRequestMockUrl, executorRequestUser } from './executor-request-scope'
 import {
   createProviderNativeKnowledgeFixture,
   deleteProviderNativeKnowledgeFixture,
@@ -63,7 +64,8 @@ export async function createProviderNativeResources(
   prefix: string
 ): Promise<ProviderNativeResources> {
   const apiClient: ApiClient = createApiClient(request)
-  const login = await apiClient.login(ADMIN_USER.username, ADMIN_USER.password)
+  const user = executorRequestUser(request, ADMIN_USER)
+  const login = await apiClient.login(user.username, user.password)
   const token = login.data?.access_token || ''
   expect(token).toBeTruthy()
   const fixture = await createProviderNativeKnowledgeFixture(request, {
@@ -88,7 +90,7 @@ export async function createProviderNativeResources(
               model: 'openai',
               model_id: 'mock-provider-native-model',
               api_key: 'mock-api-key',
-              base_url: `${PROVIDER_NATIVE_MOCK_URL}/v1`,
+              base_url: `${executorRequestMockUrl(request, PROVIDER_NATIVE_MOCK_URL)}/v1`,
             },
           },
         },
@@ -217,7 +219,9 @@ export async function configureDingTalkService(
       headers: authHeaders(token),
       data: {
         enabled,
-        url: enabled ? `${PROVIDER_NATIVE_MCP_URL}/mcp?service=${serviceId}` : '',
+        url: enabled
+          ? `${executorRequestMockUrl(request, PROVIDER_NATIVE_MCP_URL)}/mcp?service=${serviceId}`
+          : '',
       },
     }
   )
@@ -256,9 +260,12 @@ export async function configureToolScenario(
   steps: ToolScenarioStep[],
   options: ToolScenarioOptions = {}
 ): Promise<void> {
-  const response = await request.post(`${PROVIDER_NATIVE_MOCK_URL}/tool-scenarios`, {
-    data: { matchText, matchHeaders: options.matchHeaders, steps },
-  })
+  const response = await request.post(
+    `${executorRequestMockUrl(request, PROVIDER_NATIVE_MOCK_URL)}/tool-scenarios`,
+    {
+      data: { matchText, matchHeaders: options.matchHeaders, steps },
+    }
+  )
   expect(response.status(), await response.text()).toBe(200)
 }
 
@@ -267,12 +274,14 @@ export async function clearToolScenario(
   matchText: string
 ): Promise<void> {
   await request.delete(
-    `${PROVIDER_NATIVE_MOCK_URL}/tool-scenarios?matchText=${encodeURIComponent(matchText)}`
+    `${executorRequestMockUrl(request, PROVIDER_NATIVE_MOCK_URL)}/tool-scenarios?matchText=${encodeURIComponent(matchText)}`
   )
 }
 
 export async function resetMockMcp(request: APIRequestContext): Promise<void> {
-  const response = await request.post(`${PROVIDER_NATIVE_MOCK_URL}/mcp-control/reset`)
+  const response = await request.post(
+    `${executorRequestMockUrl(request, PROVIDER_NATIVE_MOCK_URL)}/mcp-control/reset`
+  )
   expect(response.status(), await response.text()).toBe(200)
 }
 
@@ -325,14 +334,19 @@ export async function configureMockMcp(
   request: APIRequestContext,
   config: { deniedNodeIds?: string[]; documentNames?: Record<string, string> }
 ): Promise<void> {
-  const response = await request.post(`${PROVIDER_NATIVE_MOCK_URL}/mcp-control/config`, {
-    data: config,
-  })
+  const response = await request.post(
+    `${executorRequestMockUrl(request, PROVIDER_NATIVE_MOCK_URL)}/mcp-control/config`,
+    {
+      data: config,
+    }
+  )
   expect(response.status(), await response.text()).toBe(200)
 }
 
 export async function getMcpCalls(request: APIRequestContext): Promise<RecordedProviderCall[]> {
-  const response = await request.get(`${PROVIDER_NATIVE_MOCK_URL}/mcp-control/calls`)
+  const response = await request.get(
+    `${executorRequestMockUrl(request, PROVIDER_NATIVE_MOCK_URL)}/mcp-control/calls`
+  )
   expect(response.status(), await response.text()).toBe(200)
   return (await response.json()) as RecordedProviderCall[]
 }
@@ -438,7 +452,7 @@ export async function getScenarioModelBodies(
   prompt: string
 ): Promise<Record<string, unknown>[]> {
   const response = await request.get(
-    `${PROVIDER_NATIVE_MOCK_URL}/tool-scenarios?matchText=${encodeURIComponent(prompt)}`
+    `${executorRequestMockUrl(request, PROVIDER_NATIVE_MOCK_URL)}/tool-scenarios?matchText=${encodeURIComponent(prompt)}`
   )
   expect(response.status(), await response.text()).toBe(200)
   const body = (await response.json()) as { capturedRequests: Record<string, unknown>[] }
@@ -450,7 +464,7 @@ export async function getScenarioRequestHeaders(
   prompt: string
 ): Promise<Array<Record<string, string | string[] | undefined>>> {
   const response = await request.get(
-    `${PROVIDER_NATIVE_MOCK_URL}/tool-scenarios?matchText=${encodeURIComponent(prompt)}`
+    `${executorRequestMockUrl(request, PROVIDER_NATIVE_MOCK_URL)}/tool-scenarios?matchText=${encodeURIComponent(prompt)}`
   )
   expect(response.status(), await response.text()).toBe(200)
   const body = (await response.json()) as {
@@ -464,7 +478,7 @@ export async function getToolScenarioState(
   prompt: string
 ): Promise<{ nextStep: number; capturedRequestCount: number }> {
   const response = await request.get(
-    `${PROVIDER_NATIVE_MOCK_URL}/tool-scenarios?matchText=${encodeURIComponent(prompt)}`
+    `${executorRequestMockUrl(request, PROVIDER_NATIVE_MOCK_URL)}/tool-scenarios?matchText=${encodeURIComponent(prompt)}`
   )
   expect(response.status(), await response.text()).toBe(200)
   const body = (await response.json()) as {

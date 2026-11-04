@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { test } from 'vitest'
@@ -5,6 +7,7 @@ import { test } from 'vitest'
 import { runWithCheckpointResources } from '../e2e/desktop/checkpoint-scheduler.mjs'
 import {
   UPGRADE_PACKAGE_CHECKPOINTS,
+  UPGRADE_CHECKPOINT_GROUP,
   rejectFailedReleaseCheckpoint,
 } from '../e2e/desktop/upgrade-suite.mjs'
 
@@ -16,6 +19,14 @@ const checkpointExit = code =>
     child.once('error', reject)
     child.once('exit', (code, signal) => resolve({ code, signal }))
   })
+
+test('a failed source checkpoint group cannot produce a green verification job', async () => {
+  rejectFailedReleaseCheckpoint(UPGRADE_CHECKPOINT_GROUP, await checkpointExit(0))
+  await assert.rejects(
+    async () => rejectFailedReleaseCheckpoint(UPGRADE_CHECKPOINT_GROUP, await checkpointExit(1)),
+    { message: `Release package checkpoint failed: ${UPGRADE_CHECKPOINT_GROUP}` }
+  )
+})
 
 test('a failed real child rejects the release pair before another checkpoint starts', async () => {
   const started = []
@@ -29,9 +40,9 @@ test('a failed real child rejects the release pair before another checkpoint sta
         rejectFailedReleaseCheckpoint(checkpoint, await checkpointExit(1))
       },
     }),
-    /Release package checkpoint failed: app-upgrade/
+    { message: `Release package checkpoint failed: ${UPGRADE_PACKAGE_CHECKPOINTS[0]}` }
   )
-  assert.deepEqual(started, ['app-upgrade'])
+  assert.deepEqual(started, [UPGRADE_PACKAGE_CHECKPOINTS[0]])
 })
 
 test('a successful release pair still executes every required checkpoint', async () => {

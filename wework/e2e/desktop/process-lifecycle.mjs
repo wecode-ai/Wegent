@@ -10,6 +10,18 @@ const execFileAsync = promisify(execFile)
 // Use the same PowerShell runtime as the Windows E2E workflow.
 const WINDOWS_PROCESS_QUERY_TIMEOUT_MS = 30_000
 
+/**
+ * Every signal the desktop E2E harness delivers to an application process or
+ * process group is logged with a self-contained timestamp. Chromium crash
+ * lines in app.log use runner-local time, so these records allow attributing
+ * each "Network service crashed" line to harness teardown or leaving it as an
+ * unexplained event that needs further investigation.
+ */
+export function logDesktopE2eSignal(detail) {
+  // The timestamp is spread last so a caller payload can never override it.
+  console.log(`[desktop-e2e-signal] ${JSON.stringify({ ...detail, at: new Date().toISOString() })}`)
+}
+
 function linuxProcessStateFromStat(stat) {
   const commandEnd = stat.lastIndexOf(')')
   if (commandEnd === -1) return null
@@ -230,10 +242,12 @@ async function waitForProcessGroupExit(processGroupId, timeoutMs) {
 
 export async function stopProcess(child) {
   if (!child || child.exitCode !== null || child.signalCode !== null) return
+  logDesktopE2eSignal({ action: 'stop-process', pid: child.pid, signal: 'SIGTERM' })
   child.kill('SIGTERM')
   try {
     await waitForProcessExit(child, PROCESS_STOP_TIMEOUT_MS)
   } catch {
+    logDesktopE2eSignal({ action: 'stop-process', pid: child.pid, signal: 'SIGKILL' })
     child.kill('SIGKILL')
     await waitForProcessExit(child, PROCESS_STOP_TIMEOUT_MS)
   }
@@ -332,6 +346,7 @@ export async function crashOwnedProcessTree(child, snapshot) {
           if (error?.code !== 'ESRCH') throw error
         }
       }
+      logDesktopE2eSignal({ action: 'crash-freeze', signal: 'SIGSTOP', pids: frozen })
       for (const pid of frozen.toReversed()) {
         try {
           process.kill(pid, 'SIGKILL')
@@ -339,8 +354,10 @@ export async function crashOwnedProcessTree(child, snapshot) {
           if (error?.code !== 'ESRCH') throw error
         }
       }
+      logDesktopE2eSignal({ action: 'crash-kill', signal: 'SIGKILL', pids: frozen })
     } catch (error) {
       // Leave a diagnosable live application if the crash injection is rejected.
+      logDesktopE2eSignal({ action: 'crash-resume', signal: 'SIGCONT', pids: frozen })
       for (const pid of frozen) {
         try {
           process.kill(pid, 'SIGCONT')
@@ -389,7 +406,14 @@ async function stopWindowsProcessTree(child) {
 function signalProcessGroup(processGroupId, signal) {
   try {
     process.kill(-processGroupId, signal)
+    logDesktopE2eSignal({
+      action: 'signal-group',
+      processGroupId,
+      signal,
+      result: 'delivered',
+    })
   } catch (error) {
     if (error?.code !== 'ESRCH') throw error
+    logDesktopE2eSignal({ action: 'signal-group', processGroupId, signal, result: 'absent' })
   }
 }

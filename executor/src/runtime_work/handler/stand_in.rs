@@ -180,6 +180,7 @@ impl RuntimeWorkRpcHandler {
             return Ok(settings);
         }
         let mut settings = payload["settings"].clone();
+        settings["id"] = json!(settings["id"].as_str().unwrap_or("default").to_owned());
         if settings["executionDeviceId"].as_str() != Some(self.device_id.as_str()) {
             return Err(AppIpcError::new(
                 "wrong_device",
@@ -191,6 +192,25 @@ impl RuntimeWorkRpcHandler {
         settings["userId"] = json!(user_id);
         let gate = self.task_send_gate(&format!("stand-in-processing:{user_id}"));
         let _guard = gate.lock().await;
+        let previous = store
+            .personal_stand_in(user_id, &self.device_id)
+            .map_err(settings_error)?;
+        if settings.get("connections").is_none() {
+            if let Some(role) = previous["roles"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|role| role["id"] == settings["id"])
+            {
+                if role["connections"].is_array() {
+                    settings["connections"] = role["connections"].clone();
+                }
+            }
+        }
+        let mut prepared = json!({"roles":[settings]});
+        self.prepare_connection_boundaries(&mut prepared, &previous)
+            .await?;
+        let settings = prepared["roles"][0].clone();
         store
             .save_stand_in_settings(&project, user_id, settings)
             .map_err(settings_error)

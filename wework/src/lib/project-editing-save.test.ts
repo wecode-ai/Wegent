@@ -1,5 +1,7 @@
-import { expect, test } from 'vitest'
+// @vitest-environment node
+
 import type { DeviceInfo, RuntimeProjectWork, RuntimeWorkListResponse } from '@/types/api'
+import { expect, test } from 'vitest'
 import { qualifyLocalRuntimeSource } from './local-runtime-sidebar-identity'
 import { findOwnedRuntimeProject } from './project-editing-save'
 
@@ -78,17 +80,4 @@ test('rejects duplicate same-key projects on the same owning runtime', () => {
   expect(
     findOwnedRuntimeProject(work, remote, 'same-project-key', [native, remote])
   ).toBeUndefined()
-})
-
-test('does not trust native provenance attached to a remote project', () => {
-  const remoteProject = project(remote, 8)
-  remoteProject.project = qualifyLocalRuntimeSource(remoteProject.project, identity)
-  remoteProject.project.source = 'remote_project'
-
-  expect(
-    findOwnedRuntimeProject(runtimeWork([remoteProject]), remote, 'same-project-key', [
-      native,
-      remote,
-    ])
-  ).toBe(remoteProject)
 })

@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { GITHUB_CLI_TARGET, githubVerificationUrl } from './githubCli'
 import {

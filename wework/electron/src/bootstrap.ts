@@ -226,12 +226,13 @@ async function launchSelectedRelease(
   }
   const active = await store.active()
   if (!active) throw new Error('Active release is missing')
-  if (process.platform === 'darwin' && active.macosInstallation) {
-    const selectedUserData = await releaseBridgeUserData(store, active.executable, dataDirectory)
-    if (!selectedUserData) throw new Error('The selected release does not own its launch data')
-    process.env.WEWORK_USER_DATA_DIR = selectedUserData
-    process.env.WEWORK_RELEASE_ROOT = root
-  }
+  // Legacy Windows entries resolve the release root above user-data and compare
+  // its lexical path with the launcher's handoff. Pass the selected store owner
+  // explicitly on every platform, including interrupted rollback recovery.
+  const selectedUserData = await releaseBridgeUserData(store, active.executable, dataDirectory)
+  if (!selectedUserData) throw new Error('The selected release does not own its launch data')
+  process.env.WEWORK_USER_DATA_DIR = selectedUserData
+  process.env.WEWORK_RELEASE_ROOT = root
   const bridge = (await optionalText(join(root, 'bridge'))) || process.execPath
   const launcher =
     process.platform === 'darwin' && active.macosInstallation

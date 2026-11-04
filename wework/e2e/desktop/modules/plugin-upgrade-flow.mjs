@@ -35,9 +35,14 @@ async function waitForManagedPlugin(manifestPath, managedKey, timeoutMs = PLUGIN
 }
 
 export async function verifyPluginUpgrade({ cloudEnvironment: env, control, codexHome, setPhase }) {
-  const deviceId = (
-    await readFile(join(resultDir, 'electron-user-data/desktop-device-id'), 'utf8')
-  ).trim()
+  const device = await env.waitForConnectedAppDevice()
+  const deviceId = device.execution_target_id
+  assert.ok(deviceId, 'Plugin fixture needs a registered Runtime route')
+  assert.equal(
+    deviceId,
+    device.socket_device_id,
+    'Plugin fixture must use its registered Runtime route'
+  )
   const headers = { Authorization: `Bearer ${env.authToken}`, 'Content-Type': 'application/json' }
   const request = (path, method = 'GET', body) =>
     fetchJson(`${env.backendUrl}/api${path}`, {

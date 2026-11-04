@@ -4,6 +4,9 @@ import { installedProviders } from './installed-providers.js'
 import { connectionTools } from '@wegent/dsh-plugin-runtime/connection-tools'
 import { satisfies } from 'semver'
 import { ExecutorRuntimeClient } from '@wegent/dsh-executor-runtime/client'
+import { createEmailAccounts } from './email-accounts.js'
+import { createEmailProvider, EMAIL_PROVIDER } from './email-provider.js'
+import { createEmailSender } from './email-send.js'
 import {
   ConnectionRegistry,
   ConnectionError,
@@ -13,7 +16,7 @@ import {
 import { ConnectionDependencies } from '@wegent/dsh-plugin-runtime/connection-dependencies'
 
 export const name = 'wework-connection-runtime'
-export const inject = ['webServer']
+export const inject = ['webServer', 'weworkSecureStorage', 'weworkPluginRuntime']
 export const BASE_PATH = '/wework/connections/v1/rpc'
 
 export async function apply(ctx) {
@@ -44,6 +47,19 @@ export async function apply(ctx) {
           satisfies
         ),
       }),
+  })
+  const emailAccounts = createEmailAccounts(ctx.weworkSecureStorage.scope('email-accounts'))
+  const sendEmail = createEmailSender(emailAccounts, ctx.weworkSecureStorage.scope('email-outbox'))
+  await registry.register(ctx, new URL('./package.json', import.meta.url), {
+    email: createEmailProvider(emailAccounts),
+  })
+  ctx.weworkPluginRuntime.register(ctx, {
+    id: name,
+    methods: {
+      emailAccounts: () => emailAccounts.list(),
+      saveEmailAccount: input => emailAccounts.save(input),
+      removeEmailAccount: input => emailAccounts.remove(input),
+    },
   })
   let stopped = false
   let timer
@@ -87,6 +103,11 @@ export async function apply(ctx) {
       path: BASE_PATH,
       handler: (req, res) =>
         handleConnectionRpc(req, res, token, async body => {
+          if (body.method === 'sendEmail') {
+            if (body.providerId !== EMAIL_PROVIDER)
+              throw new ConnectionError('connection_tool_denied', 'Invalid email provider')
+            return sendEmail(body.input)
+          }
           if (body.method === 'catalog') {
             await publishHost()
             return {

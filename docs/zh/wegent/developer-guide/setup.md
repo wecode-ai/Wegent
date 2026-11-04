@@ -260,6 +260,10 @@ pnpm --dir frontend run start
 
 #### Wework 与本地 Rust 构建缓存
 
+从 Wework 内置终端启动 `dev:mac` 时，开发脚本会清除父应用传入的发布根目录、
+受监督启动标识、活动版本和组件数据目录，使开发数据目录只使用自己的发布状态。
+不要通过创建正式版发布目录或删除启动校验来处理开发环境的 `release-bootstrap` 路径错误。
+
 Wework macOS 开发脚本会让 Git worktree 按组件共享 Cargo target，因此切换 worktree 时可以直接复用已编译的依赖产物，而不必再次完整编译。Cargo 会为同一 target 目录协调并发访问，并在 fingerprint 变化时重新编译失效产物。首次运行 `pnpm --dir wework run dev:mac` 时，如果本机缺少 `sccache`，脚本会通过 Homebrew 自动安装，以进一步复用编译器缓存。
 
 - `pnpm --dir wework run dev:mac`、`pnpm --dir wework run build:mac`、开发模式 executor sidecar 和 `executor/local.sh build` 都使用 `$XDG_CACHE_HOME/wegent/cargo-target/<组件>`；未设置 `XDG_CACHE_HOME` 时使用 `~/.cache/wegent/cargo-target/...`。

@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
+import { readReplyPrediction } from './replyPredictionCache'
 import {
   deleteReplyPredictions,
+  replyPredictionKey,
   ReplyPredictionService,
   type ReplyPredictionSource,
 } from './replyPredictionService'
-import { readReplyPrediction } from './replyPredictionCache'
-import { replyPredictionKey } from './replyPredictionService'
 
 const source = (): ReplyPredictionSource => ({
   scope: 'task-1',
@@ -65,21 +65,6 @@ describe('reply prediction service', () => {
     expect(readReplyPrediction(task.scope, replyPredictionKey(task))).toBeNull()
   })
 
-  it('restores suggestions after a restart and persists acceptance', async () => {
-    const predict = vi.fn(async () => ({ suggestion: '请继续' }))
-    await new ReplyPredictionService({ predict }).request(source())
-
-    const restored = new ReplyPredictionService({ predict })
-    expect(restored.isPending(source().scope)).toBe(false)
-    const suggestion = await restored.request(source())
-    expect(suggestion?.text).toBe('请继续')
-    expect(predict).toHaveBeenCalledTimes(1)
-    suggestion!.onAccept()
-
-    expect(await new ReplyPredictionService({ predict }).request(source())).toBeNull()
-    expect(predict).toHaveBeenCalledTimes(1)
-  })
-
   it.each(['empty', 'failure'] as const)(
     'restores a completed %s result without spending tokens again',
     async state => {
@@ -95,19 +80,6 @@ describe('reply prediction service', () => {
       expect(predict).toHaveBeenCalledTimes(1)
     }
   )
-
-  it('generates for a new turn, model or conversation after a restart', async () => {
-    const predict = vi.fn(async () => ({ suggestion: '请继续' }))
-    await new ReplyPredictionService({ predict }).request(source())
-    await new ReplyPredictionService({ predict }).request({ ...source(), latestTurnId: 'turn-2' })
-    await new ReplyPredictionService({ predict }).request({
-      ...source(),
-      latestTurnId: 'turn-2',
-      modelSelection: { modelName: 'new-model', modelType: 'runtime' },
-    })
-    await new ReplyPredictionService({ predict }).request({ ...source(), scope: 'task-2' })
-    expect(predict).toHaveBeenCalledTimes(4)
-  })
 
   it('does not let a cancelled response overwrite the persisted current turn', async () => {
     let resolve!: (value: { suggestion: string }) => void

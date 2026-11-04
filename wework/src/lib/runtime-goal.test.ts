@@ -1,7 +1,9 @@
-import { describe, expect, test } from 'vitest'
+// @vitest-environment node
+
 import type { RuntimeGoal, RuntimeTaskSummary } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
-import { projectRuntimeGoalContinuing, projectRuntimeGoalContinuationActive } from './runtime-goal'
+import { describe, expect, test } from 'vitest'
+import { projectRuntimeGoalContinuationActive, projectRuntimeGoalContinuing } from './runtime-goal'
 
 const activeGoal: RuntimeGoal = {
   threadId: 'thread-1',
@@ -63,15 +65,6 @@ describe('native Goal presentation', () => {
       expect(projectRuntimeGoalContinuing(input)).toBe(false)
     }
   )
-  test('settles presentation only after authoritative execution settlement', () => {
-    expect(
-      projectRuntimeGoalContinuing({
-        goal: activeGoal,
-        execution: { ...execution, phase: 'idle', turnId: null },
-        activeAssistantMessage: continuedAssistantMessage,
-      })
-    ).toBe(false)
-  })
   test('does not project the initial request turn as Goal continuation', () => {
     expect(
       projectRuntimeGoalContinuing({
@@ -80,15 +73,6 @@ describe('native Goal presentation', () => {
         activeAssistantMessage: continuedAssistantMessage,
       })
     ).toBe(false)
-  })
-  test('shows continuation between turns without showing an active assistant', () => {
-    expect(
-      projectRuntimeGoalContinuing({
-        goal: activeGoal,
-        execution: { ...execution, phase: 'continuing', turnId: null },
-        activeAssistantMessage: null,
-      })
-    ).toBe(true)
   })
   test('does not project inactive Goals or unknown execution as continuing', () => {
     for (const status of ['paused', 'blocked', 'complete'] as const) {

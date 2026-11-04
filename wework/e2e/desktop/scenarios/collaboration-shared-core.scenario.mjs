@@ -1,3 +1,4 @@
+import { verifyCommentAssignmentTargets } from '../modules/comment-assignment-targets.mjs'
 import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -707,6 +708,15 @@ export function createDesktopScenario({
           owner,
           agent,
           scoped,
+        })
+        await verifyCommentAssignmentTargets(control, {
+          request,
+          project,
+          issue,
+          owner,
+          agent,
+          scoped,
+          capture,
         })
         await capture(control, 'collaboration-shared-core-05-shared-issue-detail.png')
         const activitySelector = scoped(`[data-testid="cloud-task-activity-${issue.id}"]`)

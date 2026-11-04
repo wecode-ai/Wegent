@@ -1,3 +1,4 @@
+import { openConnectionTypePicker } from '../modules/stand-in-flows.mjs'
 import assert from 'node:assert/strict'
 import { createStandInCoordinatorVerification } from '../modules/stand-in-coordinator.mjs'
 import { DatabaseSync } from 'node:sqlite'
@@ -148,6 +149,7 @@ export function createDesktopScenario({
       await control.command('waitFor', '[data-testid="stand-in-primary-execution"]')
       await captureScreenshot(control, '01-unified-profile.png', PANEL)
       await control.command('click', '[data-testid="stand-in-primary-connections-open"]')
+      await openConnectionTypePicker(control)
       await control.command('waitFor', '[data-testid="stand-in-time-connections"]', {
         text: '日历',
       })
@@ -155,11 +157,11 @@ export function createDesktopScenario({
         await control.command('getElementCount', '[data-testid="stand-in-connections-empty"]'),
         '0'
       )
-      await control.command('click', '[data-testid="stand-in-add-connection"]')
       await control.command('click', '[data-testid="stand-in-add-projects-connection"]')
       await control.command('waitFor', '[data-testid="stand-in-source-collaboration"]')
       await captureScreenshot(control, '02-connection-editor.png', PANEL)
       await control.command('click', '[data-testid="stand-in-connections-back"]')
+      await openConnectionTypePicker(control)
       await control.command('waitFor', '[data-testid="stand-in-time-connections"]')
       await control.command('click', '[data-testid="stand-in-primary-back-to-settings"]')
       await control.command('click', `${PANEL} [data-testid="project-work-button"]`)

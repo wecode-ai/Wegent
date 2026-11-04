@@ -1387,6 +1387,13 @@ impl RuntimeWorkRpcHandler {
                         thread_id.clone(),
                         turn_id.clone(),
                     );
+                    active_turn_handler.bind_native_turn_start(
+                        &active_turn_local_task_id,
+                        &active_turn_request,
+                        active_turn_execution_id,
+                        &thread_id,
+                        &turn_id,
+                    );
                     let presentation = callback_turn_presentation
                         .lock()
                         .expect("turn presentation lock should not be poisoned")
