@@ -1,4 +1,8 @@
-import type { RequestUserInputPayload } from '@/components/chat/RequestUserInputCard'
+import type {
+  RequestUserInputPayload,
+  RequestUserInputResponse,
+  RequestUserInputQuestion,
+} from '@wegent/chat-core/runtime'
 import {
   CODEX_IMPLEMENT_PLAN_QUESTION,
   CODEX_IMPLEMENT_PLAN_RESPONSE_LABEL,
@@ -19,19 +23,50 @@ export function pendingRequestUserInputPayload(
   // Keep the first request's identity and question IDs stable as new requests
   // arrive, so React preserves the answers already being edited. Later calls
   // can reuse question IDs; scope those IDs to their owning request.
-  const seen = new Set<string>()
   return {
     ...asyncPayloads[0],
     questions: asyncPayloads.flatMap((payload, index) => {
-      const key = requestUserInputPayloadKey(payload) ?? `anonymous:${index}`
-      if (seen.has(key)) return []
-      seen.add(key)
       return (payload.questions ?? []).map((question, questionIndex) => ({
         ...question,
-        id: index === 0 ? question.id : JSON.stringify([key, question.id, questionIndex]),
+        id: groupedQuestionId(payload, question, index, questionIndex),
       }))
     }),
   }
+}
+
+function groupedQuestionId(
+  payload: RequestUserInputPayload,
+  question: RequestUserInputQuestion,
+  requestIndex: number,
+  questionIndex: number
+): string {
+  const questionId = question.id?.trim() || `question_${questionIndex + 1}`
+  if (requestIndex === 0) return questionId
+  const key = requestUserInputPayloadKey(payload) ?? `anonymous:${requestIndex}`
+  return JSON.stringify([key, questionId, questionIndex])
+}
+
+/** Capture each request and its own answers before asynchronous delivery. */
+export function pendingRequestUserInputResponses(
+  response: RequestUserInputResponse,
+  messages: WorkbenchMessage[],
+  hiddenRequestUserInputIds?: ReadonlySet<string>
+): RequestUserInputResponse[] {
+  const payloads = pendingRequestUserInputPayloads(messages, hiddenRequestUserInputIds)
+  if (payloads.length <= 1) return [response]
+  return payloads.map((payload, requestIndex) => ({
+    requestId: payload.requestId ?? payload.request_id,
+    itemId: payload.itemId ?? payload.item_id,
+    interactionScope: payload.interactionScope,
+    answers: Object.fromEntries(
+      (payload.questions ?? []).flatMap((question, questionIndex) => {
+        const answer =
+          response.answers[groupedQuestionId(payload, question, requestIndex, questionIndex)]
+        const id = question.id?.trim() || `question_${questionIndex + 1}`
+        return answer ? [[id, answer]] : []
+      })
+    ),
+  }))
 }
 
 /** The original requests behind the form, also used to dismiss the whole group. */
@@ -55,7 +90,15 @@ export function pendingRequestUserInputPayloads(
 
     planPayload ??= pendingImplementationPlanPayload(message, hiddenRequestUserInputIds)
   }
-  return asyncPayloads.length > 0 ? asyncPayloads : planPayload ? [planPayload] : []
+  if (asyncPayloads.length === 0) return planPayload ? [planPayload] : []
+  const seen = new Set<string>()
+  return asyncPayloads.filter(payload => {
+    const key = requestUserInputPayloadKey(payload)
+    if (!key) return true
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
 }
 
 function pendingImplementationPlanPayload(

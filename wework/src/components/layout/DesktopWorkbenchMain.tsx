@@ -228,6 +228,7 @@ import {
 import {
   pendingRequestUserInputPayload,
   pendingRequestUserInputPayloads,
+  pendingRequestUserInputResponses,
 } from './requestUserInputOverlay'
 import { useRequestUserInputExpiryRefresh } from './useRequestUserInputExpiryRefresh'
 import {
@@ -5512,6 +5513,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                           isImplementationPlanRequest &&
                                           isImplementationPlanConfirmationResponse(response)
                                         return paneSession.sendRequestUserInputResponse(response, {
+                                          requestUserInputResponses:
+                                            pendingRequestUserInputResponses(
+                                              response,
+                                              paneMessages,
+                                              paneSession.answeredRequestUserInputIds
+                                            ),
                                           appendUserMessage: isImplementationPlanRequest,
                                           forceDefaultCollaborationMode: shouldImplementPlan,
                                         })

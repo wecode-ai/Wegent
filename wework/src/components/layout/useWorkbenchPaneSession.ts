@@ -154,6 +154,7 @@ interface WorkbenchPaneSessionOptions {
 }
 
 interface SendRequestUserInputResponseOptions {
+  requestUserInputResponses?: readonly RequestUserInputResponse[]
   appendUserMessage?: boolean
   forceDefaultCollaborationMode?: boolean
 }
@@ -1056,16 +1057,19 @@ export function useWorkbenchPaneSession({
     [dispatchMessages]
   )
 
-  const applyLocalRequestUserInputResponse = useCallback(
-    (response: RequestUserInputResponse) => {
+  const applyLocalRequestUserInputResponses = useCallback(
+    (responses: readonly RequestUserInputResponse[]) => {
       if (!currentRuntimeTask) return
       const previousCount = messagesRef.current.length
       const nextMessages = updateRuntimeConversationBlocks(currentRuntimeTask, block =>
-        applyRequestUserInputResponseToBlock(block, response)
+        responses.reduce(
+          (current, response) => applyRequestUserInputResponseToBlock(current, response),
+          block
+        )
       )
       debugRuntimePaneMessageFlow('request-user-input-response-applied', {
         address: runtimeAddressDebug(currentRuntimeTask),
-        requestUserInputKey: requestUserInputResponseKey(response),
+        requestUserInputKeys: responses.map(requestUserInputResponseKey),
         previousCount,
         nextCount: nextMessages.length,
         nextMessages: summarizeWorkbenchMessages(nextMessages),
@@ -1656,22 +1660,21 @@ export function useWorkbenchPaneSession({
         }
         if (!operation.isCurrent()) return false
         if (answerIsUserMessage) lifecycleStore.userInputResponded(currentRuntimeTask)
-        if (requestUserInputKey) {
-          setAnsweredRequestUserInputIds(current => {
-            if (current.has(requestUserInputKey)) return current
-            const next = new Set(current)
-            next.add(requestUserInputKey)
-            return next
-          })
+        const responses = options.requestUserInputResponses ?? [response]
+        const answeredKeys = responses
+          .map(requestUserInputResponseKey)
+          .filter((key): key is string => Boolean(key))
+        if (answeredKeys.length > 0) {
+          setAnsweredRequestUserInputIds(current => new Set([...current, ...answeredKeys]))
         }
-        applyLocalRequestUserInputResponse(response)
+        applyLocalRequestUserInputResponses(responses)
         return true
       } finally {
         operation.dispose()
       }
     },
     [
-      applyLocalRequestUserInputResponse,
+      applyLocalRequestUserInputResponses,
       currentRuntimeTask,
       getRuntimeModelFields,
       lifecycleStore,

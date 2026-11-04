@@ -51,7 +51,7 @@ export function createDesktopScenario({
         return false
       const body = await readRequestBody(request)
       if (handleEmptyReplyPrediction(body, response)) return true
-      assert.ok(JSON.stringify(body).includes(PROMPT))
+      if (!JSON.stringify(body).includes(PROMPT)) return false
       const id = `consecutive-${Date.now()}`
       let events
       if (!requestContainsToolOutput(body, 'consecutive-first')) {
@@ -208,6 +208,7 @@ export function createDesktopScenario({
           'Answered questions must remain settled after reloading'
         )
       } finally {
+        active = false
         releaseSecond()
       }
     },
