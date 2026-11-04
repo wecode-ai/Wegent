@@ -273,7 +273,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
           const created = findValue(value, item => item.accepted === true && item.conversation_id)
           assert.ok(created)
           remoteIds.push(created.conversation_id)
-          const desktopTask = await cloud.waitForRuntimeTask({
+          const desktopTask = await cloudEnvironment.waitForRuntimeTask({
             deviceId: created.deviceId,
             taskId: created.taskId,
             workspacePath: created.workspacePath,
@@ -311,7 +311,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
           remoteOperationIds.set(deviceId, receipt.operation.operation_id)
           const task = desktopTasks.get(remoteIds.at(-1))
           assert.equal(receipt.operation.result.taskId, task.taskId)
-          await cloud.waitForRuntimeTask({
+          await cloudEnvironment.waitForRuntimeTask({
             deviceId,
             taskId: task.taskId,
             workspacePath: task.workspacePath,
@@ -516,6 +516,8 @@ export function createDesktopScenario({ uiTimeoutMs }) {
 
     async verify(control) {
       await verifyLocalExecutorUsesCloudSocketUrl(control, cloudEnvironment)
+      const { workspacePath } = cloudEnvironment
+      assert.ok(typeof workspacePath === 'string' && workspacePath.length > 0)
       active = true
       const issue = await request(`/api/v1/cloud-projects/${cloudProject.id}/loop-items`, {
         title: 'Scoped continuation',
@@ -523,7 +525,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       const scoped = await request('/api/runtime-work/create', {
         schemaVersion: 2,
         deviceId: CLOUD_DEVICE_ID,
-        workspacePath: cloud.workspacePath,
+        workspacePath,
         runtime: 'codex',
         message: SCOPED_CREATED,
         modelId: CLOUD_PUBLIC_MODEL_NAME,
@@ -538,8 +540,8 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         },
       })
       assert.equal(scoped.accepted, true)
-      assert.equal(scoped.workspacePath, cloud.workspacePath)
-      scopedTask = await cloud.waitForRuntimeTask({
+      assert.equal(scoped.workspacePath, workspacePath)
+      scopedTask = await cloudEnvironment.waitForRuntimeTask({
         deviceId: CLOUD_DEVICE_ID,
         taskId: scoped.taskId,
         workspacePath: scoped.workspacePath,
