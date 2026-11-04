@@ -195,6 +195,61 @@ async def test_silent_control_skips_only_group_card(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("card_template_id", [None, "", "template"])
+@pytest.mark.parametrize("send_private", [False, True])
+async def test_default_delivery_requires_group_capability(
+    monkeypatch, card_template_id, send_private
+):
+    """Default group delivery requires a card template; private delivery is separate."""
+    cards = AsyncMock(return_value={"success": True})
+    markdown = AsyncMock(return_value={"success": True})
+
+    class _FakeSender:
+        def __init__(self, **_kwargs):
+            self.send_ai_card_notification = cards
+            self.send_markdown_message = markdown
+
+    monkeypatch.setattr(
+        "shared.utils.crypto.decrypt_sensitive_data", lambda _value: "secret"
+    )
+    monkeypatch.setattr(
+        "app.services.channels.dingtalk.sender.DingTalkRobotSender", _FakeSender
+    )
+    channel = _dingtalk_channel()
+    config = channel.json["spec"]["config"]
+    if card_template_id is None:
+        config.pop("card_template_id")
+    else:
+        config["card_template_id"] = card_template_id
+
+    await notification_dispatcher.subscription_notification_dispatcher._send_dingtalk_notification(
+        db=None,
+        channel=channel,
+        binding=SimpleNamespace(sender_staff_id="staff-1", sender_id="sender-1"),
+        user_id=42,
+        message="Routine check succeeded.",
+        subscription_id=1,
+        execution_id=2,
+        subscription_display_name="Daily alert",
+        send_private=send_private,
+        send_group=True,
+        group_conversation_id="conversation-1",
+    )
+
+    if card_template_id:
+        markdown.assert_not_awaited()
+        assert cards.await_count == 1 + int(send_private)
+        group = cards.await_args.kwargs
+        assert group["open_space_id"] == "dtv1.card//IM_GROUP.conversation-1"
+        assert group["mention_user_ids"] == []
+    else:
+        cards.assert_not_awaited()
+        assert markdown.await_count == int(send_private)
+        if send_private:
+            assert markdown.await_args.kwargs["user_ids"] == ["staff-1"]
+
+
+@pytest.mark.asyncio
 async def test_per_message_mentions_reach_group_card(monkeypatch):
     calls = []
 
