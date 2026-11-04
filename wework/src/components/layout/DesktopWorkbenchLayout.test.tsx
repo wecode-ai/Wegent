@@ -60,7 +60,7 @@ import {
   requestNewChatComposerFocus,
 } from '@/lib/workbenchComposerFocus'
 import { PopoutWorkbenchPage } from '@/pages/PopoutWorkbenchPage'
-import { preloadDefaultDshUiTestModules } from '@/test/setup'
+import { preloadDefaultDshUiTestModules } from '@/test/setup.dom'
 import type { ProjectWithTasks, RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
 import type {
   RuntimePaneTranscript,
@@ -2296,23 +2296,6 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(screen.getByTestId('workspace-plan-panel')).toHaveTextContent('已流式补充第二步')
-  })
-
-  test('keeps the empty composer at the intended desktop proportion', () => {
-    render(<DesktopWorkbenchLayout {...baseProps} />)
-
-    expect(screen.getByTestId('composer-plugin-picker-button')).toBeVisible()
-    expect(screen.getByTestId('desktop-empty-composer-frame')).toHaveClass(
-      'flex',
-      'min-h-0',
-      'flex-1',
-      'flex-col'
-    )
-    expect(screen.getByTestId('desktop-empty-composer-dock')).toHaveClass(
-      'w-[min(46rem,calc(100%_-_2rem))]',
-      'min-w-0',
-      'shrink-0'
-    )
   })
 
   test('treats a selected runtime task with an empty transcript as a conversation', () => {

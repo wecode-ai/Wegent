@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import type { WorkspaceTarget } from '@/types/workspace-files'
 import { expect, test } from 'vitest'
 import { workspaceFileTabId, workspaceFileTabLabel } from './workspaceFileTabs'

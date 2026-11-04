@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 import type { RuntimeWorkListResponse } from '@/types/api'
 import { describe, expect, test } from 'vitest'

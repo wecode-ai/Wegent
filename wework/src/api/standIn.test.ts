@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import i18n from '@/i18n'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { bindProjectStandInApi, createStandInExecutorApi, type StandInExecutorApi } from './standIn'

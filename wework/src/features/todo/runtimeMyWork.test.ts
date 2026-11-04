@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import type { CloudLoopItem } from '@/api/deliveries'
 import { RuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle'
 import type { RuntimeTaskSummary, RuntimeWorkListResponse } from '@/types/api'

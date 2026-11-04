@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import type { WorkbenchMessage } from '@/types/workbench'
 import { describe, expect, test } from 'vitest'
 import { buildConversationOutputs } from './conversationOutputs'
