@@ -213,33 +213,17 @@ describe('ComposerTextarea', () => {
     render(<Harness />)
     const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
     act(() => {
-      editor.value = '/github'
+      // Match real input order: native jsdom focus resets the DOM selection.
       editor.focus()
+      editor.value = '/github'
     })
     const option = await screen.findByTestId('slash-command-option-app-plugin-github')
     expect(option).toBeEnabled()
     expect(option).toHaveTextContent('待授权')
-    const beforeClick = {
-      optionConnected: option.isConnected,
-      valueLength: editor.value.length,
-      diagnostics: getComposerDiagnosticsSnapshot(),
-    }
-    try {
-      fireEvent.click(option)
-      await waitFor(() =>
-        expect(editor.value).toBe('[$GitHub](plugin://github@openai-curated-remote) ')
-      )
-    } catch (error) {
-      console.error('GitHub slash selection failed', {
-        beforeClick,
-        afterClick: {
-          optionConnected: option.isConnected,
-          valueLength: editor.value.length,
-          diagnostics: getComposerDiagnosticsSnapshot(),
-        },
-      })
-      throw error
-    }
+    fireEvent.click(option)
+    await waitFor(() =>
+      expect(editor.value).toBe('[$GitHub](plugin://github@openai-curated-remote) ')
+    )
     expect(github.isAccessible).toBe(false)
   })
 
