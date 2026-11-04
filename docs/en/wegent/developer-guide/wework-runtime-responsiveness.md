@@ -51,6 +51,9 @@ flowchart LR
     Candidate[Candidate backend] --> Auth[Validate and authorize]
     Auth -->|Publish backend and account together on success| Owner
     Profile[Explicit profile and preference updates] --> UserState[Current user state]
+    Mutation[Create collaboration workspace or project] --> Target[Show the target immediately]
+    Target --> Navigation[Complete unsettled independent navigation sources]
+    Navigation --> Settled[Record partial or complete cache status]
 ```
 
 - Consume task events and authoritative execution state first. Complete live
@@ -139,6 +142,12 @@ flowchart LR
   old account with a candidate backend or unmount the connection dialog that owns
   its error and recovery actions.
 
+- Collaboration navigation distinguishes unsettled, settled partial, and complete
+  caches. Creating a workspace or project adds its target without marking source
+  discovery complete. A route change shows that target immediately and completes
+  unsettled catalogs so a late local workspace can still appear. Settled partial
+  caches retain covered targets when a cloud source fails.
+
 ## Verification contract
 
 | Scenario                                    | Required result                                                                     |
@@ -151,6 +160,7 @@ flowchart LR
 | Initial/refresh list failure                | Local error and retry; no false empty state or discarded valid data                 |
 | Refresh overlaps account switch             | Independent results publish promptly; old responses cannot cross scopes             |
 | Same-account reconnect overlaps preferences | Retain project, conversation, and new model selection; reject old transport results |
+| Create and open a cloud project or empty workspace during navigation | Show the target immediately and include the local catalog when it arrives |
 
 Run focused Rust, component, and protocol tests locally. Desktop regression
 coverage uses the existing CI checkpoint runner. Repository policy requires an
