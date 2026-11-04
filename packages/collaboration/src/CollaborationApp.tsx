@@ -1026,6 +1026,7 @@ export function CollaborationApp({
                               testId: "collaboration-project-settings-sharing",
                               content: (
                                 <ProjectTemplateSettings
+                                  agentConfiguration={host.projectAgentConfiguration}
                                   key={project.id}
                                   onChange={commands.replaceProject}
                                   api={api}
@@ -1080,6 +1081,15 @@ export function CollaborationApp({
                         ),
                         groupsContent: api.projects.listCollaborationGroups ? (
                           <ProjectCollaborationGroups
+                            agentConfiguration={host.projectAgentConfiguration}
+                            agentResourceContext={
+                              host.projectAgentResourceContext
+                            }
+                            location={
+                              project.project_store === "local"
+                                ? "local"
+                                : "cloud"
+                            }
                             onProjectChanged={commands.replaceProject}
                             api={api}
                             currentUserId={templateStore?.library.ownerId}

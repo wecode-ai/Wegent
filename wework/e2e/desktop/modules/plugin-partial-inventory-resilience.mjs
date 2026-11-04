@@ -119,6 +119,7 @@ export async function verifyPluginPartialInventoryResilience({
   const reportPath = join(resultDir, 'plugin-partial-inventory-resilience-evidence.json')
   const report = {
     scope: 'Partial live local inventory blocks automatic updates, sync and manual repair',
+    systemPressureSource: 'controlled E2E idle fixture; physical host pressure is not verified',
     preconditions: { completed: false },
     faultChecks: [],
     snapshots: [],
@@ -294,14 +295,21 @@ export async function verifyPluginPartialInventoryResilience({
     return observation
   }
 
-  function physicallyIdle(observation) {
-    const { idleTasks, pluginDeviceSyncInFlight, systemPressure } = observation
+  function queueIdle(observation) {
+    const { idleTasks, pluginDeviceSyncInFlight } = observation
     return (
       idleTasks.started &&
       !idleTasks.running &&
       !idleTasks.pendingTaskIds.includes('plugins.auto-update') &&
       idleTasks.userIdleMs >= 1_500 &&
-      !pluginDeviceSyncInFlight &&
+      !pluginDeviceSyncInFlight
+    )
+  }
+
+  function physicallyIdle(observation) {
+    const { systemPressure } = observation
+    return (
+      queueIdle(observation) &&
       systemPressure &&
       Number.isFinite(systemPressure.cpuLoadRatio) &&
       systemPressure.cpuLoadRatio <= 0.75 &&
@@ -319,6 +327,12 @@ export async function verifyPluginPartialInventoryResilience({
 
   try {
     assert.ok(deviceId, 'Partial inventory requires a real connected desktop device')
+    const pressureFixture = await idleDiagnostics('controlled-idle-pressure-precondition')
+    assert.deepEqual(pressureFixture.systemPressure, {
+      cpuLoadRatio: 0.1,
+      freeMemoryRatio: 0.5,
+      userIdleSeconds: 60,
+    })
     fixture = await installFixture(cloud, control, slug, deviceId, timeoutMs)
     report.preconditions.expected = {
       deviceId,
@@ -397,13 +411,13 @@ export async function verifyPluginPartialInventoryResilience({
     // Policy already equals auto. Updating policy while the fault is active would
     // itself push capabilities and invalidate the controlled filesystem failure.
     await control.command('click', testId('new-chat-button'))
-    report.beforePublicationIdle = await until(
+    report.beforePublicationQueueIdle = await until(
       async () => {
         noMutations()
         assert.ok((await readFile(manifestPath)).equals(injected))
         return idleDiagnostics('before-release-publication')
       },
-      physicallyIdle,
+      queueIdle,
       'The real automatic-update scheduler was not idle before release publication',
       timeoutMs
     )
@@ -437,10 +451,11 @@ export async function verifyPluginPartialInventoryResilience({
       installedVersion: candidate.installedVersion,
       updateAvailable: candidate.updateAvailable,
     }
-    // Let the real release event run before any UI refresh can acquire its lease.
+    // Host pressure gates queued work, not publication. Require the real guard
+    // and configured idle pressure before any UI refresh can acquire its lease.
     await until(
       async () => {
-        await idleDiagnostics('awaiting-real-partial-inventory-guard')
+        const observation = await idleDiagnostics('awaiting-real-partial-inventory-guard')
         noMutations()
         assert.ok((await readFile(manifestPath)).equals(injected))
         const appLog = await readFile(appLogPath)
@@ -456,7 +471,9 @@ export async function verifyPluginPartialInventoryResilience({
           ).length
         report.autoUpdateGuard.matched = matchingLineCount > 0
         report.autoUpdateGuard.matchingLineCount = matchingLineCount
-        return report.autoUpdateGuard.matched
+        if (!report.autoUpdateGuard.matched || !physicallyIdle(observation)) return false
+        report.autoUpdateGuard.idle = observation
+        return true
       },
       Boolean,
       'The real automatic-update coordinator never reached the partial-inventory guard',

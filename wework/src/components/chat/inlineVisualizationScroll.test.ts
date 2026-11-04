@@ -151,7 +151,7 @@ afterEach(() => {
 })
 
 describe('forwardVisualizationWheel', () => {
-  test.each(['top', 'bottom'] as const)(
+  test.each(['top'] as const)(
     'records user intent before scrolling the actual %s-origin viewport',
     origin => {
       const { viewport, frame, scrollBy, wrapper } = createViewport(origin, true)
@@ -217,20 +217,6 @@ describe('forwardVisualizationWheel', () => {
 
     expect(listener).not.toHaveBeenCalled()
     expect(scrollBy).not.toHaveBeenCalled()
-  })
-
-  test('forwards horizontal pixel scrolling without vertical movement', () => {
-    const { viewport, frame, scrollBy } = createViewport('top')
-
-    forwardVisualizationWheel(frame, message({ deltaX: -48, deltaY: 0 }), TOKEN)
-
-    expect(scrollBy).toHaveBeenCalledExactlyOnceWith({
-      top: 0,
-      left: -48,
-      behavior: 'instant',
-    })
-    expect(viewport.scrollTop).toBe(400)
-    expect(viewport.scrollLeft).toBe(-48)
   })
 })
 

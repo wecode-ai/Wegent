@@ -4,13 +4,16 @@ export function createProvider() {
   const identities = new Map()
   return {
     async check(ctx) {
+      let authTarget
       try {
+        authTarget = await ctx.cli.describe('dingtalk')
         await activeProfile(ctx)
-        return { status: 'ready' }
+        return { status: 'ready', authTarget }
       } catch (error) {
         return {
           status: error.code === 'connector_auth_required' ? 'auth_required' : 'error',
           code: error.code,
+          authTarget,
         }
       }
     },
@@ -18,6 +21,21 @@ export function createProvider() {
       const profile = await activeProfile(ctx)
       const kind = input.kind
       if (!['group', 'direct'].includes(kind)) throw invalid('Invalid conversation kind')
+      if (input.scope === 'all') {
+        return {
+          items: [
+            {
+              providerId: PROVIDER_ID,
+              profile,
+              kind,
+              id: '*',
+              scope: 'all',
+              name: kind === 'group' ? '所有群聊中 @我' : '所有联系人私聊',
+            },
+          ],
+          hasMore: false,
+        }
+      }
       const query = required(input, 'query')
       if (query.length > 256) throw invalid('Search query is too long')
       const args = { query, profile }
@@ -39,6 +57,11 @@ export function createProvider() {
     },
     async validate(ctx, input) {
       required(input, 'id')
+      if (
+        (input.scope === 'all') !== (input.id === '*') ||
+        (input.scope !== undefined && input.scope !== 'all')
+      )
+        throw invalid('Invalid resource scope')
       const profile = required(input, 'profile')
       if (!['group', 'direct'].includes(input.kind)) throw invalid('Invalid conversation kind')
       await ownIdentity(ctx, profile, identities)
@@ -55,8 +78,10 @@ export function createProvider() {
       const until = checkpoint?.until ?? new Date().toISOString()
       const cursor = checkpoint?.cursor ?? '0'
       const args = { start, end: until, limit: '100', cursor, profile }
-      if (source.kind === 'group') args.group = id
-      else args.senderIds = id
+      if (source.scope !== 'all') {
+        if (source.kind === 'group') args.group = id
+        else args.senderIds = id
+      }
       const response = await readTool(
         ctx,
         source.kind === 'group' ? 'listMentions' : 'searchMessages',
@@ -94,13 +119,17 @@ export function normalizeMessages(source, response, ownId) {
     const direct = conversation.singleChat
     if (direct !== (source.kind === 'direct')) continue
     const conversationId = required(conversation, 'openConversationId')
-    if (!direct && conversationId !== source.id) continue
+    if (!direct && source.scope !== 'all' && conversationId !== source.id) continue
     if (!Array.isArray(conversation.messages)) throw invalid('Missing messages')
     for (const message of conversation.messages) {
       const sender = required(message, 'senderOpenDingTalkId')
       const manualSelfMention =
         !direct && message.sendType === 'user' && message.messageAiSendFlag === undefined
-      if ((sender === ownId && !manualSelfMention) || (direct && sender !== source.id)) continue
+      if (
+        (sender === ownId && !manualSelfMention) ||
+        (direct && source.scope !== 'all' && sender !== source.id)
+      )
+        continue
       events.push({
         id: required(message, 'openMessageId'),
         eventType: 'message.received',
@@ -111,6 +140,15 @@ export function normalizeMessages(source, response, ownId) {
         conversationId,
         quotedMessageId: message.quotedMessage?.openMessageId ?? null,
         topicId: message.openConvThreadId ?? null,
+        ...(source.scope === 'all'
+          ? {
+              resource: {
+                id: direct ? sender : conversationId,
+                kind: source.kind,
+                name: direct ? message.sender || sender : conversation.title || conversationId,
+              },
+            }
+          : {}),
       })
     }
   }
@@ -120,7 +158,7 @@ export function normalizeMessages(source, response, ownId) {
 async function activeProfile(ctx) {
   const response = await readTool(ctx, 'listProfiles')
   if (typeof response.currentProfile !== 'string' || !response.currentProfile) {
-    throw Object.assign(new Error('pluginKey=dingtalk connectorSlug=dingtalk'), {
+    throw Object.assign(new Error('Authorize the account'), {
       code: 'connector_auth_required',
     })
   }
@@ -133,7 +171,7 @@ async function ownIdentity(ctx, profile, cache) {
   const response = await readTool(ctx, 'listProfiles')
   const account = response.profiles?.find(row => row.profile === profile)
   if (!account)
-    throw Object.assign(new Error('pluginKey=dingtalk connectorSlug=dingtalk'), {
+    throw Object.assign(new Error('Authorize the account'), {
       code: 'connector_auth_required',
     })
   const users = await readTool(ctx, 'searchUsers', {
@@ -165,7 +203,7 @@ async function readTool(ctx, tool, args = {}) {
   ) {
     const code = response?.error?.code ?? response?.errorCode ?? response?.code
     if (['need_login', 'AUTH_REQUIRED', 'connector_auth_required', 'NOT_LOGGED_IN'].includes(code))
-      throw Object.assign(new Error('pluginKey=dingtalk connectorSlug=dingtalk'), {
+      throw Object.assign(new Error('Authorize the account'), {
         code: 'connector_auth_required',
       })
     throw invalid('DingTalk tool request failed')

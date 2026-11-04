@@ -123,6 +123,8 @@ impl RestoreStartupGate {
 mod active_text;
 mod archives;
 mod assignment_receipts;
+mod async_questions;
+mod automatic_turns;
 mod automation_rpc;
 mod background_terminals;
 mod claude_turns;
@@ -130,6 +132,7 @@ mod codex_accounts;
 mod codex_config;
 mod collection;
 mod command_items;
+mod command_journal;
 mod connections;
 mod context_compaction;
 mod control;
@@ -142,7 +145,12 @@ mod notifications;
 mod personal_stand_in;
 mod plugin_install;
 mod plugin_marketplace;
+mod project_coordination_binding;
+mod project_coordination_commands;
+mod project_coordination_execution;
+mod project_coordinator;
 mod project_preparation;
+mod project_router;
 mod queries;
 mod robot_queue_rpc;
 mod runner_catalog;
@@ -150,12 +158,18 @@ mod runner_cloud_models;
 mod sidebar;
 mod stand_in;
 mod stand_in_agent;
+mod stand_in_arrangements;
+mod stand_in_assignment_intake;
+mod stand_in_calendar;
 mod stand_in_conversations;
 mod stand_in_diagnostics;
 mod stand_in_events;
 mod stand_in_execution;
 mod stand_in_ingress;
 mod stand_in_memory;
+mod stand_in_processing;
+mod stand_in_schedules;
+mod stand_in_tasks;
 mod stand_in_telemetry;
 mod stand_in_work;
 mod stand_in_workspace;
@@ -163,6 +177,7 @@ mod supervisor;
 mod system;
 mod tasks;
 mod text_generation;
+mod transcript_diagnostics;
 mod transcript_overlays;
 mod transcript_search;
 mod transcript_sync;
@@ -315,6 +330,7 @@ struct RuntimeTurnScheduler {
     active_tasks: usize,
     active_task_ids: HashSet<String>,
     queued_turns: VecDeque<SpawnTurnRequest>,
+    waiting_automatic_task_ids: HashSet<String>,
 }
 
 impl RuntimeTurnScheduler {
@@ -324,11 +340,37 @@ impl RuntimeTurnScheduler {
             active_tasks: 0,
             active_task_ids: HashSet::new(),
             queued_turns,
+            waiting_automatic_task_ids: HashSet::new(),
         }
+    }
+
+    fn refresh_automatic_waits(&mut self, store: &RuntimeWorkStore, incoming: Option<&str>) {
+        self.waiting_automatic_task_ids = self
+            .queued_turns
+            .iter()
+            .map(|turn| turn.local_task_id.as_str())
+            .chain(incoming)
+            .filter(|id| {
+                store.get_task_summary(id).is_some_and(|link| {
+                    link.interaction_status
+                        .as_deref()
+                        .is_some_and(|status| !status.is_empty())
+                })
+            })
+            .map(str::to_owned)
+            .collect();
+    }
+
+    fn automatic_waits(&self, turn: &SpawnTurnRequest) -> bool {
+        turn.request.extra.get("standInAutomatic") == Some(&Value::Bool(true))
+            && self
+                .waiting_automatic_task_ids
+                .contains(&turn.local_task_id)
     }
 
     fn enqueue(&mut self, turn: SpawnTurnRequest) -> Option<SpawnTurnRequest> {
         if self.active_tasks >= self.max_concurrent_tasks
+            || self.automatic_waits(&turn)
             || self.active_task_ids.contains(&turn.local_task_id)
             || !self.queued_turns.is_empty()
         {
@@ -383,6 +425,9 @@ impl RuntimeTurnScheduler {
             .queued_turns
             .iter()
             .position(|turn| turn.local_task_id == local_task_id)?;
+        if self.automatic_waits(&self.queued_turns[position]) {
+            return None;
+        }
         let turn = self.queued_turns.remove(position)?;
         self.active_tasks += 1;
         self.active_task_ids.insert(turn.local_task_id.clone());
@@ -398,11 +443,9 @@ impl RuntimeTurnScheduler {
         let available = self.max_concurrent_tasks.saturating_sub(self.active_tasks);
         let mut turns = Vec::with_capacity(available);
         while turns.len() < available {
-            let Some(position) = self
-                .queued_turns
-                .iter()
-                .position(|turn| !self.active_task_ids.contains(&turn.local_task_id))
-            else {
+            let Some(position) = self.queued_turns.iter().position(|turn| {
+                !self.active_task_ids.contains(&turn.local_task_id) && !self.automatic_waits(turn)
+            }) else {
                 break;
             };
             let Some(turn) = self.queued_turns.remove(position) else {
@@ -623,6 +666,7 @@ pub struct RuntimeWorkRpcHandler {
     turn_scheduler: Arc<Mutex<RuntimeTurnScheduler>>,
     active_goal_turns: Arc<Mutex<HashMap<String, SpawnTurnRequest>>>,
     restore_startup_semaphore: Arc<Semaphore>,
+    command_journal: Arc<Mutex<command_journal::CommandJournal>>,
     turn_queue_operation: Arc<AsyncMutex<()>>,
     turn_queue_path: Arc<PathBuf>,
     preparing_worktree_turns: Arc<Mutex<HashMap<String, PreparingWorktreeTurn>>>,
@@ -750,6 +794,9 @@ struct PendingCodexNotificationReplay {
 struct ScheduledTurnGuard {
     handler: RuntimeWorkRpcHandler,
     local_task_id: String,
+    execution_id: u64,
+    command_id: Option<String>,
+    command_outcome: Option<command_journal::CommandState>,
 }
 
 struct StoppedTurnGuard {
@@ -773,10 +820,18 @@ impl Drop for StoppedTurnGuard {
 }
 
 impl ScheduledTurnGuard {
-    fn new(handler: RuntimeWorkRpcHandler, local_task_id: String) -> Self {
+    fn new(
+        handler: RuntimeWorkRpcHandler,
+        local_task_id: String,
+        execution_id: u64,
+        command_id: Option<String>,
+    ) -> Self {
         Self {
             handler,
             local_task_id,
+            execution_id,
+            command_id,
+            command_outcome: None,
         }
     }
 }
@@ -785,9 +840,19 @@ impl Drop for ScheduledTurnGuard {
     fn drop(&mut self) {
         let handler = self.handler.clone();
         let local_task_id = self.local_task_id.clone();
+        let execution_id = self.execution_id;
+        let command_id = self.command_id.clone();
+        let command_outcome = self.command_outcome.clone();
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
             runtime.spawn(async move {
-                handler.finish_scheduled_turn(&local_task_id).await;
+                handler
+                    .finish_command_execution(
+                        &local_task_id,
+                        execution_id,
+                        command_id.as_deref(),
+                        command_outcome,
+                    )
+                    .await;
             });
         }
     }
@@ -840,19 +905,69 @@ impl RuntimeWorkRpcHandler {
                 log_executor_event("runtime turn queue restore failed", &[("error", error)]);
                 turns::RuntimeTurnQueueState::default()
             });
+        for command in persisted_turns.commands.values_mut() {
+            if matches!(
+                command.state,
+                command_journal::CommandState::Dispatching | command_journal::CommandState::Started
+            ) {
+                command.state = command_journal::CommandState::RecoveryRequired;
+            }
+        }
+        persisted_turns.active_goal_turns.retain(|task, turn| {
+            let Some(id) = turn
+                .request
+                .extra
+                .get("runtime_command_id")
+                .and_then(Value::as_str)
+            else {
+                return true;
+            };
+            let Some(command) = persisted_turns
+                .commands
+                .get(&command_journal::key(task, id))
+            else {
+                return false;
+            };
+            if matches!(
+                command.state,
+                command_journal::CommandState::Cancelled | command_journal::CommandState::Failed
+            ) {
+                return false;
+            }
+            let known_native = command.native.is_some()
+                || store
+                    .read_task(task, |link| {
+                        link.runtime_handle["turnIdsBySubtask"][&turn.request.subtask_id]
+                            .is_string()
+                    })
+                    .unwrap_or(false);
+            command.state != command_journal::CommandState::RecoveryRequired || known_native
+        });
         let active_goal_turns = persisted_turns.active_goal_turns.clone();
+        let command_journal = persisted_turns.commands;
         for turn in persisted_turns.active_goal_turns.values_mut() {
             turn.initial_thread_goal = None;
             turn.request.prompt = Value::String(String::new());
+            // Goal continuation is not a resubmission of its original user command.
+            turn.request.extra.remove("runtime_command_id");
+            turn.request.extra.remove("runtime_command_input");
             turn.request
                 .extra
                 .insert(RESUME_GOAL_ONLY_MARKER.to_owned(), Value::Bool(true));
         }
         let mut queued_turns = persisted_turns.queued_turns;
+        let mut restored_inputs = queued_turns
+            .iter()
+            .map(|turn| (turn.local_task_id.clone(), turn.request.subtask_id.clone()))
+            .collect::<HashSet<_>>();
         queued_turns.extend(
             persisted_turns
                 .active_goal_turns
                 .into_values()
+                .filter(|turn| {
+                    restored_inputs
+                        .insert((turn.local_task_id.clone(), turn.request.subtask_id.clone()))
+                })
                 .filter(|turn| {
                     turn.request
                         .extra
@@ -907,6 +1022,7 @@ impl RuntimeWorkRpcHandler {
                 queued_turns,
             ))),
             active_goal_turns: Arc::new(Mutex::new(active_goal_turns)),
+            command_journal: Arc::new(Mutex::new(command_journal)),
             restore_startup_semaphore: Arc::new(Semaphore::new(restore_startup_concurrency)),
             turn_queue_operation: Arc::new(AsyncMutex::new(())),
             turn_queue_path: Arc::new(turn_queue_path),
@@ -959,6 +1075,7 @@ impl RuntimeWorkRpcHandler {
                 },
             );
         }
+        handler.reconcile_command_recovery();
         handler.spawn_archived_delete_worker(archived_delete_rx);
         crate::workbench_control::register(&handler.device_id, Arc::new(handler.clone()));
         handler
@@ -1005,6 +1122,7 @@ impl RuntimeWorkRpcHandler {
         self.start_local_stand_in_scheduler();
         self.start_connection_stand_in_scheduler();
         self.register_cloud_collaboration_dispatcher();
+        self.register_stand_in_task_dispatcher();
         self.resume_cloud_collaboration_rounds();
         self.start_supervisor_scheduler();
         self
@@ -1059,6 +1177,14 @@ impl RuntimeWorkRpcHandler {
             .is_empty()
         {
             request.backend_url = Some(connection.backend_url.clone());
+        }
+        // Coordinator work must retain the enabling actor, including absent credentials.
+        if request
+            .extra
+            .get("origin")
+            .is_some_and(|origin| origin.get("project_coordination").is_some())
+        {
+            return;
         }
         if request
             .auth_token
@@ -1174,6 +1300,7 @@ fn should_resume_persisted_turns_before_rpc(method: &str) -> bool {
     // Connection discovery and transport must never resume unrelated model work.
     if method.starts_with("runtime.connections.")
         || method.starts_with("runtime.stand_in.telemetry.")
+        || method == "runtime.stand_in.processing.status"
     {
         return false;
     }

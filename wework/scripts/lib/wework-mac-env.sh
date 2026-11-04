@@ -2,6 +2,13 @@
 
 # Shared macOS build helpers for Wework scripts.
 
+wework_clear_release_environment() {
+  unset WEWORK_RELEASE_ROOT
+  unset WEWORK_RELEASE_SUPERVISED
+  unset WEWORK_ACTIVE_RELEASE_ID
+  unset WEWORK_COMPONENT_DATA_DIRECTORY
+}
+
 wework_resolve_backend_base_url() {
   local host="${WEWORK_HOST:-127.0.0.1}"
   local backend_port="${BACKEND_PORT:-9100}"

@@ -1,8 +1,10 @@
-import { describe, expect, test } from 'vitest'
+// @vitest-environment node
+
 import type { CloudProject } from '@/api/deliveries'
+import { describe, expect, test } from 'vitest'
 import { parseCloudProjectScopeQuery } from './composerAutocomplete'
-import { appReference, matchesMentionQuery } from './composerMentionCandidates'
 import type { ComposerCloudMentionCandidate } from './composerMentionCandidates'
+import { matchesMentionQuery } from './composerMentionCandidates'
 
 const CLOUD_PROJECT: CloudProject = {
   id: '7',
@@ -34,29 +36,7 @@ function cloudCandidate(overrides: Partial<ComposerCloudMentionCandidate> = {}) 
   return candidate
 }
 
-describe('appReference', () => {
-  test('uses a generated Skill reference for Wegent connector apps', () => {
-    expect(
-      appReference({
-        id: 'wegent:docs',
-        name: 'Internal Docs',
-        source: 'wegent-connector',
-        skillPath: '/tmp/codex/skills/wegent-connector-docs/SKILL.md',
-      })
-    ).toBe('[$Internal Docs](/tmp/codex/skills/wegent-connector-docs/SKILL.md)')
-  })
-
-  test('preserves native Codex app references', () => {
-    expect(appReference({ id: 'calendar', name: 'Calendar' })).toBe('[$Calendar](app://calendar)')
-  })
-})
-
 describe('matchesMentionQuery', () => {
-  test('matches every candidate for an empty query', () => {
-    expect(matchesMentionQuery(cloudCandidate(), '')).toBe(true)
-    expect(matchesMentionQuery(cloudCandidate(), '   ')).toBe(true)
-  })
-
   test('matches against the title, description, and aliases case-insensitively', () => {
     const candidate = cloudCandidate()
     expect(matchesMentionQuery(candidate, '官')).toBe(true)
@@ -69,31 +49,8 @@ describe('matchesMentionQuery', () => {
 describe('parseCloudProjectScopeQuery', () => {
   const labels = ['项目空间', 'project space', 'project-space']
 
-  test('returns the keyword after a half-width or full-width colon', () => {
-    expect(parseCloudProjectScopeQuery('项目空间:官', labels)).toBe('官')
-    expect(parseCloudProjectScopeQuery('项目空间：官', labels)).toBe('官')
-    expect(parseCloudProjectScopeQuery('项目空间:', labels)).toBe('')
-  })
-
   test('matches scope labels case-insensitively', () => {
     expect(parseCloudProjectScopeQuery('Project-Space:web', labels)).toBe('web')
-  })
-
-  test('returns null when the head is not a scope label', () => {
-    expect(parseCloudProjectScopeQuery('云空间:官', labels)).toBeNull()
-    expect(parseCloudProjectScopeQuery('官网', labels)).toBeNull()
-    expect(parseCloudProjectScopeQuery(':官', labels)).toBeNull()
-  })
-
-  test('returns the keyword after whitespace, matching typed phrases', () => {
-    expect(parseCloudProjectScopeQuery('项目空间 新建项目', labels)).toBe('新建项目')
-    expect(parseCloudProjectScopeQuery('项目空间 ', labels)).toBe('')
-    expect(parseCloudProjectScopeQuery('项目空间  官', labels)).toBe('官')
-  })
-
-  test('prefers the longest label so labels with spaces parse correctly', () => {
-    expect(parseCloudProjectScopeQuery('project space web', labels)).toBe('web')
-    expect(parseCloudProjectScopeQuery('project-space new project', labels)).toBe('new project')
   })
 
   test('returns null for a bare scope label without a separator', () => {

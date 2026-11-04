@@ -25,6 +25,13 @@ impl RuntimeWorkRpcHandler {
         payload: Value,
     ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
         match method {
+            "runtime.coordination.contexts"
+            | "runtime.coordination.snapshot"
+            | "runtime.coordination.commit"
+            | "runtime.coordination.wake"
+            | "runtime.coordination.status" => {
+                boxed_rpc(move || async move { self.coordination_rpc(method, payload).await })
+            }
             "runtime.stand_in.assignment_tasks" => {
                 boxed_rpc(move || async move { self.stand_in_assignment_tasks(payload) })
             }
@@ -37,16 +44,43 @@ impl RuntimeWorkRpcHandler {
                 boxed_rpc(move || async move { self.list_stand_in_settings(payload).await })
             }
             "runtime.stand_in.personal.get" => {
-                boxed_rpc(move || async move { self.personal_stand_in_settings(payload, false) })
+                boxed_rpc(
+                    move || async move { self.personal_stand_in_settings(payload, false).await },
+                )
             }
             "runtime.stand_in.personal.agents" => {
                 boxed_rpc(move || async move { self.personal_stand_in_agents(payload).await })
             }
             "runtime.stand_in.personal.save" => {
-                boxed_rpc(move || async move { self.personal_stand_in_settings(payload, true) })
+                boxed_rpc(
+                    move || async move { self.personal_stand_in_settings(payload, true).await },
+                )
             }
             "runtime.stand_in.conversation" => {
                 boxed_rpc(move || async move { self.stand_in_conversation(payload).await })
+            }
+            "runtime.project_coordinator.conversation" => {
+                boxed_rpc(
+                    move || async move { self.project_coordinator_conversation(payload).await },
+                )
+            }
+            "runtime.project_coordinator.binding.get"
+            | "runtime.project_coordinator.binding.save" => boxed_rpc(move || async move {
+                self.project_coordination_binding(method, payload).await
+            }),
+            "runtime.project_coordinator.command.get"
+            | "runtime.project_coordinator.command.dispatch" => boxed_rpc(move || async move {
+                self.project_coordination_command(method, payload).await
+            }),
+            "runtime.project_coordinator.processing.get"
+            | "runtime.project_coordinator.processing.check" => boxed_rpc(move || async move {
+                self.project_coordination_processing(method, payload).await
+            }),
+            "runtime.stand_in.processing.status" => {
+                boxed_rpc(move || async move { self.stand_in_processing_status(payload) })
+            }
+            "runtime.stand_in.processing.check" => {
+                boxed_rpc(move || async move { self.check_stand_in_processing(payload).await })
             }
             "runtime.stand_in.memory.list" => {
                 boxed_rpc(move || async move { self.stand_in_memory(payload, "list") })
@@ -58,10 +92,10 @@ impl RuntimeWorkRpcHandler {
                 boxed_rpc(move || async move { self.stand_in_memory(payload, "delete") })
             }
             "runtime.stand_in.proposal.get" => {
-                boxed_rpc(move || async move { self.stand_in_proposal(payload, false) })
+                boxed_rpc(move || async move { self.stand_in_proposal(payload, false).await })
             }
             "runtime.stand_in.proposal.resolve" => {
-                boxed_rpc(move || async move { self.stand_in_proposal(payload, true) })
+                boxed_rpc(move || async move { self.stand_in_proposal(payload, true).await })
             }
             "runtime.connections.host" => {
                 boxed_rpc(move || async move { self.configure_connection_host(payload) })
@@ -216,6 +250,9 @@ impl RuntimeWorkRpcHandler {
             }
             "runtime.tasks.fork_at_turn" => {
                 boxed_rpc(move || async move { self.fork_task_at_turn(payload).await })
+            }
+            "runtime.tasks.commands.get" => {
+                boxed_rpc(move || async move { self.command_receipt(payload).await })
             }
             "runtime.tasks.send" => {
                 boxed_rpc(move || async move { self.send_message(payload).await })

@@ -30,6 +30,7 @@ pub(crate) mod native_transcript;
 mod notification_mapping;
 mod remote_projects;
 mod response;
+mod restored_workspaces;
 mod runtime_handle_messages;
 pub(crate) mod store;
 mod task_create_contract;

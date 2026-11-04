@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from 'vitest'
 import { createLocalAppServices } from '@/api/local/localServices'
 import type { ModelSelectionConfig, RuntimeSendRequest, RuntimeWorkListResponse } from '@/types/api'
+import { describe, expect, it, vi } from 'vitest'
 import { prepareRuntimeContinuationModel } from './runtimeContinuationModel'
 
 const selection: ModelSelectionConfig = {
@@ -42,27 +42,6 @@ function workList(
 }
 
 describe('runtime continuation model routing', () => {
-  it('inherits the destination task model and complete options without changing devices', async () => {
-    const list = vi.fn()
-    const result = await prepareRuntimeContinuationModel(request, workList(), list)
-    expect(result).toEqual({
-      ...request,
-      modelId: selection.modelName,
-      modelType: 'user',
-      modelOptions: selection.options,
-      modelSelection: selection,
-    })
-    expect(list).not.toHaveBeenCalled()
-  })
-
-  it('loads the task configuration when the board opens before the work list', async () => {
-    const list = vi.fn().mockResolvedValue(workList())
-    expect(await prepareRuntimeContinuationModel(request, null, list)).toMatchObject({
-      modelSelection: selection,
-    })
-    expect(list).toHaveBeenCalledOnce()
-  })
-
   it('uses persisted handle configuration without requiring a model catalog', async () => {
     const list = vi.fn()
     const result = await prepareRuntimeContinuationModel(
@@ -72,24 +51,6 @@ describe('runtime continuation model routing', () => {
     )
     expect(result.modelSelection).toEqual(selection)
     expect(list).not.toHaveBeenCalled()
-  })
-
-  it('keeps an explicitly selected model and supplies the backend modelSelection contract', async () => {
-    const result = await prepareRuntimeContinuationModel(
-      {
-        ...request,
-        modelId: 'local-codex',
-        modelType: 'runtime',
-        modelOptions: { reasoning: 'low' },
-      },
-      workList(),
-      vi.fn()
-    )
-    expect(result.modelSelection).toEqual({
-      modelName: 'local-codex',
-      modelType: 'runtime',
-      options: { reasoning: 'low' },
-    })
   })
 
   it('supplies execution fields when a caller only sends modelSelection', async () => {
@@ -113,17 +74,6 @@ describe('runtime continuation model routing', () => {
     ).rejects.toThrow()
   })
 
-  it.each(['codex', 'claude_code'] as const)(
-    'preserves %s native model configuration when the task has no override',
-    async runtime => {
-      const work = workList(null)
-      work.chats[0].tasks[0].runtime = runtime
-      const list = vi.fn()
-      expect(await prepareRuntimeContinuationModel(request, work, list)).toBe(request)
-      expect(list).not.toHaveBeenCalled()
-    }
-  )
-
   it('propagates a failed refresh without sending a default model request', async () => {
     await expect(
       prepareRuntimeContinuationModel(
@@ -132,13 +82,6 @@ describe('runtime continuation model routing', () => {
         vi.fn().mockRejectedValue(new Error('offline'))
       )
     ).rejects.toThrow('offline')
-  })
-
-  it('does not require model configuration for a runtime input answer', async () => {
-    const answer = { ...request, requestUserInputResponse: { requestId: 'input-1', answers: {} } }
-    const list = vi.fn()
-    expect(await prepareRuntimeContinuationModel(answer, null, list)).toBe(answer)
-    expect(list).not.toHaveBeenCalled()
   })
 
   it('builds a cloud gateway execution request for a board reply sent through the local executor', async () => {

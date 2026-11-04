@@ -7,6 +7,7 @@ import {
 import { McpAppSessions } from './mcp-app-sessions.js'
 import { MCP_APP_SCHEME, McpAppDocuments } from './mcp-app-documents.js'
 import { setReducedMotion } from './e2e-media-preferences.js'
+import { focusE2EWindow } from './e2e-window-focus.js'
 import { withDebuggerSession } from './debugger-session.js'
 import { McpDiscoveryNetworkFault } from './e2e-mcp-discovery-fault.js'
 import { controlInlineVisualizationFrame } from './e2e-inline-visualization.js'
@@ -45,7 +46,10 @@ import { LocalAttachmentStore } from './local-attachment-store.js'
 import { readLocalFileChunk } from './local-file-reader.js'
 import { registerWorkspaceFileActions } from './workspace-file-actions.js'
 import { getElectronProcessSnapshot } from './process-diagnostics.js'
-import type { ProcessSnapshot } from '../vendor/process-explorer/contract.js'
+import type {
+  ProcessExplorerClient,
+  ProcessSnapshotOptions,
+} from '../vendor/process-explorer/contract.js'
 import type { ProcessExplorerWindowSnapshot } from './process-explorer-window-snapshot.js'
 import { BACKGROUND_TIMER_THROTTLING_SWITCH } from './window-background-policy.js'
 import { sendE2EKey, sendE2EText, type E2EKeyPhase } from './e2e-keyboard.js'
@@ -132,9 +136,7 @@ function assertE2EEnabled(control: string): void {
 }
 
 /** Host-side process explorer the capability router exposes to the renderer. */
-export interface ProcessExplorerHostService {
-  snapshot: () => Promise<ProcessSnapshot>
-}
+export type ProcessExplorerHostService = ProcessExplorerClient
 
 export interface ElectronDesktopServices {
   registerMcpAppCleanup?: (cleanup: () => Promise<void>) => void
@@ -733,9 +735,12 @@ export function createElectronCapabilityRouter(
     const target = requiredWindow(window)
     if (target.isMinimized()) target.restore()
     target.show()
-    target.focus()
-    const primaryContents = e2eHost.captureTarget('main')
-    if (primaryContents && !primaryContents.isDestroyed()) primaryContents.focus()
+    await focusE2EWindow(target, () => {
+      app.focus({ steal: true })
+      target.focus()
+      const primaryContents = e2eHost.captureTarget('main')
+      if (primaryContents && !primaryContents.isDestroyed()) primaryContents.focus()
+    })
   })
   router.register('e2e.focusWindow', params => {
     e2eHost.focusWindow(optionalStringParam(params, 'windowLabel') ?? 'main')
@@ -834,11 +839,14 @@ export function createElectronCapabilityRouter(
   })
   // Windows restores precision-touchpad input only while the native window
   // keeps Chromium's default visibility lifecycle; see window-background-policy.
-  router.register('e2e.getWindowBackgroundPolicy', () => {
+  router.register('e2e.getWindowBackgroundPolicy', params => {
     const target = requiredWindow(window)
+    const browserLabel = optionalStringParam(params, 'browserLabel')
     return {
       platform: process.platform,
-      backgroundThrottling: target.webContents.getBackgroundThrottling(),
+      backgroundThrottling: browserLabel
+        ? browser.backgroundThrottling(browserLabel)
+        : target.webContents.getBackgroundThrottling(),
       backgroundTimerThrottlingDisabled: app.commandLine.hasSwitch(
         BACKGROUND_TIMER_THROTTLING_SWITCH
       ),
@@ -1396,17 +1404,19 @@ export function registerAppUpdateCapabilities(
   // A download outlives any single host request, and every host request is
   // bounded by a fixed timeout. Start the download and let callers follow
   // appUpdate.downloadProgress until it reports a terminal phase.
-  router.register('appUpdate.download', () => {
+  router.register('appUpdate.download', params => {
     void requiredAppUpdates(appUpdates)
-      .download()
+      .download(updateChannelParam(params))
       .catch(() => undefined)
     return null
   })
   router.register('appUpdate.downloadProgress', () =>
     requiredAppUpdates(appUpdates).downloadProgress()
   )
-  router.register('appUpdate.install', (_params, context) => {
-    context.deferUntilResponseSent(requiredAppUpdates(appUpdates).createInstallAction())
+  router.register('appUpdate.install', (params, context) => {
+    context.deferUntilResponseSent(
+      requiredAppUpdates(appUpdates).createInstallAction(stringParam(params, 'version'))
+    )
   })
   router.register(
     'appUpdate.previousRelease',
@@ -1460,7 +1470,11 @@ export function registerDesktopServiceCapabilities(
   router.register('processExplorer.setAlwaysOnTop', params =>
     developer.setProcessExplorerAlwaysOnTop(booleanParam(params, 'alwaysOnTop') ?? false)
   )
-  router.register('diagnostics.processSnapshot', () => services.processExplorer.snapshot())
+  router.register('diagnostics.processSnapshot', (options: ProcessSnapshotOptions = {}) =>
+    services.processExplorer.snapshot({
+      waitForSystemProcesses: options?.waitForSystemProcesses !== false,
+    })
+  )
   router.register('maintenance.cleanupTemporaryImages', () =>
     services.cleanupStaleTemporaryImages()
   )
@@ -1577,11 +1591,24 @@ export function cpuLoadRatioBetween(before: CpuTimeSample, after: CpuTimeSample)
   return Math.min(1, Math.max(0, 1 - idleDelta / totalDelta))
 }
 
+export function e2eSystemPressureOverride(environment: NodeJS.ProcessEnv = process.env) {
+  if (
+    environment.VITE_WEWORK_E2E !== 'true' ||
+    !environment.WEWORK_E2E_CONTROL_URL?.trim() ||
+    environment.WEWORK_E2E_SYSTEM_PRESSURE !== 'idle'
+  ) {
+    return null
+  }
+  return { cpuLoadRatio: 0.1, freeMemoryRatio: 0.5, userIdleSeconds: 60 }
+}
+
 export async function systemPressureSnapshot(): Promise<{
   cpuLoadRatio: number
   freeMemoryRatio: number
   userIdleSeconds: number
 }> {
+  const override = e2eSystemPressureOverride()
+  if (override) return override
   const cpuBefore = cpuTimeSample()
   await new Promise(resolve => setTimeout(resolve, 100))
   const cpuAfter = cpuTimeSample()

@@ -82,7 +82,8 @@ export const ComposerTextarea = forwardRef<ComposerInputHandle, ComposerTextarea
           resolveAppLogo={resolveAppLogo}
           onSelectApp={(title, app) => showTrialGuide?.(title, app)}
           onOpenMarketplace={
-            openPluginCenterAction ? () => executeDshAction(openPluginCenterAction) : undefined
+            catalog.openMarketplace ??
+            (openPluginCenterAction ? () => executeDshAction(openPluginCenterAction) : undefined)
           }
           onOpenMentionPlugin={reference => navigateTo(buildPluginDetailRoute(reference))}
           renderAppIcon={command => (

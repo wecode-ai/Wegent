@@ -5,7 +5,10 @@ import {
   completeRuntimeTurnTiming,
 } from "./runtime-turn-helpers";
 import { preserveRequestUserInputResponse } from "./runtime-user-input";
-import { commandExecutionPayload } from "./command-execution";
+import {
+  commandExecutionPayload,
+  mergeCommandExecutionPayload,
+} from "./command-execution";
 
 import {
   getLatestThinkingContent,
@@ -647,8 +650,10 @@ export function mergeRuntimeConversationItem(
     ])[0];
   }
 
+  // A command can exit while its containing model turn is still streaming.
+  const localCommand = commandExecutionPayload(local.block);
   if (
-    preserveLocalTerminal &&
+    (preserveLocalTerminal || localCommand) &&
     isTerminalProcessingBlockStatus(local.block.status) &&
     !isTerminalProcessingBlockStatus(snapshotBlock.status)
   ) {
@@ -656,6 +661,13 @@ export function mergeRuntimeConversationItem(
       ...snapshot,
       block: {
         ...snapshotBlock,
+        ...(localCommand &&
+          snapshotBlock.type === "tool" && {
+            renderPayload: mergeCommandExecutionPayload(
+              snapshotBlock.renderPayload,
+              localCommand,
+            ),
+          }),
         status: local.block.status,
         completedAt: local.block.completedAt,
         durationMs: local.block.durationMs,

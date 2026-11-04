@@ -9,10 +9,9 @@ pub(super) async fn request(
     payload: Value,
     declaration: Value,
 ) -> Result<Value, AppIpcError> {
-    if payload["operation"] != "callTool" {
+    if payload["operation"] != "callTool" && payload["operation"] != "describe" {
         return Err(denied());
     }
-    let args = read_arguments(&declaration, &payload)?;
     let installed = client
         .request("plugin/installed", serde_json::json!({"cwds":[]}))
         .await
@@ -28,17 +27,14 @@ pub(super) async fn request(
         &payload["source"],
         &crate::agents::wework_codex_home(),
     )?;
-    let slug = declaration["connectorSlug"]
-        .as_str()
-        .filter(|s| !s.is_empty())
-        .ok_or_else(denied)?;
-    super::local_connector_auth::run_connection_tool(
-        &root,
-        plugin["name"].as_str().ok_or_else(denied)?,
-        slug,
-        &args,
-    )
-    .await
+    let key = plugin["name"].as_str().ok_or_else(denied)?;
+    let target = super::local_connector_auth::connection_auth_target(&root, key, &declaration)?;
+    if payload["operation"] == "describe" {
+        return Ok(target);
+    }
+    let args = read_arguments(&declaration, &payload)?;
+    let slug = target["connectorSlug"].as_str().ok_or_else(denied)?;
+    super::local_connector_auth::run_connection_tool(&root, key, slug, &args).await
 }
 
 fn denied() -> AppIpcError {

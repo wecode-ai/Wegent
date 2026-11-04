@@ -21,12 +21,12 @@ export interface RuntimeInteraction {
   task: RuntimeTaskReminderItem
   payload: RequestUserInputPayload
   question: string
-  context: string
   createdAt: number
   answered: boolean
   running?: boolean
   cached?: boolean
   originalUrl?: string
+  sourceMessageIds?: string[]
   project?: {
     projectId: string
     issueId: string
@@ -35,7 +35,10 @@ export interface RuntimeInteraction {
   }
 }
 
-export function interactionId(task: RuntimeTaskReminderItem, requestKey: string): string {
+export function interactionId(
+  task: Pick<RuntimeTaskReminderItem, 'address'>,
+  requestKey: string
+): string {
   return JSON.stringify([task.address.deviceId, task.address.taskId, requestKey])
 }
 
@@ -99,6 +102,7 @@ export async function readRuntimeInteractions(
   api: NonNullable<WorkbenchServices['runtimeWorkApi']>
 ): Promise<RuntimeInteraction[]> {
   const pages: WorkbenchMessage[][] = []
+  const sourceMessageIdsByTurn = new Map<string, string[]>()
   const cursors = new Set<string>()
   let beforeCursor: string | undefined
   let origin = task.task.runtimeHandle?.origin
@@ -115,7 +119,18 @@ export async function readRuntimeInteractions(
     if (response.historyUnavailable || response.parseError) {
       throw new Error(response.parseError || 'Runtime history is unavailable')
     }
-    pages.unshift(projectRuntimePaneTranscript(response).messages)
+    const transcript = projectRuntimePaneTranscript(response)
+    pages.unshift(transcript.messages)
+    for (const turn of transcript.turns) {
+      if (!turn.id) continue
+      sourceMessageIdsByTurn.set(turn.id, [
+        ...new Set([
+          ...(sourceMessageIdsByTurn.get(turn.id) ?? []),
+          ...(turn.clientUserMessageId ? [turn.clientUserMessageId] : []),
+          ...turn.items.flatMap(item => (item.type === 'user_message' ? [item.id] : [])),
+        ]),
+      ])
+    }
     if (!response.hasMoreBefore) break
     const cursor = response.beforeCursor
     if (!cursor || cursors.has(cursor)) throw new Error('Incomplete runtime interaction history')
@@ -180,13 +195,11 @@ export async function readRuntimeInteractions(
               detail: approval.detail || i18n.t('chat:request_user_input.approval_no_detail'),
             })
           : question || payload.message || payload.reason || task.task.title,
-        context: approval
-          ? approval.detail || ''
-          : payload.reason || message.content.trim().slice(0, 1200),
         createdAt: new Date(message.createdAt ?? task.task.createdAt ?? 0).getTime() || 0,
         answered,
         running,
         project,
+        sourceMessageIds: message.turnId ? sourceMessageIdsByTurn.get(message.turnId) : undefined,
       })
     }
   }

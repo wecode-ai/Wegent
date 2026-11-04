@@ -36,11 +36,26 @@ impl LocalTaskStore {
         bound_local_id: Option<&str>,
     ) -> Result<bool, TaskRuntimeError> {
         let id = format!("local-code-{:x}", Sha256::digest(key.as_bytes()));
-        let execution_environment = code_project_execution_environment(roots);
+        let bound_local_id = bound_local_id.filter(|id| *id != DEFAULT_WORK_ITEM_PROJECT_ID);
+        let needs_environment = {
+            let connection = self.connection()?;
+            let metadata = connection.query_row(
+                "SELECT metadata FROM loop_items WHERE resource_type = 'project' AND (id = ?1 OR id = ?2) ORDER BY CASE WHEN id = ?2 THEN 0 ELSE 1 END LIMIT 1",
+                params![&id, bound_local_id],
+                |row| row.get::<_, String>(0),
+            ).optional()?;
+            metadata
+                .as_deref()
+                .and_then(|value| serde_json::from_str::<Value>(value).ok())
+                .map_or(true, |value| value.get("execution_environment").is_none())
+        };
+        // Existing configured projects need no Git discovery. Keep external I/O outside the transaction.
+        let execution_environment = needs_environment
+            .then(|| code_project_execution_environment(roots))
+            .flatten();
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         // Archived projects remain tombstones; refreshing must not resurrect them.
-        let bound_local_id = bound_local_id.filter(|id| *id != DEFAULT_WORK_ITEM_PROJECT_ID);
         let existing = transaction
             .query_row(
                 "SELECT id, deleted_at FROM loop_items

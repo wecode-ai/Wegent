@@ -68,6 +68,34 @@ describe("shared Issue threads", () => {
     vi.unstubAllGlobals();
   });
 
+  it.each([
+    ["pending_approval", "等待审批"],
+    ["queued", "排队中"],
+    ["waiting_runtime", "等待设备或模型配置"],
+    ["cancelled", "已停止任务规划"],
+  ])(
+    "shows the actual manager execution state %s without a planning spinner",
+    (status, label) => {
+      act(() =>
+        root.render(
+          <IssueChatMessage
+            message={message}
+            compact
+            plain
+            agentRole="manager"
+            executionStatus={status}
+            translate={translate}
+            onOpenAttachment={() => {}}
+            onOpenUrl={() => {}}
+          />,
+        ),
+      );
+      expect(container.textContent).toContain(label);
+      expect(container.textContent).not.toContain("正在规划任务");
+      expect(container.querySelector(".animate-spin")).toBeNull();
+    },
+  );
+
   it("groups shuffled events under the actual root and keeps replies chronological", () => {
     const reply = {
       ...message,
@@ -558,6 +586,74 @@ describe("shared Issue threads", () => {
       content: "Completed",
     };
     expect(mergeIssueChatMessages([completed], [message])).toEqual([completed]);
+  });
+
+  it("orders same-second Runtime snapshots by their exact event sequence", () => {
+    const outcomeOnly = {
+      ...message,
+      content: "",
+      metadata: { runtime_event_sequence: "1793597834818561699" },
+    };
+    const final = {
+      ...message,
+      content: "Completed by remote executor",
+      metadata: { runtime_event_sequence: "1793597834818561700" },
+    };
+    expect(mergeIssueChatMessages([final], [outcomeOnly])).toEqual([final]);
+    expect(mergeIssueChatMessages([outcomeOnly], [final])).toEqual([final]);
+  });
+
+  it.each([
+    {
+      name: "older than the final response",
+      sequence: "1793597834818561699",
+      snapshotStatus: "completed" as const,
+    },
+    {
+      name: "already included in a streaming snapshot",
+      sequence: "1793597834818561700",
+      snapshotStatus: "streaming" as const,
+    },
+  ])("ignores a delta $name", async ({ sequence, snapshotStatus }) => {
+    let receive!: (message: ProjectChatMessage) => void;
+    let receiveChunk!: (message: ProjectChatMessage) => void;
+    const client = {
+      subscribe: vi.fn(
+        async (...args: Parameters<ProjectChatClient["subscribe"]>) => {
+          receive = args[3];
+          receiveChunk = args[4]!;
+          return {
+            snapshot: { messages: [], latestSequence: 0, currentUserId: "1" },
+            unsubscribe: vi.fn(),
+          };
+        },
+      ),
+    } as unknown as ProjectChatClient;
+    function Harness() {
+      const chat = useIssueProjectChat(client, "project", "issue");
+      return <span>{chat.messages.map((item) => item.content).join("")}</span>;
+    }
+    await act(async () => root.render(<Harness />));
+    act(() =>
+      receive({
+        ...message,
+        status: snapshotStatus,
+        content: "Final answer",
+        metadata: { runtime_event_sequence: "1793597834818561700" },
+      }),
+    );
+    act(() =>
+      receiveChunk({
+        ...message,
+        status: "streaming",
+        content: " answer",
+        metadata: {
+          runtime_event_sequence: sequence,
+          contentMode: "delta",
+        },
+      }),
+    );
+    expect(container.textContent).toBe("Final answer");
   });
 
   it("ignores a late subscription from an Issue that was closed", async () => {

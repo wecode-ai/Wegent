@@ -1,4 +1,4 @@
-import { useScopedDraftInput } from './useScopedDraftInput'
+import { useWorkspaceTabDraftInput } from './useWorkspaceTabDraftInput'
 import { useDebugSnapshotPublisher } from './useDebugSnapshotPublisher'
 import { isDeviceRuntimeProject } from '@/lib/runtime-project-state'
 import { syncRuntimeGoal } from '@/features/workbench/runtimeTaskLifecycle/goalSynchronization'
@@ -49,7 +49,12 @@ import {
   getLocalRuntimeSourceIdentity,
   type LocalRuntimeSidebarIdentity,
 } from '@/lib/local-runtime-sidebar-identity'
-import { requestNewChatComposerFocus } from '@/lib/workbenchComposerFocus'
+import {
+  consumeWorkbenchNewChatRequest,
+  requestNewChatComposerFocus,
+  requestWorkbenchNewChat,
+  WORKBENCH_NEW_CHAT_REQUEST_EVENT,
+} from '@/lib/workbenchComposerFocus'
 import { installLocalWorkspaceOpenListener } from '@/desktop/localWorkspaceOpen'
 import {
   installMainRuntimeWorkChangedListener,
@@ -155,6 +160,7 @@ import {
   RuntimeTaskLifecycleProvider,
   RuntimeTaskLifecycleStore,
   useRuntimeTaskLifecycleStoreSnapshot,
+  useRuntimeTaskSummaryResolver,
 } from './runtimeTaskLifecycle'
 import {
   applyRuntimeConversationSubagentActivity,
@@ -180,7 +186,6 @@ import {
   findSelectableProject,
   findProjectDeviceWorkspace,
   findProjectMetadataDeviceWorkspace,
-  findRuntimeTask,
   getRememberedStandaloneDeviceId,
   getDefaultProjectDeviceWorkspaceId,
   readLastProjectId,
@@ -198,10 +203,6 @@ import {
   createDefaultWorkbenchServices,
   createExecutorClientForWorkbenchServices,
 } from './workbenchServices'
-import {
-  consumeWorkspaceTabTransfer,
-  publishWorkspaceTabTransferState,
-} from '@/features/workspace-tabs/workspaceTabTransfer'
 import { useOptionalWorkspaceTabActivity } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import { useWorkbenchTelemetry } from './useWorkbenchTelemetry'
 import { useAiGenerationTelemetry } from './useAiGenerationTelemetry'
@@ -314,6 +315,10 @@ export function WorkbenchProvider({
     }
   }, [])
   const [state, dispatch] = useReducer(workbenchReducer, initialWorkbenchState)
+  const resolveRuntimeTaskSummary = useRuntimeTaskSummaryResolver(
+    state.runtimeWork,
+    sharedLifecycleStore
+  )
   // The cloud connection context falls back to a synthetic "backend" user when
   // no real cloud provider is mounted; never let that placeholder override the
   // authenticated user. With a real connection, the cloud identity is the one
@@ -459,14 +464,8 @@ export function WorkbenchProvider({
     inputs: draftInputByScope,
     setInput: writeDraftInputForScope,
     getRevision: getInputRevisionForScope,
-  } = useScopedDraftInput(() =>
-    workspaceTabId ? (consumeWorkspaceTabTransfer(workspaceTabId)?.draftInputByScope ?? {}) : {}
-  )
+  } = useWorkspaceTabDraftInput(workspaceTabId)
   const [composerErrorByScope, setComposerErrorByScope] = useState<Record<string, string>>({})
-  useEffect(() => {
-    if (!workspaceTabId) return
-    publishWorkspaceTabTransferState(workspaceTabId, { draftInputByScope })
-  }, [draftInputByScope, workspaceTabId])
   const [trialTemplatesByScope, setTrialTemplatesByScope] = useState<
     Record<string, PluginPathComponent[]>
   >({})
@@ -858,13 +857,13 @@ export function WorkbenchProvider({
   const modelSelectionConfig = useMemo(() => {
     if (state.currentRuntimeTask) {
       return (
-        findRuntimeTask(state.runtimeWork, state.currentRuntimeTask)?.modelSelection ??
+        resolveRuntimeTaskSummary(state.currentRuntimeTask)?.modelSelection ??
         modelSelectionFromRuntimeHandle(state.currentRuntimeTask.runtimeHandle) ??
         null
       )
     }
     return projectModelSelection ?? getNewChatModelSelection(currentUser) ?? null
-  }, [currentUser, projectModelSelection, state.currentRuntimeTask, state.runtimeWork])
+  }, [currentUser, projectModelSelection, resolveRuntimeTaskSummary, state.currentRuntimeTask])
   const defaultModelSelectionConfig = useCallback(
     (models: UnifiedModel[]) => defaultNewChatModelSelection(models),
     []
@@ -987,8 +986,7 @@ export function WorkbenchProvider({
         currentRuntimeTask: null,
         standaloneChatKey: nextStandaloneChatKey,
       })
-      const sourceTitle =
-        findRuntimeTask(state.runtimeWork, sourceTask)?.title.trim() || sourceTask.taskId
+      const sourceTitle = resolveRuntimeTaskSummary(sourceTask)?.title.trim() || sourceTask.taskId
       const reference = createConversationMentionReference(sourceTitle, sourceTask)
       const currentDraft = (source?.draft ?? draftInputByScope[projectChatScopeKey] ?? '').trim()
       const nextDraft = currentDraft
@@ -1026,7 +1024,7 @@ export function WorkbenchProvider({
         })
       }
       navigateTo('/')
-      requestNewChatComposerFocus()
+      requestNewChatComposerFocus(workspaceTabId)
     },
     [
       currentUser.id,
@@ -1035,15 +1033,16 @@ export function WorkbenchProvider({
       selectModelForScope,
       projectChatScopeKey,
       projectModelSelection,
+      resolveRuntimeTaskSummary,
       setDraftInputForScope,
       state.currentProject,
       state.currentRuntimeTask,
-      state.runtimeWork,
       state.selectedDeviceWorkspaceId,
       state.standaloneChatKey,
       state.standaloneDeviceId,
       state.standaloneWorkspacePath,
       t,
+      workspaceTabId,
     ]
   )
   const {
@@ -1053,7 +1052,7 @@ export function WorkbenchProvider({
     setRuntimeTaskSelectedModelOption,
   } = useRuntimeTaskModelSelection({
     userId: user.id,
-    runtimeWork: state.runtimeWork,
+    resolveTask: resolveRuntimeTaskSummary,
     modelStore: modelSelection,
   })
   const conversationModels = modelSelection.models
@@ -1558,6 +1557,11 @@ export function WorkbenchProvider({
   )
 
   const startNewChat = useCallback(() => {
+    navigateTo('/')
+    if (!canNavigateWorkspaceTab()) {
+      requestWorkbenchNewChat()
+      return
+    }
     const project = state.currentProject
       ? findFirstSelectableProject(state.projects, state.runtimeWork, [state.currentProject.id])
       : null
@@ -1568,8 +1572,7 @@ export function WorkbenchProvider({
         project,
         deviceWorkspaceId: getDefaultProjectDeviceWorkspaceId(state.runtimeWork, project.id),
       })
-      navigateTo('/')
-      requestNewChatComposerFocus()
+      requestNewChatComposerFocus(workspaceTabId)
       return
     }
 
@@ -1583,16 +1586,26 @@ export function WorkbenchProvider({
       ),
       standaloneWorkspacePath: null,
     })
-    navigateTo('/')
-    requestNewChatComposerFocus()
+    requestNewChatComposerFocus(workspaceTabId)
   }, [
+    canNavigateWorkspaceTab,
     state.currentProject,
     state.devices,
     state.projects,
     state.runtimeWork,
     state.standaloneDeviceId,
     user,
+    workspaceTabId,
   ])
+
+  useEffect(() => {
+    const startRequestedChat = () => {
+      if (canNavigateWorkspaceTab() && consumeWorkbenchNewChatRequest()) startNewChat()
+    }
+    startRequestedChat()
+    window.addEventListener(WORKBENCH_NEW_CHAT_REQUEST_EVENT, startRequestedChat)
+    return () => window.removeEventListener(WORKBENCH_NEW_CHAT_REQUEST_EVENT, startRequestedChat)
+  }, [canNavigateWorkspaceTab, startNewChat])
 
   const localSkillsWorkspacePath =
     state.currentRuntimeTask?.workspacePath ??
@@ -1698,7 +1711,7 @@ export function WorkbenchProvider({
         startFreshChat: true,
       })
       navigateTo('/')
-      requestNewChatComposerFocus()
+      requestNewChatComposerFocus(workspaceTabId)
       return true
     },
     [
@@ -1710,6 +1723,7 @@ export function WorkbenchProvider({
       state.standaloneChatKey,
       state.standaloneDeviceId,
       user,
+      workspaceTabId,
     ]
   )
 
@@ -1755,7 +1769,7 @@ export function WorkbenchProvider({
         startFreshChat: Boolean(state.currentRuntimeTask && !hasPreservedBlankComposerState),
       })
       navigateTo('/')
-      requestNewChatComposerFocus()
+      requestNewChatComposerFocus(workspaceTabId)
     },
     [
       attachmentSelection.stateByScope,
@@ -1765,6 +1779,7 @@ export function WorkbenchProvider({
       state.runtimeWork,
       state.standaloneChatKey,
       user.id,
+      workspaceTabId,
     ]
   )
 
@@ -1793,7 +1808,7 @@ export function WorkbenchProvider({
       if (!resolvedServices.runtimeWorkApi) {
         return Promise.reject(new Error('Runtime work API is unavailable'))
       }
-      const task = findRuntimeTask(state.runtimeWork, address)
+      const task = resolveRuntimeTaskSummary(address)
       const taskTitle = task?.title.trim()
       if (!taskTitle) {
         return Promise.reject(new Error('Runtime task title is unavailable'))
@@ -1819,7 +1834,7 @@ export function WorkbenchProvider({
         ...(taskModelSelection ? { modelSelection: taskModelSelection } : {}),
       })
     },
-    [modelSelection.models, resolvedServices, state.runtimeWork]
+    [modelSelection.models, resolveRuntimeTaskSummary, resolvedServices]
   )
 
   const getImNotificationSettings = useCallback(() => {
@@ -1916,7 +1931,7 @@ export function WorkbenchProvider({
   const resolveRuntimeContextUsage = useCallback(
     (address: RuntimeTaskAddress, usage: RuntimeContextUsage): RuntimeContextUsage => {
       const taskSelection =
-        findRuntimeTask(state.runtimeWork, address)?.modelSelection ??
+        resolveRuntimeTaskSummary(address)?.modelSelection ??
         modelSelectionFromRuntimeHandle(address.runtimeHandle) ??
         null
       const selectedModel = modelSelection.selectedModel
@@ -1930,12 +1945,12 @@ export function WorkbenchProvider({
 
       return applyModelContextWindowOverride(usage, taskModel ?? matchingSelectedModel)
     },
-    [modelSelection.models, modelSelection.selectedModel, state.runtimeWork]
+    [modelSelection.models, modelSelection.selectedModel, resolveRuntimeTaskSummary]
   )
   const resolveModelForAddress = useCallback(
     (address: RuntimeTaskAddress): UnifiedModel | null => {
       const taskSelection =
-        findRuntimeTask(state.runtimeWork, address)?.modelSelection ??
+        resolveRuntimeTaskSummary(address)?.modelSelection ??
         modelSelectionFromRuntimeHandle(address.runtimeHandle) ??
         null
       const selectedModel = modelSelection.selectedModel
@@ -1948,7 +1963,7 @@ export function WorkbenchProvider({
           : null
       return taskModel ?? matchingSelectedModel
     },
-    [modelSelection.models, modelSelection.selectedModel, state.runtimeWork]
+    [modelSelection.models, modelSelection.selectedModel, resolveRuntimeTaskSummary]
   )
   const knownModelIds = useMemo(() => {
     const ids = new Set<string>()
