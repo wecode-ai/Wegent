@@ -10,7 +10,7 @@ import {
   expandDesktopCheckpoints,
 } from './checkpoints.mjs'
 import {
-  RESOURCE_EXCLUSIVE_CHECKPOINTS,
+  isResourceExclusiveCheckpoint,
   runWithCheckpointResources,
 } from './checkpoint-scheduler.mjs'
 import {
@@ -786,12 +786,14 @@ async function runParallelCheckpoints(checkpoints) {
       `[desktop-e2e] Running ${checkpoints.length} checkpoints with ${workerCount} parallel workers`
     )
 
+    const linuxCore =
+      process.platform === 'linux' && process.env.WEWORK_E2E_PARALLEL_SCOPE === 'core'
     await runWithCheckpointResources({
       checkpoints,
       workerCount,
       resourceFor: checkpoint =>
         process.platform === 'darwin' ? CHECKPOINT_RESOURCES.get(checkpoint) : [],
-      exclusiveFor: checkpoint => RESOURCE_EXCLUSIVE_CHECKPOINTS.has(checkpoint),
+      exclusiveFor: checkpoint => isResourceExclusiveCheckpoint(checkpoint, linuxCore),
       run: async checkpoint => {
         const env = checkpointScenarioEnv({ ...sharedEnv }, checkpoint)
         delete env.WEWORK_E2E_CONTROL_SERVER_PORT

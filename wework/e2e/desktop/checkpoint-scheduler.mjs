@@ -10,6 +10,15 @@ export const RESOURCE_EXCLUSIVE_CHECKPOINTS = new Set([
   'plugin-uninstall-lost-response',
 ])
 
+export const LINUX_CORE_HISTORY_CHECKPOINT = 'running-conversation-history'
+
+export function isResourceExclusiveCheckpoint(checkpoint, linuxCore = false) {
+  return (
+    RESOURCE_EXCLUSIVE_CHECKPOINTS.has(checkpoint) ||
+    (linuxCore && checkpoint === LINUX_CORE_HISTORY_CHECKPOINT)
+  )
+}
+
 export async function runWithCheckpointResources({
   checkpoints,
   workerCount,

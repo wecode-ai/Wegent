@@ -5,7 +5,10 @@ import {
   DESKTOP_CHECKPOINTS,
   expandDesktopCheckpoints,
 } from '../../wework/e2e/desktop/checkpoints.mjs'
-import { RESOURCE_EXCLUSIVE_CHECKPOINTS } from '../../wework/e2e/desktop/checkpoint-scheduler.mjs'
+import {
+  LINUX_CORE_HISTORY_CHECKPOINT,
+  isResourceExclusiveCheckpoint,
+} from '../../wework/e2e/desktop/checkpoint-scheduler.mjs'
 
 const measurements = JSON.parse(
   readFileSync(
@@ -22,47 +25,59 @@ export function balanceLinuxCoreMatrix(
     throw new Error('Invalid Linux Core matrix')
   const include = matrix.include.map((entry) => ({ ...entry }))
   const history = include.find((entry) =>
-    entry.segments.split(',').includes('running-conversation-history'),
+    entry.segments.split(',').includes(LINUX_CORE_HISTORY_CHECKPOINT),
   )
   if (!history) return { ...matrix, include }
   // Keep the two latency benchmark shards exclusive and never add a runner.
   const receivers = include.filter(
-    (entry) =>
-      entry.id !== history.id && !['core-9', 'core-10'].includes(entry.id),
+    (entry) => !['core-9', 'core-10'].includes(entry.id),
   )
-  if (!receivers.length) return { ...matrix, include }
+  if (!receivers.some((entry) => entry !== history))
+    return { ...matrix, include }
   const checkpoints = (entry) =>
     expandDesktopCheckpoints(entry.segments.split(','))
   const before = include.flatMap(checkpoints).sort()
   if (new Set(before).size !== before.length)
     throw new Error('Overlapping Linux Core checkpoints')
-  const pending = [...receivers, history]
+  const pending = receivers
     .flatMap(checkpoints)
-    .filter((checkpoint) => checkpoint !== 'running-conversation-history')
+    .filter((checkpoint) => checkpoint !== LINUX_CORE_HISTORY_CHECKPOINT)
     .sort((a, b) => a.localeCompare(b))
   const ordered = orderLinuxCheckpoints(pending, 'core', seconds)
-  history.segments = 'running-conversation-history'
+  const historySeconds = seconds[LINUX_CORE_HISTORY_CHECKPOINT]
+  // History reserves every worker until it exits. Its remaining runner time
+  // can serve measured ordinary checkpoints without sharing its runtime.
   const assignments = receivers.map((entry) => ({
     entry,
-    checkpoints: [],
-    workers: Array(measurements.workers).fill(0),
+    checkpoints: entry === history ? [LINUX_CORE_HISTORY_CHECKPOINT] : [],
+    workers: Array(measurements.workers).fill(
+      entry === history ? (historySeconds ?? 180) : 0,
+    ),
   }))
   // Exclusive checkpoints precede the worker queue and occupy the whole runner.
   // Add their duration to every worker, retaining the same runtime isolation.
   for (const checkpoint of ordered) {
-    const exclusive = RESOURCE_EXCLUSIVE_CHECKPOINTS.has(checkpoint)
+    const exclusive = isResourceExclusiveCheckpoint(checkpoint, true)
     const load = (assignment) =>
       exclusive
         ? Math.max(...assignment.workers)
         : Math.min(...assignment.workers)
-    assignments.sort(
+    // Do not put another exclusive prefix or an unmeasured case on history's runner.
+    const candidates = assignments.filter(
+      ({ entry }) =>
+        entry !== history ||
+        (!exclusive &&
+          historySeconds !== undefined &&
+          seconds[checkpoint] !== undefined),
+    )
+    candidates.sort(
       (a, b) =>
         load(a) - load(b) ||
         a.workers.reduce((sum, value) => sum + value, 0) -
           b.workers.reduce((sum, value) => sum + value, 0) ||
         a.entry.id.localeCompare(b.entry.id),
     )
-    const target = assignments[0]
+    const target = candidates[0]
     const worker = target.workers.indexOf(Math.min(...target.workers))
     const duration = seconds[checkpoint] ?? 180
     if (exclusive)

@@ -13,7 +13,12 @@ import { join } from 'node:path'
 import test from 'node:test'
 
 import { expandDesktopCheckpoints } from '../../wework/e2e/desktop/checkpoints.mjs'
-import { RESOURCE_EXCLUSIVE_CHECKPOINTS } from '../../wework/e2e/desktop/checkpoint-scheduler.mjs'
+import {
+  LINUX_CORE_HISTORY_CHECKPOINT,
+  RESOURCE_EXCLUSIVE_CHECKPOINTS,
+  isResourceExclusiveCheckpoint,
+  runWithCheckpointResources,
+} from '../../wework/e2e/desktop/checkpoint-scheduler.mjs'
 import {
   balanceLinuxCoreMatrix,
   orderLinuxCheckpoints,
@@ -72,7 +77,7 @@ function classifiedMatrices(
 
 const matrices = classifiedMatrices()
 
-test('Linux balancing isolates history without changing coverage, runners or exclusive benchmarks', () => {
+test('Linux balancing reuses the history runner without changing coverage, runners or exclusive benchmarks', () => {
   const original = JSON.parse(matrices.wework_desktop_core_e2e_matrix)
   const snapshot = JSON.stringify(original)
   const balanced = balanceLinuxCoreMatrix(original)
@@ -99,10 +104,15 @@ test('Linux balancing isolates history without changing coverage, runners or exc
       .sort()
   assert.deepEqual(expand(balanced), expand(original))
   assert.equal(new Set(expand(balanced)).size, expand(original).length)
-  assert.equal(
-    balanced.include.find((entry) => entry.id === 'core-6').segments,
-    'running-conversation-history',
-  )
+  const historyShard = balanced.include
+    .find((entry) => entry.id === 'core-6')
+    .segments.split(',')
+  assert.equal(historyShard[0], LINUX_CORE_HISTORY_CHECKPOINT)
+  assert(historyShard.length > 1)
+  for (const checkpoint of historyShard.slice(1)) {
+    assert(!isResourceExclusiveCheckpoint(checkpoint, true))
+    assert(measurements.scopes.core[checkpoint] > 0)
+  }
   for (const id of ['core-9', 'core-10'])
     assert.deepEqual(
       balanced.include.find((entry) => entry.id === id),
@@ -154,7 +164,7 @@ function completionSeconds(checkpoints, seconds) {
   let exclusiveSeconds = 0
   for (const checkpoint of checkpoints) {
     assert.ok(seconds[checkpoint] > 0, checkpoint)
-    if (RESOURCE_EXCLUSIVE_CHECKPOINTS.has(checkpoint)) {
+    if (isResourceExclusiveCheckpoint(checkpoint, true)) {
       exclusiveSeconds += seconds[checkpoint]
       continue
     }
@@ -163,6 +173,92 @@ function completionSeconds(checkpoints, seconds) {
   }
   return exclusiveSeconds + Math.max(...workers)
 }
+
+test('reuses the existing history runner after its isolated checkpoint', async () => {
+  const checkpoints = [
+    'application-menu',
+    'automation-lifecycle',
+    'embedded-browser',
+    'task-board-association',
+    'task-status-sync',
+    'temporary-chat',
+    'workspace-tabs',
+    'window-lifecycle',
+    'permission-modes',
+    'core-task-flow',
+    'workspace-attachments',
+    'conversation-state',
+    'native-window-chrome',
+    'harness-app-development',
+    'harness-app-lifecycle',
+    'harness-app-models',
+    'tray-lifecycle',
+  ]
+  const history = LINUX_CORE_HISTORY_CHECKPOINT
+  const matrix = {
+    include: [
+      { id: 'core-1', segments: checkpoints.slice(0, -1).join(',') },
+      { id: 'core-2', segments: checkpoints.at(-1) },
+      { id: 'core-6', segments: history },
+      { id: 'core-9', segments: 'split-workbench' },
+      { id: 'core-10', segments: 'collaboration-template-agents' },
+    ],
+  }
+  const seconds = Object.fromEntries(
+    [...checkpoints, history].map((checkpoint) => [checkpoint, 100]),
+  )
+  const balanced = balanceLinuxCoreMatrix(matrix, seconds)
+  const tail = balanced.include
+    .find((entry) => entry.id === 'core-6')
+    .segments.split(',')
+  assert.equal(tail[0], history)
+  assert(
+    tail.length > 1,
+    'the history runner should execute work after history',
+  )
+  const peak = (value) =>
+    Math.max(
+      ...value.include
+        .slice(0, 3)
+        .map((entry) =>
+          completionSeconds(
+            orderLinuxCheckpoints(entry.segments.split(','), 'core', seconds),
+            seconds,
+          ),
+        ),
+    )
+  assert(peak(balanced) < peak(matrix))
+  for (const id of ['core-9', 'core-10'])
+    assert.deepEqual(
+      balanced.include.find((entry) => entry.id === id),
+      matrix.include.find((entry) => entry.id === id),
+    )
+
+  const events = []
+  await runWithCheckpointResources({
+    // Prove isolation even when the CLI order is not already history-first.
+    checkpoints: [...tail.slice(1), history],
+    workerCount: 4,
+    resourceFor: () => [],
+    exclusiveFor: (checkpoint) =>
+      isResourceExclusiveCheckpoint(checkpoint, true),
+    run: async (checkpoint) => {
+      events.push(['start', checkpoint])
+      await new Promise((resolve) => setImmediate(resolve))
+      events.push(['end', checkpoint])
+    },
+  })
+  assert.deepEqual(events.slice(0, 2), [
+    ['start', history],
+    ['end', history],
+  ])
+  assert.equal(events.length, 2 * tail.length)
+  assert(!isResourceExclusiveCheckpoint(history))
+  for (const checkpoint of RESOURCE_EXCLUSIVE_CHECKPOINTS) {
+    assert(isResourceExclusiveCheckpoint(checkpoint))
+    assert(isResourceExclusiveCheckpoint(checkpoint, true))
+  }
+})
 
 test('balancing includes exclusive startup checkpoints before the four-worker queue', () => {
   const seconds = {
@@ -178,7 +274,7 @@ test('balancing includes exclusive startup checkpoints before the four-worker qu
     'workspace-tabs': 100,
     'window-lifecycle': 20,
     'permission-modes': 20,
-    'running-conversation-history': 60,
+    'running-conversation-history': 300,
   }
   const matrix = {
     include: [
