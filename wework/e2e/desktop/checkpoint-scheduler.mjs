@@ -5,6 +5,9 @@ export const RESOURCE_EXCLUSIVE_CHECKPOINTS = new Set([
   'background-terminals',
   'release-package-startup',
   'collaboration-issue-task-discovery',
+  // Its partial-inventory guard must run through the real system-idle scheduler.
+  // Parallel Electron workloads keep CPU pressure above the production limit.
+  'plugin-uninstall-lost-response',
 ])
 
 export async function runWithCheckpointResources({

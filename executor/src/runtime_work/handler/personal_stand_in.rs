@@ -229,14 +229,91 @@ impl RuntimeWorkRpcHandler {
         if save {
             let gate = self.task_send_gate(&format!("stand-in-processing:{user}"));
             let _guard = gate.lock().await;
+            let previous = store
+                .personal_stand_in(user, &self.device_id)
+                .map_err(settings_error)?;
+            let mut settings = payload["settings"].clone();
+            self.prepare_connection_boundaries(&mut settings, &previous)
+                .await?;
             store
-                .save_personal_stand_in(user, &self.device_id, payload["settings"].clone())
+                .save_personal_stand_in(user, &self.device_id, settings)
                 .map_err(settings_error)
         } else {
             store
                 .personal_stand_in(user, &self.device_id)
                 .map_err(settings_error)
         }
+    }
+
+    pub(super) async fn prepare_connection_boundaries(
+        &self,
+        settings: &mut Value,
+        previous: &Value,
+    ) -> Result<(), AppIpcError> {
+        let previous_identities =
+            crate::task_runtime::personal_stand_in::stand_in_identities(previous);
+        let mut identities = settings["roles"]
+            .as_array()
+            .cloned()
+            .ok_or_else(|| AppIpcError::new("bad_request", "Personal roles must be an array"))?;
+        let has_primary = settings["primary"].is_object();
+        if has_primary {
+            identities.push(settings["primary"].clone());
+        }
+        let count = identities.len();
+        for (index, identity) in identities.iter_mut().enumerate() {
+            let id = if has_primary && index + 1 == count {
+                json!("@primary")
+            } else {
+                identity["id"].clone()
+            };
+            let before = previous_identities.iter().find(|row| row["id"] == id);
+            let preserve = before.is_some_and(|row| row["enabled"] == identity["enabled"]);
+            let enabled = identity["enabled"] == true;
+            for source in identity
+                .get_mut("connections")
+                .and_then(Value::as_array_mut)
+                .into_iter()
+                .flatten()
+            {
+                if crate::task_runtime::personal_stand_in::source_provider(source)
+                    != crate::task_runtime::personal_stand_in::EMAIL_PROVIDER
+                {
+                    continue;
+                }
+                let existing = before.and_then(|row| {
+                    crate::task_runtime::personal_stand_in::stand_in_connection(row, source)
+                });
+                let boundary = existing
+                    .filter(|_| preserve)
+                    .map(|row| row["boundary"].clone())
+                    .filter(Value::is_object);
+                source.as_object_mut().unwrap().remove("boundary");
+                if let Some(boundary) = boundary {
+                    source["boundary"] = boundary;
+                } else if enabled {
+                    let boundary = self
+                        .connection_call(
+                            "initialize",
+                            source["providerId"].as_str(),
+                            source.clone(),
+                        )
+                        .await?;
+                    if !boundary["partition"].is_string() || !boundary["sequence"].is_u64() {
+                        return Err(AppIpcError::new(
+                            "connection_response_invalid",
+                            "Missing ordered connection boundary",
+                        ));
+                    }
+                    source["boundary"] = boundary;
+                }
+            }
+        }
+        if has_primary {
+            settings["primary"] = identities.pop().unwrap();
+        }
+        settings["roles"] = json!(identities);
+        Ok(())
     }
 }
 

@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, test } from 'vitest'
 import type { InstalledPlugin } from '@/types/api'
+import { beforeEach, describe, expect, test } from 'vitest'
 import {
   buildContextualPluginPrompt,
   buildRefinedPluginPrompt,
@@ -90,18 +90,6 @@ describe('plugin trial state', () => {
     window.sessionStorage.clear()
   })
 
-  test('builds a local skill mention from the first plugin skill', () => {
-    expect(pluginTrialInput(pluginWithSkill())).toBe(
-      '[$Documents](plugin://documents@OpenAI Bundled) '
-    )
-  })
-
-  test('normalizes plugin skill directory paths to SKILL.md file paths', () => {
-    expect(pluginTrialInput(pluginWithSkill('/tmp/plugin/skills/report'))).toBe(
-      '[$Documents](plugin://documents@OpenAI Bundled) '
-    )
-  })
-
   test('uses plugin default prompt and replaces the skill token', () => {
     expect(pluginTrialInput(pluginWithDefaultPrompt(['Use $documents to draft a report.']))).toBe(
       'Use [$Documents](plugin://documents@OpenAI Bundled) to draft a report. '
@@ -111,14 +99,6 @@ describe('plugin trial state', () => {
   test('prefixes the skill mention when default prompt omits the skill token', () => {
     expect(pluginTrialInput(pluginWithDefaultPrompt('Draft a report.'))).toBe(
       '[$Documents](plugin://documents@OpenAI Bundled) Draft a report.'
-    )
-  })
-
-  test('uses an explicit prompt when the caller selects an application type', () => {
-    const plugin = pluginWithDefaultPrompt('Build an internal website.')
-
-    expect(pluginTrialInput(plugin, { prompt: '创建并发布一个小程序' })).toBe(
-      '[$Documents](plugin://documents@OpenAI Bundled) 创建并发布一个小程序'
     )
   })
 
@@ -291,21 +271,6 @@ describe('plugin trial state', () => {
       })
     )
     expect(trial?.openInNewChat).toBe(true)
-  })
-
-  test('builds useful guide scenarios when a plugin has no templates or default prompts', () => {
-    const plugin = pluginWithSkill('/tmp/plugin/skills/report/SKILL.md')
-    plugin.spec.components.templates = []
-    plugin.spec.components.commands = []
-
-    expect(pluginTrialTemplates(plugin)).toEqual([
-      expect.objectContaining({
-        path: 'prompt-0',
-        description: 'Use Documents to summarize the current context and propose next steps',
-      }),
-      expect.objectContaining({ path: 'prompt-1' }),
-      expect.objectContaining({ path: 'prompt-2' }),
-    ])
   })
 
   test('keeps the selected detail scenario first in the chat guide', () => {

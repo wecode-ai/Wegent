@@ -141,8 +141,17 @@ fn valid_scope(settings: &Value, scope: &Value) -> bool {
         }
         Some("dingtalk" | "connection") => stand_in_identities(settings).iter().any(|role| {
             role["connections"].as_array().is_some_and(|rows| {
-                rows.iter()
-                    .any(|row| super::personal_stand_in::connection_memory_scope(row) == *scope)
+                rows.iter().any(|row| {
+                    let mut expected = super::personal_stand_in::connection_memory_scope(row);
+                    if row["scope"] == "all"
+                        && scope["id"]
+                            .as_str()
+                            .is_some_and(|id| !id.is_empty() && id != "*")
+                    {
+                        expected["id"] = scope["id"].clone();
+                    }
+                    expected == *scope
+                })
             })
         }),
         _ => false,

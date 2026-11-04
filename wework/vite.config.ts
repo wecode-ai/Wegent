@@ -8,6 +8,7 @@ import { fileViewerRenderers } from '@file-viewer/vite-plugin'
 import { configDefaults } from 'vitest/config'
 import type { BuiltinReporterOptions } from 'vitest/reporters'
 import { excalidrawAssets } from './vite/excalidrawAssets'
+import { lucideIconChunks } from './vite/lucideIconChunks'
 import {
   parseTelemetryIdentity,
   parseTelemetryContextFields,
@@ -141,6 +142,7 @@ export default defineConfig({
     },
     react(),
     excalidrawAssets(),
+    lucideIconChunks(),
     ...internalVitePlugins,
     preserveDshUiEntryExports(),
     fileViewerRenderers({

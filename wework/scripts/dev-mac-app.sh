@@ -224,11 +224,9 @@ if [ -z "$WEWORK_USER_DATA_DIR" ]; then
   exit 1
 fi
 export WEWORK_USER_DATA_DIR
-# A development app owns its release state; never inherit the parent app's slot.
-unset WEWORK_RELEASE_ROOT
-unset WEWORK_RELEASE_SUPERVISED
-unset WEWORK_ACTIVE_RELEASE_ID
-unset WEWORK_COMPONENT_DATA_DIRECTORY
+# A terminal opened by an installed release inherits its activation state.
+# Development owns a separate data directory and must not enter that release.
+wework_clear_release_environment
 export WEWORK_IMPORT_LEGACY_DEVELOPMENT_HISTORY="$IMPORT_LEGACY_DEVELOPMENT_HISTORY"
 unset WEWORK_DEV_APP_IDENTIFIER
 unset WEWORK_DEV_USER_DATA_DIR

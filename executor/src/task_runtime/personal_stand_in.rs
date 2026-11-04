@@ -2,6 +2,7 @@
 use super::*;
 
 pub const DINGTALK_PROVIDER: &str = "@wegent/dsh-connection-dingtalk/dingtalk";
+pub const EMAIL_PROVIDER: &str = "@wegent/dsh-connection-runtime/email";
 
 pub(super) fn migrate_connections(value: &mut Value) -> Result<bool, TaskRuntimeError> {
     let mut changed = false;
@@ -289,6 +290,12 @@ fn valid_collaboration(source: &Value) -> bool {
 }
 
 fn validate_connections(role: &Value) -> Result<(), TaskRuntimeError> {
+    if role
+        .get("calendar")
+        .is_some_and(|calendar| !validate_policy(&calendar["policy"]))
+    {
+        return Err(TaskRuntimeError::StandInProjectConnections);
+    }
     if role.get("dingtalk").is_some() {
         return Err(TaskRuntimeError::Invalid(
             "conflicting connection formats".into(),
@@ -320,6 +327,7 @@ fn validate_connections(role: &Value) -> Result<(), TaskRuntimeError> {
                 let mut ids = HashSet::new();
                 rows.len() <= 1000
                     && rows.iter().all(|row| {
+                        let all = row["scope"] == "all";
                         row["id"]
                             .as_str()
                             .is_some_and(|id| !id.trim().is_empty() && id.len() <= 512)
@@ -335,7 +343,18 @@ fn validate_connections(role: &Value) -> Result<(), TaskRuntimeError> {
                             && row["kind"]
                                 .as_str()
                                 .is_some_and(|kind| !kind.is_empty() && kind.len() <= 128)
+                            && (all || row.get("scope").is_none())
+                            && (all == (row["id"] == "*"))
+                            && !rows.iter().any(|other| {
+                                other["providerId"] == row["providerId"]
+                                    && other["profile"] == row["profile"]
+                                    && other["kind"] == row["kind"]
+                                    && other["id"] != row["id"]
+                                    && (all || other["scope"] == "all")
+                            })
                             && validate_policy(&row["policy"])
+                            && (source_provider(row) != EMAIL_PROVIDER
+                                || row["policy"]["askBeforeAct"] == true)
                             && ids.insert((
                                 row["providerId"].to_string(),
                                 row["profile"].to_string(),
@@ -372,7 +391,12 @@ pub fn stand_in_identities(settings: &Value) -> Vec<Value> {
 
 pub fn stand_in_connection<'a>(identity: &'a Value, source: &Value) -> Option<&'a Value> {
     identity["connections"].as_array()?.iter().find(|row| {
-        row["id"] == source["id"]
+        (row["id"] == source["id"]
+            || (row["scope"] == "all"
+                && row["id"] == "*"
+                && source["id"]
+                    .as_str()
+                    .is_some_and(|id| !id.is_empty() && id != "*")))
             && source_provider(row) == source_provider(source)
             && row["profile"] == source["profile"]
             && row["kind"] == source["kind"]
@@ -530,7 +554,7 @@ impl LocalTaskStore {
     }
 }
 
-fn stamp_stand_in_connections(identity: &mut Value, previous: &Value) {
+pub(super) fn stamp_stand_in_connections(identity: &mut Value, previous: &Value) {
     let preserve = identity["enabled"] == previous["enabled"];
     for source in identity
         .get_mut("connections")
@@ -565,4 +589,17 @@ fn stamp_project_enabled(identity: &mut Value, previous: &Value) {
     } else {
         json!(now())
     };
+}
+
+#[cfg(test)]
+mod email_policy_tests {
+    use super::*;
+
+    #[test]
+    fn email_connections_always_require_native_confirmation() {
+        let mut role = json!({"connections":[{"providerId":EMAIL_PROVIDER,"profile":"account","kind":"inbox","id":"INBOX","name":"Mailbox","policy":{"automatic":true,"askBeforeAct":true}}]});
+        assert!(validate_connections(&role).is_ok());
+        role["connections"][0]["policy"]["askBeforeAct"] = json!(false);
+        assert!(validate_connections(&role).is_err());
+    }
 }

@@ -267,7 +267,11 @@ impl RuntimeWorkRpcHandler {
         let origin = json!({"type":"connection_work","initiatedBy":"stand_in","userId":user,"standInId":role["id"],"roleName":role["name"],"deviceId":self.device_id,"workId":work_id,"askBeforeAct":ask,"manual":manual,"sourceProvider":crate::task_runtime::personal_stand_in::source_provider(&pending[0]["source"])});
         let reply_instructions = if crate::task_runtime::personal_stand_in::source_provider(
             &work["source"],
-        ) == crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER
+        ) == crate::task_runtime::personal_stand_in::EMAIL_PROVIDER
+        {
+            "Use wework_stand_in.send_email for sending or replying. Supply the exact recipient, subject and complete text so the owner can review the native confirmation in this conversation. Set reply=true for an original-thread reply, or false for a new email. Never send through shell commands or retry an unknown delivery result."
+        } else if crate::task_runtime::personal_stand_in::source_provider(&work["source"])
+            == crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER
         {
             "Use wework_stand_in.reply for an exact reply to a source message. Do not use arbitrary CLI commands to send a second reply. Each reply is tied to a source message."
         } else {

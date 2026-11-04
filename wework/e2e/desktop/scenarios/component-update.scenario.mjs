@@ -9,6 +9,7 @@ import { hashComponentPath } from '../../../scripts/lib/component-content-hash.m
 import { DEFAULT_STEP_TIMEOUT_MS } from '../modules/shared.mjs'
 import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 import { unavailableUpdatePolicy, verifyAppUpdateRetry } from '../modules/app-update-retry.mjs'
+import { packagedComponentRoots } from '../modules/packaged-component-resources.mjs'
 
 const MARKER_NAME = join('e2e-component-update', 'nested', 'marker.txt')
 
@@ -27,10 +28,16 @@ export async function createDesktopScenario({
   if (process.env.WEWORK_E2E_REQUIRE_RELEASE_PACKAGE === '1') {
     assert.match(appBinary, /release-installer/)
   }
+  const packagedRoots = await packagedComponentRoots({
+    appBinary,
+    resourcesRoot,
+    components: packaged.components,
+    resultDir,
+  })
 
   const source = join(resultDir, 'component-update-source')
   const archive = join(resultDir, 'component-update.tar.gz')
-  await cp(join(resourcesRoot, packaged.components.weworkCorePlugins.path), source, {
+  await cp(packagedRoots.weworkCorePlugins, source, {
     recursive: true,
   })
   await mkdir(dirname(join(source, MARKER_NAME)), { recursive: true })
@@ -196,7 +203,7 @@ export async function createDesktopScenario({
       for (const [id, component] of Object.entries(packaged.components)) {
         if (id === 'electron') continue
         assert.equal(
-          await hashComponentPath(join(resourcesRoot, component.path)),
+          await hashComponentPath(packagedRoots[id]),
           component.sha256,
           `The installed ${id} content must match its versioned packaged manifest`
         )

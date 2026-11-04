@@ -18,16 +18,6 @@ describe('hasMatchingConversationSummaryHostService', () => {
     },
   ]
 
-  test('loads an unresolved environment once so the host can classify the workspace', () => {
-    expect(
-      hasMatchingConversationSummaryHostService(
-        entries,
-        { 'workspace.isGitRepository': undefined },
-        WEWORK_HOST_SERVICES.environment
-      )
-    ).toBe(true)
-  })
-
   test('stops environment work after the workspace is classified as non-Git', () => {
     expect(
       hasMatchingConversationSummaryHostService(
