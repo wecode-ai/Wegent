@@ -219,10 +219,27 @@ describe('ComposerTextarea', () => {
     const option = await screen.findByTestId('slash-command-option-app-plugin-github')
     expect(option).toBeEnabled()
     expect(option).toHaveTextContent('待授权')
-    fireEvent.click(option)
-    await waitFor(() =>
-      expect(editor.value).toBe('[$GitHub](plugin://github@openai-curated-remote) ')
-    )
+    const beforeClick = {
+      optionConnected: option.isConnected,
+      valueLength: editor.value.length,
+      diagnostics: getComposerDiagnosticsSnapshot(),
+    }
+    try {
+      fireEvent.click(option)
+      await waitFor(() =>
+        expect(editor.value).toBe('[$GitHub](plugin://github@openai-curated-remote) ')
+      )
+    } catch (error) {
+      console.error('GitHub slash selection failed', {
+        beforeClick,
+        afterClick: {
+          optionConnected: option.isConnected,
+          valueLength: editor.value.length,
+          diagnostics: getComposerDiagnosticsSnapshot(),
+        },
+      })
+      throw error
+    }
     expect(github.isAccessible).toBe(false)
   })
 
