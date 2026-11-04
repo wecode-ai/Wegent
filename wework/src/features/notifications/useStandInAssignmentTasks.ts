@@ -39,13 +39,13 @@ export function useStandInAssignmentTasks(
       .map(device => ({ id: device.device_id, aliases: getWorkbenchDeviceIds(device) }))
   )
   const visibleKeys = JSON.stringify(source?.items.map(item => item.key) ?? [])
+  // Inbox and sidebar refreshes revalidate this scope without hiding resolved history.
   const scope = useMemo(
     () => ({ accountKey, userId, api, identity, assignments, devices }),
     [accountKey, userId, api, identity, assignments, devices]
   )
-  const request = useMemo(() => ({ scope, visibleKeys, inbox }), [scope, visibleKeys, inbox])
   const [loaded, setLoaded] = useState<{
-    request: typeof request
+    scope: typeof scope
     items: RuntimeTaskReminderItem[]
     error?: string
   } | null>(null)
@@ -84,19 +84,19 @@ export function useStandInAssignmentTasks(
       if (!active) return
       const failure = results.find(result => result.status === 'rejected')
       setLoaded({
-        request,
+        scope,
         items: results.flatMap(result => (result.status === 'fulfilled' ? result.value : [])),
         error: failure?.status === 'rejected' ? getStandInErrorMessage(failure.reason) : undefined,
       })
     })().catch(cause => {
-      if (active) setLoaded({ request, items: [], error: getStandInErrorMessage(cause) })
+      if (active) setLoaded({ scope, items: [], error: getStandInErrorMessage(cause) })
     })
     return () => {
       active = false
     }
-  }, [available, api, identity, userId, assignments, devices, request])
+  }, [available, api, identity, userId, assignments, devices, scope, inbox, visibleKeys])
 
-  const current = available && loaded?.request.scope === scope ? loaded : null
+  const current = available && loaded?.scope === scope ? loaded : null
   return {
     items: current?.items ?? EMPTY_ITEMS,
     pending: Boolean(available && !current),

@@ -256,7 +256,6 @@ async function declineInitialTelemetryConsent(control) {
 }
 
 async function setExperimentalFeaturesEnabled(control, enabled) {
-  if (control.experimentalFeaturesEnabled === enabled) return
   const settingsButtonCount = Number(
     await control.command('getElementCount', '[data-testid="settings-button"]', {
       visible: true,
@@ -266,7 +265,6 @@ async function setExperimentalFeaturesEnabled(control, enabled) {
     await control.command('setAppPreferences', 'body', {
       value: JSON.stringify({ experimentalFeaturesEnabled: enabled }),
     })
-    control.experimentalFeaturesEnabled = enabled
     return
   }
 
@@ -297,7 +295,6 @@ async function setExperimentalFeaturesEnabled(control, enabled) {
       `${enabled ? 'Enabling' : 'Disabling'} experimental features was not persisted`
     )
   }
-  control.experimentalFeaturesEnabled = enabled
   await control.command('click', '[data-testid="settings-back-button"]')
 }
 

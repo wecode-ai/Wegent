@@ -33,8 +33,10 @@ runtime_digest="$(
     sha256sum |
     cut -d ' ' -f 1
 )"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+runtime_image="$(node "$script_dir/resolve-ci-image.mjs" "ghcr.io/${repository_owner,,}/wegent-e2e-claudecode-executor:$runtime_digest")"
 
 {
   echo "base-image=$pinned_base_image"
-  echo "image=ghcr.io/${repository_owner,,}/wegent-e2e-claudecode-executor:$runtime_digest"
+  echo "image=$runtime_image"
 } >> "$output_file"

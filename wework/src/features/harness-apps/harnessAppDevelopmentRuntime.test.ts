@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import type { HarnessAppInstallation } from '@/api/local/harnessApps'
 import type { LocalHarnessModelOption } from '@/features/local-harness/localHarnessModels'
 import { beforeEach, describe, expect, test, vi } from 'vitest'

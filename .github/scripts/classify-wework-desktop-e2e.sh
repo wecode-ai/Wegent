@@ -896,7 +896,8 @@ classify_wework_path() {
       return
       ;;
 
-    wework/e2e/desktop/scenarios/native-lifecycle.scenario.mjs)
+    wework/e2e/desktop/scenarios/native-lifecycle.scenario.mjs | \
+      wework/e2e/desktop/scenarios/native-guidance.scenario.mjs)
       select_target "core:native-lifecycle"
       return
       ;;
@@ -2067,16 +2068,41 @@ classify_path() {
       wework/e2e/desktop/support/mysql-helper.py)
       select_all_desktop_suites
       ;;
-    .github/workflows/wework-e2e.yml | \
+    .github/ci/rust-toolchain | \
+      .github/runtime-images/* | .github/scripts/ci-prebuilt-images.mjs | \
+      .github/scripts/resolve-ci-image.mjs | .github/ci/prebuilt-images.json | \
+      .github/scripts/publish-ci-prebuild.sh | .github/scripts/restore-ci-downloads.sh | \
+      .github/actions/setup-rust-cache/* | \
+      .github/actions/setup-sccache/* | \
+      .github/actions/setup-node-workspace/* | \
+      .github/actions/setup-python-uv-cache/* | \
+      .github/actions/build-wework-windows-e2e/* | \
+      .github/actions/build-wework-macos-e2e/* | \
+      .github/workflows/wework-e2e.yml | \
       .github/actions/build-wework-core-e2e/* | \
+      .github/actions/build-minio-e2e/* | \
+      .github/actions/setup-minio-e2e/* | \
+      .github/ci/wework-linux-checkpoint-durations.json | \
+      .github/scripts/order-wework-linux-e2e.* | \
       docker/wework-e2e/* | \
       .github/scripts/download-actions-artifact.sh | \
+      .github/scripts/restore-actions-runtime.sh | \
+      .github/scripts/runtime-artifact.* | \
+      .github/scripts/prepare-macos-inspector-e2e.sh | \
+      .github/scripts/build-macos-e2e-runtimes.sh | \
+      .github/scripts/macos-e2e-source-digest.* | \
+      .github/scripts/macos-e2e-build*.mjs | .github/scripts/restore-macos-ci-build.mjs | \
+      .github/scripts/verified-build-oci.mjs | \
+      .github/scripts/restore-macos-e2e-runtime-oci.sh | .github/scripts/publish-macos-e2e-runtime-oci.sh | \
       .github/scripts/archive-wework-core-e2e-build.sh | \
+      .github/scripts/wework-core-e2e-transport.* | \
       .github/scripts/classify-ci-changes.sh | \
       .github/scripts/classify-wework-desktop-e2e.sh | \
       .github/scripts/restore-wework-core-e2e-build.sh | \
       .github/scripts/test-classify-ci-changes.sh)
       select_all_desktop_suites
+      ;;
+    wework/scripts/ci-test-sequencer.*)
       ;;
     wework/*)
       classify_wework_path "$path"

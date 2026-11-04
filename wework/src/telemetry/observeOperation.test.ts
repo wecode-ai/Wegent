@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, test } from 'vitest'
 import { observeOperation } from './observeOperation'
 import { subscribeOperationResults, type OperationResult } from './operationBus'

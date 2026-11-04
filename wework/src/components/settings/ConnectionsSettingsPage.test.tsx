@@ -21,7 +21,7 @@ import {
 } from '@/features/cloud-connection/CloudConnectionContext'
 import '@/i18n'
 import { openExternalUrl } from '@/lib/external-links'
-import { preloadDefaultDshUiTestModules } from '@/test/setup'
+import { preloadDefaultDshUiTestModules } from '@/test/setup.dom'
 import type { DeviceInfo } from '@/types/devices'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'

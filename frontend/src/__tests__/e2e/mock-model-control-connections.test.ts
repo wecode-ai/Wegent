@@ -177,4 +177,74 @@ describe('mock model controls', () => {
       }
     }
   )
+
+  it('isolates identical model rules, gates, scenario counters and request records across workers', async () => {
+    const a = '/e2e/worker-a'
+    const b = '/e2e/worker-b'
+    let pending: ReturnType<typeof modelRequest> | undefined
+    try {
+      await post(`${a}/stream-rules`, {
+        matchText: 'same-prompt',
+        responseContent: 'WORKER_A',
+        chunkDelayMs: 0,
+      })
+      await post(`${b}/stream-rules`, {
+        matchText: 'same-prompt',
+        responseContent: 'WORKER_B',
+        chunkDelayMs: 0,
+        holdResponse: true,
+      })
+      pending = modelRequest('same-prompt', `${b}/v1/messages`)
+      await pending.received
+      expect(await modelRequest('same-prompt', `${a}/v1/messages`).result).toContain('WORKER_A')
+      await (await fetch(`${url}${a}/stream-rules`, { method: 'DELETE' })).json()
+      await post(`${a}/clear-requests`, {})
+      expect(pending.finished()).toBe(false)
+      const records = await (await fetch(`${url}${b}/captured-requests`)).json()
+      expect(
+        records.filter((record: { url: string }) => record.url === '/v1/messages')
+      ).toHaveLength(1)
+      expect(await post(`${b}/stream-rules/release`, { matchText: 'same-prompt' })).toEqual({
+        released: 1,
+      })
+      expect(await pending.result).toContain('WORKER_B')
+      for (const [scope, answer] of [
+        [a, 'SCENARIO_A'],
+        [b, 'SCENARIO_B'],
+      ]) {
+        await post(`${scope}/tool-scenarios`, {
+          matchText: 'same-scenario',
+          steps: [{ responseContent: answer }],
+        })
+      }
+      expect(await modelRequest('same-scenario', `${a}/v1/messages`).result).toContain('SCENARIO_A')
+      const untouched = await (
+        await fetch(`${url}${b}/tool-scenarios?matchText=same-scenario`)
+      ).json()
+      expect(untouched.nextStep).toBe(0)
+      expect(untouched.capturedRequests).toEqual([])
+      expect(await modelRequest('same-scenario', `${b}/v1/messages`).result).toContain('SCENARIO_B')
+      await post(`${a}/claude-background-scenarios`, { model: 'same-model', mode: 'stop' })
+      await post(`${b}/claude-background-scenarios`, { model: 'same-model', mode: 'complete' })
+      await (
+        await fetch(`${url}${a}/claude-background-scenarios?model=same-model`, { method: 'DELETE' })
+      ).json()
+      const background = await (
+        await fetch(`${url}${b}/claude-background-scenarios?model=same-model`)
+      ).json()
+      expect(background.mode).toBe('complete')
+    } finally {
+      for (const scope of [a, b]) {
+        await (await fetch(`${url}${scope}/stream-rules`, { method: 'DELETE' })).json()
+        await (await fetch(`${url}${scope}/tool-scenarios`, { method: 'DELETE' })).json()
+        await post(`${scope}/clear-requests`, {})
+        await (
+          await fetch(`${url}${scope}/claude-background-scenarios?model=same-model`, {
+            method: 'DELETE',
+          })
+        ).json()
+      }
+      await pending?.result
+    }
+  })
 })

@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, test } from 'vitest'
 import { resolveReleaseVersion } from './resolve-release-version.mjs'
 

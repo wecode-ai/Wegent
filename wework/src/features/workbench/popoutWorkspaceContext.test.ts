@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import type { RuntimeWorkListResponse } from '@/types/api'
 import { describe, expect, test } from 'vitest'
 import { mergePopoutWorkspaceProjects } from './popoutWorkspaceContext'

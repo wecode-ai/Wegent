@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import type { PluginMarketplaceItem } from '@/types/api'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { clearLocalCodexPluginsReadStateCache, createLocalCodexPluginApi } from './codexPlugins'

@@ -238,6 +238,11 @@ frontend/src/__tests__/
 
 ## Wework 单元测试
 
+单元测试聚焦任务状态与消息一致性、账号和权限边界、持久化、设备与运行时路由、
+输入提交及失败恢复。不要为 CSS 类名、图标、文案排列、源码关键词、固定元数据
+或诊断日志格式单独增加用例；混合场景只保留对实际业务结果有约束的断言。
+遥测保留授权、拒绝收集、脱敏与账号隔离覆盖，不为统计标签和调试快照单独建测试。
+
 从仓库根目录运行全部 Wework 单元测试：
 
 ```bash
@@ -255,6 +260,19 @@ pnpm --dir wework test -- runtimePaneMessages.test.ts
 测试脚本会兼容性地移除参数开头的一个独立 `--`，再把其余文件过滤条件和 Vitest
 选项原样传递给测试运行器。运行聚焦测试时，应确认输出中的 `Test Files` 数量符合
 预期，避免误跑全量测试。
+
+不依赖 DOM 的纯逻辑测试应在文件顶部声明 `// @vitest-environment node`。
+这类测试不加载 `src/test/setup.dom.ts` 中的浏览器模拟、存储和插件 UI 初始化；
+需要浏览器行为的测试保留默认 jsdom 环境。组件测试所需的插件 UI 辅助函数
+从 `@/test/setup.dom` 导入。
+
+Wework CI 执行测试但不再默认采集覆盖率，避免 Istanbul 插桩开销。
+需要排查覆盖率时可定向执行 `pnpm --dir wework exec vitest run <测试文件> --coverage`。
+完整 renderer push 检查每 15 秒输出当前 shard 的通过文件数，完整诊断仍保留在日志中。
+
+运行中的 Executor 会并发写入 `tasks.sqlite`。直接写入该数据库的桌面 E2E fixture
+应在独立连接上设置 `PRAGMA busy_timeout = 10000`，等待正常写事务释放锁。
+锁等待仅作用于 fixture 数据库连接；业务断言与全局 UI 超时保持原有约束。
 
 ### 异步提问模型桩
 

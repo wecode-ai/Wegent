@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import type { ProjectWithTasks, RuntimeDeviceWorkspace, UserPreferences } from '@/types/api'
 import { describe, expect, test } from 'vitest'
 import {
