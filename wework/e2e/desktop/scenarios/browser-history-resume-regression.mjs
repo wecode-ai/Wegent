@@ -1,16 +1,65 @@
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { waitForCompletedRuntimeTaskThread } from '../modules/runtime-task-evidence.mjs'
+import {
+  assistantMessage,
+  createSse,
+  handleEmptyReplyPrediction,
+  readRequestBody,
+  responseCompleted,
+  responseCreated,
+} from '../modules/response-protocol.mjs'
 import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 
-export async function verifyBrowserHistoryResume(control, resultDir, timeoutMs) {
-  const address = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).workbench
-    .currentRuntimeTask
-  assert.ok(address?.taskId)
-  const threadId = await waitForCompletedRuntimeTaskThread(control, address.taskId, timeoutMs)
+const PROMPT = 'WEWORK_BROWSER_COLD_HISTORY_RESUME'
+
+export async function handleBrowserHistoryModelRequest(request, response, url) {
+  if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
+    return false
+  const body = await readRequestBody(request)
+  if (!JSON.stringify(body).includes(PROMPT)) return false
+  if (handleEmptyReplyPrediction(body, response)) return true
+  response.writeHead(200, { 'content-type': 'text/event-stream' })
+  response.end(
+    createSse([responseCreated(PROMPT), assistantMessage(PROMPT), responseCompleted(PROMPT)])
+  )
+  return true
+}
+
+export async function verifyBrowserHistoryResume(control, resultDir, workspacePath, timeoutMs) {
   const rpc = (method, params) => requestExecutor(control, method, params, timeoutMs)
+  const catalog = await rpc('runtime.runner.catalog', {})
+  const model = catalog.models.find(model => model.runtime === 'codex' && model.is_default)
+  assert.ok(model, 'The local browser owner needs a configured real Codex model')
+  const taskId = 'browser-cold-history-' + randomUUID()
+  // Cloud checkpoints select a remote execution device. Create this browser
+  // fixture on the local owner whose app-server and bridge are being verified.
+  const created = await rpc('runtime.tasks.create', {
+    taskId,
+    title: PROMPT,
+    runtime: 'codex',
+    workspacePath,
+    message: PROMPT,
+    executionRequest: {
+      task_id: taskId,
+      subtask_id: taskId + '-initial',
+      user_id: 9001,
+      prompt: PROMPT,
+      new_session: true,
+      bot: [{ shell_type: 'Codex', name: 'Browser cold history regression' }],
+      model_config: {
+        model_id: model.local_model_id,
+        model_provider: model.provider,
+        runtime_config: { codex: { use_user_config: true, configured: true } },
+      },
+    },
+  })
+  assert.equal(created.accepted, true)
+  const address = { deviceId: created.deviceId, taskId, workspacePath }
+  const threadId = await waitForCompletedRuntimeTaskThread(control, taskId, timeoutMs)
   const restart = await rpc('runtime.codex.app_server.restart', { ifIdle: true })
   assert.equal(restart.restarted, true, 'Cold history recovery requires the old MCP pool to stop')
 
