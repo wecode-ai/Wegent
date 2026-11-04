@@ -221,7 +221,7 @@ export function StandInPrimaryProfile({
                 ...draft,
                 collaboration: value.collaboration,
                 calendar: value.calendar,
-                connections: value.connections,
+                connections: value.connections ?? [],
               })
             }
           />
