@@ -104,6 +104,8 @@ On first startup, if the Wework Codex home has not been initialized and a native
 - Migrate config from the native Codex home into the Wework Codex home.
 - Enable or disable Codex remote app fetching. This switch only controls remote app initialization and does not refer to any specific bundled capability.
 
+Initial migration and subsequent manual Codex configuration imports remove the source configuration's top-level `model` field so the destination runtime's model catalog determines the default model. The native Codex source configuration file is unchanged.
+
 After initialization, the state is written into the Wework Codex home, and both the plugin pages and chat runtime read plugin state from the same Codex app-server. The settings page also exposes the remote apps switch so users can later update their Wework Codex config.
 
 ### Runtime Config Normalization

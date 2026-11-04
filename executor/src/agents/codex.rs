@@ -698,7 +698,8 @@ impl CodexAppServerClient {
             None => 0,
         };
         let active_threads = state.active_threads_snapshot();
-        // Existing-process controls must reach the original native session.
+        // Control and live-reload requests belong to the existing process.
+        // Apply launch-environment changes only when a request may start a process.
         if start_if_missing
             && state.process.is_some()
             && codex_process_environment_requires_restart(

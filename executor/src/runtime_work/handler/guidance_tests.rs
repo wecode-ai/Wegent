@@ -29,6 +29,8 @@ fn late_native_start_after_local_settlement_cannot_reactivate_the_turn() {
 
 #[tokio::test]
 async fn guidance_uses_native_continuation_after_local_request_finishes() {
+    // Unrelated capability tests must not restart this synthetic native session.
+    let _activation = crate::services::capability_activation::begin_execution().await;
     let (mut handler, root, _) = setup("native-guidance-continuation");
     install_native_history(&mut handler, &root, vec![], None);
     handler
