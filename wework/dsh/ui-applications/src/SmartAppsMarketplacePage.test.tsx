@@ -5,8 +5,9 @@ import { openHarnessAppTab } from '@/features/harness-apps/harnessAppTabs'
 import { localHarnessModelOptionKey } from '@/features/local-harness/localHarnessModels'
 import type { UnifiedModel } from '@/types/api'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import JSZip from 'jszip'
 import { beforeEach, describe, expect, onTestFinished, test, vi } from 'vitest'
-import { SmartAppsMarketplacePage } from './SmartAppsMarketplacePage'
+import { SmartAppPublishDialog, SmartAppsMarketplacePage } from './SmartAppsMarketplacePage'
 
 const navigateTo = vi.fn()
 const queuePluginReferenceTrial = vi.fn()
@@ -1402,5 +1403,114 @@ describe('SmartAppsMarketplacePage', () => {
     await waitFor(() =>
       expect(screen.queryByTestId('harness-app-install-confirm')).not.toBeInTheDocument()
     )
+  })
+})
+
+describe('SmartAppPublishDialog', () => {
+  async function packageFile(name: string, version: string) {
+    const archive = new JSZip()
+    archive.file(
+      'plugin-manifest.json',
+      JSON.stringify({
+        name,
+        displayName: '研究工作台',
+        version,
+        type: 'deepseek-harness-plugin-bundle',
+        description: '整理本地研究资料',
+        entry: { installPackage: 'bundle', profile: 'research' },
+        requirements: { dsh: '0.1.0', node: '>=22' },
+      })
+    )
+    const bytes = await archive.generateAsync({ type: 'uint8array' })
+    return new File([bytes], `${name}-${version}.zip`, { type: 'application/zip' })
+  }
+
+  test('keeps the current icon and screenshots when an update does not reselect images', async () => {
+    const current = item({
+      accessRole: 'owner',
+      iconUrl: 'https://download.test/current-icon.png',
+      screenshotUrls: [
+        'https://download.test/current-1.png',
+        'https://download.test/current-2.png',
+      ],
+    })
+    const smartAppsApi = api([current])
+    vi.mocked(smartAppsApi.publish).mockResolvedValue({
+      submission: {
+        id: 1,
+        smartAppId: 7,
+        version: '1.3.0',
+        status: 'published',
+        error: '',
+        createdAt: '2026-11-04T00:00:00Z',
+      },
+      item: current,
+    })
+    const onPublished = vi.fn()
+
+    render(
+      <SmartAppPublishDialog
+        api={smartAppsApi}
+        item={current}
+        installation={null}
+        tags={[]}
+        onClose={vi.fn()}
+        onPublished={onPublished}
+      />
+    )
+
+    expect(screen.getByTestId('smart-app-publish-current-icon')).toHaveAttribute(
+      'src',
+      current.iconUrl
+    )
+    expect(screen.getByTestId('smart-app-publish-current-screenshot-1')).toBeInTheDocument()
+    expect(screen.getByText('不重新选择时，将沿用当前图标和截图。')).toBeInTheDocument()
+    expect(screen.getByTestId('smart-app-publish-icon-selection')).toHaveTextContent('沿用当前图标')
+    expect(screen.getByTestId('smart-app-publish-screenshots-selection')).toHaveTextContent(
+      '沿用当前 2 张截图'
+    )
+
+    fireEvent.change(screen.getByTestId('smart-app-publish-package'), {
+      target: { files: [await packageFile('research-desk', '1.3.0')] },
+    })
+    await screen.findByText('research-desk · v1.3.0')
+
+    fireEvent.click(screen.getByRole('button', { name: '发布' }))
+
+    await waitFor(() => expect(smartAppsApi.publish).toHaveBeenCalledOnce())
+    const [, metadata] = vi.mocked(smartAppsApi.publish).mock.calls[0]
+    expect(metadata).toMatchObject({
+      smartAppId: current.id,
+      version: '1.3.0',
+      name: 'research-desk',
+    })
+    expect(metadata.iconDataUrl).toBeUndefined()
+    expect(metadata.screenshotDataUrls).toBeUndefined()
+    expect(onPublished).toHaveBeenCalledOnce()
+  })
+
+  test('still requires an icon for a first publication', async () => {
+    const smartAppsApi = api()
+
+    render(
+      <SmartAppPublishDialog
+        api={smartAppsApi}
+        item={null}
+        installation={null}
+        tags={[]}
+        onClose={vi.fn()}
+        onPublished={vi.fn()}
+      />
+    )
+
+    fireEvent.change(screen.getByTestId('smart-app-publish-package'), {
+      target: { files: [await packageFile('research-desk', '1.0.0')] },
+    })
+    await screen.findByText('research-desk · v1.0.0')
+
+    fireEvent.click(screen.getByRole('button', { name: '发布' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('请完整填写发布包、简介、标签和图标')
+    expect(smartAppsApi.publish).not.toHaveBeenCalled()
   })
 })
