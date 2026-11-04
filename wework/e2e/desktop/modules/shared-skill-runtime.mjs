@@ -261,11 +261,11 @@ export function createSharedSkillRuntime({
       const taskId = String(address.taskId)
       const pointerPath = join(
         home,
-        'runtime/task-executions',
+        'runtime/runtime-task-executions',
         `${digest(JSON.stringify(taskId))}.json`
       )
       const pointer = JSON.parse(await readFile(pointerPath, 'utf8'))
-      assert.equal(pointer.task_id, taskId)
+      assert.equal(pointer.runtime_task_id, taskId)
       return join(home, 'runtime/executions', pointer.snapshot, 'mcp.json')
     }
     const currentMcp = async () => readFile(await currentMcpPath(), 'utf8')

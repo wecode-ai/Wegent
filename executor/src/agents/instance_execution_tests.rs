@@ -168,6 +168,49 @@ fn only_the_same_task_inherits_mcp_templates_and_prunes_its_completed_snapshots(
 }
 
 #[test]
+fn runtime_task_continuation_keeps_its_mcp_and_dispatch_grants_stay_isolated() {
+    let root = tempfile::tempdir().unwrap();
+    let mut first = request("dispatch-1");
+    first.agent_home_runtime_task_id = Some("runtime-a".to_owned());
+    let home = named_home_at(root.path(), &first).unwrap();
+    let mut first = create_at(&first, root.path(), &home).unwrap();
+    prepare_skills(&first, Some("one"));
+    let mcp = r#"{"mcpServers":{"only-a":{}}}"#;
+    fs::write(first.snapshot.join("mcp.json"), mcp).unwrap();
+    first.activate().unwrap();
+    let old_snapshot = first.snapshot.clone();
+    let mut next = request("dispatch-2");
+    next.agent_home_runtime_task_id = Some("runtime-a".to_owned());
+    assert!(create_at(&next, root.path(), &home).is_err());
+    let mut other = request("dispatch-3");
+    other.agent_home_runtime_task_id = Some("runtime-b".to_owned());
+    let other = create_at(&other, root.path(), &home).unwrap();
+    assert!(!other.snapshot.join("mcp.json").exists());
+    assert_eq!(
+        task_skills_directory_at(root.path(), "dispatch-1", "7")
+            .unwrap()
+            .path,
+        first.snapshot.join("skills")
+    );
+    drop(first);
+    let mut next = create_at(&next, root.path(), &home).unwrap();
+    assert_eq!(
+        fs::read_to_string(next.snapshot.join("mcp.json")).unwrap(),
+        mcp
+    );
+    prepare_skills(&next, Some("two"));
+    next.activate().unwrap();
+    assert!(!old_snapshot.exists());
+    assert!(task_skills_directory_at(root.path(), "dispatch-1", "7").is_err());
+    assert_eq!(
+        task_skills_directory_at(root.path(), "dispatch-2", "7")
+            .unwrap()
+            .path,
+        next.snapshot.join("skills")
+    );
+}
+
+#[test]
 fn different_tasks_cannot_write_the_same_native_conversation_concurrently() {
     let root = tempfile::tempdir().unwrap();
     let home = named_home_at(root.path(), &request("task-1")).unwrap();

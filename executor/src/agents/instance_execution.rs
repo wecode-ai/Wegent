@@ -10,6 +10,7 @@ pub(in crate::agents) struct ExecutionHome {
     root: PathBuf,
     home: PathBuf,
     task_id: String,
+    runtime_task_id: Option<String>,
     snapshot: PathBuf,
     staging: Option<tempfile::TempDir>,
     activity: Option<HomeLease>,
@@ -46,15 +47,23 @@ fn create_at(
     let home_lease = HomeLease(lock);
     // Only binding/migration and the initial snapshot are serialized, never model work.
     let _preparation = preparation_lease(home, root)?;
-    let task_lease = task_lease(home, root, &request.task_id)?;
+    let scope = SnapshotScope::for_request(request);
+    let task_lease = scope.lease(home, root)?;
     bind_task_at(request, root, home)?;
-    let pointer = snapshot_pointer(home, &request.task_id);
+    let dispatch = SnapshotScope::Dispatch(&request.task_id);
+    let pointer = dispatch.pointer(home);
     reject_symlink_ancestors(&pointer, root)?;
     if !pointer.try_exists().map_err(|error| error.to_string())? {
-        super::super::runtime_capabilities::write_json_file(
-            &pointer,
-            &json!({"task_id": request.task_id, "snapshot": null}),
-        )?;
+        let mut record = json!({"task_id": request.task_id, "snapshot": null});
+        if let SnapshotScope::Runtime(id) = scope {
+            record["runtime_task_id"] = json!(id);
+        }
+        super::super::runtime_capabilities::write_json_file(&pointer, &record)?;
+    } else if let SnapshotScope::Runtime(id) = scope {
+        let record = read_marker(&pointer)?;
+        if record["task_id"] != request.task_id || record["runtime_task_id"] != id {
+            return Err("Execution is already bound to a different task identity".to_owned());
+        }
     }
     let executions = home.join("runtime/executions");
     reject_symlink_ancestors(&executions, root)?;
@@ -67,7 +76,7 @@ fn create_at(
     seed_configuration(home, &snapshot)?;
     // Older versions wrote task MCP servers to the shared Home without provenance.
     // Only this task's previous snapshot is safe to use for continuation.
-    if let Some(previous) = latest_snapshot(home, root, &request.task_id)? {
+    if let Some(previous) = latest_snapshot(home, root, scope)? {
         copy_optional_file(&previous.join("mcp.json"), &snapshot.join("mcp.json"))?;
     }
     let projects = home.join("projects");
@@ -89,14 +98,20 @@ fn create_at(
         .create_new(true)
         .open(snapshot.join(".read.lock"))
         .map_err(|error| error.to_string())?;
+    let mut identity =
+        json!({"task_id": request.task_id, "subtask_id": request.subtask_id, "ready": false});
+    if let SnapshotScope::Runtime(id) = scope {
+        identity["runtime_task_id"] = json!(id);
+    }
     super::super::runtime_capabilities::write_json_file(
         &snapshot.join("execution.json"),
-        &json!({"task_id": request.task_id, "subtask_id": request.subtask_id, "ready": false}),
+        &identity,
     )?;
     Ok(ExecutionHome {
         root: root.to_owned(),
         home: home.to_owned(),
         task_id: request.task_id.clone(),
+        runtime_task_id: request.agent_home_runtime_task_id.clone(),
         snapshot,
         staging: Some(staging),
         activity: Some(HomeLease(activity)),
@@ -104,10 +119,6 @@ fn create_at(
         session_lease: None,
         _home_lease: home_lease,
     })
-}
-
-fn task_lease(home: &Path, root: &Path, task_id: &str) -> Result<HomeLease, String> {
-    identity_lease(home, root, "task-locks", task_id, "Task")
 }
 
 fn identity_lease(
@@ -243,17 +254,17 @@ impl ExecutionHome {
             &self.snapshot.join("execution.json"),
             &record,
         )?;
-        let pointer = snapshot_pointer(&self.home, &self.task_id);
+        let scope = self.scope();
+        let pointer = scope.pointer(&self.home);
         reject_symlink_ancestors(&pointer, &root)?;
         let name = self
             .snapshot
             .file_name()
             .and_then(|name| name.to_str())
             .ok_or("Invalid execution snapshot directory name")?;
-        super::super::runtime_capabilities::write_json_file(
-            &pointer,
-            &json!({"task_id": self.task_id, "snapshot": name}),
-        )?;
+        let mut selection = json!({"snapshot": name});
+        selection[scope.field()] = json!(scope.id());
+        super::super::runtime_capabilities::write_json_file(&pointer, &selection)?;
         if let Some(staging) = self.staging.take() {
             let _ = staging.keep();
         }
@@ -263,12 +274,19 @@ impl ExecutionHome {
     }
 
     fn prune_completed(&self) {
-        if let Err(error) = prune_inactive_snapshots(&self.home, &self.root, &self.task_id) {
+        if let Err(error) = prune_inactive_snapshots(&self.home, &self.root, self.scope()) {
             log_executor_event(
                 "execution snapshot prune failed",
                 &[("task_id", self.task_id.clone()), ("error", error)],
             );
         }
+    }
+
+    fn scope(&self) -> SnapshotScope<'_> {
+        self.runtime_task_id.as_deref().map_or(
+            SnapshotScope::Dispatch(&self.task_id),
+            SnapshotScope::Runtime,
+        )
     }
 }
 
@@ -283,20 +301,80 @@ impl Drop for ExecutionHome {
     }
 }
 
-fn snapshot_pointer(home: &Path, task_id: &str) -> PathBuf {
-    home.join("runtime/task-executions")
-        .join(format!("{}.json", digest(&json!(task_id))))
+#[derive(Clone, Copy)]
+enum SnapshotScope<'a> {
+    Dispatch(&'a str),
+    Runtime(&'a str),
 }
 
-fn latest_snapshot(home: &Path, root: &Path, task_id: &str) -> Result<Option<PathBuf>, String> {
-    let pointer = snapshot_pointer(home, task_id);
+impl<'a> SnapshotScope<'a> {
+    fn for_request(request: &'a ExecutionRequest) -> Self {
+        request
+            .agent_home_runtime_task_id
+            .as_deref()
+            .map_or(Self::Dispatch(&request.task_id), Self::Runtime)
+    }
+
+    fn id(self) -> &'a str {
+        match self {
+            Self::Dispatch(id) | Self::Runtime(id) => id,
+        }
+    }
+
+    fn field(self) -> &'static str {
+        match self {
+            Self::Dispatch(_) => "task_id",
+            Self::Runtime(_) => "runtime_task_id",
+        }
+    }
+
+    fn pointer(self, home: &Path) -> PathBuf {
+        let directory = match self {
+            Self::Dispatch(_) => "task-executions",
+            Self::Runtime(_) => "runtime-task-executions",
+        };
+        home.join("runtime")
+            .join(directory)
+            .join(format!("{}.json", digest(&json!(self.id()))))
+    }
+
+    fn lease(self, home: &Path, root: &Path) -> Result<HomeLease, String> {
+        let directory = match self {
+            Self::Dispatch(_) => "task-locks",
+            Self::Runtime(_) => "runtime-task-locks",
+        };
+        identity_lease(home, root, directory, self.id(), "Task")
+    }
+
+    fn matches(self, record: &Value) -> bool {
+        record[self.field()] == self.id()
+    }
+}
+
+fn latest_snapshot(
+    home: &Path,
+    root: &Path,
+    scope: SnapshotScope<'_>,
+) -> Result<Option<PathBuf>, String> {
+    let pointer = scope.pointer(home);
     reject_symlink_ancestors(&pointer, root)?;
     if !pointer.try_exists().map_err(|error| error.to_string())? {
         return Ok(None);
     }
     let record = read_marker(&pointer)?;
-    if record["task_id"] != task_id {
+    if !scope.matches(&record) {
         return Err("Invalid execution snapshot identity".to_owned());
+    }
+    if let (SnapshotScope::Dispatch(task_id), Some(runtime_id)) =
+        (scope, record["runtime_task_id"].as_str())
+    {
+        // A per-dispatch grant must never open the next turn's snapshot.
+        let Some(path) = latest_snapshot(home, root, SnapshotScope::Runtime(runtime_id))? else {
+            return Ok(None);
+        };
+        return Ok(
+            (read_marker(&path.join("execution.json"))?["task_id"] == task_id).then_some(path),
+        );
     }
     if record["snapshot"].is_null() {
         return Ok(None);
@@ -310,7 +388,7 @@ fn latest_snapshot(home: &Path, root: &Path, task_id: &str) -> Result<Option<Pat
     let path = home.join("runtime/executions").join(path_component(name)?);
     reject_symlink_ancestors(&path, root)?;
     let identity = read_marker(&path.join("execution.json"))?;
-    if identity["task_id"] != task_id || identity["ready"] != true {
+    if !scope.matches(&identity) || identity["ready"] != true {
         return Err("Invalid execution snapshot identity".to_owned());
     }
     Ok(Some(path))
@@ -334,7 +412,11 @@ fn is_active(snapshot: &Path) -> Result<bool, String> {
     }
 }
 
-fn task_snapshots(home: &Path, root: &Path, task_id: Option<&str>) -> Result<Vec<PathBuf>, String> {
+fn task_snapshots(
+    home: &Path,
+    root: &Path,
+    scope: Option<SnapshotScope<'_>>,
+) -> Result<Vec<PathBuf>, String> {
     let path = home.join("runtime/executions");
     reject_symlink_ancestors(&path, root)?;
     let entries = match fs::read_dir(path) {
@@ -355,7 +437,7 @@ fn task_snapshots(home: &Path, root: &Path, task_id: Option<&str>) -> Result<Vec
             Err(_) if !entry.path().join("execution.json").exists() => continue,
             result => result?,
         };
-        if task_id.map_or(true, |id| record["task_id"] == id) && record["ready"] == true {
+        if scope.map_or(true, |scope| scope.matches(&record)) && record["ready"] == true {
             found.push(entry.path());
         }
     }
@@ -368,7 +450,7 @@ pub(super) fn active_skills(
     task_id: &str,
 ) -> Result<Vec<TaskSkillsDirectory>, String> {
     let _preparation = preparation_lease(home, root)?;
-    task_snapshots(home, root, Some(task_id))?
+    task_snapshots(home, root, Some(SnapshotScope::Dispatch(task_id)))?
         .into_iter()
         .filter_map(|path| match is_active(&path) {
             Ok(true) => Some(pinned_snapshot_skills(&path)),
@@ -415,9 +497,11 @@ pub(super) fn latest_skills(
     task_id: &str,
 ) -> Result<Option<TaskSkillsDirectory>, String> {
     let _preparation = preparation_lease(home, root)?;
-    let latest = latest_snapshot(home, root, task_id)?;
+    let scope = SnapshotScope::Dispatch(task_id);
+    let latest = latest_snapshot(home, root, scope)?;
     if latest.is_none()
-        && snapshot_pointer(home, task_id)
+        && scope
+            .pointer(home)
             .try_exists()
             .map_err(|error| error.to_string())?
     {
@@ -435,9 +519,13 @@ fn pinned_snapshot_skills(snapshot: &Path) -> Result<TaskSkillsDirectory, String
     Ok(skills)
 }
 
-fn prune_inactive_snapshots(home: &Path, root: &Path, task_id: &str) -> Result<(), String> {
-    let latest = latest_snapshot(home, root, task_id)?;
-    for path in task_snapshots(home, root, Some(task_id))? {
+fn prune_inactive_snapshots(
+    home: &Path,
+    root: &Path,
+    scope: SnapshotScope<'_>,
+) -> Result<(), String> {
+    let latest = latest_snapshot(home, root, scope)?;
+    for path in task_snapshots(home, root, Some(scope))? {
         if Some(&path) != latest.as_ref() && !is_active(&path)? {
             let reader = fs::OpenOptions::new()
                 .read(true)

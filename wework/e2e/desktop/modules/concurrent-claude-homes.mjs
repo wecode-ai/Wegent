@@ -256,7 +256,9 @@ export function createConcurrentClaudeHomes({
       )
       for (const file of ['mcp.json', 'settings.json', 'execution.json'])
         assert.ok((await readFile(join(snapshot, file))).length > 0)
-      const { task_id: taskId } = JSON.parse(await readFile(join(snapshot, 'execution.json')))
+      const { runtime_task_id: taskId } = JSON.parse(
+        await readFile(join(snapshot, 'execution.json'))
+      )
       const turn = turns.find(turn => String(turn.address.taskId) === taskId)
       assert.ok(turn, 'Every snapshot must belong to one of the two running tasks')
       const { mcpServers } = JSON.parse(await readFile(join(snapshot, 'mcp.json')))
