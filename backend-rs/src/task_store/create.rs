@@ -39,14 +39,13 @@ impl<M: Mysql> TaskStoreCreate for DefaultTaskStore<M> {
 
     async fn create_task_shell_with_workspace(
         &self,
-        sql: &mut dyn crate::request_sql::RequestSql,
+        transaction: &mut brz_mysql::MysqlTransactionService,
         request: &crate::task_store_create::CreateTaskShellRequest<'_>,
     ) -> MysqlResult<(i64, i64)> {
         crate::task_store_create::create_task_shell_with_workspace(
-            sql,
+            transaction,
             crate::request_sql::RouteKey::None,
             TASKS_TABLE,
-            "sa_savepoint_1",
             None,
             request,
         )
@@ -69,15 +68,13 @@ impl<M: Mysql> TaskStoreCreate for DefaultTaskStore<M> {
 
     async fn create_subtasks_with_executor(
         &self,
-        sql: &mut dyn crate::request_sql::RequestSql,
-        savepoint: &str,
+        transaction: &mut brz_mysql::MysqlTransactionService,
         request: &crate::task_store_create::CreateSubtasksRequest<'_>,
         executor: &crate::task_store_executor_reference::AssistantExecutor,
     ) -> MysqlResult<crate::task_store_executor_reference::SubtaskPairInsert> {
         crate::task_store_executor_reference::create_subtask_pair_with_resolved_executor(
-            sql,
+            transaction,
             SUBTASKS_TABLE,
-            savepoint,
             false,
             request,
             executor,

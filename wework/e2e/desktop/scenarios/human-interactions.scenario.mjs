@@ -713,11 +713,6 @@ export function createDesktopScenario({
           'The container must navigate to its original Issue',
           uiTimeoutMs
         )
-        await control.command('waitFor', `${ORIGINAL} [data-testid="cloud-todo-detail-title"]`, {
-          text: '判断旧客户订单兼容策略',
-          visible: true,
-          timeoutMs: modelResponseTimeoutMs,
-        })
         const originalContext = contextParagraph.replace(page, ORIGINAL)
         await control.command('waitFor', originalContext, {
           text: CONTEXT,
@@ -740,6 +735,16 @@ export function createDesktopScenario({
           JSON.stringify(originalReading, null, 2)
         )
         await captureScreenshot(control, '09-original-issue-thread-resumes.png')
+        // The comment deep link scrolls the original context into view first.
+        // Verify the heading through a real scroll after checking that landing.
+        const originalTitle = `${ORIGINAL} [data-testid="cloud-todo-detail-title"]`
+        await control.command('scrollIntoView', originalTitle)
+        await control.command('waitFor', originalTitle, {
+          text: '判断旧客户订单兼容策略',
+          visible: true,
+          timeoutMs: modelResponseTimeoutMs,
+        })
+        await captureScreenshot(control, '09a-original-issue-title.png')
         return
       }
       await control.command('click', `${page} [data-testid="interaction-open-original"]`)

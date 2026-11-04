@@ -192,6 +192,27 @@ fn decrypt_stored_proxy(encrypted_url: Option<&str>) -> Result<String, CryptoCon
     Ok(decrypted)
 }
 
+/// `UserRuntimeConfigService.get_proxy_url_for_execution`: the decrypted
+/// account proxy that cloud and remote runtimes apply to their model
+/// configuration.
+///
+/// # Errors
+///
+/// Returns the source's unswallowed `CryptoConfigurationError` (a missing or
+/// mis-sized `GIT_TOKEN_AES_IV`) and any failed `kinds` read.
+pub(crate) async fn execution_proxy_url<M: Mysql>(mysql: &M, user_id: i32) -> Result<String, ()> {
+    let row = proxy_kind(mysql, user_id).await.map_err(|error| {
+        tracing::error!(%error, user_id, "user proxy-config read failed");
+    })?;
+    let spec = row
+        .and_then(|row| row.kinds_json.0.project::<ProxyDocument>())
+        .and_then(|document| document.spec)
+        .unwrap_or_default();
+    let ProxySpec { proxy, .. } = spec;
+    let ProxyCredential { encrypted_url, .. } = proxy.unwrap_or_default();
+    decrypt_stored_proxy(encrypted_url.as_deref()).map_err(|_| ())
+}
+
 /// `decrypt_sensitive_data` after key resolution: `""` and `"***"` pass
 /// through, any decode/decrypt/UTF-8 failure returns the original ciphertext.
 fn decrypt_sensitive_data(key: &[u8], iv: &[u8], text: &str) -> String {

@@ -16,7 +16,7 @@ use serde_json::{Map, Value, json};
 
 use super::event::ExecutionEvent;
 use super::session;
-use super::socketio::{publish_emit, publish_emit_in_room};
+use super::socketio::{publish_chat_start, publish_emit, publish_emit_in_room};
 
 const TASK_STREAMING_ACTIVITY_TOUCH_INTERVAL: Duration = Duration::from_secs(1);
 
@@ -388,14 +388,15 @@ impl<R: Redis> StatusUpdatingEmitter<R> {
                     .and_then(Value::as_str)
                     .unwrap_or("Chat");
                 let bot_name = event.data.get("bot_name").cloned().unwrap_or(Value::Null);
-                let payload = json!({
-                    "task_id": event.task_id,
-                    "subtask_id": event.subtask_id,
-                    "bot_name": bot_name,
-                    "shell_type": shell_type,
-                    "message_id": event.message_id,
-                });
-                publish_emit(&self.redis, "chat:start", event.task_id, payload).await?;
+                publish_chat_start(
+                    &self.redis,
+                    event.task_id,
+                    event.subtask_id,
+                    bot_name,
+                    shell_type,
+                    event.message_id,
+                )
+                .await?;
             }
             "chunk" => {
                 let payload = chunk_payload(
