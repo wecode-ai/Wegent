@@ -13,13 +13,15 @@ export async function verifyWindowsComponentPublication({ resources, environment
     holder,
     `
 param([string]$Path, [int]$ReleaseAfterMs = 0)
-$handle = [System.IO.File]::Open($Path, 'Open', 'Read', 'ReadWrite')
+$ErrorActionPreference = 'Stop'
+$handle = $null
 try {
+  $handle = [System.IO.File]::Open($Path, 'Open', 'Read', 'ReadWrite')
   [Console]::Out.WriteLine('held')
   [Console]::Out.Flush()
   [Console]::In.ReadLine() | Out-Null
   if ($ReleaseAfterMs -gt 0) { [System.Threading.Thread]::Sleep($ReleaseAfterMs) }
-} finally { $handle.Dispose() }
+} finally { if ($null -ne $handle) { $handle.Dispose() } }
 `
   )
   const script = join(root, 'publication.mjs')
@@ -36,23 +38,32 @@ import { basename, dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 const input = JSON.parse(process.argv[2])
 app.setPath('userData', join(input.root, 'electron'))
+const compositionRoot = join(input.root, 'data', 'managed-components', 'composed', 'wework-core-plugins')
+const runtimeRoot = join(input.root, 'runtimes')
+const publicationFiles = new Map([
+  [compositionRoot, join('wework-app', 'client.js')],
+  [runtimeRoot, 'runtime.json'],
+])
 const originalSymlink = fs.symlink
 let child
 let closed
 let occupiedPublications = 0
 async function holdFile(file, releaseAfterMs = 0) {
+  let stderr = ''
   child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-File', input.holder,
     '-Path', file, '-ReleaseAfterMs', String(releaseAfterMs)],
     { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
   closed = new Promise((accept, reject) => {
     child.once('error', reject)
-    child.once('close', code => code === 0 ? accept(code) : reject(new Error('Native holder failed')))
+    child.once('close', code => code === 0 ? accept(code)
+      : reject(new Error('Native holder failed (exit ' + code + '): ' + stderr.trim())))
   })
-  child.stderr.resume()
+  child.stderr.on('data', data => { stderr += data.toString() })
   await new Promise((accept, reject) => {
     let output = ''
     const timer = setTimeout(() => reject(new Error('Native file holder did not start')), 10000)
     child.once('error', error => { clearTimeout(timer); reject(error) })
+    closed.catch(error => { clearTimeout(timer); reject(error) })
     child.stdout.on('data', data => {
       output += data.toString()
       if (!output.includes(String.fromCharCode(10))) return
@@ -62,9 +73,8 @@ async function holdFile(file, releaseAfterMs = 0) {
   })
 }
 fs.symlink = async (source, target, type) => {
-  if (basename(source).startsWith('.content-')) {
-    const file = basename(dirname(target)) === 'wework-core-plugins'
-      ? join('wework-app', 'client.js') : 'runtime.json'
+  const file = publicationFiles.get(dirname(target))
+  if (file && basename(source).startsWith('.content-')) {
     await holdFile(join(source, file))
     await assert.rejects(fs.rename(source, source + '.blocked'), error =>
       ['EPERM', 'EACCES', 'EBUSY'].includes(error.code))
@@ -95,7 +105,6 @@ try {
   assert.deepEqual(await fs.readdir(join(input.root, 'data', 'managed-components', 'composed', 'wework-core-plugins')), entries)
   const { materializeBundledRuntimes } = await import(pathToFileURL(join(input.resources,
     'app.asar/dist/runtime/bundled-runtime-materializer.js')).href)
-  const runtimeRoot = join(input.root, 'runtimes')
   await materializeBundledRuntimes(join(input.resources, 'harness-runtime'), runtimeRoot, ['core'])
   assert.equal(occupiedPublications, 2)
   await materializeBundledRuntimes(join(input.resources, 'harness-runtime'), runtimeRoot, ['core'])
