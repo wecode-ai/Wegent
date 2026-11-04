@@ -6,6 +6,23 @@ import { bindProjectStandInApi, createStandInExecutorApi, type StandInExecutorAp
 
 const settings = { enabled: false, prompt: '', executionDeviceId: '', version: 0 }
 
+it('routes onboarding reads and explicit feature choices to the selected Executor', async () => {
+  const request = vi.fn().mockResolvedValue({ state: { version: 1, completed: true } })
+  const api = createStandInExecutorApi(request)
+  await api.onboarding(7, 'selected-device', 'zh-CN')
+  expect(request).toHaveBeenLastCalledWith(
+    'runtime.stand_in.onboarding.get',
+    { userId: 7, language: 'zh-CN' },
+    'selected-device'
+  )
+  await api.completeOnboarding(7, 'selected-device', false, '10:30', 'zh-CN')
+  expect(request).toHaveBeenLastCalledWith(
+    'runtime.stand_in.onboarding.complete',
+    { userId: 7, weeklyReview: false, time: '10:30', language: 'zh-CN' },
+    'selected-device'
+  )
+})
+
 it('addresses project binding reads and explicit generation updates to the selected Executor', async () => {
   const state = { binding: null, canEnable: true, canStop: false }
   const request = vi.fn().mockResolvedValue(state)

@@ -58,7 +58,7 @@ else {
   const finished = steps.at(-1)?.name === "Complete job" && steps.every(step =>
     step.status === "completed" && ["success", "skipped"].includes(step.conclusion))
   // GitHub can publish terminal steps before updating the enclosing job status.
-  console.log(failed?.conclusion || (finished ? "success" : job.status))
+  console.log(failed?.conclusion || (finished ? "steps_completed" : job.status))
 }
 ' "$source_job" <<<"$jobs_json"
 }
@@ -115,7 +115,7 @@ for (const run of runs) console.log(run.id, run.status)
   elif [[ -n "$source_job" ]]; then
     producer_state="$(producer_state_for "$run_id")"
     case "$producer_state" in
-      success) ;;
+      success|steps_completed) ;;
       absent|queued|in_progress|waiting|pending|requested) producer_ready=false ;;
       *)
         echo "Producer $source_job in run $run_id ended with $producer_state" >&2

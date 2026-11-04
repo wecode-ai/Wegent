@@ -316,6 +316,8 @@ export interface DeleteProjectWorktreeResponse {
 
 export interface RuntimeSettings {
   maxConcurrentTasks: number
+  maxConcurrentStandInTasks: number
+  maxConcurrentAgentTasks: number
 }
 
 export interface RuntimeTaskQueueReorderRequest extends RuntimeTaskAddress {
@@ -915,7 +917,7 @@ export interface RuntimeTaskExecutionConfig {
 export interface RuntimeTaskCreateRequest extends RuntimeTaskCreateIntent {
   /** Identity that owns this scheduled work; checked again when it executes. */
   standInOwner?: { userId: number; roleId: string }
-  standInCalendar?: Record<string, never>
+  standInCalendar?: { template?: 'weekly_review' }
   forceStart?: boolean
   /** Logical route used to bind this task to a project Issue. */
   executionDeviceId?: string

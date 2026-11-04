@@ -133,6 +133,7 @@ def _enqueue_ai_leader(
         project=project,
         item=item,
         group=group,
+        execution_prompt=str((automation_context or {}).get("execution_prompt") or ""),
     )
     context = {
         **(automation_context or {}),
@@ -367,6 +368,7 @@ def _manager_user_message(
     project: CloudProject,
     item: LoopItem,
     group: dict[str, Any],
+    execution_prompt: str = "",
 ) -> str:
     project_metadata = (
         project.metadata_json if isinstance(project.metadata_json, dict) else {}
@@ -391,19 +393,20 @@ def _manager_user_message(
         "group_stages": stages if isinstance(stages, list) else [],
         "project_workflow": workflow if isinstance(workflow, dict) else {},
     }
-    return "\n\n".join(
-        [
-            f"Issue: {item.title}",
-            f"Issue description:\n{item.description or ''}",
-            "Project collaboration rules and workflow:\n"
-            + json.dumps(rules, ensure_ascii=False, indent=2),
-            (
-                "Coordinate this Issue with the configured collaboration group. "
-                "Use the Issue status tool only after you have evaluated the "
-                "member results."
-            ),
-        ]
-    )
+    sections = [
+        f"Issue: {item.title}",
+        f"Issue description:\n{item.description or ''}",
+        "Project collaboration rules and workflow:\n"
+        + json.dumps(rules, ensure_ascii=False, indent=2),
+        (
+            "Coordinate this Issue with the configured collaboration group. "
+            "Use the Issue status tool only after you have evaluated the "
+            "member results."
+        ),
+    ]
+    if execution_prompt.strip():
+        sections.append(f"Automation instructions:\n{execution_prompt.strip()}")
+    return "\n\n".join(sections)
 
 
 def _human_leader_instructions(

@@ -5448,6 +5448,7 @@ fn write_fake_codex_slow_first_turn(log_path: &Path) -> PathBuf {
     let content = format!(
         r#"#!/bin/sh
 LOG_PATH='{}'
+turn_count=0
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$LOG_PATH"
   request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
@@ -5490,16 +5491,17 @@ while IFS= read -r line; do
       printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
       ;;
     *'"method":"turn/start"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-1","status":"inProgress"}}}}}}'
+      turn_count=$((turn_count + 1))
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-'"$turn_count"'","status":"inProgress"}}}}}}'
       case "$line" in
         *'second turn'*)
-          printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-2","status":"completed"}}}}}}'
+          printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-1","turn":{{"id":"turn-'"$turn_count"'","status":"completed"}}}}}}'
           ;;
       esac
       ;;
     *'"method":"turn/interrupt"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
-      printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-1","status":"cancelled"}}}}}}'
+      printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-1","turn":{{"id":"turn-'"$turn_count"'","status":"interrupted"}}}}}}'
       ;;
   esac
 done
@@ -5636,7 +5638,7 @@ while IFS= read -r line; do
       ;;
     *'"method":"turn/interrupt"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
-      printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-1","turn":{{"id":"turn-1","status":"cancelled"}}}}}}'
+      printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-1","turn":{{"id":"turn-1","status":"interrupted"}}}}}}'
       ;;
   esac
 done
@@ -5655,6 +5657,8 @@ fn write_fake_codex_hanging_turn_inner(log_path: &Path, steer_mismatch: bool) ->
 LOG_PATH='{}'
 STEER_MISMATCH='{}'
 steer_count=0
+turn_count=0
+active_turn_id=turn-1
 turn_active=true
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$LOG_PATH"
@@ -5684,9 +5688,9 @@ while IFS= read -r line; do
       ;;
     *'"method":"thread/turns/list"'*)
       if [ "$turn_active" = "true" ]; then
-        printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"turn-1","status":"inProgress","itemsView":"notLoaded","items":[]}}],"nextCursor":null,"backwardsCursor":null}}}}'
+        printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"'"$active_turn_id"'","status":"inProgress","itemsView":"notLoaded","items":[]}}],"nextCursor":null,"backwardsCursor":null}}}}'
       else
-        printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"turn-1","status":"interrupted","itemsView":"notLoaded","items":[]}}],"nextCursor":null,"backwardsCursor":null}}}}'
+        printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"'"$active_turn_id"'","status":"interrupted","itemsView":"notLoaded","items":[]}}],"nextCursor":null,"backwardsCursor":null}}}}'
       fi
       ;;
     *'"method":"thread/items/list"'*)
@@ -5700,24 +5704,29 @@ while IFS= read -r line; do
       ;;
     *'"method":"turn/start"'*)
       turn_active=true
+      turn_count=$((turn_count + 1))
+      active_turn_id="turn-$turn_count"
       if [ "$STEER_MISMATCH" = "true" ]; then
         printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-stale","status":"inProgress"}}}}}}'
       else
-        printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-1","status":"inProgress"}}}}}}'
+        printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"'"$active_turn_id"'","status":"inProgress"}}}}}}'
       fi
       ;;
     *'"method":"turn/steer"'*)
       steer_count=$((steer_count + 1))
       if [ "$STEER_MISMATCH" = "true" ] && [ "$steer_count" -eq 1 ]; then
+        printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-1","turn":{{"id":"turn-stale","status":"completed"}}}}}}'
+        printf '%s\n' '{{"method":"turn/started","params":{{"threadId":"thread-1","turn":{{"id":"'"$active_turn_id"'","status":"inProgress"}}}}}}'
         printf '%s\n' '{{"id":'"$request_id"',"error":{{"code":-32602,"message":"expected active turn id `turn-stale` but found `turn-1`"}}}}'
       else
-        printf '%s\n' '{{"id":'"$request_id"',"result":{{"turnId":"turn-1"}}}}'
+        printf '%s\n' '{{"id":'"$request_id"',"result":{{"turnId":"'"$active_turn_id"'"}}}}'
       fi
       ;;
     *'"method":"turn/interrupt"'*)
       turn_active=false
+      if [ "$turn_count" -eq 0 ]; then turn_count=1; fi
       printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
-      printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-1","status":"cancelled"}}}}}}'
+      printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-1","turn":{{"id":"'"$active_turn_id"'","status":"interrupted"}}}}}}'
       ;;
   esac
 done
@@ -5772,7 +5781,7 @@ while IFS= read -r line; do
       ;;
     *'"method":"turn/interrupt"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
-      printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-1","status":"cancelled"}}}}}}'
+      printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-1","turn":{{"id":"turn-1","status":"interrupted"}}}}}}'
       ;;
   esac
 done
@@ -5810,7 +5819,7 @@ while IFS= read -r line; do
     *'"method":"turn/interrupt"'*)
       if printf '%s\n' "$line" | grep -q '"turnId":""'; then
         printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
-        printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-1","turn":{{"id":"turn-1","status":"cancelled"}}}}}}'
+        printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-1","turn":{{"id":"turn-1","status":"interrupted"}}}}}}'
       else
         printf '%s\n' '{{"id":'"$request_id"',"error":{{"code":-32600,"message":"no active turn to interrupt"}}}}'
         printf '%s\n' '{{"method":"turn/started","params":{{"threadId":"thread-1","turn":{{"id":"turn-1","status":"inProgress"}}}}}}'
@@ -5858,7 +5867,7 @@ while IFS= read -r line; do
       ;;
     *'"method":"turn/interrupt"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
-      printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-1","status":"cancelled"}}}}}}'
+      printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-1","turn":{{"id":"turn-1","status":"interrupted"}}}}}}'
       ;;
   esac
 done
