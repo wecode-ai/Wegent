@@ -871,6 +871,7 @@ function snapshotHasAssistantActivity(snapshot) {
 
 export {
   createSse,
+  codexRequestMetadata,
   codexRequestKind,
   latestModelInputText,
   isReplyPredictionRequest,

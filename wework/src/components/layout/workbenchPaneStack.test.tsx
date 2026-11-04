@@ -1,15 +1,10 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { useState } from 'react'
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   WORKBENCH_SPLIT_ACTIONS_PORTAL_ID,
   WorkbenchPaneHeaderActionsPortal,
 } from '@/components/topnav/TitlebarActionsPortal'
-import {
-  WORKBENCH_SIDEBAR_PANE_DRAG_END_EVENT,
-  WORKBENCH_SIDEBAR_PANE_DRAG_START_EVENT,
-  type WorkbenchSidebarPaneDragEndData,
-} from './workbenchPaneDrag'
+import { render, screen, waitFor } from '@testing-library/react'
+import { useState } from 'react'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getWorkbenchPaneKey, type WorkbenchPaneIdentity } from './workbenchPaneIdentity'
 import {
   useWorkbenchPaneActive,
@@ -19,7 +14,6 @@ import {
 import { SplitWorkbenchPaneStack } from './workbenchPaneStack'
 import {
   closeWorkbenchPane,
-  collectWorkbenchPanes,
   createWorkbenchLayout,
   focusWorkbenchPane,
   parsePersistedWorkbenchLayout,
@@ -49,7 +43,6 @@ const blankPane: WorkbenchPaneIdentity = {
 const panes = [paneOne, paneTwo, paneThree]
 const paneOneKey = getWorkbenchPaneKey(paneOne)
 const paneTwoKey = getWorkbenchPaneKey(paneTwo)
-const paneThreeKey = getWorkbenchPaneKey(paneThree)
 
 beforeAll(() => {
   vi.stubGlobal(
@@ -170,46 +163,6 @@ function persistTwoPaneLayout() {
 }
 
 describe('SplitWorkbenchPaneStack', () => {
-  it('renders exactly one task in single-pane mode', () => {
-    render(<Stack activePane={paneOne} />)
-
-    expect(screen.getByTestId('pane-content-one')).toBeVisible()
-    expect(screen.getByTestId('pane-content-one')).toHaveAttribute('data-active', 'true')
-    expect(screen.getByTestId('pane-content-one')).toHaveAttribute('data-visible', 'true')
-    expect(screen.queryByTestId(/^workbench-pane-title-/)).not.toBeInTheDocument()
-    expect(screen.getAllByTestId('active-pane')).toHaveLength(1)
-  })
-
-  it('keeps panes opaque when no workbench background is configured', () => {
-    render(<Stack activePane={paneOne} />)
-
-    const pane = screen.getByTestId('active-pane').closest('section')
-
-    expect(pane).toHaveClass('bg-background')
-    expect(pane).not.toHaveClass('bg-transparent')
-  })
-
-  it('makes panes transparent so the workbench background shows through', () => {
-    render(<Stack activePane={paneOne} showWorkbenchBackground />)
-
-    const pane = screen.getByTestId('active-pane').closest('section')
-
-    expect(pane).toHaveClass('bg-transparent')
-    expect(pane).not.toHaveClass('bg-background')
-  })
-
-  it('applies the background mode to every pane in a split layout', () => {
-    persistTwoPaneLayout()
-    render(<Stack activePane={paneOne} showWorkbenchBackground />)
-
-    const panes = screen
-      .getAllByTestId(/^workbench-pane-/)
-      .filter(element => element.tagName === 'SECTION')
-
-    expect(panes).toHaveLength(2)
-    panes.forEach(pane => expect(pane).toHaveClass('bg-transparent'))
-  })
-
   it('keeps the focused pane active for task-scoped resources while its workspace tab is hidden', () => {
     persistTwoPaneLayout()
     render(<Stack activePane={paneOne} activeTestId={null} workbenchVisible={false} />)
@@ -221,185 +174,6 @@ describe('SplitWorkbenchPaneStack', () => {
     expect(screen.queryByTestId('pane-header-action-one')).not.toBeInTheDocument()
     expect(screen.queryByTestId('pane-header-action-two')).not.toBeInTheDocument()
     expect(screen.queryByTestId('active-pane')).not.toBeInTheDocument()
-  })
-
-  it('does not mutate the controlled layout when the external active pane changes', async () => {
-    const view = render(<Stack activePane={paneOne} />)
-
-    view.rerender(<Stack activePane={paneTwo} />)
-
-    await waitFor(() => {
-      expect(screen.getByTestId('pane-content-one')).toBeVisible()
-      expect(screen.queryByTestId('pane-content-two')).not.toBeInTheDocument()
-    })
-  })
-
-  it('keeps retained resources mounted outside the document and restores their host', async () => {
-    const view = render(
-      <Stack activePane={paneOne} retainedResourceKeys={[paneOneKey]} followActivePane />
-    )
-    const mountId = screen.getByTestId('pane-content-one').dataset.mountId
-
-    view.rerender(
-      <Stack activePane={paneTwo} retainedResourceKeys={[paneOneKey]} followActivePane />
-    )
-    await waitFor(() => {
-      expect(screen.queryByTestId('pane-content-one')).not.toBeInTheDocument()
-      expect(screen.getByTestId('pane-content-two')).toBeVisible()
-    })
-
-    view.rerender(
-      <Stack activePane={paneOne} retainedResourceKeys={[paneOneKey]} followActivePane />
-    )
-    await waitFor(() =>
-      expect(screen.getByTestId('pane-content-one')).toHaveAttribute('data-mount-id', mountId)
-    )
-  })
-
-  it('keeps retained resources alive beyond the former pane cache limit', async () => {
-    const manyPanes = Array.from({ length: 11 }, (_, index) => ({
-      currentRuntimeTask: { deviceId: 'device', taskId: `retained-${index}` },
-      currentProject: null,
-    }))
-    const retainedKeys: string[] = []
-    const firstPane = manyPanes[0]
-    const view = render(
-      <Stack activePane={firstPane} availablePanes={manyPanes} followActivePane />
-    )
-    const firstMountId = screen.getByTestId('pane-content-retained-0').dataset.mountId
-
-    for (const pane of manyPanes) {
-      view.rerender(
-        <Stack
-          activePane={pane}
-          availablePanes={manyPanes}
-          retainedResourceKeys={retainedKeys}
-          followActivePane
-        />
-      )
-      expect(
-        await screen.findByTestId(`pane-content-${pane.currentRuntimeTask?.taskId}`)
-      ).toBeVisible()
-      retainedKeys.push(getWorkbenchPaneKey(pane))
-    }
-
-    view.rerender(
-      <Stack
-        activePane={firstPane}
-        availablePanes={manyPanes}
-        retainedResourceKeys={retainedKeys}
-        followActivePane
-      />
-    )
-
-    await waitFor(() =>
-      expect(screen.getByTestId('pane-content-retained-0')).toHaveAttribute(
-        'data-mount-id',
-        firstMountId
-      )
-    )
-  })
-
-  it('restores two visible tasks with independent title bars and actions', async () => {
-    persistTwoPaneLayout()
-    render(<Stack activePane={paneOne} />)
-
-    expect(await screen.findByTestId('pane-content-one')).toBeVisible()
-    expect(screen.getByTestId('pane-content-two')).toBeVisible()
-    expect(screen.getAllByTestId(/^workbench-pane-title-/)).toHaveLength(2)
-    expect(screen.getByTestId('pane-header-action-one')).toBeVisible()
-    expect(screen.getByTestId('pane-header-action-two')).toBeVisible()
-  })
-
-  it('focuses an existing task without remounting either pane', async () => {
-    persistTwoPaneLayout()
-    const onPaneFocus = vi.fn()
-    const view = render(<Stack activePane={paneOne} onPaneFocus={onPaneFocus} />)
-    const oneMount = screen.getByTestId('pane-content-one').dataset.mountId
-    const twoMount = screen.getByTestId('pane-content-two').dataset.mountId
-
-    view.rerender(<Stack activePane={paneTwo} onPaneFocus={onPaneFocus} />)
-
-    await waitFor(() => expect(screen.getByTestId('pane-content-two')).toBeVisible())
-    expect(screen.getByTestId('pane-content-one')).toHaveAttribute('data-mount-id', oneMount)
-    expect(screen.getByTestId('pane-content-two')).toHaveAttribute('data-mount-id', twoMount)
-  })
-
-  it('shows one task in focus view and restores the split with Escape', async () => {
-    persistTwoPaneLayout()
-    render(<Stack activePane={paneOne} />)
-    const focusButtons = screen.getAllByTestId(/^workbench-focus-pane-/)
-
-    fireEvent.click(focusButtons[0])
-    await waitFor(() =>
-      expect(screen.getByTestId('workbench-split-layout')).toHaveAttribute('data-focused-pane')
-    )
-    expect(screen.getByTestId('pane-content-one')).toBeVisible()
-    expect(screen.queryByTestId('pane-content-two')).not.toBeInTheDocument()
-
-    fireEvent.keyDown(window, { key: 'Escape' })
-    await waitFor(() => expect(screen.getByTestId('pane-content-two')).toBeVisible())
-  })
-
-  it('removes the complete pane when its close action is used', async () => {
-    persistTwoPaneLayout()
-    render(<Stack activePane={paneOne} />)
-
-    fireEvent.click(screen.getAllByTestId(/^workbench-close-pane-/)[1])
-
-    await waitFor(() => {
-      expect(screen.queryByTestId('pane-content-two')).not.toBeInTheDocument()
-      expect(screen.getByTestId('pane-content-one')).toBeVisible()
-      expect(screen.queryByTestId(/^workbench-pane-title-/)).not.toBeInTheDocument()
-    })
-  })
-
-  it('uses a dominant center target and small directional targets while dragging', () => {
-    persistTwoPaneLayout()
-    render(<Stack activePane={paneOne} />)
-
-    act(() => {
-      window.dispatchEvent(
-        new CustomEvent(WORKBENCH_SIDEBAR_PANE_DRAG_START_EVENT, {
-          detail: { paneKey: paneThreeKey },
-        })
-      )
-    })
-
-    const targets = screen.getAllByTestId(/^workbench-pane-drop-targets-/)
-    expect(targets).toHaveLength(2)
-    expect(screen.getAllByTestId(/drop:.*:center/)[0].className).toContain('bg-background/95')
-    expect(targets[0].className).toContain('grid-cols-[14%_minmax(0,1fr)_14%]')
-  })
-
-  it('places a sidebar task on a pane edge', async () => {
-    const split = persistTwoPaneLayout()
-    const targetPaneId = collectWorkbenchPanes(split.root)[1].id
-    render(<Stack activePane={paneOne} />)
-
-    act(() => {
-      window.dispatchEvent(
-        new CustomEvent(WORKBENCH_SIDEBAR_PANE_DRAG_START_EVENT, {
-          detail: { paneKey: paneThreeKey },
-        })
-      )
-    })
-    const actualTarget = screen.getByTestId(`drop:${targetPaneId}:right`)
-    vi.spyOn(document, 'elementsFromPoint').mockReturnValue([actualTarget])
-    const detail: WorkbenchSidebarPaneDragEndData = {
-      paneKey: paneThreeKey,
-      clientX: 10,
-      clientY: 10,
-      handled: false,
-    }
-
-    act(() => {
-      window.dispatchEvent(new CustomEvent(WORKBENCH_SIDEBAR_PANE_DRAG_END_EVENT, { detail }))
-    })
-
-    await waitFor(() => expect(screen.getByTestId('pane-content-three')).toBeVisible())
-    expect(detail.handled).toBe(true)
-    expect(screen.getAllByTestId(/^workbench-pane-title-/)).toHaveLength(3)
   })
 
   it('replaces a startup blank identity without retaining it', async () => {

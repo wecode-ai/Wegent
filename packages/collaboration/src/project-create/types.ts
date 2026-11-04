@@ -117,6 +117,7 @@ export interface ProjectCreateResourceSetup {
   defaultAgentResourceIds?: string[];
   groups: CollaborationGroup[];
   executionEnvironments?: CollaborationExecutionEnvironment[];
+  validate?(selection: ProjectCreateResourceSelection): Promise<void>;
   loadCollaborationGroupGenerationModels?(): Promise<ProjectCreateGenerationModelCatalog>;
   generateCollaborationGroupDraft?(
     input: ProjectCreateCollaborationGroupDraftInput,
@@ -126,7 +127,7 @@ export interface ProjectCreateResourceSetup {
   configure(
     project: CollaborationProject,
     selection: ProjectCreateResourceSelection,
-  ): Promise<void>;
+  ): Promise<CollaborationProject | void>;
 }
 
 export interface DingTalkAITableLink {

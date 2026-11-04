@@ -136,7 +136,7 @@ export function AutomationsPage({
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
-  const initialAutomationLoadCompletedRef = useRef(false)
+  const initialSelectionResolvedRef = useRef(false)
   const runListSignatureRef = useRef('')
   const refreshWorkListsRef = useRef(refreshWorkLists)
   const locale = i18n.language
@@ -165,19 +165,17 @@ export function AutomationsPage({
     try {
       const response = await automationApi.listAutomations()
       const items = response.items.filter(item => {
-        if (ownerUserId === undefined) return true
+        const calendar = Boolean(item.taskRequest?.standInCalendar)
+        if (ownerUserId === undefined) return !calendar
+        if (!calendar) return false
         const owner = item.taskRequest?.standInOwner
-        if (owner)
-          return (
-            owner.userId === ownerUserId &&
-            (ownerRoleId === '@primary' || owner.roleId === ownerRoleId)
-          )
-        return ownerRoleId === '@primary'
+        if (owner) return owner.userId === ownerUserId && owner.roleId === ownerRoleId
+        return false
       })
       setAutomations(items)
-      const shouldSelectInitialAutomation = !initialAutomationLoadCompletedRef.current
-      initialAutomationLoadCompletedRef.current = true
-      if (shouldSelectInitialAutomation && items[0]) {
+      const shouldSelectInitialAutomation = !initialSelectionResolvedRef.current
+      initialSelectionResolvedRef.current = true
+      if (shouldSelectInitialAutomation && items[0] && ownerUserId === undefined) {
         setSelectedAutomationId(items[0].id)
         setEditing(items[0])
         setDraft(automationDraftFromAutomation(items[0], state.runtimeWork))
@@ -302,6 +300,7 @@ export function AutomationsPage({
         projectChat.selectedModelOptions
       )
       if (template) Object.assign(nextDraft, template)
+      initialSelectionResolvedRef.current = true
       setSelectedAutomationId(null)
       setEditing(null)
       setDraft(nextDraft)
@@ -310,6 +309,7 @@ export function AutomationsPage({
 
   const selectAutomation = (automation: Automation) =>
     requestLeave(() => {
+      initialSelectionResolvedRef.current = true
       setSelectedAutomationId(automation.id)
       setEditing(automation)
       setDraft(automationDraftFromAutomation(automation, state.runtimeWork))
@@ -350,6 +350,32 @@ export function AutomationsPage({
 
   const buildMutation = (): AutomationMutation => {
     if (!draft) throw new Error('Automation draft is missing')
+    const owner = editing?.taskRequest?.standInOwner ?? standInOwner
+    if (standInOwner) {
+      return {
+        id: editing?.id,
+        version: editing?.version,
+        source: draft.source,
+        name: draft.name.trim(),
+        description: '',
+        prompt: draft.prompt.trim(),
+        schedule: scheduleFromAutomationDraft(draft),
+        timezone: draft.timezone,
+        enabled: editing?.enabled ?? true,
+        conversationMode: 'independent',
+        notificationPolicy: draft.notificationPolicy,
+        taskRequest: {
+          schemaVersion: 2,
+          standInOwner: owner,
+          standInCalendar: {},
+          deviceId: draft.deviceId,
+          runtime: 'codex',
+          message: draft.prompt.trim(),
+          title: draft.name.trim(),
+        },
+        continuationPayload: null,
+      }
+    }
     const initialGoal = initialGoalFromAutomationDraft(draft)
     if (draft.conversationMode === 'continue_thread' && !draft.continuationAddress) {
       throw new Error(t('workbench.automation_target_task_required', '请选择一个可用的已固定任务'))
@@ -434,6 +460,12 @@ export function AutomationsPage({
       setDraft(automationDraftFromAutomation(response.automation))
       setDirty(false)
       await loadAutomations()
+      if (standInOwner) {
+        setSelectedAutomationId(null)
+        setEditing(null)
+        setDraft(null)
+        setRuns([])
+      }
       track('automation_action_completed', { action: editing ? 'update' : 'create' })
     } catch (saveError) {
       track('operation_failed', { operation: 'automation_save' })
@@ -497,6 +529,7 @@ export function AutomationsPage({
 
   const closeDetail = () =>
     requestLeave(() => {
+      initialSelectionResolvedRef.current = true
       setSelectedAutomationId(null)
       setEditing(null)
       setDraft(null)
@@ -535,7 +568,9 @@ export function AutomationsPage({
   const hasWorkspace = automations.length > 0 || Boolean(draft)
 
   return (
-    <div className="relative flex h-full overflow-hidden bg-background text-text-primary">
+    <div
+      className={`relative flex min-h-0 overflow-hidden bg-background text-text-primary ${standInOwner && !draft ? 'shrink-0' : 'h-full flex-1'}`}
+    >
       <ConfirmDialog
         open={pendingNavigation !== null}
         onClose={() => setPendingNavigation(null)}
@@ -572,6 +607,7 @@ export function AutomationsPage({
           collapsed={sidebarCollapsed}
           onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
           onNewChat={handleNewChat}
+          onOpenStandIn={() => requestLeave(() => navigateTo('/stand-in'))}
           onStartStandaloneChat={handleStandaloneChat}
           onOpenSearch={() => setSearchOpen(true)}
           onSelectProject={handleSelectProject}
@@ -650,28 +686,32 @@ export function AutomationsPage({
         )}
         {hasWorkspace ? (
           <>
-            <AutomationListPane
-              calendar={Boolean(standInOwner)}
-              automations={filteredAutomations}
-              allAutomations={automations}
-              query={query}
-              statusFilter={statusFilter}
-              selectedAutomationId={selectedAutomationId}
-              locale={locale}
-              loading={loading}
-              error={error}
-              detailOpen={Boolean(draft)}
-              mobileDetailOpen={isMobile && Boolean(draft)}
-              onQueryChange={setQuery}
-              onFilterChange={setStatusFilter}
-              onSelect={selectAutomation}
-              onCreate={openCreate}
-              onClearError={() => setError(null)}
-            />
+            {(!standInOwner || !draft) && (
+              <AutomationListPane
+                calendar={Boolean(standInOwner)}
+                automations={filteredAutomations}
+                allAutomations={automations}
+                query={query}
+                statusFilter={statusFilter}
+                selectedAutomationId={selectedAutomationId}
+                locale={locale}
+                loading={loading}
+                error={error}
+                detailOpen={Boolean(draft)}
+                mobileDetailOpen={isMobile && Boolean(draft)}
+                onQueryChange={setQuery}
+                onFilterChange={setStatusFilter}
+                onSelect={selectAutomation}
+                onCreate={openCreate}
+                onClearError={() => setError(null)}
+              />
+            )}
             {draft ? (
               <AutomationDetailWorkspace
+                compact={Boolean(standInOwner)}
                 validationError={draftError}
                 draft={draft}
+                calendarMode={Boolean(standInOwner)}
                 inheritStandIn={Boolean(standInOwner || editing?.taskRequest?.standInOwner)}
                 automation={editing}
                 runs={runs}

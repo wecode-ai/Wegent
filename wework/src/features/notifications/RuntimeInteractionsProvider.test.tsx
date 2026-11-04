@@ -6,6 +6,7 @@ import { NotificationTaskContext, type TaskSource } from './NotificationTaskSour
 import { RuntimeInteractionsProvider } from './RuntimeInteractionsProvider'
 import { RuntimeInteractionNotice } from './RuntimeInteractionNotice'
 import { RuntimeInteractionsPage } from './RuntimeInteractionsPage'
+import { canReplyToInteraction } from './runtimeInteractions'
 import { useRuntimeInteractions } from './RuntimeInteractionsContext'
 import {
   cacheNotificationPreferences,
@@ -16,6 +17,10 @@ import {
   interactionTask,
   interactionTranscript,
 } from './runtimeInteractions.fixtures'
+
+vi.mock('./NotificationEntitySurface', () => ({
+  NotificationEntitySurface: () => <div data-testid="original-notification-entity" />,
+}))
 
 const harness = vi.hoisted(() => ({
   t: (key: string) => key,
@@ -152,6 +157,33 @@ afterEach(() => {
 })
 
 describe('unified human response', () => {
+  it('locks and revalidates an entity-owned send, then prevents a duplicate native submission', async () => {
+    view()
+    await waitFor(() => expect(context!.pending).toHaveLength(1))
+    const item = context!.pending[0]
+    const nativeSend = vi.fn(async () => true)
+    await act(async () => {
+      expect(await context!.respond(item, 'keep', { send: nativeSend })).toBe(true)
+      expect(await context!.respond(item, 'keep', { send: nativeSend })).toBe(false)
+    })
+    expect(nativeSend).toHaveBeenCalledOnce()
+    expect(harness.send).not.toHaveBeenCalled()
+    expect(harness.guide).not.toHaveBeenCalled()
+    expect(context!.history).toHaveLength(1)
+  })
+
+  it('does not call an entity-owned sender when its request is no longer live', async () => {
+    view()
+    await waitFor(() => expect(context!.pending).toHaveLength(1))
+    const item = context!.pending[0]
+    harness.transcript.mockResolvedValue({ ...interactionTranscript(), messages: [] })
+    const nativeSend = vi.fn(async () => true)
+    await act(async () => {
+      expect(await context!.respond(item, 'keep', { send: nativeSend })).toBe(false)
+    })
+    expect(nativeSend).not.toHaveBeenCalled()
+    expect(context!.history).toHaveLength(0)
+  })
   it.each([true, false])(
     'serializes replies across provider instances and permits retry only after failure (accepted=%s)',
     async accepted => {
@@ -597,7 +629,8 @@ describe('unified human response', () => {
     })
     expect(context!.pending[0]?.id).toBe(id)
     expect(context!.pending[0]?.cached).not.toBe(true)
-    expect(screen.getByTestId('interaction-reply')).toBeInTheDocument()
+    expect(canReplyToInteraction(context!.pending[0])).toBe(true)
+    expect(screen.getByTestId('original-notification-entity')).toBeInTheDocument()
   })
   it('restores last-known pending work and its draft offline without granting cached response authority', async () => {
     const first = view()
@@ -647,14 +680,15 @@ describe('unified human response', () => {
     })
     expect(context!.pending).toHaveLength(1)
     expect(context!.pending[0].task.workspace.available).toBe(false)
-    expect(screen.getByTestId('interaction-open-original-action')).toBeInTheDocument()
+    expect(screen.getByTestId('original-notification-entity')).toBeInTheDocument()
+    expect(canReplyToInteraction(context!.pending[0])).toBe(false)
     harness.list.mockResolvedValue(work)
     rendered.rerenderSource({ ...offline, devices: [{ ...offline.devices[0], status: 'online' }] })
     await act(async () => {
       await context!.refresh()
     })
     expect(context!.pending).toHaveLength(1)
-    expect(screen.queryByTestId('interaction-open-original-action')).not.toBeInTheDocument()
+    expect(canReplyToInteraction(context!.pending[0])).toBe(true)
     expect(harness.send).not.toHaveBeenCalled()
   })
   it('discovers pending work even when no corresponding task is listed in the sidebar', async () => {
@@ -765,7 +799,8 @@ describe('unified human response', () => {
       await context!.refresh()
     })
     expect(context!.pending).toHaveLength(1)
-    expect(screen.getByTestId('interaction-open-original-action')).toBeInTheDocument()
+    expect(screen.getByTestId('original-notification-entity')).toBeInTheDocument()
+    expect(canReplyToInteraction(context!.pending[0])).toBe(false)
     expect(harness.send).not.toHaveBeenCalled()
     harness.transcript.mockResolvedValue(interactionTranscript())
     await act(async () => {
@@ -888,7 +923,8 @@ describe('unified human response', () => {
       expect(await context!.respond(context!.pending[0], 'Allow')).toBe(false)
     })
     expect(harness.send).not.toHaveBeenCalled()
-    expect(screen.getByTestId('interaction-open-original-action')).toBeInTheDocument()
+    expect(screen.getByTestId('original-notification-entity')).toBeInTheDocument()
+    expect(canReplyToInteraction(context!.pending[0])).toBe(false)
   })
 
   it('revalidates a request already answered in its original conversation', async () => {

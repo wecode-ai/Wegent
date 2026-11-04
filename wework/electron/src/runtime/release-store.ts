@@ -1,10 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises'
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { dirname, isAbsolute, join, relative } from 'node:path'
 import { removePhysicalRelease } from './physical-release-files.js'
 import { macosInstallationStage } from './macos-installation-paths.js'
-
-const releaseOperations = new Map<string, Promise<void>>()
+import { serializePathOperation } from './path-operation-queue.js'
 
 export interface DesktopRelease {
   schemaVersion: 1
@@ -425,17 +424,7 @@ export class ReleaseStore {
   }
 
   private serial<Result>(operation: () => Promise<Result>): Promise<Result> {
-    const key = resolve(this.root)
-    const result = (releaseOperations.get(key) ?? Promise.resolve()).then(operation)
-    const drained = result.then(
-      () => undefined,
-      () => undefined
-    )
-    releaseOperations.set(key, drained)
-    void drained.then(() => {
-      if (releaseOperations.get(key) === drained) releaseOperations.delete(key)
-    })
-    return result
+    return serializePathOperation(this.root, operation)
   }
 
   private async finishActivation(): Promise<void> {

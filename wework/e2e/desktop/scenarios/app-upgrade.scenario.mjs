@@ -1,6 +1,16 @@
 import assert from 'node:assert/strict'
 import { createReadStream } from 'node:fs'
-import { mkdir, readFile, stat, writeFile, rename, lstat, realpath, rm } from 'node:fs/promises'
+import {
+  mkdir,
+  readFile,
+  stat,
+  writeFile,
+  rename,
+  lstat,
+  realpath,
+  rm,
+  symlink,
+} from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { dirname, join, resolve } from 'node:path'
 import { hashReleaseAsset } from '../../../scripts/lib/portable-desktop-release.mjs'
@@ -14,7 +24,22 @@ import { prepareReleaseProcess } from '../../../electron/src/runtime/release-pre
 import { stopProcessGroup } from '../process-lifecycle.mjs'
 import { seedUnstartedActivation } from '../modules/unstarted-activation-fixture.mjs'
 import { routeUpgradeRequests } from '../modules/upgrade-request-route.mjs'
+import {
+  installPreparedSource,
+  installedSourcePlugins,
+  installedSourcePreparationRequest,
+  installedSourceSnapshotIdentity,
+  SOURCE_DISABLED_PLUGIN as OPTIONAL_PLUGIN,
+} from '../modules/installed-source-preparation.mjs'
+import {
+  restoreInstalledSourceSnapshot,
+  saveInstalledSourceSnapshot,
+} from '../modules/installed-source-snapshot.mjs'
 import { assertMacosStatusItem } from '../modules/macos-status-item.mjs'
+import {
+  linkBundledRuntimeCache,
+  prepareBundledRuntimeCache,
+} from '../modules/bundled-runtime-cache.mjs'
 import {
   assertMacosUpgradeIdentity,
   macosUpgradeIdentity,
@@ -33,7 +58,6 @@ import {
 const PROMPT = 'WEWORK_UPGRADE_PERSISTENCE'
 const ANSWER = 'WEWORK_UPGRADE_REAL_RUNTIME_OK'
 const STORAGE_KEY = 'wework:upgrade-regression-marker'
-const OPTIONAL_PLUGIN = '@wegent/dsh-connection-dingtalk'
 
 async function waitForInterruptedRollback(root) {
   const deadline = Date.now() + 10_000
@@ -78,7 +102,7 @@ export async function createDesktopScenario(options) {
   assert.ok(usesDefaultUserData, 'Upgrade verification must use the product default layout')
   const verifiesUnstartedActivation =
     usesDefaultUserData &&
-    checkpoint === 'app-upgrade' &&
+    checkpoint === 'app-rollback' &&
     (pair.kind === 'regression' || Boolean(pair.from.installedSource))
   let legacyDataDirectory
   assert.equal(pair.schemaVersion, 1)
@@ -115,6 +139,12 @@ export async function createDesktopScenario(options) {
   let origin
   let modelRequests = 0
   const requests = []
+  // Observe asynchronous acceptance before releasing real package bytes. A fixed
+  // six-second server delay charged every checkpoint without establishing state.
+  let releaseHostDownload
+  const hostDownloadAccepted = new Promise(accept => {
+    releaseHostDownload = accept
+  })
   const server = createServer((request, response) => {
     const url = new URL(request.url, origin)
     requests.push({
@@ -188,8 +218,9 @@ export async function createDesktopScenario(options) {
         response.destroy(new Error('Whole release downloads must not use byte ranges'))
         return
       }
-      const timer = setTimeout(() => createReadStream(pair.to.path).pipe(response), 6000)
-      response.once('close', () => clearTimeout(timer))
+      void hostDownloadAccepted.then(() => {
+        if (!response.destroyed) createReadStream(pair.to.path).pipe(response)
+      })
     } else {
       response.writeHead(404)
       response.end()
@@ -288,7 +319,7 @@ export async function createDesktopScenario(options) {
       await mkdir(profile, { recursive: true })
       await writeFile(
         join(profile, '.wework-core-plugins.json'),
-        JSON.stringify({ version: 1, order: [], disabled: [OPTIONAL_PLUGIN] })
+        JSON.stringify(installedSourcePlugins())
       )
       // A represents an installed, prepared desktop. Run its own shipped
       // preparation entry before launch; B must still prepare its isolated slot.
@@ -296,57 +327,94 @@ export async function createDesktopScenario(options) {
         process.platform === 'darwin'
           ? resolve(dirname(pair.from.executable), '../Resources')
           : join(dirname(pair.from.executable), 'resources')
-      const request = join(resultDir, 'prepare-source.json')
-      await writeFile(
-        request,
-        JSON.stringify({
-          storeRoot: root,
-          sourceProfile: profile,
-          release: {
-            schemaVersion: 1,
-            id: 'source-preparation',
+      // An installed source already has its immutable runtime cache. Install
+      // those exact checked bytes once; its shipped entry still prepares all
+      // components and mutable profile state. The target still validates its
+      // delivered archives and prepares its own isolated profile.
+      const cacheStarted = performance.now()
+      console.log(`[upgrade-e2e] Installing the delivered source runtime ${pair.from.version}`)
+      const runtimeCache =
+        pair.from.runtimeCache || join(resultDir, 'installed-runtimes', pair.from.sha256)
+      await prepareBundledRuntimeCache(resources, runtimeCache)
+      await linkBundledRuntimeCache(runtimeCache, sourceRuntimeRoot)
+      console.log(
+        `[upgrade-e2e] Source runtime installed: durationMs=${Math.round(performance.now() - cacheStarted)}`
+      )
+      const snapshot =
+        !options.preparationOnly && pair.from.preparationCache
+          ? {
+              cache: pair.from.preparationCache,
+              slot: join(root, 'slots/source-preparation'),
+              dataDirectory: electronUserDataDirectory,
+              identity: installedSourceSnapshotIdentity(pair.from),
+            }
+          : null
+      const restored = snapshot && (await restoreInstalledSourceSnapshot(snapshot))
+      if (restored)
+        console.log(`[upgrade-e2e] Restored private source preparation: sha256=${pair.from.sha256}`)
+      if (!restored) {
+        const request = join(resultDir, 'prepare-source.json')
+        await writeFile(
+          request,
+          JSON.stringify(
+            installedSourcePreparationRequest(
+              { ...pair.from, resources },
+              electronUserDataDirectory
+            )
+          )
+        )
+        console.log(`[upgrade-e2e] Preparing the installed source ${pair.from.version}`)
+        const preparation = prepareReleaseProcess(
+          pair.from.executable,
+          [join(resources, 'app.asar', 'dist', 'runtime', 'release-preparation-cli.js'), request],
+          {
+            env: { ...sourceEnvironment, ELECTRON_RUN_AS_NODE: '1' },
+            progress: {
+              logPath: join(electronUserDataDirectory, 'logs', 'release-preparation.log'),
+            },
             version: pair.from.version,
-            executable: pair.from.executable,
-            resources,
-            runtimeRoot: sourceRuntimeRoot,
-            profileRoot: join(root, 'slots/source-preparation/profile'),
-            dataSchema: pair.from.dataSchema,
-            readableDataSchemas: pair.from.readableDataSchemas,
-          },
-        })
-      )
-      console.log(`[upgrade-e2e] Preparing the installed source ${pair.from.version}`)
-      const preparation = prepareReleaseProcess(
-        pair.from.executable,
-        [join(resources, 'app.asar', 'dist', 'runtime', 'release-preparation-cli.js'), request],
-        {
-          env: { ...sourceEnvironment, ELECTRON_RUN_AS_NODE: '1' },
-          progress: { logPath: join(electronUserDataDirectory, 'logs', 'release-preparation.log') },
-          version: pair.from.version,
-          releaseId: 'source-preparation',
-          stop: stopProcessGroup,
+            releaseId: 'source-preparation',
+            stop: stopProcessGroup,
+          }
+        )
+        try {
+          await preparation
+        } catch (error) {
+          await writeFile(
+            join(resultDir, 'source-preparation.log'),
+            `${error.stdout ?? ''}\n${error.stderr ?? ''}`
+          )
+          await writeFile(
+            join(resultDir, 'source-preparation-result.json'),
+            JSON.stringify({
+              pid: preparation.child?.pid,
+              code: error.code,
+              signal: error.signal,
+              killed: error.killed,
+              error: { name: error.name, message: error.message },
+            })
+          )
+          throw new Error(`Source preparation failed: ${error.message}`, { cause: error })
         }
-      )
-      try {
-        await preparation
-      } catch (error) {
-        await writeFile(
-          join(resultDir, 'source-preparation.log'),
-          `${error.stdout ?? ''}\n${error.stderr ?? ''}`
-        )
-        await writeFile(
-          join(resultDir, 'source-preparation-result.json'),
-          JSON.stringify({
-            pid: preparation.child?.pid,
-            code: error.code,
-            signal: error.signal,
-            killed: error.killed,
-            error: { name: error.name, message: error.message },
-          })
-        )
-        throw new Error(`Source preparation failed: ${error.message}`, { cause: error })
+        if (snapshot) await saveInstalledSourceSnapshot(snapshot)
       }
+      if (!options.preparationOnly)
+        await installPreparedSource(
+          join(root, 'slots/source-preparation'),
+          electronUserDataDirectory
+        )
       console.log('[upgrade-e2e] Installed source prepared from its delivered package')
+      if (pair.immutableRuntimeCache && !options.preparationOnly) {
+        // This store contains immutable programs only. Source/target catalogs,
+        // profile state and all release slots remain private to this checkpoint.
+        await mkdir(pair.immutableRuntimeCache, { recursive: true })
+        const shared = join(sourceRuntimeRoot, '.prepared')
+        await symlink(
+          pair.immutableRuntimeCache,
+          shared,
+          process.platform === 'win32' ? 'junction' : 'dir'
+        )
+      }
     },
     async prepareUserDataLaunch() {
       if (usesDefaultUserData) {
@@ -462,9 +530,26 @@ export async function createDesktopScenario(options) {
         'The download request blocked until preparation completed'
       )
       assert.notEqual(accepted.phase, 'failed', 'The download failed to start')
-      const observedProgress = await waitForUpdatePreparation(async () =>
-        JSON.parse(await control.command('getAppUpdateProgress', 'body'))
-      )
+      releaseHostDownload()
+      let preparationPhase = 'accepted'
+      let phaseStarted = performance.now()
+      const observedProgress = await waitForUpdatePreparation(async () => {
+        const progress = JSON.parse(await control.command('getAppUpdateProgress', 'body'))
+        if (progress.phase !== preparationPhase) {
+          const now = performance.now()
+          console.log(
+            `[upgrade-e2e] ${JSON.stringify({
+              phase: preparationPhase,
+              nextPhase: progress.phase,
+              elapsedMs: Math.round(now - phaseStarted),
+              downloadedBytes: progress.downloadedBytes,
+            })}`
+          )
+          preparationPhase = progress.phase
+          phaseStarted = now
+        }
+        return progress
+      })
       const transfers = requests.filter(request => request.path === `/${pair.to.name}`)
       assert.equal(transfers.length, 1, 'The updater must download the complete host exactly once')
       assert.equal(transfers[0].range, null, 'The host update must use one full request')

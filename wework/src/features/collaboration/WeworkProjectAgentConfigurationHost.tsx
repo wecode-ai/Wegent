@@ -1,4 +1,4 @@
-import type { ProjectAgentConfigurationHost } from '@wegent/collaboration'
+import { runnerModelIdentity, type ProjectAgentConfigurationHost } from '@wegent/collaboration'
 
 import type { createAgentResourceApi } from '@/api/agentResources'
 import type { createLocalProjectChatAgentApi } from '@/api/local/localDelivery'
@@ -24,9 +24,69 @@ export function createWeworkProjectAgentConfigurationHost(
 ): ProjectAgentConfigurationHost {
   return {
     ...weworkProjectAgentConfigurationHost,
+    ...(localAgentApi
+      ? {
+          async resolveTemplateAgentRouting(runtime, location, projectId) {
+            const environments = await localAgentApi.listRunnerEnvironments(
+              location === 'local' ? projectId : undefined
+            )
+            if (environments.length !== 1) throw new Error('template_model_default_unavailable')
+            const current = environments[0]
+            const defaults = current.models.filter(
+              model => model.runtime === runtime && model.is_default
+            )
+            if (defaults.length !== 1) throw new Error('template_model_default_unavailable')
+            let environmentId = current.id
+            if (location === 'cloud') {
+              if (!agentResourceApi) throw new Error('template_environment_unavailable')
+              const authorized = (await agentResourceApi.listEnvironments(projectId)).filter(
+                environment =>
+                  environment.device_key === current.device_key &&
+                  (!projectId || environment.project_authorized)
+              )
+              if (authorized.length !== 1) throw new Error('template_environment_unavailable')
+              environmentId = authorized[0].id
+            }
+            return {
+              executionPolicy: { mode: 'fixed', environment_id: environmentId },
+              modelPolicy: { mode: 'fixed', model: runnerModelIdentity(defaults[0]) },
+            }
+          },
+        }
+      : {}),
     ...(agentResourceApi
       ? {
           supportsExistingAgentSelection: true,
+          async createTemplateAgent(agent, namespace, routing) {
+            const created = await agentResourceApi.createAgent({
+              ...routing,
+              name: `template-${crypto.randomUUID()}`,
+              displayName: agent.name,
+              namespace,
+              runtime: agent.runtime === 'codex' ? 'Codex' : 'ClaudeCode',
+              systemPrompt: agent.systemPrompt,
+              capabilityMode: 'follow_device',
+              model: { name: '' },
+              skills: [],
+              plugins: [],
+              mcpServers: {},
+            })
+            return { id: String(created.id), name: agent.name }
+          },
+          async readTemplateAgent(teamId) {
+            const agent = await agentResourceApi.getAgent(teamId)
+            if (agent.botCount && agent.botCount > 1)
+              throw new Error(
+                'Multi-Bot Agents cannot be represented by a native template definition'
+              )
+            if (!agent.runtime) throw new Error('template_agent_runtime_unsupported')
+            return {
+              name: agent.displayName || agent.name,
+              runtime: agent.runtime === 'Codex' ? 'codex' : 'claude_code',
+              systemPrompt: agent.systemPrompt,
+              capabilityDescription: '',
+            }
+          },
           renderAgentCreator({
             projectId,
             namespace,

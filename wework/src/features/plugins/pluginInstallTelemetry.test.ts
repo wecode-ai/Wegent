@@ -1,10 +1,10 @@
-import { describe, expect, test } from 'vitest'
-import type { InstalledPlugin } from '@/types/api'
 import { subscribeBusinessEvents } from '@/telemetry/businessEvents'
 import { subscribeOperationResults } from '@/telemetry/operationBus'
+import type { InstalledPlugin } from '@/types/api'
+import { describe, expect, test } from 'vitest'
 import {
-  recordPluginInstallationAccepted,
   reconcilePluginInstallation,
+  recordPluginInstallationAccepted,
 } from './pluginInstallTelemetry'
 
 function plugin(id: string, state: 'pending' | 'installed' | 'failed'): InstalledPlugin {

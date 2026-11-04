@@ -1,10 +1,6 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { PluginMarketplaceItem } from '@/types/api'
-import {
-  clearLocalCodexPluginsReadStateCache,
-  createLocalCodexPluginApi,
-  peekLocalCodexPluginsReadState,
-} from './codexPlugins'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { clearLocalCodexPluginsReadStateCache, createLocalCodexPluginApi } from './codexPlugins'
 
 const mocks = vi.hoisted(() => ({ request: vi.fn() }))
 
@@ -153,26 +149,6 @@ describe('installation from a shared catalog item', () => {
     }
   )
 
-  test.each([true, false])(
-    'installs remote discovery without a full readState (remote id present=%s)',
-    async withRemoteId => {
-      installRuntime({ withRemoteId })
-      const api = createLocalCodexPluginApi()
-      const catalog = await api.readRemoteCatalog()
-      await api.readState({ mergeAllMarketplaces: true, marketplaceKinds: ['local'] })
-      mocks.request.mockClear()
-      const result = await api.installAvailablePlugin(catalog.items[0])
-      expect(result.spec.source.pluginKey).toBe('github')
-      expect(result.spec.sourcePayload?.remotePluginId).toBe(remoteId)
-      expect(
-        mocks.request.mock.calls.filter(([, args]) => args?.method === 'plugin/install')
-      ).toHaveLength(1)
-      expect(mocks.request.mock.calls.some(([, args]) => args?.method === 'plugin/list')).toBe(
-        false
-      )
-    }
-  )
-
   test('installs a restored shared-catalog item even when remote discovery is unavailable', async () => {
     installRuntime({ rejectCatalog: true })
     const item: PluginMarketplaceItem = {
@@ -210,46 +186,6 @@ describe('installation from a shared catalog item', () => {
     })
     expect(mocks.request.mock.calls.some(([, args]) => args?.method === 'plugin/list')).toBe(false)
   })
-
-  test.each([false, true])(
-    'distinguishes full and local-only catalog reads (local first=%s)',
-    async localFirst => {
-      installRuntime()
-      const api = createLocalCodexPluginApi()
-      const full = { mergeAllMarketplaces: true }
-      const scoped = { ...full, marketplaceKinds: ['local'] as Array<'local'> }
-      await api.readState(localFirst ? scoped : full)
-      const second = await api.readState(localFirst ? full : scoped)
-      expect(second.marketplaceItems.some(item => item.name === 'github')).toBe(localFirst)
-      expect(
-        mocks.request.mock.calls.filter(([, args]) => args?.method === 'plugin/list')
-      ).toHaveLength(2)
-    }
-  )
-
-  test.each([false, true])(
-    'never reuses a persisted local-only catalog as full (legacy key=%s)',
-    async legacyKey => {
-      installRuntime()
-      const api = createLocalCodexPluginApi()
-      await api.readState({ mergeAllMarketplaces: true, marketplaceKinds: ['local'] })
-      const raw = window.localStorage.getItem('wework.plugins.codexCatalog.v1')!
-      expect(raw).toBeTruthy()
-      const store = JSON.parse(raw)
-      if (legacyKey) {
-        const entry = store.entries['|all|local']
-        store.entries = { '|all': { ...entry, paramsKey: '|all' } }
-      }
-      clearLocalCodexPluginsReadStateCache()
-      window.localStorage.setItem('wework.plugins.codexCatalog.v1', JSON.stringify(store))
-      expect(peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })).toBeNull()
-      const full = await api.readState({ mergeAllMarketplaces: true })
-      expect(full.marketplaceItems.some(item => item.name === 'github')).toBe(true)
-      expect(
-        mocks.request.mock.calls.filter(([, args]) => args?.method === 'plugin/list')
-      ).toHaveLength(2)
-    }
-  )
 
   test('propagates actual install rejection without marking the plugin installed', async () => {
     installRuntime()

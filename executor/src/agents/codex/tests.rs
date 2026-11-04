@@ -1286,6 +1286,28 @@ fn mcp_form_elicitation_maps_enum_names_to_request_user_input_options() {
 }
 
 #[test]
+fn native_mcp_approval_preserves_its_exact_tool_arguments() {
+    let mut params = json!({
+        "serverName": "wework_stand_in", "mode": "form",
+        "message": "Allow the tool?", "requestedSchema": {"properties": {}},
+        "_meta": {"codex_approval_kind": "mcp_tool_call", "tool_title": "Wework: Send email", "tool_params": {
+            "from": "owner@example.com", "to": "sender@example.com",
+            "subject": "Re: Review", "text": "Complete reply\nFinal paragraph"
+        }}
+    });
+    let payload = mcp_server_elicitation_request_user_input_params(&params).unwrap();
+    assert_eq!(payload["approvalKind"], "mcp_tool_call");
+    assert_eq!(payload["toolTitle"], "Wework: Send email");
+    assert_eq!(payload["toolArguments"], params["_meta"]["tool_params"]);
+    assert_eq!(payload["questions"][0]["id"], "__mcp_approval");
+    params["_meta"]["codex_approval_kind"] = json!("other");
+    let payload = mcp_server_elicitation_request_user_input_params(&params).unwrap();
+    assert!(payload.get("toolArguments").is_none());
+    assert!(payload.get("toolTitle").is_none());
+    assert!(payload.get("approvalKind").is_none());
+}
+
+#[test]
 fn mcp_url_elicitation_is_visible_and_requires_explicit_consent() {
     let params = json!({
         "serverName": "codex_apps", "mode": "url",
