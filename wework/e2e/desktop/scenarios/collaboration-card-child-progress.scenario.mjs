@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { createLocalCollaborationProject, reloadMainWindow } from '../modules/workspace-flows.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
+import { waitForBoardValue } from '../modules/collaboration-board-flows.mjs'
 import { createDesktopScenario as createParentBoardScenario } from './collaboration-parent-board.scenario.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -52,14 +53,28 @@ export function createDesktopScenario(options) {
         0
       )
       const complete = async child => {
-        const current = await rpc('todos.get', { project_id: project.id, task_id: child.id })
-        await rpc('todos.update', {
-          project_id: project.id,
-          task_id: child.id,
-          todo: { version: current.version, status: 'completed' },
+        await control.command('clickWhenEnabled', test(`cloud-todo-card-${child.id}`), {
+          timeoutMs: uiTimeoutMs,
+        })
+        await control.command('select', test('cloud-todo-detail-status'), { value: 'completed' })
+        await control.command('clickWhenEnabled', test('cloud-todo-save'), {
+          timeoutMs: uiTimeoutMs,
+        })
+        await waitForBoardValue(
+          async () =>
+            (await rpc('todos.get', { project_id: project.id, task_id: child.id })).status,
+          'completed',
+          'Completing a sub-issue through the UI must persist',
+          uiTimeoutMs
+        )
+        await control.command('clickWhenEnabled', test('cloud-todo-detail-close'), {
+          timeoutMs: uiTimeoutMs,
         })
       }
+      await control.command('clickWhenEnabled', progress, { timeoutMs: uiTimeoutMs })
+      await wait(test(`cloud-todo-card-${children[0].id}`), children[0].title)
       for (const child of children.slice(0, 2)) await complete(child)
+      await control.command('click', `${test('cloud-todo-board-breadcrumb')} > div > button`)
       await wait(progress, '子任务 2/5')
       await options.captureScreenshot(control, 'card-child-progress-2-of-5.png', 'body')
       assert.equal(
