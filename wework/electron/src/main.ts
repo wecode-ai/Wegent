@@ -529,6 +529,14 @@ app.on('web-contents-created', (_event, contents) => {
     })
   })
   contents.on('console-message', (_event, level, message, lineNumber, sourceId) => {
+    if (
+      process.env.VITE_WEWORK_E2E === 'true' &&
+      (message.startsWith('[Wework] Local workspace catalog') ||
+        message.startsWith('[Wework] Transcript order changed'))
+    ) {
+      // Preserve bounded metadata after the renderer's rolling log has expired.
+      console.info(redactLog(message).slice(0, 16_384))
+    }
     if (process.env.VITE_WEWORK_E2E === 'true' && message.startsWith('[desktop-e2e-key] ')) {
       console.info(redactLog(message).slice(0, 1024))
     }

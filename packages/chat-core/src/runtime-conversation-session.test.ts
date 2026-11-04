@@ -81,6 +81,64 @@ function setup() {
 }
 
 describe("shared runtime execution session", () => {
+  it("records reordered native identities without retaining private content", async () => {
+    const { session, client } = setup();
+    const history = page();
+    const source = history.turns![0];
+    source.items = [
+      {
+        id: "earlier",
+        position: 1,
+        type: "assistant_text",
+        content: "private earlier",
+        createdAt: "2026-09-17T00:00:01Z",
+      },
+      {
+        id: "later",
+        position: 2,
+        type: "assistant_text",
+        content: "private later",
+        createdAt: "2026-09-17T00:00:02Z",
+      },
+    ];
+    vi.mocked(client.getTranscript).mockResolvedValue(history);
+    const log = vi.spyOn(console, "debug").mockImplementation(() => {});
+    try {
+      session.start();
+      await session.reload();
+      vi.mocked(client.getTranscript).mockResolvedValue({
+        ...history,
+        turns: [
+          {
+            ...source,
+            items: source.items.map((item) => ({
+              ...item,
+              position: 3 - item.position!,
+            })),
+          },
+        ],
+      });
+      await session.reload();
+      const entry = log.mock.calls.find(
+        (call) => call[0] === "[Wework] Transcript order changed",
+      );
+      expect(entry).toBeDefined();
+      const evidence = JSON.parse(String(entry![1]));
+      expect(evidence.before.map((item: { id: string }) => item.id)).toEqual([
+        "earlier",
+        "later",
+      ]);
+      expect(evidence.after.map((item: { id: string }) => item.id)).toEqual([
+        "later",
+        "earlier",
+      ]);
+      expect(JSON.stringify(evidence)).not.toContain("private");
+    } finally {
+      session.stop();
+      log.mockRestore();
+    }
+  });
+
   it("replaces positions when the native thread changes instead of joining branches", async () => {
     const { session, client } = setup();
     vi.mocked(client.getTranscript).mockResolvedValueOnce({

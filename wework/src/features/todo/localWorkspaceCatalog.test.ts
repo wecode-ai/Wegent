@@ -5,7 +5,7 @@ import type {
   ProjectSpaceDetailServices,
 } from '@/features/workbench/workbenchServices'
 import { createLocalWorkspaceApi } from './localWorkspaceApi'
-import { loadWorkspaceCatalog } from './localWorkspaceCatalog'
+import { getLocalWorkspaceCatalogDiagnostics, loadWorkspaceCatalog } from './localWorkspaceCatalog'
 
 beforeEach(() => {
   vi.spyOn(console, 'debug').mockImplementation(() => undefined)
@@ -89,6 +89,10 @@ describe('local workspace catalog diagnostics', () => {
     ])
     expect(failures()[0].elapsedMs).toBeGreaterThanOrEqual(0)
     expect(JSON.stringify(vi.mocked(console.error).mock.calls)).not.toMatch(/private|https:/)
+    expect(
+      getLocalWorkspaceCatalogDiagnostics().find(row => row.catalog === 'navigation-workspaces')
+    ).toEqual(failures()[0])
+    expect(JSON.stringify(getLocalWorkspaceCatalogDiagnostics())).not.toMatch(/private|https:/)
   })
 
   it.each(['projects', 'workspaces'] as const)(

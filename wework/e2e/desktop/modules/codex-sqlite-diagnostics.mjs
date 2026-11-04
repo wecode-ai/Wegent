@@ -22,7 +22,8 @@ export async function collectCodexSqliteDiagnostics(directory, threadId) {
           if (name === 'thread_history_1.sqlite') {
             entry.recentItems = database
               .prepare(
-                `SELECT thread_id, turn_id, item_id, item_type,
+                `SELECT thread_id, turn_id, item_id, item_type, rollout_ordinal,
+                started_at_ms AS startedAtMs, completed_at_ms AS completedAtMs,
                 json_extract(item_json, '$.phase') AS phase,
                 length(item_json) AS jsonLength
                 FROM thread_items ORDER BY rollout_ordinal DESC LIMIT 40`
