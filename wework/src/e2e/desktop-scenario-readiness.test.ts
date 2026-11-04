@@ -53,19 +53,18 @@ test('Stand-in confirmation waits for navigation to mount before opening the own
   const mounted = barrier()
   const reachedOwner = new Error('Owner page is ready')
   const calls: Array<{ action: string; selector: string }> = []
-  const preferenceUpdates: unknown[] = []
   const scenario = createDesktopScenario({ workspacePath: '/fixture' })
   const verification = scenario
     .verify({
       async command(action: string, selector: string, options?: { value?: string }) {
         calls.push({ action, selector })
-        if (action === 'getElementCount') {
-          assert.equal(selector, '[data-testid="settings-button"]')
-          return 0
-        }
+        if (action === 'getElementCount' && selector === '[data-testid="settings-button"]')
+          return '0'
         if (action === 'setAppPreferences') {
           assert.equal(selector, 'body')
-          preferenceUpdates.push(JSON.parse(options?.value ?? 'null'))
+          assert.deepEqual(JSON.parse(options?.value ?? '{}'), {
+            experimentalFeaturesEnabled: true,
+          })
         }
         if (selector === '[data-testid="personal-stand-in-button"]') {
           if (action === 'click') throw new Error('Stand-in navigation is still mounting')
@@ -81,7 +80,10 @@ test('Stand-in confirmation waits for navigation to mount before opening the own
       (error: unknown) => error
     )
   assert.equal(await Promise.race([waiting.promise.then(() => 'waiting'), verification]), 'waiting')
-  assert.deepEqual(preferenceUpdates, [{ experimentalFeaturesEnabled: true }])
+  assert.deepEqual(calls.slice(0, 2), [
+    { action: 'getElementCount', selector: '[data-testid="settings-button"]' },
+    { action: 'setAppPreferences', selector: 'body' },
+  ])
   assert.equal(
     calls.some(call => call.selector === '[data-testid="stand-in-overview"]'),
     false
