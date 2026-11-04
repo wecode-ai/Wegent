@@ -321,29 +321,39 @@ def test_completed_todo_subtree_can_be_archived_listed_and_restored(
     }
 
 
-def test_incomplete_todo_subtree_cannot_be_archived(
+@pytest.mark.parametrize(
+    "parent_status", ["inbox", "in_progress", "in_review", "completed"]
+)
+def test_editable_todo_subtree_can_be_archived_regardless_of_status(
     test_client: TestClient,
     test_token: str,
     delivery_project: CloudProject,
+    parent_status: str,
 ) -> None:
     parent = test_client.post(
         f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
         headers=_auth(test_token),
-        json={"title": "Completed parent", "status": "completed"},
+        json={"title": "Editable parent", "status": parent_status},
     ).json()
-    test_client.post(
+    child = test_client.post(
         f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
         headers=_auth(test_token),
         json={"title": "Incomplete child", "parent_id": parent["id"]},
-    )
+    ).json()
 
     response = test_client.delete(
         f"/api/v1/loop-items/{parent['id']}",
         headers=_auth(test_token),
     )
 
-    assert response.status_code == 409
-    assert response.json()["detail"] == "Only completed TODO subtrees can be archived"
+    assert response.status_code == 204
+    restored = test_client.post(
+        f"/api/v1/loop-items/{parent['id']}/restore",
+        headers=_auth(test_token),
+    )
+    assert restored.status_code == 200
+    statuses = {item["id"]: item["status"] for item in restored.json()["items"]}
+    assert statuses == {parent["id"]: parent_status, child["id"]: child["status"]}
 
 
 def test_external_loop_items_forward_assignee_filters(
