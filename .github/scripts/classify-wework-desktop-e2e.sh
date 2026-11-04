@@ -229,18 +229,16 @@ cloud_segments=(
 # Balance measured checkpoint durations across four workers, longest first.
 # Run 39930854745: five ordinary Cloud shards predict 291-339 seconds.
 # Keep account auth separate from the plugin sync and 24-plugin composer fixtures.
-# Run 41696384418: isolate the real idle-update guard and rebalance the same eight runners.
-# Fixed-duration simulation reduces total execution from 2913s to 2876s, max 528s to 473s.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 cloud_shards=(
-  embedded-browser,cloud-project-creation,automation-lifecycle,browser-multi-tabs
+  plugin-uninstall-restart-recovery,plugin-runtime-path-recovery,plugin-legacy-upgrade,plugin-uninstall-lost-response,embedded-browser,cloud-project-creation,automation-lifecycle,browser-multi-tabs
   core-task-flow,goal-lifecycle,supervisor-lifecycle,priority-filter,cloud-worktree-create,plugin-toggle-persistence,cloud-worktree-tools,cloud-model-presets
-  plugin-write-coordination,plugin-auto-update,plugin-uninstall-restart-recovery,workspace-tabs,plugin-account-auth-oauth,resilience,plugin-account-auth-password,plugin-workspace-publication,plugin-account-auth-transfer,workspace-attachments,plugin-account-auth-coordination,cloud-device-lifecycle
+  plugin-auto-update,resilience,workspace-tabs,plugin-workspace-publication,plugin-write-coordination,workspace-attachments,cloud-device-lifecycle,plugin-account-auth-coordination
   model-routing,conversation-state,plugin-uninstall-unknown-result,cloud-model-recovery,rendering-extensions,telemetry-consent,plugin-registration-coordination
   window-lifecycle,plugin-uninstall-reinstall-race,project-automation,cloud-worktree-archive-restore,cloud-worktree-capability,cloud-worktree-queued-cancel,task-model-deletion
-  plugin-uninstall-lost-response
+  plugin-account-auth-password,plugin-account-auth-transfer,plugin-account-auth-oauth
   plugin-composer-long-list,plugin-collaboration-composer-isolation,plugin-runtime-route-refresh,plugin-background-sync-isolation,plugin-periodic-reconcile
-  plugin-runtime-path-recovery,plugin-account-auth-dws,plugin-account-auth-conversation,plugin-legacy-upgrade,plugin-account-auth-github
+  plugin-account-auth-dws,plugin-account-auth-conversation,plugin-account-auth-github
 )
 # Run 39930854745: eight ordinary Core shards predict 323-332 seconds.
 # Co-locate CLI and Electron preparation; keep the two latency benchmarks exclusive.

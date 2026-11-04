@@ -229,30 +229,6 @@ history and native-input assertions.
 Shards are balanced from observed CI durations; a new or
 materially slower checkpoint requires rebalancing instead of
 removing coverage or rerunning failures.
-
-Checkpoints that exercise idle maintenance must also establish real host idleness.
-The partial-inventory guard in `plugin-uninstall-lost-response` waits for the real
-automatic-update coordinator. Competing desktop instances can legitimately keep
-it queued; never lower the product's 75% CPU threshold to make the test run.
-The shared runner reads exclusive declarations from `checkpoints.mjs`:
-
-```mermaid
-flowchart LR
-    Registry[Checkpoint resource declarations] --> Runner[Shared runner]
-    Runner --> Exclusive[Run idle-host checkpoints alone]
-    Runner --> Parallel[At most four ordinary checkpoints]
-    Exclusive --> Gate[Real CPU and memory admission]
-```
-
-Cloud allocation retains eight runners and balances measured checkpoint durations
-around the exclusive phase. A fixed-duration model from `41696384418` reduces the
-execution sum from 2913 to 2876 seconds and the maximum from 528 to 473 seconds;
-these are estimates pending CI verification. An unchanged full-suite budget does
-not imply unchanged selective matrices: covered single-path matrices do not grow,
-but some multi-file combinations gain one runner. Such reallocation requires
-explicit acceptance under the repository's
-resource policy while retaining the complete target set.
-
 The Issue notification read scenario waits for the close button to disappear after
 closing a drawer before interacting with the board. Closing commits after the exit
 animation; clicking a covered card earlier can let the delayed close affect the

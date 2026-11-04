@@ -198,26 +198,6 @@ Lint、单元测试、平台 E2E 和桌面 E2E 的汇总 job 使用 `always() &&
 不新增 matrix job、不提高 10 秒单步超时，也不减少历史或原生输入断言。
 分片按 CI 实测耗时平衡；新增或明显变慢的 checkpoint
 必须重新校准分片，不能靠删覆盖或重跑失败用例来缩短关键路径。
-
-需要验证后台空闲任务的 checkpoint 还必须建立真实主机空闲的前提。
-`plugin-uninstall-lost-response` 的清单损坏保护会等待真实自动更新协调器；
-其他完整桌面实例持续占用 CPU 时，协调器应留队，不能为测试降低产品的 75% CPU 门槛。
-独占声明统一位于 `checkpoints.mjs`，由共享 runner 执行：
-
-```mermaid
-flowchart LR
-    Registry[checkpoint 资源声明] --> Runner[共享 runner]
-    Runner --> Exclusive[需要主机空闲的 checkpoint 独占执行]
-    Runner --> Parallel[普通 checkpoint 最多四个并发]
-    Exclusive --> Gate[真实 CPU 与内存准入检查]
-```
-
-云端分片维持八个 runner，并按实测耗时重排，以抵消独占阶段的成本。
-基于 `41696384418` 的固定耗时模型，执行段合计从 2913 秒降至 2876 秒，
-最长分片从 528 秒降至 473 秒；这是估算，仍需 CI 验证。
-已覆盖的单路径矩阵均不增加 runner，但部分多文件组合仍会多一个 runner，
-因此此类重分配必须按仓库资源规则取得明确接受，并保留完整目标集合。
-
 长场景按独立行为拆成 checkpoint，而不是只调整分片：
 同步 main 后新增的 `stand-in-project-enable` 尚无历史样本，与第 3 片的分身配置流程
 合并复用准备；该片现有 15 个任务，其余普通 Core 分片为 14 个。上述估算不含此新增场景。
