@@ -398,6 +398,7 @@ let activeReadStateDeviceId: string | null = null
 const inflightReadState = new Map<string, Promise<LocalCodexPluginsState>>()
 let installedReadRevision = 0
 let activeInstalledIdentity: string | undefined
+let lastVerifiedInstalledScope: InstalledCatalogScope | undefined
 let activeInventoryMutationVersion: number | undefined
 const installedCatalog = createVersionedInstalledCatalog<{
   marketplaces: CodexPluginMarketplaceEntry[]
@@ -434,6 +435,7 @@ function invalidateReadState(deviceId: string | null = null): void {
   activeInventoryMutationVersion = getPluginInventoryMutationVersion()
   installedCatalog.invalidate()
   activeInstalledIdentity = undefined
+  lastVerifiedInstalledScope = undefined
   cachedState = null
   cachedStateGeneration = nextReadStateGeneration++
   cachedCatalogGeneration = cachedStateGeneration
@@ -778,6 +780,7 @@ function resetInMemoryReadStateForDevice(deviceId: string): void {
   if (activeReadStateDeviceId === deviceId) return
   installedReadRevision += 1
   activeInstalledIdentity = undefined
+  lastVerifiedInstalledScope = undefined
   activeInventoryMutationVersion = getPluginInventoryMutationVersion()
   installedCatalog.invalidate()
   settingsScopeEpoch += 1
@@ -1022,7 +1025,35 @@ async function verifyInstalledReadCurrent(scope: InstalledCatalogScope): Promise
     throw new ExpiredPluginInventoryRequest()
   const auth = await readInstalledAuthStatus(scope)
   assertInstalledReadCurrent(scope)
-  if (auth.sha256 !== scope.account) throw new ExpiredPluginInventoryRequest()
+  if (auth.sha256 !== scope.account) {
+    lastVerifiedInstalledScope = undefined
+    throw new ExpiredPluginInventoryRequest()
+  }
+  lastVerifiedInstalledScope = scope
+}
+
+/** Display a verified fresh snapshot without making an auth probe its loading boundary. */
+async function freshVerifiedReadState(): Promise<CachedPluginsState | null> {
+  const scope = lastVerifiedInstalledScope
+  if (!cachedState || !scope?.runtimeInstanceId) return null
+  if (Date.now() - cachedStateAt >= READ_STATE_FRESH_TTL_MS) return null
+  const current = await ensureLocalExecutorStarted()
+  if (
+    current.runtimeInstanceId !== scope.runtimeInstanceId ||
+    current.deviceId?.trim() !== scope.deviceId
+  )
+    return null
+  try {
+    assertInstalledReadCurrent(scope)
+  } catch (error) {
+    if (error instanceof ExpiredPluginInventoryRequest) return null
+    throw error
+  }
+  return cachedState &&
+    Date.now() - cachedStateAt < READ_STATE_FRESH_TTL_MS &&
+    readStateMatchesDevice(cachedState, scope.deviceId)
+    ? cachedState
+    : null
 }
 
 function requestPluginInstalled(scope: InstalledCatalogScope, reuseRecent = false) {
@@ -2308,10 +2339,15 @@ async function readState(
   } = {}
 ): Promise<LocalCodexPluginsState> {
   if (!isDesktopRuntime()) return emptyState
+  const paramsKey = readStateParamsKey(params)
+  if (!params.refresh) {
+    const fresh = await freshVerifiedReadState()
+    if (fresh && cachedStateParamsKey === paramsKey)
+      return withFilteredMarketplaceItems(fresh, params.query)
+  }
   const scope = await captureInstalledReadScope()
   const deviceId = scope.deviceId
   hydrateReadStateCacheFromSession(deviceId)
-  const paramsKey = readStateParamsKey(params)
   if (
     !params.refresh &&
     cachedState &&
@@ -3308,6 +3344,15 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
     },
     async listInstalledPlugins(options) {
       if (!isDesktopRuntime()) return { items: [] }
+      if (!options?.refresh && !options?.requireComplete) {
+        const fresh = await freshVerifiedReadState()
+        if (fresh && !fresh.partial && fresh.installedPlugins.length > 0)
+          return {
+            items: fresh.installedPlugins,
+            deviceId: fresh.deviceId,
+            sourceReads: fresh.sourceReads,
+          }
+      }
       const scope = await captureInstalledReadScope()
       const mergeParams = { mergeAllMarketplaces: true as const }
       const peeked = peekLocalCodexPluginsReadState(mergeParams) || peekLocalCodexPluginsReadState()

@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   deviceId: 'device-a',
   runtimeInstanceId: 'runtime-a',
   account: 'account-a',
+  auth: vi.fn(),
   installed: vi.fn(),
   catalog: vi.fn(),
   uninstall: vi.fn(),
@@ -25,7 +26,7 @@ vi.mock('@/lib/runtime-environment', () => ({
   isElectronRuntime: () => true,
 }))
 vi.mock('./runtimeAuthStatus', () => ({
-  getLocalCodexAuthStatus: async () => ({ sha256: mocks.account }),
+  getLocalCodexAuthStatus: () => mocks.auth(),
 }))
 vi.mock('@/desktop/localExecutor', () => ({
   ensureLocalExecutorStarted: async () => ({
@@ -76,6 +77,7 @@ beforeEach(() => {
   mocks.deviceId = 'device-a'
   mocks.runtimeInstanceId = 'runtime-a'
   mocks.account = 'account-a'
+  mocks.auth.mockReset().mockImplementation(async () => ({ sha256: mocks.account }))
   mocks.installed.mockReset().mockResolvedValue(empty)
   mocks.catalog.mockReset().mockResolvedValue(empty)
   mocks.uninstall.mockReset().mockResolvedValue({})
@@ -85,6 +87,101 @@ beforeEach(() => {
 afterEach(() => clearPluginMarketplaceCache())
 
 describe('installed inventory identity and revision', () => {
+  const displays = {
+    marketplace: async () =>
+      (await createLocalCodexPluginApi().readState({ mergeAllMarketplaces: true }))
+        .installedPlugins,
+    installed: async () => (await createLocalCodexPluginApi().listInstalledPlugins()).items,
+  }
+  const warmDisplay = async () => {
+    mocks.installed.mockResolvedValueOnce(oldInventory)
+    await createLocalCodexPluginApi().readState({ mergeAllMarketplaces: true, refresh: true })
+  }
+
+  test.each(Object.entries(displays))(
+    '%s displays a fresh verified snapshot without a failing auth probe',
+    async (_name, display) => {
+      await warmDisplay()
+      mocks.auth.mockClear().mockRejectedValue(new Error('auth probe failed'))
+      expect((await display()).map(item => item.metadata.name)).toEqual(['old'])
+      expect(mocks.auth).not.toHaveBeenCalled()
+      expect(mocks.installed).toHaveBeenCalledOnce()
+      expect(mocks.catalog).toHaveBeenCalledOnce()
+    }
+  )
+
+  test('cached displays do not wait for a hung probe used by a strict reader', async () => {
+    await warmDisplay()
+    const probe = deferred<{ sha256: string }>()
+    mocks.auth.mockClear().mockReturnValue(probe.promise)
+    const strict = read()
+    await vi.waitFor(() => expect(mocks.auth).toHaveBeenCalledOnce())
+    try {
+      for (const display of Object.values(displays))
+        expect((await display()).map(item => item.metadata.name)).toEqual(['old'])
+      expect(mocks.auth).toHaveBeenCalledOnce()
+    } finally {
+      probe.resolve({ sha256: mocks.account })
+      await strict
+    }
+  })
+
+  test('an account change observed during refresh revokes the previous verified snapshot', async () => {
+    await warmDisplay()
+    const pending = deferred<unknown>()
+    mocks.installed.mockReturnValueOnce(pending.promise)
+    const rejected = expect(read()).rejects.toMatchObject({ name: 'ExpiredPluginInventoryRequest' })
+    await vi.waitFor(() => expect(mocks.installed).toHaveBeenCalledTimes(2))
+    mocks.account = 'account-b'
+    pending.resolve(oldInventory)
+    await rejected
+    mocks.auth.mockRejectedValue(new Error('new account probe failed'))
+    for (const display of Object.values(displays))
+      await expect(display()).rejects.toThrow('new account probe failed')
+  })
+
+  test.each(['marketplace refresh', 'installed refresh', 'complete inventory'])(
+    '%s still requires auth when a fresh display cache exists',
+    async mode => {
+      await warmDisplay()
+      mocks.auth.mockRejectedValue(new Error('auth probe failed'))
+      const api = createLocalCodexPluginApi()
+      const result =
+        mode === 'marketplace refresh'
+          ? api.readState({ mergeAllMarketplaces: true, refresh: true })
+          : api.listInstalledPlugins(
+              mode === 'installed refresh' ? { refresh: true } : { requireComplete: true }
+            )
+      await expect(result).rejects.toThrow('auth probe failed')
+    }
+  )
+
+  test.each(Object.entries(displays))(
+    '%s refuses the warm snapshot after device, runtime, session, uninstall or expiry changes',
+    async (_name, display) => {
+      for (const change of ['device', 'runtime', 'session', 'uninstall', 'expiry']) {
+        clearLocalCodexPluginsReadStateCache()
+        mocks.auth.mockImplementation(async () => ({ sha256: mocks.account }))
+        await warmDisplay()
+        const now = Date.now()
+        if (change === 'device') mocks.deviceId += '-new'
+        if (change === 'runtime') mocks.runtimeInstanceId += '-new'
+        if (change === 'session') clearPluginMarketplaceCache()
+        if (change === 'uninstall')
+          await createLocalCodexPluginApi().uninstallInstalledPlugin('old@wework-personal')
+        const clock = vi
+          .spyOn(Date, 'now')
+          .mockReturnValue(now + (change === 'expiry' ? 60_001 : 0))
+        mocks.auth.mockRejectedValue(new Error(`auth probe failed after ${change}`))
+        try {
+          await expect(display()).rejects.toThrow(`auth probe failed after ${change}`)
+        } finally {
+          clock.mockRestore()
+        }
+      }
+    }
+  )
+
   test('eleven strict readers and marketplace loading share one membership request', async () => {
     const pending = deferred<unknown>()
     mocks.installed.mockReturnValueOnce(pending.promise)
