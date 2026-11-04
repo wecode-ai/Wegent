@@ -332,6 +332,34 @@ mod tests {
     }
 
     #[test]
+    fn omit_mcp_binary_output_label_follows_api_key_name() {
+        // Recorded `bcec9abf` create Task: the Responses API request's
+        // `omit_mcp_binary_output: true` becomes the last label, after
+        // `api_key_name`.
+        let payload = build_task_crd(&TaskCrdInput {
+            omit_mcp_binary_output: true,
+            ..recorded_input()
+        });
+        let labels = payload["metadata"]["labels"].as_object().expect("labels");
+        assert_eq!(labels["omitMcpBinaryOutput"], serde_json::json!("true"));
+        let keys: Vec<&String> = labels.keys().collect();
+        let api_key_name = keys
+            .iter()
+            .position(|key| *key == "api_key_name")
+            .expect("api_key_name");
+        let omit = keys
+            .iter()
+            .position(|key| *key == "omitMcpBinaryOutput")
+            .expect("omitMcpBinaryOutput");
+        assert_eq!(omit, api_key_name + 1);
+        assert!(
+            build_task_crd(&recorded_input())["metadata"]["labels"]
+                .get("omitMcpBinaryOutput")
+                .is_none()
+        );
+    }
+
+    #[test]
     fn task_type_defaults_to_chat_without_git_workspace() {
         let payload = build_task_crd(&TaskCrdInput {
             task_type: None,

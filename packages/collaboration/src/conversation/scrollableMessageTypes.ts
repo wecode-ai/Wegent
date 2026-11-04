@@ -15,6 +15,7 @@ import type { MarkdownFileOpenOptions as WorkspaceFileOpenOptions } from '../mar
 import { type MessageListProps } from './MessageList'
 import type { ConversationSearchTarget } from './useConversationSearchTarget'
 import type { ConversationMessageTarget } from './turnNavigationTypes'
+import type { ConversationViewportAnchor } from './conversationViewportCache'
 
 import type { RequestUserInputPayload } from './RequestUserInputCard'
 import type { AssistantPlanOpenRequest } from './AssistantPlanCard'
@@ -32,18 +33,8 @@ export interface RuntimeTranscriptRange {
   end: number
 }
 
-export interface UserViewportAnchor {
-  messageId: string
-  item?: {
-    id: string
-    chunkIndex: string | null
-    anchorIndex: number
-    text: string
-  }
+export interface UserViewportAnchor extends ConversationViewportAnchor {
   element: HTMLElement
-  anchorIndex: number
-  offsetFromScrollerTop: number
-  textOffset: number | null
   scrollTopPx: number
 }
 

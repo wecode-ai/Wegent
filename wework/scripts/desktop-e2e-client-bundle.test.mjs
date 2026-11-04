@@ -95,6 +95,33 @@ test('the shared build loads plugin scenarios and decodes inventory without node
   )
 }, 30_000)
 
+test('the shared build loads renderer storage and performance recording without node_modules', async () => {
+  const fixture = await isolatedConsumer('renderer-storage')
+  await assert.rejects(access(join(fixture.consumer, 'node_modules')))
+  await assert.rejects(access(join(fixture.consumer, 'wework/node_modules')))
+  const script = `
+    import assert from 'node:assert/strict'
+    import { createRequire } from 'node:module'
+    import { pathToFileURL } from 'node:url'
+    assert.throws(() => createRequire(pathToFileURL(process.argv[2])).resolve('jszip'), { code: 'MODULE_NOT_FOUND' })
+    const scene = await import(pathToFileURL(process.argv[1]))
+    assert.equal(typeof scene.createDesktopScenario, 'function')
+    const performance = await import(pathToFileURL(process.argv[2]))
+    assert.equal(typeof performance.verifyPerformanceRecording, 'function')
+  `
+  await run(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      script,
+      join(fixture.desktop, 'scenarios/renderer-storage.scenario.mjs'),
+      join(fixture.desktop, 'modules/performance-recording.mjs'),
+    ],
+    fixture.options
+  )
+}, 30_000)
+
 test('an explicitly configured incomplete artifact never falls back to workspace dependencies', async () => {
   const fixture = await isolatedConsumer('incomplete')
   await rm(join(fixture.client, 'lz-string.cjs'))

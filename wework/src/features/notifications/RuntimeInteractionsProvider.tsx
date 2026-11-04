@@ -19,6 +19,7 @@ import { useNotificationTaskSource } from './NotificationTaskSourceContext'
 import {
   interactionResponse,
   interactionId,
+  interactionSource,
   interactionOriginalScheme,
   canReplyToInteraction,
   interactionAllowsNativeReply,
@@ -171,6 +172,7 @@ function RuntimeInteractionsState({
       await navigator.locks.request(historyKey, () => {
         const next = archiveInteraction(readInteractionHistory(historyKey), {
           id: item.id,
+          source: interactionSource(item),
           title: item.task.task.title,
           question: item.question,
           address: item.task.address,
@@ -186,6 +188,13 @@ function RuntimeInteractionsState({
   )
   useEffect(() => {
     const update = (event: StorageEvent) => {
+      if (event.key?.startsWith(acceptancePrefix) && event.newValue !== null) {
+        submittedRef.current = new Set(submittedRef.current).add(
+          event.key.slice(acceptancePrefix.length)
+        )
+        setSubmitted(submittedRef.current)
+        return
+      }
       if (event.key !== historyKey) return
       const next = readInteractionHistory(historyKey)
       setHistory(next)
@@ -194,7 +203,7 @@ function RuntimeInteractionsState({
     }
     window.addEventListener('storage', update)
     return () => window.removeEventListener('storage', update)
-  }, [historyKey])
+  }, [acceptancePrefix, historyKey])
 
   const refresh = useCallback(
     async (force = true) => {
@@ -243,6 +252,11 @@ function RuntimeInteractionsState({
             ...nextInventory,
           ].map(item => [item.key, item])
         )
+        // Discovery owns persisted pending state; live sources supply turn identity.
+        for (const item of current.items) {
+          const candidate = candidates.get(item.key)!
+          if (item.lifecycle) candidates.set(item.key, { ...candidate, lifecycle: item.lifecycle })
+        }
         const items = [...candidates.values()].filter(
           item =>
             (item.lifecycle?.interactionStatus ?? item.task.interactionStatus) ||
@@ -342,6 +356,9 @@ function RuntimeInteractionsState({
       item.lifecycle?.interactionStatus,
       item.task.interactionStatus,
       item.task.updatedAt,
+      item.lifecycle?.turn.id,
+      item.lifecycle?.turn.latestId,
+      item.lifecycle?.turn.phase,
     ])
   )
   useEffect(() => {
@@ -351,13 +368,14 @@ function RuntimeInteractionsState({
   }, [refresh, signature, source?.services?.runtimeWorkApi])
 
   const pending = useMemo(() => {
-    const visible = new Map([...inventory, ...(source?.items ?? [])].map(item => [item.key, item]))
+    const visible = new Map([...(source?.items ?? []), ...inventory].map(item => [item.key, item]))
     return Object.values(loaded)
       .flat()
       .filter(
         item =>
           !item.answered &&
           !submitted.has(item.id) &&
+          localStorage.getItem(acceptancePrefix + item.id) === null &&
           visible.has(item.task.key) &&
           (!item.payload.expiresAtUnixMs || item.payload.expiresAtUnixMs > Date.now())
       )
@@ -372,7 +390,7 @@ function RuntimeInteractionsState({
         }
       })
       .sort((a, b) => b.createdAt - a.createdAt)
-  }, [errors, inventory, loaded, source?.items, submitted])
+  }, [acceptancePrefix, errors, inventory, loaded, source?.items, submitted])
 
   useEffect(() => {
     saveInteractionState(cacheKey, pendingInteractionCache(pending))
@@ -386,6 +404,39 @@ function RuntimeInteractionsState({
       return next
     })
   }, [])
+  const markHandled = useCallback(
+    (id: string) => {
+      submittedRef.current = new Set(submittedRef.current).add(id)
+      setSubmitted(submittedRef.current)
+      setDraft(id, '')
+      setNoticeIds(current => current.filter(value => value !== id))
+      setErrors(current => {
+        const next = { ...current }
+        delete next[id]
+        return next
+      })
+    },
+    [setDraft]
+  )
+  const dismiss = useCallback(
+    async (item: RuntimeInteraction) => {
+      if (inFlight.current.has(item.id)) return
+      inFlight.current.add(item.id)
+      setBusy(new Set(inFlight.current))
+      try {
+        await navigator.locks.request(historyKey + ':' + item.id, async () => {
+          saveInteractionState(acceptancePrefix + item.id, true)
+          await archive(item, Date.now())
+          if (!mounted.current) return
+          markHandled(item.id)
+        })
+      } finally {
+        inFlight.current.delete(item.id)
+        if (mounted.current) setBusy(new Set(inFlight.current))
+      }
+    },
+    [acceptancePrefix, archive, historyKey, markHandled]
+  )
   const respond = useCallback(
     async (
       item: RuntimeInteraction,
@@ -478,16 +529,8 @@ function RuntimeInteractionsState({
           saveInteractionState(acceptancePrefix + item.id, true)
           await archive(item, Date.now())
           if (!mounted.current) return true
-          submittedRef.current = new Set(submittedRef.current).add(item.id)
-          setSubmitted(submittedRef.current)
+          markHandled(item.id)
           setReplyNotice(t('interactions.reply_success'))
-          setDraft(item.id, '')
-          setNoticeIds(current => current.filter(id => id !== item.id))
-          setErrors(current => {
-            const next = { ...current }
-            delete next[item.id]
-            return next
-          })
           // Refresh failure must never turn an accepted answer into a failed send.
           void sourceRef.current?.refresh?.().catch(console.error)
           void refresh()
@@ -515,7 +558,7 @@ function RuntimeInteractionsState({
         if (mounted.current) setBusy(new Set(inFlight.current))
       }
     },
-    [acceptancePrefix, archive, historyKey, refresh, setDraft, t]
+    [acceptancePrefix, archive, historyKey, markHandled, refresh, setDraft, t]
   )
 
   const open = useCallback(
@@ -535,15 +578,7 @@ function RuntimeInteractionsState({
     for (const item of pending) {
       if (records[item.id]) continue
       const alreadyViewed = focused && [...views.current.values()].includes(item.id)
-      const origin = item.task.task.runtimeHandle?.origin
-      const category =
-        item.project ||
-        (origin &&
-          typeof origin === 'object' &&
-          'initiatedBy' in origin &&
-          origin.initiatedBy === 'stand_in')
-          ? 'collaboration'
-          : 'tasks'
+      const category = interactionSource(item) === 'task' ? 'tasks' : 'collaboration'
       // An inactive window with system notifications disabled has delivered nothing.
       // Keep the request eligible for its in-app reminder when the user returns.
       const systemAvailable = isElectronRuntime() && preferences[category].system
@@ -673,6 +708,7 @@ function RuntimeInteractionsState({
       loading,
       setDraft,
       respond,
+      dismiss,
       refresh,
       open,
       notice,
@@ -688,6 +724,7 @@ function RuntimeInteractionsState({
       loading,
       setDraft,
       respond,
+      dismiss,
       refresh,
       open,
       notice,

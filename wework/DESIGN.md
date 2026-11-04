@@ -616,6 +616,39 @@ recipe closely:
   changes keep the grabbed thumb point under that pointer. Disable both row and
   text compensation during the drag; release samples the new reading position.
 
+切换任务只恢复该任务的视口，不播放滚动动画。离开时正在阅读历史内容，切回后保持同一
+文字在视口中的位置，主动回到底部后才继续跟随；离开时已经贴底，则切回后保持贴底。
+实时阅读和切换恢复共用消息、运行时条目与 Markdown 分块内的文字锚点。占位文本与实际
+Markdown 的字符数不同，不能把整段内容中的字符偏移当作稳定阅读位置。
+后台在同一段尾追加文字时，保留已采样文字的字符位置。
+
+Task switching restores the task's viewport without scroll animation. Preserve a
+reader's text position until they explicitly return to the bottom; restore bottom
+pinning when the task was already pinned. Live reading and saved restoration use
+the same text anchor within its message, runtime item and Markdown chunk. A
+whole-item character offset is unstable when chunks switch between raw Markdown
+placeholders and rendered markup.
+Appending to the anchored paragraph preserves its sampled character position.
+
+虚拟列表的排版输入来自稳定的正文样式和根字号，不能从当前已挂载的消息段落取样。
+计划预览等紧凑卡片有不同的行高；滚动导致它们成为首个段落时，不得清空整份列表的
+测量缓存，否则会形成估算、挂载和滚动相互触发的布局循环，使输入框也离开底部。
+
+Virtual layout inputs come from stable body styles and the root font size, never
+from whichever message paragraph happens to be mounted. Compact plan previews
+use another line height. Their appearance in the virtual range must not invalidate
+all row measurements and create an estimate, mount and scroll feedback loop that
+also displaces the composer.
+
+恢复任务或挂载 Markdown 时，行高在布局阶段用同一测量函数提交给 TanStack，再注册
+后续尺寸观察。原生滚动事件尚未结束不代表行高可以延迟到下一帧，否则短回复会先以
+流式估算高度出现，再把文字推回实际位置。
+
+Restore and Markdown mount commit actual row sizes through the same measurement
+function and TanStack writer in the layout phase, then register ongoing observation.
+An outstanding native scroll event must not defer the initial size until another
+frame and expose a streaming estimate in place of a short reply.
+
 跟随动画从实际滚动位置开始，持有连续位置计算下一帧；浏览器取整后的显示位置
 不能覆盖未完成的亚像素进度。内容缩短时将连续位置限制到新的实际底部，弹簧收敛后
 精确写入底部。用户输入、导航、暂停或会话切换均清除位置、速度和时钟。
@@ -2038,6 +2071,14 @@ implementation and WCAG conflict.
 - Native title-bar drag regions must not geometrically overlap visible
   interactive controls. Explicitly carve controls out of the drag region even
   when they declare `no-drag`.
+- 标题栏内绝对定位的拖拽区必须以标题栏为定位边界；调试面板展开时停用
+  底下的原生拖拽区，收起或关闭后恢复。
+- Anchor absolutely positioned title-bar drag regions to the title bar. Disable
+  underlying native drag regions while the debug panel is expanded, and restore
+  them when it collapses or closes.
+- 刷新期间收到的原生工作区菜单操作必须在工作区挂载后执行一次。
+- Replay native workspace-menu actions received during refresh once the workspace
+  mounts, without executing consumed actions again after a remount.
 - Respect macOS traffic-light safe areas, Windows controls, system scaling, and
   actual platform shortcuts.
 - Use the platform modifier in both behavior and visible shortcut labels.

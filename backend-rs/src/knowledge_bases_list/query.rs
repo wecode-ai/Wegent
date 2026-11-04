@@ -325,8 +325,12 @@ pub(crate) fn direct_access_predicate(ctx: &PermissionContext) -> String {
     let requirement = requirement_expr();
     let mut predicate = format!(
         "({requirement} = '' OR {requirement} = 'read' OR {requirement} = 'edit' AND ({})) \
+         AND ({}) \
          AND NOT {}",
         edit_conditions.join(" OR "),
+        // `apply_acl_deny_filter` unconditionally applies
+        // `exclude_hidden_replicas` before the RestrictedAnalyst deny.
+        crate::knowledge_bases_all_grouped::queries::hidden_replica_filter(),
         member_exists(&format!(
             "resource_members.entity_type = 'user' AND resource_members.entity_id = '{user_id}' \
              AND resource_members.`role` = 'RestrictedAnalyst'"

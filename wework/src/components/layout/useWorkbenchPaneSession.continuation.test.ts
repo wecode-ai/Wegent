@@ -26,7 +26,10 @@ import type { RuntimeConversationTurn, WorkbenchMessage } from '@/types/workbenc
 import { act, cleanup, fireEvent, renderHook, waitFor } from '@testing-library/react'
 import { createElement, StrictMode, type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
+import {
+  pendingRequestUserInputPayload,
+  pendingRequestUserInputResponses,
+} from './requestUserInputOverlay'
 import { useWorkbenchPaneSession } from './useWorkbenchPaneSession'
 
 const mocks = vi.hoisted(() => ({
@@ -1100,3 +1103,92 @@ describe('composer cancellation rollback', () => {
     }
   )
 })
+
+test.each([true, false])(
+  'dismisses a question group with one cancellation and restores all IDs on failure (%s)',
+  async accepted => {
+    const { result } = await renderSession()
+    mocks.cancel.mockResolvedValueOnce(accepted)
+    await act(async () => {
+      await result.current.ignoreRequestUserInput([
+        { kind: 'request_user_input', delivery: 'async', itemId: 'first' },
+        { kind: 'request_user_input', delivery: 'async', itemId: 'second' },
+      ])
+    })
+    expect(mocks.cancel).toHaveBeenCalledTimes(1)
+    expect(result.current.answeredRequestUserInputIds.has('item:first')).toBe(accepted)
+    expect(result.current.answeredRequestUserInputIds.has('item:second')).toBe(accepted)
+  }
+)
+
+test.each([true, false])(
+  'settles the whole async group after guidance without a turn ID (accepted=%s)',
+  async accepted => {
+    const { result } = await renderSession()
+    mocks.guide.mockResolvedValueOnce({ sent: accepted })
+    act(() => {
+      reconcileRuntimeConversationSnapshot(address, [
+        {
+          id: 'group-turn',
+          status: 'streaming',
+          items: ['first', 'second'].map(itemId => ({
+            id: itemId,
+            type: 'block',
+            block: {
+              id: itemId,
+              type: 'tool',
+              toolName: 'request_user_input',
+              status: 'done',
+              createdAt: 1,
+              renderPayload: {
+                kind: 'request_user_input',
+                delivery: 'async',
+                itemId,
+                questions: [{ id: 'question_1', question: `${itemId}?` }],
+              },
+            },
+          })),
+        },
+      ])
+      lifecycleStore.turnStarted(address, 'group-turn')
+    })
+    const response = {
+      itemId: 'first',
+      answers: {
+        question_1: { answers: ['One'] },
+        '["item:second","question_1",0]': { answers: ['Two'] },
+      },
+    }
+    const responses = pendingRequestUserInputResponses(response, result.current.messages)
+    await act(async () => {
+      expect(
+        await result.current.sendRequestUserInputResponse(response, {
+          requestUserInputResponses: responses,
+        })
+      ).toBe(accepted)
+    })
+    if (accepted) {
+      expect(result.current.messages.flatMap(message => message.blocks ?? [])).toMatchObject([
+        {
+          renderPayload: {
+            response: { itemId: 'first', answers: { question_1: { answers: ['One'] } } },
+          },
+        },
+        {
+          renderPayload: {
+            response: { itemId: 'second', answers: { question_1: { answers: ['Two'] } } },
+          },
+        },
+      ])
+    }
+    expect(mocks.guide).toHaveBeenCalledOnce()
+    expect(result.current.answeredRequestUserInputIds.has('item:first')).toBe(accepted)
+    expect(result.current.answeredRequestUserInputIds.has('item:second')).toBe(accepted)
+    expect(
+      pendingRequestUserInputPayload(
+        result.current.messages,
+        result.current.answeredRequestUserInputIds
+      ) === null
+    ).toBe(accepted)
+  }
+)
