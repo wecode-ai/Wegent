@@ -4,6 +4,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
+import { fileURLToPath } from 'node:url'
 
 // Included in the Windows workbench-mode checkpoint using real packaged resources.
 export async function verifyWindowsComponentPublication({ resources, environment, root }) {
@@ -13,6 +14,7 @@ export async function verifyWindowsComponentPublication({ resources, environment
     holder,
     `
 param([string]$Path, [int]$ReleaseAfterMs = 0)
+$ErrorActionPreference = 'Stop'
 $handle = [System.IO.File]::Open($Path, 'Open', 'Read', 'ReadWrite')
 try {
   [Console]::Out.WriteLine('held')
@@ -35,6 +37,7 @@ import { syncBuiltinESMExports } from 'node:module'
 import { basename, dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 const input = JSON.parse(process.argv[2])
+const { waitForNativeFileHolder } = await import(pathToFileURL(input.holderHelper).href)
 app.setPath('userData', join(input.root, 'electron'))
 const originalSymlink = fs.symlink
 let child
@@ -48,18 +51,7 @@ async function holdFile(file, releaseAfterMs = 0) {
     child.once('error', reject)
     child.once('close', code => code === 0 ? accept(code) : reject(new Error('Native holder failed')))
   })
-  child.stderr.resume()
-  await new Promise((accept, reject) => {
-    let output = ''
-    const timer = setTimeout(() => reject(new Error('Native file holder did not start')), 10000)
-    child.once('error', error => { clearTimeout(timer); reject(error) })
-    child.stdout.on('data', data => {
-      output += data.toString()
-      if (!output.includes(String.fromCharCode(10))) return
-      clearTimeout(timer)
-      output.trim() === 'held' ? accept() : reject(new Error('Invalid native holder acknowledgement'))
-    })
-  })
+  await waitForNativeFileHolder(child)
 }
 fs.symlink = async (source, target, type) => {
   if (basename(source).startsWith('.content-')) {
@@ -130,7 +122,15 @@ try {
   delete env.ELECTRON_RUN_AS_NODE
   const { stdout } = await promisify(execFile)(
     require('electron'),
-    [script, JSON.stringify({ root, resources, holder })],
+    [
+      script,
+      JSON.stringify({
+        root,
+        resources,
+        holder,
+        holderHelper: fileURLToPath(new URL('./native-file-holder.mjs', import.meta.url)),
+      }),
+    ],
     { env, timeout: 120000, maxBuffer: 1024 * 1024 }
   )
   const evidence = JSON.parse(stdout)
