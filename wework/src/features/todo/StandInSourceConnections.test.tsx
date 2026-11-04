@@ -412,3 +412,48 @@ it('keeps all groups when selected contacts replace the all-contacts scope', asy
     expect.objectContaining({ id: 'contact', kind: 'direct', profile: 'corp' }),
   ])
 })
+
+it('retains removable scope when an expired authorization is detected during search', async () => {
+  const role = {
+    ...newStandInRole('device'),
+    connections: [
+      {
+        providerId: 'example',
+        id: 'saved',
+        name: 'Saved group',
+        profile: 'corp',
+        kind: 'group',
+        policy: { automatic: true, askBeforeAct: true },
+      },
+    ],
+  }
+  const onChange = vi.fn()
+  const searchConnectionResources = vi.fn().mockRejectedValue({ code: 'connector_auth_required' })
+  render(
+    <StandInSourceConnections
+      provider={{
+        id: 'example',
+        displayName: 'Example',
+        resourceKinds: ['group'],
+        dependencies: [],
+        availability: { status: 'ready' },
+        authTarget: { pluginKey: 'example-plugin', connectorSlug: 'work-account' },
+      }}
+      role={role}
+      api={{ searchConnectionResources } as unknown as StandInExecutorApi}
+      deviceId="device"
+      localDeviceId="device"
+      disabled={false}
+      onChange={onChange}
+    />
+  )
+  const user = userEvent.setup()
+  await user.click(screen.getByTestId('stand-in-connection-example-add'))
+  await user.type(screen.getByTestId('stand-in-connection-example-query'), 'Other')
+  await user.click(screen.getByTestId('stand-in-connection-example-search'))
+  expect(await screen.findByTestId('stand-in-connection-example-authorization')).toHaveTextContent(
+    'Saved group'
+  )
+  await user.click(screen.getByTestId('stand-in-connection-example-remove-saved'))
+  expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ connections: [] }))
+})

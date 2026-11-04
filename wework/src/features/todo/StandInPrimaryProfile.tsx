@@ -59,9 +59,16 @@ export function StandInPrimaryProfile({
 }) {
   const { t } = useTranslation('common')
   const saved = settings.primary ?? { enabled: true, prompt: '', preferences: '' }
+  const defaultCollaboration = {
+    ...newStandInRole(settings.executionDeviceId).collaboration,
+    policy: { automatic: true, askBeforeAct: true, immediate: false },
+  }
   // Consolidate the old two-field profile without dropping either saved value.
   const original = {
     ...saved,
+    collaboration: saved.collaboration ?? defaultCollaboration,
+    calendar: saved.calendar,
+    connections: saved.connections ?? [],
     prompt: '',
     preferences: [saved.prompt, saved.preferences].filter(Boolean).join('\n\n'),
   }
@@ -104,13 +111,10 @@ export function StandInPrimaryProfile({
   }, [services.runtimeWorkApi, settings.executionDeviceId, reload])
   const [scheduleDirty, setScheduleDirty] = useState(false)
   const dirty = !dequal(original, draft) || scheduleDirty
+
   const role = {
     ...newStandInRole(settings.executionDeviceId, '@primary'),
     ...draft,
-    collaboration: draft.collaboration ?? {
-      ...newStandInRole(settings.executionDeviceId).collaboration,
-      policy: { automatic: true, askBeforeAct: true, immediate: false },
-    },
   }
   const navigation = useStandInPanelNavigation(!dequal(original, draft), saving, () =>
     setDiscard(true)
@@ -200,6 +204,11 @@ export function StandInPrimaryProfile({
             onCalendarViewChange={calendarViewChanged}
             onDetailViewChange={setConnectionDetailOpen}
             role={role}
+            savedConfiguration={{
+              connections: original.connections,
+              collaboration: original.collaboration,
+              calendar: original.calendar,
+            }}
             scheduling={{ userId: settings.userId, roleId: '@primary' }}
             onScheduleDirtyChange={setScheduleDirty}
             projects={projects}

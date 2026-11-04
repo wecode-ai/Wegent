@@ -22,6 +22,10 @@ Stand-in profiles support cloud models and custom models configured on the execu
 
 ## DingTalk and collaboration sources
 
+Connections groups sources under **Configured** and **Available**. Each source appears once with its receive scope, status, and next action; other sources remain visible. A configured scope does not mean intake is active: projects retain their scope summary when **Receiving is off**. Calendar has a separate **Scheduled work** section.
+
+Open a source to install its plugin or sign in, then choose the receive scope and handling. Sources on remote execution devices require authorization on that device. Existing scopes remain visible and removable when a source is unavailable. Scope and handling changes take effect after saving stand-in settings; verifying a mailbox account also requires saving those settings before receiving new mail.
+
 Select DingTalk in the profile's connection sources. By default, intake includes mentions from all groups and direct messages from all contacts accessible to the selected account, including future groups and contacts. Switch to filtered sources to search and select individual sources in a batch. Each source remains bound to the DingTalk account used when selecting it. Complete any required plugin installation or authentication before choosing sources.
 
 You can manually mention yourself in a connected group to delegate work. Stand-in replies always retain DingTalk's AI-send marker. Intake uses the provider marker to exclude your own AI messages and prevent reply loops.

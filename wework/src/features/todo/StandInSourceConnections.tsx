@@ -203,6 +203,33 @@ export function StandInSourceConnections({
       }}
     />
   )
+  const connectedScope = (
+    <div className="space-y-2">
+      {rows.map(row => (
+        <div
+          key={`${row.profile}:${row.kind}:${row.id}`}
+          className="flex flex-wrap items-center gap-2 border-b border-border/50 py-2"
+        >
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm">{row.name}</p>
+            <p className="text-xs text-text-muted">
+              {provider.resourceLabels?.[row.kind] ?? row.kind}
+            </p>
+          </div>
+          <button
+            type="button"
+            data-testid={`${prefix}-remove-${row.id}`}
+            aria-label={t('standIn.workspace.remove_connection', { name: row.name })}
+            disabled={disabled}
+            onClick={() => updateRows(rows.filter(value => value !== row))}
+            className="flex h-8 w-8 items-center justify-center rounded-md hover:bg-muted"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      ))}
+    </div>
+  )
   if (provider.availability.status === 'auth_required' || error?.code === 'connector_auth_required')
     return (
       <section className="space-y-4" data-testid={`${prefix}-authorization`}>
@@ -227,6 +254,7 @@ export function StandInSourceConnections({
         ) : (
           <p className="text-sm text-text-muted">{t('standIn.workspace.authorize_on_device')}</p>
         )}
+        {connectedScope}
         {authorization}
       </section>
     )
@@ -238,29 +266,7 @@ export function StandInSourceConnections({
         title={provider.displayName}
         description={t('standIn.workspace.message_connection_help')}
       />
-      {rows.map(row => (
-        <div
-          key={`${row.profile}:${row.kind}:${row.id}`}
-          className="flex flex-wrap items-center gap-2 border-b border-border/50 py-2"
-        >
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm">{row.name}</p>
-            <p className="text-xs text-text-muted">
-              {provider.resourceLabels?.[row.kind] ?? row.kind}
-            </p>
-          </div>
-          <button
-            type="button"
-            data-testid={`${prefix}-remove-${row.id}`}
-            aria-label={t('standIn.workspace.remove_connection', { name: row.name })}
-            disabled={disabled}
-            onClick={() => updateRows(rows.filter(value => value !== row))}
-            className="flex h-8 w-8 items-center justify-center rounded-md hover:bg-muted"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-      ))}
+      {connectedScope}
       {!showAdding && (
         <button
           type="button"
