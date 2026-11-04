@@ -386,10 +386,52 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       ).find(candidate => candidate.id === followUp.id)
       assert.equal(cleared.open_issues + cleared.closed_issues, 0)
       await bulkMilestone(control, localId)
-      await control.command('click', scoped('collaboration-tab-board'))
+      const child = await requestExecutor(
+        control,
+        'todos.create',
+        {
+          project_id: localProject.id,
+          todo: {
+            title: 'Cross-milestone child',
+            parent_id: localIssue,
+            milestone_id: followUp.id,
+            status: 'completed',
+            priority: 'none',
+            tags: [],
+          },
+        },
+        uiTimeoutMs
+      )
+      await reloadMainWindow(control, 'The cross-milestone child must survive reopening')
+      await control.command('clickWhenEnabled', scoped('collaboration-tab-board'), {
+        timeoutMs: workbenchReadyTimeoutMs,
+      })
       await control.command('waitFor', `${scoped('milestone-filter')}:enabled`)
       await control.command('select', scoped('milestone-filter'), { value: localId })
       await control.command('waitFor', scoped(`cloud-todo-card-${localIssue}`))
+      await control.command('waitFor', scoped(`collaboration-issue-children-${localIssue}`), {
+        text: '1/1',
+      })
+      assert.equal(
+        Number(await control.command('getElementCount', scoped(`cloud-todo-card-${child.id}`))),
+        0
+      )
+      await control.command(
+        'clickWhenEnabled',
+        scoped(`collaboration-issue-children-${localIssue}`)
+      )
+      await control.command('waitFor', scoped(`cloud-todo-board-breadcrumb-${localIssue}`))
+      assert.equal(await control.command('getValue', scoped('milestone-filter')), 'all')
+      await control.command('waitFor', scoped(`cloud-todo-card-${child.id}`), {
+        text: 'Cross-milestone child',
+      })
+      await captureScreenshot(control, 'milestones-08f-cross-milestone-children.png', 'body')
+      await control.command(
+        'clickWhenEnabled',
+        `${scoped('cloud-todo-board-breadcrumb')} > div > button`
+      )
+      await control.command('waitFor', scoped(`cloud-todo-card-${localIssue}`))
+      await control.command('select', scoped('milestone-filter'), { value: localId })
       await openMilestones(control)
       await deleteMilestone(control, localId)
       await captureScreenshot(control, 'milestones-09-local-deleted.png', 'body')

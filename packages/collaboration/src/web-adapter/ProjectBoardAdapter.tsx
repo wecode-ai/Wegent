@@ -131,6 +131,7 @@ interface ProjectBoardAdapterProps {
     settings?: import("../project-board/projectBoardViews").BoardViewSaveSettings,
   ): Promise<void>;
   onOpen(issue: CollaborationIssue): void;
+  onOpenChildren?(issue: CollaborationIssue): void;
   onDeleteIssue?(issue: CollaborationIssue): void;
   onMove(
     issue: CollaborationIssue,
@@ -179,6 +180,7 @@ export function ProjectBoardAdapter({
   onSaveViews,
   onMove,
   onOpen,
+  onOpenChildren,
   project,
   renderIssueCard,
   statuses,
@@ -654,7 +656,10 @@ export function ProjectBoardAdapter({
                 itemId={issue.id}
                 progress={progress}
                 translate={translate}
-                onOpen={() => controller.setCurrentParentId(issue.id)}
+                onOpen={() => {
+                  onOpenChildren?.(issue);
+                  controller.setCurrentParentId(issue.id);
+                }}
               />
             ) : null;
           const defaultCard = (

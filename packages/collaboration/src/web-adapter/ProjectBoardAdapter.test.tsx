@@ -126,7 +126,22 @@ describe('board card sub-issue progress', () => {
         )
       )
       expect(container.querySelector(selector)?.textContent).toBe('子任务 2/2')
+      const onOpenChildren = vi.fn(() =>
+        root.render(<ProjectBoardAdapter {...props} allIssues={props.issues} />)
+      )
+      act(() =>
+        root.render(
+          <ProjectBoardAdapter
+            {...props}
+            allIssues={props.issues}
+            issues={[props.issues[0]]}
+            onOpenChildren={onOpenChildren}
+          />
+        )
+      )
+      expect(container.querySelector('[data-testid="cloud-todo-card-child"]')).toBeNull()
       act(() => container.querySelector<HTMLButtonElement>(selector)!.click())
+      expect(onOpenChildren).toHaveBeenCalledWith(props.issues[0])
       expect(onOpen).not.toHaveBeenCalled()
       expect(container.querySelector(selector)).toBeNull()
       expect(container.textContent).toContain('Child')

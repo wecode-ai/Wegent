@@ -922,6 +922,7 @@ export function CollaborationApp({
                       project={project}
                       issues={filteredIssues}
                       allIssues={issues}
+                      onOpenChildren={() => setMilestoneFilter(null)}
                       members={members ?? []}
                       statuses={projectStatuses(project, messages, translate)}
                       taskBindings={taskBindings}
