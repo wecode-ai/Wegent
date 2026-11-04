@@ -93,7 +93,11 @@ function RequestUserInputForm({
   const [localAnswers, setLocalAnswers] = useState<Record<string, string>>(() =>
     initialAnswers(questions),
   );
-  const selectedAnswers = draftAnswers ?? localAnswers;
+  // Newly arriving questions receive their defaults without resetting drafts.
+  const selectedAnswers = draftAnswers ?? {
+    ...initialAnswers(questions),
+    ...localAnswers,
+  };
   const setSelectedAnswers = (
     update:
       | Record<string, string>

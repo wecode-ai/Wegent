@@ -2,7 +2,7 @@ import '@/i18n'
 
 import { openExternalUrl } from '@/lib/external-links'
 import type { WorkbenchMessage } from '@/types/workbench'
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { RequestUserInputCard, type RequestUserInputPayload } from './RequestUserInputCard'
@@ -766,4 +766,43 @@ test('keeps the native request when its owning message has no matching reply par
   render(<RequestUserInputCard messages={messages} payload={payload} onSubmit={vi.fn()} />)
   expect(screen.getByText('Native confirmation without bound text')).toBeVisible()
   expect(screen.queryByText('不能用于本次确认的旧回复')).not.toBeInTheDocument()
+})
+
+test('preserves a typed draft when another question arrives and submits both answers', async () => {
+  const onSubmit = vi.fn(async () => true)
+  const payload: RequestUserInputPayload = {
+    kind: 'request_user_input',
+    delivery: 'async',
+    itemId: 'first',
+    questions: [{ id: 'first', question: 'First?' }],
+  }
+  const { rerender } = render(<RequestUserInputCard payload={payload} onSubmit={onSubmit} />)
+  fireEvent.change(screen.getByTestId('request-user-input-custom-first'), {
+    target: { value: 'Draft answer' },
+  })
+  rerender(
+    <RequestUserInputCard
+      payload={{
+        ...payload,
+        questions: [
+          ...payload.questions!,
+          {
+            id: 'second',
+            question: 'Second?',
+            options: [{ label: 'Default answer' }],
+          },
+        ],
+      }}
+      onSubmit={onSubmit}
+    />
+  )
+  expect(screen.getByTestId('request-user-input-custom-first')).toHaveValue('Draft answer')
+  fireEvent.click(screen.getByTestId('request-user-input-submit-button'))
+  await waitFor(() =>
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        answers: { first: { answers: ['Draft answer'] }, second: { answers: ['Default answer'] } },
+      })
+    )
+  )
 })

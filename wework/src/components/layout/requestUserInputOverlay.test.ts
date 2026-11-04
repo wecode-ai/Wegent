@@ -314,3 +314,42 @@ describe('pendingRequestUserInputPayload', () => {
     expect(pendingRequestUserInputPayload(messages)).toBeNull()
   })
 })
+
+test('keeps consecutive async calls in arrival order with stable, distinct question IDs', () => {
+  const first = {
+    kind: 'request_user_input',
+    delivery: 'async',
+    itemId: 'first',
+    questions: [{ id: 'question_1', question: 'First?' }],
+  }
+  const second = {
+    kind: 'request_user_input',
+    delivery: 'async',
+    itemId: 'second',
+    questions: [{ id: 'question_1', question: 'Second?' }],
+  }
+  const message = (payload: typeof first) =>
+    ({
+      id: payload.itemId,
+      role: 'assistant',
+      content: '',
+      status: 'streaming',
+      blocks: [{ id: payload.itemId, type: 'tool', status: 'done', renderPayload: payload }],
+    }) as WorkbenchMessage
+  const before = pendingRequestUserInputPayload([message(first)])!
+  const after = pendingRequestUserInputPayload([message(first), message(second)])!
+  expect(after.itemId).toBe(before.itemId)
+  expect(after.questions?.map(question => question.question)).toEqual(['First?', 'Second?'])
+  expect(after.questions?.[0].id).toBe(before.questions?.[0].id)
+  expect(new Set(after.questions?.map(question => question.id)).size).toBe(2)
+  expect(
+    pendingRequestUserInputPayload([message(first), message(second)], new Set(['item:first']))
+  ).toEqual(second)
+  expect(
+    pendingRequestUserInputPayload([
+      message(first),
+      message(second),
+      { id: 'reply', role: 'user', content: 'One\nTwo', status: 'done' } as WorkbenchMessage,
+    ])
+  ).toBeNull()
+})
