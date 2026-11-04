@@ -158,7 +158,11 @@ Structured inspect results should include at least the page URL, title, viewport
 - `frameId`, `selector`, or other diagnostic locator data: useful for debugging, but the model should not depend on fragile selectors.
 - `warnings`: occlusion, invisibility, sensitive input, cross-frame limits, or other risks.
 
+Inspect recursively enters same-origin iframes. A node's `rect` uses top-level viewport CSS pixels and includes iframe borders and parent transform scaling; an action result's `target.rect` uses the same coordinate space, while `localRect` is relative to the element's own document. Coordinate clicks descend through iframes with the same mapping. Cross-origin iframes remain unavailable, and rotated or skewed transforms can only be approximated, which returns a `frame_transform_approximate` warning.
+
 Action tools should prefer `ref` values produced by `inspect`. If page re-rendering invalidates a `ref`, return a recoverable error that asks the model to inspect again instead of silently guessing a selector. Action results should describe the observed effect, such as value change, DOM change, URL change, or only dispatching an event without an observed effect.
+
+Failed actions return the requested `inspectId`, `index`, and `ref` together with the available inspect identifiers. An index from an older inspect returns `stale_inspect`, while a present but non-actionable node returns `element_not_actionable`, instead of collapsing every targeting failure into `element_not_found`.
 
 ## Task Binding
 

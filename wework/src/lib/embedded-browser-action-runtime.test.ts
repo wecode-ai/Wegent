@@ -7,8 +7,12 @@ const actionScript = readFileSync(
   'utf8'
 )
 
-function runAction(input: Record<string, unknown>) {
+function runAction(
+  input: Record<string, unknown>,
+  elementFromPoint?: (x: number, y: number) => Element | null
+) {
   document.elementFromPoint = ((x: number, y: number) => {
+    if (elementFromPoint) return elementFromPoint(x, y)
     return (
       Array.from(document.querySelectorAll<HTMLElement>('[data-test-hit-target]')).find(element => {
         const rect = element.getBoundingClientRect()
@@ -26,18 +30,45 @@ function mockRect(
   rect: { x: number; y: number; width: number; height: number }
 ) {
   element.dataset.testHitTarget = 'true'
-  element.getBoundingClientRect = () =>
-    ({
-      x: rect.x,
-      y: rect.y,
-      left: rect.x,
-      top: rect.y,
-      right: rect.x + rect.width,
-      bottom: rect.y + rect.height,
-      width: rect.width,
-      height: rect.height,
-      toJSON: () => ({}),
-    }) as DOMRect
+  element.getBoundingClientRect = () => rectValue(rect.x, rect.y, rect.width, rect.height)
+}
+
+function rectValue(x: number, y: number, width: number, height: number) {
+  return {
+    x,
+    y,
+    left: x,
+    top: y,
+    right: x + width,
+    bottom: y + height,
+    width,
+    height,
+    toJSON: () => ({}),
+  } as DOMRect
+}
+
+function mockFrame(
+  frame: HTMLIFrameElement,
+  options: {
+    rect: { x: number; y: number; width: number; height: number }
+    layoutWidth: number
+    layoutHeight: number
+    clientLeft?: number
+    clientTop?: number
+    clientWidth: number
+    clientHeight: number
+  }
+) {
+  Object.defineProperties(frame, {
+    offsetWidth: { configurable: true, value: options.layoutWidth },
+    offsetHeight: { configurable: true, value: options.layoutHeight },
+    clientLeft: { configurable: true, value: options.clientLeft ?? 0 },
+    clientTop: { configurable: true, value: options.clientTop ?? 0 },
+    clientWidth: { configurable: true, value: options.clientWidth },
+    clientHeight: { configurable: true, value: options.clientHeight },
+  })
+  frame.getBoundingClientRect = () =>
+    rectValue(options.rect.x, options.rect.y, options.rect.width, options.rect.height)
 }
 
 describe('embedded browser action runtime', () => {
@@ -147,5 +178,97 @@ describe('embedded browser action runtime', () => {
       height: 40,
     })
     expect(clicked).toBe(false)
+  })
+
+  test('clicks an element in a scaled iframe using top-level viewport coordinates', () => {
+    document.body.innerHTML = ''
+    const frame = document.createElement('iframe')
+    document.body.append(frame)
+    const childDocument = frame.contentDocument!
+    const button = childDocument.createElement('button')
+    button.textContent = '目标按钮：点击加一'
+    childDocument.body.append(button)
+    let clicked = 0
+    button.addEventListener('click', () => {
+      clicked += 1
+    })
+    mockFrame(frame, {
+      rect: { x: 100, y: 200, width: 324, height: 224 },
+      layoutWidth: 648,
+      layoutHeight: 448,
+      clientLeft: 4,
+      clientTop: 4,
+      clientWidth: 640,
+      clientHeight: 440,
+    })
+    button.getBoundingClientRect = () => rectValue(110, 92, 100, 40)
+    childDocument.elementFromPoint = ((x: number, y: number) => {
+      return x >= 110 && x <= 210 && y >= 92 && y <= 132 ? button : childDocument.body
+    }) as typeof childDocument.elementFromPoint
+    window.__WEWORK_BROWSER_AGENT__ = {
+      resolveInspectElement: () => ({
+        ok: true,
+        element: button,
+        ref: 'wk-mvp:inspect:frame-1:0:target',
+        inspectId: 'wk-inspect-1',
+        index: 0,
+        frameId: 'frame-1',
+        role: 'button',
+        name: '目标按钮：点击加一',
+        rect: { x: 110, y: 92, width: 100, height: 40 },
+        viewportRect: { x: 157, y: 248, width: 50, height: 20 },
+      }),
+    }
+
+    const result = runAction({ action: 'click', index: 0 }, (x, y) =>
+      x >= 100 && x <= 424 && y >= 200 && y <= 424 ? frame : document.body
+    )
+
+    expect(result.ok).toBe(true)
+    expect(result.target.rect).toEqual({ x: 157, y: 248, width: 50, height: 20 })
+    expect(result.target.localRect).toEqual({ x: 110, y: 92, width: 100, height: 40 })
+    expect(result.target.viewportRect).toEqual({ x: 157, y: 248, width: 50, height: 20 })
+    expect(clicked).toBe(1)
+  })
+
+  test('coordinate clicks descend through nested iframes', () => {
+    document.body.innerHTML = ''
+    const outerFrame = document.createElement('iframe')
+    document.body.append(outerFrame)
+    const outerDocument = outerFrame.contentDocument!
+    const innerFrame = outerDocument.createElement('iframe')
+    outerDocument.body.append(innerFrame)
+    const innerDocument = innerFrame.contentDocument!
+    const button = innerDocument.createElement('button')
+    button.textContent = '目标按钮：点击加一'
+    innerDocument.body.append(button)
+    let clicked = 0
+    button.addEventListener('click', () => {
+      clicked += 1
+    })
+    mockFrame(outerFrame, {
+      rect: { x: 100, y: 100, width: 400, height: 300 },
+      layoutWidth: 400,
+      layoutHeight: 300,
+      clientWidth: 400,
+      clientHeight: 300,
+    })
+    mockFrame(innerFrame, {
+      rect: { x: 50, y: 40, width: 200, height: 100 },
+      layoutWidth: 200,
+      layoutHeight: 100,
+      clientWidth: 200,
+      clientHeight: 100,
+    })
+    button.getBoundingClientRect = () => rectValue(10, 20, 100, 30)
+    outerDocument.elementFromPoint = (() => innerFrame) as typeof outerDocument.elementFromPoint
+    innerDocument.elementFromPoint = (() => button) as typeof innerDocument.elementFromPoint
+
+    const result = runAction({ action: 'click', x: 200, y: 170 }, () => outerFrame)
+
+    expect(result.ok, JSON.stringify(result.error)).toBe(true)
+    expect(result.target.rect).toEqual({ x: 160, y: 160, width: 100, height: 30 })
+    expect(result.target.viewportRect).toEqual({ x: 160, y: 160, width: 100, height: 30 })
+    expect(clicked).toBe(1)
   })
 })
