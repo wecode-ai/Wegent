@@ -171,7 +171,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'stand-in-action-confirmation': './scenarios/stand-in-action-confirmation.scenario.mjs',
   'stand-in-email': './scenarios/stand-in-email.scenario.mjs',
   'stand-in-list-confirmation': './scenarios/stand-in-list-confirmation.scenario.mjs',
-  'stand-in-profile-settings': './scenarios/stand-in-profile.scenario.mjs',
+  'stand-in-profile-settings': './scenarios/stand-in-profile-with-review.scenario.mjs',
   'stand-in-telemetry': './scenarios/telemetry-policy.scenario.mjs',
   'stand-in-model-catalog': './scenarios/stand-in-model-execution.scenario.mjs',
   'stand-in-processing': './scenarios/stand-in-processing.scenario.mjs',
