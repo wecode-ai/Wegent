@@ -47,7 +47,7 @@ export function ProjectSpacePickerMenu({
     triggerRef.current?.focus()
     onClose()
   }, [onClose, triggerRef])
-  useOutsideClick(containerRef, true, close, outsideRefs)
+  useOutsideClick(containerRef, true, onClose, outsideRefs)
 
   const localLabel = t('workbench.project_picker_local', '本地项目')
   const cloudLabel = t('workbench.project_picker_cloud', '云端项目')

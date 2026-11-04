@@ -218,15 +218,18 @@ describe('WorkItemComposerGuide', () => {
     expect(onSelectProject).toHaveBeenCalledExactlyOnceWith(pickerProjects[1])
   })
 
-  test('supports keyboard selection, ignores IME confirmation and restores focus on dismissal', async () => {
+  test('restores focus for keyboard dismissal and preserves native focus on outside clicks', async () => {
     const user = userEvent.setup()
     const onSelectProject = vi.fn()
     render(
-      <WorkItemComposerGuide
-        project={project}
-        projects={pickerProjects}
-        onSelectProject={onSelectProject}
-      />
+      <>
+        <WorkItemComposerGuide
+          project={project}
+          projects={pickerProjects}
+          onSelectProject={onSelectProject}
+        />
+        <button type="button">Outside action</button>
+      </>
     )
     const trigger = screen.getByTestId('project-space-context-pill')
     await user.click(trigger)
@@ -247,8 +250,15 @@ describe('WorkItemComposerGuide', () => {
 
     await user.click(trigger)
     await waitFor(() => expect(screen.getByTestId('project-space-picker-search')).toHaveFocus())
-    fireEvent.pointerDown(document.body)
+    await user.click(document.body)
     expect(screen.queryByTestId('work-item-context-menu')).not.toBeInTheDocument()
-    expect(trigger).toHaveFocus()
+    expect(document.body).toHaveFocus()
+
+    await user.click(trigger)
+    await waitFor(() => expect(screen.getByTestId('project-space-picker-search')).toHaveFocus())
+    const outsideAction = screen.getByRole('button', { name: 'Outside action' })
+    await user.click(outsideAction)
+    expect(screen.queryByTestId('work-item-context-menu')).not.toBeInTheDocument()
+    expect(outsideAction).toHaveFocus()
   })
 })
