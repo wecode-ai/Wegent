@@ -11,21 +11,49 @@ const LOGIN_TIMEOUT: Duration = Duration::from_secs(600);
 const PROMPT_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub(super) async fn logout() -> Result<Value, AppIpcError> {
-    if crate::services::git_credentials::environment().contains_key("GH_CONFIG_DIR") {
+    let (environment, managed) = authentication_environment();
+    if managed {
         return Ok(error("gh_auth_managed"));
     }
     let environment_auth = ["GH_TOKEN", "GITHUB_TOKEN"]
         .iter()
-        .any(|key| env::var_os(key).is_some_and(|value| !value.is_empty()));
-    Ok(logout::run(command, environment_auth).await)
+        .any(|key| environment.get(*key).is_some_and(|value| !value.is_empty()));
+    let result = logout::run(
+        |args| crate::services::github_cli::command(args, &environment),
+        environment_auth,
+    )
+    .await;
+    Ok(
+        if result["status"] == "ok" && authentication_context_changed(&environment) {
+            error("gh_auth_managed")
+        } else {
+            result
+        },
+    )
 }
 
 pub(super) fn is_target(payload: &Value) -> bool {
     payload["pluginKey"] == "github" && payload["connectorSlug"] == SLUG
 }
 
-fn command(args: &[&str]) -> Command {
-    crate::services::github_cli::command(args, &crate::process_environment::process_env(&[]))
+fn authentication_environment() -> (HashMap<String, String>, bool) {
+    let managed = crate::services::git_credentials::environment();
+    let config_dir = managed
+        .get("GH_CONFIG_DIR")
+        .cloned()
+        .or_else(|| env::var("GH_CONFIG_DIR").ok());
+    let mut environment = crate::process_environment::process_env(&[]);
+    // Ownership and profile must come from the same snapshot, even during sync.
+    environment.remove("GH_CONFIG_DIR");
+    if let Some(config_dir) = config_dir {
+        environment.insert("GH_CONFIG_DIR".to_owned(), config_dir);
+    }
+    (environment, managed.contains_key("GH_CONFIG_DIR"))
+}
+
+fn authentication_context_changed(environment: &HashMap<String, String>) -> bool {
+    let (current, managed) = authentication_environment();
+    managed || current.get("GH_CONFIG_DIR") != environment.get("GH_CONFIG_DIR")
 }
 
 fn error(code: &str) -> Value {
@@ -33,20 +61,20 @@ fn error(code: &str) -> Value {
 }
 
 pub(super) async fn health() -> Result<Value, AppIpcError> {
-    Ok(crate::services::github_cli::health(
-        &crate::process_environment::process_env(&[]),
-        Duration::from_secs(20),
-        "plugin",
-    )
-    .await)
+    Ok(health_with_environment(&crate::process_environment::process_env(&[])).await)
+}
+
+async fn health_with_environment(environment: &HashMap<String, String>) -> Value {
+    crate::services::github_cli::health(environment, Duration::from_secs(20), "plugin").await
 }
 
 pub(super) async fn start() -> Result<Value, AppIpcError> {
-    let current = health().await?;
+    let (environment, managed) = authentication_environment();
+    let current = health_with_environment(&environment).await;
     if current["status"] != "need_login" {
         return Ok(current);
     }
-    if crate::services::git_credentials::environment().contains_key("GH_CONFIG_DIR") {
+    if managed {
         return Ok(error("gh_auth_managed"));
     }
     let mut sessions = browser_auth_sessions().lock().await;
@@ -66,10 +94,11 @@ pub(super) async fn start() -> Result<Value, AppIpcError> {
     let task_state = Arc::clone(&state);
     let task_id = id.clone();
     let task = tokio::spawn(async move {
-        let result = match tokio::time::timeout(LOGIN_TIMEOUT, login(&task_state)).await {
-            Ok(result) => result,
-            Err(_) => json!({"status": "expired", "errorCode": "gh_login_timeout"}),
-        };
+        let result =
+            match tokio::time::timeout(LOGIN_TIMEOUT, login(&environment, &task_state)).await {
+                Ok(result) => result,
+                Err(_) => json!({"status": "expired", "errorCode": "gh_login_timeout"}),
+            };
         let mut result = result;
         result["sessionId"] = json!(task_id);
         *task_state.lock().await = result;
@@ -86,25 +115,33 @@ pub(super) async fn start() -> Result<Value, AppIpcError> {
     Ok(json!({"status": "preparing", "sessionId": id}))
 }
 
-async fn login(state: &Arc<Mutex<Value>>) -> Value {
+async fn login(environment: &HashMap<String, String>, state: &Arc<Mutex<Value>>) -> Value {
     // Non-TTY gh emits a verification URL/code instead of opening a browser.
     // The UI opens only the verified GitHub URL after an explicit user click.
     login_with_command(
-        command(&[
-            "auth",
-            "login",
-            "--hostname",
-            "github.com",
-            "--web",
-            "--git-protocol",
-            "https",
-        ]),
+        crate::services::github_cli::command(
+            &[
+                "auth",
+                "login",
+                "--hostname",
+                "github.com",
+                "--web",
+                "--git-protocol",
+                "https",
+            ],
+            environment,
+        ),
         state,
+        environment,
     )
     .await
 }
 
-async fn login_with_command(mut command: Command, state: &Arc<Mutex<Value>>) -> Value {
+async fn login_with_command(
+    mut command: Command,
+    state: &Arc<Mutex<Value>>,
+    environment: &HashMap<String, String>,
+) -> Value {
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(_) => return error("gh_start_failed"),
@@ -151,8 +188,17 @@ async fn login_with_command(mut command: Command, state: &Arc<Mutex<Value>>) -> 
     match child.wait().await {
         Ok(status) if status.success() => {
             state.lock().await["status"] = json!("verifying");
-            match health().await {
-                Ok(result) if result["status"] == "ok" => result,
+            if authentication_context_changed(environment) {
+                return error("gh_auth_managed");
+            }
+            match health_with_environment(environment).await {
+                result if result["status"] == "ok" => {
+                    if authentication_context_changed(environment) {
+                        error("gh_auth_managed")
+                    } else {
+                        result
+                    }
+                }
                 _ => error("gh_login_verification_failed"),
             }
         }
@@ -161,6 +207,9 @@ async fn login_with_command(mut command: Command, state: &Arc<Mutex<Value>>) -> 
 }
 
 use prompts::apply_prompt;
+
+#[cfg(all(test, unix))]
+mod context_tests;
 
 #[cfg(test)]
 mod tests {
@@ -174,7 +223,10 @@ mod tests {
             .stdin(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
         let state = Arc::new(Mutex::new(json!({"status":"preparing"})));
         let task_state = state.clone();
-        let task = tokio::spawn(async move { login_with_command(command, &task_state).await });
+        let task =
+            tokio::spawn(
+                async move { login_with_command(command, &task_state, &HashMap::new()).await },
+            );
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
                 let current = state.lock().await.clone();
@@ -198,10 +250,12 @@ mod tests {
         command.args(["-c", "printf 'Open this URL to continue in your web browser: https://github.com/login/device\\n' >&2; read answer"])
             .stdin(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
         let state = Arc::new(Mutex::new(json!({"status":"preparing"})));
-        let result =
-            tokio::time::timeout(Duration::from_secs(5), login_with_command(command, &state))
-                .await
-                .unwrap();
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            login_with_command(command, &state, &HashMap::new()),
+        )
+        .await
+        .unwrap();
         assert_eq!(result["errorCode"], "gh_login_code_missing");
         assert!(state.lock().await["verificationUrl"].is_null());
     }
@@ -217,7 +271,7 @@ mod tests {
             .kill_on_drop(true);
         let state = Arc::new(Mutex::new(json!({"status":"preparing"})));
         tokio::time::pause();
-        let result = login_with_command(command, &state).await;
+        let result = login_with_command(command, &state, &HashMap::new()).await;
         assert_eq!(result["errorCode"], "gh_login_prompt_timeout");
     }
 
