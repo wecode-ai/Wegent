@@ -163,6 +163,8 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'collaboration-templates': './scenarios/collaboration-templates.scenario.mjs',
   'collaboration-template-agents': './scenarios/collaboration-template-agents.scenario.mjs',
   'collaboration-template-lifecycle': './scenarios/collaboration-template-lifecycle.scenario.mjs',
+  'collaboration-template-app-device-routing':
+    './scenarios/collaboration-template-app-device-routing.scenario.mjs',
   'collaboration-local-agent-dispatch':
     './scenarios/collaboration-local-agent-dispatch.scenario.mjs',
   'stand-in-action-confirmation': './scenarios/stand-in-action-confirmation.scenario.mjs',
@@ -217,7 +219,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'collaboration-issue-archive': './scenarios/collaboration-issue-archive.scenario.mjs',
   'collaboration-board-sorting': './scenarios/collaboration-board-sorting.scenario.mjs',
   'collaboration-board-backlog': './scenarios/collaboration-board-backlog.scenario.mjs',
-  'collaboration-parent-board': './scenarios/collaboration-parent-board.scenario.mjs',
+  'collaboration-parent-board': './scenarios/collaboration-card-child-progress.scenario.mjs',
   'collaboration-board-move-recovery': './scenarios/collaboration-board-move-recovery.scenario.mjs',
   'plugin-development': './scenarios/plugin-development.scenario.mjs',
   'task-attachments': './scenarios/task-attachments.scenario.mjs',
@@ -239,6 +241,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-templates',
   'collaboration-template-lifecycle',
   'collaboration-template-agents',
+  'collaboration-template-app-device-routing',
   'board-transcript-followup',
   'collaboration-home-preload',
   'device-artifact-declaration',

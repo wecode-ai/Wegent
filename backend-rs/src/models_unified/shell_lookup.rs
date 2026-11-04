@@ -9,7 +9,6 @@ use serde_json::Value as Json;
 
 use super::aggregation::{get_user_groups, list_referenced_capabilities_by_namespace};
 use super::mysql::KindJsonRow;
-use crate::erp_provider::ErpProvider;
 
 /// The capability kind whose referenced payloads `find_shell_json` resolves.
 const SHELL_KIND: &str = "Shell";
@@ -37,8 +36,8 @@ const SHELL_JSON_GROUP_SQL: &str = "SELECT json FROM kinds \
 /// (the direct shell followed by its referenced Shell).
 pub(super) async fn get_shell_support_model<M, R: brz_redis::Redis>(
     mysql: &M,
-    erp: &dyn ErpProvider<R>,
     redis: Option<&R>,
+    resolvers: &crate::permissions::EntityResolvers<R>,
     shell_name: &str,
     user_id: i32,
 ) -> anyhow::Result<(Vec<String>, String)>
@@ -56,7 +55,7 @@ where
     if let Some(value) = referenced_shell_json(mysql, shell_name, user_id, "default").await? {
         return parse_shell_spec(&value, shell_name);
     }
-    for group_name in get_user_groups(mysql, erp, redis, user_id).await? {
+    for group_name in get_user_groups(mysql, redis, resolvers, user_id).await? {
         if let Some(value) = fetch_shell_json(
             mysql,
             SHELL_JSON_GROUP_SQL,

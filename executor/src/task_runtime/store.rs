@@ -991,7 +991,12 @@ impl LocalTaskStore {
             }
         }
         if assignee_changed || collaboration_group_changed {
-            cancel_active_executions(&transaction, task_id)?;
+            cancel_active_executions(
+                &transaction,
+                task_id,
+                "Assignee changed before the run finished",
+                "Stop the active Runtime task before changing its robot assignee",
+            )?;
             if let Some(group) = selected_collaboration_group.as_ref() {
                 dispatch_collaboration_group_assignment(
                     &transaction,
@@ -2574,8 +2579,9 @@ impl LocalTaskStore {
             )
             .optional()?
             .ok_or(TaskRuntimeError::TaskNotFound)?;
-        let incomplete_count: i64 = transaction.query_row(
-            "WITH RECURSIVE task_tree(id) AS (
+        let subtree_ids: Vec<String> = {
+            let mut statement = transaction.prepare(
+                "WITH RECURSIVE task_tree(id) AS (
                  SELECT id FROM loop_items
                  WHERE id = ?1 AND resource_type = 'task'
                    AND cloud_project_id = ?2 AND deleted_at IS NULL
@@ -2585,15 +2591,18 @@ impl LocalTaskStore {
                  WHERE child.resource_type = 'task'
                    AND child.cloud_project_id = ?2 AND child.deleted_at IS NULL
              )
-             SELECT COUNT(*) FROM loop_items
-             WHERE id IN (SELECT id FROM task_tree) AND status != 'completed'",
-            params![task_id, project_id],
-            |row| row.get(0),
-        )?;
-        if incomplete_count > 0 {
-            return Err(TaskRuntimeError::Invalid(
-                "Only completed task subtrees can be archived".to_owned(),
-            ));
+             SELECT id FROM task_tree",
+            )?;
+            let rows = statement.query_map(params![task_id, project_id], |row| row.get(0))?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        for id in subtree_ids {
+            cancel_active_executions(
+                &transaction,
+                &id,
+                "Issue was archived before the run finished",
+                "Stop the active Runtime task before archiving this Issue",
+            )?;
         }
         let archived_at = now();
         let updated = transaction.execute(
@@ -5285,6 +5294,8 @@ fn collaboration_manager_message(
 fn cancel_active_executions(
     connection: &Connection,
     item_id: &str,
+    note: &str,
+    active_error: &str,
 ) -> Result<(), TaskRuntimeError> {
     let delivered: i64 = connection.query_row(
         "SELECT COUNT(*) FROM loop_item_executions
@@ -5295,15 +5306,13 @@ fn cancel_active_executions(
         |row| row.get(0),
     )?;
     if delivered > 0 {
-        return Err(TaskRuntimeError::Invalid(
-            "Stop the active Runtime task before changing its robot assignee".to_owned(),
-        ));
+        return Err(TaskRuntimeError::Invalid(active_error.to_owned()));
     }
     let active: Vec<i64> = {
         let mut statement = connection.prepare(
             "SELECT id FROM loop_item_executions
              WHERE loop_item_id = ?1
-               AND (status IN ('pending_approval', 'queued')
+               AND (status IN ('pending_approval', 'queued', 'waiting_runtime')
                     OR (status = 'claimed' AND start_requested_at IS NULL))",
         )?;
         let rows = statement.query_map(params![item_id], |row| row.get(0))?;
@@ -5318,7 +5327,7 @@ fn cancel_active_executions(
         "UPDATE loop_item_executions
          SET status = 'cancelled', completed_at = ?1,
              observed_state = 'cancelled', sync_state = 'in_sync', observed_at = ?1,
-             execution_note = 'Assignee changed before the run finished',
+             execution_note = ?2,
              termination_reason = 'cancelled_before_start',
              version = version + 1, updated_at = ?1
          WHERE id IN ({placeholders})"
@@ -5326,10 +5335,11 @@ fn cancel_active_executions(
     connection.execute(
         &sql,
         rusqlite::params_from_iter(
-            std::iter::once(now.clone()).chain(active.iter().map(|id| id.to_string())),
+            [now.clone(), note.to_owned()]
+                .into_iter()
+                .chain(active.iter().map(|id| id.to_string())),
         ),
     )?;
-    let note = "Assignee changed before the run finished";
     for execution_id in active {
         update_agent_comment(connection, execution_id, "cancelled", note, &now)?;
     }
@@ -5610,6 +5620,10 @@ fn truncate(value: &str, max: usize) -> String {
         value.chars().take(max).collect()
     }
 }
+
+#[cfg(test)]
+#[path = "store_archive_tests.rs"]
+mod archive_tests;
 
 #[cfg(test)]
 mod tests {

@@ -1097,3 +1097,35 @@ it('does not authorize a current device that the destination cloud project has n
   expect(listEnvironments).toHaveBeenCalledWith('private-project')
   expect(createAgent).not.toHaveBeenCalled()
 })
+
+it('matches the current APP device through its app device id', async () => {
+  const local = {
+    listRunnerEnvironments: vi.fn(async () => [
+      {
+        id: 'electron-current',
+        device_key: 'electron-current',
+        models: [{ runtime: 'codex', provider: 'openai', model_id: 'default', is_default: true }],
+      },
+    ]),
+  } as unknown as Parameters<typeof createWeworkProjectAgentConfigurationHost>[1]
+  const listEnvironments = vi.fn(async () => [
+    {
+      id: '73',
+      device_key: 'app-record-73',
+      app_device_id: 'electron-current',
+      project_authorized: true,
+    },
+  ])
+  const host = createWeworkProjectAgentConfigurationHost(
+    { listEnvironments, createAgent: vi.fn() } as unknown as ReturnType<
+      typeof createAgentResourceApi
+    >,
+    local
+  )
+
+  await expect(
+    host.resolveTemplateAgentRouting!('codex', 'cloud', 'private-project')
+  ).resolves.toMatchObject({
+    executionPolicy: { mode: 'fixed', environment_id: '73' },
+  })
+})

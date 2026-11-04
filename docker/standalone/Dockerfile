@@ -38,6 +38,7 @@ RUN corepack enable \
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages ./packages
 COPY shared/assets/codex-models ./shared/assets/codex-models
+COPY shared/data ./shared/data
 COPY frontend ./frontend
 
 # App version injected at build time (e.g. "0.1.5")
@@ -79,6 +80,7 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages ./packages
 COPY shared/assets ./shared/assets
 COPY shared/protocol ./shared/protocol
+COPY shared/data ./shared/data
 COPY wework ./wework
 
 ARG WEWORK_APP_BASE_PATH="/wework"
