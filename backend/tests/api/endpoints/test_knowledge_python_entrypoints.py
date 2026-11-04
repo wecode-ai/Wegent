@@ -4,6 +4,8 @@
 
 """HTTP authentication contract for the restored Python knowledge entrypoints."""
 
+import json
+
 import pytest
 
 
@@ -26,8 +28,18 @@ def test_restored_entrypoint_requires_authentication(test_client, path):
 
 
 @pytest.mark.parametrize("allowed", [True, False])
+@pytest.mark.parametrize(
+    ("employee_id", "expected_suffix"),
+    [("220750", " 220750"), (220750, " 220750"), (True, "")],
+)
 def test_document_protection_is_private_and_includes_watermark(
-    test_client, test_db, test_user, test_token, allowed
+    test_client,
+    test_db,
+    test_user,
+    test_token,
+    allowed,
+    employee_id,
+    expected_suffix,
 ):
     from app.schemas.knowledge import KnowledgeBaseCreate, KnowledgeBaseUpdate
     from app.services.knowledge.knowledge_service import KnowledgeService
@@ -41,16 +53,71 @@ def test_document_protection_is_private_and_includes_watermark(
         test_user.id,
         KnowledgeBaseUpdate(allow_document_download=allowed),
     )
+    test_user.preferences = json.dumps({"employee_id": employee_id})
+    test_db.commit()
     response = test_client.get(
         f"/api/knowledge-bases/{kb_id}/document-protection",
         headers={"Authorization": f"Bearer {test_token}"},
+        params={"preview_watermark": "true"},
     )
     assert response.status_code == 200
     assert response.headers["cache-control"] == "private, no-store"
     assert response.json() == {
         "original_download_allowed": allowed,
-        "watermark_text": None if allowed else test_user.user_name,
+        "watermark_text": f"{test_user.user_name}{expected_suffix}",
     }
+
+
+@pytest.mark.parametrize(
+    ("allowed", "includes_watermark"),
+    [(True, False), (False, True)],
+)
+def test_document_protection_preserves_default_watermark_contract(
+    test_client,
+    test_db,
+    test_user,
+    test_token,
+    allowed,
+    includes_watermark,
+):
+    from app.schemas.knowledge import KnowledgeBaseCreate, KnowledgeBaseUpdate
+    from app.services.knowledge.knowledge_service import KnowledgeService
+
+    kb_id = KnowledgeService.create_knowledge_base(
+        test_db, test_user.id, KnowledgeBaseCreate(name="protection-default")
+    )
+    KnowledgeService.update_knowledge_base(
+        test_db,
+        kb_id,
+        test_user.id,
+        KnowledgeBaseUpdate(allow_document_download=allowed),
+    )
+
+    response = test_client.get(
+        f"/api/knowledge-bases/{kb_id}/document-protection",
+        headers={"Authorization": f"Bearer {test_token}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "original_download_allowed": allowed,
+        "watermark_text": test_user.user_name if includes_watermark else None,
+    }
+
+
+@pytest.mark.parametrize("employee_id", [None, "   "])
+def test_document_protection_watermark_falls_back_to_id_for_blank_name(
+    test_db, test_user, employee_id
+):
+    """A blank stored user_name must not produce an empty watermark tile."""
+    from app.api.endpoints.knowledge import _document_watermark_text
+
+    test_user.user_name = "   "
+    test_user.preferences = (
+        json.dumps({"employee_id": employee_id}) if employee_id is not None else "{}"
+    )
+    test_db.commit()
+    assert _document_watermark_text(test_user) == str(test_user.id)
 
 
 def test_my_permission_returns_owner_and_missing_contract(
