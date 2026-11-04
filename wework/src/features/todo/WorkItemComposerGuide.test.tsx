@@ -100,7 +100,8 @@ describe('WorkItemComposerGuide', () => {
       await user.click(trigger)
       expect(screen.getByTestId('work-item-context-menu')).toBeVisible()
 
-      await user.click(screen.getByTestId(actionTestId))
+      const navigationAction = screen.getByTestId(actionTestId)
+      await user.click(navigationAction)
 
       const navigatesToDetails = actionTestId === 'work-item-open-details'
       expect(onOpen).toHaveBeenCalledTimes(navigatesToDetails ? 1 : 0)
@@ -108,6 +109,7 @@ describe('WorkItemComposerGuide', () => {
       expect(onSelectProject).not.toHaveBeenCalled()
       expect(screen.queryByTestId('work-item-context-menu')).not.toBeInTheDocument()
       expect(trigger).toHaveAttribute('aria-expanded', 'false')
+      expect(navigationAction).toHaveFocus()
 
       await user.click(trigger)
       await user.click(screen.getByTestId('work-item-workspace-option-team-work'))
@@ -156,6 +158,7 @@ describe('WorkItemComposerGuide', () => {
     await user.click(screen.getByTestId('clear-project-space-context-button'))
     expect(onRemoveProject).toHaveBeenCalledOnce()
     expect(screen.queryByTestId('work-item-context-menu')).not.toBeInTheDocument()
+    expect(screen.getByTestId('project-space-context-pill')).toHaveFocus()
   })
 
   test('uses storage as part of project identity when IDs and names collide', async () => {
@@ -215,7 +218,7 @@ describe('WorkItemComposerGuide', () => {
     expect(onSelectProject).toHaveBeenCalledExactlyOnceWith(pickerProjects[1])
   })
 
-  test('supports keyboard selection, ignores IME confirmation and restores focus on Escape', async () => {
+  test('supports keyboard selection, ignores IME confirmation and restores focus on dismissal', async () => {
     const user = userEvent.setup()
     const onSelectProject = vi.fn()
     render(
@@ -239,6 +242,12 @@ describe('WorkItemComposerGuide', () => {
     expect(screen.getByTestId('project-space-picker-search')).toHaveValue('')
     await waitFor(() => expect(screen.getByTestId('project-space-picker-search')).toHaveFocus())
     await user.keyboard('{Escape}')
+    expect(screen.queryByTestId('work-item-context-menu')).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
+
+    await user.click(trigger)
+    await waitFor(() => expect(screen.getByTestId('project-space-picker-search')).toHaveFocus())
+    fireEvent.pointerDown(document.body)
     expect(screen.queryByTestId('work-item-context-menu')).not.toBeInTheDocument()
     expect(trigger).toHaveFocus()
   })
