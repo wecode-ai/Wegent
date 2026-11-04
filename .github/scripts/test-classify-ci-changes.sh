@@ -563,7 +563,6 @@ assert_desktop_comparison_preserves_coverage
 
 for installer_path in \
   wework/electron/electron-builder.config.cjs \
-  wework/electron/src/build-identity.test.ts \
   wework/e2e/desktop/windows-installer.e2e.mjs \
   wework/e2e/desktop/modules/windows-installer-ui.ps1; do
   assert_desktop_case "Installer changes select real Windows validation: $installer_path" \
@@ -574,6 +573,26 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}
 wework_desktop_macos_inspector_e2e=false
 wework_windows_installer_e2e=true' "$installer_path"
+done
+
+assert_installer_e2e_not_selected() {
+  local path="$1"
+  local output
+  output="$(GITHUB_OUTPUT=/dev/stdout "$desktop_classifier" "$path")"
+  if [[ "$output" == *"wework_windows_installer_e2e=true"* ]]; then
+    printf 'Shared packaging change must not trigger installer E2E: %s\n' "$path" >&2
+    exit 1
+  fi
+}
+
+for shared_path in \
+  wework/electron/package.json \
+  wework/electron/pnpm-lock.yaml \
+  wework/electron/src/build-identity.test.ts \
+  wework/electron/scripts/build-identity.cjs \
+  .github/actions/build-wework-windows-e2e/action.yml \
+  .github/scripts/run-windows-standard-user-process.ps1; do
+  assert_installer_e2e_not_selected "$shared_path"
 done
 
 assert_desktop_case "unbound project-space discovery is invoked by its core CI checkpoint" \
@@ -2847,6 +2866,7 @@ if [[ "$wework_windows_desktop_core_build_job" != *"runs-on: windows-latest"* ]]
   [[ "$wework_windows_desktop_core_build_job" != *"needs.changes.outputs.windows_installer_e2e == 'true'"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"run-windows-standard-user-process.ps1"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"windows-installer.e2e.mjs"* ]] ||
+  [[ "$wework_windows_desktop_core_build_job" != *"-c.compression=store"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"REDIS_WINDOWS_VERSION: 8.10.1"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"REDIS_WINDOWS_SHA256: 4e8f2f956ed92feadf3f64b4e137ed34026438821e692e7ae22c9bba5976607a"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"name: wework-desktop-windows-redis-e2e-tools"* ]]; then

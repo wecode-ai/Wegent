@@ -536,7 +536,9 @@ jobs:
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
         run: |
-          pnpm --dir wework/electron exec electron-builder --config electron-builder.config.cjs --win --x64 --prepackaged release/WeWork-win32-x64 --publish never
+          # This installer only feeds the E2E run, so trade package size for
+          # packaging time instead of using the release compression mode.
+          pnpm --dir wework/electron exec electron-builder --config electron-builder.config.cjs --win --x64 --prepackaged release/WeWork-win32-x64 --publish never -c.compression=store
           if ($LASTEXITCODE -ne 0) {
             throw "Failed to build the Windows installer"
           }

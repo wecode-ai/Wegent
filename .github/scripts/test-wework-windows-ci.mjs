@@ -141,16 +141,16 @@ for (const [name, eventName, action, labels, draft, label, core, installer] of [
 
 for (const [path, expected] of [
   ["wework/electron/electron-builder.config.cjs", true],
-  ["wework/electron/package.json", true],
-  ["wework/electron/pnpm-lock.yaml", true],
-  ["wework/electron/src/build-identity.test.ts", true],
-  ["wework/electron/scripts/build-identity.cjs", true],
-  ["wework/electron/scripts/verify-windows-migration-lock.cjs", true],
+  ["wework/electron/package.json", false],
+  ["wework/electron/pnpm-lock.yaml", false],
+  ["wework/electron/src/build-identity.test.ts", false],
+  ["wework/electron/scripts/build-identity.cjs", false],
+  ["wework/electron/scripts/verify-windows-migration-lock.cjs", false],
   ["wework/e2e/desktop/windows-installer.e2e.mjs", true],
   ["wework/e2e/desktop/modules/windows-installer-ui.ps1", true],
-  [".github/actions/build-wework-windows-e2e/action.yml", true],
-  [".github/scripts/run-windows-standard-user-process.ps1", true],
-  [".github/scripts/stop-windows-standard-user-processes.ps1", true],
+  [".github/actions/build-wework-windows-e2e/action.yml", false],
+  [".github/scripts/run-windows-standard-user-process.ps1", false],
+  [".github/scripts/stop-windows-standard-user-processes.ps1", false],
   ["wework/src/App.tsx", false],
   ["docs/zh/index.md", false],
   ["--all", true],
@@ -249,6 +249,11 @@ const buildBlock = workflow
   .split("  build-wework-desktop-windows-core-e2e:\n")[1]
   .split(/\n  [\w-]+:\n/)[0];
 assert.match(buildBlock, /--prepackaged release\/WeWork-win32-x64/);
+assert.match(
+  buildBlock,
+  /-c\.compression=store/,
+  "Installer E2E packaging must not pay the release compression cost",
+);
 assert.match(
   buildBlock,
   /name: Verify alternate-drive installation as a standard user\n        if: [^\n]+\n        shell: pwsh\n        env:\n          WEWORK_E2E_WINDOWS_INSTALLER: [^\n]+\n        run: \|\n          & \.\/\.github\/scripts\/run-windows-standard-user-process\.ps1 `\n            -FilePath \(Get-Command node\)\.Source `\n            -ArgumentList "wework\/e2e\/desktop\/windows-installer\.e2e\.mjs"/,

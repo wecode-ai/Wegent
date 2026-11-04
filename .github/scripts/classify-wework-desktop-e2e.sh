@@ -1623,18 +1623,14 @@ classify_wework_path() {
 classify_path() {
   local path="$1"
 
+  # Reserve the Windows packaging and standard-user verification cost for
+  # changes that can alter installer behavior. Shared packaging, build identity
+  # and helper-script changes stay covered by the existing release-startup
+  # checkpoint instead of triggering a full Windows build.
   case "$path" in
     wework/electron/electron-builder.config.cjs | \
-      wework/electron/package.json | \
-      wework/electron/pnpm-lock.yaml | \
-      wework/electron/src/build-identity* | \
-      wework/electron/scripts/build-identity.cjs | \
-      wework/electron/scripts/verify-windows-migration-lock* | \
       wework/e2e/desktop/modules/windows-installer-ui.ps1 | \
-      wework/e2e/desktop/windows-installer* | \
-      .github/actions/build-wework-windows-e2e/* | \
-      .github/scripts/run-windows-standard-user-process.ps1 | \
-      .github/scripts/stop-windows-standard-user-processes.ps1)
+      wework/e2e/desktop/windows-installer*)
       windows_installer_e2e=true
       ;;
   esac
