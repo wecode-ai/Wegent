@@ -318,6 +318,8 @@ export function createDesktopScenario({
       await wait('template-project-defaults', '新')
       await capture('01-preview', '产品全流程模板说明智能体负责人、自动分配和阶段标签')
       await click('template-use')
+      await wait('template-customize-main')
+      await click('template-customize-main')
       const leaderValue = await control.command('getValue', selector('template-role-main-role-0'))
       assert.ok(leaderValue.startsWith('agent:'), 'Default coordinator must be an agent')
       await control.command('select', selector('template-role-main-role-0'), {
