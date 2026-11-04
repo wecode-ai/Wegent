@@ -18043,7 +18043,11 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('code-comment-context-count')).toHaveTextContent('1')
   })
 
-  test('marks queued guidance failed when native runtime guidance fails', async () => {
+  test.each([
+    ['no active turn to guide', '当前回复已结束，请编辑后重新发送'],
+    ['Turn not found', '当前回复已结束，请编辑后重新发送'],
+    ['provider rejected guidance', 'provider rejected guidance'],
+  ])('marks queued guidance failed with its reason: %s', async (error, expected) => {
     let streamHandlers: ChatStreamHandlers = {}
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
       if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
@@ -18056,7 +18060,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     const guideRuntimeTask = vi.fn().mockResolvedValue({
       accepted: false,
       success: false,
-      error: 'no active turn to guide',
+      error,
     })
     const cancelRuntimeTask = vi.fn().mockResolvedValue({
       accepted: true,
@@ -18149,7 +18153,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() =>
       expect(screen.getByTestId('queued-messages')).toHaveTextContent('failed:继续修')
     )
-    expect(screen.getByTestId('queued-errors')).toHaveTextContent('引导发送失败')
+    expect(screen.getByTestId('queued-errors')).toHaveTextContent(expected)
     expect(screen.getByTestId('queued-notices')).not.toHaveTextContent('正在引导当前对话')
   })
 

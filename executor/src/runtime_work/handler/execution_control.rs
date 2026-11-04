@@ -365,16 +365,28 @@ impl RuntimeWorkRpcHandler {
             .and_then(|execution| execution.codex_turn.clone())
     }
 
-    pub(super) async fn wait_for_active_codex_turn(
+    pub(super) async fn wait_for_guidance_turn(
         &self,
         local_task_id: &str,
-    ) -> Option<ActiveCodexTurn> {
+    ) -> Option<(String, String)> {
+        use crate::runtime_work::lifecycle::{native_execution_state, NativeExecutionPhase};
+
+        // Native Goal continuations outlive the local request's execution control.
         for attempt in 0..=ACTIVE_CODEX_TURN_WAIT_ATTEMPTS {
-            if let Some(turn) = self.active_codex_turn(local_task_id) {
-                return Some(turn);
+            let (phase, thread_id, turn_id) = self.store.read_task(local_task_id, |link| {
+                if link.runtime != "codex" {
+                    return None;
+                }
+                let state = native_execution_state(link)?;
+                Some((state.phase, link.thread_id.clone(), state.turn_id))
+            })??;
+            if phase == NativeExecutionPhase::Running {
+                return Some((thread_id?, turn_id?));
             }
-            if !self.is_active_local_task(local_task_id)
-                || attempt == ACTIVE_CODEX_TURN_WAIT_ATTEMPTS
+            if !matches!(
+                phase,
+                NativeExecutionPhase::Starting | NativeExecutionPhase::Continuing
+            ) || attempt == ACTIVE_CODEX_TURN_WAIT_ATTEMPTS
             {
                 return None;
             }

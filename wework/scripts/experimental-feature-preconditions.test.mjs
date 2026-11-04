@@ -12,10 +12,13 @@ function createControl({ settingsVisible, enabled = false }) {
     readyCount: 1,
     profile: { experimentalFeaturesEnabled: enabled },
     toggles: 0,
+    writes: [],
     command: vi.fn(async (action, selector, options) => {
-      if (action === 'getElementCount') return settingsVisible ? 1 : 0
+      if (action === 'getElementCount') return String(settingsVisible ? 1 : 0)
       if (action === 'setAppPreferences') {
+        assert.equal(selector, 'body')
         Object.assign(control.profile, JSON.parse(options.value))
+        control.writes.push(control.profile)
         return
       }
       if (action === 'snapshot') return JSON.stringify({ testIds: [TOGGLE_TEST_ID] })
@@ -59,6 +62,8 @@ test('enables a restarted app with a new profile through the retained controller
     control.command.mock.calls.filter(([action]) => action === 'setAppPreferences').length,
     2
   )
+  assert.equal(control.writes.length, 2)
+  assert.notEqual(control.writes[0], control.writes[1])
 })
 
 test('rechecks a preference changed externally in the same renderer', async () => {

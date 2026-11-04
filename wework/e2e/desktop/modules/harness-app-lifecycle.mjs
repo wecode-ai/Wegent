@@ -187,7 +187,7 @@ export async function verifyHarnessLifecycle(
     'Making the Smart app private left it listed in the public marketplace'
   )
   await waitForMissing(control, '[data-testid="smart-app-share-dialog"]', uiTimeoutMs)
-  await control.command('click', sharedVisibilitySelector)
+  await control.command('clickWhenEnabled', sharedVisibilitySelector)
   await control.command('waitFor', '[data-testid="smart-app-share-scope-private"]', {
     timeoutMs: uiTimeoutMs,
   })
