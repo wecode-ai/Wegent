@@ -9,6 +9,7 @@ import { ADMIN_USER, REGULAR_USER } from '../../config/test-users'
 
 async function selectKnowledgeTeam(page: Page, groupId: string) {
   await page.getByTestId('knowledge-team-filter').click()
+  await page.getByTestId('knowledge-team-search').fill(groupId.replace(/^group-/, ''))
   await page.getByTestId('knowledge-team-option-' + groupId).click()
 }
 
