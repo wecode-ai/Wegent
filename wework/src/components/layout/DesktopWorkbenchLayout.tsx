@@ -1031,7 +1031,7 @@ export function DesktopWorkbenchLayout({
         state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
       }
       activeItem={activeItem}
-      taskView={taskView}
+      taskView={taskBoardOpen ? 'default-work-items' : 'workbench'}
       localHarnessSessions={localHarnessSessions}
       activeLocalHarnessSessionId={activeLocalHarnessSessionId}
       collapsed={collapsed}

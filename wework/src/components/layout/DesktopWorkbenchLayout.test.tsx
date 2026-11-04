@@ -2473,6 +2473,41 @@ describe('DesktopWorkbenchLayout', () => {
     }
   })
 
+  test.each(['board', 'priority', 'collapse-read'])(
+    'uses the visible task view for %s after opening stand-in from the task board',
+    async action => {
+      render(<DesktopWorkbenchLayout {...baseProps} />)
+      await userEvent.click(screen.getByTestId('runtime-priority-filter-button'))
+      expect(screen.getByTestId('task-view-board-transition')).toBeInTheDocument()
+      await userEvent.click(screen.getByTestId('personal-stand-in-button'))
+      expect(screen.getByTestId('personal-stand-in-button')).toHaveAttribute('aria-current', 'page')
+      expect(screen.queryByTestId('task-view-board-transition')).not.toBeInTheDocument()
+      expect(screen.getByTestId('runtime-priority-filter-button')).toHaveAttribute(
+        'aria-pressed',
+        'false'
+      )
+
+      const onNavigate = vi.fn((event: Event) => event.preventDefault())
+      window.addEventListener(WORKSPACE_NAVIGATION_EVENT, onNavigate)
+      try {
+        await userEvent.click(screen.getByTestId('runtime-task-view-menu-button'))
+        await userEvent.click(screen.getByTestId(`runtime-task-view-${action}`))
+        if (action === 'board') {
+          expect(onNavigate).toHaveBeenCalledTimes(1)
+          expect((onNavigate.mock.calls[0][0] as CustomEvent).detail).toEqual({
+            kind: 'board',
+            contentRoute: '/todo?projectId=default-work-items',
+          })
+        } else {
+          expect(onNavigate).not.toHaveBeenCalled()
+          expect(window.location.pathname).toBe('/stand-in')
+        }
+      } finally {
+        window.removeEventListener(WORKSPACE_NAVIGATION_EVENT, onNavigate)
+      }
+    }
+  )
+
   test('does not open a direct stand-in route while experimental features are disabled', () => {
     experimentalFeatures.enabled = false
     const original = window.location.href
