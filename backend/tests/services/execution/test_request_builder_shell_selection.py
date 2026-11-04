@@ -55,6 +55,7 @@ def selection_builder(test_db, mocker):
     def skill(name, skill_id, owner, shells, prompt):
         return SimpleNamespace(
             id=skill_id,
+            name=name,
             user_id=owner,
             namespace="default",
             json={
@@ -74,6 +75,16 @@ def selection_builder(test_db, mocker):
         1279: skill("document", 1279, 0, ["Chat", "ClaudeCode", "Codex"], "Documents"),
         1336: skill("browser", 1336, 7, ["ClaudeCode"], "Native CDP browser"),
     }
+    interactive = skill(
+        "interactive", 1500, 0, ["Chat", "Agno", "ClaudeCode"], "Ask a question"
+    )
+    interactive.json["spec"]["mcpServers"] = {
+        "wegent-interactive-form-question": {
+            "type": "streamable-http",
+            "url": "https://example.test/mcp/interactive-form-question/sse",
+        }
+    }
+    skills[interactive.id] = interactive
     mocker.patch(
         "app.services.execution.request_builder.Team.model_validate",
         return_value=SimpleNamespace(spec=SimpleNamespace(collaborationModel="solo")),
@@ -94,7 +105,9 @@ def selection_builder(test_db, mocker):
     mocker.patch.object(
         builder,
         "_find_skill_by_ref",
-        side_effect=lambda *args, skill_id=None, **kwargs: skills.get(skill_id or 1286),
+        side_effect=lambda name, *args, skill_id=None, **kwargs: skills.get(
+            skill_id or (interactive.id if name == interactive.name else 1286)
+        ),
     )
     for method, value in {
         "_get_bot_for_subtask": bot,
@@ -125,6 +138,7 @@ def selection_builder(test_db, mocker):
         members=(),
         preload_ref=None,
         missing_browser=False,
+        clarification=False,
     ):
         if missing_browser:
             del skills[1286]
@@ -162,9 +176,45 @@ def selection_builder(test_db, mocker):
             message="List my skills",
             preload_skills=selected,
             user_selected_skills=selected_names,
+            enable_clarification=clarification,
         )
 
-    return SimpleNamespace(build=build, builder=builder, bot=bot, team=team, user=user)
+    return SimpleNamespace(
+        build=build,
+        builder=builder,
+        bot=bot,
+        team=team,
+        user=user,
+        interactive=interactive,
+    )
+
+
+def test_codex_clarification_uses_existing_builtin_skill_without_changing_it(
+    selection_builder,
+):
+    skill = selection_builder.interactive
+    stored_spec = deepcopy(skill.json["spec"])
+
+    result = selection_builder.build("Codex", clarification=True)
+
+    assert "interactive" in result.preload_skills
+    assert result.skill_refs["interactive"]["skill_id"] == skill.id
+    assert "Codex" in result.bot[0]["skill_refs"]["interactive"]["bind_shells"]
+    assert any(
+        server.get("url") == "https://example.test/mcp/interactive-form-question/sse"
+        for server in result.bot[0]["mcp_servers"]
+    )
+    assert skill.json["spec"] == stored_spec
+
+
+def test_codex_respects_shells_of_a_same_name_private_skill(selection_builder):
+    skill = selection_builder.interactive
+    skill.user_id = selection_builder.user.id
+
+    with pytest.raises(SkillShellMismatchError, match="interactive.*Codex"):
+        selection_builder.build(
+            "Codex", selected=[{"name": skill.name, "skill_id": skill.id}]
+        )
 
 
 @pytest.mark.parametrize("shell", ["ClaudeCode", "Codex"])

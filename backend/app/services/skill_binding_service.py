@@ -25,6 +25,7 @@ from app.schemas.skill_binding import (
     SkillBindingTargetType,
 )
 from app.services.group_permission import get_effective_role_in_group
+from app.services.skill_resolution import get_runtime_skill_shells
 
 SKILL_BINDING_KIND = "SkillBinding"
 SKILL_BINDING_NAMESPACE = "default"
@@ -470,7 +471,7 @@ class SkillBindingService:
             skill = self._get_active_skill(db, skill_id)
             if not skill:
                 continue
-            shells = skill.json.get("spec", {}).get("bindShells")
+            shells = get_runtime_skill_shells(skill)
             if shell_type and shells and shell_type not in shells:
                 continue
             ref = {

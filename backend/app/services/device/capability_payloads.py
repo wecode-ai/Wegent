@@ -20,6 +20,7 @@ from app.services.plugin_device_installation_service import (
 )
 from app.services.plugin_package_storage import plugin_package_storage
 from app.services.plugin_release_components import components_with_manifest_account_auth
+from app.services.skill_resolution import get_runtime_skill_shells
 
 logger = logging.getLogger(__name__)
 
@@ -344,7 +345,7 @@ class CapabilityPayloadResolver:
             "name": name,
             "namespace": namespace,
             "is_public": skill.user_id == 0,
-            "bind_shells": (skill.json or {}).get("spec", {}).get("bindShells"),
+            "bind_shells": get_runtime_skill_shells(skill),
             "content_hash": f"sha256:{file_hash}" if file_hash else None,
             "download_path": (
                 f"/api/v1/kinds/skills/{skill.id}/download?namespace={namespace}"

@@ -58,6 +58,7 @@ from app.services.skill_resolution import (
     build_skill_ref_meta,
     find_skill_by_name,
     find_skill_by_ref,
+    get_runtime_skill_shells,
 )
 from app.services.user_mcp_oauth import is_secure_mcp_url, user_mcp_oauth_service
 from app.services.user_mcp_service import MCP_AUTH_MODE_OAUTH, user_mcp_service
@@ -2048,8 +2049,9 @@ class TaskRequestBuilder:
         }
 
         # Include optional fields if present
-        if skill_crd.spec.bindShells:
-            skill_data["bindShells"] = skill_crd.spec.bindShells
+        runtime_shells = get_runtime_skill_shells(skill)
+        if runtime_shells:
+            skill_data["bindShells"] = runtime_shells
         if skill_crd.spec.config:
             skill_data["config"] = skill_crd.spec.config
 
