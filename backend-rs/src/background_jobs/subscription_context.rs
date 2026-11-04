@@ -270,9 +270,20 @@ pub(super) async fn create(
         updated_at: &now,
         completed_at: "1970-01-01 00:00:00",
     };
-    let setup = session::setup_chat_session(app.task_store.as_ref(), &mut setup_sql, &input)
-        .await
-        .map_err(|e| anyhow::anyhow!("Subscription task creation failed: {e:?}"))?;
+    // The Source's `SessionLocal` runs the whole session setup in one
+    // transaction and commits it when setup returns; `brz-mysql` owns the
+    // savepoints, so that transaction is explicit here.
+    let setup = crate::transaction_outcome::run(
+        &app.mysql,
+        async |transaction| {
+            session::setup_chat_session(app.task_store.as_ref(), transaction, &input)
+                .await
+                .map(crate::transaction_outcome::Completion::Commit)
+        },
+        crate::http_compat::FastApiError::internal,
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("Subscription task creation failed: {e:?}"))?;
     let tables = app.task_store.table_templates();
     let mysql = app
         .mysql

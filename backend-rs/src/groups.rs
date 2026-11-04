@@ -256,9 +256,10 @@ async fn user_group_roles(
         erp: state.erp.as_ref(),
         redis: state.redis.as_ref(),
     };
-    let memberships = iter_user_groups_with_roles(&state.mysql, &erp, user_id)
-        .await
-        .map_err(internal)?;
+    let memberships =
+        iter_user_groups_with_roles(&state.mysql, &erp, &state.entity_resolvers, user_id)
+            .await
+            .map_err(internal)?;
     let mut roles: Vec<(String, String)> = memberships
         .into_iter()
         .map(|membership| (membership.group_name, membership.role))

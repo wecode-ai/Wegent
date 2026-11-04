@@ -1007,7 +1007,8 @@ classify_wework_path() {
       select_target "core:collaboration-board-backlog"
       return
       ;;
-    wework/e2e/desktop/scenarios/collaboration-parent-board.scenario.mjs)
+    wework/e2e/desktop/scenarios/collaboration-parent-board.scenario.mjs | \
+      wework/e2e/desktop/scenarios/collaboration-card-child-progress.scenario.mjs)
       select_target "core:collaboration-parent-board"
       return
       ;;

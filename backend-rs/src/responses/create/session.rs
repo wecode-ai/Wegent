@@ -196,9 +196,13 @@ pub(crate) fn resumed_project_id(column: Option<i64>, task_json: &serde_json::Va
 
 /// `setup_chat_session`: create the Task + Workspace, rewrite the Task CRD, and
 /// insert the paired subtasks through the task store.
+///
+/// The request transaction is passed concretely because the Source's two
+/// `begin_nested()` blocks become nested `with_transaction` scopes on it;
+/// `brz-mysql`'s `ai-strict` owns all transaction control statements.
 pub async fn setup_chat_session(
     store: &dyn TaskStore,
-    sql: &mut dyn crate::request_sql::RequestSql,
+    transaction: &mut brz_mysql::MysqlTransactionService,
     input: &SetupChatSessionInput<'_>,
 ) -> Result<ChatSessionSetup, FastApiError> {
     let pending_name = task_creation::pending_task_name();
@@ -231,7 +235,7 @@ pub async fn setup_chat_session(
         // (`lifecycle.py:287`) re-reads the resumed Task on the request
         // session; its row is what the pending CRD rewrite flushes.
         let row = store
-            .get_active_task_owned_on(sql, continuation.task_id, input.owner_user_id)
+            .get_active_task_owned_on(&mut *transaction, continuation.task_id, input.owner_user_id)
             .await
             .map_err(internal)?
             .ok_or_else(|| {
@@ -260,11 +264,10 @@ pub async fn setup_chat_session(
         // caller so the builder sees the resumed Task, not a fresh CRD.
         return append_subtasks(
             store,
-            sql,
+            transaction,
             input,
             continuation.task_id,
             0,
-            "sa_savepoint_1",
             None,
             Some(&payload),
             task_json,
@@ -275,7 +278,7 @@ pub async fn setup_chat_session(
     }
 
     let (task_id, workspace_id) = store
-        .create_task_shell_with_workspace(sql, &shell)
+        .create_task_shell_with_workspace(transaction, &shell)
         .await
         .map_err(internal)?;
 
@@ -292,11 +295,10 @@ pub async fn setup_chat_session(
 
     append_subtasks(
         store,
-        sql,
+        transaction,
         input,
         task_id,
         workspace_id,
-        "sa_savepoint_2",
         rename,
         None,
         task_json,
@@ -312,11 +314,10 @@ pub async fn setup_chat_session(
 #[allow(clippy::too_many_arguments)]
 async fn append_subtasks(
     store: &dyn TaskStore,
-    sql: &mut dyn crate::request_sql::RequestSql,
+    transaction: &mut brz_mysql::MysqlTransactionService,
     input: &SetupChatSessionInput<'_>,
     task_id: i64,
     workspace_id: i64,
-    savepoint: &str,
     rename: Option<(String, String)>,
     json_update: Option<&str>,
     task_json: serde_json::Value,
@@ -328,7 +329,7 @@ async fn append_subtasks(
     // task's subtasks in `message_id, created_at` order before the next
     // message id is computed. A new task has none.
     let existing_subtasks = store
-        .list_subtasks_by_task_ordered_on(sql, task_id, input.user_id)
+        .list_subtasks_by_task_ordered_on(&mut *transaction, task_id, input.user_id)
         .await
         .map_err(internal)?
         .rows;
@@ -337,11 +338,11 @@ async fn append_subtasks(
     // before it breaks on `fork is None`. It is a distinct business read from
     // the qs23 owner guard even though the SQL shape is the same.
     let _lineage_task = store
-        .lineage_task_on(sql, task_id, input.user_id)
+        .lineage_task_on(&mut *transaction, task_id, input.user_id)
         .await
         .map_err(internal)?;
     let existing_max = store
-        .max_subtask_message_id(sql, task_id)
+        .max_subtask_message_id(&mut *transaction, task_id)
         .await
         .map_err(internal)?;
     let ids = next_message_ids(existing_max);
@@ -349,7 +350,7 @@ async fn append_subtasks(
     // `create_assistant_subtask` resolves the executor reference in the same
     // transaction as the insert (qs27/28).
     let executor = store
-        .resolve_task_executor_on(sql, task_id)
+        .resolve_task_executor_on(&mut *transaction, task_id)
         .await
         .map_err(internal)?;
 
@@ -358,7 +359,7 @@ async fn append_subtasks(
     if let Some((name, payload)) = rename {
         store
             .rename_and_update_task_json(
-                sql,
+                &mut *transaction,
                 task_id,
                 input.user_id,
                 &name,
@@ -374,7 +375,13 @@ async fn append_subtasks(
     // flushes the pending CRD when `begin_nested()` starts.
     if let Some(payload) = json_update {
         store
-            .update_task_json_on(sql, task_id, input.user_id, payload, input.updated_at)
+            .update_task_json_on(
+                &mut *transaction,
+                task_id,
+                input.user_id,
+                payload,
+                input.updated_at,
+            )
             .await
             .map_err(internal)?;
     }
@@ -394,8 +401,7 @@ async fn append_subtasks(
     // assistant subtask's executor fields from the inserted row.
     let inserted = store
         .create_subtasks_with_executor(
-            sql,
-            savepoint,
+            transaction,
             &CreateSubtasksRequest {
                 user_subtask,
                 assistant_subtask,

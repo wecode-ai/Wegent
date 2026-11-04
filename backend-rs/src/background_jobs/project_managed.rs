@@ -299,12 +299,13 @@ fn add_board_capabilities(request: &mut ExecutionRequest) {
 
 pub(crate) async fn dispatch(state: &AppState, request: &ExecutionRequest) -> Result<()> {
     let shell = routing::shell_type(request);
-    let chat =
-        std::env::var("CHAT_SHELL_URL").unwrap_or_else(|_| routing::DEFAULT_CHAT_SHELL_URL.into());
+    let chat = create::seam::chat_shell_url();
+    let chat_shell_mode = routing::chat_shell_mode();
     let manager = std::env::var("EXECUTOR_MANAGER_URL")
         .unwrap_or_else(|_| create::executor_client::DEFAULT_EXECUTOR_MANAGER_URL.into());
     let target = routing::route(&RouteInputs {
         shell_type: &shell,
+        chat_shell_mode: &chat_shell_mode,
         chat_shell_url: &chat,
         executor_manager_url: &manager,
         device_id: None,
@@ -312,8 +313,9 @@ pub(crate) async fn dispatch(state: &AppState, request: &ExecutionRequest) -> Re
         model_protocol: request.model_config["protocol"].as_str(),
     });
     match target.mode {
-        CommunicationMode::Sse => {
-            let consumer = create::sse_sync::ConsumerContext::from_app(state);
+        CommunicationMode::Sse | CommunicationMode::Inprocess => {
+            let mut consumer = create::sse_sync::ConsumerContext::from_app(state);
+            consumer.package_mode = target.mode == CommunicationMode::Inprocess;
             create::sse_sync::collect(
                 &consumer,
                 target

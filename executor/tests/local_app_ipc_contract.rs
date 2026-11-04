@@ -854,14 +854,43 @@ async fn app_ipc_manages_local_projects_and_nested_todos() {
         .unwrap_err();
     assert_eq!(conflict.code, "version_conflict");
 
-    let incomplete_archive = server
+    server
         .dispatch(
             "todos.archive",
             json!({"project_id": project_id, "task_id": parent_id}),
         )
         .await
-        .unwrap_err();
-    assert_eq!(incomplete_archive.code, "bad_request");
+        .unwrap();
+    let hidden = server
+        .dispatch("todos.list", json!({"project_id": project_id}))
+        .await
+        .unwrap();
+    assert!(hidden.as_array().unwrap().is_empty());
+    let initially_restored = server
+        .dispatch(
+            "todos.restore",
+            json!({"project_id": project_id, "task_id": parent_id}),
+        )
+        .await
+        .unwrap();
+    let restored_child = initially_restored
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["id"] == child["id"])
+        .unwrap();
+    assert_eq!(restored_child["status"], child["status"]);
+    let restored_parent = initially_restored
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["id"] == parent_id)
+        .unwrap();
+    assert_eq!(restored_parent["status"], "completed");
+    assert_eq!(
+        restored_parent["metadata"]["due_at"],
+        rescheduled["metadata"]["due_at"]
+    );
 
     let completed_child = server
         .dispatch(
@@ -870,7 +899,7 @@ async fn app_ipc_manages_local_projects_and_nested_todos() {
                 "project_id": project_id,
                 "task_id": child["id"],
                 "todo": {
-                    "version": child["version"],
+                    "version": restored_child["version"],
                     "status": "completed"
                 }
             }),

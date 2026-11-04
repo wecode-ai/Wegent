@@ -2202,16 +2202,18 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('request-user-input-submit-button'))
 
-    expect(onRequestUserInputSubmit).toHaveBeenCalledWith(
-      {
-        requestId: 42,
-        itemId: undefined,
-        answers: {
-          implement: { answers: ['是的，执行此计划'] },
-        },
+    const response = {
+      requestId: 42,
+      itemId: undefined,
+      answers: {
+        implement: { answers: ['是的，执行此计划'] },
       },
-      { appendUserMessage: true, forceDefaultCollaborationMode: true }
-    )
+    }
+    expect(onRequestUserInputSubmit).toHaveBeenCalledWith(response, {
+      requestUserInputResponses: [response],
+      appendUserMessage: true,
+      forceDefaultCollaborationMode: true,
+    })
   })
 
   test('keeps plan mode when submitting implementation plan adjustments', async () => {
@@ -2237,16 +2239,18 @@ describe('DesktopWorkbenchLayout', () => {
     await user.type(screen.getByTestId('request-user-input-custom-adjustment'), '先缩小范围')
     await user.click(screen.getByTestId('request-user-input-submit-button'))
 
-    expect(onRequestUserInputSubmit).toHaveBeenCalledWith(
-      {
-        requestId: 42,
-        itemId: undefined,
-        answers: {
-          adjustment: { answers: ['先缩小范围'] },
-        },
+    const response = {
+      requestId: 42,
+      itemId: undefined,
+      answers: {
+        adjustment: { answers: ['先缩小范围'] },
       },
-      { appendUserMessage: true, forceDefaultCollaborationMode: false }
-    )
+    }
+    expect(onRequestUserInputSubmit).toHaveBeenCalledWith(response, {
+      requestUserInputResponses: [response],
+      appendUserMessage: true,
+      forceDefaultCollaborationMode: false,
+    })
   })
 
   test('keeps the right workspace plan panel synced with the opened streaming plan block', async () => {
@@ -4510,15 +4514,17 @@ describe('DesktopWorkbenchLayout', () => {
 
       await userEvent.click(screen.getByTestId('request-user-input-option-decision-0'))
 
-      expect(baseProps.onRequestUserInputSubmit).toHaveBeenCalledWith(
-        {
-          requestId: 0,
-          interactionScope: 'publish-turn',
-          itemId: 'mcp_server_elicitation',
-          answers: { decision: { answers: ['确认发布'] } },
-        },
-        { appendUserMessage: false, forceDefaultCollaborationMode: false }
-      )
+      const response = {
+        requestId: 0,
+        interactionScope: 'publish-turn',
+        itemId: 'mcp_server_elicitation',
+        answers: { decision: { answers: ['确认发布'] } },
+      }
+      expect(baseProps.onRequestUserInputSubmit).toHaveBeenCalledWith(response, {
+        requestUserInputResponses: [response],
+        appendUserMessage: false,
+        forceDefaultCollaborationMode: false,
+      })
     }
   )
 

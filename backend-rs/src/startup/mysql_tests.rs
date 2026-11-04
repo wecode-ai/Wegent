@@ -17,8 +17,20 @@ fn public_pool_keeps_the_source_statement_horizon() {
     // Act + Assert: the statement deadline keeps the source's only database
     // deadline (`DB_POOL_TIMEOUT`, 30s) instead of the driver default (3s).
     assert_eq!(options.query_timeout, Duration::from_secs(30));
-    assert_eq!(options.acquire_timeout, Duration::from_secs(2));
+    assert_eq!(options.acquire_timeout, Duration::from_secs(30));
     assert!(options.slow_acquire_threshold <= options.acquire_timeout);
+}
+
+#[test]
+fn pool_acquisition_waits_as_long_as_the_source_pool_timeout() {
+    // Arrange + Act: the pool options the application builds.
+    let options = super::pool_options();
+
+    // Assert: Source waits `DB_POOL_TIMEOUT` (30s) for a free slot. The driver
+    // default is 2s, which killed a legitimate replay-served read while another
+    // statement held a connection.
+    assert_eq!(options.acquire_timeout, Duration::from_secs(30));
+    assert_eq!(options.query_timeout, Duration::from_secs(30));
 }
 
 #[tokio::test]
