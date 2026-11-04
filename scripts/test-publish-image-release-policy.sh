@@ -35,6 +35,8 @@ root = ARGV.fetch(0)
 %w[publish-image snapshot-image].each do |name|
   workflow = YAML.load_file(File.join(root, ".github/workflows/#{name}.yml"))
   workflow.fetch('jobs').each do |job, definition|
+    runners = [definition['runs-on'], *definition.dig('strategy', 'matrix', 'include')&.map { |entry| entry['runner'] }].compact
+    raise "#{name}/#{job}: retired macOS runner" if runners.any? { |runner| runner.to_s.start_with?('macos-14') }
     steps = definition.fetch('steps', [])
     steps.each do |step|
       action = step.fetch('uses', '')

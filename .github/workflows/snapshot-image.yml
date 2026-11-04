@@ -189,12 +189,12 @@ jobs:
       matrix:
         include:
           - target: macos-arm64
-            runner: macos-14
+            runner: macos-15
             output_path: executor/dist/wegent-executor
             artifact_path: executor/dist/wegent-executor-macos-arm64
             artifact_name: wegent-executor-macos-arm64
           - target: macos-amd64
-            runner: macos-14
+            runner: macos-15
             output_path: executor/dist/wegent-executor
             artifact_path: executor/dist/wegent-executor-macos-amd64
             artifact_name: wegent-executor-macos-amd64

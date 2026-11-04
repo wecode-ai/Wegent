@@ -848,7 +848,7 @@ jobs:
   # ============================================================================
   build-executor-local-macos-arm64:
     needs: prepare-release
-    runs-on: macos-14 # Apple Silicon runner
+    runs-on: macos-15 # Apple Silicon runner
     permissions:
       contents: write
     steps:
@@ -886,7 +886,7 @@ jobs:
 
   build-executor-local-macos-amd64:
     needs: prepare-release
-    runs-on: macos-14 # Apple Silicon runner with Rosetta 2 for x86_64 build
+    runs-on: macos-15 # Apple Silicon runner with Rosetta 2 for x86_64 build
     permissions:
       contents: write
     steps:
