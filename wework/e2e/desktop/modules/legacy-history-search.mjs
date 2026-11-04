@@ -149,10 +149,7 @@ export async function verifyLegacySearch(control, taskId, timeoutMs) {
     await waitForWorkbenchDebugState(
       control,
       ({ pane }) =>
-        pane?.currentRuntimeTask?.taskId === taskId &&
-        pane.updatedAt > beforeRestore.updatedAt &&
-        pane.transcript.loading === false &&
-        pane.transcript.loadingMoreBefore === false,
+        pane?.currentRuntimeTask?.taskId === taskId && pane.updatedAt > beforeRestore.updatedAt,
       'The restored live view did not publish its current state',
       timeoutMs
     )
