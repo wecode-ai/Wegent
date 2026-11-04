@@ -510,11 +510,14 @@ describe('stand-in save routing', () => {
     const services = createServices()
     mocks.localListDevices.mockClear()
     mocks.cloudListDevices.mockClear()
-    await services.standInApi!.connectionRules!(7).list({ id: 'project', store: 'local' })
-    expect(mocks.localServices.standInApi.connectionRules).toHaveBeenCalledWith(
-      7,
-      'actual-native-device'
-    )
+    await services.standInApi!.connectionRules!(7, { authority: 'https://wework.test/api' }).list({
+      id: 'project',
+      store: 'local',
+    })
+    expect(mocks.localServices.standInApi.connectionRules).toHaveBeenCalledWith(7, {
+      authority: 'https://wework.test/api',
+      deviceId: 'actual-native-device',
+    })
     expect(list).toHaveBeenCalledWith({ id: 'project', store: 'local' })
     expect(mocks.localListDevices).not.toHaveBeenCalled()
     expect(mocks.cloudListDevices).not.toHaveBeenCalled()

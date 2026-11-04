@@ -5931,6 +5931,9 @@
   },
   "automation_rules": {
     "project_unavailable": "云项目暂时无法同步，请检查网络或项目权限。",
+    "private_management_hint": "当前不能修改项目规则，仍可查看记录或删除本机规则。",
+    "remove_private": "删除本机规则",
+    "my_rules": "我的来源规则",
     "conditions": "满足条件时",
     "contains": "消息包含（可选）",
     "sender": "发件人 ID（可选）",

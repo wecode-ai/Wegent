@@ -181,8 +181,21 @@ export type StandInTelemetryFact = {
   }
 }[keyof StandInGeneratedEventMap]
 
+export interface ConnectionRuleBinding {
+  authority: string
+  deviceId?: string
+}
+
+export function connectionRuleOwnerScope(userId: number, binding: ConnectionRuleBinding): string {
+  return JSON.stringify([
+    binding.authority.replace(/\/+$/, ''),
+    userId,
+    binding.deviceId ? { kind: 'device', id: binding.deviceId } : { kind: 'current-native' },
+  ])
+}
+
 export interface StandInExecutorApi {
-  connectionRules?(userId: number, deviceId?: string): ConnectionRulesApi
+  connectionRules?(userId: number, binding: ConnectionRuleBinding): ConnectionRulesApi
   onboarding(userId: number, deviceId: string, language: string): Promise<StandInOnboardingResult>
   completeOnboarding(
     userId: number,
@@ -370,8 +383,10 @@ export function createStandInExecutorApi(
     }
   }
   return {
-    connectionRules(userId, deviceId) {
+    connectionRules(userId, binding) {
+      const deviceId = binding.deviceId
       return {
+        ownerScope: connectionRuleOwnerScope(userId, binding),
         async list(project) {
           const result = await request<{ items: Awaited<ReturnType<ConnectionRulesApi['list']>> }>(
             'runtime.connection_rules.list',

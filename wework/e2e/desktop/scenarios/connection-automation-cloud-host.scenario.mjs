@@ -21,8 +21,8 @@ export function createDesktopScenario(options) {
     assert.ok(response.ok, `Cloud source ${path} failed: ${response.status}`)
     return response.status === 204 ? null : response.json()
   }
-  async function until(load, accept) {
-    const deadline = Date.now() + options.modelResponseTimeoutMs
+  async function until(load, accept, timeoutMs = options.modelResponseTimeoutMs) {
+    const deadline = Date.now() + timeoutMs
     let latest
     while (Date.now() < deadline) {
       latest = await load()
@@ -97,7 +97,9 @@ export function createDesktopScenario(options) {
         )
         const result = await until(
           () => rpc('runtime.connection_rules.runs', { userId: user.id, id: rule.id }),
-          value => value.items.some(run => run.status === 'published')
+          value => value.items.some(run => run.status === 'published'),
+          // Source collection and receipt observation each wait for a 15-second tick.
+          options.modelResponseTimeoutMs + 2 * 15_000
         )
         const published = result.items.find(run => run.status === 'published')
         assert.ok(published.issueId)

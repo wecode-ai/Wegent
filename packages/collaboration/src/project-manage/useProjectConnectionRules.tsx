@@ -40,7 +40,11 @@ export function useProjectConnectionRules({
   disabled: boolean;
   onMutation(): void;
 }) {
-  const sourceProjectKey = `${connectionProject?.store}:${connectionProject?.id}`;
+  const sourceProjectKey = JSON.stringify([
+    connectionRules?.ownerScope,
+    connectionProject?.store,
+    connectionProject?.id,
+  ]);
   const [privateRules, setPrivateRules] = useState<{
     project: string;
     ids: string[];
@@ -82,7 +86,7 @@ export function useProjectConnectionRules({
             })),
           )}
           translate={translate}
-          disabled={disabled}
+          canConfigureProject={!disabled}
         />
       ) : null,
   };

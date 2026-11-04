@@ -1,3 +1,4 @@
+import { connectionRuleOwnerScope } from '@/api/standIn'
 import {
   createLocalDevicePluginApi,
   resolveLocalPluginDeviceRouteId,
@@ -1725,17 +1726,19 @@ export function createHybridWorkbenchServices(
     deviceApi: hybridDeviceApi,
     runtimeWorkApi: hybridRuntimeWorkApi,
     standInApi: {
-      connectionRules(userId, deviceId) {
+      connectionRules(userId, binding) {
+        const deviceId = binding.deviceId
         const resolve = async () => {
           const localIdentity = deviceId ? null : await getLocalRuntimeSidebarIdentity()
           if (!deviceId && !localIdentity) throw new Error('Local Executor identity is unavailable')
           const target = deviceId ?? localIdentity!.deviceId
           const selected = deviceId ? await standInApiForDevice(deviceId) : localServices.standInApi
-          const api = selected?.connectionRules?.(userId, target)
+          const api = selected?.connectionRules?.(userId, { ...binding, deviceId: target })
           if (!api) throw new Error('Connection automation is unavailable on this Executor')
           return api
         }
         return {
+          ownerScope: connectionRuleOwnerScope(userId, binding),
           list: async project => (await resolve()).list(project),
           save: async rule => (await resolve()).save(rule),
           remove: async (id, version) => (await resolve()).remove(id, version),

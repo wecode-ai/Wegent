@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
 import { TransportFaultProxy } from './transport-fault-proxy.mjs'
+import { reloadMainWindow } from './workspace-flows.mjs'
+import { openProjectBoard } from './collaboration-board-personal-view.mjs'
 
 export async function permissionRequest(
   environment,
@@ -54,6 +56,7 @@ export async function verifyConnectionRuleProjectPermissions(
   let switched = false
   let localProject
   let cloudRule
+  let uiRule
   let failure
   try {
     await restart({
@@ -94,6 +97,14 @@ export async function verifyConnectionRuleProjectPermissions(
         project: { id: String(projectId), store: 'cloud' },
       })
     ).rule
+    uiRule = (
+      await save({
+        ...base,
+        id: 'permission-ui-rule',
+        name: 'My private source',
+        project: { id: String(projectId), store: 'cloud' },
+      })
+    ).rule
     localProject = await rpc('projects.create', { name: 'Private rules after project refusal' })
     const localRule = (
       await save({
@@ -108,6 +119,50 @@ export async function verifyConnectionRuleProjectPermissions(
       token: login.access_token,
       status: 403,
     })
+    const content = '[data-testid="workspace-tab-content-fixed-board"]'
+    await reloadMainWindow(control, 'The Viewer role did not reconnect after reload')
+    const project = await request(`/v1/cloud-projects/${projectId}`)
+    await openProjectBoard(control, selector => `${content} ${selector}`, project)
+    console.log('[source-rule-permissions] Viewer project opened through the project picker')
+    assert.equal(
+      Number(
+        await control.command(
+          'getElementCount',
+          `${content} [data-testid="cloud-project-manage-view"]`
+        )
+      ),
+      0
+    )
+    await options.captureScreenshot(control, 'connection-permissions-00-viewer-entry.png', content)
+    await control.command(
+      'clickWhenEnabled',
+      `${content} [data-testid="private-connection-rules-open"]`
+    )
+    await control.command('waitFor', `${content} [data-testid="connection-rules-project-readonly"]`)
+    for (const testId of ['connection-rule-create', `connection-rule-toggle-${uiRule.id}`]) {
+      assert.equal(
+        Number(await control.command('getElementCount', `${content} [data-testid="${testId}"]`)),
+        0
+      )
+    }
+    await control.command(
+      'waitFor',
+      `${content} [data-testid="connection-rule-remove-${uiRule.id}"]`
+    )
+    assert.equal(
+      Number(
+        await control.command(
+          'getElementCount',
+          `${content} [data-testid="connection-rule-edit-${uiRule.id}"]:disabled`
+        )
+      ),
+      1
+    )
+    await options.captureScreenshot(
+      control,
+      'connection-permissions-01-viewer-private-rule.png',
+      content
+    )
     // Hold identity verification unavailable before the denial, so a new login check
     // cannot hide incorrectly discarded device evidence between assertions.
     proxy.rule = entry => (entry.path === '/api/users/me' ? 'drop-response' : null)
@@ -137,6 +192,37 @@ export async function verifyConnectionRuleProjectPermissions(
         rule => rule.id === cloudRule.cloudRuleId
       ),
       'Private cleanup bypassed project write authorization'
+    )
+    await control.command(
+      'clickWhenEnabled',
+      `${content} [data-testid="connection-rule-history-${uiRule.id}"]`
+    )
+    await control.command('waitFor', `${content} [data-testid="connection-rule-runs"]`)
+    await control.command(
+      'clickWhenEnabled',
+      `${content} [data-testid="connection-rule-remove-${uiRule.id}"]`
+    )
+    await control.command(
+      'waitFor',
+      `${content} [data-testid="connection-rule-remove-${uiRule.id}"]`,
+      { visible: false }
+    )
+    assert.equal(
+      Number(
+        await control.command('getElementCount', `${content} [data-testid="connection-rule-runs"]`)
+      ),
+      0
+    )
+    assert.ok(
+      (await request(`/v1/cloud-projects/${projectId}/automations`)).some(
+        rule => rule.id === uiRule.cloudRuleId
+      ),
+      'Deleting a private rule through the UI changed unauthorized shared configuration'
+    )
+    await options.captureScreenshot(
+      control,
+      'connection-permissions-02-private-removal.png',
+      content
     )
     console.log(
       '[source-rule-permissions] PASS real project 403, offline local management and private removal'
@@ -169,11 +255,11 @@ export async function verifyConnectionRuleProjectPermissions(
           },
         })
       }
-      if (cloudRule) {
-        await request(`/v1/cloud-projects/${projectId}/automations/${cloudRule.cloudRuleId}`, {
+      for (const rule of [cloudRule, uiRule].filter(Boolean)) {
+        await request(`/v1/cloud-projects/${projectId}/automations/${rule.cloudRuleId}`, {
           method: 'DELETE',
         })
-        await request(`/v1/cloud-projects/${projectId}/incoming-hooks/${cloudRule.cloudHookId}`, {
+        await request(`/v1/cloud-projects/${projectId}/incoming-hooks/${rule.cloudHookId}`, {
           method: 'DELETE',
         })
       }

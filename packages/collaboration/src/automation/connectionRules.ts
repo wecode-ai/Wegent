@@ -78,6 +78,8 @@ export interface ConnectionRuleRun {
 }
 
 export interface ConnectionRulesApi {
+  /** Stable private-view boundary, never an authorization credential. */
+  readonly ownerScope: string;
   list(project: ConnectionProjectTarget): Promise<ConnectionAutomationRule[]>;
   save(rule: ConnectionAutomationRule): Promise<ConnectionAutomationRule>;
   remove(id: string, version: number): Promise<void>;

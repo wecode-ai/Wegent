@@ -22,6 +22,8 @@ export interface ConnectionRulesPanelProps {
   }>;
   translate: CollaborationTranslate;
   disabled?: boolean;
+  canConfigureProject?: boolean;
+  className?: string;
   onRulesChange?(rules: ConnectionAutomationRule[]): void;
   onMutation?(): void;
   renderRunnerSelection?(
@@ -34,7 +36,11 @@ export interface ConnectionRulesPanelProps {
 export function ConnectionRulesPanel(props: ConnectionRulesPanelProps) {
   return (
     <ConnectionRulesWorkspace
-      key={`${props.project.store}:${props.project.id}`}
+      key={JSON.stringify([
+        props.api.ownerScope,
+        props.project.store,
+        props.project.id,
+      ])}
       {...props}
     />
   );
@@ -46,6 +52,8 @@ function ConnectionRulesWorkspace({
   targets,
   translate,
   disabled = false,
+  canConfigureProject = true,
+  className = "mt-6 space-y-3 border-t border-border pt-4",
   onRulesChange,
   onMutation,
   renderRunnerSelection,
@@ -70,6 +78,7 @@ function ConnectionRulesWorkspace({
   const [loading, setLoading] = useState(true);
   const [reload, setReload] = useState(0);
   const generation = useRef(0);
+  const configurationDisabled = disabled || !canConfigureProject;
   useEffect(() => {
     if (!loading) onRulesChange?.(rules);
   }, [rules, onRulesChange, loading]);
@@ -151,57 +160,56 @@ function ConnectionRulesWorkspace({
       ? [draft.source, ...resources]
       : resources;
   return (
-    <section
-      className="mt-6 space-y-3 border-t border-border pt-4"
-      data-testid="connection-automation-rules"
-    >
+    <section className={className} data-testid="connection-automation-rules">
       <div className="flex items-center justify-between gap-2">
         <h3 className="text-sm font-medium">
           {translate("automation_rules.external_rules", "外部数据源规则")}
         </h3>
-        <button
-          type="button"
-          className="min-h-11 px-2 text-sm underline md:min-h-8"
-          data-testid="connection-rule-create"
-          disabled={disabled || busy || loading}
-          onClick={(event) => {
-            setReturnFocus(event.currentTarget);
-            void perform(async (active) => {
-              const items = await api.providers();
-              if (!active()) return;
-              setProviders(items);
-              const first = items.find(
-                (item) => item.availability.status === "ready",
-              );
-              setProviderId(first?.id ?? "");
-              setKind(first?.resourceKinds[0] ?? "");
-              setResources([]);
-              setHistoryRuleId(null);
-              setRuns([]);
-              const target = targets[0];
-              setDraft({
-                id: `connection-rule-${crypto.randomUUID()}`,
-                version: 0,
-                name: "",
-                enabled: true,
-                source: {
-                  providerId: "",
-                  id: "",
-                  profile: "",
-                  kind: "",
+        {canConfigureProject && (
+          <button
+            type="button"
+            className="min-h-11 px-2 text-sm underline md:min-h-8"
+            data-testid="connection-rule-create"
+            disabled={configurationDisabled || busy || loading}
+            onClick={(event) => {
+              setReturnFocus(event.currentTarget);
+              void perform(async (active) => {
+                const items = await api.providers();
+                if (!active()) return;
+                setProviders(items);
+                const first = items.find(
+                  (item) => item.availability.status === "ready",
+                );
+                setProviderId(first?.id ?? "");
+                setKind(first?.resourceKinds[0] ?? "");
+                setResources([]);
+                setHistoryRuleId(null);
+                setRuns([]);
+                const target = targets[0];
+                setDraft({
+                  id: `connection-rule-${crypto.randomUUID()}`,
+                  version: 0,
                   name: "",
-                },
-                eventType: first?.eventTypes?.[0] ?? "",
-                project,
-                targetKind: target?.kind ?? "agent",
-                targetId: target?.id ?? "",
-                publication: { title: "", instruction: "" },
+                  enabled: true,
+                  source: {
+                    providerId: "",
+                    id: "",
+                    profile: "",
+                    kind: "",
+                    name: "",
+                  },
+                  eventType: first?.eventTypes?.[0] ?? "",
+                  project,
+                  targetKind: target?.kind ?? "agent",
+                  targetId: target?.id ?? "",
+                  publication: { title: "", instruction: "" },
+                });
               });
-            });
-          }}
-        >
-          {translate("automation_rules.create", "新建来源规则")}
-        </button>
+            }}
+          >
+            {translate("automation_rules.create", "新建来源规则")}
+          </button>
+        )}
       </div>
       <p className="text-xs text-text-secondary">
         {translate(
@@ -209,6 +217,17 @@ function ConnectionRulesWorkspace({
           "原始消息和账号保持私有。只有配置的发布结果会进入项目。来源设置仅在采集设备上由本人管理。",
         )}
       </p>
+      {!canConfigureProject && (
+        <p
+          className="text-xs text-text-secondary"
+          data-testid="connection-rules-project-readonly"
+        >
+          {translate(
+            "automation_rules.private_management_hint",
+            "当前不能修改项目规则，仍可查看记录或删除本机规则。",
+          )}
+        </p>
+      )}
       {error && !draft && (
         <div role="alert" data-testid="connection-rule-error">
           {error}
@@ -244,7 +263,7 @@ function ConnectionRulesWorkspace({
           <div key={rule.id} className="flex flex-wrap items-center gap-2 py-3">
             <button
               type="button"
-              disabled={disabled || busy}
+              disabled={configurationDisabled || busy}
               className="min-h-11 min-w-0 flex-1 text-left text-sm"
               data-testid={`connection-rule-edit-${rule.id}`}
               onClick={(event) => {
@@ -333,26 +352,28 @@ function ConnectionRulesWorkspace({
                 {translate("automation_rules.recheck_source", "重新检查来源")}
               </button>
             )}
-            <button
-              type="button"
-              disabled={disabled || busy}
-              className="min-h-11 px-2 text-sm underline"
-              data-testid={`connection-rule-toggle-${rule.id}`}
-              onClick={() =>
-                void perform(async (active) => {
-                  await api.save({ ...rule, enabled: !rule.enabled });
-                  onMutation?.();
-                  const items = await api.list(project);
-                  if (!active()) return;
-                  setRules(items);
-                  setDraft(null);
-                })
-              }
-            >
-              {rule.enabled
-                ? translate("automation_rules.disable", "停用")
-                : translate("automation_rules.enable", "启用")}
-            </button>
+            {canConfigureProject && (
+              <button
+                type="button"
+                disabled={configurationDisabled || busy}
+                className="min-h-11 px-2 text-sm underline"
+                data-testid={`connection-rule-toggle-${rule.id}`}
+                onClick={() =>
+                  void perform(async (active) => {
+                    await api.save({ ...rule, enabled: !rule.enabled });
+                    onMutation?.();
+                    const items = await api.list(project);
+                    if (!active()) return;
+                    setRules(items);
+                    setDraft(null);
+                  })
+                }
+              >
+                {rule.enabled
+                  ? translate("automation_rules.disable", "停用")
+                  : translate("automation_rules.enable", "启用")}
+              </button>
+            )}
             <button
               type="button"
               disabled={disabled || busy}
@@ -366,10 +387,16 @@ function ConnectionRulesWorkspace({
                   if (!active()) return;
                   setRules(items);
                   setDraft(null);
+                  if (historyRuleId === rule.id) {
+                    setHistoryRuleId(null);
+                    setRuns([]);
+                  }
                 })
               }
             >
-              {translate("automation_rules.remove", "删除")}
+              {canConfigureProject
+                ? translate("automation_rules.remove", "删除")
+                : translate("automation_rules.remove_private", "删除本机规则")}
             </button>
           </div>
         ))}
@@ -413,7 +440,7 @@ function ConnectionRulesWorkspace({
               {run.status === "failed" && run.retryable !== false && (
                 <button
                   type="button"
-                  disabled={busy || disabled}
+                  disabled={busy || configurationDisabled}
                   className="min-h-11 px-2 underline"
                   data-testid={`connection-rule-retry-${run.id}`}
                   onClick={() =>
@@ -444,6 +471,7 @@ function ConnectionRulesWorkspace({
             data-testid="connection-rule-editor"
             onSubmit={(event) => {
               event.preventDefault();
+              if (configurationDisabled || busy) return;
               void perform(async (active) => {
                 await api.save(draft);
                 onMutation?.();
@@ -479,7 +507,10 @@ function ConnectionRulesWorkspace({
               </div>
             )}
             <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-              <fieldset disabled={busy || disabled} className="space-y-4">
+              <fieldset
+                disabled={busy || configurationDisabled}
+                className="space-y-4"
+              >
                 {!providers.some(
                   (item) => item.availability.status === "ready",
                 ) && (
@@ -827,7 +858,7 @@ function ConnectionRulesWorkspace({
                 className="collaboration-primary-button min-h-11"
                 disabled={
                   busy ||
-                  disabled ||
+                  configurationDisabled ||
                   !draft.source.id ||
                   !draft.targetId ||
                   !draft.eventType

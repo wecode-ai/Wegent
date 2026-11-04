@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createRuntimeConversationSession } from "./runtime-conversation-session";
+import { transcriptOrderDiagnostic } from "./transcript-order-diagnostics";
+import type { RuntimeConversationTurn } from "./runtime-conversation";
 import type {
   RuntimeConversationClient,
   RuntimeConversationHandlers,
@@ -81,6 +83,44 @@ function setup() {
 }
 
 describe("shared runtime execution session", () => {
+  it("distinguishes reordered identities sharing a truncated prefix", () => {
+    const previous: RuntimeConversationTurn = {
+      id: "turn",
+      status: "done",
+      items: ["first", "second"].map((suffix) => ({
+        id: `${"shared-prefix".repeat(30)}-${suffix}`,
+        type: "assistant_text",
+        content: "PRIVATE ORIGINAL",
+        createdAt: "2026-09-17T00:00:01Z",
+      })),
+    };
+    const current = { ...previous, items: [...previous.items].reverse() };
+    const serialized = transcriptOrderDiagnostic(
+      previous,
+      current,
+      current.items,
+    )!;
+    const evidence = JSON.parse(serialized);
+    expect(evidence.before[0].id).toBe(evidence.before[1].id);
+    expect(
+      evidence.before.map(
+        (item: { identityIndex: number }) => item.identityIndex,
+      ),
+    ).toEqual([0, 1]);
+    expect(
+      evidence.after.map(
+        (item: { identityIndex: number }) => item.identityIndex,
+      ),
+    ).toEqual([1, 0]);
+    expect(
+      evidence.page.map(
+        (item: { identityIndex: number }) => item.identityIndex,
+      ),
+    ).toEqual([1, 0]);
+    expect(serialized.length).toBeLessThanOrEqual(1900);
+    expect(serialized).not.toContain("PRIVATE ORIGINAL");
+  });
+
   it.each([2, 42, 100])(
     "records reordered native identities in a %i-item turn without retaining private content",
     async (count) => {

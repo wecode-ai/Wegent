@@ -1,7 +1,13 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { createCollaborationTranslator } from '../../../../packages/collaboration/src/i18n'
-import { ConnectionRulesPanel, type ConnectionRulesApi } from '@wegent/collaboration/automation'
+import {
+  ConnectionRulesPanel,
+  PrivateConnectionRulesButton,
+  type ConnectionRulesApi,
+} from '@wegent/collaboration/automation'
+import { ProjectAutomaticProcessing } from '../../../../packages/collaboration/src/project-manage/ProjectAutomaticProcessing'
+import type { CollaborationProject, SharedWorkspaceApi } from '@wegent/collaboration'
 
 const source = {
   providerId: 'test/mail',
@@ -16,6 +22,7 @@ const translate = (_key: string, fallback?: string) => fallback ?? _key
 
 function fixture() {
   return {
+    ownerScope: 'account-A/current-native',
     list: vi.fn().mockResolvedValue([]),
     save: vi.fn().mockImplementation(async rule => ({ ...rule, version: 1 })),
     remove: vi.fn().mockResolvedValue(undefined),
@@ -35,6 +42,169 @@ function fixture() {
 }
 
 describe('Connection rules', () => {
+  const privateRule = {
+    id: 'private-rule',
+    version: 1,
+    name: 'PRIVATE_ACCOUNT_A_RULE',
+    enabled: true,
+    source,
+    project,
+    eventType: 'mail.received',
+    targetKind: 'agent' as const,
+    targetId: 'agent',
+    publication: { title: 'Summary', instruction: 'PRIVATE_ACCOUNT_A_INSTRUCTION' },
+  }
+
+  it('opens private history and removal independently of project settings', async () => {
+    const api = fixture()
+    api.list.mockResolvedValue([privateRule])
+    api.remove.mockImplementation(async () => {
+      api.list.mockResolvedValue([])
+    })
+    render(<PrivateConnectionRulesButton api={api} project={project} translate={translate} />)
+    expect(api.list).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('private-connection-rules-open'))
+    expect(await screen.findByTestId('connection-rule-edit-private-rule')).toBeDisabled()
+    fireEvent.click(screen.getByTestId('connection-rule-history-private-rule'))
+    await waitFor(() => expect(api.runs).toHaveBeenCalledWith('private-rule'))
+    fireEvent.click(screen.getByTestId('connection-rule-remove-private-rule'))
+    await waitFor(() => expect(screen.queryByText(privateRule.name)).not.toBeInTheDocument())
+    expect(api.remove).toHaveBeenCalledWith('private-rule', 1)
+    expect(api.save).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('connection-rule-runs')).not.toBeInTheDocument()
+    fireEvent.keyDown(screen.getByTestId('private-connection-rules-close'), { key: 'Escape' })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('closes the private management dialog when its account changes', async () => {
+    const api = fixture()
+    api.list.mockResolvedValue([privateRule])
+    const view = render(
+      <PrivateConnectionRulesButton api={api} project={project} translate={translate} />
+    )
+    fireEvent.click(screen.getByTestId('private-connection-rules-open'))
+    await screen.findByText(privateRule.name)
+    view.rerender(
+      <PrivateConnectionRulesButton
+        api={{ ...api, ownerScope: 'account-B' }}
+        project={project}
+        translate={translate}
+      />
+    )
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.queryByText(privateRule.name)).not.toBeInTheDocument()
+  })
+
+  it('lets a project Viewer read history and remove only their private rule', async () => {
+    const api = fixture()
+    api.list.mockResolvedValue([privateRule])
+    api.remove.mockImplementation(async () => {
+      api.list.mockResolvedValue([])
+    })
+    const sharedApi = {
+      projects: {},
+      agents: { list: vi.fn().mockResolvedValue([]) },
+      members: { list: vi.fn().mockResolvedValue([]) },
+      automations: { list: vi.fn().mockResolvedValue([]) },
+    } as unknown as SharedWorkspaceApi
+    render(
+      <ProjectAutomaticProcessing
+        api={sharedApi}
+        project={
+          { ...project, access_role: 'Viewer', statuses: [] } as unknown as CollaborationProject
+        }
+        members={[]}
+        agents={[]}
+        locale="zh-CN"
+        translate={translate}
+        connectionRules={api}
+        connectionProject={project}
+      />
+    )
+    expect(await screen.findByTestId('connection-rule-remove-private-rule')).toBeEnabled()
+    expect(screen.getByTestId('connection-rule-history-private-rule')).toBeEnabled()
+    expect(screen.queryByTestId('connection-rule-create')).not.toBeInTheDocument()
+    expect(screen.getByTestId('connection-rule-edit-private-rule')).toBeDisabled()
+    expect(screen.queryByTestId('connection-rule-toggle-private-rule')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('connection-rule-remove-private-rule'))
+    await waitFor(() => expect(api.remove).toHaveBeenCalledWith('private-rule', 1))
+    await waitFor(() => expect(screen.queryByText(privateRule.name)).not.toBeInTheDocument())
+    expect(api.save).not.toHaveBeenCalled()
+  })
+
+  it('blocks an already-open editor after project management permission is lost', async () => {
+    const api = fixture()
+    api.list.mockResolvedValue([privateRule])
+    const view = render(
+      <ConnectionRulesPanel api={api} project={project} targets={targets} translate={translate} />
+    )
+    fireEvent.click(await screen.findByTestId('connection-rule-edit-private-rule'))
+    await screen.findByTestId('connection-rule-editor')
+    view.rerender(
+      <ConnectionRulesPanel
+        api={api}
+        project={project}
+        targets={targets}
+        translate={translate}
+        canConfigureProject={false}
+      />
+    )
+    expect(screen.getByTestId('connection-rule-save')).toBeDisabled()
+    expect(screen.getByTestId('connection-rule-publication')).toBeDisabled()
+    fireEvent.submit(screen.getByTestId('connection-rule-editor'))
+    expect(api.save).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('connection-rule-cancel'))
+    expect(screen.queryByTestId('connection-rule-editor')).not.toBeInTheDocument()
+  })
+
+  it('clears private rules, draft and history synchronously when the owner changes', async () => {
+    const api = fixture()
+    api.list.mockResolvedValue([privateRule])
+    const view = render(
+      <ConnectionRulesPanel api={api} project={project} targets={targets} translate={translate} />
+    )
+    fireEvent.click(await screen.findByTestId('connection-rule-history-private-rule'))
+    await screen.findByTestId('connection-rule-runs')
+    fireEvent.click(screen.getByTestId('connection-rule-edit-private-rule'))
+    expect(await screen.findByTestId('connection-rule-publication')).toHaveValue(
+      privateRule.publication.instruction
+    )
+    const next = { ...fixture(), ownerScope: 'account-B/current-native' }
+    let reject!: (reason: Error) => void
+    next.list.mockReturnValue(
+      new Promise((_resolve, fail) => {
+        reject = fail
+      })
+    )
+    view.rerender(
+      <ConnectionRulesPanel api={next} project={project} targets={targets} translate={translate} />
+    )
+    expect(screen.queryByText(privateRule.name)).not.toBeInTheDocument()
+    expect(screen.queryByTestId('connection-rule-editor')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('connection-rule-runs')).not.toBeInTheDocument()
+    await act(async () => reject(new Error('Account B offline')))
+    expect(screen.getByTestId('connection-rule-error')).toHaveTextContent('Account B offline')
+    expect(screen.queryByText(privateRule.name)).not.toBeInTheDocument()
+  })
+
+  it('keeps an unsaved draft when the API is refreshed for the same owner', async () => {
+    const api = fixture()
+    api.list.mockResolvedValue([privateRule])
+    const view = render(
+      <ConnectionRulesPanel api={api} project={project} targets={targets} translate={translate} />
+    )
+    fireEvent.click(await screen.findByTestId('connection-rule-edit-private-rule'))
+    await screen.findByTestId('connection-rule-publication')
+    const next = fixture()
+    next.list.mockResolvedValue([privateRule])
+    view.rerender(
+      <ConnectionRulesPanel api={next} project={project} targets={targets} translate={translate} />
+    )
+    expect(screen.getByTestId('connection-rule-publication')).toHaveValue(
+      privateRule.publication.instruction
+    )
+  })
+
   it('discovers sources only when creating a rule and saves an explicit publication boundary', async () => {
     const api = fixture()
     render(

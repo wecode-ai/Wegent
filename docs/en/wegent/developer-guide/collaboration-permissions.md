@@ -190,6 +190,17 @@ private source subscription and cancel undelivered runs; denied project administ
 does not permit further cleanup of shared automation or hooks. `connection_rules::tests`
 covers project denials, private cleanup, version conflicts and account invalidation.
 
+The source-rule interface separates project writes from private record management:
+read-only members cannot create, edit or toggle project rules, but can inspect their
+own history and remove local rules through **My source rules** in the project header.
+Project settings remain hidden; this entry does not mount shared automation configuration
+or load its options. Source RPC and interface scope use the actual cloud connection user,
+with the supplied local identity reserved for the compatibility entry. Rules, drafts and history are scoped by service
+address, user and collection device, and unmount synchronously when that boundary changes.
+Pending or failed reads under a new identity cannot retain the previous identity's private
+content. Credential refresh or API recreation within the same scope preserves unsaved
+drafts. This interface scope key does not grant authorization.
+
 ## Incident and recovery evidence
 
 Development startup automatically runs Alembic. The original permission migration was automatically applied while under development and failed serializing backup data. MySQL retained completed DDL while rolling back project-parent backfill. Startup swallowed the failure, and queries against the empty new parent column hid projects. The earlier claim that no real database had been migrated was inaccurate.

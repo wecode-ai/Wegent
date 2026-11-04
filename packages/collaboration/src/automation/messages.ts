@@ -71,6 +71,10 @@ export const automationRuleMessages: Record<
       "遵循 Agent 策略；需要选择的环境或模型将在保存时配置。",
     "automation_rules.project_unavailable":
       "云项目暂时无法同步，请检查网络或项目权限。",
+    "automation_rules.private_management_hint":
+      "当前不能修改项目规则，仍可查看记录或删除本机规则。",
+    "automation_rules.remove_private": "删除本机规则",
+    "automation_rules.my_rules": "我的来源规则",
     "automation_rules.source_failed":
       "来源连接中断，请检查授权或网络后重新检查",
     "automation_rules.recheck_source": "重新检查来源",
@@ -167,6 +171,10 @@ export const automationRuleMessages: Record<
       "Uses Agent policies. Deferred environment or model choices are configured when saving.",
     "automation_rules.project_unavailable":
       "Cloud project cannot be synced. Check your connection or project access.",
+    "automation_rules.private_management_hint":
+      "Project rules cannot be edited right now. You can still view history or remove your device's private rules.",
+    "automation_rules.remove_private": "Remove my private rule",
+    "automation_rules.my_rules": "My source rules",
     "automation_rules.source_failed":
       "Source disconnected. Check authorization or network, then recheck.",
     "automation_rules.recheck_source": "Recheck source",

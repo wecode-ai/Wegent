@@ -6,9 +6,27 @@ import { bindProjectStandInApi, createStandInExecutorApi, type StandInExecutorAp
 
 const settings = { enabled: false, prompt: '', executionDeviceId: '', version: 0 }
 
+it('isolates private views by authority, account and collector without using API object identity', () => {
+  const request = vi.fn()
+  const scope = (user: number, authority: string, deviceId?: string) =>
+    createStandInExecutorApi(request).connectionRules!(user, { authority, deviceId }).ownerScope
+  const original = scope(7, 'https://one.test/api')
+  expect(scope(7, 'https://one.test/api/')).toBe(original)
+  expect(scope(8, 'https://one.test/api')).not.toBe(original)
+  expect(scope(7, 'https://two.test/api')).not.toBe(original)
+  expect(scope(7, 'https://one.test/api', 'other-device')).not.toBe(original)
+  expect(scope(7, 'https://one.test/api', 'device-A')).not.toBe(
+    scope(7, 'https://one.test/api', 'device-B')
+  )
+  expect(request).not.toHaveBeenCalled()
+})
+
 it('keeps connection rules and their private source discovery on the selected Executor', async () => {
   const request = vi.fn().mockResolvedValue({ items: [] })
-  const api = createStandInExecutorApi(request).connectionRules!(7, 'collector-device')
+  const api = createStandInExecutorApi(request).connectionRules!(7, {
+    authority: 'https://wework.test/api',
+    deviceId: 'collector-device',
+  })
   const project = { id: 'project', store: 'cloud' as const }
   await api.list(project)
   expect(request).toHaveBeenLastCalledWith(

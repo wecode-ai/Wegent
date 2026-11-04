@@ -1,4 +1,5 @@
 import { useConnectionAutomationHost } from '@/features/collaboration/useConnectionAutomationHost'
+import { PrivateConnectionRulesButton } from '@wegent/collaboration/automation'
 import { IssueChangeRequestBadges } from '@/features/change-requests/IssueChangeRequestBadges'
 import { requireIssueTaskAvailable } from './issueTaskAvailability'
 import { issueDraftFromText, RuntimeConfigurationProvider } from '@wegent/collaboration'
@@ -1067,6 +1068,15 @@ export function CloudTodoWorkspace({
     selectedProject?.location === 'cloud' ? cloudWorkspaceApi : localProjectManageApi
   )
   const taskOwnerUserId = selectedProject?.current_user_id ?? user.id
+  const openConnectionIssue = async (issueId: string) => {
+    const api = selectedProject?.location === 'cloud' ? cloudWorkspaceApi : localProjectManageApi
+    const issue = await api!.issues.get(issueId)
+    setBoardSettingsOpen(false)
+    setSelectedItem({
+      ...toCloudLoopItem(issue),
+      project_store: selectedProject?.location === 'cloud' ? 'backend' : 'local',
+    })
+  }
   const openTaskBinding = async (binding: SelectedTaskBinding) => {
     advanceTaskPanelSession()
     const session = taskPanelSessionIdRef.current
@@ -4293,6 +4303,17 @@ export function CloudTodoWorkspace({
                 hasCreateAction={canCreateBoardTask}
                 renderRightActions={({ actionRefs, level, showLabels }) => (
                   <>
+                    {!isMyTasksBoard && !canManageViews && connectionAutomation && (
+                      <PrivateConnectionRulesButton
+                        api={connectionAutomation.api}
+                        project={{
+                          id: selectedProject.id,
+                          store: selectedProject.location === 'cloud' ? 'cloud' : 'local',
+                        }}
+                        translate={boardTranslate}
+                        onOpenIssue={openConnectionIssue}
+                      />
+                    )}
                     {projectView === 'board' && level < 2 ? (
                       <>
                         <Tooltip
@@ -4688,21 +4709,7 @@ export function CloudTodoWorkspace({
                                     renderConnectionRunnerSelection={
                                       connectionAutomation?.renderRunnerSelection
                                     }
-                                    onOpenConnectionIssue={async issueId => {
-                                      const api =
-                                        selectedProject.location === 'cloud'
-                                          ? cloudWorkspaceApi
-                                          : localProjectManageApi
-                                      const issue = await api!.issues.get(issueId)
-                                      setBoardSettingsOpen(false)
-                                      setSelectedItem({
-                                        ...toCloudLoopItem(issue),
-                                        project_store:
-                                          selectedProject.location === 'cloud'
-                                            ? 'backend'
-                                            : 'local',
-                                      })
-                                    }}
+                                    onOpenConnectionIssue={openConnectionIssue}
                                     connectionProject={{
                                       id: selectedProject.id,
                                       store:

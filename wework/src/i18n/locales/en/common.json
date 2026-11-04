@@ -5936,6 +5936,9 @@
   },
   "automation_rules": {
     "project_unavailable": "Cloud project cannot be synced. Check your connection or project access.",
+    "private_management_hint": "Project rules cannot be edited right now. You can still view history or remove your device's private rules.",
+    "remove_private": "Remove my private rule",
+    "my_rules": "My source rules",
     "conditions": "When conditions match",
     "contains": "Message contains (optional)",
     "sender": "Sender ID (optional)",

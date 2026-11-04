@@ -197,10 +197,17 @@ That existing CI host retains coverage without another shard or duplicate run.
 then verifies that demotion to Viewer and a project 403 preserve local account
 evidence. A transparent proxy interrupts only identity-endpoint transport; Backend,
 Electron, Executor, source and storage remain real. The case reads and pauses a
-local rule, removes a private subscription and confirms shared project settings
-were not deleted without authorization. It reuses account switching and restores
+local rule, opens history and clicks **Remove my private rule** as a Viewer,
+captures the interface and confirms shared project settings were not deleted
+without authorization. It reuses account switching and restores
 the original account. `stand-in-cloud` invokes the same function in CI without
 another shard or duplicate execution.
+
+The first cloud publication wait includes two 15-second scheduler ticks plus the
+model response budget, covering source collection and receipt observation. Model
+completion alone does not prove observation completed. The bounded wait retains
+actual `published` status, Issue, successful run, deduplication and privacy assertions;
+other interface and model waits retain their existing budgets.
 
 Linux Core and Cloud jobs
 run at most four isolated checkpoints concurrently; actual concurrency also
