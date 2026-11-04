@@ -1,9 +1,10 @@
 import { UPGRADE_CHECKPOINTS, UPGRADE_CHECKPOINT_GROUP } from './upgrade-suite.mjs'
 
 // These checkpoints retain standalone selection but execute inside an existing
-// Cloud checkpoint in CI, sharing its service and Runtime lifecycle.
+// checkpoint in CI, sharing its service and Runtime lifecycle.
 export const DESKTOP_CHECKPOINT_CI_HOSTS = new Map([
   ['responses-api-gateway', 'plugin-account-auth-dws'],
+  ['collaboration-local-status-automation', 'collaboration-local-agent-dispatch'],
 ])
 
 export const DESKTOP_CHECKPOINTS = [
@@ -37,6 +38,7 @@ export const DESKTOP_CHECKPOINTS = [
   'collaboration-template-agents',
   'collaboration-template-app-device-routing',
   'collaboration-local-agent-dispatch',
+  'collaboration-local-status-automation',
   'stand-in-action-confirmation',
   'stand-in-email',
   'stand-in-list-confirmation',
