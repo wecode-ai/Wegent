@@ -7,7 +7,7 @@ import type { WorkspaceTabActivity, WorkspaceTabsContextValue } from './workspac
 import { WORKSPACE_TABS_CLOSED_EVENT, type WorkspaceTabsClosedEventDetail } from './workspaceTabs'
 import { WORKSPACE_TAB_RETURN_PREFIX } from './workspaceWindow'
 import { defaultAppPreferences } from '@/desktop/appPreferences'
-import { installDshUiTestContributions } from '@/test/setup'
+import { installDshUiTestContributions } from '@/test/setup.dom'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 
 const preferencesApi = vi.hoisted(() => ({ get: vi.fn(), update: vi.fn() }))

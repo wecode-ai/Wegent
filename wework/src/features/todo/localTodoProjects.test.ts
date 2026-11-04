@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import type { ProjectWithTasks, RuntimeWorkListResponse } from '@/types/api'
 import { describe, expect, it } from 'vitest'
 import { resolveLocalTodoProjects } from './localTodoProjects'

@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import type { PluginMarketplaceItem } from '@/types/api'
 import { describe, expect, test } from 'vitest'
 import { marketplacePluginLockLabel, resolveMarketplacePluginLock } from './marketplacePluginLock'

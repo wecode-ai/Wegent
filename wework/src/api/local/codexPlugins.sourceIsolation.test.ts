@@ -470,6 +470,27 @@ describe('local plugin source isolation', () => {
     ).toEqual(['managed-tool', 'personal-tool'])
   })
 
+  test.each([false, true])(
+    'retains disabled personal membership after a disk read (warm=%s)',
+    async warm => {
+      if (warm) await readLocalInstalledInventoryFromDisk()
+      const original = mocks.request.getMockImplementation()!
+      mocks.request.mockImplementation(async (method, params) =>
+        method === 'executor.codex_home.config.read'
+          ? { enabledPluginKeys: [], disabledPluginKeys: ['personal-tool@wework-personal'] }
+          : original(method, params)
+      )
+      const result = await readLocalInstalledInventoryFromDisk()
+      const personal = result.items.find(plugin => plugin.spec.source.pluginKey === 'personal-tool')
+      expect(personal?.spec.enabled).toBe(false)
+      expect(result.sourceReads.personal?.status).toBe('fulfilled')
+      expect(result.sourceReads.personal?.items).toContainEqual(personal)
+      expect(result.items.some(plugin => plugin.spec.source.pluginKey === 'managed-tool')).toBe(
+        true
+      )
+    }
+  )
+
   test('clears recovered inventory partial status while retaining an independent catalog failure', async () => {
     const api = createLocalCodexPluginApi()
     failures.add('executor.plugins.store.list')

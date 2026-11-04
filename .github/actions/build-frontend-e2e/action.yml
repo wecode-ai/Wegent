@@ -1,0 +1,106 @@
+name: Restore or build a verified frontend E2E artifact
+description: Reuse a complete input-addressed frontend output and attest it for the current CI run.
+inputs:
+  setup-workspace:
+    description: Install the workspace unless the trusted caller already prepared it.
+    default: "true"
+  save-cache:
+    description: Allow partial cache writes from the main branch.
+    default: "false"
+  publish:
+    description: Publish the verified output from a trusted warmup job.
+    default: "false"
+  source-run:
+    description: Optional successful upstream frontend producer used by manual publication.
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Set up Node workspace
+      if: inputs.setup-workspace == 'true'
+      uses: ./.github/actions/setup-node-workspace
+      with:
+        save-cache: ${{ inputs.save-cache }}
+
+    - name: Set up ORAS
+      uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d
+      with:
+        version: 1.3.1
+
+    - name: Identify complete frontend build inputs
+      shell: bash
+      run: node .github/scripts/frontend-e2e-build.mjs key > "$RUNNER_TEMP/frontend-build-context.json"
+
+    - name: Restore complete frontend output
+      id: complete
+      if: inputs.source-run == ''
+      shell: bash
+      run: node .github/scripts/frontend-e2e-build-oci.mjs restore .ci-artifacts "$RUNNER_TEMP/frontend-build-context.json"
+
+    - name: Restore a successful frontend CI producer
+      if: inputs.source-run != ''
+      shell: bash
+      env:
+        SOURCE_RUN: ${{ inputs.source-run }}
+        GITHUB_TOKEN: ${{ github.token }}
+      run: node .github/scripts/restore-frontend-ci-build.mjs "$SOURCE_RUN" .ci-artifacts "$RUNNER_TEMP/frontend-build-context.json"
+
+    - name: Restore shared Next.js build cache
+      id: nextjs-cache
+      if: inputs.source-run == '' && steps.complete.outputs.cache-hit != 'true'
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+      with:
+        path: frontend/.next/cache
+        key: ${{ runner.os }}-nextjs-e2e-v2-${{ hashFiles('pnpm-lock.yaml') }}-${{ hashFiles('frontend/src/**/*.[jt]s', 'frontend/src/**/*.[jt]sx') }}
+        restore-keys: |
+          ${{ runner.os }}-nextjs-e2e-v2-${{ hashFiles('pnpm-lock.yaml') }}-
+          ${{ runner.os }}-nextjs-e2e-v2-
+
+    - name: Build frontend for E2E
+      if: inputs.source-run == '' && steps.complete.outputs.cache-hit != 'true'
+      shell: bash
+      working-directory: frontend
+      env:
+        NEXT_TELEMETRY_DISABLED: 1
+        RUNTIME_INTERNAL_API_URL: http://localhost:8000
+        RUNTIME_SOCKET_DIRECT_URL: http://localhost:8000
+      run: pnpm run build
+
+    - name: Save shared Next.js build cache
+      if: inputs.save-cache == 'true' && inputs.source-run == '' && steps.complete.outputs.cache-hit != 'true' && steps.nextjs-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+      with:
+        path: frontend/.next/cache
+        key: ${{ steps.nextjs-cache.outputs.cache-primary-key }}
+
+    - name: Archive and describe frontend output
+      if: inputs.source-run == '' && steps.complete.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        FRONTEND_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      run: |
+        .github/scripts/archive-frontend-e2e-build.sh
+        node .github/scripts/frontend-e2e-build.mjs describe .ci-artifacts "$RUNNER_TEMP/frontend-build-context.json"
+
+    - name: Attest and verify current frontend handoff
+      shell: bash
+      env:
+        FRONTEND_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        FRONTEND_RESTORED_FROM: ${{ inputs.source-run != '' && format('actions:{0}', inputs.source-run) || steps.complete.outputs.restored-image }}
+      run: |
+        node .github/scripts/frontend-e2e-build.mjs attest .ci-artifacts "$RUNNER_TEMP/frontend-build-context.json"
+        .github/scripts/restore-frontend-e2e-build.sh
+
+    - name: Log in to GHCR for frontend publication
+      if: inputs.publish == 'true'
+      shell: bash
+      env:
+        GHCR_TOKEN: ${{ github.token }}
+      run: echo "$GHCR_TOKEN" | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+    - name: Publish complete frontend output
+      if: inputs.publish == 'true'
+      shell: bash
+      env:
+        FRONTEND_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      run: node .github/scripts/frontend-e2e-build-oci.mjs publish .ci-artifacts "$RUNNER_TEMP/frontend-build-context.json"

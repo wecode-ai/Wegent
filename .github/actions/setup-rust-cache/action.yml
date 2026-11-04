@@ -1,0 +1,74 @@
+name: Set up shared Rust toolchain and cache
+description: Use one CI toolchain, Cargo source cache and compiler configuration.
+inputs:
+  manifest-path:
+    description: Cargo manifest of the component to build.
+    required: true
+  components:
+    description: Optional rustup components.
+    default: ""
+  targets:
+    description: Optional rustup targets.
+    default: ""
+  save-cache:
+    description: Allow trusted main jobs to populate shared caches.
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - name: Resolve Rust build context
+      id: context
+      shell: bash
+      env:
+        MANIFEST_PATH: ${{ inputs.manifest-path }}
+      run: |
+        case "$MANIFEST_PATH" in
+          executor/Cargo.toml|backend-rs/Cargo.toml) ;;
+          *) echo "Unsupported Rust manifest: $MANIFEST_PATH" >&2; exit 1 ;;
+        esac
+        toolchain="$(cat .github/ci/rust-toolchain)"
+        [[ "$toolchain" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+        project="${MANIFEST_PATH%/Cargo.toml}"
+        {
+          echo "toolchain=$toolchain"
+          echo "lockfile=$project/Cargo.lock"
+        } >> "$GITHUB_OUTPUT"
+        {
+          echo "CARGO_TARGET_DIR=$RUNNER_TEMP/$project-target"
+          echo "CARGO_PROFILE_TEST_DEBUG=0"
+          echo "CARGO_PROFILE_DEV_DEBUG=0"
+        } >> "$GITHUB_ENV"
+
+    - name: Set up pinned Rust
+      uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+      with:
+        toolchain: ${{ steps.context.outputs.toolchain }}
+        components: ${{ inputs.components }}
+        targets: ${{ inputs.targets }}
+
+    - name: Set up shared compiler cache
+      uses: ./.github/actions/setup-sccache
+      with:
+        save-cache: ${{ inputs.save-cache == 'true' && github.ref == 'refs/heads/main' }}
+
+    - name: Restore Cargo sources
+      if: inputs.save-cache != 'true' || github.ref != 'refs/heads/main'
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+        key: ${{ runner.os }}-${{ runner.arch }}-cargo-sources-v4-${{ hashFiles(steps.context.outputs.lockfile) }}
+        restore-keys: |
+          ${{ runner.os }}-${{ runner.arch }}-cargo-sources-v4-
+
+    - name: Populate trusted Cargo sources
+      if: inputs.save-cache == 'true' && github.ref == 'refs/heads/main'
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+        key: ${{ runner.os }}-${{ runner.arch }}-cargo-sources-v4-${{ hashFiles(steps.context.outputs.lockfile) }}
+        restore-keys: |
+          ${{ runner.os }}-${{ runner.arch }}-cargo-sources-v4-

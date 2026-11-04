@@ -58,6 +58,15 @@ jest.mock('@/features/knowledge/document/utils/boundedRemoteFile', () => ({
 }))
 
 beforeAll(async () => {
+  jest.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+    scale: jest.fn(),
+    translate: jest.fn(),
+    rotate: jest.fn(),
+    fillText: jest.fn(),
+  } as unknown as CanvasRenderingContext2D)
+  jest
+    .spyOn(HTMLCanvasElement.prototype, 'toDataURL')
+    .mockReturnValue('data:image/png;base64,watermark')
   Object.defineProperty(global, 'IntersectionObserver', {
     configurable: true,
     value: jest.fn(() => ({ observe: jest.fn(), disconnect: jest.fn() })),
@@ -101,6 +110,8 @@ const props: ComponentProps<typeof DocumentContentViewer> = {
   knowledgeBaseName: 'knowledge',
   knowledgeBaseNamespace: 'default',
   isOrganization: false,
+  protectedPreview: false,
+  watermarkText: 'reader 220750',
   viewMode: 'preview',
   hasMoreContent: false,
   loadingMore: false,
@@ -204,13 +215,18 @@ it('places standalone file cards outside paragraph elements', async () => {
   expect(prepareRemotePdf).not.toHaveBeenCalled()
 })
 
-it('keeps an existing cover mounted when only its parent callbacks change', async () => {
+it('keeps an existing cover mounted when callbacks or watermark ownership change', async () => {
   const { rerender } = render(<DocumentContentViewer {...props} />)
   const card = screen.getByTestId('document-link-preview-card')
   expect(prepareRemotePdf).not.toHaveBeenCalled()
+  expect(await screen.findByTestId('knowledge-watermarked-content')).toBeInTheDocument()
 
   rerender(<DocumentContentViewer {...props} onLoadMore={jest.fn()} />)
   expect(screen.getByTestId('document-link-preview-card')).toBe(card)
+
+  rerender(<DocumentContentViewer {...props} protectedPreview watermarkText="reader@example.com" />)
+  expect(screen.getByTestId('document-link-preview-card')).toBe(card)
+  expect(screen.queryByTestId('knowledge-watermarked-content')).not.toBeInTheDocument()
 
   fireEvent.click(screen.getByTestId('document-link-preview-trigger'))
   expect(screen.getByTestId('document-link-preview-card')).toBe(card)
