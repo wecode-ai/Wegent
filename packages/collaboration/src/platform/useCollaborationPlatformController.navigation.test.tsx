@@ -35,6 +35,7 @@ const location: CollaborationPlatformLocation = {
 }
 let root: Root | undefined
 let container: HTMLDivElement
+let currentCommands: ReturnType<typeof useCollaborationPlatformController>['commands']
 
 function currentState(): CollaborationPlatformState {
   return JSON.parse(container.textContent ?? '{}')
@@ -53,10 +54,11 @@ function Harness(props: {
   location: CollaborationPlatformLocation
   refreshKey?: string
 }) {
-  const { state } = useCollaborationPlatformController({
+  const { state, commands } = useCollaborationPlatformController({
     ...props,
     loadFailedMessage: 'Failed',
   })
+  currentCommands = commands
   return <output>{JSON.stringify(state)}</output>
 }
 
@@ -151,6 +153,117 @@ it('opens a cloud project while the unrelated local navigation is pending', asyn
   expect(currentState().projects).toEqual([project])
   expect(currentState().navigationIncomplete).toBe(true)
   await act(async () => resolveLocal([]))
+  expect(currentState().navigationIncomplete).toBe(false)
+})
+
+it('finishes local navigation after opening a newly created cloud workspace', async () => {
+  let resolveLocal!: (workspaces: CollaborationWorkspace[]) => void
+  const localApi = apiFor(localWorkspace, [])
+  vi.mocked(localApi.workspaces!.list).mockReturnValue(
+    new Promise(resolve => {
+      resolveLocal = resolve
+    })
+  )
+  const createdWorkspace = { ...cloudWorkspace, project_count: 0 }
+  const cloudApi = apiFor(createdWorkspace, [])
+  vi.mocked(cloudApi.workspaces!.list).mockResolvedValue([])
+  Object.assign(cloudApi.workspaces!, {
+    create: vi.fn(async () => {
+      vi.mocked(cloudApi.workspaces!.list).mockResolvedValue([createdWorkspace])
+      return createdWorkspace
+    }),
+    get: vi.fn(async () => createdWorkspace),
+    listMembers: vi.fn(async () => []),
+  })
+  cloudApi.projects.create = vi.fn(async () => project)
+  Object.assign(cloudApi, {
+    issues: { getBoardSnapshot: vi.fn(async () => ({ items: [] })) },
+  })
+  const sources = [cloudApi, localApi]
+  await render(sources, { ...location, workspaceId: null, projectId: null })
+  await act(async () => {
+    await currentCommands.createWorkspace({ name: 'Created cloud space' })
+  })
+  await render(sources, { ...location, projectId: null })
+
+  expect(currentState().workspace?.id).toBe(createdWorkspace.id)
+  expect(currentState().loading).toBe(false)
+  await act(async () => {
+    await currentCommands.createProject({ name: 'Created cloud project' })
+  })
+  expect(currentState().navigationProjects).toContainEqual(project)
+  await act(async () => resolveLocal([localWorkspace]))
+
+  expect(
+    currentState()
+      .workspaces.map(workspace => workspace.id)
+      .sort()
+  ).toEqual(['cloud', 'local'])
+  expect(currentState().navigationProjects).toContainEqual(project)
+  expect(currentState().navigationIncomplete).toBe(false)
+  expect(currentState().error).toBeNull()
+})
+
+it('reuses a cached workspace after an unrelated navigation source has failed', async () => {
+  const cloudApi = apiFor(cloudWorkspace, [])
+  vi.mocked(cloudApi.projects.list).mockRejectedValue(new Error('Unavailable'))
+  vi.mocked(cloudApi.workspaces!.list).mockRejectedValue(new Error('Unavailable'))
+  cloudApi.workspaces!.get = vi.fn(async () => localWorkspace)
+  const localApi = apiFor(localWorkspace, [])
+  const sources = [cloudApi, localApi]
+  await render(sources, { ...location, workspaceId: null, projectId: null })
+  await render(sources, {
+    ...location,
+    workspaceId: localWorkspace.id,
+    workspaceView: 'members',
+    projectId: null,
+  })
+
+  expect(currentState().workspace?.id).toBe(localWorkspace.id)
+  expect(currentState().loading).toBe(false)
+  expect(currentState().navigationIncomplete).toBe(true)
+  expect(cloudApi.projects.list).toHaveBeenCalledOnce()
+  expect(cloudApi.workspaces!.list).toHaveBeenCalledOnce()
+})
+
+it('clears the previous workspace data while navigation for a new workspace is pending', async () => {
+  const localProject = { ...project, id: 'local-project', workspace_id: 'local' }
+  const localApi = apiFor(localWorkspace, [localProject])
+  const cloudApi = apiFor(cloudWorkspace, [])
+  Object.assign(cloudApi, {
+    resources: {
+      list: vi.fn(async () => ({
+        agents: [{ id: 'local-agent' }],
+        execution_environments: [{ id: 'local-runtime' }],
+      })),
+    },
+    issues: { getBoardSnapshot: vi.fn(async () => ({ items: [{ id: 'local-issue' }] })) },
+  })
+  Object.assign(cloudApi.workspaces!, {
+    get: vi.fn(async (id: string) => (id === 'local' ? localWorkspace : cloudWorkspace)),
+    listMembers: vi.fn(async () => [{ id: 1, user_id: 1 }]),
+  })
+  const sources = [cloudApi, localApi]
+  await render(sources, { ...location, workspaceId: 'local', projectId: null })
+  expect(currentState().members).toHaveLength(1)
+  expect(currentState().resources.agents).toHaveLength(1)
+  expect(currentState().projectIssues[localProject.id].status).toBe('available')
+
+  let resolveLocal!: (workspaces: CollaborationWorkspace[]) => void
+  vi.mocked(localApi.workspaces!.list).mockReturnValue(
+    new Promise(resolve => {
+      resolveLocal = resolve
+    })
+  )
+  await render(sources, { ...location, projectId: null }, 'refresh')
+
+  expect(currentState().workspace?.id).toBe('cloud')
+  expect(currentState().loading).toBe(false)
+  expect(currentState().members).toEqual([])
+  expect(currentState().resources).toEqual({ agents: [], execution_environments: [] })
+  expect(currentState().projectIssues).toEqual({})
+  expect(currentState().projects).not.toContainEqual(localProject)
+  await act(async () => resolveLocal([localWorkspace]))
   expect(currentState().navigationIncomplete).toBe(false)
 })
 
