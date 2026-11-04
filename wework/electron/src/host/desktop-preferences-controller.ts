@@ -1,6 +1,7 @@
 import type { PreferencesStore } from './preferences-store.js'
 
 interface DesktopPreferenceEffects {
+  isShuttingDown: () => boolean
   configurePopoutShortcut: (shortcut: string | null) => void
   setPerformanceRecordingEnabled: (enabled: boolean) => Promise<void>
 }
@@ -23,11 +24,13 @@ export class DesktopPreferencesController {
   ) {}
 
   async restorePerformanceRecording(): Promise<void> {
+    if (this.effects.isShuttingDown()) return
     const preferences = await this.store.read()
-    if (preferences.performanceRecordingEnabled !== true) return
+    if (this.effects.isShuttingDown() || preferences.performanceRecordingEnabled !== true) return
     try {
       await this.effects.setPerformanceRecordingEnabled(true)
     } catch (error) {
+      if (this.effects.isShuttingDown()) return
       await this.store.update({ performanceRecordingEnabled: false })
       throw error
     }

@@ -14,6 +14,7 @@ function fixture(initial: Record<string, unknown> = {}) {
     }),
   }
   const effects = {
+    isShuttingDown: vi.fn(() => false),
     configurePopoutShortcut: vi.fn(),
     setPerformanceRecordingEnabled: vi.fn<(_enabled: boolean) => Promise<void>>(
       async () => undefined
@@ -22,7 +23,64 @@ function fixture(initial: Record<string, unknown> = {}) {
   return { store, effects, controller: new DesktopPreferencesController(store, effects) }
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason: Error) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
 describe('DesktopPreferencesController', () => {
+  test('does not read or restore recording after shutdown starts', async () => {
+    const { controller, store, effects } = fixture({ performanceRecordingEnabled: true })
+    effects.isShuttingDown.mockReturnValue(true)
+
+    await controller.restorePerformanceRecording()
+
+    expect(store.read).not.toHaveBeenCalled()
+    expect(effects.setPerformanceRecordingEnabled).not.toHaveBeenCalled()
+    expect(store.update).not.toHaveBeenCalled()
+  })
+
+  test('preserves the recording preference when shutdown starts during its initial read', async () => {
+    const { controller, store, effects } = fixture({ performanceRecordingEnabled: true })
+    const reading = deferred<Record<string, unknown>>()
+    store.read.mockReturnValueOnce(reading.promise)
+
+    const restoring = controller.restorePerformanceRecording()
+    expect(store.read).toHaveBeenCalledOnce()
+    effects.isShuttingDown.mockReturnValue(true)
+    reading.resolve({ performanceRecordingEnabled: true })
+    await restoring
+
+    expect(effects.setPerformanceRecordingEnabled).not.toHaveBeenCalled()
+    expect(store.update).not.toHaveBeenCalled()
+    await expect(store.read()).resolves.toEqual({ performanceRecordingEnabled: true })
+  })
+
+  test('preserves the recording preference when enabling rejects during shutdown', async () => {
+    const { controller, store, effects } = fixture({ performanceRecordingEnabled: true })
+    const started = deferred<void>()
+    const enabling = deferred<void>()
+    effects.setPerformanceRecordingEnabled.mockImplementationOnce(() => {
+      started.resolve()
+      return enabling.promise
+    })
+
+    const restoring = controller.restorePerformanceRecording()
+    await started.promise
+    expect(effects.setPerformanceRecordingEnabled).toHaveBeenCalledWith(true)
+    effects.isShuttingDown.mockReturnValue(true)
+    enabling.reject(new Error('Performance recording cannot start during shutdown'))
+    await expect(restoring).resolves.toBeUndefined()
+
+    expect(store.update).not.toHaveBeenCalled()
+    await expect(store.read()).resolves.toEqual({ performanceRecordingEnabled: true })
+  })
+
   test('resumes recording only when saved, and clears a setting that cannot be restored', async () => {
     const disabled = fixture()
     await disabled.controller.restorePerformanceRecording()
@@ -37,6 +95,7 @@ describe('DesktopPreferencesController', () => {
     await expect(enabled.controller.restorePerformanceRecording()).rejects.toThrow(
       'log unavailable'
     )
+    expect(enabled.store.update).toHaveBeenCalledWith({ performanceRecordingEnabled: false })
     await expect(enabled.store.read()).resolves.toEqual({ performanceRecordingEnabled: false })
   })
   test('applies performance recording before publishing the persisted preference', async () => {

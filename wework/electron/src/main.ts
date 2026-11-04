@@ -2609,6 +2609,7 @@ if (hasSingleInstanceLock) {
     }
     preferences = new PreferencesStore(app.getPath('userData'))
     desktopPreferences = new DesktopPreferencesController(preferences, {
+      isShuttingDown: () => quitting,
       configurePopoutShortcut: shortcut => popoutShortcut?.configure(shortcut),
       setPerformanceRecordingEnabled: async enabled => {
         if (quitting && enabled) throw new Error('The application is shutting down')
