@@ -67,7 +67,7 @@ export function KnowledgeTeamFilter({
           aria-haspopup="listbox"
           aria-label={t('document.navigation.teamFilter')}
           data-testid="knowledge-team-filter"
-          className={`${mobile ? 'min-h-11 min-w-11' : 'h-9'} w-64 max-w-full justify-between bg-base px-3 font-normal`}
+          className={`${mobile ? 'min-h-11 min-w-11 w-full' : 'h-9 w-64'} max-w-full justify-between bg-base px-3 font-normal`}
         >
           <span className="min-w-0 truncate">
             {value ? selected?.displayName || value : allTeams}

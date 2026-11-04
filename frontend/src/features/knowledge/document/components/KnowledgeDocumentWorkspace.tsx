@@ -461,7 +461,6 @@ function KnowledgeDocumentSession({
       id: g.id,
       name: g.name,
       displayName: g.displayName,
-      kbCount: g.kbCount,
     }))
   }, [sidebar.groups])
 

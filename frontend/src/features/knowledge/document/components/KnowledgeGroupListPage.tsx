@@ -13,11 +13,19 @@
 
 'use client'
 
-import { useState, useMemo, useCallback, useEffect } from 'react'
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
 import { matchesKnowledgeTeam } from '../navigation'
 import { Input } from '@/components/ui/input'
 import { getKbShareSourceText } from '@/features/knowledge/utils/share-source'
-import { ArrowLeft, Plus, FolderOpen, Star, ChevronDown, ChevronUp } from 'lucide-react'
+import {
+  ArrowLeft,
+  Plus,
+  FolderOpen,
+  Star,
+  ChevronDown,
+  ChevronUp,
+  SlidersHorizontal,
+} from 'lucide-react'
 import { KnowledgeBaseIcon } from './KnowledgeBaseIcon'
 import {
   isInKnowledgeBaseCategory,
@@ -28,6 +36,7 @@ import { AdvancedKnowledgeToggle } from './AdvancedKnowledgeToggle'
 import { KnowledgeTeamFilter, type KnowledgeTeamOption } from './KnowledgeTeamFilter'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
   Select,
   SelectContent,
@@ -103,7 +112,7 @@ export interface KnowledgeGroupListPageProps {
   /** Set filter group ID (for "All" mode) */
   onFilterGroupChange?: (groupId: string | null) => void
   /** Available groups for filter (for "All" mode) */
-  availableGroups?: KnowledgeTeamOption[]
+  availableGroups?: Omit<KnowledgeTeamOption, 'kbCount'>[]
   /** Whether this is "Personal" mode (to show created/shared sections) */
   isPersonalMode?: boolean
   /** Knowledge bases created by current user (for personal mode) */
@@ -170,7 +179,7 @@ function formatDateTime(dateStr: string | undefined, locale: string): string {
 export function KnowledgeGroupListPage({
   mobile = false,
   onViewPermissions,
-  groupId: _groupId,
+  groupId,
   groupName,
   knowledgeBases,
   knowledgeBasesWithGroupInfo,
@@ -203,9 +212,11 @@ export function KnowledgeGroupListPage({
   const isGroupSectionMode = groupNativeKbs.length > 0 || groupSharedKbs.length > 0
   const { t } = useTranslation('knowledge')
   const [search, setSearch] = useState('')
+  const resultHeadingRef = useRef<HTMLHeadingElement>(null)
   const [sortBy, setSortBy] = useState<SortBy>('created')
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
   const [category, setCategory] = useState<KnowledgeBaseCategory>('all')
+  const searchQuery = search.trim().toLocaleLowerCase()
   // Determine which data source to use
   // Prefer knowledgeBasesWithGroupInfo when available (has my_role field)
   const dataSource = useMemo(() => {
@@ -237,7 +248,7 @@ export function KnowledgeGroupListPage({
   )
 
   useEffect(() => {
-    if (!showCodeCategory && category === 'code') {
+    if (!showCodeCategory && category !== 'all') {
       setCategory('all')
     }
   }, [category, showCodeCategory])
@@ -298,36 +309,55 @@ export function KnowledgeGroupListPage({
     [sortBy, sortOrder, getKbGroupInfo, getKbRole]
   )
 
-  // Filter and sort knowledge bases
-  const filteredKbs = useMemo(() => {
-    let result = [...dataSource]
-
-    // Filter by group (for "All" mode)
-    if (isAllMode && filterGroupId) {
-      result = result.filter(kb => {
-        if (getKbGroupInfo) {
-          const groupInfo = getKbGroupInfo(kb)
-          return 'group_id' in kb
-            ? matchesKnowledgeTeam(kb, filterGroupId)
-            : groupInfo.groupId === filterGroupId
-        }
-        return true
-      })
-    }
-
-    result = result.filter(kb => kb.name.toLocaleLowerCase().includes(search.toLocaleLowerCase()))
-    result = filterByCategory(result)
-
-    // Dedup by ID as a safety measure against duplicate data
+  // Facet counts and rows share one deduplicated scope before the team filter.
+  const candidateKbs = useMemo(() => {
     const seen = new Set<number>()
-    result = result.filter(kb => {
+    return filterByCategory(dataSource).filter(kb => {
+      if (!kb.name.toLocaleLowerCase().includes(searchQuery)) return false
       if (seen.has(kb.id)) return false
       seen.add(kb.id)
       return true
     })
+  }, [dataSource, filterByCategory, searchQuery])
 
-    return sortKbs(result)
-  }, [dataSource, isAllMode, filterGroupId, getKbGroupInfo, filterByCategory, sortKbs, search])
+  const matchesGroup = useCallback(
+    (kb: KbDataItem, groupId: string) => {
+      if ('group_id' in kb) return matchesKnowledgeTeam(kb, groupId)
+      return (
+        getKbGroupInfo?.(kb).groupId === groupId || kb.namespace === groupId.replace(/^group-/, '')
+      )
+    },
+    [getKbGroupInfo]
+  )
+
+  const filterGroups = useMemo(
+    () =>
+      (availableGroups ?? []).map(group => ({
+        ...group,
+        kbCount: candidateKbs.filter(kb => matchesGroup(kb, group.id)).length,
+      })),
+    [availableGroups, candidateKbs, matchesGroup]
+  )
+
+  const filteredKbs = useMemo(
+    () =>
+      sortKbs(
+        candidateKbs.filter(kb => !isAllMode || !filterGroupId || matchesGroup(kb, filterGroupId))
+      ),
+    [candidateKbs, isAllMode, filterGroupId, matchesGroup, sortKbs]
+  )
+  const hasActiveFilters = Boolean(
+    searchQuery || category !== 'all' || (isAllMode && filterGroupId)
+  )
+  const canClearFilters = Boolean(
+    searchQuery || category !== 'all' || (isAllMode && filterGroupId && onFilterGroupChange)
+  )
+  const clearFilters = () => {
+    setSearch('')
+    setCategory('all')
+    onFilterGroupChange?.(null)
+    resultHeadingRef.current?.focus()
+  }
 
   // Determine whether to show the "from" column
   const showFromColumn = !isPersonalMode && !isAllMode
@@ -470,22 +500,43 @@ export function KnowledgeGroupListPage({
   )
 
   const renderEmptyState = () => {
-    const emptyTitle =
-      category === 'code'
-        ? t('document.knowledgeBase.categoryFilter.emptyCode')
-        : category === 'document'
-          ? t('document.knowledgeBase.categoryFilter.emptyDocument')
-          : t('document.knowledgeBase.empty', '暂无知识库')
+    const emptyTitle = hasActiveFilters
+      ? t('document.navigation.noFilteredKnowledge')
+      : groupId === 'shared'
+        ? t('document.navigation.emptyShared')
+        : groupId === 'organization'
+          ? t('document.navigation.emptyCompany')
+          : t('document.knowledgeBase.empty')
 
     return (
       <div className="flex flex-col items-center justify-center py-12 text-center">
         <FolderOpen className="w-12 h-12 text-text-muted mb-4" />
         <h3 className="text-lg font-medium text-text-primary mb-2">{emptyTitle}</h3>
-        {category === 'all' && (
-          <p className="text-sm text-text-muted mb-4">
-            {t('document.knowledgeBase.createDesc', '点击上方按钮创建第一个知识库')}
+        {hasActiveFilters ? (
+          <>
+            <p className="mb-4 text-sm text-text-muted">{t('document.navigation.refineFilters')}</p>
+            {canClearFilters && (
+              <Button
+                variant="outline"
+                className="min-h-11 min-w-11"
+                data-testid="knowledge-clear-filters"
+                onClick={clearFilters}
+              >
+                {t('document.navigation.clearFilters')}
+              </Button>
+            )}
+          </>
+        ) : groupId === 'shared' || groupId === 'organization' ? (
+          <p className="text-sm text-text-muted">
+            {t(
+              groupId === 'shared'
+                ? 'document.navigation.emptySharedHint'
+                : 'document.navigation.emptyCompanyHint'
+            )}
           </p>
-        )}
+        ) : onCreateKb ? (
+          <p className="text-sm text-text-muted mb-4">{t('document.knowledgeBase.createDesc')}</p>
+        ) : null}
       </div>
     )
   }
@@ -599,6 +650,65 @@ export function KnowledgeGroupListPage({
     )
   }
 
+  const renderFilterControls = () => (
+    <>
+      <KnowledgeBaseCategoryFilter
+        value={category}
+        onValueChange={setCategory}
+        showCode={showCodeCategory}
+      />
+      {hasAdvancedKnowledge && onShowAdvancedKnowledgeChange && (
+        <AdvancedKnowledgeToggle
+          id="show-advanced-knowledge"
+          testId="show-advanced-knowledge-toggle"
+          checked={showAdvancedKnowledge}
+          onCheckedChange={onShowAdvancedKnowledgeChange}
+        />
+      )}
+      {mobile && (
+        <div className="flex max-w-full items-center gap-2">
+          <Select value={sortBy} onValueChange={value => setSortBy(value as SortBy)}>
+            <SelectTrigger
+              className="min-h-11 min-w-11 w-32 max-w-full bg-base"
+              data-testid="knowledge-sort"
+              aria-label={t('document.navigation.sortLabel')}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent
+              collisionPadding={8}
+              className="max-h-[min(16rem,var(--radix-select-content-available-height))]"
+            >
+              {(['name', 'group', 'permission', 'created', 'updated'] as SortBy[]).map(value => (
+                <SelectItem
+                  key={value}
+                  value={value}
+                  className="min-h-11"
+                  data-testid={`knowledge-sort-option-${value}`}
+                >
+                  {t('document.navigation.sort.' + value)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button
+            variant="outline"
+            className="min-h-11 min-w-11"
+            data-testid="knowledge-sort-direction"
+            aria-label={t(
+              sortOrder === 'asc'
+                ? 'document.navigation.ascending'
+                : 'document.navigation.descending'
+            )}
+            onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
+          >
+            {sortOrder === 'asc' ? <ChevronUp /> : <ChevronDown />}
+          </Button>
+        </div>
+      )}
+    </>
+  )
+
   return (
     <div
       className={`flex flex-col h-full overflow-hidden ${mobile ? '' : 'pl-4'}`}
@@ -623,7 +733,14 @@ export function KnowledgeGroupListPage({
               </Button>
             )}
             <div className="flex min-w-0 flex-1 items-center gap-2">
-              <h2 className="truncate text-lg font-semibold">{groupName}</h2>
+              <h2
+                ref={resultHeadingRef}
+                tabIndex={-1}
+                data-testid="knowledge-result-title"
+                className="truncate text-lg font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+              >
+                {groupName}
+              </h2>
               <span
                 className="shrink-0 text-sm tabular-nums text-text-muted"
                 data-testid="knowledge-result-count"
@@ -667,65 +784,43 @@ export function KnowledgeGroupListPage({
             className={mobile ? 'min-h-11 w-full' : 'h-9 w-48'}
           />
           {onFilterGroupChange && (
-            <KnowledgeTeamFilter
-              groups={availableGroups ?? []}
-              value={filterGroupId ?? null}
-              onValueChange={onFilterGroupChange}
-              mobile={mobile}
-            />
-          )}
-          <KnowledgeBaseCategoryFilter
-            value={category}
-            onValueChange={setCategory}
-            showCode={showCodeCategory}
-          />
-          {hasAdvancedKnowledge && onShowAdvancedKnowledgeChange && (
-            <AdvancedKnowledgeToggle
-              id="show-advanced-knowledge"
-              testId="show-advanced-knowledge-toggle"
-              checked={showAdvancedKnowledge}
-              onCheckedChange={onShowAdvancedKnowledgeChange}
-            />
-          )}
-          {mobile && (
-            <div className="flex max-w-full items-center gap-2">
-              <Select value={sortBy} onValueChange={value => setSortBy(value as SortBy)}>
-                <SelectTrigger
-                  className="min-h-11 min-w-11 w-32 max-w-full bg-base"
-                  data-testid="knowledge-sort"
-                  aria-label={t('document.navigation.sortLabel')}
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {(['name', 'group', 'permission', 'created', 'updated'] as SortBy[]).map(
-                    value => (
-                      <SelectItem
-                        key={value}
-                        value={value}
-                        className="min-h-11"
-                        data-testid={`knowledge-sort-option-${value}`}
-                      >
-                        {t('document.navigation.sort.' + value)}
-                      </SelectItem>
-                    )
-                  )}
-                </SelectContent>
-              </Select>
-              <Button
-                variant="outline"
-                className="min-h-11 min-w-11"
-                data-testid="knowledge-sort-direction"
-                aria-label={t(
-                  sortOrder === 'asc'
-                    ? 'document.navigation.ascending'
-                    : 'document.navigation.descending'
-                )}
-                onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
-              >
-                {sortOrder === 'asc' ? <ChevronUp /> : <ChevronDown />}
-              </Button>
+            <div className={mobile ? 'min-w-0 flex-1' : undefined}>
+              <KnowledgeTeamFilter
+                groups={filterGroups}
+                value={filterGroupId ?? null}
+                onValueChange={onFilterGroupChange}
+                mobile={mobile}
+              />
             </div>
+          )}
+          {mobile ? (
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="outline"
+                  className="min-h-11 min-w-11 shrink-0"
+                  data-testid="knowledge-mobile-filters"
+                >
+                  <SlidersHorizontal className="h-4 w-4" />
+                  {t('document.navigation.filters')}
+                  {category !== 'all' && (
+                    <span className="rounded bg-primary/10 px-1.5 py-0.5 text-xs text-primary">
+                      {t(`document.knowledgeBase.categoryFilter.${category}`)}
+                    </span>
+                  )}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent
+                align="end"
+                collisionPadding={8}
+                aria-label={t('document.navigation.filters')}
+                className="max-h-[var(--radix-popover-content-available-height)] w-80 max-w-[calc(100vw_-_2rem)] overflow-y-auto"
+              >
+                <div className="space-y-4">{renderFilterControls()}</div>
+              </PopoverContent>
+            </Popover>
+          ) : (
+            renderFilterControls()
           )}
         </div>
       </div>

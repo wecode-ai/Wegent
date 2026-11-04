@@ -122,7 +122,7 @@
       "loadingKbs": "Loading knowledge bases..."
     },
     "sidebar": {
-      "searchPlaceholder": "Search knowledge bases...",
+      "searchPlaceholder": "Search knowledge bases globally...",
       "typeToSearch": "Type to search knowledge bases",
       "favorites": "Favorites",
       "recent": "Recent",
@@ -196,7 +196,7 @@
     "knowledgeBase": {
       "title": "Knowledge Base",
       "create": "Create Knowledge Base",
-      "advancedMode": "Advanced",
+      "advancedMode": "Show code wikis",
       "advancedModeDescription": "Show code wikis",
       "createDialogDescription": "Configure the knowledge base name, visibility, and retrieval settings.",
       "createDesc": "Create your first knowledge base",
@@ -968,7 +968,7 @@
       "all": "All knowledge bases",
       "loadFailed": "Unable to refresh knowledge bases",
       "retry": "Retry",
-      "search": "Search knowledge bases",
+      "search": "Search names in this list",
       "teamFilter": "Filter by team",
       "allTeams": "All teams",
       "searchTeams": "Search team name or identifier",
@@ -998,7 +998,15 @@
       "descending": "Descending",
       "managementUnavailable": "Management access changed. Verify your permissions again.",
       "dismissError": "Dismiss error",
-      "membersFailed": "Unable to load members. Please retry."
+      "membersFailed": "Unable to load members. Please retry.",
+      "filters": "Filters",
+      "noFilteredKnowledge": "No knowledge bases match these conditions",
+      "refineFilters": "Try another keyword or clear the filters.",
+      "clearFilters": "Clear filters",
+      "emptyShared": "No knowledge bases shared with you yet",
+      "emptySharedHint": "Knowledge bases will appear here when someone shares them with you.",
+      "emptyCompany": "No accessible company knowledge bases",
+      "emptyCompanyHint": "Company knowledge bases you can access appear here."
     },
     "creation": {
       "created": "Library created",

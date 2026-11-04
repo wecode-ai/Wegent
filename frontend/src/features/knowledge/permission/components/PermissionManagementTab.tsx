@@ -397,22 +397,24 @@ function PermissionManagementSession({
       {activeTab === 'user' && (
         <div className="space-y-4">
           {/* Pending Requests Section */}
-          <Card padding="default" className="space-y-4">
-            <div className="flex items-center gap-2 text-sm font-medium">
-              <Clock className="w-4 h-4 text-warning" />
-              {t('document.permission.pendingRequests')}
-              {pendingCount > 0 && (
+          {pendingCount === 0 ? (
+            <p
+              className="flex items-center gap-2 text-xs text-text-muted"
+              data-testid="knowledge-empty-pending"
+            >
+              <Clock className="h-4 w-4 shrink-0" />
+              {t('document.permission.noPendingRequests')}
+            </p>
+          ) : (
+            <Card padding="default" className="space-y-4">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <Clock className="w-4 h-4 text-warning" />
+                {t('document.permission.pendingRequests')}
                 <span className="bg-warning/10 text-warning px-2 py-0.5 rounded-full text-xs">
                   {pendingCount}
                 </span>
-              )}
-            </div>
+              </div>
 
-            {pendingCount === 0 ? (
-              <p className="text-sm text-text-muted py-4 text-center">
-                {t('document.permission.noPendingRequests')}
-              </p>
-            ) : (
               <div className="space-y-2">
                 {permissions?.pending.map(permission => (
                   <div
@@ -475,8 +477,8 @@ function PermissionManagementSession({
                   </div>
                 ))}
               </div>
-            )}
-          </Card>
+            </Card>
+          )}
 
           {/* Approved Users Section */}
           <Card padding="default" className="space-y-4">

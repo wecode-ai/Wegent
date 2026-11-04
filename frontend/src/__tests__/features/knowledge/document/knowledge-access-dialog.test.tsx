@@ -256,3 +256,52 @@ it('keeps an initial member error distinct from an empty member list and retries
   await userEvent.setup().click(screen.getByTestId('retry-knowledge-members'))
   expect(await screen.findByTestId('perm-tab-user')).toBeInTheDocument()
 })
+
+it('keeps zero pending requests as a compact status without an empty approval section', async () => {
+  jest
+    .mocked(knowledgePermissionApi.getMyPermissionSources)
+    .mockResolvedValue({ ...reader, effective_role: 'Maintainer' })
+  render(<KnowledgeAccessDialog {...props()} canManage />)
+  expect(await screen.findByTestId('knowledge-empty-pending')).toHaveTextContent(
+    'document.permission.noPendingRequests'
+  )
+  expect(screen.queryByText('document.permission.pendingRequests')).not.toBeInTheDocument()
+  expect(screen.getByText('document.permission.approvedUsers')).toBeInTheDocument()
+})
+
+it('keeps real pending requests actionable and compacts the section after approval', async () => {
+  jest
+    .mocked(knowledgePermissionApi.getMyPermissionSources)
+    .mockResolvedValue({ ...reader, effective_role: 'Maintainer' })
+  jest.mocked(knowledgePermissionApi.listPermissions).mockResolvedValueOnce({
+    ...members,
+    pending: [
+      {
+        id: 55,
+        user_id: 6,
+        username: 'Pending user',
+        email: 'pending@example.invalid',
+        role: 'Reporter',
+        requested_at: '2026-11-04T00:00:00Z',
+      },
+    ],
+  })
+  jest.mocked(knowledgePermissionApi.reviewPermission).mockResolvedValue({
+    id: 55,
+    user_id: 6,
+    role: 'Reporter',
+    status: 'approved',
+    reviewed_at: '2026-11-04T01:00:00Z',
+    message: 'Approved',
+  })
+  render(<KnowledgeAccessDialog {...props()} canManage />)
+  expect(await screen.findByTestId('permission-approve-55')).toBeEnabled()
+  expect(screen.getByTestId('permission-reject-55')).toBeEnabled()
+  expect(screen.queryByTestId('knowledge-empty-pending')).not.toBeInTheDocument()
+  await userEvent.setup().click(screen.getByTestId('permission-approve-55'))
+  expect(knowledgePermissionApi.reviewPermission).toHaveBeenCalledWith(27, 55, {
+    action: 'approve',
+    role: 'Reporter',
+  })
+  expect(await screen.findByTestId('knowledge-empty-pending')).toBeInTheDocument()
+})

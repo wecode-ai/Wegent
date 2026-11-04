@@ -107,7 +107,7 @@ export function KnowledgeTree({
   )
 
   useEffect(() => {
-    if (!showCodeCategory && category === 'code') {
+    if (!showCodeCategory && category !== 'all') {
       setCategory('all')
     }
   }, [category, showCodeCategory])

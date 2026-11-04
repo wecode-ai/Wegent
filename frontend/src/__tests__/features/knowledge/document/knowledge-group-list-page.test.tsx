@@ -230,7 +230,7 @@ describe('KnowledgeGroupListPage category filter', () => {
     expect(screen.queryByTestId('kb-row-3')).not.toBeInTheDocument()
   })
 
-  it('hides the code filter when creation is disabled and no code wiki is visible', () => {
+  it('hides redundant category controls when only document libraries are visible', () => {
     render(
       <KnowledgeGroupListPage
         groupId="personal"
@@ -242,8 +242,8 @@ describe('KnowledgeGroupListPage category filter', () => {
       />
     )
 
-    expect(screen.getByTestId('knowledge-category-all-filter')).toBeInTheDocument()
-    expect(screen.getByTestId('knowledge-category-document-filter')).toBeInTheDocument()
+    expect(screen.queryByTestId('knowledge-category-all-filter')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('knowledge-category-document-filter')).not.toBeInTheDocument()
     expect(screen.queryByTestId('knowledge-category-code-filter')).not.toBeInTheDocument()
   })
 
@@ -349,6 +349,157 @@ it('reports the search result count without changing the relationship title', as
   expect(screen.getByRole('heading', { level: 2 })).toHaveTextContent('Created by me')
 })
 
+it('counts teams from the deduplicated current scope and recovers filtered empty results', async () => {
+  const row = {
+    ...createKnowledgeBase(101, 'Scoped notebook', 'notebook'),
+    group_id: 'default',
+    group_name: 'Personal',
+    group_type: 'personal' as const,
+    team_ids: ['alpha'],
+  }
+  function ScopedPage() {
+    const [team, setTeam] = useState<string | null>(null)
+    return (
+      <KnowledgeGroupListPage
+        groupId="personal"
+        groupName="Created by me"
+        isAllMode
+        knowledgeBases={[]}
+        knowledgeBasesWithGroupInfo={[row, row]}
+        isLoading={false}
+        onSelectKb={jest.fn()}
+        onCreateKb={jest.fn()}
+        filterGroupId={team}
+        onFilterGroupChange={setTeam}
+        availableGroups={[
+          { id: 'group-alpha', name: 'alpha', displayName: 'Alpha' },
+          { id: 'group-beta', name: 'beta', displayName: 'Beta' },
+        ]}
+      />
+    )
+  }
+  render(<ScopedPage />)
+  const user = userEvent.setup()
+  expect(screen.getAllByTestId(/^kb-row-/)).toHaveLength(1)
+  await user.click(screen.getByTestId('knowledge-team-filter'))
+  expect(screen.getByTestId('knowledge-team-count-group-alpha')).toHaveTextContent('1')
+  expect(screen.queryByTestId('knowledge-team-option-group-beta')).not.toBeInTheDocument()
+  await user.type(screen.getByTestId('knowledge-team-search'), 'beta')
+  expect(screen.getByTestId('knowledge-team-count-group-beta')).toHaveTextContent('0')
+  await user.click(screen.getByTestId('knowledge-team-option-group-beta'))
+  expect(screen.getByText('document.navigation.noFilteredKnowledge')).toBeVisible()
+  expect(screen.queryByText('document.knowledgeBase.createDesc')).not.toBeInTheDocument()
+  await user.click(screen.getByTestId('knowledge-clear-filters'))
+  expect(screen.getByTestId('kb-row-101')).toBeInTheDocument()
+  expect(screen.getByTestId('knowledge-result-title')).toHaveFocus()
+  await user.type(screen.getByTestId('knowledge-search'), 'missing')
+  await user.click(screen.getByTestId('knowledge-team-filter'))
+  expect(screen.queryByTestId('knowledge-team-option-group-alpha')).not.toBeInTheDocument()
+  await user.type(screen.getByTestId('knowledge-team-search'), 'alpha')
+  expect(screen.getByTestId('knowledge-team-count-group-alpha')).toHaveTextContent('0')
+  await user.keyboard('{Escape}')
+  await user.click(screen.getByTestId('knowledge-clear-filters'))
+  expect(screen.getByTestId('knowledge-search')).toHaveValue('')
+  expect(screen.getByTestId('kb-row-101')).toBeInTheDocument()
+})
+
+it('applies the current type to team counts before applying the team selection', async () => {
+  const rows = [
+    { ...createKnowledgeBase(111, 'Notebook', 'notebook'), team_ids: ['alpha'] },
+    { ...createKnowledgeBase(112, 'Repository', 'code_wiki'), team_ids: ['beta'] },
+  ].map(kb => ({
+    ...kb,
+    group_id: 'default',
+    group_name: 'Personal',
+    group_type: 'personal' as const,
+  }))
+  render(
+    <KnowledgeGroupListPage
+      groupId={null}
+      groupName="All"
+      isAllMode
+      knowledgeBases={[]}
+      knowledgeBasesWithGroupInfo={rows}
+      isLoading={false}
+      onSelectKb={jest.fn()}
+      showAdvancedKnowledge
+      onFilterGroupChange={jest.fn()}
+      availableGroups={[
+        { id: 'group-alpha', name: 'alpha', displayName: 'Alpha' },
+        { id: 'group-beta', name: 'beta', displayName: 'Beta' },
+      ]}
+    />
+  )
+  const user = userEvent.setup()
+  await user.click(screen.getByTestId('knowledge-team-filter'))
+  expect(screen.getByTestId('knowledge-team-count-group-beta')).toHaveTextContent('1')
+  await user.keyboard('{Escape}')
+  await user.click(screen.getByTestId('knowledge-category-document-filter'))
+  await user.click(screen.getByTestId('knowledge-team-filter'))
+  expect(screen.getByTestId('knowledge-team-count-group-alpha')).toHaveTextContent('1')
+  expect(screen.queryByTestId('knowledge-team-option-group-beta')).not.toBeInTheDocument()
+  await user.type(screen.getByTestId('knowledge-team-search'), 'beta')
+  expect(screen.getByTestId('knowledge-team-count-group-beta')).toHaveTextContent('0')
+})
+
+it.each([
+  ['shared', 'emptyShared', 'emptySharedHint'],
+  ['organization', 'emptyCompany', 'emptyCompanyHint'],
+])(
+  'explains a genuinely empty %s entry without suggesting a first library',
+  (groupId, title, hint) => {
+    render(
+      <KnowledgeGroupListPage
+        groupId={groupId}
+        groupName={groupId}
+        isAllMode
+        knowledgeBases={[]}
+        isLoading={false}
+        onSelectKb={jest.fn()}
+        onCreateKb={jest.fn()}
+      />
+    )
+    expect(screen.getByText('document.navigation.' + title)).toBeVisible()
+    expect(screen.getByText('document.navigation.' + hint)).toBeVisible()
+    expect(screen.queryByText('document.knowledgeBase.createDesc')).not.toBeInTheDocument()
+  }
+)
+
+it('keeps mobile secondary controls in filters and clears a hidden type condition', async () => {
+  const documentKb = createKnowledgeBase(121, 'Notebook', 'notebook')
+  const codeKb = createKnowledgeBase(122, 'Repository', 'code_wiki')
+  function MobilePage() {
+    const [advanced, setAdvanced] = useState(false)
+    return (
+      <KnowledgeGroupListPage
+        mobile
+        groupId={null}
+        groupName="All"
+        knowledgeBases={advanced ? [documentKb, codeKb] : [documentKb]}
+        isLoading={false}
+        onSelectKb={jest.fn()}
+        hasAdvancedKnowledge
+        showAdvancedKnowledge={advanced}
+        onShowAdvancedKnowledgeChange={setAdvanced}
+      />
+    )
+  }
+  render(<MobilePage />)
+  const user = userEvent.setup()
+  expect(screen.queryByTestId('knowledge-sort')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('show-advanced-knowledge-toggle')).not.toBeInTheDocument()
+  await user.click(screen.getByTestId('knowledge-mobile-filters'))
+  expect(screen.getByTestId('knowledge-sort')).toBeVisible()
+  await user.click(screen.getByTestId('show-advanced-knowledge-toggle'))
+  await user.click(screen.getByTestId('knowledge-category-code-filter'))
+  expect(screen.queryByTestId('kb-row-121')).not.toBeInTheDocument()
+  expect(screen.getByTestId('kb-row-122')).toBeInTheDocument()
+  await user.click(screen.getByTestId('show-advanced-knowledge-toggle'))
+  expect(screen.getByTestId('kb-row-121')).toBeInTheDocument()
+  expect(screen.queryByTestId('kb-row-122')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('knowledge-category-filter')).not.toBeInTheDocument()
+})
+
 it('filters same-name teams by identity, clears the filter, and sorts through shared selects', async () => {
   const onFilter = jest.fn()
   const libraries = [
@@ -383,8 +534,8 @@ it('filters same-name teams by identity, clears the filter, and sorts through sh
           setTeam(value)
         }}
         availableGroups={[
-          { id: 'group-a', name: 'a', displayName: 'Same team', kbCount: 1 },
-          { id: 'group-b', name: 'b', displayName: 'Same team', kbCount: 1 },
+          { id: 'group-a', name: 'a', displayName: 'Same team' },
+          { id: 'group-b', name: 'b', displayName: 'Same team' },
         ]}
       />
     )
@@ -401,6 +552,8 @@ it('filters same-name teams by identity, clears the filter, and sorts through sh
   await user.click(screen.getByTestId('knowledge-team-option-all'))
   expect(onFilter).toHaveBeenLastCalledWith(null)
   expect(screen.getAllByTestId(/^kb-row-/)).toHaveLength(2)
+  expect(screen.queryByTestId('knowledge-sort')).not.toBeInTheDocument()
+  await user.click(screen.getByTestId('knowledge-mobile-filters'))
   await user.click(screen.getByTestId('knowledge-sort'))
   await user.click(screen.getByTestId('knowledge-sort-option-name'))
   await user.click(screen.getByTestId('knowledge-sort-direction'))
