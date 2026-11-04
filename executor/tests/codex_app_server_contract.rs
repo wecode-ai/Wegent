@@ -1502,6 +1502,7 @@ async fn env_lock() -> MutexGuard<'static, ()> {
     let executor_home = EXECUTOR_HOME.get_or_init(|| unique_dir("codex-app-server-home"));
     std::env::set_var("WEGENT_EXECUTOR_HOME", executor_home);
     std::env::set_var("WEGENT_CODEX_HOME", executor_home.join("codex"));
+    std::env::remove_var("WEGENT_NATIVE_CODEX_HOME");
     guard
 }
 
@@ -2295,6 +2296,7 @@ fn unique_dir(name: &str) -> PathBuf {
 struct CloudConfigFallbackFixture {
     _home: EnvGuard,
     _codex_home: EnvGuard,
+    _native_codex_home: EnvGuard,
     _wework_codex_home: EnvGuard,
     _executor_home: EnvGuard,
     _subscription: EnvGuard,
@@ -2317,6 +2319,10 @@ fn cloud_config_fallback_fixture(name: &str) -> CloudConfigFallbackFixture {
     CloudConfigFallbackFixture {
         _home: EnvGuard::set("HOME", &home.display().to_string()),
         _codex_home: EnvGuard::set("CODEX_HOME", &user_codex_home.display().to_string()),
+        _native_codex_home: EnvGuard::set(
+            "WEGENT_NATIVE_CODEX_HOME",
+            &user_codex_home.display().to_string(),
+        ),
         _wework_codex_home: EnvGuard::set(
             "WEGENT_CODEX_HOME",
             &wework_codex_home.display().to_string(),
