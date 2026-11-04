@@ -226,7 +226,14 @@ pub(super) fn retry_at(source: &Value) -> Option<i64> {
         .copied()
 }
 
-fn decode_reply(raw: &[u8]) -> Result<(u16, u64, Option<i64>, &[u8]), AppIpcError> {
+struct DecodedReply<'a> {
+    status: u16,
+    poll_interval: u64,
+    retry_at: Option<i64>,
+    body: &'a [u8],
+}
+
+fn decode_reply(raw: &[u8]) -> Result<DecodedReply<'_>, AppIpcError> {
     let mut remaining = raw;
     let mut status = 200;
     let mut poll = 60;
@@ -289,7 +296,12 @@ fn decode_reply(raw: &[u8]) -> Result<(u16, u64, Option<i64>, &[u8]), AppIpcErro
         }
         remaining = &remaining[end + delimiter..];
     }
-    Ok((status, poll, retry, remaining))
+    Ok(DecodedReply {
+        status,
+        poll_interval: poll,
+        retry_at: retry,
+        body: remaining,
+    })
 }
 
 async fn api(
@@ -365,7 +377,7 @@ async fn api(
         }
         let (out,err)=tokio::try_join!(bounded_output(&mut stdout,2*1024*1024),bounded_output(&mut stderr,8192))?;
         let status=child.wait().await.map_err(|_|invalid("Git CLI failed"))?;
-        let (http_status,poll_interval,retry,response_body)=decode_reply(&out)?;
+        let DecodedReply { status: http_status, poll_interval, retry_at: retry, body: response_body } = decode_reply(&out)?;
         if http_status==429 || (http_status==403 && retry.is_some()) {
             if let Ok(mut limits)=rate_limits().lock(){limits.insert(instance.to_owned(),retry.unwrap_or_else(||chrono::Utc::now().timestamp_millis()+60000));}
             return Err(AppIpcError::new("git_rate_limited","Git API rate limit reached; waiting for the platform deadline"));
@@ -574,19 +586,24 @@ mod tests {
     use super::*;
     #[test]
     fn http_metadata_distinguishes_rate_limits_from_permission_denials() {
-        let (status, poll, retry, body) =
-            decode_reply(b"HTTP/2.0 200 OK\r\nX-Poll-Interval: 120\r\n\r\n[]").unwrap();
+        let DecodedReply {
+            status,
+            poll_interval: poll,
+            retry_at: retry,
+            body,
+        } = decode_reply(b"HTTP/2.0 200 OK\r\nX-Poll-Interval: 120\r\n\r\n[]").unwrap();
         assert_eq!(status, 200);
         assert_eq!(poll, 120);
         assert!(retry.is_none());
         assert_eq!(body, b"[]");
-        let (_,_,retry,_)=decode_reply(b"HTTP/2.0 403 Forbidden\r\nX-RateLimit-Remaining: 17\r\nX-RateLimit-Reset: 9999999999\r\n\r\n{}").unwrap();
+        let retry=decode_reply(b"HTTP/2.0 403 Forbidden\r\nX-RateLimit-Remaining: 17\r\nX-RateLimit-Reset: 9999999999\r\n\r\n{}").unwrap().retry_at;
         assert!(
             retry.is_none(),
             "ordinary permission failures must not become rate-limit pauses"
         );
-        let (_, _, retry, _) =
-            decode_reply(b"HTTP/2.0 429 Too Many Requests\r\nRetry-After: 300\r\n\r\n{}").unwrap();
+        let retry = decode_reply(b"HTTP/2.0 429 Too Many Requests\r\nRetry-After: 300\r\n\r\n{}")
+            .unwrap()
+            .retry_at;
         assert!(retry.unwrap() > chrono::Utc::now().timestamp_millis() + 299000);
     }
     #[test]
