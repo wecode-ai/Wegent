@@ -459,7 +459,7 @@ export function StandInSettingsPage({
   return (
     <section
       ref={dialogRef}
-      className={`min-h-0 text-base text-text-primary ${calendarOpen ? 'overflow-hidden' : 'overflow-y-auto'} ${initialProject ? '' : 'h-full px-5'}`}
+      className={`min-h-0 px-5 text-base text-text-primary ${calendarOpen ? 'overflow-hidden' : 'overflow-y-auto'} ${initialProject ? '' : 'h-full'}`}
       data-testid="stand-in-page"
     >
       <div

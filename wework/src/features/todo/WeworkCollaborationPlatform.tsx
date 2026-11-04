@@ -57,6 +57,7 @@ import {
 import { loopItemLocalProject } from '@/api/localProjectAssociation'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
+import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { getChangeRequestMonitor } from '@/features/workbench/changeRequestMonitor'
 import { useCollaborationMarkdownServices } from './useCollaborationMarkdownServices'
 import { AddCloudDeviceDialog } from '@/components/settings/AddCloudDeviceDialog'
@@ -408,6 +409,7 @@ export function WeworkSharedProject({
 }) {
   const { t } = useTranslation('common')
   const preferences = useAppPreferencesState()
+  const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const issueChangeRequestMonitor =
     services.deviceApi && (preferences?.preferences.changeRequestStatusEnabled ?? true)
       ? getChangeRequestMonitor(services.deviceApi)
@@ -533,45 +535,46 @@ export function WeworkSharedProject({
   )
   const projectHost = useMemo<CollaborationHostAdapter>(
     () => ({
-      renderProjectHeaderAction: currentProject => (
-        <div className="flex items-center gap-2">
-          <ProjectCoordinatorConversation
-            key={`${currentProject.project_store}:${currentProject.id}:${userId}`}
-            api={scopedApi}
-            project={currentProject}
-            services={services}
-            userId={Number(userId)}
-            devices={devices ?? []}
-            onOpenTask={onOpenRuntimeTask}
-            onOpenIssue={issueId => {
-              setTaskComposer(null)
-              setLocation(current => ({ ...current, projectView: 'board', issueId }))
-              if (focusedItemId) onFocusedItemHandled?.()
-            }}
-            onOpenGroupSettings={() => {
-              setTaskComposer(null)
-              setLocation(current => ({
-                ...current,
-                projectView: 'manage',
-                projectSettingsSection: 'groups',
-                issueId: null,
-              }))
-              if (focusedItemId) onFocusedItemHandled?.()
-            }}
-          />
-          <StandInPopover
-            key={currentProject.id}
-            api={standInWorkspaceApi}
-            project={currentProject}
-            devices={devices}
-            readLocalIdentity={services.getLocalRuntimeSidebarIdentity}
-            services={services}
-            userId={Number(userId)}
-            onOpenPersonalSettings={onOpenStandInSettings}
-            initialDeviceId={standInDeviceId}
-          />
-        </div>
-      ),
+      renderProjectHeaderAction: currentProject =>
+        experimentalFeaturesEnabled ? (
+          <div className="flex items-center gap-2">
+            <ProjectCoordinatorConversation
+              key={`${currentProject.project_store}:${currentProject.id}:${userId}`}
+              api={scopedApi}
+              project={currentProject}
+              services={services}
+              userId={Number(userId)}
+              devices={devices ?? []}
+              onOpenTask={onOpenRuntimeTask}
+              onOpenIssue={issueId => {
+                setTaskComposer(null)
+                setLocation(current => ({ ...current, projectView: 'board', issueId }))
+                if (focusedItemId) onFocusedItemHandled?.()
+              }}
+              onOpenGroupSettings={() => {
+                setTaskComposer(null)
+                setLocation(current => ({
+                  ...current,
+                  projectView: 'manage',
+                  projectSettingsSection: 'groups',
+                  issueId: null,
+                }))
+                if (focusedItemId) onFocusedItemHandled?.()
+              }}
+            />
+            <StandInPopover
+              key={currentProject.id}
+              api={standInWorkspaceApi}
+              project={currentProject}
+              devices={devices}
+              readLocalIdentity={services.getLocalRuntimeSidebarIdentity}
+              services={services}
+              userId={Number(userId)}
+              onOpenPersonalSettings={onOpenStandInSettings}
+              initialDeviceId={standInDeviceId}
+            />
+          </div>
+        ) : null,
       capabilities: {
         automation: true,
         dingtalkAitable: true,
@@ -623,6 +626,7 @@ export function WeworkSharedProject({
     [
       focusedItemId,
       devices,
+      experimentalFeaturesEnabled,
       standInWorkspaceApi,
       scopedApi,
       onOpenRuntimeTask,
@@ -1344,6 +1348,7 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
 
 function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformProps) {
   const { i18n, t } = useTranslation('common')
+  const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const standInProjects = useStandInProjects(props.services, props.devices, Number(props.user.id))
   const cloudConnection = useOptionalCloudConnection()
   const templateOwnerId =
@@ -1642,6 +1647,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
           templateStore,
           templateNavigation: true,
           renderProjectSidebarBadge: project => {
+            if (!experimentalFeaturesEnabled) return null
             const enabled = standInProjects.has(
               `${project.project_store === 'local' ? 'local' : 'cloud'}:${project.id}`
             )

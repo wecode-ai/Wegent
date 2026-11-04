@@ -12,6 +12,9 @@ import { ApiClient, createApiClient } from '../utils/api-client'
 import { DataBuilders } from '../fixtures/data-builders'
 
 const APP_BASE_URL = process.env.E2E_BASE_URL || 'http://localhost:3000'
+// Public fixture repository with a single `demo-skill/SKILL.md`.
+const SKILL_GIT_FIXTURE_REPO =
+  process.env.E2E_SKILL_GIT_REPO_URL || 'https://github.com/hustfisher/wegent-skill-e2e-fixture'
 
 interface UnifiedSkill {
   id: number
@@ -524,6 +527,185 @@ test.describe('Agent skill management scope', () => {
         groupName: fixture.groupName,
         name: fixture.teamSkillName,
       })
+    } finally {
+      await context.close()
+      await fixture.cleanup()
+    }
+  })
+
+  test('management upload follows the personal target after switching scope', async ({
+    browser,
+    request,
+  }) => {
+    const prefix = `e2e-skill-scope-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const fixture = await createSkillScopeFixture(request, prefix)
+    const { context, page } = await openUserContext(browser, fixture.userToken)
+    const personalSkillName = `${prefix}-personal-target`
+
+    try {
+      const dialog = await openGroupAgentEditor(page, fixture.groupName, fixture.teamId)
+      const manager = await openSkillManagement(dialog)
+
+      await manager.getByTestId('manage-skills-upload-button').click()
+      const uploadDialog = page.getByTestId('skill-upload-dialog')
+      await expect(uploadDialog).toBeVisible({ timeout: 15000 })
+      await expect(uploadDialog.getByTestId('capability-scope-team')).toHaveAttribute(
+        'aria-pressed',
+        'true'
+      )
+
+      await uploadDialog.getByTestId('capability-scope-personal').click()
+      await uploadDialog.locator('#skill-name').fill(personalSkillName)
+      await uploadDialog.locator('#file-input').setInputFiles({
+        name: `${personalSkillName}.zip`,
+        mimeType: 'application/zip',
+        buffer: await buildSkillZip(personalSkillName, '1.0.0'),
+      })
+
+      const uploadPromise = page.waitForResponse(response => {
+        const url = new URL(response.url())
+        return (
+          response.request().method() === 'POST' && url.pathname === '/api/v1/kinds/skills/upload'
+        )
+      })
+      await uploadDialog.getByTestId('skill-upload-submit-button').click()
+      const uploadResponse = await uploadPromise
+      expect(uploadResponse.status(), await uploadResponse.text()).toBe(201)
+
+      const uploaded = await findUploadedSkill(fixture.userApi, {
+        scope: 'personal',
+        name: personalSkillName,
+      })
+      fixture.createdSkillIds.push(uploaded.id)
+      expect(uploaded.namespace).toBe('default')
+
+      const groupSkills = await listUnifiedSkills(fixture.userApi, {
+        scope: 'group',
+        groupName: fixture.groupName,
+      })
+      expect(groupSkills.some(skill => skill.name === personalSkillName)).toBe(false)
+    } finally {
+      await context.close()
+      await fixture.cleanup()
+    }
+  })
+
+  test('management git import lands in the selected team namespace', async ({
+    browser,
+    request,
+  }) => {
+    const prefix = `e2e-skill-scope-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const fixture = await createSkillScopeFixture(request, prefix)
+    const { context, page } = await openUserContext(browser, fixture.userToken)
+
+    try {
+      const dialog = await openGroupAgentEditor(page, fixture.groupName, fixture.teamId)
+      const manager = await openSkillManagement(dialog)
+
+      await manager.getByTestId('manage-skills-upload-button').click()
+      const uploadDialog = page.getByTestId('skill-upload-dialog')
+      await expect(uploadDialog).toBeVisible({ timeout: 15000 })
+      await expect(uploadDialog.getByTestId('capability-scope-team')).toHaveAttribute(
+        'aria-pressed',
+        'true'
+      )
+
+      await uploadDialog.getByTestId('skill-update-git-tab').click()
+      await uploadDialog.locator('#git-url').fill(SKILL_GIT_FIXTURE_REPO)
+      await uploadDialog.getByRole('button', { name: /Scan Skills|扫描技能/ }).click()
+
+      const skillCheckbox = uploadDialog.locator('#skill-demo-skill')
+      await expect(skillCheckbox).toBeVisible({ timeout: 60000 })
+      await skillCheckbox.click()
+
+      const importPromise = page.waitForResponse(response => {
+        const url = new URL(response.url())
+        return (
+          response.request().method() === 'POST' &&
+          url.pathname === '/api/v1/kinds/skills/git/import'
+        )
+      })
+      await uploadDialog.getByTestId('git-import-submit').click()
+      const importResponse = await importPromise
+      expect(importResponse.status(), await importResponse.text()).toBe(200)
+
+      const imported = await findUploadedSkill(fixture.userApi, {
+        scope: 'group',
+        groupName: fixture.groupName,
+        name: 'demo-skill',
+      })
+      fixture.createdSkillIds.push(imported.id)
+      expect(imported.namespace).toBe(fixture.groupName)
+    } finally {
+      await context.close()
+      await fixture.cleanup()
+    }
+  })
+
+  test('marketplace creation publishes the skill with its tags', async ({ browser, request }) => {
+    const prefix = `e2e-skill-scope-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const fixture = await createSkillScopeFixture(request, prefix)
+    const { context, page } = await openUserContext(browser, fixture.userToken)
+    const marketplaceSkillName = `${prefix}-marketplace-skill`
+
+    try {
+      const tagsResponse = await fixture.adminApi.get<{
+        items: Array<{ id: string; enabled: boolean }>
+      }>('/api/resource-library/tags')
+      expect(tagsResponse.status, JSON.stringify(tagsResponse.data)).toBe(200)
+      const tag = (tagsResponse.data?.items ?? []).find(item => item.enabled)
+      expect(tag, 'At least one enabled marketplace tag must exist').toBeDefined()
+
+      const dialog = await openGroupAgentEditor(page, fixture.groupName, fixture.teamId)
+      const manager = await openSkillManagement(dialog)
+
+      await manager.getByTestId('manage-skills-upload-button').click()
+      const uploadDialog = page.getByTestId('skill-upload-dialog')
+      await expect(uploadDialog).toBeVisible({ timeout: 15000 })
+
+      await uploadDialog.getByTestId('capability-scope-marketplace').click()
+      const tagOption = uploadDialog.getByTestId(`marketplace-tag-option-${tag!.id}`)
+      await expect(tagOption).toBeVisible({ timeout: 15000 })
+      await tagOption.click()
+
+      await uploadDialog.locator('#skill-name').fill(marketplaceSkillName)
+      await uploadDialog.locator('#file-input').setInputFiles({
+        name: `${marketplaceSkillName}.zip`,
+        mimeType: 'application/zip',
+        buffer: await buildSkillZip(marketplaceSkillName, '1.0.0'),
+      })
+
+      const listingPromise = page.waitForResponse(response => {
+        const url = new URL(response.url())
+        return (
+          response.request().method() === 'POST' &&
+          url.pathname === '/api/resource-library/listings'
+        )
+      })
+      await uploadDialog.getByTestId('skill-upload-submit-button').click()
+      const listingResponse = await listingPromise
+      expect([200, 201], await listingResponse.text()).toContain(listingResponse.status())
+
+      const payload = listingResponse.request().postDataJSON() as {
+        source_id: number
+        resource_type: string
+        tags: string[]
+      }
+      expect(payload.resource_type).toBe('skill')
+      expect(payload.tags).toContain(tag!.id)
+      fixture.createdSkillIds.push(payload.source_id)
+
+      const createdListing = (await listingResponse.json()) as {
+        id: number
+        tags?: string[]
+      }
+      expect(createdListing.tags).toContain(tag!.id)
+
+      const storedListing = await fixture.userApi.get<{ tags?: string[] }>(
+        `/api/resource-library/listings/${createdListing.id}`
+      )
+      expect(storedListing.status, JSON.stringify(storedListing.data)).toBe(200)
+      expect(storedListing.data?.tags).toContain(tag!.id)
     } finally {
       await context.close()
       await fixture.cleanup()

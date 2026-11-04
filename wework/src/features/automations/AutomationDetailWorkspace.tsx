@@ -172,13 +172,13 @@ export function AutomationDetailWorkspace({
           >
             {automation
               ? automation.enabled
-                ? t('workbench.automation_status_active', '活跃')
-                : t('workbench.automation_status_paused', '已暂停')
-              : t('workbench.automation_status_new', '新建')}
+                ? t('todo.automation_status_active', '活跃')
+                : t('todo.automation_status_paused', '已暂停')
+              : t('todo.automation_status_new', '新建')}
           </span>
           <input
             ref={nameRef}
-            aria-label={t('workbench.automation_name', '名称')}
+            aria-label={t('todo.automation_name', '名称')}
             aria-invalid={Boolean(validationError && !draft.name.trim())}
             data-testid="automation-name-input"
             value={draft.name}
@@ -188,7 +188,7 @@ export function AutomationDetailWorkspace({
                 ? 'mt-2 min-h-9 w-full rounded-lg border border-solid border-border bg-background px-3 text-sm text-text-primary outline-none placeholder:text-text-tertiary focus:border-text-tertiary'
                 : 'mt-2 w-full border-0 bg-transparent p-0 text-heading-md font-medium tracking-[-0.02em] text-text-primary outline-none placeholder:text-text-tertiary'
             }
-            placeholder={t('workbench.automation_name', '名称')}
+            placeholder={t('todo.automation_name', '名称')}
             autoFocus={!automation}
           />
         </div>
@@ -200,7 +200,7 @@ export function AutomationDetailWorkspace({
                 data-testid={`automation-detail-actions-${automation.id}`}
                 onClick={() => setActionsOpen(open => !open)}
                 className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-surface"
-                aria-label={t('workbench.automation_actions', '自动化操作')}
+                aria-label={t('todo.automation_actions', '自动化操作')}
               >
                 <MoreHorizontal className="h-4 w-4" />
               </button>
@@ -211,8 +211,8 @@ export function AutomationDetailWorkspace({
                 className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-surface"
                 aria-label={
                   automation.enabled
-                    ? t('workbench.automation_pause', '暂停')
-                    : t('workbench.automation_resume', '恢复')
+                    ? t('todo.automation_pause', '暂停')
+                    : t('todo.automation_resume', '恢复')
                 }
               >
                 {automation.enabled ? (
@@ -238,7 +238,7 @@ export function AutomationDetailWorkspace({
                     ) : (
                       <Play className="h-4 w-4" />
                     )}
-                    {t('workbench.automation_run_now', '立即运行')}
+                    {t('todo.automation_run_now', '立即运行')}
                   </button>
                   <button
                     type="button"
@@ -271,7 +271,7 @@ export function AutomationDetailWorkspace({
         <textarea
           ref={promptRef}
           aria-label={t(
-            calendarMode ? 'standIn.workspace.calendar_event' : 'workbench.automation_prompt',
+            calendarMode ? 'standIn.workspace.calendar_event' : 'todo.automation_prompt',
             '任务说明'
           )}
           aria-invalid={Boolean(validationError && !draft.prompt.trim())}
@@ -280,7 +280,7 @@ export function AutomationDetailWorkspace({
           onChange={event => onChange('prompt', event.target.value)}
           className={`min-h-24 w-full resize-y appearance-none border border-solid border-border bg-background px-3 py-3 text-sm leading-6 text-text-primary outline-none transition-colors placeholder:text-text-tertiary focus:border-text-tertiary ${compact ? 'rounded-lg' : 'rounded-2xl'}`}
           placeholder={t(
-            calendarMode ? 'standIn.workspace.calendar_event' : 'workbench.automation_prompt',
+            calendarMode ? 'standIn.workspace.calendar_event' : 'todo.automation_prompt',
             '任务说明'
           )}
         />
@@ -294,14 +294,14 @@ export function AutomationDetailWorkspace({
         {!calendarMode && (
           <>
             <SectionTitle
-              title={t('workbench.automation_details', '详情')}
+              title={t('todo.automation_details', '详情')}
               action={<Info className="h-4 w-4" />}
             />
             <SettingsGroup>
               <SettingsRow
-                label={t('workbench.automation_goal_mode', '持续完成目标')}
+                label={t('todo.automation_goal_mode', '持续完成目标')}
                 description={t(
-                  'workbench.automation_goal_description',
+                  'todo.automation_goal_description',
                   '将任务说明作为目标持续推进，直到目标完成'
                 )}
               >
@@ -309,10 +309,10 @@ export function AutomationDetailWorkspace({
                   data-testid="automation-goal-switch"
                   checked={draft.goalEnabled}
                   onCheckedChange={checked => onChange('goalEnabled', checked)}
-                  aria-label={t('workbench.automation_goal_mode', '持续完成目标')}
+                  aria-label={t('todo.automation_goal_mode', '持续完成目标')}
                 />
               </SettingsRow>
-              <SettingsRow label={t('workbench.automation_run_in', '运行于')}>
+              <SettingsRow label={t('todo.automation_run_in', '运行于')}>
                 <InlineSelect
                   dataTestId="automation-conversation-mode"
                   value={draft.conversationMode}
@@ -339,11 +339,11 @@ export function AutomationDetailWorkspace({
                   options={[
                     {
                       value: 'independent',
-                      label: t('workbench.automation_new_task', '新任务'),
+                      label: t('todo.automation_new_task', '新任务'),
                     },
                     {
                       value: 'continue_thread',
-                      label: t('workbench.automation_continue_conversation', '现有任务'),
+                      label: t('todo.automation_continue_conversation', '现有任务'),
                     },
                   ]}
                 />
@@ -375,17 +375,17 @@ export function AutomationDetailWorkspace({
                 </p>
               ) : (
                 <>
-                  <SettingsRow label={t('workbench.automation_location', '运行位置')}>
+                  <SettingsRow label={t('todo.automation_location', '运行位置')}>
                     <InlineSelect
                       dataTestId="automation-source-select"
                       value={draft.source}
                       disabled={Boolean(automation)}
                       onChange={value => onSourceChange(value as AutomationSource)}
                       options={[
-                        { value: 'local', label: t('workbench.automation_local', '本地') },
+                        { value: 'local', label: t('todo.automation_local', '本地') },
                         {
                           value: 'cloud',
-                          label: t('workbench.automation_cloud', '云端'),
+                          label: t('todo.automation_cloud', '云端'),
                           disabled: !cloudAvailable,
                         },
                       ]}
@@ -410,7 +410,7 @@ export function AutomationDetailWorkspace({
                       options={[
                         {
                           value: '',
-                          label: t('workbench.automation_select_device', '选择设备'),
+                          label: t('todo.automation_select_device', '选择设备'),
                         },
                         ...sourceDevices.map(device => ({
                           value: device.device_id,
@@ -429,7 +429,7 @@ export function AutomationDetailWorkspace({
                         onChange('workspacePath', project?.workspacePath ?? '')
                       }}
                       options={[
-                        { value: '', label: t('workbench.none', '无') },
+                        { value: '', label: t('todo.none', '无') },
                         ...projectOptions.map(project => ({
                           value: project.key,
                           label: projectOptionLabel(project),
@@ -456,7 +456,7 @@ export function AutomationDetailWorkspace({
                         )
                       }}
                       options={[
-                        { value: '', label: t('workbench.automatic', '自动') },
+                        { value: '', label: t('todo.automatic', '自动') },
                         ...models.map(model => {
                           const modelId = model.modelId ?? model.name
                           return {
@@ -467,7 +467,7 @@ export function AutomationDetailWorkspace({
                       ]}
                     />
                   </SettingsRow>
-                  <SettingsRow label={t('workbench.reasoning', '推理')}>
+                  <SettingsRow label={t('todo.reasoning', '推理')}>
                     <InlineSelect
                       dataTestId="automation-reasoning-select"
                       value={reasoning}
@@ -475,10 +475,10 @@ export function AutomationDetailWorkspace({
                         onChange('modelOptions', { ...draft.modelOptions, reasoningEffort: value })
                       }
                       options={[
-                        { value: 'low', label: t('workbench.reasoning_low', '低') },
-                        { value: 'medium', label: t('workbench.reasoning_medium', '中') },
-                        { value: 'high', label: t('workbench.reasoning_high', '高') },
-                        { value: 'xhigh', label: t('workbench.reasoning_xhigh', '极高') },
+                        { value: 'low', label: t('todo.reasoning_low', '低') },
+                        { value: 'medium', label: t('todo.reasoning_medium', '中') },
+                        { value: 'high', label: t('todo.reasoning_high', '高') },
+                        { value: 'xhigh', label: t('todo.reasoning_xhigh', '极高') },
                       ]}
                     />
                   </SettingsRow>
@@ -489,7 +489,7 @@ export function AutomationDetailWorkspace({
         )}
 
         <SectionTitle
-          title={t('workbench.automation_frequency', '频率')}
+          title={t('todo.automation_frequency', '频率')}
           action={<Settings className="h-4 w-4" />}
         />
         <FrequencySettings draft={draft} onChange={onChange} />
@@ -537,7 +537,7 @@ function deviceDisplayName(
   t: (key: string, fallback: string) => string
 ): string {
   const name = isCurrentAppDevice(device, localDeviceIds)
-    ? t('workbench.automation_this_computer', '此电脑')
+    ? t('todo.automation_this_computer', '此电脑')
     : device.name?.trim() || t('workbench.environment_device_unknown', '未知设备')
   return isRemoteDevice(device)
     ? `${name} · ${t('workbench.remote_host_docker_group', '远程 Docker 设备')}`
@@ -575,26 +575,26 @@ function FrequencySettings({
 }) {
   const { t } = useTranslation('common')
   const repeatOptions = [
-    { value: 'weekdays', label: t('workbench.weekdays', '工作日') },
-    { value: 'daily', label: t('workbench.daily', '每天') },
-    { value: 'weekly', label: t('workbench.weekly', '每周') },
-    { value: 'custom', label: t('workbench.custom', '自定义') },
-    { value: 'one_time', label: t('workbench.automation_schedule_once', '仅一次') },
+    { value: 'weekdays', label: t('todo.weekdays', '工作日') },
+    { value: 'daily', label: t('todo.daily', '每天') },
+    { value: 'weekly', label: t('todo.weekly', '每周') },
+    { value: 'custom', label: t('todo.custom', '自定义') },
+    { value: 'one_time', label: t('todo.automation_schedule_once', '仅一次') },
   ]
   const customFrequencyOptions = [
-    { value: 'hourly', label: t('workbench.automation_every_hour', '每小时') },
-    { value: 'daily', label: t('workbench.daily', '每天') },
-    { value: 'weekly', label: t('workbench.weekly', '每周') },
-    { value: 'monthly', label: t('workbench.automation_monthly', '每月') },
-    { value: 'yearly', label: t('workbench.automation_yearly', '每年') },
+    { value: 'hourly', label: t('todo.automation_every_hour', '每小时') },
+    { value: 'daily', label: t('todo.daily', '每天') },
+    { value: 'weekly', label: t('todo.weekly', '每周') },
+    { value: 'monthly', label: t('todo.automation_monthly', '每月') },
+    { value: 'yearly', label: t('todo.automation_yearly', '每年') },
   ]
   const repeatValue = draft.scheduleType === 'one_time' ? 'one_time' : draft.cronPreset
   const intervalUnitLabel = {
-    hourly: t('workbench.automation_hour_unit', '小时'),
-    daily: t('workbench.automation_day_unit', '天'),
-    weekly: t('workbench.automation_week_unit', '周'),
-    monthly: t('workbench.automation_month_unit', '月'),
-    yearly: t('workbench.automation_year_unit', '年'),
+    hourly: t('todo.automation_hour_unit', '小时'),
+    daily: t('todo.automation_day_unit', '天'),
+    weekly: t('todo.automation_week_unit', '周'),
+    monthly: t('todo.automation_month_unit', '月'),
+    yearly: t('todo.automation_year_unit', '年'),
   }[draft.customFrequency]
 
   const setRepeat = (value: string) => {
@@ -608,7 +608,7 @@ function FrequencySettings({
 
   return (
     <SettingsGroup>
-      <SettingsRow label={t('workbench.automation_repeat', '重复')}>
+      <SettingsRow label={t('todo.automation_repeat', '重复')}>
         <MenuSelect
           testId="automation-repeat-menu"
           value={repeatValue}
@@ -617,7 +617,7 @@ function FrequencySettings({
         />
       </SettingsRow>
       {draft.scheduleType === 'one_time' ? (
-        <SettingsRow label={t('workbench.automation_execute_at', '执行时间')}>
+        <SettingsRow label={t('todo.automation_execute_at', '执行时间')}>
           <input
             data-testid="automation-execute-at-input"
             type="datetime-local"
@@ -630,7 +630,7 @@ function FrequencySettings({
       ) : null}
       {draft.scheduleType === 'cron' && draft.cronPreset === 'custom' ? (
         <>
-          <SettingsRow label={t('workbench.automation_repeat', '重复')}>
+          <SettingsRow label={t('todo.automation_repeat', '重复')}>
             <MenuSelect
               testId="automation-custom-frequency-menu"
               value={draft.customFrequency}
@@ -639,7 +639,7 @@ function FrequencySettings({
               pill
             />
           </SettingsRow>
-          <SettingsRow label={t('workbench.automation_every', '每隔')}>
+          <SettingsRow label={t('todo.automation_every', '每隔')}>
             <span className="flex items-center gap-2 text-sm">
               <input
                 data-testid="automation-custom-interval"
@@ -653,7 +653,7 @@ function FrequencySettings({
             </span>
           </SettingsRow>
           {draft.customFrequency === 'weekly' ? (
-            <SettingsRow label={t('workbench.automation_on', '开启')}>
+            <SettingsRow label={t('todo.automation_on', '开启')}>
               <WeekdayMenu
                 testId="automation-custom-weekdays"
                 value={draft.customWeekdays}
@@ -664,7 +664,7 @@ function FrequencySettings({
         </>
       ) : null}
       {draft.scheduleType === 'cron' && draft.cronPreset === 'weekly' ? (
-        <SettingsRow label={t('workbench.automation_on', '开启')}>
+        <SettingsRow label={t('todo.automation_on', '开启')}>
           <WeekdayMenu
             testId="automation-weekly-day"
             value={[draft.weeklyDay]}
@@ -675,7 +675,7 @@ function FrequencySettings({
       ) : null}
       {draft.scheduleType === 'cron' &&
       !(draft.cronPreset === 'custom' && draft.customFrequency === 'hourly') ? (
-        <SettingsRow label={t('workbench.automation_time', '时间')}>
+        <SettingsRow label={t('todo.automation_time', '时间')}>
           <TimeMenu
             testId="automation-cron-time"
             value={draft.cronTime}
@@ -683,17 +683,17 @@ function FrequencySettings({
           />
         </SettingsRow>
       ) : null}
-      <SettingsRow label={t('workbench.automation_notifications', '通知')}>
+      <SettingsRow label={t('todo.automation_notifications', '通知')}>
         <MenuSelect
           testId="automation-notification-menu"
           value={draft.notificationPolicy}
           options={[
-            { value: 'all_runs', label: t('workbench.automation_all_runs', '所有运行') },
+            { value: 'all_runs', label: t('todo.automation_all_runs', '所有运行') },
             {
               value: 'attention_only',
-              label: t('workbench.automation_attention_only', '仅需要关注时'),
+              label: t('todo.automation_attention_only', '仅需要关注时'),
             },
-            { value: 'never', label: t('workbench.automation_notifications_never', '不通知') },
+            { value: 'never', label: t('todo.automation_notifications_never', '不通知') },
           ]}
           onChange={value =>
             onChange('notificationPolicy', value as AutomationDraft['notificationPolicy'])
@@ -746,7 +746,7 @@ function AutomationTaskSelect({
       trigger={
         <span className="inline-flex h-8 max-w-72 items-center justify-end gap-1.5 rounded-full bg-surface px-2 text-sm font-medium">
           <span className="truncate">
-            {selected?.label ?? t('workbench.automation_select_pinned_task', '选择一个已固定任务')}
+            {selected?.label ?? t('todo.automation_select_pinned_task', '选择一个已固定任务')}
           </span>
           <ChevronDown className="h-4 w-4 shrink-0 text-text-secondary" />
         </span>
@@ -755,7 +755,7 @@ function AutomationTaskSelect({
       {close => (
         <div className="w-full min-w-0">
           <div className="px-3 pb-2 pt-1 text-sm font-medium text-text-tertiary">
-            {t('workbench.automation_target_task', '目标任务')}
+            {t('todo.automation_target_task', '目标任务')}
           </div>
           {options.length ? (
             options.map(option => (
@@ -778,7 +778,7 @@ function AutomationTaskSelect({
           ) : (
             <p className="whitespace-normal px-3 pb-2 text-sm font-medium leading-6 text-text-primary">
               {t(
-                'workbench.automation_pin_local_task_first',
+                'todo.automation_pin_local_task_first',
                 '请先置顶一个可用设备上的任务，再使用已安排任务'
               )}
             </p>
@@ -806,12 +806,12 @@ function RunHistory({
   return (
     <div className="mt-8" data-testid="automation-run-history">
       <h3 className="mb-2 px-1 text-sm font-medium text-text-tertiary">
-        {t('workbench.automation_run_history', '运行记录')}
+        {t('todo.automation_run_history', '运行记录')}
       </h3>
       <div className="divide-y divide-border overflow-hidden rounded-2xl border border-border px-4">
         {runs.length === 0 ? (
           <p className="py-4 text-sm text-text-secondary">
-            {t('workbench.automation_no_runs', '尚无运行记录')}
+            {t('todo.automation_no_runs', '尚无运行记录')}
           </p>
         ) : (
           runs.slice(0, 20).map(run => (
@@ -854,13 +854,13 @@ function runStatusLabel(
   t: (key: string, fallback: string) => string
 ) {
   const labels: Record<AutomationRun['status'], string> = {
-    pending: t('workbench.automation_status_pending', '等待中'),
-    running: t('workbench.automation_status_running', '运行中'),
-    succeeded: t('workbench.automation_status_succeeded', '已完成'),
-    failed: t('workbench.automation_status_failed', '失败'),
-    skipped: t('workbench.automation_status_skipped', '已跳过'),
-    needs_attention: t('workbench.automation_status_attention', '需要关注'),
-    cancelled: t('workbench.automation_status_cancelled', '已取消'),
+    pending: t('todo.automation_status_pending', '等待中'),
+    running: t('todo.automation_status_running', '运行中'),
+    succeeded: t('todo.automation_status_succeeded', '已完成'),
+    failed: t('todo.automation_status_failed', '失败'),
+    skipped: t('todo.automation_status_skipped', '已跳过'),
+    needs_attention: t('todo.automation_status_attention', '需要关注'),
+    cancelled: t('todo.automation_status_cancelled', '已取消'),
   }
   return labels[status] ?? status
 }

@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import type { RuntimeSupervisorState, RuntimeWorkListResponse } from '@/types/api'
 import { describe, expect, test } from 'vitest'
 import { RuntimeSupervisorSnapshots } from './runtimeSupervisorSnapshots'

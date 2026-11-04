@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 import { clearPluginMarketplaceCache } from '@/features/plugins/pluginMarketplaceCache'
 import type { PluginMarketplaceItem } from '@/types/api'
 import { beforeEach, describe, expect, test, vi } from 'vitest'

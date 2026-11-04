@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { afterEach, expect, test } from 'vitest'
 import type { RuntimeGoal } from '@/types/api'
 import {

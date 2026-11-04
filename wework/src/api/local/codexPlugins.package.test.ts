@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import type { InstalledPlugin } from '@/types/api'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { createLocalCodexPluginApi } from './codexPlugins'

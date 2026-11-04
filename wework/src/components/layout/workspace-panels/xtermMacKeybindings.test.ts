@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { installXtermMacKeybindings } from './xtermMacKeybindings'
 
