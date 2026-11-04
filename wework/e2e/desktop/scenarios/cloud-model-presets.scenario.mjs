@@ -5,22 +5,50 @@ import {
   ensureModelOptionVisible,
   fetchJson,
 } from '../modules/shared.mjs'
+import { reloadMainWindow } from '../modules/workspace-flows.mjs'
 
 const models = [
   { name: 'preset-glm', label: 'Preset GLM', family: 'glm' },
   { name: 'preset-deepseek', label: 'Preset DeepSeek', family: 'deepseek' },
-  { name: 'preset-sol', label: 'Preset Sol', family: 'gpt', effort: 'medium' },
-  { name: 'preset-astra', label: 'Preset Astra', family: 'gpt', effort: 'high' },
+  { name: 'preset-sol', label: 'Preset Sol', family: 'gpt', effort: 'medium', efforts: ['high'] },
+  {
+    name: 'preset-astra',
+    label: 'Preset Astra',
+    family: 'gpt',
+    effort: 'ultra',
+    efforts: ['high'],
+  },
   {
     name: 'preset-long',
     label: 'Preset Long Model Name With Complete Account And Deployment Information 完整模型名称',
     family: 'gpt',
     effort: 'medium',
-    efforts: ['low', 'medium', 'high'],
+    efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
   },
 ]
 const cloudSource = '[data-testid="model-source-cloud"]'
 const recommended = `${cloudSource} > [data-model-preset="recommended"]`
+
+async function verifyFixedEfforts(control, locale) {
+  const labels =
+    locale === 'en'
+      ? { xhigh: 'Extra High', max: 'Maximum', ultra: 'Ultra' }
+      : { xhigh: '极高', max: '最大', ultra: 'Ultra' }
+  for (const [effort, label] of Object.entries(labels)) {
+    await control.command('click', `[data-testid="model-control-reasoning-${effort}"]`)
+    await control.command('waitFor', '[data-testid="model-simple-header"]', { text: label })
+    const panel = JSON.parse(
+      await control.command('snapshot', '[data-testid="model-advanced-panel"]')
+    )
+    assert.equal(panel.testIds.includes('reasoning-ultra-burst'), effort === 'ultra')
+    assert.equal(
+      await control.command('getAttribute', '[data-testid="model-control-reasoning-track"]', {
+        value: 'aria-valuetext',
+      }),
+      label
+    )
+  }
+}
 
 async function assertCompactLayout(control) {
   const [menu] = JSON.parse(
@@ -63,7 +91,7 @@ export function createDesktopScenario({ captureScreenshot }) {
           ...(model.effort
             ? {
                 reasoningEfforts: model.efforts ?? [model.effort],
-                defaultReasoningEffort: model.effort,
+                defaultReasoningEffort: model.efforts?.[0] ?? model.effort,
               }
             : {}),
         }
@@ -89,7 +117,7 @@ export function createDesktopScenario({ captureScreenshot }) {
                 {
                   name: 'unavailable',
                   label: '不可用',
-                  models: [{ modelName: 'preset-glm', reasoningEffort: 'medium' }],
+                  models: [{ modelName: 'missing-model', reasoningEffort: 'medium' }],
                 },
               ],
             },
@@ -183,6 +211,12 @@ export function createDesktopScenario({ captureScreenshot }) {
           const slider = JSON.parse(
             await control.command('snapshot', '[data-testid="model-advanced-panel"]')
           )
+          assert.equal(slider.testIds.includes('reasoning-ultra-burst'), model.effort === 'ultra')
+          if (model.effort === 'ultra') {
+            await control.command('waitFor', '[data-testid="model-simple-header"]', {
+              text: 'Ultra',
+            })
+          }
           for (const target of models) {
             assert.ok(
               slider.testIds.includes(
@@ -191,6 +225,14 @@ export function createDesktopScenario({ captureScreenshot }) {
             )
           }
         }
+        await control.command('press', 'body', { key: 'Escape' })
+        await reloadMainWindow(control, 'The recommended Catalog override did not survive reload')
+        await control.command('waitFor', selector, { text: models[2].label })
+        await control.command('click', selector)
+        await control.command('waitFor', '[data-testid="model-selection-mode"]', {
+          text: '推荐模型集',
+        })
+        await control.command('waitFor', '[data-testid="model-simple-header"]', { text: '中' })
         await control.command('click', '[data-testid="model-advanced-toggle"]')
         await control.command('click', '[data-testid="model-option-preset-long"]')
         await control.command('waitFor', '[data-testid="model-selection-mode"]', {
@@ -205,6 +247,7 @@ export function createDesktopScenario({ captureScreenshot }) {
         )
         await assertCompactLayout(control)
         await captureScreenshot(control, 'model-selector-fixed-long-name.png', 'body')
+        await verifyFixedEfforts(control, 'zh-CN')
         await control.command('click', '[data-testid="model-control-reasoning-high"]')
         await control.command('waitFor', '[data-testid="model-simple-name"]', {
           text: models[4].label,
@@ -257,6 +300,7 @@ export function createDesktopScenario({ captureScreenshot }) {
         })
         await assertCompactLayout(control)
         await captureScreenshot(control, 'model-selector-fixed-english-dark.png', 'body')
+        await verifyFixedEfforts(control, 'en')
         await control.command('click', '[data-testid="model-reset-default-button"]')
         await control.command('waitFor', '[data-testid="model-selection-mode"]', {
           text: 'Recommended model set',

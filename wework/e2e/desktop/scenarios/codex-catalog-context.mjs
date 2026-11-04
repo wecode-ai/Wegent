@@ -10,6 +10,11 @@ import {
   selectE2EModel,
 } from '../modules/shared.mjs'
 import {
+  configureCatalogReasoning,
+  selectCatalogEffort,
+  verifyCatalogReasoning,
+} from './codex-catalog-reasoning.mjs'
+import {
   codexRequestKind,
   createSse,
   handleEmptyReplyPrediction,
@@ -82,6 +87,7 @@ export function createCatalogContextVerification({
   let requests = 0
   let compactions = 0
   let heldResponse
+  let expectedEffort
 
   return {
     attachServer(server) {
@@ -114,6 +120,11 @@ export function createCatalogContextVerification({
       const prewarm = kind === 'prewarm'
       if (!prewarm) {
         assert.equal(body.model, modelId)
+        assert.equal(
+          body.reasoning?.effort,
+          expectedEffort,
+          'The selected Catalog effort was not forwarded to the real Codex request'
+        )
         assert.ok(JSON.stringify(body).includes(PROMPT), 'Catalog task lost its conversation')
         requests += 1
       }
@@ -142,6 +153,7 @@ export function createCatalogContextVerification({
       await control.command('fill', '[data-testid="local-model-context-window-input"]', {
         value: '500000',
       })
+      await configureCatalogReasoning(control)
       const executorLogPath = join(resultDir, 'executor.log')
       // A customized row confirms persistence before the optional restart confirmation.
       const restartLogOffset = (await readFile(executorLogPath, 'utf8')).length
@@ -158,9 +170,12 @@ export function createCatalogContextVerification({
       await control.command('navigate', 'body', { value: '/' })
       await createSingleRootLocalProject(control, workspacePath, 'catalog-context-500k')
       await selectE2EModel(control, modelId, modelLabel, '', 'openai')
+      await verifyCatalogReasoning(control)
       active = true
       try {
         for (let turn = 1; turn <= 2; turn += 1) {
+          expectedEffort = turn === 1 ? 'max' : 'ultra'
+          await selectCatalogEffort(control, expectedEffort)
           await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
             value: `${PROMPT} turn ${turn}`,
           })

@@ -1556,7 +1556,9 @@ classify_wework_path() {
       return
       ;;
 
-    wework/e2e/desktop/scenarios/codex-native-catalog.scenario.mjs)
+    wework/e2e/desktop/scenarios/codex-native-catalog.scenario.mjs | \
+      wework/e2e/desktop/scenarios/codex-catalog-context.mjs | \
+      wework/e2e/desktop/scenarios/codex-catalog-reasoning.mjs)
       select_target "core:codex-native-catalog"
       return
       ;;
@@ -1755,8 +1757,11 @@ classify_path() {
   case "$path" in
     packages/collaboration/src/controls/ModelSelector* | \
       packages/collaboration/src/controls/ModelPowerSlider* | \
+      packages/collaboration/src/controls/model-reasoning* | \
+      packages/collaboration/src/controls/model-ui* | \
       packages/collaboration/src/controls/model-selector-utils*)
       select_target "cloud:cloud-model-presets"
+      select_target "core:codex-native-catalog"
       ;;
   esac
   case "$path" in
