@@ -34,7 +34,54 @@ const checkpoints = matrix =>
 const measuredLoad = shard =>
   shard.segments.split(',').reduce((total, segment) => total + (checkpointSeconds(segment) ?? 0), 0)
 
-test('measured Windows scheduling preserves every segment and expanded checkpoint exactly once', () => {
+function preparationRequirements() {
+  const steps = JSON.parse(
+    execFileSync(
+      'ruby',
+      [
+        '-ryaml',
+        '-rjson',
+        '-e',
+        "puts JSON.generate(YAML.load_file(ARGV[0])['jobs']['wework-desktop-windows-core-e2e']['steps'])",
+        '.github/workflows/wework-e2e.yml',
+      ],
+      { cwd: root, encoding: 'utf8' }
+    )
+  )
+  const evidence = JSON.parse(
+    readFileSync(new URL('../ci/wework-windows-checkpoint-durations.json', import.meta.url))
+  )
+  const weights = {
+    'Install local harness CLIs': evidence.preparationSeconds['local-harness'],
+    'Build real object storage': evidence.preparationSeconds['object-storage'],
+    'Install Electron for native startup and schema verification': 0,
+  }
+  return Object.entries(weights).map(([name, seconds]) => {
+    const step = steps.find(step => step.name === name)
+    assert.ok(step, name)
+    const triggers = [...step.if.matchAll(/contains\(matrix.segments, '([^']+)'\)/g)].map(
+      match => match[1]
+    )
+    assert.ok(triggers.length, `Preparation triggers are required for ${name}`)
+    return { name, seconds, triggers }
+  })
+}
+
+function scheduledLoads(matrix, preparations) {
+  return matrix.include.map(shard => {
+    const segments = shard.segments.split(',')
+    return preparations.reduce(
+      (total, preparation) =>
+        total +
+        (preparation.triggers.some(segment => segments.includes(segment))
+          ? preparation.seconds
+          : 0),
+      measuredLoad(shard)
+    )
+  })
+}
+
+test('Windows scheduling preserves every segment and expanded checkpoint exactly once', () => {
   const balanced = balanceWindowsMatrix(original)
   assert.deepEqual(segments(balanced).sort(), segments(original).sort())
   assert.deepEqual(checkpoints(balanced).sort(), checkpoints(original).sort())
@@ -47,11 +94,24 @@ test('measured Windows scheduling preserves every segment and expanded checkpoin
       original.include.find(shard => shard.id === id)
     )
   }
-  const ordinary = matrix =>
-    matrix.include.filter(shard => !['core-9', 'core-10'].includes(shard.id))
+})
+
+test('balancing strictly reduces the maximum load of fully measured shards', () => {
+  // New checkpoints pin their entire shard until successful timings exist.
+  // Their known subtotal cannot prove whether the complete shard is faster.
+  const measured = {
+    include: original.include.filter(shard =>
+      shard.segments.split(',').every(segment => checkpointSeconds(segment) !== null)
+    ),
+  }
+  const balanced = balanceWindowsMatrix(measured)
+  const ordinary = matrix => ({
+    include: matrix.include.filter(shard => !['core-9', 'core-10'].includes(shard.id)),
+  })
+  const preparations = preparationRequirements()
   assert.ok(
-    Math.max(...ordinary(balanced).map(measuredLoad)) <
-      Math.max(...ordinary(original).map(measuredLoad))
+    Math.max(...scheduledLoads(ordinary(balanced), preparations)) <
+      Math.max(...scheduledLoads(ordinary(measured), preparations))
   )
 })
 
@@ -85,51 +145,11 @@ test('duplicate selection is rejected rather than silently losing coverage', () 
 })
 
 test('balancing never multiplies expensive conditional preparation from the original workflow', () => {
-  const steps = JSON.parse(
-    execFileSync(
-      'ruby',
-      [
-        '-ryaml',
-        '-rjson',
-        '-e',
-        "puts JSON.generate(YAML.load_file(ARGV[0])['jobs']['wework-desktop-windows-core-e2e']['steps'])",
-        '.github/workflows/wework-e2e.yml',
-      ],
-      { cwd: root, encoding: 'utf8' }
-    )
-  )
   const balanced = balanceWindowsMatrix(original)
-  const evidence = JSON.parse(
-    readFileSync(new URL('../ci/wework-windows-checkpoint-durations.json', import.meta.url))
-  )
-  const preparationWeights = {
-    'Install local harness CLIs': evidence.preparationSeconds['local-harness'],
-    'Build real object storage': evidence.preparationSeconds['object-storage'],
-  }
-  const preparationLoads = matrix => matrix.include.map(shard => measuredLoad(shard))
-  const originalLoads = preparationLoads(original)
-  const balancedLoads = preparationLoads(balanced)
-  for (const name of [
-    'Install local harness CLIs',
-    'Build real object storage',
-    'Install Electron for native startup and schema verification',
-  ]) {
-    const step = steps.find(step => step.name === name)
-    assert.ok(step, name)
-    const triggers = [...step.if.matchAll(/contains\(matrix.segments, '([^']+)'\)/g)].map(
-      match => match[1]
-    )
-    assert.ok(triggers.length, `Preparation triggers are required for ${name}`)
-    for (const [matrix, loads] of [
-      [original, originalLoads],
-      [balanced, balancedLoads],
-    ]) {
-      for (const [index, shard] of matrix.include.entries()) {
-        if (triggers.some(segment => shard.segments.split(',').includes(segment))) {
-          loads[index] += preparationWeights[name] ?? 0
-        }
-      }
-    }
+  const preparations = preparationRequirements()
+  const originalLoads = scheduledLoads(original, preparations)
+  const balancedLoads = scheduledLoads(balanced, preparations)
+  for (const { name, triggers } of preparations) {
     const count = matrix =>
       matrix.include.filter(shard => triggers.some(segment => shard.segments.includes(segment)))
         .length
