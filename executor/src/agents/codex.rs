@@ -5498,7 +5498,17 @@ fn codex_base_process_environment() -> BTreeMap<String, String> {
         );
     }
     environment.extend(computer_use_mcp_config_overrides().1);
-    environment.extend(crate::services::git_credentials::environment());
+    // Auxiliary RPCs and turns must compare the same effective CLI directories.
+    environment.extend(
+        process_environment::process_env(&[])
+            .into_iter()
+            .filter(|(key, _)| {
+                matches!(
+                    key.as_str(),
+                    "GH_CONFIG_DIR" | "GLAB_CONFIG_DIR" | "GIT_CONFIG_GLOBAL"
+                )
+            }),
+    );
     environment
 }
 

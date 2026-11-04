@@ -579,6 +579,18 @@ async fn codex_app_server_engine_uses_user_runtime_proxy_without_provider_overri
 
 async fn codex_auxiliary_rpc_and_task_share_one_proxy_configured_app_server() {
     let _lock = env_lock().await;
+    let root = tempfile::tempdir().unwrap();
+    let _workbench = EnvGuard::set("WEGENT_WORKBENCH_HOME", root.path().to_str().unwrap());
+    let _device = EnvGuard::set("DEVICE_TYPE", "local");
+    let git_environment = [
+        ("GH_CONFIG_DIR", "/native/github"),
+        ("GLAB_CONFIG_DIR", "/native/gitlab"),
+        ("GIT_CONFIG_GLOBAL", "/native/gitconfig"),
+    ];
+    let _git_environment = git_environment
+        .iter()
+        .map(|(key, value)| EnvGuard::set(key, value))
+        .collect::<Vec<_>>();
     let _debug = EnvGuard::set("WEGENT_DEBUG_CLAUDE_STDOUT", "1");
     let stdout_path = std::env::temp_dir().join(format!(
         "wegent-codex-stdout-{}.jsonl",
@@ -632,6 +644,11 @@ async fn codex_auxiliary_rpc_and_task_share_one_proxy_configured_app_server() {
     let messages = read_json_lines(&log_path);
     assert_eq!(messages[0]["env"]["HTTP_PROXY"], "http://127.0.0.1:7890");
     assert_eq!(messages[0]["env"]["HTTPS_PROXY"], "http://127.0.0.1:7890");
+    let thread = messages.iter().find(|message| message["method"] == "thread/start").unwrap();
+    for (key, value) in git_environment {
+        assert_eq!(messages[0]["env"][key], value);
+        assert_eq!(thread["params"]["config"][format!("shell_environment_policy.set.{key}")], value);
+    }
     assert_eq!(
         messages
             .iter()
@@ -1446,7 +1463,7 @@ fn write_fake_codex_for_auxiliary_rpc_then_turn(log_path: &Path) -> PathBuf {
 LOG_PATH='{}'
 http_proxy=$(printenv HTTP_PROXY)
 https_proxy=$(printenv HTTPS_PROXY)
-printf '{{"env":{{"HTTP_PROXY":"%s","HTTPS_PROXY":"%s"}}}}\n' "$http_proxy" "$https_proxy" >> "$LOG_PATH"
+printf '{{"env":{{"HTTP_PROXY":"%s","HTTPS_PROXY":"%s","GH_CONFIG_DIR":"%s","GLAB_CONFIG_DIR":"%s","GIT_CONFIG_GLOBAL":"%s"}}}}\n' "$http_proxy" "$https_proxy" "$GH_CONFIG_DIR" "$GLAB_CONFIG_DIR" "$GIT_CONFIG_GLOBAL" >> "$LOG_PATH"
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$LOG_PATH"
   request_id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
