@@ -255,6 +255,73 @@ async fn native_completion_wakes_a_resume_waiting_for_thread_admission() {
 }
 
 #[tokio::test]
+async fn reading_a_persisted_goal_does_not_block_its_recovery_admission() {
+    let fixture = Fixture::new();
+    let client = &fixture.client;
+    let response = client
+        .request("thread/goal/get", json!({"threadId":"thread-1"}))
+        .await
+        .unwrap();
+    assert_eq!(response["goal"]["status"], "active");
+    assert!(client.state.lock().await.active_threads.is_empty());
+    client
+        .state
+        .lock()
+        .await
+        .thread_mcp_configurations
+        .insert("thread-1".into(), Map::new());
+    let plan = CodexThreadPlan {
+        start: CodexThreadStart::Request {
+            operation: "thread/resume",
+            params: json!({"threadId":"thread-1"}),
+        },
+        resume_requested: true,
+        fork_requested: false,
+    };
+    let request = ExecutionRequest::default();
+    let admitted = timeout(
+        Duration::from_secs(1),
+        client.prepare_thread_admission(&plan, &request),
+    )
+    .await
+    .expect("A persisted active Goal must be admitted before native work starts")
+    .unwrap();
+    let resumed = client
+        .request("thread/resume", json!({"threadId":"thread-1"}))
+        .await
+        .unwrap();
+    assert_eq!(resumed["pid"], response["pid"]);
+    let hub = client
+        .state
+        .lock()
+        .await
+        .process
+        .as_ref()
+        .unwrap()
+        .notifications
+        .clone();
+    hub.send(
+        json!({"method":"turn/started","params":{"threadId":"thread-1","turn":{"id":"recovered"}}}),
+    )
+    .await;
+    drop(admitted);
+    client.finish_thread_activity("thread-1", false).await;
+    hub.send(json!({"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"recovered","status":"completed"}}})).await;
+    assert_eq!(client.restart_if_idle().await, Err((1, 0)));
+    client
+        .mutate_thread_goal("thread/goal/clear", json!({"threadId":"thread-1"}))
+        .await
+        .unwrap();
+    assert!(client
+        .state
+        .lock()
+        .await
+        .active_threads_snapshot()
+        .is_empty());
+    client.restart().await;
+}
+
+#[tokio::test]
 async fn native_rpc_responses_protect_the_gap_before_turn_and_goal_notifications() {
     let fixture = Fixture::new();
     let client = &fixture.client;

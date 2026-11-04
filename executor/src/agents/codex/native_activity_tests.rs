@@ -94,6 +94,101 @@ fn native_responses_bridge_startup_and_goal_clear_keeps_a_running_turn() {
 }
 
 #[test]
+fn reading_a_persisted_active_goal_does_not_start_native_work() {
+    let mut activity = CodexNativeActivity::default();
+    let get = request(&activity, "thread/goal/get");
+    assert!(!activity.observe_response(&get, &json!({"goal":{"status":"active"}})));
+    assert!(activity.active_threads().is_empty());
+
+    for response_order in 0..3 {
+        let mut activity = CodexNativeActivity::default();
+        let get = request(&activity, "thread/goal/get");
+        let active = json!({"goal":{"status":"active"}});
+        if response_order == 0 {
+            activity.observe_response(&get, &active);
+        }
+        activity.observe(&turn("turn/started", "thread", "one", "inProgress"));
+        if response_order == 1 {
+            activity.observe_response(&get, &active);
+        }
+        activity.observe(&turn("turn/completed", "thread", "one", "completed"));
+        if response_order == 2 {
+            assert!(activity.active_threads().is_empty());
+            activity.observe_response(&get, &active);
+        }
+        assert_eq!(
+            activity.active_threads().get("thread"),
+            Some(&1),
+            "response_order={response_order}"
+        );
+    }
+}
+
+#[test]
+fn a_goal_terminal_discards_prior_native_work_and_goal_metadata() {
+    for terminal in [
+        clear_goal(),
+        goal("blocked"),
+        goal("complete"),
+        turn("turn/completed", "thread", "failed", "failed"),
+    ] {
+        let mut activity = CodexNativeActivity::default();
+        let get = request(&activity, "thread/goal/get");
+        let active = json!({"goal":{"status":"active"}});
+        activity.observe_response(&get, &active);
+        activity.observe(&turn("turn/started", "thread", "one", "inProgress"));
+        activity.observe(&turn("turn/completed", "thread", "one", "completed"));
+        assert_eq!(activity.active_threads().get("thread"), Some(&1));
+        let old_get = request(&activity, "thread/goal/get");
+        let old_set = request(&activity, "thread/goal/set");
+        assert!(activity.observe(&terminal));
+        assert!(!activity.observe_response(&old_get, &active));
+        assert!(!activity.observe_response(&old_set, &active));
+        assert!(!activity.observe(&turn("turn/started", "thread", "one", "inProgress")));
+        activity.observe(&turn("turn/started", "thread", "two", "inProgress"));
+        activity.observe(&turn("turn/completed", "thread", "two", "completed"));
+        assert!(activity.active_threads().is_empty(), "{terminal}");
+    }
+
+    let mut activity = CodexNativeActivity::default();
+    activity.observe(&turn("turn/started", "thread", "one", "inProgress"));
+    activity.observe(&turn("turn/completed", "thread", "one", "completed"));
+    activity.observe(&clear_goal());
+    let get = request(&activity, "thread/goal/get");
+    activity.observe_response(&get, &json!({"goal":{"status":"active"}}));
+    assert!(activity.active_threads().is_empty());
+}
+
+#[test]
+fn a_newer_passive_goal_read_preserves_the_pending_set_response_bridge() {
+    for get_response_first in [false, true] {
+        for status in [Some("active"), Some("complete"), None] {
+            let mut activity = CodexNativeActivity::default();
+            let set = request(&activity, "thread/goal/set");
+            let get = request(&activity, "thread/goal/get");
+            let set_response = json!({"goal":{"status":"active"}});
+            let get_response = match status {
+                Some(status) => json!({"goal":{"status":status}}),
+                None => json!({"goal":null}),
+            };
+            if get_response_first {
+                activity.observe_response(&get, &get_response);
+                assert!(activity.active_threads().is_empty());
+                activity.observe_response(&set, &set_response);
+            } else {
+                activity.observe_response(&set, &set_response);
+                activity.observe_response(&get, &get_response);
+            }
+            assert_eq!(
+                activity.active_threads().contains_key("thread"),
+                status == Some("active"),
+                "status={status:?}, get_response_first={get_response_first}"
+            );
+        }
+    }
+}
+
+#[test]
 fn native_goal_changes_reject_older_goal_responses() {
     for notification in [
         goal("blocked"),

@@ -8,21 +8,77 @@ use super::*;
 pub(super) struct CodexNativeActivity {
     turns: HashMap<String, HashSet<String>>,
     settled_turns: HashMap<String, HashSet<String>>,
-    active_goals: HashSet<String>,
-    goal_observations: HashMap<String, u64>,
-    goal_responses: HashMap<String, u64>,
+    goals: HashMap<String, GoalActivity>,
+}
+
+struct GoalResponse {
+    request_id: u64,
+    active: bool,
+}
+
+#[derive(Default)]
+struct GoalActivity {
+    // Native updates invalidate responses registered against an earlier observation.
+    observation: u64,
+    response: Option<GoalResponse>,
+    // Persisted Goal configuration alone does not establish execution in this process.
+    active: bool,
+    // Successful turns retain continuation eligibility until a Goal or turn terminal ends it.
+    native_work: bool,
+}
+
+impl GoalActivity {
+    fn is_busy(&self) -> bool {
+        self.active && self.native_work
+    }
+
+    fn observe_native(&mut self, active: bool) -> bool {
+        let was_busy = self.is_busy();
+        self.observation += 1;
+        self.response = None;
+        self.active = active;
+        self.native_work = active;
+        was_busy != self.is_busy()
+    }
+
+    fn observe_response(
+        &mut self,
+        response: GoalResponse,
+        observation: u64,
+        starts_work: bool,
+        turn_running: bool,
+    ) -> bool {
+        if self.observation != observation {
+            return false;
+        }
+        let active = response.active;
+        if let Some(last) = &self.response {
+            if response.request_id < last.request_id {
+                // A newer active read can confirm a pending set without starting work itself.
+                if !(starts_work && response.active && last.active) {
+                    return false;
+                }
+            } else {
+                self.response = Some(response);
+            }
+        } else {
+            self.response = Some(response);
+        }
+        let was_busy = self.is_busy();
+        self.active = active;
+        self.native_work = active && (self.native_work || starts_work || turn_running);
+        was_busy != self.is_busy()
+    }
 }
 
 impl CodexNativeActivity {
     pub(super) fn observe(&mut self, message: &Value) -> bool {
         let method = message["method"].as_str().unwrap_or_default();
         if method == "codex/app-server/exited" {
-            let changed = !self.turns.is_empty() || !self.active_goals.is_empty();
+            let changed = !self.turns.is_empty() || self.goals.values().any(GoalActivity::is_busy);
             self.turns.clear();
             self.settled_turns.clear();
-            self.active_goals.clear();
-            self.goal_observations.clear();
-            self.goal_responses.clear();
+            self.goals.clear();
             return changed;
         }
         let params = message_params(message);
@@ -35,24 +91,15 @@ impl CodexNativeActivity {
             "turn/completed" => self.complete_turn(&thread_id, params),
             "thread/goal/updated" => match params.pointer("/goal/status").and_then(Value::as_str) {
                 Some(status) => {
-                    self.advance_goal_observation(&thread_id);
-                    if status.eq_ignore_ascii_case("active") {
-                        self.active_goals.insert(thread_id)
-                    } else {
-                        self.active_goals.remove(&thread_id)
-                    }
+                    self.observe_goal(&thread_id, status.eq_ignore_ascii_case("active"))
                 }
                 None => false,
             },
-            "thread/goal/cleared" => {
-                self.advance_goal_observation(&thread_id);
-                self.active_goals.remove(&thread_id)
-            }
+            "thread/goal/cleared" => self.observe_goal(&thread_id, false),
             "thread/closed" => {
                 let turns = self.turns.remove(&thread_id).is_some();
                 self.settled_turns.remove(&thread_id);
-                self.advance_goal_observation(&thread_id);
-                self.active_goals.remove(&thread_id) || turns
+                self.observe_goal(&thread_id, false) || turns
             }
             _ => false,
         }
@@ -81,8 +128,7 @@ impl CodexNativeActivity {
                     Some("failed" | "interrupted" | "cancelled")
                 )
             {
-                self.advance_goal_observation(thread_id);
-                goal_changed = self.active_goals.remove(thread_id);
+                goal_changed = self.observe_goal(thread_id, false);
             }
         }
         changed || goal_changed
@@ -97,7 +143,15 @@ impl CodexNativeActivity {
         {
             return false;
         }
-        self.turns.entry(thread_id).or_default().insert(turn_id)
+        let started = self
+            .turns
+            .entry(thread_id.clone())
+            .or_default()
+            .insert(turn_id);
+        if started {
+            self.goals.entry(thread_id).or_default().native_work = true;
+        }
+        started
     }
 
     pub(super) fn observe_response(
@@ -112,54 +166,67 @@ impl CodexNativeActivity {
                 thread_id,
                 observation,
                 request_id,
+                starts_work,
             } => {
                 let status = response.pointer("/goal/status").and_then(Value::as_str);
-                if (status.is_none() && !response.get("goal").is_some_and(Value::is_null))
-                    || !self.accept_goal_response(thread_id, *observation, *request_id)
-                {
+                let active = status.is_some_and(|status| status.eq_ignore_ascii_case("active"));
+                if status.is_none() && !response.get("goal").is_some_and(Value::is_null) {
                     return false;
                 }
-                if status.is_some_and(|status| status.eq_ignore_ascii_case("active")) {
-                    self.active_goals.insert(thread_id.clone())
-                } else {
-                    self.active_goals.remove(thread_id)
-                }
+                self.observe_goal_response(
+                    thread_id,
+                    GoalResponse {
+                        request_id: *request_id,
+                        active,
+                    },
+                    *observation,
+                    *starts_work,
+                )
             }
             CodexNativeRequest::ClearGoal {
                 thread_id,
                 observation,
                 request_id,
-            } => {
-                self.accept_goal_response(thread_id, *observation, *request_id)
-                    && self.active_goals.remove(thread_id)
-            }
+            } => self.observe_goal_response(
+                thread_id,
+                GoalResponse {
+                    request_id: *request_id,
+                    active: false,
+                },
+                *observation,
+                false,
+            ),
         }
     }
 
-    fn accept_goal_response(&mut self, thread_id: &str, observation: u64, request_id: u64) -> bool {
-        if self.goal_observation(thread_id) != observation
-            || self
-                .goal_responses
-                .get(thread_id)
-                .is_some_and(|last| request_id < *last)
-        {
-            return false;
-        }
-        self.goal_responses.insert(thread_id.to_owned(), request_id);
-        true
-    }
-
-    fn advance_goal_observation(&mut self, thread_id: &str) {
-        *self
-            .goal_observations
+    fn observe_goal_response(
+        &mut self,
+        thread_id: &str,
+        response: GoalResponse,
+        observation: u64,
+        starts_work: bool,
+    ) -> bool {
+        let turn_running = self
+            .turns
+            .get(thread_id)
+            .is_some_and(|turns| !turns.is_empty());
+        self.goals
             .entry(thread_id.to_owned())
-            .or_default() += 1;
+            .or_default()
+            .observe_response(response, observation, starts_work, turn_running)
+    }
+
+    fn observe_goal(&mut self, thread_id: &str, active: bool) -> bool {
+        self.goals
+            .entry(thread_id.to_owned())
+            .or_default()
+            .observe_native(active)
     }
 
     fn goal_observation(&self, thread_id: &str) -> u64 {
-        self.goal_observations
+        self.goals
             .get(thread_id)
-            .copied()
+            .map(|goal| goal.observation)
             .unwrap_or_default()
     }
 
@@ -177,6 +244,7 @@ impl CodexNativeActivity {
                 thread_id,
                 observation,
                 request_id,
+                starts_work: method == "thread/goal/set",
             }),
             "thread/goal/clear" => Some(CodexNativeRequest::ClearGoal {
                 thread_id,
@@ -193,8 +261,10 @@ impl CodexNativeActivity {
             .iter()
             .map(|(thread_id, turns)| (thread_id.clone(), turns.len()))
             .collect();
-        for thread_id in &self.active_goals {
-            active.entry(thread_id.clone()).or_insert(1);
+        for (thread_id, goal) in &self.goals {
+            if goal.is_busy() {
+                active.entry(thread_id.clone()).or_insert(1);
+            }
         }
         active
     }
@@ -206,6 +276,7 @@ pub(super) enum CodexNativeRequest {
         thread_id: String,
         observation: u64,
         request_id: u64,
+        starts_work: bool,
     },
     ClearGoal {
         thread_id: String,
