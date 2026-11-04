@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { verifyBrowserFullControl } from '../modules/browser-full-control.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
+import { verifyBrowserHistoryResume } from './browser-history-resume-regression.mjs'
 import {
   EMBEDDED_BROWSER_BRIDGE_COLLISION_COMPLETION_TEXT,
   EMBEDDED_BROWSER_BRIDGE_COLLISION_PROMPT,
@@ -1803,6 +1804,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         )}\n`,
         'utf8'
       )
+      await verifyBrowserHistoryResume(control, resultDir, uiTimeoutMs)
     },
   }
 }
