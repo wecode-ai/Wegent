@@ -362,11 +362,16 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
         message: SCOPED_FOLLOW_UP,
         request_key: 'scoped-original-43',
       }),
-      value => {
+      async value => {
         const receipt = findValue(value, item => item.operation && item.duplicate === false)
         assert.equal(receipt?.operation.delivery_status, 'accepted')
         assert.equal(receipt.operation.result.taskId, scopedTask.taskId)
         assert.equal(receipt.operation.device_id, CLOUD_DEVICE_ID)
+        await cloudEnvironment.waitForRuntimeTask({
+          deviceId: receipt.operation.device_id,
+          taskId: scopedTask.taskId,
+          workspacePath: scopedTask.workspacePath,
+        })
       },
     ],
     [
