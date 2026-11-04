@@ -74,13 +74,14 @@ vi.mock('@/features/workbench/useWorkbench', () => ({
 vi.mock('@/features/workspace-tabs/workspaceTabsContextValue', async importOriginal => {
   const original =
     await importOriginal<typeof import('@/features/workspace-tabs/workspaceTabsContextValue')>()
+  const workspaceTabs = {
+    tabs: [],
+    openTab: vi.fn(),
+    closeTab: vi.fn(),
+  }
   return {
     ...original,
-    useWorkspaceTabs: () => ({
-      tabs: [],
-      openTab: vi.fn(),
-      closeTab: vi.fn(),
-    }),
+    useWorkspaceTabs: () => workspaceTabs,
   }
 })
 vi.mock('@/features/harness-apps/harnessAppTabs', () => ({

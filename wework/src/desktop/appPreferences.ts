@@ -49,6 +49,7 @@ export interface AppPreferences {
   localCodexSubscriptionEnabled: boolean
   telemetryConsentAsked: boolean
   telemetryEnabled: boolean
+  performanceRecordingEnabled: boolean
   supervisorPrinciples: string
   supervisorModelSelection: ModelSelectionConfig | null
   projectAiModelSelection: ModelSelectionConfig | null
@@ -132,6 +133,7 @@ export interface AppPreferencesPatch {
   localCodexSubscriptionEnabled?: boolean
   telemetryConsentAsked?: boolean
   telemetryEnabled?: boolean
+  performanceRecordingEnabled?: boolean
   supervisorPrinciples?: string
   supervisorModelSelection?: ModelSelectionConfig | null
   projectAiModelSelection?: ModelSelectionConfig | null
@@ -180,6 +182,7 @@ export const defaultAppPreferences: AppPreferences = {
   localCodexSubscriptionEnabled: true,
   telemetryConsentAsked: false,
   telemetryEnabled: false,
+  performanceRecordingEnabled: false,
   supervisorPrinciples: '',
   supervisorModelSelection: null,
   projectAiModelSelection: null,
@@ -351,6 +354,10 @@ export function mergeAppPreferences(value: unknown): AppPreferences {
       typeof record.telemetryEnabled === 'boolean'
         ? record.telemetryEnabled
         : defaultAppPreferences.telemetryEnabled,
+    performanceRecordingEnabled:
+      typeof record.performanceRecordingEnabled === 'boolean'
+        ? record.performanceRecordingEnabled
+        : defaultAppPreferences.performanceRecordingEnabled,
     supervisorPrinciples:
       typeof record.supervisorPrinciples === 'string'
         ? record.supervisorPrinciples
