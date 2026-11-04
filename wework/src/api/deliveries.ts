@@ -940,7 +940,9 @@ export function createDeliveryApi(client: HttpClient) {
       return client.getCacheScope?.() ?? client
     },
     listMilestones(projectId: string): Promise<Milestone[]> {
-      return client.get(`/v1/cloud-projects/${encodeURIComponent(projectId)}/milestones`)
+      return client.get(`/v1/cloud-projects/${encodeURIComponent(projectId)}/milestones`, {
+        cache: 'no-store',
+      })
     },
     createMilestone(projectId: string, input: MilestoneInput): Promise<Milestone> {
       return client.post(`/v1/cloud-projects/${encodeURIComponent(projectId)}/milestones`, input)

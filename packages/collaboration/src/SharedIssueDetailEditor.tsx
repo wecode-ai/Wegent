@@ -2808,6 +2808,9 @@ export function TodoEditor(props: TodoEditorProps) {
               value={
                 isCreate ? createMilestoneId : (item?.milestone_id ?? null)
               }
+              onMissingValue={
+                isCreate ? () => setCreateMilestoneId(null) : undefined
+              }
               disabled={!editable || saving}
               label={t("todo.milestone", "里程碑")}
               noneLabel={t("todo.no_milestone", "未设置里程碑")}

@@ -37,7 +37,7 @@ it('routes cloud milestones and explicit Issue association clearing through the 
   await api.milestones.create('p1', input)
   await api.milestones.remove('p1', 'ms1', 2)
   await api.issues.update('I-1', { version: 3, milestoneId: null })
-  expect(client.get).toHaveBeenCalledWith('/v1/cloud-projects/p1/milestones')
+  expect(client.get).toHaveBeenCalledWith('/v1/cloud-projects/p1/milestones', { cache: 'no-store' })
   expect(client.post).toHaveBeenCalledWith('/v1/cloud-projects/p1/milestones', input)
   expect(client.delete).toHaveBeenCalledWith('/v1/cloud-projects/p1/milestones/ms1', { version: 2 })
   expect(client.patch).toHaveBeenCalledWith('/v1/loop-items/I-1', {

@@ -84,12 +84,29 @@ def test_issue_api_creates_and_clears_milestone_without_losing_other_fields(
     assert created.status_code == 201, created.text
     issue = created.json()
     assert issue["milestone_id"] == "ms-api"
+    unchanged = test_client.patch(
+        f"/api/v1/loop-items/{issue['id']}",
+        headers=headers,
+        json={"version": issue["version"], "milestone_id": "ms-api"},
+    )
+    assert unchanged.status_code == 200, unchanged.text
+    assert unchanged.json()["content_revision"] == issue["content_revision"]
     cleared = test_client.patch(
         f"/api/v1/loop-items/{issue['id']}",
         headers=headers,
-        json={"version": issue["version"], "milestone_id": None},
+        json={"version": unchanged.json()["version"], "milestone_id": None},
     )
     assert cleared.status_code == 200, cleared.text
     assert cleared.json()["milestone_id"] is None
     assert cleared.json()["tags"] == ["release"]
     assert cleared.json()["title"] == "Ship"
+    assert cleared.json()["content_revision"] == issue["content_revision"] + 1
+    already_cleared = test_client.patch(
+        f"/api/v1/loop-items/{issue['id']}",
+        headers=headers,
+        json={"version": cleared.json()["version"], "milestone_id": None},
+    )
+    assert already_cleared.status_code == 200, already_cleared.text
+    assert (
+        already_cleared.json()["content_revision"] == cleared.json()["content_revision"]
+    )

@@ -6,7 +6,7 @@ import { milestoneMessages } from "./milestones/messages";
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { projectStatuses } from './board'
+import { projectStatuses } from "./board";
 import { ProjectTemplateSettings } from "./templates/ProjectTemplateSettings";
 import { useCollaborationTemplateStore } from "./templates/context";
 import { templateMessages } from "./templates/messages";
@@ -921,6 +921,7 @@ export function CollaborationApp({
                       boardError={error}
                       project={project}
                       issues={filteredIssues}
+                      allIssues={issues}
                       members={members ?? []}
                       statuses={projectStatuses(project, messages, translate)}
                       taskBindings={taskBindings}

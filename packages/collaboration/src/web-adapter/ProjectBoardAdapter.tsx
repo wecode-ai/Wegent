@@ -114,6 +114,7 @@ interface ProjectBoardAdapterProps {
   boardError: string | null;
   agents: CollaborationAgent[];
   issues: CollaborationIssue[];
+  allIssues?: CollaborationIssue[];
   labels: ProjectBoardAdapterLabels;
   members: CollaborationMember[];
   project: CollaborationProject;
@@ -166,6 +167,7 @@ export function ProjectBoardAdapter({
   agents,
   boardError,
   issues,
+  allIssues = issues,
   labels,
   members,
   onCreateIssue,
@@ -183,8 +185,8 @@ export function ProjectBoardAdapter({
   taskBindings,
 }: ProjectBoardAdapterProps) {
   const childrenProgress = useMemo(
-    () => collectIssueChildrenProgress(issues),
-    [issues],
+    () => collectIssueChildrenProgress(allIssues),
+    [allIssues],
   );
   const savedViews = useSavedBoardViews({
     projectKey: `${project.project_store}:${project.id}`,

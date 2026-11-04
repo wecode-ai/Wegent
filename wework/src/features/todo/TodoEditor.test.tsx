@@ -47,6 +47,34 @@ const baseItem = {
 const project = { id: '11', name: 'Wework' } as unknown as CloudProject
 
 describe('TodoEditor external item sync', () => {
+  it('clears a deleted draft milestone only after a successful catalog read', async () => {
+    const key = 'wework-todo-draft:11:inbox'
+    localStorage.setItem(key, JSON.stringify({ title: 'Keep this draft', milestoneId: 'deleted' }))
+    const pending = deferred<[]>()
+    const createApi = { ...api, listMilestones: vi.fn(() => pending.promise) } as never
+    render(
+      <TodoEditor
+        mode="create"
+        project={{ ...project, task_provider: 'local', access_role: 'Owner' }}
+        initialParent={null}
+        initialStatus="inbox"
+        allItems={[]}
+        onCreated={vi.fn()}
+        onClose={vi.fn()}
+        api={createApi}
+        currentUserId={1}
+      />
+    )
+    expect(screen.getByTestId('issue-milestone')).toHaveValue('deleted')
+    await act(async () => pending.resolve([]))
+    await waitFor(() => expect(screen.getByTestId('issue-milestone')).toHaveValue(''))
+    expect(screen.getByTestId('cloud-todo-title')).toHaveValue('Keep this draft')
+    await waitFor(() =>
+      expect(JSON.parse(localStorage.getItem(key)!)).toMatchObject({ milestoneId: null })
+    )
+    localStorage.removeItem(key)
+  })
+
   it('restores a selected milestone when reopening an Issue creation draft', async () => {
     const user = userEvent.setup({ delay: null })
     const createApi = {

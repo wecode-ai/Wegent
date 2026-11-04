@@ -1602,7 +1602,7 @@ class LoopItemService:
         meaningful_change = group_changed or any(
             field in values.model_fields_set
             and (
-                field in {"tags", "workflow", "milestone_id"}
+                field in {"tags", "workflow"}
                 or getattr(item, field, None) != getattr(values, field)
             )
             for field in (

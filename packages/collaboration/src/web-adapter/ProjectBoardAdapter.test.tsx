@@ -74,6 +74,14 @@ describe('board card sub-issue progress', () => {
       ).toBeNull()
       act(() =>
         root.render(
+          <ProjectBoardAdapter {...props} allIssues={props.issues} issues={[props.issues[0]]} />
+        )
+      )
+      expect(container.querySelector(selector)?.textContent).toBe('子任务 1/2')
+      expect(container.querySelector('[data-testid="cloud-todo-card-child"]')).toBeNull()
+      expect(container.querySelector('[data-testid="cloud-todo-card-second"]')).toBeNull()
+      act(() =>
+        root.render(
           <ProjectBoardAdapter
             {...props}
             issues={props.issues.map(issue => ({ ...issue, can_view_detail: false }))}
