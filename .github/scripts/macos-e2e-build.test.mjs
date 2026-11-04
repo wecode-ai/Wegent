@@ -284,6 +284,20 @@ test('promotion requires the exact successful Inspector, archive and upload prod
   )
   assert.equal(restored.producer.sha, identity.headSha)
   assert.equal(downloads, 1)
+  const dispatch = {
+    ...run,
+    event: 'workflow_dispatch',
+    head_repository: { full_name: identity.repository },
+  }
+  assert.deepEqual(
+    validateMacosBuildProducer(dispatch, [job]),
+    restored.producer,
+  )
+  for (const head_repository of [{ full_name: 'fork/Wegent' }, undefined]) {
+    assert.throws(() =>
+      validateMacosBuildProducer({ ...dispatch, head_repository }, [job]),
+    )
+  }
   for (const name of requiredSteps) {
     const step = job.steps.find((step) => step.name === name)
     step.conclusion = 'skipped'
@@ -298,7 +312,7 @@ test('promotion requires the exact successful Inspector, archive and upload prod
       r.path = '.github/workflows/wework-app.yml'
     },
     (r) => {
-      r.event = 'workflow_dispatch'
+      r.event = 'schedule'
     },
     (r) => {
       r.status = 'in_progress'

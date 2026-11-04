@@ -14,7 +14,13 @@ export function validateMacosRuntimeProducer(run, jobs) {
     repository.toLowerCase(),
   );
   assert.equal(run.path, ".github/workflows/wework-e2e.yml");
-  assert(["pull_request", "push"].includes(run.event));
+  assert(["pull_request", "push", "workflow_dispatch"].includes(run.event));
+  if (run.event === "workflow_dispatch") {
+    assert.equal(
+      run.head_repository?.full_name.toLowerCase(),
+      repository.toLowerCase(),
+    );
+  }
   assert.equal(run.status, "completed");
   assert(["success", "failure"].includes(run.conclusion));
   assert.match(run.head_sha, /^[a-f0-9]{40}$/);

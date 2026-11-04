@@ -253,4 +253,61 @@ for failure in FAIL_DEPENDENCIES FAIL_PREPARATION; do
   fi
 done
 
+ruby -ryaml - "$script_dir/../actions/build-wework-macos-e2e/action.yml" "$temp_dir" <<'RUBY'
+steps = YAML.load_file(ARGV.fetch(0)).fetch('runs').fetch('steps')
+{
+  'resolve-app' => 'Resolve shared macOS Wework E2E build',
+  'restore-native' => 'Restore macOS arm64 runtimes from OCI'
+}.each do |file, name|
+  run = steps.find { |step| step['name'] == name }.fetch('run')
+  File.write(File.join(ARGV.fetch(1), "#{file}.sh"), run)
+end
+RUBY
+
+cat >"$repo/bin/node" <<'EOF_NODE'
+#!/usr/bin/env bash
+echo app-restore >> "$BUILD_EVENTS"
+echo "cache-hit=$TEST_APP_HIT" >> "$GITHUB_OUTPUT"
+EOF_NODE
+cat >"$repo/.github/scripts/restore-macos-e2e-runtime-oci.sh" <<'EOF_NATIVE'
+#!/usr/bin/env bash
+printf '%s\n' "$@" >> "$BUILD_EVENTS"
+if [[ "$2" != "${TEST_NATIVE_MISS:-}" ]]; then
+  mkdir -p "$(dirname "$1")"
+  touch "$1"
+  chmod +x "$1"
+fi
+EOF_NATIVE
+chmod +x "$repo/bin/node" "$repo/.github/scripts/restore-macos-e2e-runtime-oci.sh"
+
+(
+  cd "$repo"
+  export PATH="$repo/bin:$PATH"
+  export BUILD_EVENTS="$temp_dir/oci-events" GITHUB_OUTPUT="$temp_dir/oci-output"
+  export TEST_APP_HIT=true
+  OCI_VALIDATION=native-only bash -e "$temp_dir/resolve-app.sh"
+  test ! -e "$BUILD_EVENTS"
+  test "$(cat "$GITHUB_OUTPUT")" = 'cache-hit=false'
+  OCI_VALIDATION=complete-app bash -e "$temp_dir/resolve-app.sh"
+  test "$(cat "$BUILD_EVENTS")" = app-restore
+  if TEST_APP_HIT=false OCI_VALIDATION=complete-app GITHUB_OUTPUT="$temp_dir/oci-miss-output" bash -e "$temp_dir/resolve-app.sh"; then
+    echo 'Complete App verification passed with an OCI miss' >&2
+    exit 1
+  fi
+  export EXECUTOR_SOURCE_REF=executor-source EXECUTOR_HEAD_REF=executor-head
+  export BACKEND_SOURCE_REF=backend-source BACKEND_HEAD_REF=backend-head
+  BUILD_EVENTS="$temp_dir/native-events" HOME="$temp_dir/native-home" \
+    OCI_VALIDATION=native-only bash -e "$temp_dir/restore-native.sh"
+  test "$(grep -c -- '-source$' "$temp_dir/native-events")" -eq 2
+  if grep -q -- '-head$' "$temp_dir/native-events"; then
+    echo 'Native OCI baseline used a head fallback' >&2
+    exit 1
+  fi
+  if TEST_NATIVE_MISS=wegent-backend-rs HOME="$temp_dir/native-miss-home" \
+    OCI_VALIDATION=native-only bash -e "$temp_dir/restore-native.sh"; then
+    echo 'Native OCI baseline passed with a missing runtime' >&2
+    exit 1
+  fi
+)
+
 echo "Wework macOS E2E build tests passed"
