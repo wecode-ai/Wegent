@@ -53,7 +53,6 @@ test('Stand-in confirmation waits for navigation to mount before opening the own
   const mounted = barrier()
   const reachedOwner = new Error('Owner page is ready')
   const calls: Array<{ action: string; selector: string }> = []
-  let preferencesConfigured = false
   const scenario = createDesktopScenario({ workspacePath: '/fixture' })
   const verification = scenario
     .verify({
@@ -63,12 +62,11 @@ test('Stand-in confirmation waits for navigation to mount before opening the own
           return '0'
         if (action === 'setAppPreferences') {
           assert.equal(selector, 'body')
-          assert.ok(options?.value)
-          assert.deepEqual(JSON.parse(options.value), { experimentalFeaturesEnabled: true })
-          preferencesConfigured = true
+          assert.deepEqual(JSON.parse(options?.value ?? '{}'), {
+            experimentalFeaturesEnabled: true,
+          })
         }
         if (selector === '[data-testid="personal-stand-in-button"]') {
-          assert.equal(preferencesConfigured, true)
           if (action === 'click') throw new Error('Stand-in navigation is still mounting')
           assert.equal(action, 'clickWhenEnabled')
           waiting.release()
@@ -82,6 +80,10 @@ test('Stand-in confirmation waits for navigation to mount before opening the own
       (error: unknown) => error
     )
   assert.equal(await Promise.race([waiting.promise.then(() => 'waiting'), verification]), 'waiting')
+  assert.deepEqual(calls.slice(0, 2), [
+    { action: 'getElementCount', selector: '[data-testid="settings-button"]' },
+    { action: 'setAppPreferences', selector: 'body' },
+  ])
   assert.equal(
     calls.some(call => call.selector === '[data-testid="stand-in-overview"]'),
     false
