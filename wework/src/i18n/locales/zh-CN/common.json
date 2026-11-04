@@ -1173,6 +1173,8 @@
     "remote_project_git_cloning": "克隆中",
     "remote_project_git_opening": "添加中",
     "remote_project_git_failed": "克隆失败",
+    "remote_project_device_unavailable": "设备不可用",
+    "reselect_device": "重新选择设备",
     "remote_project_git_open_failed": "添加失败",
     "remote_project_device_offline": "设备离线",
     "remote_project_git_clone_failed": "Git 仓库克隆失败",

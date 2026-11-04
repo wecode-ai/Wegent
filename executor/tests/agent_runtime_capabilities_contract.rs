@@ -100,10 +100,13 @@ printf '%s' "$CLAUDE_CONFIG_DIR" > "$CLAUDE_CONFIG_DIR/observed-home"
         ExecutionOutcome::Completed { .. }
     ));
     let home = workbench.join("agents/user7/design  space/agent name");
+    let execution = execution_home(&home, "spaces");
+    assert!(execution.starts_with(home.join("runtime/executions")));
     assert_eq!(
-        fs::read_to_string(home.join("observed-home")).unwrap(),
-        home.to_str().unwrap()
+        fs::read_to_string(execution.join("observed-home")).unwrap(),
+        execution.to_str().unwrap()
     );
+    assert!(!home.join("observed-home").exists());
     assert!(home.join("runtime/tasks/spaces.json").is_file());
 }
 
@@ -431,10 +434,15 @@ async fn claude_runtime_writes_mcp_config_and_passes_it_to_process() {
     let mcp_config_path = args[mcp_flag_index + 1].as_str().unwrap();
     let mcp_config = read_json(&log_path.with_extension("mcp"));
     let agent_home = task_home("7788");
-    assert_eq!(Path::new(mcp_config_path), agent_home.join("mcp.json"));
+    assert_eq!(
+        Path::new(mcp_config_path),
+        execution_home(&agent_home, "7788").join("mcp.json")
+    );
+    assert!(!agent_home.join("mcp.json").exists());
+    assert_eq!(read_json(Path::new(mcp_config_path)), mcp_config);
     assert!(
         Path::new(mcp_config_path).exists(),
-        "agent MCP definitions must survive execution"
+        "task MCP definitions must survive execution"
     );
 
     assert_eq!(
@@ -454,7 +462,8 @@ async fn claude_runtime_writes_mcp_config_and_passes_it_to_process() {
     );
     assert_eq!(mcp_config["mcpServers"]["bot-shell"]["env"]["BOT_ENV"], "1");
     assert_eq!(mcp_config["mcpServers"]["wework_space"]["type"], "http");
-    let settings_path = agent_home.join("settings.json");
+    assert!(!agent_home.join("settings.json").exists());
+    let settings_path = execution_home(&agent_home, "7788").join("settings.json");
     let settings = read_json(&settings_path);
     let pre_tool_use = settings["hooks"]["PreToolUse"].as_array().unwrap();
     assert!(pre_tool_use.iter().any(|entry| {
@@ -506,10 +515,19 @@ async fn claude_runtime_writes_mcp_config_and_passes_it_to_process() {
     let latest_args = latest_args.as_array().unwrap();
     assert!(latest_args.iter().any(|arg| arg == "--mcp-config"));
     assert_eq!(read_json(&log_path.with_extension("mcp")), merged);
-    assert!(Path::new(mcp_config_path).exists());
+    let latest_config = execution_home(&agent_home, "7788").join("mcp.json");
+    assert!(latest_args
+        .windows(2)
+        .any(|pair| pair[0] == "--mcp-config" && pair[1] == latest_config.to_str().unwrap()));
+    assert_ne!(Path::new(mcp_config_path), latest_config);
+    assert!(
+        !Path::new(mcp_config_path).exists(),
+        "completed older snapshots must be pruned"
+    );
+    assert!(latest_config.is_file());
     assert!(!agent_home.join("runtime/claude-mcp-7788-101.json").exists());
 
-    // The stable definitions belong to the agent, not a single task.
+    // Another task using the same agent and checkout cannot inherit this task's tools.
     followup.task_id = "7789".to_owned();
     followup.project_workspace_path = Some(workspace_root.join("7788").display().to_string());
     assert_eq!(
@@ -524,7 +542,18 @@ async fn claude_runtime_writes_mcp_config_and_passes_it_to_process() {
         .unwrap()
         .iter()
         .any(|arg| arg == "--mcp-config"));
-    assert_eq!(read_json(&log_path.with_extension("mcp")), merged);
+    let managed_only = json!({"mcpServers": {
+        "wework_space": merged["mcpServers"]["wework_space"]
+    }});
+    assert_eq!(read_json(&log_path.with_extension("mcp")), managed_only);
+    assert!(
+        latest_config.is_file(),
+        "another task must retain the prior task's latest snapshot"
+    );
+    assert_ne!(
+        execution_home(&agent_home, "7789").join("mcp.json"),
+        latest_config
+    );
 
     // A different agent sharing the checkout must not inherit custom definitions.
     let mut other_agent = authenticated_bot_request(followup);
@@ -534,12 +563,7 @@ async fn claude_runtime_writes_mcp_config_and_passes_it_to_process() {
         .extra
         .insert("team_name".to_owned(), json!("other-agent"));
     assert_eq!(engine.run(other_agent).await, outcome);
-    assert_eq!(
-        read_json(&log_path.with_extension("mcp")),
-        json!({"mcpServers": {
-            "wework_space": merged["mcpServers"]["wework_space"]
-        }})
-    );
+    assert_eq!(read_json(&log_path.with_extension("mcp")), managed_only);
 }
 
 #[tokio::test]
@@ -1720,6 +1744,20 @@ fn task_home(task_id: &str) -> PathBuf {
         "missing agent Home for task {task_id}"
     );
     home
+}
+
+fn execution_home(home: &Path, task_id: &str) -> PathBuf {
+    let snapshots = fs::read_dir(home.join("runtime/executions"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| read_json(&path.join("execution.json"))["task_id"] == task_id)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        snapshots.len(),
+        1,
+        "task must retain one execution snapshot"
+    );
+    snapshots.into_iter().next().unwrap()
 }
 
 fn skill_zip(path: &str, content: &str) -> Vec<u8> {
