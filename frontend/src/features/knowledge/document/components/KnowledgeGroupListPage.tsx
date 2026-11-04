@@ -427,7 +427,7 @@ export function KnowledgeGroupListPage({
             <SortIcon column="updated" />
           </button>
         </TableHead>
-        <TableHead className="h-auto w-52 px-2 py-3 font-medium text-right">
+        <TableHead className="h-auto w-40 px-2 py-3 font-medium text-right">
           {t('document.table.actions', '操作')}
         </TableHead>
       </TableRow>

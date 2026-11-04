@@ -156,6 +156,7 @@
       "createdAt": "创建时间",
       "updatedAt": "更新时间",
       "actions": "操作",
+      "more": "更多",
       "edit": "编辑",
       "delete": "删除",
       "minutesAgo": "分钟前",

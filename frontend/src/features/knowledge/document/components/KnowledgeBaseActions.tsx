@@ -1,8 +1,14 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { FolderOutput, Pencil, Shield, Trash2 } from 'lucide-react'
+import { FolderOutput, MoreHorizontal, Pencil, Shield, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown'
 import { useTranslation } from '@/hooks/useTranslation'
 
 export function KnowledgeBaseActions({
@@ -26,10 +32,12 @@ export function KnowledgeBaseActions({
       onClick: onPermissions,
       Icon: Shield,
     },
-    { id: 'migrate', label: 'document.migrate.title', onClick: onMigrate, Icon: FolderOutput },
     { id: 'edit', label: 'document.table.edit', onClick: onEdit, Icon: Pencil },
-    { id: 'delete', label: 'document.table.delete', onClick: onDelete, Icon: Trash2 },
   ]
+  const moreActions = [
+    { id: 'migrate', label: 'document.migrate.title', onClick: onMigrate, Icon: FolderOutput },
+    { id: 'delete', label: 'document.table.delete', onClick: onDelete, Icon: Trash2 },
+  ].filter(action => action.onClick)
   return (
     <div className="flex flex-nowrap items-center justify-end gap-1">
       {actions
@@ -51,6 +59,37 @@ export function KnowledgeBaseActions({
             <Icon className="h-4 w-4" />
           </Button>
         ))}
+      {moreActions.length > 0 && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="min-h-11 min-w-11 shrink-0"
+              data-testid={`more-kb-${kbId}`}
+              aria-label={t('document.table.more')}
+              title={t('document.table.more')}
+              onClick={event => event.stopPropagation()}
+            >
+              <MoreHorizontal className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" onClick={event => event.stopPropagation()}>
+            {moreActions.map(({ id, label, onClick, Icon }) => (
+              <DropdownMenuItem
+                key={id}
+                className="min-h-11 gap-2"
+                danger={id === 'delete'}
+                data-testid={`${id}-kb-${kbId}`}
+                onSelect={() => onClick?.()}
+              >
+                <Icon className="h-4 w-4" />
+                {t(label)}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
     </div>
   )
 }

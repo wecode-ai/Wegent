@@ -2,8 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import { useState } from 'react'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { KnowledgeBaseActions } from '@/features/knowledge/document/components/KnowledgeBaseActions'
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 
 import {
   KnowledgeGroupListPage,
@@ -68,6 +71,7 @@ describe('KnowledgeGroupListPage permissions', () => {
 
     expect(screen.queryByTestId('edit-kb-1')).not.toBeInTheDocument()
     expect(screen.queryByTestId('delete-kb-1')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('more-kb-1')).not.toBeInTheDocument()
   })
 
   it('hides kb edit and delete actions when canManageKb returns false', () => {
@@ -75,14 +79,63 @@ describe('KnowledgeGroupListPage permissions', () => {
 
     expect(screen.queryByTestId('edit-kb-1')).not.toBeInTheDocument()
     expect(screen.queryByTestId('delete-kb-1')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('more-kb-1')).not.toBeInTheDocument()
   })
 
-  it('shows kb edit and delete actions when canManageKb returns true', () => {
+  it('shows edit and puts delete in the more menu when canManageKb returns true', async () => {
     renderPage({ canManageKb: () => true })
 
     expect(screen.getByTestId('edit-kb-1')).toBeInTheDocument()
+    expect(screen.queryByTestId('delete-kb-1')).not.toBeInTheDocument()
+    await userEvent.setup().click(screen.getByTestId('more-kb-1'))
     expect(screen.getByTestId('delete-kb-1')).toBeInTheDocument()
   })
+})
+
+it('runs more-menu actions without opening the knowledge base row', async () => {
+  const onOpen = jest.fn()
+  const onMigrate = jest.fn()
+  const onDelete = jest.fn()
+  render(
+    <div onClick={onOpen}>
+      <KnowledgeBaseActions kbId={8} onMigrate={onMigrate} onDelete={onDelete} />
+    </div>
+  )
+  const user = userEvent.setup()
+  expect(screen.queryByTestId('migrate-kb-8')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('delete-kb-8')).not.toBeInTheDocument()
+  await user.click(screen.getByTestId('more-kb-8'))
+  await user.click(screen.getByTestId('migrate-kb-8'))
+  expect(onMigrate).toHaveBeenCalledTimes(1)
+  await user.click(screen.getByTestId('more-kb-8'))
+  await user.click(screen.getByTestId('delete-kb-8'))
+  expect(onDelete).toHaveBeenCalledTimes(1)
+  expect(onOpen).not.toHaveBeenCalled()
+})
+
+it('keeps focus inside an action dialog opened from more and closes with Escape', async () => {
+  function ActionsWithDialog() {
+    const [open, setOpen] = useState(false)
+    return (
+      <>
+        <KnowledgeBaseActions kbId={12} onDelete={() => setOpen(true)} />
+        <Dialog open={open} onOpenChange={setOpen}>
+          <DialogContent aria-describedby={undefined}>
+            <DialogTitle>Delete library</DialogTitle>
+            <button onClick={() => setOpen(false)}>Cancel delete</button>
+          </DialogContent>
+        </Dialog>
+      </>
+    )
+  }
+  render(<ActionsWithDialog />)
+  const user = userEvent.setup()
+  const more = screen.getByTestId('more-kb-12')
+  await user.click(more)
+  await user.click(screen.getByTestId('delete-kb-12'))
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Cancel delete' })).toHaveFocus())
+  await user.keyboard('{Escape}')
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
 })
 
 function createKnowledgeBase(
@@ -335,6 +388,8 @@ it('uses readable vertical mobile rows with space, role, permission and migratio
   expect(screen.getByTestId('permission-kb-71')).toHaveClass('min-h-11', 'min-w-11')
   await userEvent.setup().click(screen.getByTestId('permission-kb-71'))
   expect(permission).toHaveBeenCalledWith(kb)
+  expect(screen.queryByTestId('migrate-kb-71')).not.toBeInTheDocument()
+  await userEvent.setup().click(screen.getByTestId('more-kb-71'))
   await userEvent.setup().click(screen.getByTestId('migrate-kb-71'))
   expect(migrate).toHaveBeenCalledWith(kb)
 })

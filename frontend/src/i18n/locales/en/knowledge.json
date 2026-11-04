@@ -156,6 +156,7 @@
       "createdAt": "Created",
       "updatedAt": "Updated",
       "actions": "Actions",
+      "more": "More",
       "edit": "Edit",
       "delete": "Delete",
       "minutesAgo": "min ago",
