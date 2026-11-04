@@ -420,7 +420,7 @@ mod memory_tests {
         assert!(stand_in_identity(&request).is_none());
         request.extra.get_mut("origin").unwrap()["weeklyReview"] = json!(true);
         let identity = stand_in_identity(&request).unwrap();
-        let mut context = SpaceMcpRequestContext::new(None, String::new(), String::new());
+        let mut context = SpaceMcpRequestContext::new(None, None, None);
         context.stand_in = Some(identity);
         let names: Vec<_> = tools(&context)
             .into_iter()

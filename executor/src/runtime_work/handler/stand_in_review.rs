@@ -8,7 +8,7 @@ fn review_owned(link: &RuntimeTaskLink, user: i64) -> bool {
         && !link.ephemeral
         && !matches!(
             link.runtime_handle["origin"]["type"].as_str(),
-            Some("stand_in_coordinator" | "project_coordinator" | "stand_in_processing")
+            Some("stand_in_coordinator" | "stand_in_processing")
         )
 }
 
@@ -334,10 +334,6 @@ impl RuntimeWorkRpcHandler {
             || actor.runtime_handle["origin"]["userId"] != identity.user
         {
             return Err(denied());
-        }
-        if self.backend_connection_snapshot()?.is_some() {
-            self.verify_stand_in_user(&json!({"userId":identity.user}))
-                .await?;
         }
         let end = if identity.review {
             self.review_run_end(&actor, identity.user)?
