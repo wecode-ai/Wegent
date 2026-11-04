@@ -2,64 +2,46 @@
 sidebar_position: 35
 ---
 
-# Skill asset publication and binding migration
+# Package and publish document Skills
 
-External Skill sources own instructions, scripts, and resources. Backend stores
-ordinary Skill ZIPs. Executor uses the standard download API and content hashes
-to link selected packages into each execution's private snapshot. Agent Home
-and session history remain shared. Publishing a package does not change running
-executions. Device images no longer install a document-specific Skill tree.
+`backend/skill_catalogs/document.json` describes five standard Skill ZIPs.
+Chat uses `document` with its provider and tools. ClaudeCode and Codex use
+`docx`, `xlsx`, `pptx`, and `pdf`. Devices download selected packages
+through the standard Skill endpoint, cache them by content hash, and use a
+private Skill snapshot for each execution.
 
-## Document catalog upgrade
-
-`backend/skill_catalogs/document.json` is release configuration, not a runtime
-dependency protocol. It publishes the Chat-only `document` asset and ordinary
-native `docx`, `xlsx`, `pptx`, and `pdf` assets. Obtain complete, reviewed source
-packages from the Skill marketplace or repository and pin their release versions.
-The `chat` source root must contain the original Chat `document/` including its
-provider and tools. The `native` root must contain all four complete format
-directories, including scripts and resources.
-
-Use the target Backend database configuration during the release maintenance window:
+Get complete packages at pinned versions from trusted Skill sources. The
+`chat` source root contains the original `document/` directory. The
+`native` source root contains the four complete format-specific directories.
 
 ```bash
 cd backend
-uv run python scripts/publish_skill_catalog.py skill_catalogs/document.json \
+uv run python scripts/package_skill_catalog.py skill_catalogs/document.json \
   --source chat=/release/chat-skills \
-  --source native=/release/native-skills
+  --source native=/release/native-skills \
+  --output-dir /release/document-skill-zips
 ```
 
-The default validates and rolls back. Review the database identity, asset IDs,
-and affected bindings, then add `--apply` with the same source packages. Use
-`--env-file /release/backend.env` for an explicit configuration file. Fresh
-environments run normal resource initialization first, then the same catalog
-publication. Existing environments must also run this step. Requests never fetch
-external repositories, and publication never modifies the source directories.
+The packager validates all packages locally before writing ZIPs to a new output
+directory. It needs no Backend connection or database configuration.
 
-Publication reuses Skill validation and storage, preserves public IDs, and
-migrates exact Ghost, SkillBinding, InstalledSkill, and Template references in
-one transaction. Private namesakes, existing destination bindings, exceptions,
-forced preload, and disabled state are preserved. Automatic bindings select
-compatible Skills for the actual Shell; explicit incompatible selections still
-fail. Chat retains its original provider and sandbox tools.
-User and group SkillBindings use the names addressed by existing management APIs,
-so settings, removal, and restoration keep working. Earlier `catalog-*` bindings
-are renamed in place. An existing canonical destination retains its settings and
-supersedes an old alias. Group destinations are shared across creators to prevent
-duplicate bindings.
+Administrators upload each ZIP through the existing Skill management UI.
+Use `POST /api/v1/kinds/skills/public/upload` for a new public Skill and select
+the required marketplace tags. Update an existing ID with
+`PUT /api/v1/kinds/skills/public/{skill_id}/upload`. Keep the original ZIP
+used for the previous release and upload it to restore that version. Use the
+original release archive because the download may have its MCP declarations
+removed.
 
-Explicit Chat Ghost preloads remain unchanged. Native-only Ghost and template
-document preloads become compatible format preloads. A Ghost sharing a forced
-document preload across Chat and native Shells causes the entire transaction to
-roll back with its ID. Split that explicit preload before publishing; do not
-ignore the error. Back up affected Skill ZIPs and Kind JSON first. Rolling back
-application code does not restore database packages or bindings.
+Skill publication and binding changes are separate operations. Existing Chat
+bindings keep the same `document` ID. Enable the formats you need through
+the normal Skill settings for ClaudeCode or Codex. If a native agent, template,
+or default Skill explicitly preloads `document`, replace it with the needed
+formats through its management UI before updating `document` to the Chat-only
+version. Existing user and group settings retain their enabled state,
+exceptions, and preload choices. Uploading an archive does not migrate bindings.
 
-## Verification
-
-Focused tests cover fresh publication, upgrades, rollback, idempotence, private
-namesakes, disabled bindings, and preloads. The existing `claude-runtime` desktop
-E2E uploads two versions of ordinary format Skills and checks complete resources,
-shared Home, and isolated execution configuration and Skill snapshots. GitHub
-`wework-e2e.yml` runs this scenario, including settings, removal, and restoration
-of migrated bindings through the standard API.
+Focused tests verify archive metadata, complete resources, and reproducible ZIPs.
+The existing `claude-runtime` desktop checkpoint uploads two versions of
+ordinary format Skills through the standard APIs and verifies that overlapping
+executions in a shared Home read the correct versions and resources.

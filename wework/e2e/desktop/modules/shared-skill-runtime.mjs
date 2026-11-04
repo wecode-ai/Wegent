@@ -278,7 +278,11 @@ export function createSharedSkillRuntime({
       assert.ok((await readdir(systemPath)).includes('skill-creator'))
     } else {
       mcpFirst = await currentMcp()
-      await assert.rejects(lstat(join(home, 'mcp.json')), { code: 'ENOENT' })
+      const previousSharedPath = join(home, 'mcp.json')
+      await assert.rejects(lstat(previousSharedPath), { code: 'ENOENT' })
+      console.log(
+        `[shared-skill-runtime] legacy MCP path: ENOENT (${previousSharedPath}); active config: ${await currentMcpPath()}`
+      )
       const retainedServers = Object.keys(JSON.parse(mcpFirst).mcpServers).filter(name =>
         name.endsWith('_retained-skill-mcp')
       )

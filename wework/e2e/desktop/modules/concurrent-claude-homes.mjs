@@ -1,16 +1,33 @@
 import assert from 'node:assert/strict'
-import { mkdir, readFile, readdir, realpath, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, realpath, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 
 import { CLOUD_DEVICE_ID, CLOUD_PUBLIC_MODEL_NAME, CLOUD_PUBLIC_MODEL_OPTIONS } from './shared.mjs'
 import { createZipFixture } from './zip-fixtures.mjs'
-import { verifySkillCatalogBindings } from './skill-catalog-bindings.mjs'
 
 const NAME = 'concurrent-home-skill'
 const TEAM = 'Concurrent Claude Agent'
 const FORMATS = ['docx', 'xlsx', 'pptx', 'pdf']
+
+async function findAgentHome(cloud, botId) {
+  const workbench =
+    cloud.remoteExecutorEnv.WEGENT_WORKBENCH_HOME ??
+    join(cloud.remoteExecutorEnv.HOME, '.wegent/workbench')
+  const homes = []
+  for (const owner of await readdir(join(workbench, 'agents'))) {
+    const candidate = join(workbench, 'agents', owner, 'default', TEAM, 'bots', String(botId))
+    try {
+      await readdir(candidate)
+      homes.push(candidate)
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error
+    }
+  }
+  assert.equal(homes.length, 1, 'Both tasks must share one Agent Home')
+  return homes[0]
+}
 
 // Hold the first real Claude inside its model request while a second execution
 // activates a different version of the same Skill in the shared Agent Home.
@@ -82,7 +99,6 @@ export function createConcurrentClaudeHomes({
       assert.ok(response.ok, `${path}: ${response.status} ${await response.clone().text()}`)
       return response.status === 204 ? null : response.json()
     }
-    await verifySkillCatalogBindings(cloud, resultDir, request)
     const upload = async (version, id) => {
       const path = join(resultDir, `${NAME}-${version}.zip`)
       const mcps =
@@ -181,6 +197,7 @@ export function createConcurrentClaudeHomes({
       collaboration_model: 'pipeline',
       bots: [{ bot_id: bot.id }],
     })
+    let home, firstMcp
     for (const [index, version] of [
       [1, 'V1'],
       [2, 'V2'],
@@ -226,23 +243,28 @@ export function createConcurrentClaudeHomes({
         () => pending.has(index),
         `Claude task ${index} did not start while the preceding task was held`
       )
-    }
-    assert.equal(pending.size, 2, 'Both native processes must overlap')
-    const workbench =
-      cloud.remoteExecutorEnv.WEGENT_WORKBENCH_HOME ??
-      join(cloud.remoteExecutorEnv.HOME, '.wegent/workbench')
-    const homes = []
-    for (const owner of await readdir(join(workbench, 'agents'))) {
-      const candidate = join(workbench, 'agents', owner, 'default', TEAM, 'bots', String(bot.id))
-      try {
-        await readdir(candidate)
-        homes.push(candidate)
-      } catch (error) {
-        if (error.code !== 'ENOENT') throw error
+      if (index === 1) {
+        home = await findAgentHome(cloud, bot.id)
+        const snapshots = await readdir(join(home, 'runtime/executions'))
+        assert.equal(snapshots.length, 1)
+        const path = join(home, 'runtime/executions', snapshots[0], 'mcp.json')
+        firstMcp = {
+          path,
+          contents: await readFile(path, 'utf8'),
+          metadata: await stat(path, { bigint: true }),
+        }
       }
     }
-    assert.equal(homes.length, 1, 'Both tasks must share one Agent Home')
-    const home = homes[0]
+    assert.equal(pending.size, 2, 'Both native processes must overlap')
+    assert.equal(await findAgentHome(cloud, bot.id), home)
+    const firstMcpAfter = await stat(firstMcp.path, { bigint: true })
+    assert.equal(firstMcpAfter.ino, firstMcp.metadata.ino, 'The running MCP file was replaced')
+    assert.equal(
+      firstMcpAfter.mtimeNs,
+      firstMcp.metadata.mtimeNs,
+      'The running MCP file was edited'
+    )
+    assert.equal(await readFile(firstMcp.path, 'utf8'), firstMcp.contents)
     await assert.rejects(readFile(join(home, 'mcp.json')), { code: 'ENOENT' })
     const snapshots = await readdir(join(home, 'runtime/executions'))
     assert.equal(snapshots.length, 2)

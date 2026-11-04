@@ -30,7 +30,5 @@
       "path": "pdf",
       "bind_shells": ["ClaudeCode", "Codex"]
     }
-  ],
-  "expansions": { "document": ["docx", "xlsx", "pptx", "pdf"] },
-  "seed_ghosts": ["wegent-wework"]
+  ]
 }
