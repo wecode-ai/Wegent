@@ -160,7 +160,10 @@ wait_wework_renderer_shard() {
             sleep_pid=$!
             wait "$sleep_pid"
             if kill -0 "$shard_pid" 2>/dev/null; then
-                completed=$(grep -c '✓' "$shard_log" || true)
+                completed=$(
+                    sed $'s/\033\\[[0-9;]*m//g' "$shard_log" |
+                        grep -cE '^[[:space:]]*✓[[:space:]]+[^[:space:]]+\.(test|spec)\.[cm]?[jt]sx?[[:space:]]+\(' || true
+                )
                 echo "   Renderer ${shard_name%.log}: ${completed:-0} files passed (${SECONDS}s elapsed)"
             fi
         done
