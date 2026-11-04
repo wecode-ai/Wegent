@@ -1,43 +1,7 @@
 import assert from 'node:assert/strict'
-import { execFile } from 'node:child_process'
-import { fileURLToPath } from 'node:url'
+import { nativeCloudAuthorization } from './native-cloud-authorization-client.mjs'
 import { verifyPositiveMcpCloudOwnership } from './mcp-app-cloud-positive.mjs'
 import { fetchLocalRuntime } from './runtime-request.mjs'
-
-async function nativeCloudAuthorization(
-  cloudEnvironment,
-  userDataDirectory,
-  snapshotId,
-  clear = false
-) {
-  const appBinary = process.env.WEWORK_E2E_APP_BIN
-  assert.ok(appBinary, 'Native cloud authorization requires the shared packaged application')
-  await new Promise((resolve, reject) => {
-    const child = execFile(
-      appBinary,
-      [fileURLToPath(new URL('./native-cloud-authorization.mjs', import.meta.url))],
-      {
-        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-        timeout: 10000,
-      },
-      (error, stdout) => {
-        if (error) reject(error)
-        else if (stdout !== (clear ? 'cleared' : 'authorized'))
-          reject(new Error('Native cloud authorization did not complete'))
-        else resolve()
-      }
-    )
-    child.stdin.end(
-      JSON.stringify({
-        apiBaseUrl: `${cloudEnvironment.backendUrl}/api`,
-        authToken: cloudEnvironment.authToken,
-        userDataDirectory,
-        snapshotId,
-        clear,
-      })
-    )
-  })
-}
 
 /** Exercise native ownership through the real Backend and remote executor. */
 export async function verifyNativeMcpCloudRouting(control, cloudEnvironment, userDataDirectory) {

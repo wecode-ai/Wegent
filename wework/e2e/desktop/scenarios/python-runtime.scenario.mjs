@@ -54,6 +54,7 @@ export async function createDesktopScenario({
 
   return {
     requiresCloudEnvironment: true,
+    requiresNativeCloudAuthorization: true,
     requiresRemoteExecutor: false,
     requiresPackagedHarnessRuntime: true,
     async prepareCloud(cloud) {

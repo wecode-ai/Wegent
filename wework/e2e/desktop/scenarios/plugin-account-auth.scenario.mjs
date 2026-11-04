@@ -168,6 +168,7 @@ export async function createDesktopScenario({
 
   return {
     requiresCloudEnvironment: true,
+    requiresNativeCloudAuthorization: checkpoint === 'plugin-account-auth-password',
     requiresPackagedHarnessRuntime: checkpoint === 'plugin-account-auth-password',
     codexConfigToml: githubConfig,
     appEnvironment: {

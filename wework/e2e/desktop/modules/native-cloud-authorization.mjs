@@ -36,4 +36,6 @@ const claimed = await credentials.claimAuthorization({
 })
 assert.equal(claimed.status, 'success')
 assert.equal(claimed.credentialMode, 'desktop_refresh')
+const refreshed = await credentials.refreshAccessToken(apiBaseUrl)
+assert.ok(refreshed.accessToken, 'The real Backend must refresh the claimed native credential')
 process.stdout.write('authorized')

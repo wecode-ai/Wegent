@@ -6,6 +6,7 @@ import {
 import { tmpdir } from 'node:os'
 import { UPGRADE_DIAGNOSTIC_CHECKPOINTS } from '../upgrade-suite.mjs'
 import { waitForColdPackageStartup } from './cold-package-startup.mjs'
+import { nativeCloudAuthorizationFixture } from './native-cloud-authorization-client.mjs'
 
 import { verifyCloudCheckpoint } from './cloud-checkpoint-flows.mjs'
 import { createCloudHistorySearchVerification } from './cloud-history-search.mjs'
@@ -1225,6 +1226,7 @@ async function main() {
   let blockingNetworkProxy
   let cloudEnvironment
   let cloudHistorySearch
+  let nativeCloudLogin
   let phase = 'startup'
   let desktopScenarioVerified = false
   let testFailed = false
@@ -1484,6 +1486,15 @@ async function main() {
       Object.assign(appEnvironment, cleanEnvironment)
     }
     await desktopScenario?.prepareApp?.({ appBinary, appEnvironment, codexHome, control })
+    if (desktopScenario?.requiresNativeCloudAuthorization) {
+      assert.ok(cloudEnvironment, 'Native desktop login requires the real Backend environment')
+      nativeCloudLogin = nativeCloudAuthorizationFixture(
+        cloudEnvironment,
+        electronUserDataDirectory,
+        appBinary
+      )
+      await nativeCloudLogin.authorize()
+    }
     await desktopScenario?.prepareUserDataLaunch?.()
     const electronLaunchArguments = resolveElectronLaunchArguments({
       extraArguments: [
@@ -4788,6 +4799,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       }
     }
     await runTeardownStep('desktop application', async () => stopDesktopAppProcess(app))
+    await runTeardownStep('native cloud authorization', async () => nativeCloudLogin?.restore())
     // Scenario fixtures can still need the controller, proxies, and backend during cleanup.
     await runTeardownStep('desktop scenario', async () => desktopScenario?.cleanup?.())
     await runTeardownStep('default upgrade Home', async () => {
