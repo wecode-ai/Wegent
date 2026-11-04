@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
-import { readFile, stat } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import JSZip from 'jszip'
+import { extractZipFixture } from './zip-fixtures.mjs'
 
 const TOGGLE = '[data-testid="general-performance-recording-toggle"]'
 const ARCHIVE_LOG = 'logs/app/performance.log'
@@ -133,12 +133,19 @@ export async function verifyPerformanceRecording(
     'getText',
     '[data-testid="task-feedback-dialog-overlay"] p.break-all'
   )
-  const archive = await JSZip.loadAsync(await readFile(exportedPath.trim()))
-  assert.equal(
-    await archive.file(ARCHIVE_LOG)?.async('string'),
-    stoppedContent,
-    'The exported diagnostic bundle did not preserve the on-disk performance history'
+  const extractionDirectory = await mkdtemp(
+    join(electronUserDataDirectory, '.performance-recording-export-')
   )
+  try {
+    await extractZipFixture(exportedPath.trim(), extractionDirectory)
+    assert.equal(
+      await readFile(join(extractionDirectory, ARCHIVE_LOG), 'utf8'),
+      stoppedContent,
+      'The exported diagnostic bundle did not preserve the on-disk performance history'
+    )
+  } finally {
+    await rm(extractionDirectory, { recursive: true, force: true })
+  }
   await control.command('click', '[data-testid="task-feedback-cancel-button"]')
   console.log('[desktop-e2e] PASS performance recording: switch, restart, stop and local export')
 }
