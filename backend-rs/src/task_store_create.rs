@@ -14,7 +14,9 @@
 //! (`with_id = true`), while the open-source single-table store leaves the id
 //! to MySQL (`with_id = false`).
 use async_trait::async_trait;
-use brz_mysql::{FromMysqlRow, MysqlResult, MysqlService, MysqlTransaction};
+use brz_mysql::{
+    FromMysqlRow, MysqlResult, MysqlService, MysqlTransaction, MysqlTransactionService,
+};
 
 use crate::request_sql::{RequestSql, RouteKey, fetch_optional_as};
 use crate::task_store_statements::{
@@ -42,18 +44,19 @@ pub trait TaskStoreCreate: Send + Sync {
     ) -> MysqlResult<u64>;
 
     /// `create_pending_task_shell_with_workspace`: insert the placeholder Task
-    /// and its Workspace inside `SAVEPOINT sa_savepoint_1`, returning
+    /// and its Workspace inside the Source's `begin_nested()` block, returning
     /// `(task_id, workspace_id)`. The single-table store lets MySQL assign the
     /// ids; a sharded deployment allocates the user-scoped ids before the
     /// insert.
     ///
-    /// `mysql` is the application's concrete service for the same reason as
-    /// the subtask insert below: `ai-strict` rejects a pooled `SAVEPOINT`, so
-    /// the savepoint pair and both inserts run through `with_transaction`,
-    /// whose future is not `Send` through a generic store handle.
+    /// The request transaction is passed concretely because `brz-mysql`'s
+    /// `ai-strict` owns transaction control: the Source's savepoint has to be
+    /// one nested `with_transaction` scope on that same connection, and a
+    /// generic store handle cannot name the transaction type whose futures are
+    /// `Send`.
     async fn create_task_shell_with_workspace(
         &self,
-        sql: &mut dyn RequestSql,
+        transaction: &mut MysqlTransactionService,
         request: &CreateTaskShellRequest<'_>,
     ) -> MysqlResult<(i64, i64)>;
 
@@ -64,26 +67,23 @@ pub trait TaskStoreCreate: Send + Sync {
     /// user/assistant subtasks inside one transaction, returning both ids and
     /// the resolved executor fields.
     ///
-    /// `mysql` is the application's concrete service: the locking read has to
-    /// run through `Mysql::with_transaction`, whose future is not `Send` through
-    /// a generic store handle. The store supplies its resolved table names and,
-    /// for a sharded deployment, the ids it allocated before the insert. The
-    /// savepoint index is the session's nested-transaction counter, so a
-    /// resumed Task that skipped the task-creation savepoint uses
-    /// `sa_savepoint_1`.
+    /// The request transaction is passed concretely for the same reason as the
+    /// task-shell insert above: the Source's `begin_nested()` block maps to one
+    /// nested `with_transaction` scope on that same connection, and the store
+    /// supplies its resolved table names plus, for a sharded deployment, the
+    /// ids it allocated before the insert.
     async fn create_user_and_assistant_subtasks_with_executor_reference(
         &self,
-        sql: &mut dyn RequestSql,
-        savepoint: &str,
+        transaction: &mut MysqlTransactionService,
         request: &CreateSubtasksRequest<'_>,
     ) -> MysqlResult<crate::task_store_executor_reference::SubtaskPairInsert> {
         // The Source emits the task's rename UPDATE between the executor reads
         // and the savepoint block, so the two halves are separate methods and
         // this composition remains for callers that do not need the split.
         let executor = self
-            .resolve_task_executor_on(sql, request.user_subtask.task_id)
+            .resolve_task_executor_on(&mut *transaction, request.user_subtask.task_id)
             .await?;
-        self.create_subtasks_with_executor(sql, savepoint, request, &executor)
+        self.create_subtasks_with_executor(transaction, request, &executor)
             .await
     }
 
@@ -95,12 +95,11 @@ pub trait TaskStoreCreate: Send + Sync {
         task_id: i64,
     ) -> MysqlResult<crate::task_store_executor_reference::AssistantExecutor>;
 
-    /// The subtask savepoint and paired inserts (qs30-34) for an executor the
-    /// caller already resolved.
+    /// The subtask `begin_nested()` block (qs30-34) for an executor the caller
+    /// already resolved.
     async fn create_subtasks_with_executor(
         &self,
-        sql: &mut dyn RequestSql,
-        savepoint: &str,
+        transaction: &mut MysqlTransactionService,
         request: &CreateSubtasksRequest<'_>,
         executor: &crate::task_store_executor_reference::AssistantExecutor,
     ) -> MysqlResult<crate::task_store_executor_reference::SubtaskPairInsert>;
@@ -342,8 +341,8 @@ pub struct CreateTaskShellRequest<'a> {
 }
 
 /// `create_pending_task_shell_with_workspace`: insert the placeholder Task and
-/// its Workspace inside `SAVEPOINT {savepoint}` (the source's `begin_nested`),
-/// returning `(task_id, workspace_id)`.
+/// its Workspace inside the Source's `begin_nested()` block, returning
+/// `(task_id, workspace_id)`.
 ///
 /// `preallocated` carries the store-assigned ids for the sharded deployment
 /// (`Some((task_id, workspace_id))`); the single-table store passes `None` and
@@ -351,21 +350,35 @@ pub struct CreateTaskShellRequest<'a> {
 ///
 /// The source's request session already had an open transaction, so the
 /// savepoint and both inserts belong to one atomic block. `brz-mysql`'s
-/// `ai-strict` rejects `SAVEPOINT`/`RELEASE SAVEPOINT` through the pooled
-/// `execute`; the block therefore runs on an explicit transaction, which keeps
-/// the savepoint pair and the two inserts atomic and commits them together.
+/// `ai-strict` owns every transaction control statement, so the block is one
+/// nested [`MysqlTransactionService::with_transaction`] scope: the SDK emits
+/// the `SAVEPOINT`, releases it with the inserts, and rolls back only the scope
+/// on failure, leaving the outer request transaction open for the source's
+/// retry or rejection.
 pub async fn create_task_shell_with_workspace(
+    transaction: &mut MysqlTransactionService,
+    route: RouteKey,
+    table: &str,
+    preallocated: Option<(i64, i64)>,
+    request: &CreateTaskShellRequest<'_>,
+) -> MysqlResult<(i64, i64)> {
+    transaction
+        .with_transaction(async |nested| {
+            insert_task_shell_rows(nested, route, table, preallocated, request).await
+        })
+        .await
+}
+
+/// The two inserts inside the Source's task-shell savepoint, on the nested
+/// scope's connection.
+async fn insert_task_shell_rows(
     sql: &mut dyn RequestSql,
     route: RouteKey,
     table: &str,
-    savepoint: &str,
     preallocated: Option<(i64, i64)>,
     request: &CreateTaskShellRequest<'_>,
 ) -> MysqlResult<(i64, i64)> {
     let with_id = preallocated.is_some();
-    sql.execute_statement(route, &format!("SAVEPOINT {savepoint}"), Vec::new())
-        .await?;
-
     let task_row = NewTaskRow {
         id: preallocated.map_or(0, |ids| ids.0),
         user_id: request.user_id,
@@ -398,9 +411,6 @@ pub async fn create_task_shell_with_workspace(
         is_group_chat: 0,
     };
     let workspace_id = insert_task_row_on(sql, route, table, with_id, &workspace_row).await?;
-
-    sql.execute_statement(route, &format!("RELEASE SAVEPOINT {savepoint}"), Vec::new())
-        .await?;
     Ok((task_id, workspace_id))
 }
 
@@ -597,11 +607,12 @@ mod tests {
         );
     }
 
-    /// The Source's `begin_nested()` block: one `SAVEPOINT`, the Task and
-    /// Workspace inserts, then `RELEASE SAVEPOINT`, all on the caller's handle
-    /// and with no transaction of its own.
+    /// The Source's `begin_nested()` block body: the Task and Workspace inserts
+    /// on the enclosing transaction's connection, with the store's allocated
+    /// ids bound. The savepoint itself is the SDK's nested scope, so it never
+    /// appears as a statement in this block.
     #[tokio::test]
-    async fn create_task_shell_with_workspace_emits_savepoints_only() {
+    async fn the_task_shell_block_inserts_the_task_and_workspace_with_the_allocated_ids() {
         let workspace = |task_id: i64| WorkspacePayload {
             name: format!("workspace-{task_id}"),
             namespace: "default".to_string(),
@@ -618,11 +629,10 @@ mod tests {
             workspace: &workspace,
         };
         let mut sql = RecordedRequestSql::default();
-        let ids = create_task_shell_with_workspace(
+        let ids = insert_task_shell_rows(
             &mut sql,
             RouteKey::User(509),
             "{{tasks}}",
-            "sa_savepoint_1",
             Some((897_064_049_841_442, 897_064_049_841_443)),
             &request,
         )
@@ -631,16 +641,14 @@ mod tests {
         assert_eq!(ids, (897_064_049_841_442, 897_064_049_841_443));
 
         let calls = sql.calls();
-        assert_eq!(calls.len(), 4, "{calls:?}");
-        assert_eq!(calls[0].1, "SAVEPOINT sa_savepoint_1");
+        assert_eq!(calls.len(), 2, "{calls:?}");
+        assert!(calls[0].1.starts_with("INSERT INTO {{tasks}} (id, user_id"));
         assert!(calls[1].1.starts_with("INSERT INTO {{tasks}} (id, user_id"));
-        assert!(calls[2].1.starts_with("INSERT INTO {{tasks}} (id, user_id"));
-        assert_eq!(calls[3].1, "RELEASE SAVEPOINT sa_savepoint_1");
         assert!(
             calls
                 .iter()
-                .all(|(_, sql, _)| !sql.starts_with("BEGIN") && !sql.starts_with("COMMIT")),
-            "the savepoint pair must not open or close a transaction: {calls:?}"
+                .all(|(_, sql, _)| !sql.to_ascii_uppercase().contains("SAVEPOINT")),
+            "transaction control belongs to the SDK's nested scope: {calls:?}"
         );
         assert!(
             calls
@@ -648,6 +656,80 @@ mod tests {
                 .all(|(route, _, _)| *route == RouteKey::User(509)),
             "every statement keeps the owner shard key: {calls:?}"
         );
+    }
+
+    /// The Source's `begin_nested()` block reaches the database as a nested
+    /// SDK savepoint on the request transaction, never as a hand-written
+    /// `SAVEPOINT` statement (`ai-strict` owns transaction control).
+    #[tokio::test]
+    async fn the_task_shell_block_enters_the_sdk_nested_savepoint_scope() {
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let mysql = crate::connect_mysql(&format!(
+                "mysql://test:test@{}/test?ssl-mode=disabled",
+                listener.local_addr().unwrap()
+            ))
+            .unwrap();
+            let (stop, stopped) = tokio::sync::oneshot::channel();
+            let server = tokio::spawn(
+                crate::sql_test_support::mysql_pool_server::capture_controls_until(
+                    listener, stopped,
+                ),
+            );
+            let workspace = |task_id: i64| WorkspacePayload {
+                name: format!("workspace-{task_id}"),
+                namespace: "default".to_string(),
+                json: "{\"kind\": \"Workspace\"}".to_string(),
+            };
+            let request = CreateTaskShellRequest {
+                user_id: 509,
+                client_origin: "frontend",
+                is_group_chat: false,
+                project_id: 2571,
+                created_at: "2026-10-25 19:09:17.335721",
+                updated_at: "2026-10-25 19:09:17.335721",
+                pending_name: "task-pending-7bb581d77ac088dffe1f3b75c2fab96e",
+                workspace: &workspace,
+            };
+            // The fake server answers the first prepared INSERT with a SQL
+            // error, so the operation fails after the scope was opened.
+            let result = mysql
+                .with_transaction(async |transaction| {
+                    create_task_shell_with_workspace(
+                        transaction,
+                        RouteKey::User(509),
+                        "tasks_0383",
+                        Some((897_064_049_841_442, 897_064_049_841_443)),
+                        &request,
+                    )
+                    .await
+                })
+                .await;
+            assert!(result.is_err(), "the fake server rejects the INSERT");
+            stop.send(()).unwrap();
+            let statements = server.await.unwrap();
+            mysql.close().await;
+
+            assert_eq!(statements.first().map(String::as_str), Some("BEGIN"));
+            assert!(
+                statements
+                    .get(1)
+                    .is_some_and(|sql| sql.starts_with("SAVEPOINT ")),
+                "the block opens a nested savepoint after the outer BEGIN: {statements:?}"
+            );
+            assert!(
+                statements
+                    .iter()
+                    .any(|sql| sql.starts_with("INSERT INTO tasks_0383")),
+                "the inserts run inside the scope: {statements:?}"
+            );
+            assert!(
+                !statements.iter().any(|sql| sql.contains("sa_savepoint")),
+                "the Source's savepoint name is never hand-written: {statements:?}"
+            );
+        })
+        .await
+        .expect("the nested savepoint scope should be observed within the timeout");
     }
 
     #[test]

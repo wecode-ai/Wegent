@@ -341,6 +341,7 @@ pub(crate) async fn build_task_detail(
                                 erp: state.erp.as_ref(),
                                 redis: state.redis.as_ref(),
                             },
+                            &state.entity_resolvers,
                             user_id,
                             team.id,
                             team.user_id,
@@ -530,7 +531,8 @@ pub(crate) async fn build_task_detail(
     }
 
     let subtasks_value =
-        subtask_responses(&subtasks, &contexts, &bot_summaries, &inherited_task_ids);
+        subtask_responses(&subtasks, &contexts, &bot_summaries, &inherited_task_ids)
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
 
     // `add_group_chat_info_to_task`.
     let member_count = count_approved_members(mysql, task_id).await?;

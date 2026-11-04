@@ -7,6 +7,36 @@ use serde_json::json;
 use super::*;
 
 #[test]
+fn effective_git_credentials_are_pinned_in_app_server_and_tool_shells() {
+    let environment = HashMap::from([
+        ("GH_CONFIG_DIR".into(), "/device/git-auth/current/gh".into()),
+        (
+            "GLAB_CONFIG_DIR".into(),
+            "/device/git-auth/current/glab".into(),
+        ),
+        (
+            "GIT_CONFIG_GLOBAL".into(),
+            "/device/git-auth/current/gitconfig".into(),
+        ),
+    ]);
+    let mut config = CodexLaunchConfig::default();
+    apply_git_cli_environment(&mut config, &environment);
+    for (key, value) in &environment {
+        assert_eq!(config.env.get(key), Some(value));
+        assert!(config.config_overrides.contains(&format!(
+            "shell_environment_policy.set.{key}={}",
+            toml_value(value)
+        )));
+    }
+    let request: ExecutionRequest = serde_json::from_value(json!({})).unwrap();
+    let params = thread_start_params(&request, &config);
+    assert_eq!(
+        params["config"]["shell_environment_policy.set.GH_CONFIG_DIR"],
+        "/device/git-auth/current/gh"
+    );
+}
+
+#[test]
 fn cloud_config_bundle_failures_are_detected() {
     assert!(is_codex_cloud_config_error(
         "failed to load configuration: timed out refreshing cloud config bundle"

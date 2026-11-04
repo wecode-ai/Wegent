@@ -4,16 +4,15 @@
 
 //! Request dependencies supplied by the application at startup.
 use super::config::AppConfig;
-use crate::erp_provider::ErpProvider;
 use anyhow::{Context as _, Result};
 use brz_mysql::Mysql;
 use brz_redis::Redis;
-use std::sync::Arc;
 
 pub struct AppState<M: Mysql, R: Redis> {
     pub mysql: M,
     pub redis: Option<R>,
-    pub erp: Arc<dyn ErpProvider<R> + Send + Sync>,
+    /// Entity-resolver registry used by the shared group-membership batch.
+    pub entity_resolvers: crate::permissions::EntityResolvers<R>,
     #[allow(dead_code, reason = "authentication now runs through AppAuthenticator")]
     pub jwt: JwtConfig,
 }
@@ -38,13 +37,13 @@ pub fn build_state<M: Mysql, R: Redis>(
     config: &AppConfig,
     mysql: M,
     redis: Option<R>,
-    erp: Arc<dyn ErpProvider<R> + Send + Sync>,
+    entity_resolvers: crate::permissions::EntityResolvers<R>,
 ) -> Result<AppState<M, R>> {
     let jwt = build_jwt_config(config)?;
     Ok(AppState {
         mysql,
         redis,
-        erp,
+        entity_resolvers,
         jwt,
     })
 }

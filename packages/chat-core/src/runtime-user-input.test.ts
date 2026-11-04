@@ -306,3 +306,28 @@ describe('async request user input', () => {
     })
   })
 })
+
+test('attributes a combined reply across consecutive async calls, including repeated question IDs', () => {
+  const first = assistantMessage(ASYNC_PAYLOAD)
+  const second = assistantMessage({
+    ...ASYNC_PAYLOAD,
+    itemId: 'second',
+    questions: [{ id: 'question_1', question: 'Second question?' }],
+  })
+  second.id = 'assistant-2'
+  const messages = [first, second, userMessage('Reading\nSecond answer')]
+  expect(resolveAsyncRequestUserInputReplies(messages).get('user-1')).toEqual([
+    { question: 'Which state jitters?', answer: 'Reading' },
+    { question: 'Second question?', answer: 'Second answer' },
+  ])
+  const resolved = resolveAsyncRequestUserInputAnswers(messages)
+  expect(
+    (resolved[0].blocks?.[0] as RequestUserInputBlock).renderPayload.response?.answers
+  ).toEqual({ question_1: { answers: ['Reading'] } })
+  expect(
+    (resolved[1].blocks?.[0] as RequestUserInputBlock).renderPayload.response?.answers
+  ).toEqual({ question_1: { answers: ['Second answer'] } })
+  expect(resolveAsyncRequestUserInputReplies([first, second, userMessage('Ambiguous')]).size).toBe(
+    0
+  )
+})

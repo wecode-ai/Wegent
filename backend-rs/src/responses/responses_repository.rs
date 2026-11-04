@@ -77,6 +77,24 @@ impl SubtaskRow {
             result: row.get("result")?,
         })
     }
+
+    /// Decode one row of the labeled (`{table}_{column}`) subtask projection.
+    ///
+    /// The label prefix is the physical table name, which a routed store only
+    /// resolves at execution time (a sharded deployment renders
+    /// `subtasks_0025_id`, …), so the fields are read by projection position:
+    /// `id`, `user_id`, `task_id`, `role` (index 6), `status` (13), `result`
+    /// (15), following the `subtasks` column order.
+    fn from_labeled_row(row: &MysqlRow) -> MysqlResult<Self> {
+        Ok(Self {
+            id: row.get_at::<i64>(0)?,
+            user_id: row.get_at::<i32>(1)?,
+            task_id: row.get_at::<i64>(2)?,
+            role: row.get_at::<String>(6)?,
+            status: row.get_at::<String>(13)?,
+            result: row.get_at::<Option<Json<Value>>>(15)?,
+        })
+    }
 }
 
 /// One `kinds` row projection (Team lookup).
@@ -239,6 +257,21 @@ pub async fn list_subtasks_for_user_ordered(
 ) -> MysqlResult<Vec<SubtaskRow>> {
     let rows = task_store.list_subtasks_for_user(task_id, user_id).await?;
     rows.iter().map(SubtaskRow::from_row).collect()
+}
+
+/// `subtask_store.list_by_task_for_user_ordered` for the queued/background
+/// response render (`openapi_responses._query_subtasks`): the Source issues
+/// the labeled task/user-scoped list read ordered by `message_id`, not the
+/// id-page batch behind [`list_subtasks_for_user_ordered`].
+pub async fn list_subtasks_for_user_ordered_labeled(
+    task_store: &dyn crate::task_store::TaskStore,
+    task_id: i64,
+    user_id: i32,
+) -> MysqlResult<Vec<SubtaskRow>> {
+    let rows = task_store
+        .list_subtasks_for_user_ordered_labeled(task_id, user_id)
+        .await?;
+    rows.iter().map(SubtaskRow::from_labeled_row).collect()
 }
 
 /// Model string from a task row's CRD team reference:

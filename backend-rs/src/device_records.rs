@@ -28,16 +28,13 @@
 //! one transaction connection because the `FOR UPDATE` row lock has to span
 //! the `UPDATE` that ends it.
 
-use std::collections::hash_map::RandomState;
-use std::hash::{BuildHasher, Hasher};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
 use brz_mysql::{MysqlError, MysqlTransaction};
-use brz_redis::{ErrorKind, Redis, RedisBytes, RedisError, SetExpiration, SetOptions};
+use brz_redis::{Redis, RedisBytes};
 use chrono::Utc;
 use serde_json::Value;
 
 use crate::auth::{SessionUser, UserRow};
+use crate::device_identity_lock::IdentityLock;
 use crate::devices::{
     DeviceKindRow, DeviceSpecInput, DeviceType, internal_error, online_key, record_route_id, spec,
 };
@@ -55,8 +52,9 @@ const REMOVED_MESSAGE: &str = "Device registration removed";
 const IDENTITY_CONFLICT_MESSAGE: &str = "Device is online or busy; disconnect it before removal";
 
 /// `lock_device_owner` (`identity.lock_device_owner`): the owner row lock that
-/// serializes registration against deletion.
-const LOCK_DEVICE_OWNER_QUERY: &str = "SELECT users.id AS users_id \n\
+/// serializes registration against deletion. Shared by the delete endpoint and
+/// the `/local-executor` registration path.
+pub(crate) const LOCK_DEVICE_OWNER_QUERY: &str = "SELECT users.id AS users_id \n\
      FROM users \n\
      WHERE users.id = ? \n LIMIT 1 FOR UPDATE";
 
@@ -85,19 +83,6 @@ const ACTIVE_SUBTASK_BY_EXECUTOR_QUERY: &str = "SELECT subtasks.id AS subtasks_i
 /// Python-side `onupdate` `updated_at`.
 const UPDATE_DEVICE_INACTIVE_QUERY: &str =
     "UPDATE kinds SET is_active=0, updated_at=? WHERE kinds.id = ?";
-
-/// `app_identity_lock`'s `Lock(timeout=30)`: the lock key's TTL.
-const IDENTITY_LOCK_TIMEOUT_MS: u64 = 30_000;
-
-/// `Lock(blocking_timeout=10)`: how long acquisition keeps retrying.
-const IDENTITY_LOCK_BLOCKING_TIMEOUT: Duration = Duration::from_secs(10);
-
-/// redis-py `Lock.sleep`: the pause between acquisition attempts.
-const IDENTITY_LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(100);
-
-/// SHA1 of redis-py's `Lock.LUA_RELEASE_SCRIPT`, the script `Lock.release`
-/// runs with `EVALSHA` so only the acquirer deletes the key.
-const IDENTITY_LOCK_RELEASE_SHA1: &str = "c3f8721cbb97f72bc19e972846bd7aaf91901658";
 
 /// The endpoint's success body (`{"message": "Device registration removed"}`).
 #[derive(serde::Serialize)]
@@ -379,10 +364,10 @@ fn status_unavailable() -> FastApiError {
 
 /// The `users` row lock `lock_device_owner` takes; only its presence matters.
 #[derive(brz_mysql::FromMysqlRow)]
-struct LockOwnerRow {
+pub(crate) struct LockOwnerRow {
     #[allow(dead_code, reason = "the row's presence is the whole answer")]
     #[mysql(rename = "users_id")]
-    users_id: i32,
+    pub(crate) users_id: i32,
 }
 
 /// The `subtasks` probe row; only its presence matters.
@@ -393,117 +378,10 @@ struct ActiveSubtaskRow {
     subtasks_id: i64,
 }
 
-/// `device:identity-lock:{user_id}` (`app_identity_lock`).
-fn identity_lock_key(user_id: i64) -> String {
-    format!("device:identity-lock:{user_id}")
-}
-
-/// The Redis lock `app_identity_lock` holds across the delete.
-///
-/// redis-py's `Lock` acquires with `SET name token NX PX timeout` and releases
-/// only when the stored value still equals its token, so an expired or stolen
-/// lock is never released by its former owner.
-///
-/// The owner token is a source-random draw, so Replay matches it through the
-/// `device-record-identity-lock` dependency rule rather than as an argument:
-/// the rule correlates the recorded `SET … NX … PX` with its `EVALSHA` release
-/// by key, token and resource identity instead of by physical connection, so
-/// this lane replays in recorded order across target connections. The release
-/// is accepted only once the acquisition has been consumed.
-struct IdentityLock<'a, R: Redis> {
-    redis: &'a R,
-    key: String,
-    token: String,
-}
-
-impl<'a, R: Redis> IdentityLock<'a, R> {
-    /// `Lock.acquire`: retry every 100 ms until the 10 s blocking budget
-    /// expires. `Ok(None)` is redis-py's `LockError`; `Err` is the propagated
-    /// request failure the endpoint also maps to 503.
-    async fn acquire(redis: &'a R, user_id: i64) -> Result<Option<Self>, RedisError> {
-        let key = identity_lock_key(user_id);
-        let token = lock_token();
-        let options = SetOptions::default()
-            .with_expiration(SetExpiration::Milliseconds(IDENTITY_LOCK_TIMEOUT_MS))
-            .if_absent();
-        let deadline = tokio::time::Instant::now() + IDENTITY_LOCK_BLOCKING_TIMEOUT;
-        loop {
-            if redis
-                .set_with(key.as_str(), token.as_str(), options)
-                .await?
-            {
-                return Ok(Some(Self { redis, key, token }));
-            }
-            if tokio::time::Instant::now() + IDENTITY_LOCK_RETRY_INTERVAL > deadline {
-                return Ok(None);
-            }
-            tokio::time::sleep(IDENTITY_LOCK_RETRY_INTERVAL).await;
-        }
-    }
-
-    /// `Lock.release`: `EVALSHA` of the redis-py release script, which returns
-    /// `1` only when this token still owns the key.
-    async fn release(&self) -> Result<(), RedisError> {
-        let released: i64 = self
-            .redis
-            .evalsha(
-                IDENTITY_LOCK_RELEASE_SHA1,
-                [self.key.as_str()],
-                [self.token.as_str()],
-            )
-            .await?;
-        if released == 1 {
-            Ok(())
-        } else {
-            Err(RedisError::new(
-                ErrorKind::ResponseError,
-                "Cannot release a lock that's no longer owned",
-            ))
-        }
-    }
-}
-
-/// The lock's owner token: 32 lowercase hex characters, like the
-/// `uuid.uuid1().hex` redis-py stores, so only the acquirer can release the
-/// key. The value is a per-acquisition random draw; nothing downstream reads
-/// it.
-fn lock_token() -> String {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_nanos() as u64)
-        .unwrap_or(0);
-    let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    let mut token = String::with_capacity(32);
-    for half in 0..2u64 {
-        let mut hasher = RandomState::new().build_hasher();
-        hasher.write_u64(nanos);
-        hasher.write_u64(sequence);
-        hasher.write_u64(half);
-        token.push_str(&format!("{:016x}", hasher.finish()));
-    }
-    token
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
-
-    #[test]
-    fn identity_lock_key_matches_the_source_prefix() {
-        assert_eq!(identity_lock_key(157), "device:identity-lock:157");
-    }
-
-    #[test]
-    fn lock_tokens_are_unique_hex_of_the_redis_py_length() {
-        let first = lock_token();
-        let second = lock_token();
-        assert_eq!(first.len(), 32);
-        assert!(first.chars().all(|c| c.is_ascii_hexdigit()));
-        assert_ne!(first, second);
-    }
 
     #[test]
     fn python_truthiness_follows_the_source_booleans() {

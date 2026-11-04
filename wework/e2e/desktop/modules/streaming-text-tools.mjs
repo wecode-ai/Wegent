@@ -49,6 +49,7 @@ import {
   TOOL_DETAIL_PERSISTENCE_CALL_ID,
   TOOL_DETAIL_PERSISTENCE_OUTPUT,
   TOOL_DETAIL_PERSISTENCE_COMPLETION,
+  assertShimmerCopyTracksText,
 } from './streaming-text-fixture.mjs'
 import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
@@ -649,6 +650,11 @@ export function createStreamingToolChecks({
       text: `正在思考 · ${REASONING_PREVIEW}`,
       timeoutMs: modelResponseTimeoutMs,
     })
+    await assertShimmerCopyTracksText(
+      control,
+      `${TOOL_THINKING_INDICATOR_SELECTOR} .activity-shimmer-text`,
+      'The streaming tool reasoning summary'
+    )
     await capture(control, 'streaming-text-01-live-reasoning-summary.png')
     releaseToolCompletion()
     await toolFinalTextStarted
