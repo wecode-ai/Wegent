@@ -167,3 +167,57 @@ it('directs remote authorization to the selected execution device', () => {
   )
   expect(screen.getByTestId('stand-in-add-chat-connection')).toHaveTextContent('在执行设备上授权')
 })
+
+it('searches source names and configured scopes, and recovers from an empty result', async () => {
+  const user = userEvent.setup()
+  render(
+    <StandInConnectionCatalog
+      {...defaults}
+      role={{ ...defaults.role, connections: [connection('Design', 'chat')] }}
+      providers={[provider('chat'), provider('mail')]}
+    />
+  )
+  const search = screen.getByRole('searchbox')
+  await user.type(search, 'design')
+  expect(screen.getByTestId('stand-in-add-chat-connection')).toBeVisible()
+  expect(screen.queryByTestId('stand-in-add-mail-connection')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('stand-in-time-connections')).not.toBeInTheDocument()
+  await user.clear(search)
+  await user.type(search, 'unknown')
+  expect(screen.getByRole('status')).toHaveTextContent('没有匹配的连接')
+  await user.clear(search)
+  expect(screen.getByTestId('stand-in-add-mail-connection')).toBeVisible()
+  expect(screen.getByTestId('stand-in-time-connections')).toBeVisible()
+})
+
+it('filters configured sources without changing scope, and restores the full catalog', async () => {
+  const user = userEvent.setup()
+  const onSelect = vi.fn()
+  render(
+    <StandInConnectionCatalog
+      {...defaults}
+      role={{ ...defaults.role, connections: [connection('one'), connection('two')] }}
+      providers={[provider('chat'), provider('mail')]}
+      onSelect={onSelect}
+    />
+  )
+  const filter = screen.getByTestId('stand-in-connection-configured-filter')
+  expect(filter).toHaveTextContent('已配置 1')
+  await user.click(filter)
+  expect(filter).toHaveAttribute('aria-pressed', 'true')
+  expect(screen.getByTestId('stand-in-add-chat-connection')).toBeVisible()
+  expect(screen.queryByTestId('stand-in-available-list')).not.toBeInTheDocument()
+  expect(onSelect).not.toHaveBeenCalled()
+  await user.click(filter)
+  expect(screen.getByTestId('stand-in-add-mail-connection')).toBeVisible()
+})
+
+it('keeps the full catalog reachable when no source is configured', async () => {
+  const user = userEvent.setup()
+  render(<StandInConnectionCatalog {...defaults} providers={[provider('chat')]} />)
+  const filter = screen.getByTestId('stand-in-connection-configured-filter')
+  await user.click(filter)
+  expect(screen.getByRole('status')).toHaveTextContent('还没有已配置的来源')
+  await user.click(filter)
+  expect(screen.getByTestId('stand-in-add-chat-connection')).toBeVisible()
+})

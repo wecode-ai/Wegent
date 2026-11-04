@@ -9,12 +9,26 @@ export async function verifyStandInConnectionCatalog(control, uiTimeoutMs, captu
   const panel = '[data-testid="stand-in-primary-profile"]'
   await control.command('waitFor', '[data-testid="stand-in-connected-list"]')
   await control.command('waitFor', dingtalk, { text: '迁移连接' })
+  await control.command('waitFor', dingtalk, { text: '钉钉' })
   assert.equal(await control.command('getElementCount', dingtalk), '1')
   assert.equal(
     await control.command('getElementCount', '[data-testid="stand-in-add-connection"]'),
     '0'
   )
   await captureScreenshot(control, 'connection-01-source-catalog.png', panel)
+  const search = '[data-testid="stand-in-connection-search"]'
+  const configuredFilter = '[data-testid="stand-in-connection-configured-filter"]'
+  await control.command('fill', search, { value: '迁移连接' })
+  await control.command('waitFor', dingtalk)
+  await control.command('waitFor', projects, { visible: false })
+  await captureScreenshot(control, 'connection-04-search-scope.png', panel)
+  await control.command('fill', search, { value: 'no-matching-source' })
+  await control.command('waitFor', `${panel} [role="status"]`, { text: '没有匹配的连接' })
+  await control.command('fill', search, { value: '' })
+  await control.command('click', configuredFilter)
+  await control.command('waitFor', '[data-testid="stand-in-available-list"]', { visible: false })
+  await control.command('waitFor', dingtalk)
+  await control.command('click', configuredFilter)
   await control.command('waitFor', projects)
   await control.command('waitFor', '[data-testid="stand-in-time-connections"]')
   await control.command('click', projects)
