@@ -260,7 +260,7 @@ async fn tree(
         deps.task_store.as_ref(),
         &erp,
         &kinds,
-        Some(&deps.entity_resolvers),
+        &deps.entity_resolvers,
         &deps.video_refresh,
         task_id,
         user_id,

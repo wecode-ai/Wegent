@@ -35,10 +35,13 @@ pub async fn build(app: Arc<AppState>) -> Result<brz_http_server::Router<AppAuth
             .await
             .context("failed to connect runtime-check dependencies")?;
     let models_unified_config = models_unified::config::AppConfig::from_env();
-    let models_unified_state =
-        super::models_unified::build(app.mysql.clone(), &models_unified_config, app.erp.clone())
-            .await
-            .context("failed to connect models-unified dependencies")?;
+    let models_unified_state = super::models_unified::build(
+        app.mysql.clone(),
+        &models_unified_config,
+        app.entity_resolvers.clone(),
+    )
+    .await
+    .context("failed to connect models-unified dependencies")?;
 
     // `POST /api/runtime-work/llm-responses-proxy/responses` forwards every
     // `x-wegent-upstream-header-*` header, which the function API's named-header

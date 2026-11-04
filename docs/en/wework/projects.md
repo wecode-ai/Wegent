@@ -199,6 +199,14 @@ An Issue can appear in both its matching status and tag lanes. After a cross-typ
 
 Existing projects keep the base board without converting historical Issue statuses or tags. Concurrent configuration changes produce a conflict message and refresh the latest configuration. Older clients cannot edit unknown view formats created by newer versions.
 
+## Sub-issue progress on cards
+
+Issue cards with sub-issues show a progress ring and **Sub-issues 2/5**, meaning 2 of 5 direct sub-issues are completed. The ring turns green when all are complete. Select this control to enter the Issue's sub-issue board without opening its details.
+
+Progress counts direct sub-issues that the current user can view and that are not archived. It excludes deeper descendants and is independent of search, tag filters, and grouping. The control is hidden when no eligible sub-issues exist. Local and cloud projects share this presentation.
+
+Desktop regression: `pnpm --filter wework e2e:desktop --segment collaboration-parent-board`. The new progress checks share the existing parent-board CI checkpoint and desktop runtime.
+
 ## Lane sorting
 
 Each lane on a native project-space board has its own **Sort by** control and defaults to highest priority first. Add ascending or descending rules for priority, creation time, and update time, then move rules up or down or remove them. Rules apply from top to bottom: each subsequent rule breaks ties, and manual order breaks any remaining ties. Choose **Manual order** to reorder cards within status, priority, assignee, or tag lanes, or insert a card into another lane at a specific position. Non-status lanes can mix Issues with different statuses; reordering within a lane preserves status, assignee, and tags. Manual positions use the project’s shared order across groupings. Preferences are saved on the current device by user, project space, grouping, and lane, are restored when reopening the board, and do not affect other members. Drop onto the blank space at the end of a lane to append a card. Group fields and position are saved together; a failed save commits neither. Changes to different lane preferences in multiple windows are retained independently and synchronized to open boards.
