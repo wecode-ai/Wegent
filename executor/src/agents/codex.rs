@@ -46,6 +46,8 @@ use super::{model_id, prompt_text};
 const DEFAULT_CODEX_RPC_TIMEOUT_SECONDS: u64 = 300;
 const DEFAULT_CODEX_TURN_STARTUP_TIMEOUT_SECONDS: u64 = 180;
 const DEFAULT_PROVIDER_ID: &str = "wecode-openai";
+const AUTH_DEGRADE_PENDING_DRAIN_TIMEOUT: Duration = Duration::from_secs(10);
+const AUTH_DEGRADE_PENDING_DRAIN_POLL_INTERVAL: Duration = Duration::from_millis(25);
 pub const CODEX_APP_SERVER_EXECUTOR_SHUTDOWN: &str =
     "codex app-server stopped because the executor is shutting down";
 pub const CODEX_APP_SERVER_ACTIVE_GOAL_INTERRUPTED: &str =
@@ -493,57 +495,71 @@ impl CodexAppServerClient {
         {
             return Ok(false);
         }
-        let mut state = self.state.lock().await;
-        if state.auth_mode == CodexAuthMode::WeworkRouter {
-            return Ok(false);
+        let drain_deadline = Instant::now() + AUTH_DEGRADE_PENDING_DRAIN_TIMEOUT;
+        loop {
+            let mut state = self.state.lock().await;
+            if state.auth_mode == CodexAuthMode::WeworkRouter {
+                return Ok(false);
+            }
+            // Active-turn recovery must own the launch mode and replacement stream.
+            // Generic Goal reconciliation cannot safely infer subscription ownership.
+            if !may_restart_active_thread && !state.active_threads.is_empty() {
+                return Ok(false);
+            }
+            let pending_request_count = match state.process.as_ref() {
+                Some(process) => process.pending.lock().await.len(),
+                None => 0,
+            };
+            let can_degrade = match state.active_threads.len() {
+                0 => true,
+                1 => thread_id.is_some_and(|id| state.active_threads.get(id) == Some(&1)),
+                _ => false,
+            };
+            if !can_degrade {
+                return Ok(false);
+            }
+            if pending_request_count == 0 {
+                log_executor_event(
+                    "codex auth degraded after cloud config failure",
+                    &[
+                        ("method", method.to_owned()),
+                        ("error", error.to_owned()),
+                        ("auth_mode", "wework_router".to_owned()),
+                        ("pending_requests", pending_request_count.to_string()),
+                    ],
+                );
+                state.auth_mode = CodexAuthMode::WeworkRouter;
+                stop_codex_app_server_process(
+                    &mut state,
+                    Some("codex app-server was restarted without ChatGPT cloud config"),
+                )
+                .await;
+                drop(state);
+                let restart = match launch_config {
+                    Some(launch_config) => self
+                        .ensure_process_for_launch_config(launch_config)
+                        .await
+                        .map(|_| ()),
+                    None => self.ensure_process().await.map(|_| ()),
+                };
+                restart.map_err(|error| {
+                    format!("failed to restart Codex without local subscription auth: {error}")
+                })?;
+                return Ok(true);
+            }
+            drop(state);
+            if Instant::now() >= drain_deadline {
+                log_executor_event(
+                    "codex auth degrade deferred by pending requests",
+                    &[
+                        ("method", method.to_owned()),
+                        ("pending_requests", pending_request_count.to_string()),
+                    ],
+                );
+                return Ok(false);
+            }
+            tokio::time::sleep(AUTH_DEGRADE_PENDING_DRAIN_POLL_INTERVAL).await;
         }
-        // Active-turn recovery must own the launch mode and replacement stream.
-        // Generic Goal reconciliation cannot safely infer subscription ownership.
-        if !may_restart_active_thread && !state.active_threads.is_empty() {
-            return Ok(false);
-        }
-        let pending_request_count = match state.process.as_ref() {
-            Some(process) => process.pending.lock().await.len(),
-            None => 0,
-        };
-        if pending_request_count > 0 {
-            return Ok(false);
-        }
-        let can_degrade = match state.active_threads.len() {
-            0 => true,
-            1 => thread_id.is_some_and(|id| state.active_threads.get(id) == Some(&1)),
-            _ => false,
-        };
-        if !can_degrade {
-            return Ok(false);
-        }
-        log_executor_event(
-            "codex auth degraded after cloud config failure",
-            &[
-                ("method", method.to_owned()),
-                ("error", error.to_owned()),
-                ("auth_mode", "wework_router".to_owned()),
-                ("pending_requests", pending_request_count.to_string()),
-            ],
-        );
-        state.auth_mode = CodexAuthMode::WeworkRouter;
-        stop_codex_app_server_process(
-            &mut state,
-            Some("codex app-server was restarted without ChatGPT cloud config"),
-        )
-        .await;
-        drop(state);
-        let restart = match launch_config {
-            Some(launch_config) => self
-                .ensure_process_for_launch_config(launch_config)
-                .await
-                .map(|_| ()),
-            None => self.ensure_process().await.map(|_| ()),
-        };
-        restart.map_err(|error| {
-            format!("failed to restart Codex without local subscription auth: {error}")
-        })?;
-        Ok(true)
     }
 
     async fn send_request_and_wait(
