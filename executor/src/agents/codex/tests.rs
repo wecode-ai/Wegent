@@ -78,7 +78,10 @@ async fn runtime_interaction_settlement_joins_the_native_mailbox_in_order() {
 #[tokio::test]
 async fn native_subscription_survives_process_stop_and_replacement() {
     let mut state = CodexAppServerSharedState::default();
-    let hub = CodexNotificationHub::for_runtime(Arc::clone(&state.runtime_notifications));
+    let hub = CodexNotificationHub::for_runtime(
+        Arc::clone(&state.runtime_notifications),
+        Arc::clone(&state.thread_activity_changed),
+    );
     let generation = hub.process_generation;
     let mut runtime = hub.subscribe_runtime();
     let mut child = spawn_idle_app_server_child();
@@ -99,7 +102,10 @@ async fn native_subscription_survives_process_stop_and_replacement() {
         Err(mpsc::error::TryRecvError::Empty)
     ));
 
-    let replacement = CodexNotificationHub::for_runtime(Arc::clone(&state.runtime_notifications));
+    let replacement = CodexNotificationHub::for_runtime(
+        Arc::clone(&state.runtime_notifications),
+        Arc::clone(&state.thread_activity_changed),
+    );
     assert_ne!(replacement.process_generation, generation);
     replacement.send(json!({"method": "turn/started"})).await;
     let start = runtime.try_recv().unwrap();
@@ -418,7 +424,7 @@ async fn explicit_unsubscribe_keeps_thread_admission_locked_until_the_native_res
     let responses = std::mem::take(&mut *pending.lock().await);
     assert_eq!(responses.len(), 1);
     for (_, response) in responses {
-        response.send(Ok(json!({}))).unwrap();
+        response.sender.send(Ok(json!({}))).unwrap();
     }
     unsubscribe.await.unwrap();
     if admission_blocked {
@@ -546,7 +552,7 @@ async fn idle_restart_preserves_pending_reads_until_the_native_response() {
     let responses = std::mem::take(&mut *pending.lock().await);
     assert_eq!(responses.len(), 1);
     for (_, sender) in responses {
-        sender.send(Ok(json!({"data": []}))).unwrap();
+        sender.sender.send(Ok(json!({"data": []}))).unwrap();
     }
     assert_eq!(response.await.unwrap().unwrap(), json!({"data": []}));
     assert_eq!(client.restart_if_idle().await, Ok(()));
