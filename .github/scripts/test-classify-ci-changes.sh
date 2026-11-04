@@ -1320,7 +1320,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "collaboration execution environment changes select onboarding and lifecycle coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"collaboration-remote-group-coordinate"},{"id":"core-2","name":"Core / shard 2","segments":"project-assignment-notification,collaboration-runtime-reconciliation,project-member-overrides,collaboration-group-onboarding"},{"id":"core-3","name":"Core / shard 3","segments":"stand-in,stand-in-identities,stand-in-connections,stand-in-mcp,stand-in-cli,stand-in-plugin-bridge,stand-in-alternate-source,stand-in-action-confirmation,stand-in-email,stand-in-list-confirmation,stand-in-profile,stand-in-telemetry,collaboration-human-round-resume,stand-in-controls,stand-in-project-enable"},{"id":"core-4","name":"Core / shard 4","segments":"collaboration-local-group-coordinate"},{"id":"core-5","name":"Core / shard 5","segments":"collaboration-local-agent-dispatch,collaboration-worktree-policy,stand-in-personal-task"},{"id":"core-6","name":"Core / shard 6","segments":"remote-device-onboarding,collaboration-issue-archive,collaboration-deliveries,collaboration-delivery-editing"},{"id":"core-7","name":"Core / shard 7","segments":"collaboration-remote-agent-dispatch,stand-in-permissions,stand-in-workspace"},{"id":"core-8","name":"Core / shard 8","segments":"collaboration-remote-group-planning-details,stand-in-cloud,stand-in-assignment-notifications,collaboration-local-group-cancellation,collaboration-first-use"},{"id":"core-10","name":"Core / shard 10","segments":"collaboration-shared-core,collaboration-template-agents"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"collaboration-remote-group-coordinate"},{"id":"core-2","name":"Core / shard 2","segments":"project-assignment-notification,collaboration-runtime-reconciliation,project-member-overrides,collaboration-group-onboarding"},{"id":"core-3","name":"Core / shard 3","segments":"stand-in,stand-in-identities,stand-in-connections,stand-in-mcp,stand-in-cli,stand-in-plugin-bridge,stand-in-alternate-source,stand-in-action-confirmation,stand-in-email,stand-in-list-confirmation,stand-in-profile,stand-in-telemetry,collaboration-human-round-resume,stand-in-controls,stand-in-project-enable"},{"id":"core-4","name":"Core / shard 4","segments":"collaboration-local-group-coordinate"},{"id":"core-5","name":"Core / shard 5","segments":"collaboration-local-agent-dispatch,collaboration-worktree-policy,stand-in-personal-task"},{"id":"core-6","name":"Core / shard 6","segments":"remote-device-onboarding,collaboration-issue-archive,collaboration-deliveries,collaboration-delivery-editing"},{"id":"core-7","name":"Core / shard 7","segments":"collaboration-remote-agent-dispatch,stand-in-permissions,stand-in-workspace"},{"id":"core-8","name":"Core / shard 8","segments":"collaboration-remote-group-planning-details,stand-in-cloud,stand-in-assignment-notifications,collaboration-local-group-cancellation,collaboration-first-use"},{"id":"core-10","name":"Core / shard 10","segments":"collaboration-shared-core,collaboration-template-agents,collaboration-template-app-device-routing"}]}
 wework_desktop_cloud_e2e=true
 wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-3","name":"Cloud / shard 3","segments":"cloud-device-lifecycle"}]}
 wework_desktop_other_e2e=false
@@ -1337,6 +1337,16 @@ for template_agent_path in \
   template_agent_output="$(GITHUB_OUTPUT=/dev/stdout "$desktop_classifier" "$template_agent_path")"
   if [[ "$template_agent_output" != *collaboration-template-agents* ]]; then
     printf 'Template agent execution coverage missing for %s\n' "$template_agent_path" >&2
+    exit 1
+  fi
+done
+for app_device_routing_path in \
+  wework/src/api/agentRoutingCatalog.ts \
+  wework/src/features/collaboration/WeworkProjectAgentConfigurationHost.tsx \
+  packages/collaboration/src/agent-form/runnerRouting.ts; do
+  app_device_routing_output="$(GITHUB_OUTPUT=/dev/stdout "$desktop_classifier" "$app_device_routing_path")"
+  if [[ "$app_device_routing_output" != *collaboration-template-app-device-routing* ]]; then
+    printf 'APP device template routing coverage missing for %s\n' "$app_device_routing_path" >&2
     exit 1
   fi
 done
@@ -1559,7 +1569,7 @@ full_desktop_expected="${full_desktop_expected/native-window-startup,/native-win
 full_desktop_expected="${full_desktop_expected/\"segments\":\"project-assignment-notification,resilience,project-member-overrides/\"segments\":\"project-assignment-notification,resilience,collaboration-runtime-reconciliation,project-member-overrides}"
 full_desktop_expected="${full_desktop_expected/collaboration-issue-comment-attachments,reply-predictions/collaboration-issue-comment-attachments,collaboration-issue-attachment-preview,reply-predictions}"
 full_desktop_expected="${full_desktop_expected/model-settings,tray-lifecycle/model-settings,tray-lifecycle,mcp-apps,project-space-tool-discovery}"
-full_desktop_expected="${full_desktop_expected/runtime-input-answer-persistence/runtime-input-answer-persistence,collaboration-templates,collaboration-template-lifecycle,collaboration-template-agents}"
+full_desktop_expected="${full_desktop_expected/runtime-input-answer-persistence/runtime-input-answer-persistence,collaboration-templates,collaboration-template-lifecycle,collaboration-template-agents,collaboration-template-app-device-routing}"
 full_desktop_expected="${full_desktop_expected/send-key-preference,collaboration-app-queue-identity/send-key-preference,collaboration-app-queue-identity,codex-cloud-config-recovery}"
 
 for path in \
@@ -1863,7 +1873,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "template components retain group onboarding coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"collaboration-group-onboarding"},{"id":"core-10","name":"Core / shard 10","segments":"collaboration-templates,collaboration-template-lifecycle,collaboration-template-agents"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"collaboration-group-onboarding"},{"id":"core-10","name":"Core / shard 10","segments":"collaboration-templates,collaboration-template-lifecycle,collaboration-template-agents,collaboration-template-app-device-routing"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "packages/collaboration/src/templates/TemplateCreateSection.tsx"
