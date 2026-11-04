@@ -306,8 +306,8 @@ impl RuntimeWorkRpcHandler {
         rule: &mut Value,
         previous: Option<&Value>,
     ) -> Result<(), AppIpcError> {
-        if rule["enabled"] == false && previous.is_some() {
-            rule["source"] = previous.unwrap()["source"].clone();
+        if let Some(previous) = previous.filter(|_| rule["enabled"] == false) {
+            rule["source"] = previous["source"].clone();
             return Ok(());
         }
         let catalog = self.connection_call("catalog", None, json!({})).await?;
@@ -546,7 +546,7 @@ impl RuntimeWorkRpcHandler {
             if event
                 .get("nextRetryAt")
                 .or_else(|| event.get("next_retry_at"))
-                .is_none_or(Value::is_null)
+                .map_or(true, Value::is_null)
             {
                 run["retryable"] = json!(false);
                 return Err(AppIpcError::new(

@@ -84,9 +84,9 @@ pub(crate) fn matches_condition(condition: &Value, event: &Value) -> bool {
 
 fn validate_rule_fields(rule: &Value) -> Result<(), TaskRuntimeError> {
     required(rule, "id")?;
-    required(&rule, "name")?;
-    required(&rule, "eventType")?;
-    required(&rule, "targetId")?;
+    required(rule, "name")?;
+    required(rule, "eventType")?;
+    required(rule, "targetId")?;
     for key in ["providerId", "id", "profile", "kind", "name"] {
         required(&rule["source"], key)?;
     }

@@ -10,6 +10,12 @@ pub(super) struct ConnectionActor {
     generation: i64,
 }
 
+impl ConnectionActor {
+    pub(super) fn user_id(&self) -> i64 {
+        self.user
+    }
+}
+
 pub(super) fn connection_fingerprint(connection: &ConnectionConfig) -> String {
     let mut hash = Sha256::new();
     for part in [&connection.backend_url, &connection.auth_token] {

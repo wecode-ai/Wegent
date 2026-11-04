@@ -114,9 +114,7 @@ impl RuntimeWorkRpcHandler {
                     continue;
                 }
                 let outcome = self
-                    .collect_connection_source(
-                        &store, user, &actor, source, roles, &state, &version,
-                    )
+                    .collect_connection_source(&store, &actor, source, roles, &state, &version)
                     .await;
                 save_collection_result(&store, user, source, &version, &state, outcome)?;
             }
@@ -161,13 +159,13 @@ impl RuntimeWorkRpcHandler {
     async fn collect_connection_source(
         &self,
         store: &LocalTaskStore,
-        user: i64,
         actor: &super::connection_identity::ConnectionActor,
         source: &Value,
         roles: &[Value],
         state: &Value,
         settings_version: &Value,
     ) -> Result<Value, AppIpcError> {
+        let user = actor.user_id();
         let checkpoint = state.get("checkpoint").cloned().unwrap_or_else(|| {
             if source_provider(source) == crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER
                 && state["after"].is_string()
