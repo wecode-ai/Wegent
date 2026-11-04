@@ -18,10 +18,10 @@ fn proposals_require_explicit_owner_confirmation_and_reject_stale_versions() {
         .unwrap();
     assert_eq!(store.personal_stand_in(7, "mac").unwrap(), original);
     assert!(store
-        .resolve_stand_in_proposal(8, "mac", proposal["id"].as_str().unwrap(), true)
+        .resolve_stand_in_proposal(8, "mac", proposal["id"].as_str().unwrap(), true, None)
         .is_err());
     let saved = store
-        .resolve_stand_in_proposal(7, "mac", proposal["id"].as_str().unwrap(), true)
+        .resolve_stand_in_proposal(7, "mac", proposal["id"].as_str().unwrap(), true, None)
         .unwrap();
     assert_eq!(
         saved["primary"]["connections"][0]["policy"]["askBeforeAct"],
@@ -29,14 +29,14 @@ fn proposals_require_explicit_owner_confirmation_and_reject_stale_versions() {
     );
     assert!(saved["primary"]["connections"][0]["enabledAfter"].is_string());
     assert!(store
-        .resolve_stand_in_proposal(7, "mac", proposal["id"].as_str().unwrap(), true)
+        .resolve_stand_in_proposal(7, "mac", proposal["id"].as_str().unwrap(), true, None)
         .is_err());
     let stale = store
         .propose_stand_in_settings(7, "mac", None, "Update preferences", saved.clone())
         .unwrap();
     store.save_personal_stand_in(7, "mac", saved).unwrap();
     assert!(store
-        .resolve_stand_in_proposal(7, "mac", stale["id"].as_str().unwrap(), true)
+        .resolve_stand_in_proposal(7, "mac", stale["id"].as_str().unwrap(), true, None)
         .is_err());
     assert_eq!(
         store.stand_in_proposal(7, None).unwrap()["status"],
@@ -362,4 +362,58 @@ fn stand_in_connection_memories_do_not_cross_provider_boundaries() {
     assert!(store
         .save_stand_in_memory(7, "mac", json!({"content":"Not connected","scope":other}))
         .is_err());
+}
+
+#[test]
+fn continuous_connection_scopes_preserve_account_kind_and_memory_isolation() {
+    use wegent_executor::task_runtime::personal_stand_in::{
+        stand_in_connection, DINGTALK_PROVIDER,
+    };
+    let root = tempfile::tempdir().unwrap();
+    let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+    let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    let source = json!({"providerId":DINGTALK_PROVIDER,"profile":"corp","kind":"group","id":"*","scope":"all","name":"All groups","policy":{"automatic":true,"askBeforeAct":true}});
+    settings["roles"][0]["connections"] = json!([source.clone()]);
+    let saved = store.save_personal_stand_in(7, "mac", settings).unwrap();
+    let role = &saved["roles"][0];
+    for id in ["existing", "future"] {
+        let concrete =
+            json!({"providerId":DINGTALK_PROVIDER,"profile":"corp","kind":"group","id":id});
+        assert!(stand_in_connection(role, &concrete).is_some());
+        for (key, value) in [
+            ("providerId", "other"),
+            ("profile", "other"),
+            ("kind", "direct"),
+        ] {
+            let mut outside = concrete.clone();
+            outside[key] = json!(value);
+            assert!(stand_in_connection(role, &outside).is_none());
+        }
+        let memory = store.save_stand_in_memory(7,"mac",json!({"scope":{"kind":"dingtalk","id":id,"profile":"corp","conversationKind":"group"},"content":id})).unwrap();
+        assert_eq!(memory["scope"]["id"], id);
+    }
+    assert_eq!(store.stand_in_memories(7).unwrap().len(), 2);
+    assert!(store.save_stand_in_memory(7,"mac",json!({"scope":{"kind":"dingtalk","id":"future","profile":"other","conversationKind":"group"},"content":"outside"})).is_err());
+    for invalid in [json!({"scope":"all","id":"specific"}), json!({"id":"*"})] {
+        let mut draft = saved.clone();
+        for (key, value) in invalid.as_object().unwrap() {
+            draft["roles"][0]["connections"][0][key] = value.clone();
+        }
+        if invalid.get("scope").is_none() {
+            draft["roles"][0]["connections"][0]
+                .as_object_mut()
+                .unwrap()
+                .remove("scope");
+        }
+        assert!(store.save_personal_stand_in(7, "mac", draft).is_err());
+    }
+    let mut overlap = saved.clone();
+    let mut specific = source.clone();
+    specific.as_object_mut().unwrap().remove("scope");
+    specific["id"] = json!("specific");
+    overlap["roles"][0]["connections"]
+        .as_array_mut()
+        .unwrap()
+        .push(specific);
+    assert!(store.save_personal_stand_in(7, "mac", overlap).is_err());
 }

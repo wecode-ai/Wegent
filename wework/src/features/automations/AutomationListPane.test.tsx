@@ -17,10 +17,10 @@ it('offers arranging work inside a calendar without suggesting unconnected mail 
       onClearError={vi.fn()}
     />
   )
-  expect(screen.getByText('还没有安排。可以创建一次或周期性的工作。')).toBeVisible()
+  expect(screen.getByText('暂无事项，添加事项并设置触发时间。')).toBeVisible()
   expect(screen.queryByText('已安排的任务')).not.toBeInTheDocument()
   expect(screen.queryByText('每日简报')).not.toBeInTheDocument()
-  await userEvent.setup().click(screen.getByRole('button', { name: '安排工作' }))
+  await userEvent.setup().click(screen.getByRole('button', { name: '添加事项' }))
   expect(onCreate).toHaveBeenCalledOnce()
 })
 
@@ -39,5 +39,5 @@ it('keeps a calendar load failure actionable instead of presenting an empty succ
   )
   await userEvent.setup().click(screen.getByTestId('automation-error'))
   expect(retry).toHaveBeenCalledOnce()
-  expect(screen.queryByText('还没有安排。可以创建一次或周期性的工作。')).not.toBeInTheDocument()
+  expect(screen.queryByText('暂无事项，添加事项并设置触发时间。')).not.toBeInTheDocument()
 })

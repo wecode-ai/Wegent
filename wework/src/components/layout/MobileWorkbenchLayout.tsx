@@ -490,6 +490,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                         requestUserInputPayloadKey(pendingRequestUserInput) ?? 'implementation-plan'
                       }
                       payload={pendingRequestUserInput}
+                      messages={paneMessages}
                       onSubmit={response => {
                         const isImplementationPlanRequest =
                           isImplementationPlanRequestUserInput(pendingRequestUserInput)

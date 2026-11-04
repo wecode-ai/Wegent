@@ -4117,7 +4117,7 @@ export function DesktopSidebar({
               testId="new-chat-button"
               onClick={onNewChat}
             />
-            {onOpenStandIn && (
+            {experimentalFeaturesEnabled && onOpenStandIn && (
               <DesktopSidebarNavItem
                 icon={UserRound}
                 label={t('standIn.title')}

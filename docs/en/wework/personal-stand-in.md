@@ -4,7 +4,7 @@ sidebar_position: 12
 
 # Personal stand-in and scenario roles
 
-Open **My stand-in** in the Tasks sidebar to delegate work, ask follow-up questions, or draft a scenario role with AI. The primary identity conversation and individual work executions are stored separately. Returning from a role restores the primary conversation.
+Enable **Experimental features** in **Settings → General**, then open **My stand-in** in the Tasks sidebar to delegate work, ask follow-up questions, or draft a scenario role with AI. The header displays the primary identity and existing roles for switching. The primary identity conversation and individual work executions are stored separately. Returning from a role restores the primary conversation.
 
 A **scenario role** continuously handles a particular information flow. Its default page is a work list. Select work for a preview, open the shared **Needs your input** tab for human decisions, or open the full conversation for context. Each role also has its own persistent identity conversation.
 
@@ -16,11 +16,13 @@ You can also describe a role or configuration change in conversation. AI creates
 
 ## DingTalk and collaboration sources
 
-Search and manually select individual DingTalk groups or contacts in the profile's source section. Group sources receive relevant mentions from the selected group; contact sources receive direct messages from the selected contact. Each source remains bound to the DingTalk account used when selecting it.
+Select DingTalk in the profile's connection sources. By default, intake includes mentions from all groups and direct messages from all contacts accessible to the selected account, including future groups and contacts. Switch to filtered sources to search and select individual sources in a batch. Each source remains bound to the DingTalk account used when selecting it. Complete any required plugin installation or authentication before choosing sources.
 
 You can manually mention yourself in a connected group to delegate work. Stand-in replies always retain DingTalk's AI-send marker. Intake uses the provider marker to exclude your own AI messages and prevent reply loops.
 
 Choose manual delegation, approval before operations, or automatic handling independently for each source. New DingTalk sources default to approval before operations. The selected execution device uses its installed DingTalk plugin and account. Complete any requested authentication through the existing connector flow.
+
+Collaboration, Calendar, and DingTalk share the **Process directly** option under **Processing**. When enabled, incoming matters create a conversation for processing. Otherwise, the background stand-in decides how to handle them. New role connections enable direct processing by default. Operations retain the connection's approval policy.
 
 Collaboration sources retain project membership permissions. Project-scoped agents cannot broaden intake to other projects or DingTalk sources. When roles overlap, AI selects one handler to avoid duplicate execution.
 
@@ -58,6 +60,8 @@ Assigners and recipients can view the receipts, which refresh while details rema
 
 ## Calendar arrangements and project leaders
 
-Create one-time or recurring work in **Settings → Connections → Calendar**. Calendar saves independently and protects unsaved edits when returning or closing. Open the corresponding work from its execution history. The work list contains concrete work, without a peer Scheduled tab.
+Record a matter and its trigger time in **Settings → Connections → Calendar**, with one-time or recurring triggers. At that time, the owning stand-in receives the matter using its current responsibilities, device, model, and working directory. Processing is configured for the whole Calendar connection. Calendar entries save independently and protect unsaved edits when returning or closing. Open the corresponding work from its execution history.
+
+**Scheduled** in the Tasks sidebar remains independent and retains its goal, target task, model, and execution environment settings without requiring experimental features. Scheduled tasks and Calendar connections manage separate lists, editors, and run histories. The stand-in work list contains concrete work.
 
 The project conversation uses the existing collaboration group leader. Its header identifies the group and leader, and settings use the existing group configuration. Automatic project event handling enables that leader on the selected device. Each project/group has exactly one active member/device binding, with explicit takeover required for switching. Private chat and memory remain private until selected content is explicitly published to an Issue.

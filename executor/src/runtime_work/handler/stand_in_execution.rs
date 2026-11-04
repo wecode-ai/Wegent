@@ -82,6 +82,28 @@ impl RuntimeWorkRpcHandler {
             );
             return Ok(());
         }
+        if config["manual"] != true
+            && config["intakeRouted"] != true
+            && !crate::task_runtime::personal_stand_in::immediate_policy(&config["handlingPolicy"])
+        {
+            let store = LocalTaskStore::open(self.task_store_path.as_ref())
+                .map_err(super::stand_in::settings_error)?;
+            let user = config["userId"]
+                .as_i64()
+                .ok_or_else(|| AppIpcError::new("permission_denied", "Missing assignment owner"))?;
+            let assignment = if config["projectStore"] == "local" {
+                &binding["humanAssignmentId"]
+            } else {
+                &binding["assignmentId"]
+            };
+            store.enqueue_stand_in_event(user, json!(["assignment",config["projectStore"],config["projectId"],issue["id"],assignment,config["id"]]), json!({
+                "kind":"assignment","roleScoped":true,"roleIds":[config["id"]],
+                "projectId":config["projectId"],"projectStore":config["projectStore"],
+                "issueId":issue["id"],"assignmentId":assignment,"issue":issue,
+                "source":{"providerId":"project","id":config["projectId"],"name":issue["title"]}
+            })).map_err(super::stand_in::settings_error)?;
+            return Ok(());
+        }
         let result = async {
             let payload = self.prepare_stand_in_task(config, issue, binding).await?;
             if already_bound {
