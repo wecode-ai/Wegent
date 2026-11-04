@@ -53,12 +53,20 @@ test('Stand-in confirmation waits for navigation to mount before opening the own
   const mounted = barrier()
   const reachedOwner = new Error('Owner page is ready')
   const calls: Array<{ action: string; selector: string }> = []
+  const preferenceUpdates: unknown[] = []
   const scenario = createDesktopScenario({ workspacePath: '/fixture' })
   const verification = scenario
     .verify({
-      experimentalFeaturesEnabled: true,
-      async command(action: string, selector: string) {
+      async command(action: string, selector: string, options?: { value?: string }) {
         calls.push({ action, selector })
+        if (action === 'getElementCount') {
+          assert.equal(selector, '[data-testid="settings-button"]')
+          return 0
+        }
+        if (action === 'setAppPreferences') {
+          assert.equal(selector, 'body')
+          preferenceUpdates.push(JSON.parse(options?.value ?? 'null'))
+        }
         if (selector === '[data-testid="personal-stand-in-button"]') {
           if (action === 'click') throw new Error('Stand-in navigation is still mounting')
           assert.equal(action, 'clickWhenEnabled')
@@ -73,6 +81,7 @@ test('Stand-in confirmation waits for navigation to mount before opening the own
       (error: unknown) => error
     )
   assert.equal(await Promise.race([waiting.promise.then(() => 'waiting'), verification]), 'waiting')
+  assert.deepEqual(preferenceUpdates, [{ experimentalFeaturesEnabled: true }])
   assert.equal(
     calls.some(call => call.selector === '[data-testid="stand-in-overview"]'),
     false
