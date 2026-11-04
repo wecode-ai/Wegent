@@ -398,6 +398,7 @@ validate_registered_checkpoint_coverage
 declare -A selected=()
 desktop_runner_changed=false
 macos_inspector_e2e=false
+windows_installer_e2e=false
 
 select_target() {
   selected["$1"]=true
@@ -652,11 +653,12 @@ classify_wework_path() {
       return
       ;;
 
-    # Installer packaging changes are covered by the formal release startup
-    # checkpoint and the dedicated Windows alternate-drive installer E2E.
+    # Installer packaging changes retain the formal release startup checkpoint.
+    # Windows also verifies the installer in the existing package build job.
     wework/electron/electron-builder.config.cjs | \
       wework/electron/src/build-identity* | \
-      wework/e2e/desktop/windows-installer.e2e.mjs)
+      wework/e2e/desktop/modules/windows-installer-ui.ps1 | \
+      wework/e2e/desktop/windows-installer*)
       select_target "core:release-package-startup"
       return
       ;;
@@ -1621,6 +1623,22 @@ classify_path() {
   local path="$1"
 
   case "$path" in
+    wework/electron/electron-builder.config.cjs | \
+      wework/electron/package.json | \
+      wework/electron/pnpm-lock.yaml | \
+      wework/electron/src/build-identity* | \
+      wework/electron/scripts/build-identity.cjs | \
+      wework/electron/scripts/verify-windows-migration-lock* | \
+      wework/e2e/desktop/modules/windows-installer-ui.ps1 | \
+      wework/e2e/desktop/windows-installer* | \
+      .github/actions/build-wework-windows-e2e/* | \
+      .github/scripts/run-windows-standard-user-process.ps1 | \
+      .github/scripts/stop-windows-standard-user-processes.ps1)
+      windows_installer_e2e=true
+      ;;
+  esac
+
+  case "$path" in
     wework/src/features/todo/ProjectCoordinatorConversation*|wework/src/features/todo/ProjectCoordinatorPublication*|wework/src/features/todo/ProjectCoordinationPanel*|executor/src/runtime_work/handler/project_coordinator.rs|executor/src/runtime_work/handler/project_router*|executor/src/task_runtime/project_router_store.rs|executor/src/task_runtime/store/project_coordinator.rs|wework/e2e/desktop/scenarios/project-coordinator-publication.scenario.mjs|wework/e2e/desktop/scenarios/project-coordination.scenario.mjs)
       select_target "core:stand-in-profile"
       select_target "core:stand-in-permissions"
@@ -2183,6 +2201,7 @@ build_matrix() {
 
 if [[ "${1:-}" == "--all" ]]; then
   select_all_desktop_suites
+  windows_installer_e2e=true
 elif (($# > 0)); then
   for path in "$@"; do
     classify_path "$path"
@@ -2236,4 +2255,5 @@ output_file="${GITHUB_OUTPUT:-/dev/stdout}"
   printf 'wework_desktop_other_e2e=%s\n' "$run_other"
   printf 'wework_desktop_other_e2e_matrix=%s\n' "$other_matrix_json"
   printf 'wework_desktop_macos_inspector_e2e=%s\n' "$macos_inspector_e2e"
+  printf 'wework_windows_installer_e2e=%s\n' "$windows_installer_e2e"
 } >> "$output_file"

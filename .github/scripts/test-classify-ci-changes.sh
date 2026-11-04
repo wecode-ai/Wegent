@@ -492,6 +492,9 @@ wework_desktop_other_e2e='
   if [[ "$expected" != *"wework_desktop_macos_inspector_e2e="* ]]; then
     expected="${expected}"$'\n''wework_desktop_macos_inspector_e2e=false'
   fi
+  if [[ "$expected" != *"wework_windows_installer_e2e="* ]]; then
+    expected="${expected}"$'\n''wework_windows_installer_e2e=false'
+  fi
   local output
   output="$(GITHUB_OUTPUT=/dev/stdout "$desktop_classifier" "$@")"
   # Every checkpoint owns its prerequisites; order within one shard is not coverage.
@@ -521,6 +524,21 @@ assert_desktop_comparison_preserves_coverage() {
 }
 
 assert_desktop_comparison_preserves_coverage
+
+for installer_path in \
+  wework/electron/electron-builder.config.cjs \
+  wework/electron/src/build-identity.test.ts \
+  wework/e2e/desktop/windows-installer.e2e.mjs \
+  wework/e2e/desktop/modules/windows-installer-ui.ps1; do
+  assert_desktop_case "Installer changes select real Windows validation: $installer_path" \
+    'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"release-package-startup"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}
+wework_desktop_macos_inspector_e2e=false
+wework_windows_installer_e2e=true' "$installer_path"
+done
 
 assert_desktop_case "unbound project-space discovery is invoked by its core CI checkpoint" \
   'wework_desktop_e2e=true
@@ -2789,7 +2807,9 @@ if [[ "$wework_windows_desktop_core_build_job" != *"runs-on: windows-latest"* ]]
   [[ "$wework_windows_desktop_core_build_job" != *"include-hidden-files: true"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"pnpm --dir wework/electron install --frozen-lockfile"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"Build Windows NSIS installer for alternate-drive E2E"* ]] ||
-  [[ "$wework_windows_desktop_core_build_job" != *"name: wework-desktop-windows-installer"* ]] ||
+  [[ "$wework_windows_desktop_core_build_job" != *"needs.changes.outputs.windows_installer_e2e == 'true'"* ]] ||
+  [[ "$wework_windows_desktop_core_build_job" != *"run-windows-standard-user-process.ps1"* ]] ||
+  [[ "$wework_windows_desktop_core_build_job" != *"windows-installer.e2e.mjs"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"REDIS_WINDOWS_VERSION: 8.10.1"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"REDIS_WINDOWS_SHA256: 4e8f2f956ed92feadf3f64b4e137ed34026438821e692e7ae22c9bba5976607a"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"name: wework-desktop-windows-redis-e2e-tools"* ]]; then
@@ -2798,7 +2818,7 @@ if [[ "$wework_windows_desktop_core_build_job" != *"runs-on: windows-latest"* ]]
 fi
 
 wework_windows_desktop_core_job="$(
-  sed -n '/^  wework-desktop-windows-core-e2e:/,/^  wework-desktop-windows-installer-e2e:/p' \
+  sed -n '/^  wework-desktop-windows-core-e2e:/,/^  wework-desktop-cloud-e2e:/p' \
     "$wework_workflow"
 )"
 if [[ "$wework_windows_desktop_core_job" != *"runs-on: windows-latest"* ]] ||
@@ -2823,16 +2843,8 @@ if [[ "$wework_windows_desktop_core_job" != *"runs-on: windows-latest"* ]] ||
   exit 1
 fi
 
-wework_windows_desktop_installer_job="$(
-  sed -n '/^  wework-desktop-windows-installer-e2e:/,/^  wework-desktop-cloud-e2e:/p' \
-    "$wework_workflow"
-)"
-if [[ "$wework_windows_desktop_installer_job" != *"runs-on: windows-latest"* ]] ||
-  [[ "$wework_windows_desktop_installer_job" != *"needs.changes.outputs.windows_desktop_core_e2e == 'true'"* ]] ||
-  [[ "$wework_windows_desktop_installer_job" != *"wework-desktop-windows-installer"* ]] ||
-  [[ "$wework_windows_desktop_installer_job" != *"run-windows-standard-user-process.ps1"* ]] ||
-  [[ "$wework_windows_desktop_installer_job" != *"windows-installer.e2e.mjs"* ]]; then
-  printf 'Windows installer E2E must install from a standard-user alternate drive\n' >&2
+if grep -Eq 'wework-desktop-windows-installer|WINDOWS_DESKTOP_INSTALLER_E2E' "$wework_workflow"; then
+  printf 'Windows installer verification must reuse the existing build job without artifact transfers\n' >&2
   exit 1
 fi
 
@@ -2847,14 +2859,14 @@ if [[ "$wework_summary_job" == *"RUN_DESKTOP_CORE_E2E: \${{ github.event_name !=
   exit 1
 fi
 if [[ "$wework_summary_job" != *"RUN_WINDOWS_DESKTOP_CORE_E2E:"* ]] ||
-  [[ "$(grep -Fc "\"\$RUN_WINDOWS_DESKTOP_CORE_E2E\" == \"true\"" <<<"$wework_summary_job")" -ne 2 ]]; then
+  [[ "$(grep -Fc "\"\$RUN_WINDOWS_DESKTOP_CORE_E2E\" == \"true\"" <<<"$wework_summary_job")" -ne 1 ]]; then
   printf 'Wework E2E summary must check Windows Core only when explicitly scheduled\n' >&2
   exit 1
 fi
-if [[ "$wework_summary_job" != *"RUN_WINDOWS_DESKTOP_INSTALLER_E2E:"* ]] ||
-  [[ "$(grep -Fc "\"\$RUN_WINDOWS_DESKTOP_INSTALLER_E2E\" == \"true\"" <<<"$wework_summary_job")" -ne 1 ]] ||
-  [[ "$(grep -Fc "\"\$RUN_WINDOWS_DESKTOP_INSTALLER_E2E\" != \"true\"" <<<"$wework_summary_job")" -ne 1 ]]; then
-  printf 'Wework E2E summary must check the Windows installer only when explicitly scheduled\n' >&2
+if [[ "$wework_summary_job" != *"RUN_WINDOWS_DESKTOP_BUILD:"* ]] ||
+  [[ "$(grep -Fc "\"\$RUN_WINDOWS_DESKTOP_BUILD\" == \"true\"" <<<"$wework_summary_job")" -ne 1 ]] ||
+  [[ "$(grep -Fc "\"\$RUN_WINDOWS_DESKTOP_BUILD\" != \"true\"" <<<"$wework_summary_job")" -ne 1 ]]; then
+  printf 'Wework E2E summary must require the shared Windows build and its installer verification\n' >&2
   exit 1
 fi
 
@@ -2886,7 +2898,7 @@ if [[ "$(grep -Fc "$test_archive_exclusion" "$wework_workflow")" -ne 7 ]] ||
   exit 1
 fi
 
-if [[ "$(grep -Fc 'compression-level: 6' "$wework_workflow")" -ne 7 ]] ||
+if [[ "$(grep -Fc 'compression-level: 6' "$wework_workflow")" -ne 8 ]] ||
   [[ "$(grep -Fc 'compression-level: 6' \
     "$script_dir/../workflows/wework-app.yml")" -ne 1 ]]; then
   printf 'Every Wework desktop diagnostics upload must compress retained evidence\n' >&2
