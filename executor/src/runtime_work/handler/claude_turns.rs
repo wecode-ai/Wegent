@@ -265,6 +265,7 @@ impl RuntimeWorkRpcHandler {
         mut request: ExecutionRequest,
         restore_startup: Option<Arc<RestoreStartupGate>>,
     ) {
+        request.agent_home_runtime_task_id = Some(local_task_id.clone());
         let backend_connection = match self.backend_connection_snapshot() {
             Ok(connection) => connection,
             Err(error) => {
