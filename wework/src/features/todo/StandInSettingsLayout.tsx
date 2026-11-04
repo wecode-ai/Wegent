@@ -33,7 +33,7 @@ export function StandInSettingsHeader({
         </button>
       )}
       <div className="min-w-0 flex-1">
-        <h2 className="heading-sm">{title}</h2>
+        <h2 className="heading-sm flex min-h-8 items-center">{title}</h2>
         {description && <p className="mt-1 text-sm text-text-muted">{description}</p>}
       </div>
       {actions}
