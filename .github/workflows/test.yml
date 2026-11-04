@@ -463,7 +463,9 @@ jobs:
         working-directory: ./executor
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
-        run: cargo test --all-features --lib runtime_work::store::tests::atomic_write
+        run: |
+          cargo test --all-features --lib runtime_work::store::tests::atomic_write
+          cargo test --all-features --lib claude_execution_home_publishes_runtime_selection_beyond_windows_max_path
 
       - name: Run native worktree platform regressions
         if: ${{ !cancelled() }}

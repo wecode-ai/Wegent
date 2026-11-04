@@ -35,6 +35,41 @@ fn prepare_skills(execution: &ExecutionHome, name: Option<&str>) {
 }
 
 #[test]
+fn claude_execution_home_publishes_runtime_selection_beyond_windows_max_path() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut root = directory.path().to_path_buf();
+    while root.as_os_str().len() < 220 {
+        root.push("long-agent-home-segment");
+    }
+    let mut request = request("task-1");
+    request.agent_home_runtime_task_id = Some("runtime-task".to_owned());
+    let home = named_home_at(&root, &request).unwrap();
+    let pointer = SnapshotScope::Runtime("runtime-task").pointer(&home);
+    assert!(pointer.as_os_str().len() > 260);
+
+    let mut execution = create_at(&request, &root, &home).unwrap();
+    prepare_skills(&execution, Some("selected"));
+    execution.activate().unwrap();
+    let selection = read_marker(&pointer).unwrap();
+    assert_eq!(selection["runtime_task_id"], "runtime-task");
+    assert_eq!(
+        home.join("runtime/executions")
+            .join(selection["snapshot"].as_str().unwrap()),
+        execution.snapshot
+    );
+    assert_eq!(
+        fs::read_to_string(execution.snapshot.join("skills/selected/SKILL.md")).unwrap(),
+        "selected"
+    );
+    drop(execution);
+    let resumed = create_at(&request, &root, &home).unwrap();
+    assert_ne!(
+        resumed.snapshot.file_name().and_then(|name| name.to_str()),
+        selection["snapshot"].as_str()
+    );
+}
+
+#[test]
 fn concurrent_executions_share_history_and_isolate_configuration() {
     let root = tempfile::tempdir().unwrap();
     let first = request("task-1");

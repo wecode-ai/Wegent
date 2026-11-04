@@ -2514,7 +2514,11 @@ pub(super) fn write_json_file(path: &Path, value: &Value) -> Result<(), String> 
     let content = serde_json::to_string_pretty(value)
         .map_err(|error| format!("failed to serialize JSON: {error}"))?;
     let parent = path.parent().ok_or("JSON file has no parent")?;
-    let mut file = tempfile::NamedTempFile::new_in(parent)
+    // tempfile publishes through Win32 directly, unlike Rust's long-path-aware I/O.
+    let parent = fs::canonicalize(parent)
+        .map_err(|error| format!("failed to resolve JSON parent: {error}"))?;
+    let destination = parent.join(path.file_name().ok_or("JSON file has no name")?);
+    let mut file = tempfile::NamedTempFile::new_in(&parent)
         .map_err(|error| format!("failed to stage JSON: {error}"))?;
     use std::io::Write;
     file.write_all(content.as_bytes())
@@ -2522,7 +2526,7 @@ pub(super) fn write_json_file(path: &Path, value: &Value) -> Result<(), String> 
     file.as_file()
         .sync_all()
         .map_err(|error| error.to_string())?;
-    file.persist(path)
+    file.persist(destination)
         .map_err(|error| format!("failed to publish JSON: {}", error.error))?;
     Ok(())
 }
