@@ -149,7 +149,7 @@
     },
     "table": {
       "name": "Name",
-      "group": "Group",
+      "group": "Space",
       "belongsTo": "Belongs To",
       "from": "From",
       "permission": "Permission",
@@ -959,6 +959,21 @@
       "reanalyzing": "Re-analyzing...",
       "reanalyzeSuccess": "Re-analysis started",
       "reanalyzeFailed": "Re-analysis failed"
+    },
+    "navigation": {
+      "created": "Created by me",
+      "shared": "Shared with me",
+      "company": "Company knowledge",
+      "all": "All knowledge bases",
+      "loadFailed": "Unable to refresh knowledge bases",
+      "retry": "Retry",
+      "search": "Search knowledge bases",
+      "teamFilter": "Filter by team",
+      "allTeams": "All teams",
+      "space": "Space",
+      "unknownSpace": "Unknown space",
+      "personalSpace": "Personal space",
+      "createInSpace": "Create in this space"
     }
   },
   "add_repository": "Add Repository",

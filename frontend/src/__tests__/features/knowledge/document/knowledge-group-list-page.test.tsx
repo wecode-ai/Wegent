@@ -241,3 +241,57 @@ describe('KnowledgeGroupListPage category filter', () => {
     expect(screen.queryByTestId('knowledge-category-code-filter')).not.toBeInTheDocument()
   })
 })
+
+it('filters all receiving teams, preserves real space, and keeps an empty relationship empty', async () => {
+  const shared = {
+    ...createKnowledgeBase(88, 'Multi-team library', 'notebook'),
+    group_id: 'alpha',
+    group_name: 'Receiving team',
+    group_type: 'group' as const,
+    namespace: 'origin',
+    namespace_level: 'group',
+    namespace_display_name: 'Real space',
+    team_ids: ['alpha', 'beta'],
+    my_role: 'Reporter' as const,
+  }
+  const props = {
+    groupId: null,
+    groupName: 'Shared with me',
+    knowledgeBases: [],
+    knowledgeBasesWithGroupInfo: [shared],
+    isLoading: false,
+    onSelectKb: jest.fn(),
+    isAllMode: true,
+    getKbGroupInfo: () => ({
+      groupId: 'origin',
+      groupName: 'Real space',
+      groupType: 'group' as const,
+    }),
+  }
+  const { rerender } = render(<KnowledgeGroupListPage {...props} filterGroupId="group-beta" />)
+  expect(screen.getByTestId('kb-row-88')).toHaveTextContent('Real space')
+  expect(screen.getByRole('heading')).toHaveTextContent('Shared with me')
+  expect(screen.getByTestId('knowledge-result-count')).toHaveTextContent('1')
+  rerender(<KnowledgeGroupListPage {...props} filterGroupId="group-gamma" />)
+  expect(screen.queryByTestId('kb-row-88')).not.toBeInTheDocument()
+  rerender(
+    <KnowledgeGroupListPage {...props} knowledgeBases={[shared]} knowledgeBasesWithGroupInfo={[]} />
+  )
+  expect(screen.queryByTestId('kb-row-88')).not.toBeInTheDocument()
+})
+
+it('reports the search result count without changing the relationship title', async () => {
+  render(
+    <KnowledgeGroupListPage
+      groupId={null}
+      groupName="Created by me"
+      knowledgeBases={[createKnowledgeBase(99, 'Architecture', 'notebook')]}
+      isAllMode
+      isLoading={false}
+      onSelectKb={jest.fn()}
+    />
+  )
+  await userEvent.setup().type(screen.getByTestId('knowledge-search'), 'missing')
+  expect(screen.getByTestId('knowledge-result-count')).toHaveTextContent('0')
+  expect(screen.getByRole('heading', { level: 2 })).toHaveTextContent('Created by me')
+})

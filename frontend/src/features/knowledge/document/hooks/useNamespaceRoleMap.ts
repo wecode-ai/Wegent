@@ -5,14 +5,21 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import client from '@/apis/client'
+import { useUser } from '@/features/common/UserContext'
 import { listGroups } from '@/apis/groups'
 import { buildNamespaceRoleMap, type NamespaceRoleMap } from '@/utils/namespace-permissions'
 
+let cachedScope: string | null = null
 let cachedNamespaceRoleMap: NamespaceRoleMap | null = null
 let pendingNamespaceRoleMapRequest: Promise<NamespaceRoleMap> | null = null
 let namespaceRoleMapCacheVersion = 0
 
-function fetchNamespaceRoleMap(): Promise<NamespaceRoleMap> {
+function fetchNamespaceRoleMap(scope: string): Promise<NamespaceRoleMap> {
+  if (cachedScope !== scope) {
+    clearNamespaceRoleMapCache()
+    cachedScope = scope
+  }
   if (cachedNamespaceRoleMap) {
     return Promise.resolve(cachedNamespaceRoleMap)
   }
@@ -27,7 +34,7 @@ function fetchNamespaceRoleMap(): Promise<NamespaceRoleMap> {
           if (pendingNamespaceRoleMapRequest === request) {
             pendingNamespaceRoleMapRequest = null
           }
-          return fetchNamespaceRoleMap()
+          return cachedScope === scope ? fetchNamespaceRoleMap(scope) : new Map()
         }
 
         cachedNamespaceRoleMap = roleMap
@@ -57,12 +64,19 @@ export function clearNamespaceRoleMapCache() {
 }
 
 export function useNamespaceRoleMap(): NamespaceRoleMap {
+  const { user } = useUser()
+  const scope = JSON.stringify([user?.id, client.getCacheScope()])
+  const [stateScope, setStateScope] = useState(scope)
   const [namespaceRoleMap, setNamespaceRoleMap] = useState<NamespaceRoleMap>(new Map())
 
+  if (stateScope !== scope) {
+    setStateScope(scope)
+    setNamespaceRoleMap(new Map())
+  }
   useEffect(() => {
     let isActive = true
 
-    fetchNamespaceRoleMap()
+    fetchNamespaceRoleMap(scope)
       .then(roleMap => {
         if (!isActive) {
           return
@@ -77,7 +91,7 @@ export function useNamespaceRoleMap(): NamespaceRoleMap {
     return () => {
       isActive = false
     }
-  }, [])
+  }, [scope])
 
   return namespaceRoleMap
 }

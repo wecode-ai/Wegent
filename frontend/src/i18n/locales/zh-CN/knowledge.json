@@ -149,7 +149,7 @@
     },
     "table": {
       "name": "名称",
-      "group": "归属",
+      "group": "所在空间",
       "belongsTo": "归属",
       "from": "来自",
       "permission": "权限",
@@ -959,6 +959,21 @@
       "reanalyzing": "重新分析中...",
       "reanalyzeSuccess": "已开始重新分析",
       "reanalyzeFailed": "重新分析失败"
+    },
+    "navigation": {
+      "created": "我创建的",
+      "shared": "与我共享",
+      "company": "公司知识",
+      "all": "全部知识库",
+      "loadFailed": "知识库列表加载失败",
+      "retry": "重试",
+      "search": "搜索知识库",
+      "teamFilter": "按团队筛选",
+      "allTeams": "全部团队",
+      "space": "所在空间",
+      "unknownSpace": "未知空间",
+      "personalSpace": "个人空间",
+      "createInSpace": "在此空间创建"
     }
   },
   "add_repository": "添加仓库",

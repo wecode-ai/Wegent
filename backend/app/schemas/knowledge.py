@@ -1559,6 +1559,8 @@ class KnowledgeBaseWithGroupInfo(BaseModel):
     updated_at: datetime
     created_at: datetime
     user_id: int
+    namespace_level: Optional[str] = None
+    namespace_display_name: Optional[str] = None
     # Group info for display
     group_id: str  # namespace or 'default'
     group_name: str  # Display name

@@ -14,6 +14,8 @@
 'use client'
 
 import { useState, useMemo, useCallback, useEffect } from 'react'
+import { matchesKnowledgeTeam } from '../navigation'
+import { Input } from '@/components/ui/input'
 import { getKbShareSourceText } from '@/features/knowledge/utils/share-source'
 import {
   ArrowLeft,
@@ -75,6 +77,7 @@ export interface KnowledgeGroupListPageProps {
   onSelectKb: (kb: KbDataItem) => void
   /** Create a new knowledge base */
   onCreateKb?: (kbType: KnowledgeBaseType) => void
+  onCreateKbInSpace?: (kbType: KnowledgeBaseType) => void
   /** Whether advanced knowledge bases exist or are enabled by runtime config */
   hasAdvancedKnowledge?: boolean
   /** Whether advanced knowledge bases (code wikis) are visible */
@@ -173,6 +176,7 @@ export function KnowledgeGroupListPage({
   onBack,
   onSelectKb,
   onCreateKb,
+  onCreateKbInSpace,
   hasAdvancedKnowledge = false,
   showAdvancedKnowledge = false,
   onShowAdvancedKnowledgeChange,
@@ -184,8 +188,8 @@ export function KnowledgeGroupListPage({
   getKbGroupInfo,
   isAllMode = false,
   filterGroupId,
-  onFilterGroupChange: _onFilterGroupChange,
-  availableGroups: _availableGroups,
+  onFilterGroupChange,
+  availableGroups,
   isPersonalMode = false,
   personalCreatedByMe = [],
   personalSharedWithMe = [],
@@ -196,13 +200,14 @@ export function KnowledgeGroupListPage({
 }: KnowledgeGroupListPageProps) {
   const isGroupSectionMode = groupNativeKbs.length > 0 || groupSharedKbs.length > 0
   const { t } = useTranslation('knowledge')
+  const [search, setSearch] = useState('')
   const [sortBy, setSortBy] = useState<SortBy>('created')
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
   const [category, setCategory] = useState<KnowledgeBaseCategory>('all')
   // Determine which data source to use
   // Prefer knowledgeBasesWithGroupInfo when available (has my_role field)
   const dataSource = useMemo(() => {
-    if (knowledgeBasesWithGroupInfo && knowledgeBasesWithGroupInfo.length > 0) {
+    if (knowledgeBasesWithGroupInfo) {
       return knowledgeBasesWithGroupInfo
     }
     return knowledgeBases
@@ -300,12 +305,15 @@ export function KnowledgeGroupListPage({
       result = result.filter(kb => {
         if (getKbGroupInfo) {
           const groupInfo = getKbGroupInfo(kb)
-          return groupInfo.groupId === filterGroupId
+          return 'group_id' in kb
+            ? matchesKnowledgeTeam(kb, filterGroupId)
+            : groupInfo.groupId === filterGroupId
         }
         return true
       })
     }
 
+    result = result.filter(kb => kb.name.toLocaleLowerCase().includes(search.toLocaleLowerCase()))
     result = filterByCategory(result)
 
     // Dedup by ID as a safety measure against duplicate data
@@ -317,7 +325,7 @@ export function KnowledgeGroupListPage({
     })
 
     return sortKbs(result)
-  }, [dataSource, isAllMode, filterGroupId, getKbGroupInfo, filterByCategory, sortKbs])
+  }, [dataSource, isAllMode, filterGroupId, getKbGroupInfo, filterByCategory, sortKbs, search])
 
   // Determine whether to show the "from" column
   const showFromColumn = !isPersonalMode && !isAllMode
@@ -607,9 +615,32 @@ export function KnowledgeGroupListPage({
             <ArrowLeft className="w-4 h-4" />
           </Button>
         )}
-        <h2 className="text-lg font-semibold flex-1 min-w-[160px] truncate">
-          {isAllMode ? t('document.allKnowledgeBases', '全部知识库') : groupName}
-        </h2>
+        <h2 className="text-lg font-semibold flex-1 min-w-[160px] truncate">{groupName}</h2>
+        <span data-testid="knowledge-result-count">{filteredKbs.length}</span>
+        <Input
+          data-testid="knowledge-search"
+          aria-label={t('document.navigation.search')}
+          placeholder={t('document.navigation.search')}
+          value={search}
+          onChange={event => setSearch(event.target.value)}
+          className="min-h-11 w-48"
+        />
+        {onFilterGroupChange && (
+          <select
+            data-testid="knowledge-team-filter"
+            aria-label={t('document.navigation.teamFilter')}
+            className="min-h-11 min-w-11 max-w-64 bg-base border border-border rounded px-3"
+            value={filterGroupId ?? ''}
+            onChange={event => onFilterGroupChange(event.target.value || null)}
+          >
+            <option value="">{t('document.navigation.allTeams')}</option>
+            {availableGroups?.map(group => (
+              <option key={group.id} value={group.id}>
+                {group.displayName} ({group.name})
+              </option>
+            ))}
+          </select>
+        )}
         <KnowledgeBaseCategoryFilter
           value={category}
           onValueChange={setCategory}
@@ -622,6 +653,16 @@ export function KnowledgeGroupListPage({
             checked={showAdvancedKnowledge}
             onCheckedChange={onShowAdvancedKnowledgeChange}
           />
+        )}
+        {onCreateKbInSpace && (
+          <Button
+            variant="primary"
+            className="min-h-11 min-w-11"
+            data-testid="create-space-kb-button"
+            onClick={() => onCreateKbInSpace('notebook')}
+          >
+            {t('document.navigation.createInSpace')}
+          </Button>
         )}
         {onCreateKb && (
           <Button

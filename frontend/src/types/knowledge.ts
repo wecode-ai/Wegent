@@ -938,6 +938,9 @@ export interface KbGroupInfo {
 
 /** Knowledge base with group info for all-grouped response */
 export interface KnowledgeBaseWithGroupInfo {
+  namespace_level?: string | null
+  namespace_display_name?: string | null
+  team_ids?: string[]
   id: number
   name: string
   description: string | null

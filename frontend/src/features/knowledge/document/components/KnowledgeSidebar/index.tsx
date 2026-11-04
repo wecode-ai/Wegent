@@ -210,7 +210,11 @@ export function KnowledgeSidebar({
           groups={groups}
           isLoading={isGroupsLoading}
           selectedGroupId={selectedGroupId}
-          isAllSelected={viewMode === 'all'}
+          isAllSelected={
+            viewMode === 'all' ||
+            viewMode === 'groups' ||
+            Boolean(selectedGroupId?.startsWith('group-'))
+          }
           isGroupsSelected={viewMode === 'groups'}
           selectedSourceViewId={selectedSourceViewId}
           isExpanded={sectionStates.groups}
@@ -220,7 +224,7 @@ export function KnowledgeSidebar({
           onSelectGroups={onSelectGroups}
           onSelectSourceView={onSelectSourceView}
           sourceViews={sourceViews}
-          totalKbCount={summary?.total_count ?? groups.reduce((sum, g) => sum + g.kbCount, 0)}
+          totalKbCount={summary?.total_count}
           summary={summary}
         />
       </div>

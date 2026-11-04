@@ -14,7 +14,6 @@
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { usePathname } from 'next/navigation'
-import { FolderOpen } from 'lucide-react'
 import { Spinner } from '@/components/ui/spinner'
 import { userApis } from '@/apis/user'
 import { teamService } from '@/features/tasks/service/teamService'
@@ -22,14 +21,12 @@ import { getModelFromConfig } from '@/features/settings/services/bots'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
 import { parseKbUrl } from '@/utils/knowledgeUrl'
-import { useKnowledgeSidebar, type KnowledgeGroup } from '../hooks/useKnowledgeSidebar'
+import { useKnowledgeSidebar } from '../hooks/useKnowledgeSidebar'
 import {
-  filterKnowledgeBasesByAdvancedMode,
   hasAdvancedKnowledgeBases,
   useAdvancedKnowledgeMode,
 } from '../hooks/useAdvancedKnowledgeMode'
 import { useNamespaceRoleMap } from '../hooks/useNamespaceRoleMap'
-import { useGroupKbs } from '../hooks/useGroupKbs'
 import { useKnowledgeUrlSync } from '../hooks/useKnowledgeUrlSync'
 import { useKnowledgeBaseDialogs } from '../hooks/useKnowledgeBaseDialogs'
 import { getDefaultKnowledgeView, useKnowledgeViewMode } from '../hooks/useKnowledgeViewMode'
@@ -48,7 +45,7 @@ import {
   canCreateKnowledgeBaseInNamespace,
   canManageKnowledgeBase,
 } from '@/utils/namespace-permissions'
-import type { CodeWikiView, KnowledgeBase, KnowledgeBaseWithGroupInfo } from '@/types/knowledge'
+import type { CodeWikiView, KnowledgeBase } from '@/types/knowledge'
 import type { DefaultTeamsResponse, Team } from '@/types/api'
 
 // Sidebar width constant
@@ -135,29 +132,15 @@ export function KnowledgeDocumentPageDesktop({
   }, [selectedKbId])
   const sourceViews = useKnowledgeSourceViews()
   const namespaceRoleMap = useNamespaceRoleMap()
-  // Group KBs hook (extracted from inline logic)
-  const selectedGroup = useMemo((): KnowledgeGroup | null => {
-    if (!sidebar.selectedGroupId) return null
-    return sidebar.groups.find(group => group.id === sidebar.selectedGroupId) || null
-  }, [sidebar.selectedGroupId, sidebar.groups])
-
-  const {
-    groupKbs,
-    isGroupKbsLoading,
-    reload: reloadGroupKbs,
-  } = useGroupKbs({
-    selectedGroupId: sidebar.selectedGroupId,
-    groups: sidebar.groups,
-    personalCreatedByMe: visibleKnowledgeBases.personalCreatedByMe,
-    personalSharedWithMe: visibleKnowledgeBases.personalSharedWithMe,
-  })
-  const visibleGroupKbs = useMemo(
-    () =>
-      selectedGroup?.type === 'personal'
-        ? groupKbs
-        : filterKnowledgeBasesByAdvancedMode(groupKbs, showAdvancedKnowledge),
-    [groupKbs, selectedGroup?.type, showAdvancedKnowledge]
-  )
+  const reloadGroupKbs = sidebar.refreshAll
+  const selectedSpace = sidebar.groups.find(group => group.id === sidebar.selectedGroupId)
+  const canCreateInSelectedSpace =
+    selectedSpace &&
+    selectedSpace.type !== 'personal' &&
+    canCreateKnowledgeBaseInNamespace({
+      namespace: selectedSpace.name,
+      namespaceRole: namespaceRoleMap.get(selectedSpace.name),
+    })
 
   // Sidebar collapse state - auto-collapse in Notebook view
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
@@ -248,6 +231,7 @@ export function KnowledgeDocumentPageDesktop({
   const { initialUrlSyncDone, updateUrlParams, navigateToKbViaHistory } = useKnowledgeUrlSync({
     initialKbNamespace,
     initialKbName,
+    scopeKey: sidebar.scopeKey,
     allKnowledgeBases: sidebar.allKnowledgeBases,
     isGroupsLoading: sidebar.isGroupsLoading,
     selectKb: sidebar.selectKb,
@@ -289,28 +273,13 @@ export function KnowledgeDocumentPageDesktop({
     }
   }, [sidebar.selectedKb, currentView, updateSidebarCollapsed])
 
-  const canCreateInSelectedGroup = useMemo(() => {
-    if (!selectedGroup) {
-      return false
-    }
-
-    if (selectedGroup.type === 'personal') {
-      return true
-    }
-
-    return canCreateKnowledgeBaseInNamespace({
-      namespace: selectedGroup.name,
-      namespaceRole: namespaceRoleMap.get(selectedGroup.name),
-    })
-  }, [selectedGroup, namespaceRoleMap])
-
   const canManageKbInList = useCallback(
     (kb: KbDataItem) => {
       return canManageKnowledgeBase({
         currentUserId: user?.id,
         knowledgeBase: kb,
         knowledgeRole: 'my_role' in kb ? (kb.my_role ?? undefined) : undefined,
-        namespaceRole: namespaceRoleMap.get(kb.namespace),
+        namespaceRole: 'my_role' in kb ? undefined : namespaceRoleMap.get(kb.namespace),
       })
     },
     [user?.id, namespaceRoleMap]
@@ -349,11 +318,6 @@ export function KnowledgeDocumentPageDesktop({
     },
     [sidebar, updateUrlParams]
   )
-
-  const handleBackFromGroup = useCallback(() => {
-    sidebar.clearSelection()
-    updateUrlParams({ kb: null, group: null })
-  }, [sidebar, updateUrlParams])
 
   const handleSelectGroups = useCallback(() => {
     sidebar.selectGroups()
@@ -395,34 +359,24 @@ export function KnowledgeDocumentPageDesktop({
   }, [sidebar.groups])
 
   const availableGroupsForCreate = useMemo((): AvailableGroup[] => {
-    return sidebar.groups.map(g => ({
-      id: g.id,
-      name: g.name,
-      displayName: g.displayName,
-      type: g.type,
-      canCreate:
-        g.type === 'personal'
-          ? true
-          : canCreateKnowledgeBaseInNamespace({
-              namespace: g.name,
-              namespaceRole: namespaceRoleMap.get(g.name),
-            }),
-    }))
+    return sidebar.groups
+      .filter(g => g.id !== 'shared')
+      .map(g => ({
+        id: g.id,
+        name: g.name,
+        displayName: g.displayName,
+        type: g.type,
+        canCreate:
+          g.type === 'personal'
+            ? true
+            : canCreateKnowledgeBaseInNamespace({
+                namespace: g.name,
+                namespaceRole: namespaceRoleMap.get(g.name),
+              }),
+      }))
   }, [sidebar.groups, namespaceRoleMap])
 
-  const hasCreatableTeamGroup = useMemo(() => {
-    return availableGroupsForCreate.some(group => group.type === 'group' && group.canCreate)
-  }, [availableGroupsForCreate])
-
-  const allModeKbsWithInfo = useMemo((): KnowledgeBaseWithGroupInfo[] => {
-    const map = new Map<number, KnowledgeBaseWithGroupInfo>()
-    for (const kb of visibleKnowledgeBases.allWithGroupInfo) {
-      if (!map.has(kb.id)) {
-        map.set(kb.id, { ...kb })
-      }
-    }
-    return Array.from(map.values())
-  }, [visibleKnowledgeBases.allWithGroupInfo])
+  const allModeKbsWithInfo = visibleKnowledgeBases.allWithGroupInfo
 
   const selectedKbGroupInfo = sidebar.selectedKb
     ? sidebar.getKbGroupInfo(sidebar.selectedKb)
@@ -511,167 +465,59 @@ export function KnowledgeDocumentPageDesktop({
       )
     }
 
-    if (sidebar.viewMode === 'groups') {
-      const teamGroupKbs = visibleKnowledgeBases.allWithGroupInfo.filter(
-        kb => kb.group_type === 'group'
-      )
-
-      return (
-        <KnowledgeGroupListPage
-          groupId={null}
-          groupName={t('document.sidebar.groups', 'Groups')}
-          knowledgeBases={teamGroupKbs.map(kb => ({
-            id: kb.id,
-            name: kb.name,
-            description: kb.description,
-            user_id: kb.user_id,
-            namespace: kb.namespace,
-            document_count: kb.document_count,
-            is_active: true,
-            summary_enabled: false,
-            kb_type: kb.kb_type || 'notebook',
-            max_calls_per_conversation: 10,
-            exempt_calls_before_check: 5,
-            created_at: kb.created_at,
-            updated_at: kb.updated_at,
-          }))}
-          knowledgeBasesWithGroupInfo={teamGroupKbs}
-          isLoading={sidebar.isGroupsLoading}
-          onSelectKb={handleSelectKb}
-          onCreateKb={hasCreatableTeamGroup ? dialogs.handleCreateKbFromGroups : undefined}
-          hasAdvancedKnowledge={hasAdvancedKnowledge}
-          showAdvancedKnowledge={showAdvancedKnowledge}
-          onShowAdvancedKnowledgeChange={setShowAdvancedKnowledge}
-          onEditKb={kb => {
-            const fullKb = sidebar.allKnowledgeBases.find(k => k.id === kb.id)
-            if (fullKb) dialogs.setEditingKb(fullKb)
-          }}
-          onDeleteKb={kb => {
-            const fullKb = sidebar.allKnowledgeBases.find(k => k.id === kb.id)
-            if (fullKb) dialogs.setDeletingKb(fullKb)
-          }}
-          canManageKb={canManageKbInList}
-          onToggleFavorite={handleToggleFavorite}
-          isFavorite={isFavorite}
-          getKbGroupInfo={sidebar.getKbGroupInfo}
-          isAllMode={true}
-          filterGroupId={sidebar.filterGroupId}
-          onFilterGroupChange={sidebar.setFilterGroupId}
-          availableGroups={availableGroups.filter(g => g.id.startsWith('group-'))}
-        />
-      )
-    }
-
-    if (sidebar.viewMode === 'all') {
-      return (
-        <KnowledgeGroupListPage
-          groupId={null}
-          groupName={t('document.allKnowledgeBases', 'All Knowledge Bases')}
-          knowledgeBases={visibleKnowledgeBases.all}
-          knowledgeBasesWithGroupInfo={allModeKbsWithInfo}
-          isLoading={sidebar.isGroupsLoading}
-          onSelectKb={handleSelectKb}
-          onCreateKb={dialogs.handleCreateKbFromAll}
-          hasAdvancedKnowledge={hasAdvancedKnowledge}
-          showAdvancedKnowledge={showAdvancedKnowledge}
-          onShowAdvancedKnowledgeChange={setShowAdvancedKnowledge}
-          onEditKb={kb => {
-            const fullKb = sidebar.allKnowledgeBases.find(k => k.id === kb.id)
-            if (fullKb) dialogs.setEditingKb(fullKb)
-          }}
-          onDeleteKb={kb => {
-            const fullKb = sidebar.allKnowledgeBases.find(k => k.id === kb.id)
-            if (fullKb) dialogs.setDeletingKb(fullKb)
-          }}
-          canManageKb={canManageKbInList}
-          onToggleFavorite={handleToggleFavorite}
-          isFavorite={isFavorite}
-          getKbGroupInfo={sidebar.getKbGroupInfo}
-          isAllMode={true}
-          filterGroupId={sidebar.filterGroupId}
-          onFilterGroupChange={sidebar.setFilterGroupId}
-          availableGroups={availableGroups}
-        />
-      )
-    }
-
-    if (selectedGroup) {
-      const isPersonalMode = selectedGroup.type === 'personal'
-
-      const groupKbsWithInfo = visibleKnowledgeBases.allWithGroupInfo.filter(kb => {
-        if (selectedGroup.type === 'personal') {
-          return kb.group_type === 'personal' || kb.group_type === 'personal-shared'
-        } else if (selectedGroup.type === 'organization') {
-          return kb.group_type === 'organization'
-        } else {
-          return kb.group_type === 'group' && kb.group_id === selectedGroup.name
-        }
-      })
-
-      const groupNativeKbs =
-        selectedGroup.type === 'group' ? groupKbsWithInfo.filter(kb => !kb.shared_from) : []
-      const groupSharedKbs =
-        selectedGroup.type === 'group' ? groupKbsWithInfo.filter(kb => kb.shared_from) : []
-
-      return (
-        <KnowledgeGroupListPage
-          groupId={selectedGroup.id}
-          groupName={selectedGroup.displayName}
-          knowledgeBases={visibleGroupKbs}
-          knowledgeBasesWithGroupInfo={groupKbsWithInfo}
-          isLoading={isGroupKbsLoading}
-          onBack={handleBackFromGroup}
-          onSelectKb={handleSelectKb}
-          onCreateKb={canCreateInSelectedGroup ? dialogs.handleCreateKbFromGroup : undefined}
-          hasAdvancedKnowledge={hasAdvancedKnowledge}
-          showAdvancedKnowledge={showAdvancedKnowledge}
-          onShowAdvancedKnowledgeChange={setShowAdvancedKnowledge}
-          onEditKb={kb => {
-            const fullKb =
-              sidebar.allKnowledgeBases.find(k => k.id === kb.id) ||
-              groupKbs.find(k => k.id === kb.id)
-            if (fullKb) dialogs.setEditingKb(fullKb)
-          }}
-          onDeleteKb={kb => {
-            const fullKb =
-              sidebar.allKnowledgeBases.find(k => k.id === kb.id) ||
-              groupKbs.find(k => k.id === kb.id)
-            if (fullKb) dialogs.setDeletingKb(fullKb)
-          }}
-          canManageKb={canManageKbInList}
-          onToggleFavorite={handleToggleFavorite}
-          isFavorite={isFavorite}
-          isPersonalMode={isPersonalMode}
-          personalCreatedByMe={
-            isPersonalMode ? visibleKnowledgeBases.personalCreatedByMe : undefined
-          }
-          personalSharedWithMe={
-            isPersonalMode ? visibleKnowledgeBases.personalSharedWithMe : undefined
-          }
-          groupNativeKbs={groupNativeKbs}
-          groupSharedKbs={groupSharedKbs}
-          getKbGroupInfo={sidebar.getKbGroupInfo}
-          onMigrateKb={kb => {
-            const fullKb =
-              sidebar.allKnowledgeBases.find(k => k.id === kb.id) ||
-              groupKbs.find(k => k.id === kb.id)
-            if (fullKb) dialogs.setMigratingKb(fullKb)
-          }}
-          canMigrate={dialogs.canMigrateKb}
-        />
-      )
-    }
-
+    const rows =
+      sidebar.selectedGroupId === 'personal'
+        ? visibleKnowledgeBases.personalCreatedByMe
+        : sidebar.selectedGroupId === 'shared'
+          ? visibleKnowledgeBases.personalSharedWithMe
+          : sidebar.selectedGroupId === 'organization'
+            ? allModeKbsWithInfo.filter(kb => kb.namespace_level === 'organization')
+            : sidebar.viewMode === 'groups'
+              ? allModeKbsWithInfo.filter(kb => kb.team_ids?.length)
+              : allModeKbsWithInfo
+    const titleKey =
+      sidebar.selectedGroupId === 'personal'
+        ? 'created'
+        : sidebar.selectedGroupId === 'shared'
+          ? 'shared'
+          : sidebar.selectedGroupId === 'organization'
+            ? 'company'
+            : 'all'
     return (
-      <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
-        <FolderOpen className="w-16 h-16 text-text-muted mb-4" />
-        <h2 className="text-lg font-medium text-text-primary mb-2">
-          {t('document.tree.emptyState', 'Please select a knowledge base from the left')}
-        </h2>
-        <p className="text-sm text-text-muted max-w-md">
-          {t('document.tree.emptyStateHint', 'Browse and select a knowledge base to view details')}
-        </p>
-      </div>
+      <KnowledgeGroupListPage
+        groupId={sidebar.selectedGroupId}
+        groupName={t('document.navigation.' + titleKey)}
+        knowledgeBases={visibleKnowledgeBases.all}
+        knowledgeBasesWithGroupInfo={rows}
+        isLoading={sidebar.isGroupsLoading && !sidebar.hasLoaded}
+        onSelectKb={handleSelectKb}
+        onCreateKb={dialogs.handleCreateKbFromAll}
+        onCreateKbInSpace={canCreateInSelectedSpace ? dialogs.handleCreateKbFromGroup : undefined}
+        hasAdvancedKnowledge={hasAdvancedKnowledge}
+        showAdvancedKnowledge={showAdvancedKnowledge}
+        onShowAdvancedKnowledgeChange={setShowAdvancedKnowledge}
+        onEditKb={kb => {
+          const full = sidebar.allKnowledgeBases.find(k => k.id === kb.id)
+          if (full) dialogs.setEditingKb(full)
+        }}
+        onDeleteKb={kb => {
+          const full = sidebar.allKnowledgeBases.find(k => k.id === kb.id)
+          if (full) dialogs.setDeletingKb(full)
+        }}
+        canManageKb={canManageKbInList}
+        onToggleFavorite={handleToggleFavorite}
+        isFavorite={isFavorite}
+        getKbGroupInfo={sidebar.getKbGroupInfo}
+        isAllMode
+        filterGroupId={sidebar.filterGroupId}
+        onFilterGroupChange={sidebar.setFilterGroupId}
+        availableGroups={availableGroups.filter(g => g.id.startsWith('group-'))}
+        onMigrateKb={kb => {
+          const full = sidebar.allKnowledgeBases.find(k => k.id === kb.id)
+          if (full) dialogs.setMigratingKb(full)
+        }}
+        canMigrate={dialogs.canMigrateKb}
+      />
     )
   }
 
@@ -680,6 +526,7 @@ export function KnowledgeDocumentPageDesktop({
       {!isSidebarCollapsed && (
         <div style={{ width: SIDEBAR_WIDTH, flexShrink: 0 }} className="h-full">
           <KnowledgeSidebar
+            key={sidebar.scopeKey}
             favorites={sidebar.favorites}
             isFavoritesLoading={sidebar.isFavoritesLoading}
             onAddFavorite={sidebar.addFavorite}
@@ -706,7 +553,22 @@ export function KnowledgeDocumentPageDesktop({
         </div>
       )}
 
-      <div className="flex-1 min-w-0 flex flex-col bg-base relative">{renderMainContent()}</div>
+      <div className="flex-1 min-w-0 flex flex-col bg-base relative">
+        {sidebar.loadError && (
+          <div role="alert" className="p-3 text-error">
+            {t('document.navigation.loadFailed')}
+            <button
+              type="button"
+              data-testid="retry-knowledge-navigation"
+              className="min-h-11 min-w-11 px-3"
+              onClick={() => void sidebar.refreshAll()}
+            >
+              {t('document.navigation.retry')}
+            </button>
+          </div>
+        )}
+        {sidebar.loadError && !sidebar.hasLoaded ? null : renderMainContent()}
+      </div>
 
       <CreateKnowledgeBaseDialog
         open={dialogs.showCreateDialog}

@@ -15,6 +15,7 @@ import { buildKbUrl, parseKbUrl } from '@/utils/knowledgeUrl'
 import type { KnowledgeBase } from '@/types/knowledge'
 
 interface UseKnowledgeUrlSyncParams {
+  scopeKey?: string
   initialKbNamespace?: string
   initialKbName?: string
   allKnowledgeBases: KnowledgeBase[]
@@ -27,6 +28,7 @@ interface UseKnowledgeUrlSyncParams {
 }
 
 export function useKnowledgeUrlSync({
+  scopeKey,
   initialKbNamespace,
   initialKbName,
   allKnowledgeBases,
@@ -55,7 +57,7 @@ export function useKnowledgeUrlSync({
     navParams.delete('taskId')
     navParams.delete('task_id')
     navParams.delete('taskid')
-    const navUrlKey = `${pathname}?${navParams.toString()}`
+    const navUrlKey = `${scopeKey ?? ''}:${pathname}?${navParams.toString()}`
     if (lastSyncedUrlRef.current === navUrlKey && initialUrlSyncDone) return
 
     const parsedKbUrl = pathname ? parseKbUrl(pathname) : null
@@ -94,6 +96,8 @@ export function useKnowledgeUrlSync({
         const found = allKnowledgeBases.find(kb => kb.id === kbId)
         if (found) {
           selectKb(found)
+        } else {
+          clearSelection()
         }
       }
     } else if (groupParam === 'all-groups') {
@@ -113,6 +117,7 @@ export function useKnowledgeUrlSync({
     lastSyncedUrlRef.current = navUrlKey
     setInitialUrlSyncDone(true)
   }, [
+    scopeKey,
     pathname,
     searchParams,
     allKnowledgeBases,

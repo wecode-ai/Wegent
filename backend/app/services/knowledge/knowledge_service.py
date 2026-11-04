@@ -3099,7 +3099,6 @@ class KnowledgeService:
             .filter(
                 Kind.kind == "KnowledgeBase",
                 Kind.is_active == True,
-                Kind.namespace == "default",
                 Kind.user_id == user_id,
             )
             .order_by(Kind.updated_at.desc())
@@ -3432,6 +3431,11 @@ class KnowledgeService:
             organization=organization,
             summary=summary,
         )
+        from app.services.knowledge.navigation_metadata import (
+            enrich_navigation_metadata,
+        )
+
+        enrich_navigation_metadata(db, response, permission_context)
         return response
 
     @staticmethod
