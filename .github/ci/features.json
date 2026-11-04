@@ -118,6 +118,10 @@
         {
           "file": "team-catalog-pagination.spec.ts",
           "project": "chromium"
+        },
+        {
+          "file": "team-share-scope.spec.ts",
+          "project": "chromium"
         }
       ]
     },
