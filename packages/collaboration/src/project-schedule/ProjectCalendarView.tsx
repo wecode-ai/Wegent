@@ -4,6 +4,7 @@
 
 import {
   DndContext,
+  DragOverlay,
   PointerSensor,
   pointerWithin,
   useDraggable,
@@ -25,10 +26,12 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 
 import { canEditCollaborationIssue } from "../permissions";
 import type { CollaborationIssue, CollaborationStatus } from "../types";
 import { collaborationTestIds } from "../testIds";
+import { useCollaborationPortalTheme } from "../theme";
 import {
   addLocalDays,
   addLocalMonths,
@@ -192,6 +195,27 @@ export function ScheduleDateDropZone({
   );
 }
 
+function UndatedIssueLabel({
+  issue,
+  statuses,
+}: {
+  issue: CollaborationIssue;
+  statuses: CollaborationStatus[];
+}) {
+  return (
+    <>
+      <span
+        className={`h-2 w-2 shrink-0 rounded-full ${statusClass(statuses, issue)}`}
+      />
+      <span className="sr-only">{statusLabel(statuses, issue)}</span>
+      <span className="truncate">{issue.title}</span>
+    </>
+  );
+}
+
+const undatedIssueClassName =
+  "inline-flex h-8 max-w-72 items-center gap-2 rounded-lg border border-border bg-background px-3 text-xs text-text-secondary max-md:h-11";
+
 function DraggableUndatedIssue({
   issue,
   locale,
@@ -202,21 +226,19 @@ function DraggableUndatedIssue({
   issue: CollaborationIssue;
   enabled: boolean;
 }) {
-  const { attributes, isDragging, listeners, setNodeRef, transform } =
-    useDraggable({
-      id: scheduleIssueDragId(issue.id, "move"),
-      disabled: !enabled,
-    });
+  const { attributes, isDragging, listeners, setNodeRef } = useDraggable({
+    id: scheduleIssueDragId(issue.id, "move"),
+    disabled: !enabled,
+  });
   return (
     <button
       ref={setNodeRef}
       type="button"
       data-testid={`collaboration-schedule-undated-${issue.id}`}
       onClick={() => onOpen(issue)}
-      className={`inline-flex h-8 max-w-72 items-center gap-2 rounded-lg border border-border px-3 text-xs text-text-secondary hover:bg-muted hover:text-text-primary max-md:h-11 ${
+      className={`${undatedIssueClassName} hover:bg-muted hover:text-text-primary ${
         enabled ? "cursor-grab touch-none active:cursor-grabbing" : ""
       } ${isDragging ? "opacity-50" : ""}`}
-      style={{ transform: CSS.Translate.toString(transform) }}
       title={
         enabled
           ? locale === "zh-CN"
@@ -227,11 +249,7 @@ function DraggableUndatedIssue({
       {...listeners}
       {...attributes}
     >
-      <span
-        className={`h-2 w-2 shrink-0 rounded-full ${statusClass(statuses, issue)}`}
-      />
-      <span className="sr-only">{statusLabel(statuses, issue)}</span>
-      <span className="truncate">{issue.title}</span>
+      <UndatedIssueLabel issue={issue} statuses={statuses} />
     </button>
   );
 }
@@ -562,39 +580,60 @@ export function UndatedIssues({
   onOpen,
   onSchedule,
 }: ProjectScheduleViewProps) {
+  const { activeIssueId } = useContext(ScheduleDragPreviewContext);
+  const portalTheme = useCollaborationPortalTheme();
   const undated = issues.filter(
     (issue) =>
       !parseScheduleDate(issue.start_at) && !parseScheduleDate(issue.due_at),
   );
+  const draggedIssue = undated.find((issue) => issue.id === activeIssueId);
   if (undated.length === 0) return null;
   return (
-    <section className="max-h-40 overflow-auto border-t border-border px-6 py-4">
-      <h2 className="mb-2 text-sm font-medium text-text-primary">
-        {locale === "zh-CN" ? "未安排时间" : "Unscheduled"}
-        <span className="ml-2 text-xs font-normal text-text-muted">
-          {undated.length}
-        </span>
-      </h2>
-      {onSchedule ? (
-        <p className="mb-3 text-xs text-text-muted">
-          {locale === "zh-CN"
-            ? "拖拽任务到上方日期即可设置起止时间"
-            : "Drag a task onto a date above to set its schedule"}
-        </p>
-      ) : null}
-      <div className="flex flex-wrap gap-2">
-        {undated.map((issue) => (
-          <DraggableUndatedIssue
-            key={issue.id}
-            issue={issue}
-            locale={locale}
-            statuses={statuses}
-            onOpen={onOpen}
-            enabled={Boolean(onSchedule) && canEditCollaborationIssue(issue)}
-          />
-        ))}
-      </div>
-    </section>
+    <>
+      <section className="max-h-40 overflow-auto border-t border-border px-6 py-4">
+        <h2 className="mb-2 text-sm font-medium text-text-primary">
+          {locale === "zh-CN" ? "未安排时间" : "Unscheduled"}
+          <span className="ml-2 text-xs font-normal text-text-muted">
+            {undated.length}
+          </span>
+        </h2>
+        {onSchedule ? (
+          <p className="mb-3 text-xs text-text-muted">
+            {locale === "zh-CN"
+              ? "拖拽任务到上方日期即可设置起止时间"
+              : "Drag a task onto a date above to set its schedule"}
+          </p>
+        ) : null}
+        <div className="flex flex-wrap gap-2">
+          {undated.map((issue) => (
+            <DraggableUndatedIssue
+              key={issue.id}
+              issue={issue}
+              locale={locale}
+              statuses={statuses}
+              onOpen={onOpen}
+              enabled={Boolean(onSchedule) && canEditCollaborationIssue(issue)}
+            />
+          ))}
+        </div>
+      </section>
+      {typeof document !== "undefined"
+        ? createPortal(
+            <DragOverlay dropAnimation={null}>
+              {draggedIssue ? (
+                <div
+                  {...portalTheme}
+                  data-testid="collaboration-schedule-undated-drag-overlay"
+                  className={`${portalTheme.className} ${undatedIssueClassName} cursor-grabbing shadow-sm`}
+                >
+                  <UndatedIssueLabel issue={draggedIssue} statuses={statuses} />
+                </div>
+              ) : null}
+            </DragOverlay>,
+            document.body,
+          )
+        : null}
+    </>
   );
 }
 

@@ -36,6 +36,12 @@ ghcr.io/wecode-ai/wegent-standalone
 
 流程会先推送按提交命名的 `main-<short-sha>` 多架构标签，并验证 standalone 镜像可以启动。验证通过后，才会将同一批镜像提升到可移动的 `main` 和 `edge` 标签。
 
+## 发布构建维护
+
+正式发布与快照流程共用 `.github/actions/setup-rust-cache` 配置 executor 的固定 Rust 工具链和缓存。打包二进制时须从该 action 导出的 `CARGO_TARGET_DIR` 读取产物；macOS x64 产物位于其 `x86_64-apple-darwin/release` 子目录。
+
+前端和 standalone 镜像的前端、Wework 构建阶段必须包含 `shared/data`，供共享协作组件读取内置模板。修改构建输入后，运行 `bash scripts/test-publish-image-release-policy.sh` 检查本地 action、二进制打包路径和各阶段模板文件；该检查也在 CI 中运行。
+
 ## 使用示例
 
 使用最新稳定版：

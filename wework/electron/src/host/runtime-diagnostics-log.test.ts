@@ -42,3 +42,33 @@ test('persists executor transport diagnostics with the configured prefix', async
     await rm(directory, { recursive: true, force: true })
   }
 })
+
+test('persists local catalog lifecycle messages without unrelated renderer output', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'wework-local-catalog-log-'))
+  try {
+    const path = join(directory, 'local-workspace-catalog.log')
+    const prefix = '[Wework] Local workspace catalog '
+    const log = new RuntimeDiagnosticsLog(path, prefix)
+    for (const status of ['started', 'fulfilled', 'rejected']) {
+      const diagnostic = JSON.stringify({
+        source: 'local',
+        catalog: 'agents',
+        status,
+        elapsedMs: 1,
+      })
+      await log.record(3, prefix + (status === 'rejected' ? 'failed ' : '') + diagnostic)
+    }
+    await log.record(3, '[Wework] Local workspace unrelated console output')
+    await log.flush()
+
+    const contents = await readFile(path, 'utf8')
+    expect(contents).toContain('web_contents_id=3')
+    expect(contents).toContain('"catalog":"agents"')
+    for (const status of ['started', 'fulfilled', 'rejected']) {
+      expect(contents).toContain(`"status":"${status}"`)
+    }
+    expect(contents).not.toContain('unrelated console output')
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})

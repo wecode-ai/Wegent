@@ -302,4 +302,88 @@ describe('ProcessExplorerService', () => {
       vi.useRealTimers()
     }
   })
+
+  it('bounds pending waiters and timeout timers across later sampling windows', async () => {
+    vi.useFakeTimers()
+    const timeout = vi.spyOn(globalThis, 'setTimeout')
+    try {
+      const read = vi.fn(() => new Promise<never>(() => undefined))
+      const { service, metrics, advance } = createService({
+        systemTable: { read },
+        systemTableTimeoutMs: 50,
+      })
+      const first = service.snapshot()
+      await vi.advanceTimersByTimeAsync(50)
+      const degraded = (await first).degraded
+      // Count retained waiters on the service-owned promise, not its assimilated source.
+      const pending = (
+        service as unknown as { pendingSystemTableRead: Promise<SystemProcessTableResult> }
+      ).pendingSystemTableRead
+      const waiters = vi.spyOn(pending, 'then')
+      timeout.mockClear()
+
+      for (let sample = 0; sample < 5; sample += 1) {
+        advance(2_000)
+        let delivered = false
+        const next = service.snapshot().then(snapshot => {
+          delivered = true
+          return snapshot
+        })
+        await vi.advanceTimersByTimeAsync(0)
+        expect.soft(delivered).toBe(true)
+        if (!delivered) await vi.advanceTimersByTimeAsync(50)
+        expect((await next).degraded).toEqual(degraded)
+      }
+
+      expect.soft(waiters).not.toHaveBeenCalled()
+      expect.soft(timeout).not.toHaveBeenCalled()
+      expect(read).toHaveBeenCalledOnce()
+      expect(metrics).toHaveBeenCalledTimes(6)
+    } finally {
+      timeout.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  it.each(['resolve', 'reject'] as const)(
+    'recovers after a timed-out underlying read eventually %ss',
+    async outcome => {
+      vi.useFakeTimers()
+      try {
+        let settle!: () => void
+        const read = vi.fn<() => Promise<SystemProcessTableResult>>()
+        read.mockImplementationOnce(
+          () =>
+            new Promise((resolve, reject) => {
+              settle = () =>
+                outcome === 'resolve'
+                  ? resolve({ processes: [], degraded: [] })
+                  : reject(new Error('Late system read failure'))
+            })
+        )
+        const recovered = deferredSystemTable()
+        recovered.complete()
+        read.mockImplementation(() => recovered.read())
+        const { service, advance } = createService({
+          systemTable: { read },
+          systemTableTimeoutMs: 50,
+        })
+        const first = service.snapshot()
+        await vi.advanceTimersByTimeAsync(50)
+        expect((await first).degraded).toHaveLength(1)
+
+        settle()
+        await vi.advanceTimersByTimeAsync(0)
+        advance(2_000)
+        const snapshot = await service.snapshot()
+
+        expect(read).toHaveBeenCalledTimes(2)
+        expect(snapshot.degraded).toEqual([])
+        expect(snapshot.collectingSystemProcesses).toBe(false)
+        expect(snapshot.processes.find(row => row.pid === 40)?.startedAt).toBe(1000)
+      } finally {
+        vi.useRealTimers()
+      }
+    }
+  )
 })

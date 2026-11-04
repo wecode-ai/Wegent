@@ -65,6 +65,11 @@ import { resolveDownloadsDirectory } from './host/downloads-directory.js'
 import { SystemSleepController } from './host/system-sleep-controller.js'
 import { PreferencesStore } from './host/preferences-store.js'
 import {
+  DesktopPreferencesController,
+  resolvePopoutShortcut,
+} from './host/desktop-preferences-controller.js'
+import { PerformanceRecorder } from './host/performance-recorder.js'
+import {
   initializeWorkbenchModePreference,
   normalizeWorkbenchMode,
 } from './runtime/workbench-mode.js'
@@ -242,7 +247,6 @@ const applicationId =
   packageMetadata.weworkAppId?.trim() ||
   'io.wecode.wework'
 const developmentDockIdentity = resolveDevelopmentDockIdentity(process.env)
-const DEFAULT_POPOUT_WINDOW_SHORTCUT = 'Alt+Shift+Space'
 const startupStartedAt = performance.now()
 const pluginDevelopmentInstance = process.env.WEWORK_INSTANCE_MODE === 'core-dsh-plugin-development'
 const pythonRuntimeEnabled = process.env.WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP !== '1'
@@ -377,6 +381,8 @@ let shutdownPromise: Promise<void> | null = null
 let dockVisible = true
 let e2eForegroundActivationAllowed = false
 let preferences: PreferencesStore | null = null
+let desktopPreferences: DesktopPreferencesController | null = null
+let performanceRecorder: PerformanceRecorder | null = null
 let rendererStorage: RendererStorageStore | null = null
 let cloudCredentials: CloudCredentialService | null = null
 let windowClosePolicy: WindowClosePolicy | null = null
@@ -493,6 +499,10 @@ const conversationSearchDiagnosticsLog = new RuntimeDiagnosticsLog(
   join(app.getPath('logs'), 'conversation-search.log'),
   '[Wework] Conversation search diagnostic '
 )
+const localWorkspaceCatalogLog = new RuntimeDiagnosticsLog(
+  join(app.getPath('logs'), 'local-workspace-catalog.log'),
+  '[Wework] Local workspace catalog '
+)
 app.on('web-contents-created', (_event, contents) => {
   const logLoadEvent = (event: string) => () => {
     console.info('[renderer-load]', { event, webContentsId: contents.id })
@@ -565,6 +575,9 @@ app.on('web-contents-created', (_event, contents) => {
     })
     void conversationSearchDiagnosticsLog.record(contents.id, message).catch(error => {
       console.warn('[Wework] Failed to write conversation search diagnostics', error)
+    })
+    void localWorkspaceCatalogLog.record(contents.id, message).catch(() => {
+      console.warn('[Wework] Failed to write local workspace catalog diagnostics')
     })
   })
 })
@@ -1389,32 +1402,11 @@ async function togglePopoutWindow(): Promise<void> {
   await showPopoutWindow()
 }
 
-function resolvePopoutShortcut(preferenceRecord: Record<string, unknown>): string | null {
-  if (!Object.prototype.hasOwnProperty.call(preferenceRecord, 'popoutWindowShortcut')) {
-    return DEFAULT_POPOUT_WINDOW_SHORTCUT
-  }
-  const value = preferenceRecord.popoutWindowShortcut
-  return typeof value === 'string' && value.trim() ? value.trim() : null
-}
-
 async function updateDesktopPreferences(
   patch: Record<string, unknown>
 ): Promise<Record<string, unknown>> {
-  const store = requiredPreferences()
-  if (!Object.prototype.hasOwnProperty.call(patch, 'popoutWindowShortcut')) {
-    return store.update(patch)
-  }
-
-  const previousPreferences = await store.read()
-  const previousShortcut = resolvePopoutShortcut(previousPreferences)
-  const nextShortcut = resolvePopoutShortcut(patch)
-  popoutShortcut?.configure(nextShortcut)
-  try {
-    return await store.update(patch)
-  } catch (error) {
-    popoutShortcut?.configure(previousShortcut)
-    throw error
-  }
+  if (!desktopPreferences) throw new Error('Desktop preferences are unavailable')
+  return desktopPreferences.update(patch)
 }
 
 async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
@@ -1815,6 +1807,7 @@ async function startupDiagnosticsText(): Promise<string> {
     mainProcessLog.flush(),
     startupRendererLog.flush(),
     runtimeDiagnosticsLog.flush(),
+    localWorkspaceCatalogLog.flush(),
   ])
   return buildStartupDiagnostics({
     appName: app.getName(),
@@ -1994,6 +1987,12 @@ async function shutdown(): Promise<void> {
   await traceShutdownStep('child-runtime-stopping', () =>
     pluginDevelopmentChildRuntime?.writeState('stopping')
   )
+  await traceShutdownStep('performance-recording', async () => {
+    await performanceRecorder?.stop().catch(error => {
+      console.error('[performance] Failed to flush performance recording during shutdown', error)
+    })
+    performanceRecorder = null
+  })
   await traceShutdownStep('log-retention', () => logRetention.stop())
   await traceShutdownStep('mcp-apps', async () => {
     try {
@@ -2049,6 +2048,9 @@ async function shutdown(): Promise<void> {
     traceShutdownStep('plugin-development', () => development?.stop()),
     traceShutdownStep('desktop-runtime', () => desktopRuntime?.stop()),
   ])
+  await localWorkspaceCatalogLog.flush().catch(() => {
+    console.warn('[Wework] Failed to flush local workspace catalog diagnostics')
+  })
   const stopFailures = stoppedServices.filter(result => result.status === 'rejected')
   if (stopFailures.length)
     throw new AggregateError(
@@ -2239,6 +2241,18 @@ async function configureDesktopRuntime(): Promise<void> {
         ),
       }
     },
+  })
+  await performanceRecorder?.stop()
+  performanceRecorder = new PerformanceRecorder({
+    logPath: join(app.getPath('logs'), 'performance.log'),
+    appVersion: app.getVersion(),
+    processSnapshot: () => processExplorerService.snapshot(),
+  })
+  await desktopPreferences?.restorePerformanceRecording().catch(error => {
+    console.error(
+      '[performance] Could not resume performance recording; recording is disabled',
+      error
+    )
   })
   desktopRuntime = new DesktopRuntime({
     environment,
@@ -2644,6 +2658,15 @@ if (hasSingleInstanceLock) {
       dockVisible = false
     }
     preferences = new PreferencesStore(app.getPath('userData'))
+    desktopPreferences = new DesktopPreferencesController(preferences, {
+      isShuttingDown: () => quitting,
+      configurePopoutShortcut: shortcut => popoutShortcut?.configure(shortcut),
+      setPerformanceRecordingEnabled: async enabled => {
+        if (quitting && enabled) throw new Error('The application is shutting down')
+        if (!performanceRecorder) throw new Error('Performance recorder is unavailable')
+        await performanceRecorder.setEnabled(enabled)
+      },
+    })
     rendererStorage = new RendererStorageStore(app.getPath('userData'), update => {
       if (update.changes['wework.cloudConnection']) {
         void pythonRuntimeManagerPromise

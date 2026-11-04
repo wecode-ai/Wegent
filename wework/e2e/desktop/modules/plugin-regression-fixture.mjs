@@ -95,12 +95,16 @@ export async function completedApiResourceTimings(control, path) {
       resource =>
         ['fetch', 'xmlhttprequest'].includes(resource.initiatorType) && resource.path === path
     )
-    .map(resource => ({
-      path,
-      startedAt: snapshot.timeOrigin + resource.startTime,
-      completedAt: snapshot.timeOrigin + resource.startTime + resource.duration,
-      durationMs: resource.duration,
-    }))
+    .map(resource => {
+      const marker = resource.serverTiming?.find(timing => timing.name === 'wework-e2e-response')
+      return {
+        path,
+        startedAt: snapshot.timeOrigin + resource.startTime,
+        completedAt: snapshot.timeOrigin + resource.startTime + resource.duration,
+        durationMs: resource.duration,
+        ...(marker ? { responseTimingId: marker.description } : {}),
+      }
+    })
 }
 
 export async function requestPluginExecutor(control, method, params = {}) {
