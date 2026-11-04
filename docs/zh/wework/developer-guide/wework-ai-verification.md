@@ -16,6 +16,12 @@ Wework 支持启动隔离的开发验证会话，让 AI 在真实 Electron 应�
 pnpm --filter wework e2e:desktop:cloud -- --segment plugin-periodic-reconcile
 ```
 
+## 桌面 E2E 启动前准备
+
+模型目录覆盖等会被 Codex 缓存的配置必须在场景的 `prepareApp` 中写入，先于应用和共享 app-server 启动。`human-interactions` 在此阶段声明 `request_user_input_async`；不要等到 `verify` 才改配置或删除磁盘缓存，已经运行的进程可能仍使用旧目录。
+
+Windows CI 以普通账户执行桌面测试。DingTalk 协议 fixture 在切换账户前编译到工作区，通过 `WEWORK_E2E_DWS_FIXTURE_BIN` 交给分身场景复用，避免依赖普通账户的 Rust 工具链。未提供预编译文件的本地运行仍在场景准备阶段编译。覆盖属于协议集成测试，不代表真实钉钉兼容性已验证。
+
 ## 启动会话
 
 构建时的 `prepare-codex-binary.mjs` 使用 Node 原生 HTTP/HTTPS 流下载锁定版本，处理重定向并删除失败的临时文件；归档通过完整性校验后才解包使用。下载流不依赖 Node 内置 Fetch 的 Undici 解析器，避免其异常终止构建进程。
