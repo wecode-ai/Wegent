@@ -149,7 +149,8 @@ The UI and guidance must read the same `NativeExecutionState`, rather than
 infer execution from local request controls. A start receipt may only bind the
 current request's `starting` state; native notifications then supply process
 generation and timing. A late receipt cannot reactivate a settled or replaced
-request. Native Goal continuations can outlive local request controls and must
+request, and a delayed start notification for the same turn cannot revive a
+stopped state. Native Goal continuations can outlive local request controls and must
 remain guidable through their native running turn. Waiting for the next turn
 is bounded and does not create another guidance state.
 

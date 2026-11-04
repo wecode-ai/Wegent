@@ -3,6 +3,30 @@
 
 use super::*;
 
+#[test]
+fn late_native_start_after_local_settlement_cannot_reactivate_the_turn() {
+    let (handler, root, request) = setup("native-guidance-late-start-after-stop");
+    let execution = start_test_execution(&handler, "task-1");
+    handler.bind_native_turn_start("task-1", &request, execution, "thread-1", "turn-1");
+    assert!(handler.force_settle_local_task_execution(
+        "task-1",
+        Some("thread-1".into()),
+        "cancelled",
+        "test stop"
+    ));
+    let settled = handler.local_task_link("task-1").unwrap().execution_state;
+    assert_eq!(settled.as_ref().unwrap().process_generation, None);
+    handler.route_codex_notification(
+        notification("turn/started", "turn-1").with_process_generation(7),
+    );
+    assert_eq!(
+        handler.local_task_link("task-1").unwrap().execution_state,
+        settled
+    );
+    assert!(!handler.local_task_link("task-1").unwrap().running);
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[tokio::test]
 async fn guidance_uses_native_continuation_after_local_request_finishes() {
     let (mut handler, root, _) = setup("native-guidance-continuation");

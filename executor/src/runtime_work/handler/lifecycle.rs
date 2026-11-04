@@ -288,7 +288,9 @@ impl RuntimeWorkRpcHandler {
             if started
                 && previous.as_ref().is_some_and(|state| {
                     state.latest_turn_id.as_ref() == Some(&turn_id)
-                        && state.process_generation.is_some()
+                        && (state.process_generation.is_some()
+                            || state.phase != NativeExecutionPhase::Running
+                            || state.outcome.is_some())
                 })
             {
                 return;
