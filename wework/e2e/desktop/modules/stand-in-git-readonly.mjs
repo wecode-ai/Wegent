@@ -1,6 +1,11 @@
 // Local live-provider extension: real CLI account/API, with only model responses simulated.
 import assert from 'node:assert/strict'
+import { execFile } from 'node:child_process'
 import { createHmac } from 'node:crypto'
+import { appendFile, mkdir, writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { promisify } from 'node:util'
 import { requestExecutor } from './executor-rpc.mjs'
 import { readMcpToolOutput } from './mcp-tool-results.mjs'
 import {
@@ -40,6 +45,51 @@ export function createGitReadonlyVerification({
     assert.fail(`Git readonly work did not reach its expected state: ${JSON.stringify(latest)}`)
   }
   return {
+    async prepareApp({ appEnvironment, codexHome }) {
+      const repository = process.env.WEWORK_GIT_READONLY_REPOSITORY?.trim()
+      if (!repository) return
+      assert.match(repository, /^[\w.-]+\/[\w.-]+$/)
+      const { stdout } = await promisify(execFile)('which', ['gh'])
+      const executable = stdout.trim()
+      assert.ok(executable.startsWith('/'), 'Live verification requires the installed GitHub CLI')
+      const cliHome = homedir()
+      const configDirectory =
+        process.env.GH_CONFIG_DIR ||
+        join(process.env.XDG_CONFIG_HOME || join(cliHome, '.config'), 'gh')
+      const bin = join(dirname(codexHome), 'git-readonly-bin')
+      await mkdir(bin, { recursive: true })
+      // Keep the fixture Home isolated while the real CLI uses this device's native login.
+      // This guard never fabricates a response and refuses every publication operation.
+      const script = `#!${process.execPath}
+import { spawn } from 'node:child_process'
+const args = process.argv.slice(2)
+const expected = ['api', '--include', '--hostname', 'github.com', '--method', 'GET']
+const read = args.length === 7 && expected.every((value, i) => args[i] === value)
+  && ${JSON.stringify(['user', `repos/${repository}`])}.includes(args[6])
+const version = args.length === 1 && ['--version', 'version'].includes(args[0])
+if (!read && !version) {
+  console.error('Live GitHub verification permits only identity and selected-repository GET requests')
+  process.exit(64)
+}
+const child = spawn(${JSON.stringify(executable)}, args, {
+  env: { ...process.env, HOME: ${JSON.stringify(cliHome)}, GH_CONFIG_DIR: ${JSON.stringify(configDirectory)} },
+  stdio: 'inherit'
+})
+child.on('error', () => process.exit(1))
+child.on('exit', (code, signal) => {
+  if (signal) process.kill(process.pid, signal)
+  else process.exit(code ?? 1)
+})
+`
+      await writeFile(join(bin, 'gh'), script, { mode: 0o700 })
+      await promisify(execFile)(join(bin, 'gh'), ['--version'])
+      const quotedBin = `'${bin.replaceAll("'", "'\\''")}'`
+      const profile = `\nexport PATH=${quotedBin}:"$PATH"\n`
+      for (const name of ['.zprofile', '.bash_profile'])
+        await appendFile(join(appEnvironment.HOME, name), profile, { mode: 0o600 })
+      appEnvironment.ZDOTDIR = appEnvironment.HOME
+      appEnvironment.PATH = `${bin}:${appEnvironment.PATH || process.env.PATH || ''}`
+    },
     setRestartDesktopApp(value) {
       restart = value
     },
@@ -278,6 +328,29 @@ export function createGitReadonlyVerification({
           'The restarted device must complete the account-bound native Git read'
         )
         const approval = await control.command('getText', '[data-testid="request-user-input-card"]')
+        const messages = JSON.parse(
+          await control.command('getRuntimeConversationMessages', 'body', {
+            value: JSON.stringify({ deviceId: saved.executionDeviceId, taskId: work.taskId }),
+          })
+        )
+        const pending = messages
+          .flatMap(message => message.blocks ?? [])
+          .map(block => block.renderPayload)
+          .filter(payload => Array.isArray(payload?.questions))
+        console.log(
+          '[desktop-e2e] Native Git approval metadata',
+          pending.map(payload => ({
+            serverName: payload.serverName,
+            approvalKind: payload.approvalKind,
+            toolTitle: payload.toolTitle,
+            argumentKeys: Object.keys(payload.toolArguments ?? {}),
+            questionIds: payload.questions.map(question => question.id),
+          }))
+        )
+        await captureScreenshot(
+          control,
+          'git-08-live-read-completed-external-write-awaiting-confirmation.png'
+        )
         for (const field of [
           repository,
           identity.instance,
@@ -287,10 +360,6 @@ export function createGitReadonlyVerification({
           'This verification write must be denied and never published.',
         ])
           assert.ok(approval.includes(field), `Native confirmation must contain ${field}`)
-        await captureScreenshot(
-          control,
-          'git-08-live-read-completed-external-write-awaiting-confirmation.png'
-        )
         const rejectText = await control.command(
           'getText',
           '[data-testid="request-user-input-option-__mcp_approval-1"]'

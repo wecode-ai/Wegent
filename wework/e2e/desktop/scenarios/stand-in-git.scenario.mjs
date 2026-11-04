@@ -41,6 +41,7 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, modelRes
   return {
     requiresCloudEnvironment: true,
     handleHttp: live.handleHttp,
+    prepareApp: live.prepareApp,
     setRestartDesktopApp: live.setRestartDesktopApp,
     async prepareCloud(environment) {
       cloud = environment
@@ -258,10 +259,7 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, modelRes
           value: JSON.stringify({ width: 1000, height: 760 }),
         })
         await control.command('navigate', 'body', { value: '/stand-in' })
-        for (const target of [
-          'stand-in-settings-open',
-          'stand-in-primary-connections-open',
-        ])
+        for (const target of ['stand-in-settings-open', 'stand-in-primary-connections-open'])
           await control.command('clickWhenEnabled', `[data-testid="${target}"]`)
         await openGit('gitlab')
         await captureScreenshot(control, 'git-06-narrow-dark-gitlab-instance-and-scope.png')
