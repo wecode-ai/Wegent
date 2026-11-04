@@ -102,7 +102,10 @@ from app.services.loop_items.ordering import (
 )
 from app.services.loop_items.read_context import LoopItemReadContext
 from app.services.loop_items.task_bindings import active_task_binding_query
-from app.services.project_automation_domain import runnable_wegent_team
+from app.services.project_automation_domain import (
+    runnable_wegent_team,
+    status_automation_target,
+)
 from app.services.project_chat.service import ProjectChatService, bot_config
 from app.stores.tasks import task_store
 from app.utils.schedule_time import normalize_schedule_datetime
@@ -1524,6 +1527,7 @@ class LoopItemService:
         values: LoopItemUpdate,
         *,
         commit: bool = True,
+        emit_status_event: bool = True,
     ) -> LoopItem:
         item = self.get(db, item_id, user_id)
         position_order = None
@@ -1984,6 +1988,13 @@ class LoopItemService:
             )
         if position_order is not None:
             persist_sibling_order(position_order, updated_item_id=item.id)
+        if status_changed and emit_status_event:
+            from app.services.project_internal_events import queue_issue_status_changed
+
+            db.refresh(item)
+            queue_issue_status_changed(
+                db, item=item, previous_status=previous_status, actor_user_id=user_id
+            )
         if commit:
             db.commit()
         else:
@@ -2120,6 +2131,7 @@ class LoopItemService:
             user_id=user_id,
         )
         previous_assignee_user_id = item.assignee_user_id
+        automation_run_requested = bool((automation_context or {}).get("run_id"))
         metadata = dict(item.metadata_json or {})
         assignment_created = False
         if values.assignee_type == "agent":
@@ -2212,7 +2224,7 @@ class LoopItemService:
                     instruction=instruction,
                     cancel_existing=False,
                 )
-                if assignment_created
+                if assignment_created or automation_run_requested
                 else []
             )
         elif values.assignee_type == "user":
@@ -2333,7 +2345,7 @@ class LoopItemService:
                     instruction=instruction,
                     cancel_existing=False,
                 )
-                if assignment_created
+                if assignment_created or automation_run_requested
                 else []
             )
         elif values.assignee_type == "group":
@@ -2400,6 +2412,7 @@ class LoopItemService:
             values.version,
             metadata,
             commit=commit and position_order is None,
+            automation_run_id=(automation_context or {}).get("run_id"),
             **assignee_updates,
         )
         if position_order is not None:
@@ -3393,7 +3406,10 @@ class LoopItemService:
                 )
                 if _execution_needs_runtime_cancellation(cancelled):
                     cancelled_runs.append(cancelled)
-        if item.status == "completed":
+        if (
+            item.status == "completed"
+            and status_automation_target(automation_context) != "completed"
+        ):
             return cancelled_runs
         if target_type == "agent" and agent is not None:
             config = bot_config(agent)
@@ -3507,8 +3523,10 @@ class LoopItemService:
         metadata: dict,
         *,
         commit: bool = True,
+        automation_run_id: str | None = None,
         **updates: object,
     ) -> LoopItem:
+        previous_status = item.status
         updates = {**updates, "metadata_json": metadata}
         connection = db.connection()
         updates = adapt_loop_node_values_for_dialect(
@@ -3524,6 +3542,16 @@ class LoopItemService:
         if updated != 1:
             db.rollback()
             raise HTTPException(status.HTTP_409_CONFLICT, "TODO changed")
+        if updates.get("status") is not None and updates["status"] != previous_status:
+            from app.services.project_internal_events import queue_issue_status_changed
+
+            db.refresh(item)
+            queue_issue_status_changed(
+                db,
+                item=item,
+                previous_status=previous_status,
+                automation_run_id=automation_run_id,
+            )
         if commit:
             db.commit()
         else:

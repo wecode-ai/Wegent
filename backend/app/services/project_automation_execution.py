@@ -888,6 +888,10 @@ class ProjectAutomationProcessor:
         for rule in candidate_rules:
             if deferred_automation_id and str(rule.id) == deferred_automation_id:
                 continue
+            if event.event_type == "task.status_changed" and str(
+                rule.id
+            ) == event.payload.get("caused_by_automation_rule_id"):
+                continue
             rule_metadata = metadata(rule)
             if rule_metadata.get("trigger_type") != "event":
                 continue
@@ -1067,7 +1071,11 @@ class ProjectAutomationProcessor:
         for rule in matching_rules:
             run_public_id = self._event_run_public_id(event, rule)
             existing = self._event_run(db, run_public_id)
-            if existing is not None and not self._is_unresolved_run(existing):
+            if (
+                existing is not None
+                and not self._can_resume_pending(existing, event)
+                and not self._is_unresolved_run(existing)
+            ):
                 runs.append(existing)
                 continue
             run_event_payload = dict(event.payload)
@@ -1086,7 +1094,9 @@ class ProjectAutomationProcessor:
                     run = self._event_run(db, run_public_id)
                     if run is None:
                         raise
-                    if not self._is_unresolved_run(run):
+                    if not self._can_resume_pending(
+                        run, event
+                    ) and not self._is_unresolved_run(run):
                         runs.append(run)
                         continue
             else:
@@ -1169,6 +1179,17 @@ class ProjectAutomationProcessor:
 
             await consume_queues_background()
         return runs
+
+    @staticmethod
+    def _can_resume_pending(
+        run: ProjectAutomationRun, event: ProjectAutomationEvent
+    ) -> bool:
+        return (
+            run.status == "pending"
+            and event.source == "wework"
+            and event.event_type
+            in {"task.created", "task.tag_added", "task.status_changed"}
+        )
 
     @staticmethod
     def _event_run(
@@ -1465,6 +1486,13 @@ class ProjectAutomationProcessor:
             ):
                 return False
             if previous_status == current_status:
+                return False
+            expected_statuses = config.get("statuses")
+            if expected_statuses is not None and (
+                not isinstance(expected_statuses, list)
+                or not expected_statuses
+                or current_status not in expected_statuses
+            ):
                 return False
             if (
                 transition == "entered_processing"

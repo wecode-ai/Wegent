@@ -472,6 +472,22 @@ class ReplyContext:
 
 class ProjectChatService:
     @staticmethod
+    def _queue_task_status_change(
+        db: Session,
+        task: LoopItem,
+        previous_status: str,
+        row: ProjectChatMessage,
+    ) -> None:
+        from app.services.project_internal_events import queue_issue_status_changed
+
+        queue_issue_status_changed(
+            db,
+            item=task,
+            previous_status=previous_status,
+            automation_run_id=(row.metadata_json or {}).get("automation_run_id"),
+        )
+
+    @staticmethod
     def _queue_loop_item_change(db: Session, item: LoopItem) -> None:
         pending = db.info.setdefault(PENDING_LOOP_ITEM_CHANGES_KEY, set())
         pending.add(item.id)
@@ -2076,6 +2092,7 @@ class ProjectChatService:
             return
 
         now = datetime.now(UTC).replace(tzinfo=None)
+        previous_board_status = task.status
         task_metadata = dict(task.metadata_json or {})
         external_index = (
             task_metadata.get("external_index") is True
@@ -2173,6 +2190,7 @@ class ProjectChatService:
             self._queue_loop_item_change(db, task)
         task.metadata_json = task_metadata
         task.version += 1
+        self._queue_task_status_change(db, task, previous_board_status, row)
         if (
             status_value != "running"
             or previous_status != "running"
@@ -2313,6 +2331,7 @@ class ProjectChatService:
             or isinstance(task_metadata.get("workflow_plan"), dict)
         ):
             return
+        previous_status = task.status
         project = db.get(CloudProject, task.cloud_project_id)
         if project is not None:
             write_status_change(
@@ -2328,6 +2347,7 @@ class ProjectChatService:
         task.completed_at = ProjectChatService._loop_unset_datetime(db)
         task.sort_order = 0
         task.version += 1
+        ProjectChatService._queue_task_status_change(db, task, previous_status, row)
 
     def fail_agent_response(
         self,

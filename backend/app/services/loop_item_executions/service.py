@@ -54,7 +54,10 @@ from app.services.loop_item_executions.runtime_identity import (
     execution_runtime_turn_id,
     runtime_task_id_for,
 )
-from app.services.project_automation_domain import TERMINAL_RUN_STATUSES
+from app.services.project_automation_domain import (
+    TERMINAL_RUN_STATUSES,
+    status_automation_target,
+)
 from app.services.workspaces.storage import workspace_id_for_project
 
 logger = logging.getLogger(__name__)
@@ -2196,7 +2199,11 @@ class LoopItemExecutionService:
             )
         if row is None:
             task = db.get(LoopItem, execution.loop_item_id)
-            if task is not None and task.status == "completed":
+            if (
+                task is not None
+                and task.status == "completed"
+                and status_automation_target(origin_context) != "completed"
+            ):
                 logger.info(
                     "[LoopItemExecution] Activity open skipped for completed "
                     "Issue execution=%s task=%s",

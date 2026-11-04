@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import { projectStatuses } from './board'
 import { ProjectTemplateSettings } from "./templates/ProjectTemplateSettings";
 import { useCollaborationTemplateStore } from "./templates/context";
 import { templateMessages } from "./templates/messages";
@@ -16,7 +17,6 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   collaborationMessages,
   createCollaborationTranslator,
-  localizeStandardStatuses,
   type CollaborationLocale,
 } from "./i18n";
 import { collaborationTestIds } from "./testIds";
@@ -51,7 +51,6 @@ import type {
   CollaborationIssue,
   CollaborationProject,
   ProjectSettingsSectionId,
-  CollaborationStatus,
   CollaborationView,
 } from "./types";
 import type {
@@ -115,29 +114,6 @@ interface CollaborationAppProps {
       onMarkRead(): Promise<void>;
     },
   ): ReactNode;
-}
-
-function projectStatuses(
-  project: CollaborationProject,
-  messages:
-    | (typeof collaborationMessages)["zh-CN"]
-    | (typeof collaborationMessages)["en"],
-  translate: ReturnType<typeof createCollaborationTranslator>,
-): CollaborationStatus[] {
-  const statuses = project.board_config?.statuses;
-  return statuses && statuses.length > 0
-    ? localizeStandardStatuses(statuses, translate)
-    : [
-        { id: "inbox", name: messages.statusInbox, color: "gray" },
-        { id: "pending", name: messages.statusPending, color: "blue" },
-        {
-          id: "in_progress",
-          name: messages.statusInProgress,
-          color: "orange",
-        },
-        { id: "in_review", name: messages.statusInReview, color: "purple" },
-        { id: "completed", name: messages.statusCompleted, color: "green" },
-      ];
 }
 
 export function CollaborationApp({

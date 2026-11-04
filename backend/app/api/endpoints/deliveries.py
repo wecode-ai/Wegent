@@ -553,7 +553,7 @@ async def update_loop_item(
     )
     status_changed = requested_status != previous_status
     entered_processing = status_changed and requested_transition.entered_processing
-    if entered_processing:
+    if status_changed:
         event_payload = _loop_item_response(
             db,
             existing,
@@ -618,7 +618,12 @@ async def update_loop_item(
     )
     try:
         item = loop_item_service.update(
-            db, item_id, current_user.id, values, commit=False
+            db,
+            item_id,
+            current_user.id,
+            values,
+            commit=False,
+            emit_status_event=not status_changed,
         )
         if refresh_execution and item.assignee_agent_id:
             item = loop_item_service.refresh_agent_execution_configuration(
