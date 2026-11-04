@@ -95,4 +95,15 @@ describe('getGitHostingCliStatus', () => {
 
     await expect(getGitHostingCliStatus('github')).rejects.toThrow('executor unavailable')
   })
+
+  test('preserves a failed health check instead of displaying it as logged out', async () => {
+    requestLocalExecutor.mockResolvedValue({
+      success: true,
+      stdout: { installed: true, authenticated: false, detectionError: 'gh_health_failed' },
+    })
+    await expect(getGitHostingCliStatus('github')).resolves.toMatchObject({
+      authenticated: false,
+      detectionError: 'gh_health_failed',
+    })
+  })
 })

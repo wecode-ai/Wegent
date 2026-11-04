@@ -8,7 +8,6 @@ use std::{collections::HashMap, env, path::PathBuf};
 use std::{
     io::{Read, Seek, SeekFrom},
     process::{Command, ExitStatus, Stdio},
-    sync::OnceLock,
     thread,
     time::{Duration, Instant},
 };
@@ -21,8 +20,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[cfg(unix)]
 use regex::Regex;
+use std::sync::OnceLock;
 
 const STANDARD_DEVELOPER_PATHS: &[&str] = &[
     "/opt/homebrew/bin",
@@ -489,8 +488,7 @@ fn parse_shell_environment(output: &str) -> Result<HashMap<String, String>, Stri
     Ok(values)
 }
 
-#[cfg(unix)]
-fn strip_ansi_codes(value: &str) -> String {
+pub(crate) fn strip_ansi_codes(value: &str) -> String {
     static ANSI_PATTERN: OnceLock<Regex> = OnceLock::new();
     ANSI_PATTERN
         .get_or_init(|| {

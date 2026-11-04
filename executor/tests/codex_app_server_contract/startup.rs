@@ -22,17 +22,19 @@ fn shared_startup_timeout_preserves_live_turns_and_late_responses() {
                 bot: json!([{"shell_type": "ClaudeCode"}]),
                 ..ExecutionRequest::default()
             };
+            let running_client = client.clone();
             let mut turns = tokio::task::JoinSet::new();
-            let turn_client = client.clone();
             turns.spawn(async move {
                 tokio::join!(
-                    turn_client.run_turn_with_cancel(
+                    running_client.run_turn_with_cancel(
                         request.clone(),
                         CodexAppServerTurnOptions::default()
                     ),
-                    turn_client.run_turn_with_cancel(request, CodexAppServerTurnOptions::default())
+                    running_client
+                        .run_turn_with_cancel(request, CodexAppServerTurnOptions::default())
                 )
             });
+            wait_for_fixture_events(&root.path().join("codex"), "ready", 2).await;
             // Both turns remain pending beyond the one-second startup watchdog.
             assert!(
                 tokio::time::timeout(Duration::from_millis(1500), turns.join_next())
@@ -100,15 +102,16 @@ fn shared_startup_timeout_can_cancel_without_a_turn_id() {
                     .then(|| json!({"objective": "Goal startup", "status": "active"})),
                 ..CodexAppServerTurnOptions::default()
             };
+            let running_client = client.clone();
             let mut turns = tokio::task::JoinSet::new();
-            let turn_client = client.clone();
             turns.spawn(async move {
                 tokio::join!(
-                    turn_client
+                    running_client
                         .run_turn_with_cancel(other_request, CodexAppServerTurnOptions::default()),
-                    turn_client.run_turn_with_cancel(request, options)
+                    running_client.run_turn_with_cancel(request, options)
                 )
             });
+            wait_for_fixture_events(&root.path().join("codex"), "ready", 2).await;
             assert!(
                 tokio::time::timeout(Duration::from_millis(1500), turns.join_next())
                     .await
@@ -120,6 +123,7 @@ fn shared_startup_timeout_can_cancel_without_a_turn_id() {
                     .await
                     .is_err()
             );
+            wait_for_fixture_events(&root.path().join("codex"), "interrupted", 1).await;
             assert_eq!(
                 client
                     .request("test/interrupt-count", json!({}))
@@ -157,14 +161,15 @@ fn shared_startup_timeout_retries_recovery_after_other_turn_finishes() {
                 ..ExecutionRequest::default()
             };
             let other_request = ExecutionRequest { prompt: json!("other-turn"), ..request.clone() };
+            let running_client = client.clone();
             let mut turns = tokio::task::JoinSet::new();
-            let turn_client = client.clone();
             turns.spawn(async move {
                 tokio::join!(
-                    turn_client.run_turn_with_cancel(other_request, CodexAppServerTurnOptions::default()),
-                    turn_client.run_turn_with_cancel(request, CodexAppServerTurnOptions::default())
+                    running_client.run_turn_with_cancel(other_request, CodexAppServerTurnOptions::default()),
+                    running_client.run_turn_with_cancel(request, CodexAppServerTurnOptions::default())
                 )
             });
+            wait_for_fixture_events(&root.path().join("codex"), "ready", 2).await;
             assert!(tokio::time::timeout(Duration::from_millis(1500), turns.join_next()).await.is_err());
             client.request("test/finish-first", json!({})).await.unwrap();
             let (first, stalled) = tokio::time::timeout(Duration::from_secs(5), turns.join_next()).await.unwrap().unwrap().unwrap();
@@ -197,6 +202,7 @@ while IFS= read -r line; do
       ;;
     *'"method":"turn/start"'*)
       turn_count=$((turn_count + 1))
+      printf '%s\n' ready >> "$0.events"
       thread_id=$(printf '%s' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
       if printf '%s' "$line" | grep -q other-turn; then
         other_index=${thread_id#thread-}
@@ -216,10 +222,12 @@ while IFS= read -r line; do
       printf '{"id":%s,"result":{}}\n' "$request_id"
       ;;
     *'"method":"thread/goal/set"'*)
+      printf '%s\n' ready >> "$0.events"
       printf '{"id":%s,"result":{"goal":{"status":"active"}}}\n' "$request_id"
       ;;
     *'"method":"turn/interrupt"'*)
       interrupt_count=$((interrupt_count + 1))
+      printf '%s\n' interrupted >> "$0.events"
       if printf '%s' "$line" | grep -q '"turnId":""'; then
         empty_interrupt_count=$((empty_interrupt_count + 1))
       fi
