@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import re
 import zipfile
 from copy import deepcopy
 from pathlib import Path
@@ -61,6 +62,27 @@ class SkillCatalog(BaseModel):
         return self
 
 
+def _apply_shell_metadata(asset: CatalogAsset, content: bytes) -> bytes:
+    text = content.decode()
+    frontmatter = re.match(
+        r"---[ \t]*\r?\n(.*?)^---[ \t]*(?:\r?\n|\Z)", text, re.MULTILINE | re.DOTALL
+    )
+    if frontmatter is None:
+        raise ValueError(f"Skill source lacks frontmatter: {asset.name}")
+    try:
+        metadata = yaml.safe_load(frontmatter[1])
+    except yaml.YAMLError as error:
+        raise ValueError(f"Invalid Skill frontmatter: {asset.name}") from error
+    if not isinstance(metadata, dict):
+        raise ValueError(f"Invalid Skill frontmatter: {asset.name}")
+    if metadata.get("name", asset.name) != asset.name:
+        raise ValueError(f"Skill source name mismatch: {asset.name}")
+    metadata["bindShells"] = asset.bind_shells
+    return (
+        f"---\n{yaml.safe_dump(metadata, sort_keys=False)}---\n{text[frontmatter.end():]}"
+    ).encode()
+
+
 def package_asset(asset: CatalogAsset, sources: dict[str, Path]) -> bytes:
     """Keep the full source package, with explicit runtime metadata and stable ZIPs."""
     root = sources[asset.source].resolve(strict=True)
@@ -86,12 +108,7 @@ def package_asset(asset: CatalogAsset, sources: dict[str, Path]) -> bytes:
                 continue
             content = path.read_bytes()
             if relative.as_posix() == "SKILL.md":
-                _, frontmatter, prompt = content.decode().split("---", 2)
-                metadata = yaml.safe_load(frontmatter)
-                if metadata.get("name", asset.name) != asset.name:
-                    raise ValueError(f"Skill source name mismatch: {asset.name}")
-                metadata["bindShells"] = asset.bind_shells
-                content = f"---\n{yaml.safe_dump(metadata, sort_keys=False)}---{prompt}".encode()
+                content = _apply_shell_metadata(asset, content)
             info = zipfile.ZipInfo(f"{asset.name}/{relative.as_posix()}")
             info.create_system = 3
             info.external_attr = (path.stat().st_mode & 0xFFFF) << 16
@@ -167,7 +184,10 @@ def _expand_ghost(db: Session, row: Kind, source: Kind, targets: list[Kind]) -> 
         return False
     preload_spec = {
         "preload_skills": spec.get("preload_skills"),
-        "preload_skill_refs": spec.get("preload_skill_refs"),
+        "preload_skill_refs": {
+            **(spec.get("skill_refs") or {}),
+            **(spec.get("preload_skill_refs") or {}),
+        },
     }
     if _matches(db, row, preload_spec, source):
         replacements = _preload_replacements(db, row, source, targets)

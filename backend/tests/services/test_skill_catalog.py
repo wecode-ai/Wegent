@@ -311,6 +311,34 @@ def test_packaging_is_complete_deterministic_and_does_not_follow_symlinks(
         )
 
 
+@pytest.mark.parametrize(
+    ("content", "message"),
+    [
+        ("Body\n---\ndescription: not frontmatter\n---\n", "lacks frontmatter"),
+        ("---\ndescription: no closing delimiter\n", "lacks frontmatter"),
+        ("---\n- invalid metadata\n---\nBody\n", "Invalid Skill frontmatter"),
+        ("---\ndescription: [unterminated\n---\nBody\n", "Invalid Skill frontmatter"),
+    ],
+)
+def test_packaging_rejects_invalid_frontmatter(sources, content, message):
+    (sources["native"] / "docx" / "SKILL.md").write_text(content)
+    asset = next(asset for asset in catalog().assets if asset.name == "docx")
+    with pytest.raises(ValueError, match=f"{message}: docx"):
+        package_asset(asset, sources)
+
+
+def test_packaging_preserves_dashes_in_metadata_and_markdown(sources):
+    body = "Read the instructions.\n\n---\n\nThen render the file.\n"
+    (sources["native"] / "docx" / "SKILL.md").write_text(
+        f'---\nname: docx\ndescription: "Create --- documents"\n---\n{body}'
+    )
+    asset = next(asset for asset in catalog().assets if asset.name == "docx")
+    with zipfile.ZipFile(io.BytesIO(package_asset(asset, sources))) as archive:
+        skill = archive.read("docx/SKILL.md").decode()
+    assert "description: Create --- documents" in skill
+    assert skill.endswith(body)
+
+
 def test_dry_run_rolls_back_new_assets_and_bindings(test_db, sources):
     report = publish_catalog(test_db, catalog(), sources)
     ids = list(report["assets"].values())
@@ -468,6 +496,40 @@ def test_private_preload_identity_survives_public_optional_expansion(
     publish_catalog(test_db, catalog(), sources)
     assert ghost.json["spec"]["preload_skill_refs"]["document"] == private_ref
     assert ghost.json["spec"]["preload_skills"] == ["document"]
+
+
+def test_legacy_preload_inherits_public_skill_identity(test_db, test_user, sources):
+    initial = publish_catalog(test_db, catalog(), sources)
+    add_kind(
+        test_db, "Skill", "document", {"description": "Private native"}, test_user.id
+    )
+    ghost = add_kind(
+        test_db,
+        "Ghost",
+        "legacy-public-preload",
+        {
+            "skills": ["document"],
+            "preload_skills": ["document"],
+            "skill_refs": {"document": {"skill_id": initial["assets"]["document"]}},
+        },
+        test_user.id,
+    )
+    add_kind(test_db, "Shell", "ClaudeCode", {"shellType": "ClaudeCode"})
+    add_kind(
+        test_db,
+        "Bot",
+        "native-consumer",
+        {"ghostRef": {"name": ghost.name}, "shellRef": {"name": "ClaudeCode"}},
+        test_user.id,
+    )
+
+    publish_catalog(test_db, catalog(), sources)
+
+    assert ghost.json["spec"]["preload_skills"] == FORMATS
+    assert {
+        name: ref["skill_id"]
+        for name, ref in ghost.json["spec"]["preload_skill_refs"].items()
+    } == {name: initial["assets"][name] for name in FORMATS}
 
 
 def test_private_template_with_unresolved_shell_is_not_migrated(

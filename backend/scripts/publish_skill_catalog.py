@@ -19,6 +19,12 @@ def main() -> None:
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--env-file", type=Path)
     args = parser.parse_args()
+    sources: dict[str, Path] = {}
+    for source in args.source:
+        key, separator, value = source.partition("=")
+        if not separator or not key or not value:
+            parser.error(f"--source must be KEY=PATH: {source!r}")
+        sources[key] = Path(value)
     if args.env_file:
         from dotenv import load_dotenv
 
@@ -27,13 +33,10 @@ def main() -> None:
     from app.db.session import SessionLocal
     from app.services.skill_catalog import SkillCatalog, publish_catalog
 
-    sources = dict(item.split("=", 1) for item in args.source)
     catalog = SkillCatalog.model_validate_json(args.catalog.read_text())
     with SessionLocal() as db:
         try:
-            report = publish_catalog(
-                db, catalog, {key: Path(value) for key, value in sources.items()}
-            )
+            report = publish_catalog(db, catalog, sources)
             report["database"] = {
                 "host": db.bind.url.host,
                 "name": db.bind.url.database,

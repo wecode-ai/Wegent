@@ -50,6 +50,7 @@ export async function verifySkillCatalogBindings(cloud, resultDir, request) {
   const initial = await publish()
   const ids = names.map(name => initial.assets[name])
   let aliasFixture
+  let testFailed = false
   try {
     const source = await request(`v1/kinds/skills/${ids[0]}/bindings/me`, 'POST')
     const renamed = await request(`v1/kinds/skills/${ids[1]}/bindings/me`, 'POST')
@@ -107,13 +108,32 @@ export async function verifySkillCatalogBindings(cloud, resultDir, request) {
       join(root, 'verified.json'),
       JSON.stringify({ passed: true, assets: initial.assets, repairedBindingId: renamed.id })
     )
+  } catch (error) {
+    testFailed = true
+    throw error
   } finally {
+    const cleanupFailures = []
+    const clean = async (label, action) => {
+      try {
+        await action()
+      } catch (error) {
+        console.error(`[desktop-e2e] skill catalog cleanup failed (${label}):`, error)
+        cleanupFailures.push(error)
+      }
+    }
     if (aliasFixture) {
-      await cloud.executeDatabase(
-        "UPDATE kinds SET is_active = 0 WHERE id = %s AND user_id = %s AND name = %s AND kind = 'SkillBinding'",
-        [aliasFixture.bindingId, aliasFixture.ownerId, aliasFixture.alias]
+      await clean('legacy alias', () =>
+        cloud.executeDatabase(
+          "UPDATE kinds SET is_active = 0 WHERE id = %s AND user_id = %s AND name = %s AND kind = 'SkillBinding'",
+          [aliasFixture.bindingId, aliasFixture.ownerId, aliasFixture.alias]
+        )
       )
     }
-    for (const id of ids) await request(`v1/kinds/skills/${id}/bindings/me`, 'DELETE')
+    for (const id of ids) {
+      await clean(`binding ${id}`, () => request(`v1/kinds/skills/${id}/bindings/me`, 'DELETE'))
+    }
+    if (!testFailed && cleanupFailures.length) {
+      throw new AggregateError(cleanupFailures, 'Skill catalog binding cleanup failed')
+    }
   }
 }
