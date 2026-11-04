@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 
 import { verifyLocalExecutorUsesCloudSocketUrl } from '../modules/cloud-environment.mjs'
+import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
 import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
 import {
   assistantMessage,
@@ -55,14 +56,10 @@ function findValue(value, predicate) {
 }
 
 function callResult(body, callId) {
-  const output = findValue(
-    body.input,
-    value => value.call_id === callId && value.type?.endsWith('_call_output')
-  )
-  assert.ok(output, `Missing real MCP output for ${callId}`)
-  const error = findValue(output.output, value => value.isError === true)
-  assert.equal(error, undefined, `Control MCP failed: ${JSON.stringify(output.output)}`)
-  return output.output
+  const output = readMcpToolOutput(body, callId)
+  const error = findValue(output, value => value.isError === true)
+  assert.equal(error, undefined, `Control MCP failed: ${output}`)
+  return output
 }
 
 export function createDesktopScenario({ uiTimeoutMs }) {
@@ -237,7 +234,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
     ],
     [
       'search_conversations',
-      () => ({ query: CLOUD_TITLE }),
+      () => ({ query: CLOUD_TITLE, scope: 'current_device' }),
       value => {
         assert.ok(findValue(value, item => item.conversation_id === cloudCreatedId))
         const coverage = findValue(value, item => item.scope === 'owning_device')
@@ -246,7 +243,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
     ],
     [
       'list_conversations',
-      () => ({ limit: 100 }),
+      () => ({ limit: 100, scope: 'current_device' }),
       value => {
         assert.ok(findValue(value, item => item.conversation_id === cloudCreatedId))
         const coverage = findValue(value, item => item.scope === 'owning_device')
@@ -526,6 +523,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       const scoped = await request('/api/runtime-work/create', {
         schemaVersion: 2,
         deviceId: CLOUD_DEVICE_ID,
+        workspacePath: cloud.workspacePath,
         runtime: 'codex',
         message: SCOPED_CREATED,
         modelId: CLOUD_PUBLIC_MODEL_NAME,
@@ -540,6 +538,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         },
       })
       assert.equal(scoped.accepted, true)
+      assert.equal(scoped.workspacePath, cloud.workspacePath)
       scopedTask = await cloud.waitForRuntimeTask({
         deviceId: CLOUD_DEVICE_ID,
         taskId: scoped.taskId,
