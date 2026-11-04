@@ -166,6 +166,19 @@ describe('Workbench', () => {
     expect(taskApis.getBranchDiff).not.toHaveBeenCalled()
   })
 
+  test.each(['git_info', 'file_changes'])(
+    'handles partial workbench metadata without %s',
+    missingField => {
+      const workbenchData = { ...runningWorkbenchData }
+      Reflect.deleteProperty(workbenchData, missingField)
+      render(<Workbench {...props} taskStatus="COMPLETED" workbenchData={workbenchData} />)
+      fireEvent.click(screen.getByRole('button', { name: 'Files Changed' }))
+
+      expect(screen.getByTestId('workbench-files')).toHaveTextContent('No changes found')
+      expect(taskApis.getBranchDiff).not.toHaveBeenCalled()
+    }
+  )
+
   test('renders an inline Git snapshot with complete headers and separate added and deleted lines', () => {
     render(<Workbench {...props} taskStatus="COMPLETED" fileChanges={changes} />)
     fireEvent.click(screen.getByRole('button', { name: /Files Changed/ }))

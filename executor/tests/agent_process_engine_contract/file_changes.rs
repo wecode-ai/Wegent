@@ -45,8 +45,9 @@ async fn standard_claude_capture_reaches_final_http_callback_after_bash_commit()
             .status
             .success());
     }
-    let fake_claude = write_fake_executable(
-        "fake-claude-file-changes",
+    let fake_claude = root.path().join("fake-claude-file-changes");
+    fs::write(
+        &fake_claude,
         r#"#!/bin/sh
 set -eu
 cat >/dev/null
@@ -59,7 +60,10 @@ printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","id"
 printf '%s\n' '{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"bash-1","content":"committed","is_error":false}]}}'
 printf '%s\n' '{"type":"result","subtype":"success","result":"changed using Bash","is_error":false}'
 "#,
-    );
+    )
+    .unwrap();
+    #[cfg(unix)]
+    fs::set_permissions(&fake_claude, fs::Permissions::from_mode(0o700)).unwrap();
     let (sender, mut receiver) = mpsc::unbounded_channel::<Value>();
     let app = Router::new().route(
         "/callback",

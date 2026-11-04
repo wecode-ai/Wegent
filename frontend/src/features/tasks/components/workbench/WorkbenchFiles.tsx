@@ -45,8 +45,8 @@ export default function WorkbenchFiles({
   const { t } = useTranslation('tasks')
   const [state, setState] = useState<DiffState | null>(null)
   const [attempt, setAttempt] = useState(0)
-  const source = workbenchData?.git_info.source_branch
-  const target = workbenchData?.git_info.target_branch
+  const source = workbenchData?.git_info?.source_branch
+  const target = workbenchData?.git_info?.target_branch
   const gitType = workbenchData?.git_type || 'github'
   const gitDomain = workbenchData?.git_domain || 'github.com'
   const scope = JSON.stringify([taskKey, repository, source, target, gitType, gitDomain])
@@ -98,7 +98,7 @@ export default function WorkbenchFiles({
 
   const current = !fileChanges && state?.scope === scope ? state : null
   const error = fileChanges?.status === 'error' ? 'snapshot_failed' : current?.error
-  const hasFiles = Boolean(fileChanges?.files.length || workbenchData?.file_changes.length)
+  const hasFiles = Boolean(fileChanges?.files.length || workbenchData?.file_changes?.length)
 
   return (
     <div data-testid="workbench-files" className="space-y-4">
