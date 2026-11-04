@@ -31,7 +31,7 @@ export function KnowledgeBaseActions({
     { id: 'delete', label: 'document.table.delete', onClick: onDelete, Icon: Trash2 },
   ]
   return (
-    <div className="flex flex-wrap justify-end gap-1">
+    <div className="flex flex-nowrap items-center justify-end gap-1">
       {actions
         .filter(action => action.onClick)
         .map(({ id, label, onClick, Icon }) => (
@@ -39,7 +39,7 @@ export function KnowledgeBaseActions({
             key={id}
             variant="ghost"
             size="icon"
-            className="min-h-11 min-w-11"
+            className="min-h-11 min-w-11 shrink-0"
             data-testid={`${id}-kb-${kbId}`}
             aria-label={t(label)}
             title={t(label)}

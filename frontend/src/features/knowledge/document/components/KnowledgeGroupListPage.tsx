@@ -381,7 +381,7 @@ export function KnowledgeGroupListPage({
   ) => (
     <TableHeader className="sticky top-0 bg-surface">
       <TableRow className="text-left text-sm text-text-secondary">
-        <TableHead className="h-auto px-6 py-3 font-medium w-[30%]">
+        <TableHead className="h-auto px-6 py-3 font-medium">
           <button
             className="flex items-center hover:text-text-primary transition-colors"
             onClick={() => handleSort('name')}
@@ -406,10 +406,10 @@ export function KnowledgeGroupListPage({
             {t('document.table.from', '来自')}
           </TableHead>
         )}
-        <TableHead className="h-auto px-6 py-3 font-medium w-[10%]">
+        <TableHead className="h-auto w-24 px-3 py-3 font-medium">
           {t('document.table.permission', '权限')}
         </TableHead>
-        <TableHead className="h-auto px-6 py-3 font-medium w-[12%]">
+        <TableHead className="h-auto w-28 px-3 py-3 font-medium">
           <button
             className="flex items-center hover:text-text-primary transition-colors"
             onClick={() => handleSort('created')}
@@ -418,7 +418,7 @@ export function KnowledgeGroupListPage({
             <SortIcon column="created" />
           </button>
         </TableHead>
-        <TableHead className="h-auto px-6 py-3 font-medium w-[12%]">
+        <TableHead className="hidden h-auto w-28 px-3 py-3 font-medium xl:table-cell">
           <button
             className="flex items-center hover:text-text-primary transition-colors"
             onClick={() => handleSort('updated')}
@@ -427,7 +427,7 @@ export function KnowledgeGroupListPage({
             <SortIcon column="updated" />
           </button>
         </TableHead>
-        <TableHead className="h-auto px-6 py-3 font-medium w-[9%] text-right">
+        <TableHead className="h-auto w-52 px-2 py-3 font-medium text-right">
           {t('document.table.actions', '操作')}
         </TableHead>
       </TableRow>
@@ -612,21 +612,28 @@ export function KnowledgeGroupListPage({
             <ArrowLeft className="w-4 h-4" />
           </Button>
         )}
-        <h2 className="text-lg font-semibold flex-1 min-w-[160px] truncate">{groupName}</h2>
-        <span data-testid="knowledge-result-count">{filteredKbs.length}</span>
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <h2 className="truncate text-lg font-semibold">{groupName}</h2>
+          <span
+            className="shrink-0 text-sm tabular-nums text-text-muted"
+            data-testid="knowledge-result-count"
+          >
+            {filteredKbs.length}
+          </span>
+        </div>
         <Input
           data-testid="knowledge-search"
           aria-label={t('document.navigation.search')}
           placeholder={t('document.navigation.search')}
           value={search}
           onChange={event => setSearch(event.target.value)}
-          className="min-h-11 w-48"
+          className={mobile ? 'min-h-11 w-full' : 'h-9 w-48'}
         />
         {onFilterGroupChange && (
           <select
             data-testid="knowledge-team-filter"
             aria-label={t('document.navigation.teamFilter')}
-            className="min-h-11 min-w-11 max-w-64 bg-base border border-border rounded px-3"
+            className={`${mobile ? 'min-h-11 min-w-11' : 'h-9'} max-w-64 bg-base border border-border rounded px-3 text-sm`}
             value={filterGroupId ?? ''}
             onChange={event => onFilterGroupChange(event.target.value || null)}
           >
@@ -684,7 +691,7 @@ export function KnowledgeGroupListPage({
         {onCreateKbInSpace && (
           <Button
             variant="primary"
-            className="min-h-11 min-w-11"
+            className={mobile ? 'min-h-11 min-w-11' : ''}
             data-testid="create-space-kb-button"
             onClick={() => onCreateKbInSpace('notebook')}
           >
@@ -695,7 +702,7 @@ export function KnowledgeGroupListPage({
           <Button
             variant="primary"
             size="sm"
-            className="min-h-11 min-w-11"
+            className={mobile ? 'min-h-11 min-w-11' : ''}
             onClick={() => onCreateKb('notebook')}
             data-testid="create-kb-button"
           >
@@ -810,22 +817,22 @@ function KnowledgeBaseRow({
       )}
 
       {/* Permission column */}
-      <TableCell className="px-6 py-3 text-text-secondary whitespace-nowrap">
+      <TableCell className="px-3 py-3 text-text-secondary whitespace-nowrap">
         {'my_role' in kb && kb.my_role ? t(`document.permission.role.${kb.my_role}`) : '--'}
       </TableCell>
 
       {/* Created at column */}
-      <TableCell className="px-6 py-3 text-text-secondary whitespace-nowrap">
+      <TableCell className="px-3 py-3 text-text-secondary whitespace-nowrap">
         {formatDateTime(kb.created_at, i18n.language)}
       </TableCell>
 
       {/* Updated at column */}
-      <TableCell className="px-6 py-3 text-text-secondary whitespace-nowrap">
+      <TableCell className="hidden px-3 py-3 text-text-secondary whitespace-nowrap xl:table-cell">
         {formatDateTime(kb.updated_at, i18n.language)}
       </TableCell>
 
       {/* Actions column - Migrate, Edit and Delete */}
-      <TableCell className="px-6 py-3">
+      <TableCell className="px-2 py-3">
         <KnowledgeBaseActions
           kbId={kb.id}
           onPermissions={onPermissions}
