@@ -56,9 +56,12 @@ test('Stand-in confirmation waits for navigation to mount before opening the own
   const scenario = createDesktopScenario({ workspacePath: '/fixture' })
   const verification = scenario
     .verify({
-      experimentalFeaturesEnabled: true,
       async command(action: string, selector: string) {
         calls.push({ action, selector })
+        if (action === 'getElementCount') {
+          assert.equal(selector, '[data-testid="settings-button"]')
+          return 0
+        }
         if (selector === '[data-testid="personal-stand-in-button"]') {
           if (action === 'click') throw new Error('Stand-in navigation is still mounting')
           assert.equal(action, 'clickWhenEnabled')
