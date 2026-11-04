@@ -24,6 +24,7 @@
 mod background;
 pub mod bot_config;
 pub mod bound_knowledge;
+pub(crate) mod callback_source;
 pub mod contexts;
 pub mod continuation;
 pub mod dispatch;
@@ -45,6 +46,7 @@ pub mod model;
 pub mod model_config;
 pub mod model_selection;
 mod openai_client;
+pub(crate) mod package_runtime;
 mod preflight;
 mod project_workspace;
 pub mod reasoning;
@@ -71,3 +73,4 @@ pub mod team_access;
 pub(crate) mod tokens;
 
 mod handler;
+pub(crate) mod wework;

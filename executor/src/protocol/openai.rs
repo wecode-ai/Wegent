@@ -102,6 +102,7 @@ impl OpenAIResponsesRequest {
             message_id: get_i64_optional(&metadata, "message_id"),
             executor_name: get_string(&metadata, "executor_name"),
             executor_namespace: get_string(&metadata, "executor_namespace"),
+            agent_home_runtime_task_id: None,
             backend_url: get_string(&metadata, "backend_url"),
             validation_params: metadata
                 .get("validation_params")

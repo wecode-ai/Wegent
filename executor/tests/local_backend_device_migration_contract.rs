@@ -247,6 +247,7 @@ async fn http_capability_provider_supports_signed_external_package_urls_without_
                 namespace: "team a&x=y#z".to_owned(),
                 is_public: false,
                 content_hash: None,
+                bind_shells: Vec::new(),
             },
             &target,
         )

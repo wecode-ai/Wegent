@@ -25,8 +25,8 @@ pub(super) async fn available(
 ) -> Result<Vec<ModelResource>, FastApiError> {
     list_available_model_resources(
         &state.mysql,
-        state.erp.as_ref(),
         state.redis.as_ref(),
+        &state.entity_resolvers,
         user,
         &UnifiedQuery {
             scope: "all".into(),
