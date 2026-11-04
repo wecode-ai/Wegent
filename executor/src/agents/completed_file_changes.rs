@@ -12,8 +12,9 @@ use crate::{
     services::turn_file_changes::{failed_file_change_summary, TurnFileChangeTracker},
 };
 
-/// Track only standard executions after their repository has been prepared.
-/// Native runtime turns use their own file-change events and do not call this.
+/// Capture the prepared current directory for the web task workbench.
+/// Public task dispatch selects one repository; this summary does not aggregate
+/// auxiliary runtime roots or replace native runtime file-change events.
 pub(super) async fn capture_completed_file_changes<F, Fut>(
     request: &ExecutionRequest,
     workspace: Option<PathBuf>,
