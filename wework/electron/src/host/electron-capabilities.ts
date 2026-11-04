@@ -1591,11 +1591,24 @@ export function cpuLoadRatioBetween(before: CpuTimeSample, after: CpuTimeSample)
   return Math.min(1, Math.max(0, 1 - idleDelta / totalDelta))
 }
 
+export function e2eSystemPressureOverride(environment: NodeJS.ProcessEnv = process.env) {
+  if (
+    environment.VITE_WEWORK_E2E !== 'true' ||
+    !environment.WEWORK_E2E_CONTROL_URL?.trim() ||
+    environment.WEWORK_E2E_SYSTEM_PRESSURE !== 'idle'
+  ) {
+    return null
+  }
+  return { cpuLoadRatio: 0.1, freeMemoryRatio: 0.5, userIdleSeconds: 60 }
+}
+
 export async function systemPressureSnapshot(): Promise<{
   cpuLoadRatio: number
   freeMemoryRatio: number
   userIdleSeconds: number
 }> {
+  const override = e2eSystemPressureOverride()
+  if (override) return override
   const cpuBefore = cpuTimeSample()
   await new Promise(resolve => setTimeout(resolve, 100))
   const cpuAfter = cpuTimeSample()
