@@ -156,53 +156,88 @@ it('opens a cloud project while the unrelated local navigation is pending', asyn
   expect(currentState().navigationIncomplete).toBe(false)
 })
 
-it('finishes local navigation after opening a newly created cloud workspace', async () => {
-  let resolveLocal!: (workspaces: CollaborationWorkspace[]) => void
-  const localApi = apiFor(localWorkspace, [])
-  vi.mocked(localApi.workspaces!.list).mockReturnValue(
-    new Promise(resolve => {
-      resolveLocal = resolve
+it.each([
+  { incomingCount: 0, projectListed: false },
+  { incomingCount: 1, projectListed: false },
+  { incomingCount: 0, projectListed: true },
+])(
+  'finishes local navigation with an incoming new-workspace count=$incomingCount and project listed=$projectListed',
+  async ({ incomingCount, projectListed }) => {
+    let resolveLocal!: (workspaces: CollaborationWorkspace[]) => void
+    let resolveCloud!: (workspaces: CollaborationWorkspace[]) => void
+    let resolveProjects!: (projects: CollaborationProject[]) => void
+    const localApi = apiFor(localWorkspace, [])
+    vi.mocked(localApi.workspaces!.list).mockReturnValue(
+      new Promise(resolve => {
+        resolveLocal = resolve
+      })
+    )
+    const createdWorkspace = { ...cloudWorkspace, project_count: 0 }
+    const cloudApi = apiFor(createdWorkspace, [])
+    vi.mocked(cloudApi.workspaces!.list).mockResolvedValue([])
+    Object.assign(cloudApi.workspaces!, {
+      create: vi.fn(async () => {
+        vi.mocked(cloudApi.workspaces!.list).mockReturnValue(
+          new Promise(resolve => {
+            resolveCloud = resolve
+          })
+        )
+        vi.mocked(cloudApi.projects.list).mockReturnValue(
+          new Promise(resolve => {
+            resolveProjects = resolve
+          })
+        )
+        return createdWorkspace
+      }),
+      get: vi.fn(async () => createdWorkspace),
+      listMembers: vi.fn(async () => []),
     })
-  )
-  const createdWorkspace = { ...cloudWorkspace, project_count: 0 }
-  const cloudApi = apiFor(createdWorkspace, [])
-  vi.mocked(cloudApi.workspaces!.list).mockResolvedValue([])
-  Object.assign(cloudApi.workspaces!, {
-    create: vi.fn(async () => {
-      vi.mocked(cloudApi.workspaces!.list).mockResolvedValue([createdWorkspace])
-      return createdWorkspace
-    }),
-    get: vi.fn(async () => createdWorkspace),
-    listMembers: vi.fn(async () => []),
-  })
-  cloudApi.projects.create = vi.fn(async () => project)
-  Object.assign(cloudApi, {
-    issues: { getBoardSnapshot: vi.fn(async () => ({ items: [] })) },
-  })
-  const sources = [cloudApi, localApi]
-  await render(sources, { ...location, workspaceId: null, projectId: null })
-  await act(async () => {
-    await currentCommands.createWorkspace({ name: 'Created cloud space' })
-  })
-  await render(sources, { ...location, projectId: null })
+    cloudApi.projects.create = vi.fn(async () => project)
+    Object.assign(cloudApi, {
+      issues: { getBoardSnapshot: vi.fn(async () => ({ items: [] })) },
+    })
+    const sources = [cloudApi, localApi]
+    await render(sources, { ...location, workspaceId: null, projectId: null })
+    await act(async () => {
+      await currentCommands.createWorkspace({ name: 'Created cloud space' })
+    })
+    await render(sources, { ...location, projectId: null })
 
-  expect(currentState().workspace?.id).toBe(createdWorkspace.id)
-  expect(currentState().loading).toBe(false)
-  await act(async () => {
-    await currentCommands.createProject({ name: 'Created cloud project' })
-  })
-  expect(currentState().navigationProjects).toContainEqual(project)
-  await act(async () => resolveLocal([localWorkspace]))
+    expect(currentState().workspace?.id).toBe(createdWorkspace.id)
+    expect(currentState().loading).toBe(false)
+    await act(async () => {
+      await currentCommands.createProject({ name: 'Created cloud project' })
+    })
+    expect(currentState().navigationProjects).toContainEqual(project)
+    await act(async () => {
+      resolveCloud([{ ...createdWorkspace, project_count: incomingCount }])
+      resolveProjects(projectListed ? [project] : [])
+      resolveLocal([localWorkspace])
+    })
 
-  expect(
-    currentState()
-      .workspaces.map(workspace => workspace.id)
-      .sort()
-  ).toEqual(['cloud', 'local'])
-  expect(currentState().navigationProjects).toContainEqual(project)
-  expect(currentState().navigationIncomplete).toBe(false)
-  expect(currentState().error).toBeNull()
-})
+    expect(
+      currentState()
+        .workspaces.map(workspace => workspace.id)
+        .sort()
+    ).toEqual(['cloud', 'local'])
+    expect(currentState().navigationProjects).toContainEqual(project)
+    expect(
+      currentState().workspaces.find(workspace => workspace.id === createdWorkspace.id)
+        ?.project_count
+    ).toBe(1)
+    expect(currentState().navigationIncomplete).toBe(false)
+    expect(currentState().error).toBeNull()
+
+    vi.mocked(cloudApi.workspaces!.list).mockResolvedValue([createdWorkspace])
+    vi.mocked(cloudApi.projects.list).mockResolvedValue([])
+    await render(sources, { ...location, projectId: null }, 'refresh-after-project-removal')
+    expect(currentState().navigationProjects).not.toContainEqual(project)
+    expect(
+      currentState().workspaces.find(workspace => workspace.id === createdWorkspace.id)
+        ?.project_count
+    ).toBe(0)
+  }
+)
 
 it('reuses a cached workspace after an unrelated navigation source has failed', async () => {
   const cloudApi = apiFor(cloudWorkspace, [])

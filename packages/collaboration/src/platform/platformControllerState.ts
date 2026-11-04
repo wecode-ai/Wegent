@@ -189,6 +189,42 @@ export function reconcilePendingNavigationProjects(
   );
 }
 
+export function reconcilePendingNavigationCollections(
+  incoming: NavigationCollections,
+  current: Pick<NavigationCollections, "workspaces" | "projects">,
+  initialProjects: CollaborationProject[],
+): NavigationCollections {
+  const initialIds = new Set(initialProjects.map((project) => project.id));
+  const changedWorkspaceIds = new Set(
+    current.projects
+      .filter((project) => !initialIds.has(project.id))
+      .map((project) => project.workspace_id),
+  );
+  const currentWorkspaces = new Map(
+    current.workspaces.map((workspace) => [workspace.id, workspace]),
+  );
+  return {
+    ...incoming,
+    projects: reconcilePendingNavigationProjects(
+      incoming.projects,
+      current.projects,
+      initialProjects,
+    ),
+    workspaces: incoming.workspaces.map((workspace) => {
+      const currentWorkspace = currentWorkspaces.get(workspace.id);
+      return changedWorkspaceIds.has(workspace.id) && currentWorkspace
+        ? {
+            ...workspace,
+            project_count: Math.max(
+              workspace.project_count,
+              currentWorkspace.project_count,
+            ),
+          }
+        : workspace;
+    }),
+  };
+}
+
 export function mergeRootNavigationSnapshots(
   snapshots: RootNavigationSnapshot[],
 ): RootNavigationSnapshot {
