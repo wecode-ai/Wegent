@@ -52,6 +52,7 @@ import { useExperimentalFeaturesEnabled } from '@/features/experimental-features
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import { updateAppPreferences } from '@/desktop/appPreferences'
 import { useWorkbench, useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
+import { useRuntimeTaskSummaryResolver } from '@/features/workbench/runtimeTaskLifecycle'
 import { getPopoutComposerPlaceholder } from '@/features/workbench/popoutWorkspaceContext'
 import { DeliveryDialog } from '@/features/delivery/DeliveryDialog'
 import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
@@ -249,10 +250,7 @@ import {
   type DesktopReviewMetadata,
   type DesktopReviewState,
 } from './desktopWorkbenchPaneTypes'
-import {
-  findRuntimeTask,
-  truncateRuntimeTaskTitle,
-} from '@/features/workbench/workbenchRuntimeHelpers'
+import { truncateRuntimeTaskTitle } from '@/features/workbench/workbenchRuntimeHelpers'
 import { consumeWorkbenchWorkspaceLaunch } from '@/features/workbench/workspaceLaunchRequest'
 import { useWorkbenchPaneEnvironment } from './useWorkbenchPaneEnvironment'
 import { useWorkbenchProjectWorkControls } from './useWorkbenchProjectWorkControls'
@@ -290,7 +288,12 @@ import type {
   LocalHarnessWorkbenchSession,
 } from './localHarnessWorkbench'
 import type { WorkspaceAddMenuItem } from './workspace-panels/WorkspaceAddMenu'
-import { TaskFeedbackDialog } from '@/features/feedback/TaskFeedbackDialog'
+import {
+  openFeedbackDialog,
+  useRegisteredFeedbackDialogContext,
+  withLatestFeedbackDialogContext,
+  type FeedbackDialogRequest,
+} from '@/features/feedback/feedbackDialogStore'
 import { usePluginTrialPromptRefinement } from '@/features/plugins/usePluginTrialPromptRefinement'
 import {
   WORKSPACE_TABS_CLOSED_EVENT,
@@ -731,6 +734,7 @@ const MemoizedBottomWorkspacePanel = memo(function MemoizedBottomWorkspacePanel(
 
 export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const { state } = useWorkbenchPaneContext()
+  const resolveRuntimeTaskSummary = useRuntimeTaskSummaryResolver(state.runtimeWork)
   const { services, openRuntimeTask } = useWorkbench()
   const { t } = useTranslation('common')
   const { onLocalHarnessSessionStarted, onLocalHarnessSessionClose, onLocalHarnessSessionExit } =
@@ -990,7 +994,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
       if (!pane.currentRuntimeTask) {
         return pane.currentProject?.name ?? t('workbench.new_chat', '新任务')
       }
-      const task = findRuntimeTask(state.runtimeWork, pane.currentRuntimeTask)
+      const task = resolveRuntimeTaskSummary(pane.currentRuntimeTask)
       return (
         truncateRuntimeTaskTitle(task?.title) ??
         t('workbench.task_fallback_title', {
@@ -999,7 +1003,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
         })
       )
     },
-    [state.runtimeWork, t]
+    [resolveRuntimeTaskSummary, t]
   )
   const focusPane = useCallback(
     (pane: WorkbenchPaneIdentity) => {
@@ -1263,6 +1267,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const sendPaneInput = paneSession.send
   const paneInput = paneSession.input
   const setPaneInput = paneSession.setInput
+  const replacePaneInput = paneSession.replaceInput
+  const getDraftEditVersion = paneSession.getDraftEditVersion
   const [newChatRuntime, setNewChatRuntime] = useState<'codex' | LocalHarnessId>('codex')
   const [localHarnessModelKeys, setLocalHarnessModelKeys] = useState<
     Partial<Record<LocalHarnessId, string | null>>
@@ -1334,7 +1340,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [supervisorDialogTaskKey, setSupervisorDialogTaskKey] = useState<string | null>(null)
   const supervisorDialogOpen = supervisorDialogTaskKey === supervisorDialogScopeKey
   const runtimeWork = state.runtimeWork
-  const runtimeTaskSummary = findRuntimeTask(runtimeWork, currentRuntimeTask)
+  const resolveRuntimeTaskSummary = useRuntimeTaskSummaryResolver(runtimeWork)
+  const runtimeTaskSummary = resolveRuntimeTaskSummary(currentRuntimeTask)
   const currentRuntimeConversationSource: RuntimeTaskAddress | null =
     currentRuntimeTask && runtimeTaskSummary
       ? {
@@ -1350,6 +1357,52 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const runtimeTaskDescription =
     paneSession.messages.find(message => message.role === 'user')?.content ?? ''
   const workbenchTitle = activeLocalHarnessSession?.title ?? runtimeTaskTitle
+  const feedbackDialogRequest: FeedbackDialogRequest = {
+    hasActiveTask: Boolean(currentRuntimeTask),
+    deviceId: currentRuntimeTask?.deviceId ?? null,
+    taskId: currentRuntimeTask?.taskId ?? null,
+    feedbackApi: services?.feedbackApi,
+    getTaskContext: async () => {
+      if (!currentRuntimeTask) {
+        return {
+          task: { state: 'new-conversation' },
+          runtime: {
+            status: paneSession.status,
+            goal: paneSession.goal,
+          },
+        }
+      }
+      const messages = await paneSession.loadFullTranscriptForExport()
+      return {
+        task: {
+          taskId: currentRuntimeTask.taskId ?? null,
+          deviceId: currentRuntimeTask.deviceId ?? null,
+          threadId: currentRuntimeTask.threadId ?? null,
+          workspacePath: currentRuntimeTask.workspacePath ?? null,
+          title: runtimeTaskTitle ?? messages.find(message => message.role === 'user')?.content,
+          status: runtimeTaskSummary?.status ?? null,
+        },
+        conversation: {
+          messages,
+          queuedMessages: paneSession.queuedMessages,
+          guidanceMessages: paneSession.guidanceMessages,
+          turnNavigation: paneSession.turnNavigation,
+        },
+        runtime: {
+          status: paneSession.status,
+          goal: paneSession.goal,
+          taskPlan: paneSession.taskPlan,
+          subagentStatuses: paneSession.subagentStatuses,
+        },
+      }
+    },
+  }
+  const feedbackDialogRequestRef = useRef(feedbackDialogRequest)
+  useLayoutEffect(() => {
+    // The request is rebuilt from current pane state on every render.
+    feedbackDialogRequestRef.current = feedbackDialogRequest
+  })
+  useRegisteredFeedbackDialogContext(workbenchVisible && paneActive, feedbackDialogRequest)
   const {
     activeDeliveryItem,
     associateRuntimeTaskWithExistingItem,
@@ -1459,9 +1512,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       const supervisorConfig =
         currentRuntimeTask || options?.runtime === 'claude_code' ? null : pendingSupervisorConfig
       const description = value ?? paneSession.input
+      const draftEditVersion = getDraftEditVersion()
       const cloudSubmission = await prepareSubmission(description)
       return sendPaneInput(value, {
         ...options,
+        draftEditVersion,
         additionalContext: cloudSubmission.additionalContext,
         cloudProjectId: cloudSubmission.cloudProjectId,
         origin: cloudSubmission.origin,
@@ -1480,6 +1535,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     },
     [
       currentRuntimeTask,
+      getDraftEditVersion,
       paneSession.input,
       pendingSupervisorConfig,
       prepareSubmission,
@@ -1936,7 +1992,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [bottomPanelContexts, setBottomPanelContexts] = useState<BottomPanelRenderContext[]>([])
   const [openFileRequest, setOpenFileRequest] = useState<WorkspaceFileOpenRequest | null>(null)
   const [forkDialogOpen, setForkDialogOpen] = useState(false)
-  const [feedbackDialogOpen, setFeedbackDialogOpen] = useState(false)
   const [hasPreviousTurnReview, setHasPreviousTurnReview] = useState(false)
   const isDesktop = isDesktopRuntime()
   const workbenchMainRef = useRef<HTMLElement | null>(null)
@@ -3222,7 +3277,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   )
   const selectTaskSuggestion = useCallback(
     (prompt: string) => {
-      paneSession.setInput(prompt)
+      paneSession.replaceInput(prompt)
     },
     [paneSession]
   )
@@ -4192,7 +4247,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     if (!launch) return
 
     if (launch.initialInput) {
-      setPaneInput(launch.initialInput)
+      replacePaneInput(launch.initialInput)
     }
     if (launch.rightSidebarTab) {
       rightWorkspaceDshSidebar.openTab(
@@ -4204,7 +4259,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     paneActive,
     paneVisible,
     rightWorkspaceExtensionScope,
-    setPaneInput,
+    replacePaneInput,
     workbenchVisible,
     workspaceLaunchDeviceId,
     workspaceLaunchPath,
@@ -4942,7 +4997,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         data-testid="task-feedback-button"
         className={DESKTOP_TOP_BAR_BUTTON_CLASS}
         aria-label={t('workbench.feedback_button')}
-        onClick={() => setFeedbackDialogOpen(true)}
+        onClick={() =>
+          openFeedbackDialog(
+            withLatestFeedbackDialogContext(
+              feedbackDialogRequest,
+              () => feedbackDialogRequestRef.current
+            )
+          )
+        }
       >
         <MessageSquareWarning />
       </button>
@@ -5473,13 +5535,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                         autoFocus
                                         insertion={conversationSelectionInsertion}
                                         value={paneSession.input}
+                                        replaceDraftKey={paneSession.replaceDraftKey}
                                         onChange={paneSession.setInput}
-                                        onDraftEdit={paneSession.clearError}
+                                        onDraftEdit={paneSession.onDraftEdit}
                                         onSubmit={submitPaneInput}
                                         disabled={
                                           composerDisabled || !paneVisible || !workbenchVisible
                                         }
-                                        pluginPickerIconOnly={hasConversation}
+                                        showPluginPicker={!hasConversation}
                                         submitDisabled={paneSession.status.isSubmitting}
                                         error={paneSession.error}
                                         disabledReason={inlineComposerDisabledReason}
@@ -5709,9 +5772,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                           showProjectWorkBar={presentation !== 'popout'}
                           autoFocus
                           value={paneSession.input}
+                          replaceDraftKey={paneSession.replaceDraftKey}
                           onChange={paneSession.setInput}
                           onDraftEdit={() => {
-                            paneSession.clearError?.()
+                            paneSession.onDraftEdit()
                             setCentralHarnessError(null)
                           }}
                           onSubmit={submitWorkbenchInput}
@@ -6093,47 +6157,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         <ContinueInImDialog
           key={continueInIm.dialog.open ? 'continue-im-open' : 'continue-im-closed'}
           {...continueInIm.dialog}
-        />
-        <TaskFeedbackDialog
-          open={feedbackDialogOpen}
-          hasActiveTask={Boolean(currentRuntimeTask)}
-          feedbackApi={services?.feedbackApi}
-          onClose={() => setFeedbackDialogOpen(false)}
-          getTaskContext={async () => {
-            if (!currentRuntimeTask) {
-              return {
-                task: { state: 'new-conversation' },
-                runtime: {
-                  status: paneSession.status,
-                  goal: paneSession.goal,
-                },
-              }
-            }
-            const messages = await paneSession.loadFullTranscriptForExport()
-            return {
-              task: {
-                taskId: currentRuntimeTask?.taskId ?? null,
-                deviceId: currentRuntimeTask?.deviceId ?? null,
-                threadId: currentRuntimeTask?.threadId ?? null,
-                workspacePath: currentRuntimeTask?.workspacePath ?? null,
-                title:
-                  runtimeTaskTitle ?? messages.find(message => message.role === 'user')?.content,
-                status: findRuntimeTask(runtimeWork, currentRuntimeTask)?.status ?? null,
-              },
-              conversation: {
-                messages,
-                queuedMessages: paneSession.queuedMessages,
-                guidanceMessages: paneSession.guidanceMessages,
-                turnNavigation: paneSession.turnNavigation,
-              },
-              runtime: {
-                status: paneSession.status,
-                goal: paneSession.goal,
-                taskPlan: paneSession.taskPlan,
-                subagentStatuses: paneSession.subagentStatuses,
-              },
-            }
-          }}
         />
         <TaskSupervisorControl
           open={supervisorDialogOpen && !issueExecutionReadOnly}

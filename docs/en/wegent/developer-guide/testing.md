@@ -17,6 +17,13 @@ The project includes comprehensive unit testing support across all modules:
 - **Executor Manager** (Task Management): pytest + pytest-mock + pytest-cov
 - **Shared** (Utilities): pytest + pytest-cov
 - **Frontend** (Next.js + React 19): Jest + @testing-library/react
+- **Wework** (Electron + React): Vitest + @testing-library/react and the Node.js test runner
+
+## Maintaining Wework Unit Tests
+
+Run related tests with `pnpm --filter wework test <test-file>`. Count expanded parameterized cases when measuring reductions, rather than files or `test()` declarations. Do not reduce the count by skipping cases, merging tests, or changing discovery rules.
+
+Prioritize behavior coverage for task creation and sending, permissions and resource ownership, persistence, failure recovery, state machines, and upgrade or rollback. Tests with identical inputs, actions, and assertions can be removed; independent checks of colors, spacing, icons, and ordinary display formatting can be trimmed according to maintenance needs. Coverage evidence helps detect omissions but cannot alone establish behavioral equivalence. Run affected tests and review assertions after cleanup, preserving security assertions and distinct critical boundary cases.
 
 ## Current Test Coverage
 

@@ -907,13 +907,15 @@ def _project_chat_runtime_event_sync(
     log_runtime_event = logger.info if projected_status is not None else logger.debug
     log_runtime_event(
         "[IssueTaskRuntimeSync] received user=%s device=%s task=%s event=%s "
-        "event_seq=%s workflow_status=%s",
+        "event_seq=%s workflow_status=%s turn=%s client_message=%s",
         user_id,
         device_id,
         runtime_task_id,
         event_name,
         payload.get("eventSeq") or payload.get("event_seq"),
         projected_status,
+        payload.get("subtaskId") or payload.get("subtask_id"),
+        payload.get("clientUserMessageId") or payload.get("client_user_message_id"),
     )
     with get_db_session() as db:
         # The LoopItemExecution is the aggregate root for Wework automation

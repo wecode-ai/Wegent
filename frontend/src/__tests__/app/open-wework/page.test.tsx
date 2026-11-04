@@ -27,6 +27,26 @@ describe('OpenWeworkPage', () => {
       'href',
       '/collaboration/12/issues/ISSUE-1'
     )
+    expect(screen.getByTestId('wework-install-hint')).toHaveTextContent('not_installed_title')
+    expect(screen.getByTestId('download-wework-button')).toHaveAttribute(
+      'href',
+      'https://github.com/wecode-ai/Wegent/releases/latest'
+    )
+  })
+
+  it('opens a Smart app destination and keeps the desktop download fallback', () => {
+    ;(useSearchParams as jest.Mock).mockReturnValue(
+      new URLSearchParams({ url: 'wework://smart-apps/42' })
+    )
+
+    render(<OpenWeworkPage />)
+
+    expect(screen.getByTestId('open-wework-button')).toHaveAttribute(
+      'href',
+      'wework://smart-apps/42'
+    )
+    expect(screen.queryByTestId('view-task-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('download-wework-button')).toBeInTheDocument()
   })
 
   it('does not render navigation actions for an invalid destination', () => {

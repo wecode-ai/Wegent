@@ -1,3 +1,4 @@
+import { useRuntimeInteractionInputHost } from '@/features/notifications/useRuntimeInteractionInputHost'
 import {
   createPluginTrialGuide,
   type PluginTrialGuide,
@@ -114,6 +115,10 @@ interface TemporaryChatPanelProps {
   onRestoreConversation?: () => void
   initialScrollPosition?: 'restore' | 'latest'
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
+  coordinateUserInput?: boolean
+  focusedRequest?: RequestUserInputPayload | null
+  sourceMessageIds?: string[]
+  focusRequestKey?: string
 }
 
 export function TemporaryChatPanel({
@@ -145,6 +150,10 @@ export function TemporaryChatPanel({
   onRestoreConversation,
   initialScrollPosition = 'restore',
   onOpenRuntimeTask,
+  coordinateUserInput = false,
+  focusedRequest,
+  sourceMessageIds,
+  focusRequestKey,
   active = true,
 }: TemporaryChatPanelProps) {
   const { t, i18n } = useTranslation('common')
@@ -170,6 +179,7 @@ export function TemporaryChatPanel({
     scopeKey: instanceId,
   })
   const [address, setAddress] = useState<RuntimeTaskAddress | null>(initialAddress)
+  const requestUserInputHost = useRuntimeInteractionInputHost(address, coordinateUserInput)
   const catalogTranslate = useCallback((key: string) => String(t(key)), [t])
   const catalogAddress = address ?? source
   const catalogDeviceId = resolveLocalWorkbenchDeviceId(state.devices, catalogAddress?.deviceId)
@@ -300,7 +310,17 @@ export function TemporaryChatPanel({
   const busy = sending || paneStatus.isBusy
   const createdAddressKeyRef = useRef<string | null>(null)
   const autoSubmittedInitialInputRef = useRef(false)
+  const draftEditVersionRef = useRef(0)
+  const autoSubmissionScopeRef = useRef<{ active: boolean } | null>(null)
   const retryInFlightRef = useRef(false)
+
+  useEffect(() => {
+    const scope = { active: true }
+    autoSubmissionScopeRef.current = scope
+    return () => {
+      scope.active = false
+    }
+  }, [instanceId, initialAddress?.deviceId, initialAddress?.taskId])
 
   useEffect(() => {
     conversationQueue.reconcileGuidance(
@@ -585,7 +605,6 @@ export function TemporaryChatPanel({
       const attachments = localRuntimeAttachments(currentAttachments)
       const handleError = (errorMessage: string) => {
         setError(errorMessage)
-        setInput(current => current || message)
         setSending(false)
       }
 
@@ -629,7 +648,6 @@ export function TemporaryChatPanel({
               })
             : current => current.filter(currentMessage => currentMessage.id !== queuedMessage.id)
         )
-        setInput(current => current || message)
         updateAddress(null)
         setSending(false)
         return false
@@ -731,7 +749,18 @@ export function TemporaryChatPanel({
     const timeoutId = window.setTimeout(() => {
       if (autoSubmittedInitialInputRef.current) return
       autoSubmittedInitialInputRef.current = true
-      void send(initialInput)
+      const submittedEditVersion = draftEditVersionRef.current
+      const submissionScope = autoSubmissionScopeRef.current
+      const restoreInitialDraft = () => {
+        if (!submissionScope?.active) return
+        setSending(false)
+        if (draftEditVersionRef.current !== submittedEditVersion) return
+        setInput(initialInput.trim())
+        setReplaceDraftKey(current => current + 1)
+      }
+      void send(initialInput).then(accepted => {
+        if (!accepted) restoreInitialDraft()
+      }, restoreInitialDraft)
     }, 0)
     return () => window.clearTimeout(timeoutId)
   }, [autoSubmitInitialInput, initialInput, send, taskModelIdentityPending])
@@ -745,6 +774,7 @@ export function TemporaryChatPanel({
     (id: string) => {
       const message = conversationQueue.take(id)
       if (!message) return
+      draftEditVersionRef.current += 1
       setInput(message.content)
       setReplaceDraftKey(current => current + 1)
       sideChatProjectChat.resetAttachments()
@@ -809,9 +839,10 @@ export function TemporaryChatPanel({
   const submitRequestUserInput = useCallback(
     async (response: RequestUserInputResponse): Promise<boolean> => {
       if (!address) return false
-      const appendUserMessage = isAsyncRequestUserInputPayload(
-        findRequestUserInputPayload(messages, requestUserInputResponseKey(response))
-      )
+      const payload = findRequestUserInputPayload(messages, requestUserInputResponseKey(response))
+      const hosted = await requestUserInputHost?.submit(response, payload)
+      if (hosted !== undefined) return hosted
+      const appendUserMessage = isAsyncRequestUserInputPayload(payload)
       // A non-blocking Codex question carries no runtime request to answer, so it
       // is answered by the next user message: Codex steers the running turn while
       // the model is still working and starts a new turn once it has stopped.
@@ -842,6 +873,7 @@ export function TemporaryChatPanel({
       selectedModelFields,
       sendQueuedMessageAsGuidance,
       sendRuntimePaneMessage,
+      requestUserInputHost,
     ]
   )
 
@@ -864,7 +896,49 @@ export function TemporaryChatPanel({
     [address, cancelRuntimePaneTask]
   )
 
-  const pendingRequest = pendingRequestUserInputPayload(messages, hiddenRequestUserInputIds)
+  const sourceMessageId = messages.find(message => sourceMessageIds?.includes(message.id))?.id
+  const messageTarget = useMemo(
+    () =>
+      sourceMessageId && focusRequestKey
+        ? { messageId: sourceMessageId, requestKey: focusRequestKey }
+        : undefined,
+    [sourceMessageId, focusRequestKey]
+  )
+  useEffect(() => {
+    if (
+      active &&
+      focusRequestKey &&
+      sourceMessageIds?.length &&
+      !sourceMessageId &&
+      !historyLoading &&
+      !historyLoadingMoreBefore &&
+      historyBeforeCursor &&
+      !historyError
+    ) {
+      let current = true
+      void Promise.resolve().then(() => (current ? loadMoreHistory() : undefined))
+      return () => {
+        current = false
+      }
+    }
+  }, [
+    active,
+    focusRequestKey,
+    sourceMessageIds,
+    sourceMessageId,
+    historyLoading,
+    historyLoadingMoreBefore,
+    historyBeforeCursor,
+    historyError,
+    loadMoreHistory,
+  ])
+  const pendingRequest =
+    focusedRequest === undefined
+      ? pendingRequestUserInputPayload(messages, hiddenRequestUserInputIds)
+      : focusedRequest &&
+          !hiddenRequestUserInputIds.has(requestUserInputPayloadKey(focusedRequest) ?? '')
+        ? focusedRequest
+        : null
   return (
     <TemporaryConversationLayout
       messageCount={messages.length}
@@ -882,11 +956,26 @@ export function TemporaryChatPanel({
         readOnly || !active ? null : (
           <>
             {!pendingRequest && composerHeader}
+            {pendingRequest && requestUserInputHost?.isSubmitting(pendingRequest) ? (
+              <div
+                data-testid="runtime-input-submitting"
+                role="status"
+                className="pb-2 text-xs text-text-muted"
+              >
+                {t('workbench.sending_message')}
+              </div>
+            ) : null}
             {pendingRequest ? (
               <RequestUserInputCard
                 key={requestUserInputPayloadKey(pendingRequest)}
                 payload={pendingRequest}
+                disabled={requestUserInputHost?.isDisabled(pendingRequest)}
+                error={requestUserInputHost?.getError(pendingRequest)}
                 messages={messages}
+                draftAnswers={requestUserInputHost?.getDraft(pendingRequest)}
+                onDraftAnswersChange={answers =>
+                  requestUserInputHost?.setDraft(pendingRequest, answers)
+                }
                 onSubmit={submitRequestUserInput}
                 onIgnore={() => void ignoreRequestUserInput(pendingRequest)}
               />
@@ -896,8 +985,14 @@ export function TemporaryChatPanel({
                   predictionAddress={address}
                   value={input}
                   replaceDraftKey={replaceDraftKey}
-                  onChange={setInput}
-                  onDraftEdit={() => setError(null)}
+                  onChange={value => {
+                    setInput(value)
+                    return { appliedSynchronously: true }
+                  }}
+                  onDraftEdit={() => {
+                    draftEditVersionRef.current += 1
+                    setError(null)
+                  }}
                   onSubmit={send}
                   disabled={taskModelIdentityPending}
                   showExecutionTools={showExecutionTools}
@@ -937,6 +1032,7 @@ export function TemporaryChatPanel({
       }
     >
       <ScrollableMessageArea
+        messageTarget={messageTarget}
         messages={messages}
         turns={turns}
         loading={historyLoading || historyLoadingMoreBefore}
@@ -979,7 +1075,9 @@ export function TemporaryChatPanel({
         onRequestUserInputIgnore={address && !readOnly ? ignoreRequestUserInput : undefined}
         onOpenAssistantPlan={onOpenRuntimeTask ? openRuntimeTask : undefined}
         hiddenRequestUserInputIds={hiddenRequestUserInputIds}
-        hideRequestUserInputBlocks={Boolean(pendingRequest) && !readOnly}
+        hideRequestUserInputBlocks={
+          (focusedRequest !== undefined || Boolean(pendingRequest)) && !readOnly
+        }
         initialScrollPosition={initialScrollPosition}
       />
     </TemporaryConversationLayout>

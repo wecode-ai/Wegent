@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { ComponentProps, ReactNode } from 'react'
 
 import { botApis } from '@/apis/bots'
@@ -18,27 +18,26 @@ jest.mock('next/image', () => ({
   default: () => null,
 }))
 
-jest.mock('@/hooks/useTranslation', () => ({
-  useTranslation: () => ({
-    t: (key: string) =>
-      ({
-        'team.model': 'Collaboration mode',
-        'common:actions.save': 'Save',
-        'common:common.confirm': 'Confirm',
-        'common:common.cancel': 'Cancel',
-        'common:team.mode_change_confirm_title': 'Change mode?',
-        'common:teams.create_title': 'Create agent',
-        'common:teams.description': 'Agent settings',
-        'team_model.solo': 'Solo',
-        'team_model.pipeline': 'Pipeline',
-        'team_model.coordinate': 'Coordinate',
-        'team_model_desc.solo': 'Single bot handles everything.',
-        'team_model_desc.pipeline': 'Bots execute sequentially.',
-        'team_model_desc.coordinate': 'Leader coordinates parallel work.',
-      })[key] || key,
-    i18n: { language: 'en' },
-  }),
-}))
+jest.mock('@/hooks/useTranslation', () => {
+  const t = (key: string) =>
+    ({
+      'team.model': 'Collaboration mode',
+      'common:actions.save': 'Save',
+      'common:common.confirm': 'Confirm',
+      'common:common.cancel': 'Cancel',
+      'common:team.mode_change_confirm_title': 'Change mode?',
+      'common:teams.create_title': 'Create agent',
+      'common:teams.description': 'Agent settings',
+      'team_model.solo': 'Solo',
+      'team_model.pipeline': 'Pipeline',
+      'team_model.coordinate': 'Coordinate',
+      'team_model_desc.solo': 'Single bot handles everything.',
+      'team_model_desc.pipeline': 'Bots execute sequentially.',
+      'team_model_desc.coordinate': 'Leader coordinates parallel work.',
+    })[key] || key
+  const i18n = { language: 'en' }
+  return { useTranslation: () => ({ t, i18n }) }
+})
 
 jest.mock('@/features/settings/services/teams', () => ({
   createTeam: jest.fn(),
@@ -159,6 +158,14 @@ jest.mock('@/features/settings/components/team-edit/TeamModeEditor', () => ({
       >
         Select members
       </button>
+      <button
+        onClick={() => {
+          setLeaderBotId(10)
+          setSelectedBotKeys(['10'])
+        }}
+      >
+        Remove member
+      </button>
     </div>
   ),
 }))
@@ -171,6 +178,14 @@ jest.mock('@/features/settings/components/team-edit/SimpleTeamEditForm', () => (
     setDisplayName,
     prompt,
     onPromptChange,
+    bindMode,
+    setBindMode,
+    selectedSkills,
+    onSkillsChange,
+    mcpConfig,
+    onMcpConfigChange,
+    inheritBaseCapabilities,
+    onInheritBaseCapabilitiesChange,
   }: ComponentProps<typeof SimpleTeamEditForm>) => (
     <div data-testid="simple-editor">
       <input
@@ -183,6 +198,19 @@ jest.mock('@/features/settings/components/team-edit/SimpleTeamEditForm', () => (
         value={prompt}
         onChange={event => onPromptChange(event.target.value)}
       />
+      <output data-testid="solo-draft">
+        {JSON.stringify({ bindMode, selectedSkills, mcpConfig, inheritBaseCapabilities })}
+      </output>
+      <button onClick={() => setBindMode(['chat'])}>Use chat</button>
+      <button
+        onClick={() => {
+          onSkillsChange([], {})
+          onMcpConfigChange('')
+          onInheritBaseCapabilitiesChange(false)
+        }}
+      >
+        Clear Bot capabilities
+      </button>
       {collaborationModeSelector}
     </div>
   ),
@@ -343,6 +371,232 @@ describe('TeamEditDialog team mode selector', () => {
           workflow: { mode: 'pipeline', leader_bot_id: 20 },
           bind_mode: ['chat', 'code', 'task'],
         })
+      )
+    )
+  })
+
+  it.each(['pipeline', 'coordinate'] as const)(
+    'preserves unsaved %s members and leader after saving a member prompt',
+    async mode => {
+      const team: Team = {
+        ...existingTeam,
+        workflow: { mode, leader_bot_id: '10' },
+      }
+      const props = { ...createProps(), editingTeamId: team.id, teams: [team] }
+      const { rerender } = render(<TeamEditDialog {...props} />)
+      expect(screen.getByTestId('selected-members')).toHaveTextContent('10:10')
+
+      fireEvent.click(screen.getByRole('button', { name: 'Select members' }))
+      rerender(
+        <TeamEditDialog
+          {...props}
+          bots={bots.map(bot =>
+            bot.id === 20 ? { ...bot, system_prompt: 'Updated diagnosis prompt' } : bot
+          )}
+        />
+      )
+
+      expect(screen.getByTestId('selected-members')).toHaveTextContent('20:20,10')
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+      await waitFor(() =>
+        expect(updateTeam).toHaveBeenCalledWith(
+          team.id,
+          expect.objectContaining({
+            workflow: { mode, leader_bot_id: 20 },
+            bots: [
+              expect.objectContaining({ bot_id: 20, role: 'leader' }),
+              expect.objectContaining({ bot_id: 10 }),
+            ],
+          })
+        )
+      )
+    }
+  )
+
+  it('keeps saved members selected while the bot catalog is loading', async () => {
+    const team: Team = {
+      ...existingTeam,
+      workflow: { mode: 'pipeline', leader_bot_id: '10' },
+    }
+    const props = { ...createProps(), editingTeamId: team.id, teams: [team] }
+    const { rerender } = render(<TeamEditDialog {...props} bots={[]} />)
+
+    expect(screen.getByTestId('selected-members')).toHaveTextContent('10:10')
+    fireEvent.click(screen.getByRole('button', { name: 'Select members' }))
+    rerender(<TeamEditDialog {...props} />)
+
+    expect(screen.getByTestId('selected-members')).toHaveTextContent('20:20,10')
+    await act(async () => {})
+  })
+
+  it('preserves solo draft fields across bot catalog updates', async () => {
+    const props = { ...createProps(), editingTeamId: 1, teams: [existingTeam] }
+    const { rerender } = render(<TeamEditDialog {...props} />)
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Draft name' } })
+    fireEvent.change(screen.getByLabelText('Prompt'), { target: { value: 'Draft prompt' } })
+
+    rerender(<TeamEditDialog {...props} bots={[...bots]} />)
+
+    expect(screen.getByLabelText('Name')).toHaveValue('Draft name')
+    expect(screen.getByLabelText('Prompt')).toHaveValue('Draft prompt')
+    await act(async () => {})
+  })
+
+  it('does not restore a removed member when another member prompt is saved', async () => {
+    const team: Team = {
+      ...existingTeam,
+      workflow: { mode: 'pipeline', leader_bot_id: '10' },
+      bots: [...existingTeam.bots, { bot_id: 20, bot_prompt: '' }],
+    }
+    const props = { ...createProps(), editingTeamId: team.id, teams: [team] }
+    const { rerender } = render(<TeamEditDialog {...props} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Remove member' }))
+
+    rerender(
+      <TeamEditDialog
+        {...props}
+        bots={bots.map(bot => ({ ...bot, system_prompt: 'Updated prompt' }))}
+      />
+    )
+
+    expect(screen.getByTestId('selected-members')).toHaveTextContent(/^10:10$/)
+    await act(async () => {})
+  })
+
+  it('hydrates a late solo bot once without resetting the agent name', async () => {
+    const props = { ...createProps(), editingTeamId: 1, teams: [existingTeam] }
+    const { rerender } = render(<TeamEditDialog {...props} bots={[]} />)
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Draft name' } })
+
+    const loadedBots = bots.map(bot => ({ ...bot, system_prompt: 'Saved prompt' }))
+    rerender(<TeamEditDialog {...props} bots={loadedBots} />)
+    expect(screen.getByLabelText('Name')).toHaveValue('Draft name')
+    expect(screen.getByLabelText('Prompt')).toHaveValue('Saved prompt')
+    fireEvent.change(screen.getByLabelText('Prompt'), { target: { value: 'Draft prompt' } })
+    rerender(<TeamEditDialog {...props} bots={[...loadedBots]} />)
+    expect(screen.getByLabelText('Prompt')).toHaveValue('Draft prompt')
+    await act(async () => {})
+  })
+
+  it.each(['Draft prompt', ''])(
+    'preserves an edited solo prompt %p before the bot catalog arrives',
+    async draftPrompt => {
+      const props = { ...createProps(), editingTeamId: 1, teams: [existingTeam] }
+      const { rerender } = render(<TeamEditDialog {...props} bots={[]} />)
+      fireEvent.change(screen.getByLabelText('Prompt'), { target: { value: 'Draft prompt' } })
+      fireEvent.change(screen.getByLabelText('Prompt'), { target: { value: draftPrompt } })
+
+      rerender(
+        <TeamEditDialog
+          {...props}
+          bots={bots.map(bot => ({ ...bot, system_prompt: 'Saved prompt', skills: ['saved'] }))}
+        />
+      )
+
+      expect(screen.getByLabelText('Prompt')).toHaveValue(draftPrompt)
+      expect(
+        JSON.parse(screen.getByTestId('solo-draft').textContent || '{}').selectedSkills
+      ).toEqual(['saved'])
+      await act(async () => {})
+    }
+  )
+
+  it('preserves explicitly cleared Bot capabilities before the catalog arrives', async () => {
+    const props = { ...createProps(), editingTeamId: 1, teams: [existingTeam] }
+    const { rerender } = render(<TeamEditDialog {...props} bots={[]} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Clear Bot capabilities' }))
+
+    rerender(
+      <TeamEditDialog
+        {...props}
+        bots={bots.map(bot => ({
+          ...bot,
+          skills: ['saved'],
+          mcp_servers: { saved: { command: 'saved' } },
+          inherit_base_capabilities: true,
+        }))}
+      />
+    )
+
+    expect(JSON.parse(screen.getByTestId('solo-draft').textContent || '{}')).toEqual(
+      expect.objectContaining({ selectedSkills: [], mcpConfig: '', inheritBaseCapabilities: false })
+    )
+    await act(async () => {})
+  })
+
+  it('preserves a user-selected solo bind mode before the bot catalog arrives', async () => {
+    const props = { ...createProps(), editingTeamId: 1, teams: [existingTeam] }
+    const { rerender } = render(<TeamEditDialog {...props} bots={[]} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Use chat' }))
+
+    rerender(<TeamEditDialog {...props} />)
+
+    expect(JSON.parse(screen.getByTestId('solo-draft').textContent || '{}').bindMode).toEqual([
+      'chat',
+    ])
+    await act(async () => {})
+  })
+
+  it('clears solo field edit markers when reopening the dialog', async () => {
+    const props = { ...createProps(), editingTeamId: 1, teams: [existingTeam] }
+    const { rerender } = render(<TeamEditDialog {...props} bots={[]} />)
+    fireEvent.change(screen.getByLabelText('Prompt'), { target: { value: 'Discard this draft' } })
+
+    rerender(<TeamEditDialog {...props} bots={[]} open={false} />)
+    rerender(<TeamEditDialog {...props} bots={[]} />)
+    rerender(
+      <TeamEditDialog
+        {...props}
+        bots={bots.map(bot => ({ ...bot, system_prompt: 'Saved prompt' }))}
+      />
+    )
+
+    expect(screen.getByLabelText('Prompt')).toHaveValue('Saved prompt')
+    await act(async () => {})
+  })
+
+  it('discards member edits on reopen and initializes a different agent', async () => {
+    const team: Team = {
+      ...existingTeam,
+      workflow: { mode: 'pipeline', leader_bot_id: '10' },
+    }
+    const props = { ...createProps(), editingTeamId: team.id, teams: [team] }
+    const { rerender } = render(<TeamEditDialog {...props} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Select members' }))
+
+    rerender(<TeamEditDialog {...props} open={false} />)
+    rerender(<TeamEditDialog {...props} />)
+    expect(screen.getByTestId('selected-members')).toHaveTextContent(/^10:10$/)
+
+    const otherTeam: Team = {
+      ...team,
+      id: 2,
+      name: 'another-agent',
+      workflow: { mode: 'coordinate', leader_bot_id: '20' },
+      bots: [{ bot_id: 20, role: 'leader', bot_prompt: '' }],
+    }
+    rerender(<TeamEditDialog {...props} editingTeamId={2} teams={[team, otherTeam]} />)
+    expect(screen.getByRole('radio', { name: 'Coordinate' })).toBeChecked()
+    expect(screen.getByTestId('selected-members')).toHaveTextContent(/^20:20$/)
+    await act(async () => {})
+  })
+
+  it('cancels late solo initialization after changing collaboration mode', async () => {
+    const team: Team = { ...existingTeam, bind_mode: ['chat'] }
+    const props = { ...createProps(), editingTeamId: team.id, teams: [team] }
+    const { rerender } = render(<TeamEditDialog {...props} bots={[]} />)
+    fireEvent.click(screen.getByTestId('select-mode-label-pipeline'))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Select members' }))
+
+    rerender(<TeamEditDialog {...props} />)
+    expect(screen.getByRole('radio', { name: 'Pipeline' })).toBeChecked()
+    expect(screen.getByTestId('selected-members')).toHaveTextContent('20:20,10')
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() =>
+      expect(updateTeam).toHaveBeenCalledWith(
+        team.id,
+        expect.objectContaining({ bind_mode: ['chat', 'code', 'task'] })
       )
     )
   })

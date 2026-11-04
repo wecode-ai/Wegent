@@ -7,6 +7,7 @@ import react from '@vitejs/plugin-react'
 import { fileViewerRenderers } from '@file-viewer/vite-plugin'
 import { configDefaults } from 'vitest/config'
 import { excalidrawAssets } from './vite/excalidrawAssets'
+import { lucideIconChunks } from './vite/lucideIconChunks'
 import {
   parseTelemetryIdentity,
   parseTelemetryContextFields,
@@ -140,6 +141,7 @@ export default defineConfig({
     },
     react(),
     excalidrawAssets(),
+    lucideIconChunks(),
     ...internalVitePlugins,
     preserveDshUiEntryExports(),
     fileViewerRenderers({
@@ -271,6 +273,18 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: './src/test/setup.ts',
     globals: true,
+    ...(process.env.WEWORK_TEST_REPORT_FILE
+      ? {
+          reporters: [
+            'default',
+            ...(process.env.GITHUB_ACTIONS === 'true' ? (['github-actions'] as const) : []),
+            [
+              'junit',
+              { outputFile: process.env.WEWORK_TEST_REPORT_FILE, includeConsoleOutput: false },
+            ],
+          ],
+        }
+      : {}),
     server: {
       deps: {
         inline: [/@file-viewer/, /@panzoom/, /mermaid/],

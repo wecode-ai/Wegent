@@ -74,6 +74,10 @@ impl RuntimeWorkRpcHandler {
         outcomes: &[Value],
     ) -> Result<Value, String> {
         let (mut request, mut payload) = fresh_cloud_manager_payload(source, command, outcomes)?;
+        super::super::project_coordination_execution::restore_identity(
+            &mut request,
+            &source.runtime_handle,
+        )?;
         if let Some(config) = self.runtime_model_config(&source.local_task_id) {
             request.model_config = config;
         } else if !request.model_config.is_null()
@@ -175,6 +179,10 @@ pub(super) fn fresh_cloud_manager_payload(
     }
     if let Some(origin) = request.extra.get("origin") {
         payload["origin"] = origin.clone();
+    }
+    let identity_key = super::super::project_coordination_execution::IDENTITY_KEY;
+    if let Some(identity) = source_link.runtime_handle.get(identity_key) {
+        payload["runtimeHandle"][identity_key] = identity.clone();
     }
     Ok((request, payload))
 }

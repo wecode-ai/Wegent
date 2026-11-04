@@ -406,15 +406,17 @@ export class RuntimeTaskLifecycleStore {
     } else if (transcript.running === true) {
       if (!ignoreStaleRunningTranscript) {
         this.executorStarted(address)
-      } else if (
-        current?.execution.phase === 'idle' &&
+      }
+      if (
+        (current?.execution.phase === 'idle' || current?.execution.phase === 'running') &&
         !current.turn.active &&
         latestTurn?.id &&
         isTerminalTurnStatus(latestTurn.status) &&
         (current.turn.latestId === null || current.turn.latestId === latestTurn.id)
       ) {
         // Older streaming history may coexist with the latest terminal turn.
-        // Fill idle terminal identity without changing execution ownership or replacing a known turn.
+        // Retain terminal identity even when completed task metadata arrives after history.
+        // Execution ownership and a known later turn remain independent of that history.
         this.turnSettled(address, latestTurn.id, terminalTurnOutcome(latestTurn.status))
       }
     } else if (transcript.running === false && !ignoreStaleIdleTranscript) {

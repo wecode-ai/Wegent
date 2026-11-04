@@ -4,7 +4,7 @@ sidebar_position: 12
 
 # Personal stand-in and scenario roles
 
-Open **My stand-in** in the collaboration sidebar to delegate work, ask follow-up questions, or draft a scenario role with AI. The primary identity conversation and individual work executions are stored separately. Returning from a role restores the primary conversation.
+Enable **Experimental features** in **Settings → General**, then open **My stand-in** in the Tasks sidebar to delegate work, ask follow-up questions, or draft a scenario role with AI. The header displays the primary identity and existing roles for switching. The primary identity conversation and individual work executions are stored separately. Returning from a role restores the primary conversation.
 
 A **scenario role** continuously handles a particular information flow. Its default page is a work list. Select work for a preview, open the shared **Needs your input** tab for human decisions, or open the full conversation for context. Each role also has its own persistent identity conversation.
 
@@ -16,11 +16,13 @@ You can also describe a role or configuration change in conversation. AI creates
 
 ## DingTalk and collaboration sources
 
-Search and manually select individual DingTalk groups or contacts in the profile's source section. Group sources receive relevant mentions from the selected group; contact sources receive direct messages from the selected contact. Each source remains bound to the DingTalk account used when selecting it.
+Select DingTalk in the profile's connection sources. By default, intake includes mentions from all groups and direct messages from all contacts accessible to the selected account, including future groups and contacts. Switch to filtered sources to search and select individual sources in a batch. Each source remains bound to the DingTalk account used when selecting it. Complete any required plugin installation or authentication before choosing sources.
 
 You can manually mention yourself in a connected group to delegate work. Stand-in replies always retain DingTalk's AI-send marker. Intake uses the provider marker to exclude your own AI messages and prevent reply loops.
 
 Choose manual delegation, approval before operations, or automatic handling independently for each source. New DingTalk sources default to approval before operations. The selected execution device uses its installed DingTalk plugin and account. Complete any requested authentication through the existing connector flow.
+
+Collaboration, Calendar, and DingTalk share the **Process directly** option under **Processing**. When enabled, incoming matters create a conversation for processing. Otherwise, the background stand-in decides how to handle them. New role connections enable direct processing by default. Operations retain the connection's approval policy.
 
 Collaboration sources retain project membership permissions. Project-scoped agents cannot broaden intake to other projects or DingTalk sources. When roles overlap, AI selects one handler to avoid duplicate execution.
 
@@ -36,7 +38,13 @@ Operation approvals appear in **Needs your input** and link to the original conv
 
 ## Shared human decisions
 
-Structured questions from stand-ins and ordinary tasks share one pending request. While the app is in the foreground, a compact reminder appears in the upper right; expand it to answer simple questions. The title-bar bell's **Needs your input** entry opens the shared tab with the question, supporting context, and original conversation. Work lists and notification entries no longer contain independent reply forms.
+Structured questions from stand-ins and ordinary tasks share one pending request. While the app is in the foreground, a compact reminder appears in the upper right; expand it to answer simple questions. The title-bar bell's **Needs your input** entry opens the shared tab to view and handle the original task or Issue in its own interface. Work lists and notification entries no longer contain independent reply forms.
+
+The detail header shows the selected notification’s original question and entity name, keeping the question readable when narrow windows hide the list. Needs your input hosts the original entity: tasks navigate to the selected question's original conversation turn and show its native input card. Issues use the native execution and message IDs to focus the AI message that raised the question and its context, rather than the thread's initial comment. Opening a notification preserves the reading position; clicking Reply focuses the composer. Context, questions, forms, approvals, and authorization use the original interface and handlers. The inbox does not extract or summarize conversation content or create another reply form.
+
+The container header's **Open in original view** action opens the owning task or Issue and preserves the source comment target. Files, reviews, plans, and execution details that require the full workspace open in the original task. Child Issues open their own detail page rather than adding workspace sidebars inside the inbox.
+
+Opening an original task restores its title, model, and workspace so you can continue the conversation, even when the task is absent from the sidebar. Opening it preserves the sidebar's existing visibility rules.
 
 Background delivery follows the notification channel settings. Eligible simple asynchronous questions support text replies through system notifications. Manage channels in the title-bar bell's settings; the account area no longer has a separate global IM notification menu. System delivery also depends on operating-system permissions and notification settings.
 
@@ -49,3 +57,11 @@ Disable **Receive new work** and save to pause new intake while retaining existi
 Inside the assignee dropdown control, an outlined person with a check marks **Read by recipient** and a filled person with a check marks **Received by stand-in**. Hover to view the status and timestamp. A successful detail open records the human receipt; a stand-in records reception once its task is accepted, before execution completes. Both receipts retain their own timestamps and do not complete the Issue. Notification previews, marking all notifications as read, and background reads do not record a human receipt.
 
 Assigners and recipients can view the receipts, which refresh while details remain open. The latest active assignment in the activity timeline shows the same receipts and updates together with the assignee control, without polling historical entries separately. Reassignment moves the displayed receipts to the latest assignment activity; unassignment removes the former recipient's receipts. Reassignment starts a new receipt history. Older assignments without reliable evidence show “No receipt recorded.” Executors retain pending cloud receipts for up to 30 days, increasing failed retry intervals to at most one hour. Restarting preserves the retry delay. Local-project receipts stay on the owning Executor.
+
+## Calendar arrangements and project leaders
+
+Record a matter and its trigger time in **Settings → Connections → Calendar**, with one-time or recurring triggers. At that time, the owning stand-in receives the matter using its current responsibilities, device, model, and working directory. Processing is configured for the whole Calendar connection. Calendar entries save independently and protect unsaved edits when returning or closing. Open the corresponding work from its execution history.
+
+**Scheduled** in the Tasks sidebar remains independent and retains its goal, target task, model, and execution environment settings without requiring experimental features. Scheduled tasks and Calendar connections manage separate lists, editors, and run histories. The stand-in work list contains concrete work.
+
+The project conversation uses the existing collaboration group leader. Its header identifies the group and leader, and settings use the existing group configuration. Automatic project event handling enables that leader on the selected device. Each project/group has exactly one active member/device binding, with explicit takeover required for switching. Private chat and memory remain private until selected content is explicitly published to an Issue.

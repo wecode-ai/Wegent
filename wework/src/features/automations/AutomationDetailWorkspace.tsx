@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   Check,
   ChevronDown,
@@ -55,6 +55,9 @@ import {
 
 interface AutomationDetailWorkspaceProps {
   draft: AutomationDraft
+  inheritStandIn?: boolean
+  calendarMode?: boolean
+  compact?: boolean
   automation: Automation | null
   runs: AutomationRun[]
   locale: string
@@ -76,10 +79,15 @@ interface AutomationDetailWorkspaceProps {
   onRun: () => void
   onToggle: () => void
   onDelete: () => void
+  onOpenRun?: (run: AutomationRun) => void
+  validationError?: string | null
 }
 
 export function AutomationDetailWorkspace({
   draft,
+  inheritStandIn = false,
+  calendarMode = false,
+  compact = false,
   automation,
   runs,
   locale,
@@ -101,9 +109,18 @@ export function AutomationDetailWorkspace({
   onRun,
   onToggle,
   onDelete,
+  onOpenRun,
+  validationError,
 }: AutomationDetailWorkspaceProps) {
   const { t } = useTranslation('common')
   const [actionsOpen, setActionsOpen] = useState(false)
+  const nameRef = useRef<HTMLInputElement>(null)
+  const promptRef = useRef<HTMLTextAreaElement>(null)
+  useEffect(() => {
+    if (!validationError) return
+    if (!draft.name.trim()) nameRef.current?.focus()
+    else if (!draft.prompt.trim()) promptRef.current?.focus()
+  }, [validationError, draft.name, draft.prompt])
   const localDeviceIdSet = new Set(localDeviceIds)
   const taskOptions: AutomationTaskMenuOption[] = buildAutomationTaskOptions(runtimeWork).map(
     option => {
@@ -144,11 +161,15 @@ export function AutomationDetailWorkspace({
   return (
     <section
       data-testid="automation-detail-panel"
-      className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-background"
+      className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background"
     >
-      <header className="flex min-h-16 shrink-0 items-start justify-between gap-4 px-6 pt-4">
+      <header
+        className={`flex shrink-0 items-start justify-between gap-3 ${compact ? 'pb-3' : 'min-h-16 px-6 pt-4'}`}
+      >
         <div className="min-w-0 flex-1">
-          <span className="block text-sm font-medium text-blue-500">
+          <span
+            className={`block text-sm font-medium ${compact ? 'text-text-secondary' : 'text-blue-500'}`}
+          >
             {automation
               ? automation.enabled
                 ? t('workbench.automation_status_active', '活跃')
@@ -156,10 +177,17 @@ export function AutomationDetailWorkspace({
               : t('workbench.automation_status_new', '新建')}
           </span>
           <input
+            ref={nameRef}
+            aria-label={t('workbench.automation_name', '名称')}
+            aria-invalid={Boolean(validationError && !draft.name.trim())}
             data-testid="automation-name-input"
             value={draft.name}
             onChange={event => onChange('name', event.target.value)}
-            className="mt-2 w-full border-0 bg-transparent p-0 text-heading-md font-medium tracking-[-0.02em] text-text-primary outline-none placeholder:text-text-tertiary"
+            className={
+              compact
+                ? 'mt-2 min-h-9 w-full rounded-lg border border-solid border-border bg-background px-3 text-sm text-text-primary outline-none placeholder:text-text-tertiary focus:border-text-tertiary'
+                : 'mt-2 w-full border-0 bg-transparent p-0 text-heading-md font-medium tracking-[-0.02em] text-text-primary outline-none placeholder:text-text-tertiary'
+            }
             placeholder={t('workbench.automation_name', '名称')}
             autoFocus={!automation}
           />
@@ -239,215 +267,245 @@ export function AutomationDetailWorkspace({
         </div>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-28 pt-3">
+      <div className={`min-h-0 flex-1 overflow-y-auto ${compact ? 'pb-4' : 'px-6 pb-28 pt-3'}`}>
         <textarea
+          ref={promptRef}
+          aria-label={t(
+            calendarMode ? 'standIn.workspace.calendar_event' : 'workbench.automation_prompt',
+            '任务说明'
+          )}
+          aria-invalid={Boolean(validationError && !draft.prompt.trim())}
           data-testid="automation-prompt-input"
           value={draft.prompt}
           onChange={event => onChange('prompt', event.target.value)}
-          className="min-h-24 w-full resize-y rounded-2xl border border-border bg-background px-4 py-3 text-sm leading-6 text-text-primary outline-none transition-colors placeholder:text-text-tertiary focus:border-text-tertiary"
-          placeholder={t('workbench.automation_prompt', '任务说明')}
+          className={`min-h-24 w-full resize-y appearance-none border border-solid border-border bg-background px-3 py-3 text-sm leading-6 text-text-primary outline-none transition-colors placeholder:text-text-tertiary focus:border-text-tertiary ${compact ? 'rounded-lg' : 'rounded-2xl'}`}
+          placeholder={t(
+            calendarMode ? 'standIn.workspace.calendar_event' : 'workbench.automation_prompt',
+            '任务说明'
+          )}
         />
 
-        <SectionTitle
-          title={t('workbench.automation_details', '详情')}
-          action={<Info className="h-4 w-4" />}
-        />
-        <SettingsGroup>
-          <SettingsRow
-            label={t('workbench.automation_goal_mode', '持续完成目标')}
-            description={t(
-              'workbench.automation_goal_description',
-              '将任务说明作为目标持续推进，直到目标完成'
-            )}
-          >
-            <SettingsSwitch
-              data-testid="automation-goal-switch"
-              checked={draft.goalEnabled}
-              onCheckedChange={checked => onChange('goalEnabled', checked)}
-              aria-label={t('workbench.automation_goal_mode', '持续完成目标')}
+        {validationError && (
+          <p role="alert" data-testid="automation-draft-error" className="mt-2 text-sm text-error">
+            {validationError}
+          </p>
+        )}
+
+        {!calendarMode && (
+          <>
+            <SectionTitle
+              title={t('workbench.automation_details', '详情')}
+              action={<Info className="h-4 w-4" />}
             />
-          </SettingsRow>
-          <SettingsRow label={t('workbench.automation_run_in', '运行于')}>
-            <InlineSelect
-              dataTestId="automation-conversation-mode"
-              value={draft.conversationMode}
-              onChange={value => {
-                const mode = value as AutomationConversationMode
-                onChange('conversationMode', mode)
-                if (mode === 'continue_thread' && !draft.continuationAddress) {
-                  const currentKey = automationTaskKey(currentRuntimeTask)
-                  const target =
-                    taskOptions.find(option => option.key === currentKey && !option.disabled) ??
-                    taskOptions.find(option => !option.disabled) ??
-                    null
-                  onChange('continuationAddress', target?.address ?? null)
-                  if (target) {
-                    onChange(
-                      'source',
-                      localDeviceIdSet.has(target.address.deviceId) ? 'local' : 'cloud'
-                    )
-                    onChange('deviceId', target.address.deviceId)
-                    onChange('workspacePath', target.address.workspacePath ?? '')
-                  }
-                }
-              }}
-              options={[
-                {
-                  value: 'independent',
-                  label: t('workbench.automation_new_task', '新任务'),
-                },
-                {
-                  value: 'continue_thread',
-                  label: t('workbench.automation_continue_conversation', '现有任务'),
-                },
-              ]}
-            />
-          </SettingsRow>
-          {draft.conversationMode === 'continue_thread' ? (
-            <SettingsRow label={t('workbench.task', '任务')}>
-              <AutomationTaskSelect
-                value={automationTaskKey(draft.continuationAddress)}
-                onChange={value => {
-                  const target = taskOptions.find(
-                    option => option.key === value && !option.disabled
-                  )
-                  onChange('continuationAddress', target?.address ?? null)
-                  if (target) {
-                    onChange(
-                      'source',
-                      localDeviceIdSet.has(target.address.deviceId) ? 'local' : 'cloud'
-                    )
-                    onChange('deviceId', target.address.deviceId)
-                    onChange('workspacePath', target.address.workspacePath ?? '')
-                  }
-                }}
-                options={taskOptions}
-              />
-            </SettingsRow>
-          ) : (
-            <>
-              <SettingsRow label={t('workbench.automation_location', '运行位置')}>
-                <InlineSelect
-                  dataTestId="automation-source-select"
-                  value={draft.source}
-                  disabled={Boolean(automation)}
-                  onChange={value => onSourceChange(value as AutomationSource)}
-                  options={[
-                    { value: 'local', label: t('workbench.automation_local', '本地') },
-                    {
-                      value: 'cloud',
-                      label: t('workbench.automation_cloud', '云端'),
-                      disabled: !cloudAvailable,
-                    },
-                  ]}
+            <SettingsGroup>
+              <SettingsRow
+                label={t('workbench.automation_goal_mode', '持续完成目标')}
+                description={t(
+                  'workbench.automation_goal_description',
+                  '将任务说明作为目标持续推进，直到目标完成'
+                )}
+              >
+                <SettingsSwitch
+                  data-testid="automation-goal-switch"
+                  checked={draft.goalEnabled}
+                  onCheckedChange={checked => onChange('goalEnabled', checked)}
+                  aria-label={t('workbench.automation_goal_mode', '持续完成目标')}
                 />
               </SettingsRow>
-              <SettingsRow label={t('workbench.device', '设备')}>
+              <SettingsRow label={t('workbench.automation_run_in', '运行于')}>
                 <InlineSelect
-                  dataTestId="automation-device-select"
-                  value={draft.deviceId}
+                  dataTestId="automation-conversation-mode"
+                  value={draft.conversationMode}
                   onChange={value => {
-                    onChange('deviceId', value)
-                    onChange(
-                      'workspacePath',
-                      currentRuntimeTask?.deviceId === value
-                        ? (currentRuntimeTask.workspacePath ?? '')
-                        : ''
-                    )
-                    if (currentRuntimeTask?.deviceId !== value) {
-                      onChange('conversationMode', 'independent')
+                    const mode = value as AutomationConversationMode
+                    onChange('conversationMode', mode)
+                    if (mode === 'continue_thread' && !draft.continuationAddress) {
+                      const currentKey = automationTaskKey(currentRuntimeTask)
+                      const target =
+                        taskOptions.find(option => option.key === currentKey && !option.disabled) ??
+                        taskOptions.find(option => !option.disabled) ??
+                        null
+                      onChange('continuationAddress', target?.address ?? null)
+                      if (target) {
+                        onChange(
+                          'source',
+                          localDeviceIdSet.has(target.address.deviceId) ? 'local' : 'cloud'
+                        )
+                        onChange('deviceId', target.address.deviceId)
+                        onChange('workspacePath', target.address.workspacePath ?? '')
+                      }
                     }
                   }}
                   options={[
                     {
-                      value: '',
-                      label: t('workbench.automation_select_device', '选择设备'),
+                      value: 'independent',
+                      label: t('workbench.automation_new_task', '新任务'),
                     },
-                    ...sourceDevices.map(device => ({
-                      value: device.device_id,
-                      label: deviceOptionLabel(device, localDeviceIds, t),
-                      disabled: !canUseForProjectCreation(device),
-                    })),
+                    {
+                      value: 'continue_thread',
+                      label: t('workbench.automation_continue_conversation', '现有任务'),
+                    },
                   ]}
                 />
               </SettingsRow>
-              <SettingsRow label={t('workbench.project', '项目')}>
-                <InlineSelect
-                  dataTestId="automation-project-select"
-                  value={selectedProject?.key ?? ''}
-                  onChange={value => {
-                    const project = projectOptions.find(option => option.key === value)
-                    onChange('workspacePath', project?.workspacePath ?? '')
-                  }}
-                  options={[
-                    { value: '', label: t('workbench.none', '无') },
-                    ...projectOptions.map(project => ({
-                      value: project.key,
-                      label: projectOptionLabel(project),
-                    })),
-                  ]}
-                />
-              </SettingsRow>
-              <SettingsRow label={t('workbench.model', '模型')}>
-                <InlineSelect
-                  dataTestId="automation-model-select"
-                  value={
-                    selectedModel
-                      ? `${selectedModel.type}:${selectedModel.modelId ?? selectedModel.name}`
-                      : ''
-                  }
-                  onChange={value => {
-                    const [modelType, ...modelIdParts] = value.split(':')
-                    const modelId = modelIdParts.join(':')
-                    onModelChange(
-                      models.find(
-                        model =>
-                          model.type === modelType && (model.modelId ?? model.name) === modelId
-                      ) ?? null
-                    )
-                  }}
-                  options={[
-                    { value: '', label: t('workbench.automatic', '自动') },
-                    ...models.map(model => {
-                      const modelId = model.modelId ?? model.name
-                      return {
-                        value: `${model.type}:${modelId}`,
-                        label: model.displayName ?? model.name,
+              {draft.conversationMode === 'continue_thread' ? (
+                <SettingsRow label={t('workbench.task', '任务')}>
+                  <AutomationTaskSelect
+                    value={automationTaskKey(draft.continuationAddress)}
+                    onChange={value => {
+                      const target = taskOptions.find(
+                        option => option.key === value && !option.disabled
+                      )
+                      onChange('continuationAddress', target?.address ?? null)
+                      if (target) {
+                        onChange(
+                          'source',
+                          localDeviceIdSet.has(target.address.deviceId) ? 'local' : 'cloud'
+                        )
+                        onChange('deviceId', target.address.deviceId)
+                        onChange('workspacePath', target.address.workspacePath ?? '')
                       }
-                    }),
-                  ]}
-                />
-              </SettingsRow>
-              <SettingsRow label={t('workbench.reasoning', '推理')}>
-                <InlineSelect
-                  dataTestId="automation-reasoning-select"
-                  value={reasoning}
-                  onChange={value =>
-                    onChange('modelOptions', { ...draft.modelOptions, reasoningEffort: value })
-                  }
-                  options={[
-                    { value: 'low', label: t('workbench.reasoning_low', '低') },
-                    { value: 'medium', label: t('workbench.reasoning_medium', '中') },
-                    { value: 'high', label: t('workbench.reasoning_high', '高') },
-                    { value: 'xhigh', label: t('workbench.reasoning_xhigh', '极高') },
-                  ]}
-                />
-              </SettingsRow>
-            </>
-          )}
-        </SettingsGroup>
+                    }}
+                    options={taskOptions}
+                  />
+                </SettingsRow>
+              ) : inheritStandIn ? (
+                <p className="px-3 py-2 text-xs text-text-muted">
+                  {t('standIn.workspace.schedule_inherits_settings')}
+                </p>
+              ) : (
+                <>
+                  <SettingsRow label={t('workbench.automation_location', '运行位置')}>
+                    <InlineSelect
+                      dataTestId="automation-source-select"
+                      value={draft.source}
+                      disabled={Boolean(automation)}
+                      onChange={value => onSourceChange(value as AutomationSource)}
+                      options={[
+                        { value: 'local', label: t('workbench.automation_local', '本地') },
+                        {
+                          value: 'cloud',
+                          label: t('workbench.automation_cloud', '云端'),
+                          disabled: !cloudAvailable,
+                        },
+                      ]}
+                    />
+                  </SettingsRow>
+                  <SettingsRow label={t('workbench.device', '设备')}>
+                    <InlineSelect
+                      dataTestId="automation-device-select"
+                      value={draft.deviceId}
+                      onChange={value => {
+                        onChange('deviceId', value)
+                        onChange(
+                          'workspacePath',
+                          currentRuntimeTask?.deviceId === value
+                            ? (currentRuntimeTask.workspacePath ?? '')
+                            : ''
+                        )
+                        if (currentRuntimeTask?.deviceId !== value) {
+                          onChange('conversationMode', 'independent')
+                        }
+                      }}
+                      options={[
+                        {
+                          value: '',
+                          label: t('workbench.automation_select_device', '选择设备'),
+                        },
+                        ...sourceDevices.map(device => ({
+                          value: device.device_id,
+                          label: deviceOptionLabel(device, localDeviceIds, t),
+                          disabled: !canUseForProjectCreation(device),
+                        })),
+                      ]}
+                    />
+                  </SettingsRow>
+                  <SettingsRow label={t('workbench.project', '项目')}>
+                    <InlineSelect
+                      dataTestId="automation-project-select"
+                      value={selectedProject?.key ?? ''}
+                      onChange={value => {
+                        const project = projectOptions.find(option => option.key === value)
+                        onChange('workspacePath', project?.workspacePath ?? '')
+                      }}
+                      options={[
+                        { value: '', label: t('workbench.none', '无') },
+                        ...projectOptions.map(project => ({
+                          value: project.key,
+                          label: projectOptionLabel(project),
+                        })),
+                      ]}
+                    />
+                  </SettingsRow>
+                  <SettingsRow label={t('workbench.model', '模型')}>
+                    <InlineSelect
+                      dataTestId="automation-model-select"
+                      value={
+                        selectedModel
+                          ? `${selectedModel.type}:${selectedModel.modelId ?? selectedModel.name}`
+                          : ''
+                      }
+                      onChange={value => {
+                        const [modelType, ...modelIdParts] = value.split(':')
+                        const modelId = modelIdParts.join(':')
+                        onModelChange(
+                          models.find(
+                            model =>
+                              model.type === modelType && (model.modelId ?? model.name) === modelId
+                          ) ?? null
+                        )
+                      }}
+                      options={[
+                        { value: '', label: t('workbench.automatic', '自动') },
+                        ...models.map(model => {
+                          const modelId = model.modelId ?? model.name
+                          return {
+                            value: `${model.type}:${modelId}`,
+                            label: model.displayName ?? model.name,
+                          }
+                        }),
+                      ]}
+                    />
+                  </SettingsRow>
+                  <SettingsRow label={t('workbench.reasoning', '推理')}>
+                    <InlineSelect
+                      dataTestId="automation-reasoning-select"
+                      value={reasoning}
+                      onChange={value =>
+                        onChange('modelOptions', { ...draft.modelOptions, reasoningEffort: value })
+                      }
+                      options={[
+                        { value: 'low', label: t('workbench.reasoning_low', '低') },
+                        { value: 'medium', label: t('workbench.reasoning_medium', '中') },
+                        { value: 'high', label: t('workbench.reasoning_high', '高') },
+                        { value: 'xhigh', label: t('workbench.reasoning_xhigh', '极高') },
+                      ]}
+                    />
+                  </SettingsRow>
+                </>
+              )}
+            </SettingsGroup>
+          </>
+        )}
 
         <SectionTitle
           title={t('workbench.automation_frequency', '频率')}
           action={<Settings className="h-4 w-4" />}
         />
         <FrequencySettings draft={draft} onChange={onChange} />
+        {calendarMode && (
+          <p className="mt-2 text-xs text-text-muted">
+            {t('standIn.workspace.schedule_inherits_settings')}
+          </p>
+        )}
 
-        {automation ? <RunHistory runs={runs} locale={locale} /> : null}
+        {automation ? <RunHistory runs={runs} locale={locale} onOpenRun={onOpenRun} /> : null}
       </div>
 
       {!automation || dirty ? (
-        <footer className="absolute bottom-0 right-0 flex w-full min-w-0 justify-end gap-2 border-t border-border bg-background/95 px-6 py-3 backdrop-blur">
+        <footer
+          className={`flex w-full min-w-0 justify-end gap-2 border-t border-border py-3 ${compact ? 'shrink-0 bg-background' : 'absolute bottom-0 right-0 bg-background/95 px-6 backdrop-blur'}`}
+        >
           {!automation ? (
             <button
               type="button"
@@ -735,7 +793,15 @@ type AutomationTaskMenuOption = ReturnType<typeof buildAutomationTaskOptions>[nu
   disabled: boolean
 }
 
-function RunHistory({ runs, locale }: { runs: AutomationRun[]; locale: string }) {
+function RunHistory({
+  runs,
+  locale,
+  onOpenRun,
+}: {
+  runs: AutomationRun[]
+  locale: string
+  onOpenRun?(run: AutomationRun): void
+}) {
   const { t } = useTranslation('common')
   return (
     <div className="mt-8" data-testid="automation-run-history">
@@ -765,6 +831,16 @@ function RunHistory({ runs, locale }: { runs: AutomationRun[]; locale: string })
                   {run.error}
                 </span>
               ) : null}
+              {run.taskId && run.deviceId && onOpenRun && (
+                <button
+                  type="button"
+                  data-testid={`automation-run-open-${run.id}`}
+                  onClick={() => onOpenRun(run)}
+                  className="min-h-8 shrink-0 rounded-md px-2 text-sm underline hover:bg-surface"
+                >
+                  {t('standIn.workspace.open_work')}
+                </button>
+              )}
             </div>
           ))
         )}

@@ -53,6 +53,34 @@ export function beginPluginDeviceSync(deviceId: string): (() => void) | null {
   }
 }
 
+/** Wait for the existing device lease without dropping a requested operation. */
+export function acquirePluginDeviceSync(
+  deviceId: string,
+  signal?: AbortSignal
+): Promise<() => void> {
+  if (!deviceId.trim()) return Promise.reject(new Error('A plugin device identity is required'))
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      unsubscribe()
+      signal?.removeEventListener('abort', abort)
+    }
+    const abort = () => {
+      cleanup()
+      reject(signal?.reason)
+    }
+    const acquire = () => {
+      if (signal?.aborted) return abort()
+      const finish = beginPluginDeviceSync(deviceId)
+      if (!finish) return
+      cleanup()
+      resolve(finish)
+    }
+    const unsubscribe = subscribePluginDeviceSync(acquire)
+    signal?.addEventListener('abort', abort, { once: true })
+    acquire()
+  })
+}
+
 export function hasAttemptedPluginDeviceAutoSync(deviceId: string): boolean {
   return attemptedDeviceIds.has(deviceId.trim())
 }

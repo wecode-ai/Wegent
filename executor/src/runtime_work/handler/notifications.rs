@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use super::super::codex_user_input::async_question_payload_from_item;
+use super::super::codex_timeline::next_open_timeline_turn_id;
 use super::command_items::{merge_codex_command_item, merge_codex_turn_items};
 use super::*;
 
@@ -63,35 +63,6 @@ impl RuntimeWorkRpcHandler {
         let replay = begin_pending_codex_notification_replays(&mut routing, &[child.to_owned()]);
         drop(routing);
         self.replay_codex_notifications(replay);
-    }
-
-    pub(super) fn record_async_question_notification(&self, local_task_id: &str, message: &Value) {
-        let notification = codex_notification(message);
-        if notification.method != "item/completed"
-            || async_question_payload_from_item(notification.params).is_none()
-        {
-            return;
-        }
-        let turn_id = codex_notification_turn_id(message);
-        let mut changed = false;
-        self.store.update_task(local_task_id, |link| {
-            if matches!(link.status.as_str(), "failed" | "cancelled")
-                || turn_id.as_deref().is_some_and(|turn_id| {
-                    link.runtime_handle["lastTurnId"]
-                        .as_str()
-                        .is_some_and(|current| current != turn_id)
-                })
-                || link.interaction_status.as_deref() == Some(INTERACTION_AWAITING_USER_REPLY)
-            {
-                return;
-            }
-            link.interaction_status = Some(INTERACTION_AWAITING_USER_REPLY.to_owned());
-            link.updated_at = now_ms().max(link.updated_at);
-            changed = true;
-        });
-        if changed {
-            emit_runtime_work_changed(&self.event_tx, &self.device_id, local_task_id);
-        }
     }
 
     pub(super) fn refresh_pending_user_input_status(&self, local_task_id: &str) {
@@ -542,26 +513,46 @@ impl RuntimeWorkRpcHandler {
     pub(super) fn merge_active_codex_transcript(&self, local_task_id: &str, thread: &mut Value) {
         // The lifecycle is published before its transcript buffer is created.
         // Preserve that native identity across a concurrent historical read.
-        let state = self
-            .store
-            .read_task(
-                local_task_id,
-                crate::runtime_work::lifecycle::native_execution_state,
-            )
-            .flatten();
-        let owned_turn_id = state
+        let link = self.local_task_link(local_task_id);
+        let state = link
             .as_ref()
-            .and_then(|state| state.turn_id.clone())
-            .or_else(|| {
-                state
-                    .is_some_and(|state| {
-                        state.phase
-                            == crate::runtime_work::lifecycle::NativeExecutionPhase::Starting
-                    })
-                    .then(|| self.active_codex_turn(local_task_id))
-                    .flatten()
-                    .map(|turn| turn.turn_id)
+            .and_then(crate::runtime_work::lifecycle::native_execution_state);
+        // Goal recovery can commit a new native boundary before its notification
+        // is routed. Observe only a continuation after this task's known turn;
+        // an abandoned turn from the previous process must stay interrupted.
+        let observed_turn_id = link
+            .as_ref()
+            .filter(|link| {
+                link.running
+                    && self
+                        .active_local_executions
+                        .lock()
+                        .expect("active local execution map lock should not be poisoned")
+                        .get(local_task_id)
+                        .is_some_and(|control| !control.stop_requested)
+                    && link
+                        .thread_id
+                        .as_deref()
+                        .is_some_and(|id| thread["id"] == id)
+            })
+            .and_then(|link| {
+                next_open_timeline_turn_id(thread, link.runtime_handle["lastTurnId"].as_str()?)
             });
+        let owned_turn_id = observed_turn_id.or_else(|| {
+            state
+                .as_ref()
+                .and_then(|state| state.turn_id.clone())
+                .or_else(|| {
+                    state
+                        .is_some_and(|state| {
+                            state.phase
+                                == crate::runtime_work::lifecycle::NativeExecutionPhase::Starting
+                        })
+                        .then(|| self.active_codex_turn(local_task_id))
+                        .flatten()
+                        .map(|turn| turn.turn_id)
+                })
+        });
         let active = self
             .active_codex_transcript_items
             .lock()
@@ -907,7 +898,7 @@ impl RuntimeWorkRpcHandler {
                     if !self.normalize_pending_mcp_elicitation(&local_task_id, &mut message) {
                         return;
                     }
-                    self.record_async_question_notification(&local_task_id, &message);
+                    self.persist_async_question_interaction(&local_task_id, &message);
                     if codex_notification_requires_user_input(&message)
                         || message["method"] == "mcpServer/elicitation/request"
                         || message["method"] == super::super::mcp_elicitation::SETTLED_METHOD

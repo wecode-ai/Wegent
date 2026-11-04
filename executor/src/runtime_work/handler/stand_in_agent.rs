@@ -88,11 +88,12 @@ impl RuntimeWorkRpcHandler {
             .await?
         };
         let rows = if config["projectStore"] == "cloud" {
-            json!(rows.as_array().into_iter().flatten().map(|row| json!({
-                "id":row["id"],"name":row["name"],"runtime":row["runtime"],"status":row["status"],"can_use":row["canUse"],
-                "execution_policy":row["executionPolicy"],"model_policy":row["modelPolicy"],"system_prompt":row["systemPrompt"],
-                "additional_skills":row["additionalSkills"],"plugins":row["plugins"],"mcp_servers":row["mcpServers"]
-            })).collect::<Vec<_>>())
+            json!(rows
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(cloud_agent_profile)
+                .collect::<Vec<_>>())
         } else {
             rows
         };
@@ -110,7 +111,10 @@ impl RuntimeWorkRpcHandler {
         self.normalize_stand_in_agent(agent.clone()).await.map(Some)
     }
 
-    async fn normalize_stand_in_agent(&self, mut agent: Value) -> Result<Value, AppIpcError> {
+    pub(super) async fn normalize_stand_in_agent(
+        &self,
+        mut agent: Value,
+    ) -> Result<Value, AppIpcError> {
         if !matches!(agent["runtime"].as_str(), Some("codex" | "claude_code")) {
             return Err(AppIpcError::new(
                 "unsupported_runtime",
@@ -192,4 +196,13 @@ pub(super) fn apply_stand_in_agent(
     payload["bot"] = json!([{"id":agent["id"],"name":agent["name"],"shell_type":if runtime == "claude_code" {"ClaudeCode"} else {"Codex"},"mcp_servers":agent["mcp_servers"]}]);
     crate::task_runtime::runner_routing::resolve_pending(payload, Some(catalog), device)
         .map_err(settings_error)
+}
+
+pub(super) fn cloud_agent_profile(row: &Value) -> Value {
+    json!({
+        "version":row["version"],
+        "id":row["id"],"name":row["name"],"runtime":row["runtime"],"status":row["status"],"can_use":row["canUse"],
+        "execution_policy":row["executionPolicy"],"model_policy":row["modelPolicy"],"system_prompt":row["systemPrompt"],
+        "additional_skills":row["additionalSkills"],"plugins":row["plugins"],"mcp_servers":row["mcpServers"]
+    })
 }

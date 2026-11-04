@@ -103,6 +103,22 @@ Claude 主代理返回 `end_turn` 时，后台子代理仍可能在执行。Exec
 
 CLI 成功退出并不能单独证明任务完成。流结束时若仍有未完成、失败或停止的子代理，或最终 `subagent_stats` 记录了系统终止或未结束的子代理，Executor 返回 `runtime_error`，由现有错误回调将任务标记为 `FAILED`。正常完成的子代理和后续主代理回合仍可得到 `COMPLETED`；显式用户取消仍为 `CANCELLED`。
 
+### Claude stdout 消息大小限制
+
+Executor 按 UTF-8 字节数限制规范化后的单条 Claude stdout JSON 消息。`WEGENT_CLAUDE_STDOUT_MAX_BUFFER_BYTES` 默认值为 `10485760`（10 MiB），允许设置为 `1` 到 `67108864` 之间的正整数；独立的 64 MiB 原始消息保护上限保持不变。未设置时使用默认值；空白、无效或超出范围的值会记录警告并使用默认值。
+
+消息超过配置上限时，先尝试清理可识别的重复任务记录，清理后仍超限才报错；上限以内保留任务记录元数据。
+
+在 Executor 容器的启动环境中配置，例如将上限设为 20 MiB：
+
+```yaml
+env:
+  - name: WEGENT_CLAUDE_STDOUT_MAX_BUFFER_BYTES
+    value: '20971520'
+```
+
+该值首次读取后会在进程内缓存。修改启动环境后，需要重启 Executor 或重建 Pod / Docker 容器才能生效；在容器内执行 `export` 不会改变已运行 Executor 进程的环境。
+
 ### 取消与状态收敛
 
 运行时任务取消必须同时收敛两类状态：

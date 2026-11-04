@@ -32,14 +32,16 @@ export class DshRuntime {
   constructor(private readonly options: DshRuntimeOptions) {
     this.listeningUrl = options.url
     const args = options.args ? [...options.args] : undefined
-    const browserAuthentication = options.env?.WEWORK_DSH_BROWSER_AUTH === '1'
+    const browserAuthentication = ['1', 'legacy'].includes(
+      options.env?.WEWORK_DSH_BROWSER_AUTH ?? ''
+    )
     this.process = options.command
       ? new RuntimeSupervisor({
           command: options.command,
           args,
           cwd: options.cwd,
           env: {
-            ...options.env,
+            ...(options.env ?? process.env),
             ...(browserAuthentication ? { WEWORK_DSH_BROWSER_AUTH_FD: '5' } : {}),
           },
           name: options.name ?? 'dsh-web',
@@ -57,21 +59,31 @@ export class DshRuntime {
               : {}),
           startTimeoutMs: options.startTimeoutMs,
           probe: async (child, signal) => {
-            if (new URL(options.url).port === '0') {
-              this.listeningUrl = await waitForListeningUrl(child, signal)
-              const portFlag = args?.indexOf('--port') ?? -1
-              if (args && portFlag >= 0 && args[portFlag + 1] === '0') {
-                args[portFlag + 1] = new URL(this.listeningUrl).port
+            let phase = 'listening URL announcement'
+            try {
+              if (new URL(options.url).port === '0') {
+                this.listeningUrl = await waitForListeningUrl(child, signal)
+                const portFlag = args?.indexOf('--port') ?? -1
+                if (args && portFlag >= 0 && args[portFlag + 1] === '0') {
+                  args[portFlag + 1] = new URL(this.listeningUrl).port
+                }
               }
+              phase = 'browser authentication'
+              const request = browserAuthentication
+                ? await authenticateBrowser(child, this.listeningUrl, signal)
+                : fetch
+              phase = 'HTTP readiness'
+              await waitForHttpEndpoints(
+                runtimeProbeUrls(options, this.listeningUrl),
+                signal,
+                request
+              )
+            } catch (error) {
+              throw new Error(
+                `DSH ${phase} failed: ${error instanceof Error ? error.message : String(error)}`,
+                { cause: error }
+              )
             }
-            const request = browserAuthentication
-              ? await authenticateBrowser(child, this.listeningUrl, signal)
-              : fetch
-            await waitForHttpEndpoints(
-              runtimeProbeUrls(options, this.listeningUrl),
-              signal,
-              request
-            )
           },
         })
       : null
@@ -181,27 +193,43 @@ async function waitForHttp(url: string, signal: AbortSignal, request: HttpReques
       if (signal.aborted) break
       lastError = error
     }
-    await abortableDelay(LOCAL_READINESS_RETRY_INTERVAL_MS, signal)
+    try {
+      await abortableDelay(LOCAL_READINESS_RETRY_INTERVAL_MS, signal)
+    } catch (error) {
+      if (!signal.aborted) throw error
+      break
+    }
   }
-  if (signal.reason instanceof Error) throw signal.reason
-  throw new Error(`DSH did not become reachable at ${url}`, {
-    cause: signal.reason ?? lastError,
-  })
+  const endpoint = new URL(url)
+  const reason = signal.reason instanceof Error ? signal.reason.message : 'DSH startup failed'
+  throw new Error(
+    `${reason}: ${endpoint.origin}${endpoint.pathname} (${readinessError(lastError)})`,
+    {
+      cause: signal.reason,
+    }
+  )
+}
+
+function readinessError(error: unknown): string {
+  if (!(error instanceof Error)) return 'no HTTP response'
+  const cause = error.cause as NodeJS.ErrnoException | undefined
+  return [error.message, cause?.code].filter(Boolean).join(': ')
 }
 
 function abortableDelay(milliseconds: number, signal: AbortSignal): Promise<void> {
   if (signal.aborted) return Promise.reject(signal.reason)
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(resolve, milliseconds)
+    const finish = () => {
+      signal.removeEventListener('abort', abort)
+      resolve()
+    }
+    const timer = setTimeout(finish, milliseconds)
     timer.unref()
-    signal.addEventListener(
-      'abort',
-      () => {
-        clearTimeout(timer)
-        reject(signal.reason)
-      },
-      { once: true }
-    )
+    const abort = () => {
+      clearTimeout(timer)
+      reject(signal.reason)
+    }
+    signal.addEventListener('abort', abort, { once: true })
   })
 }
 

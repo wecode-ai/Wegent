@@ -1,15 +1,101 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { once } from 'node:events'
+import { EventEmitter, once } from 'node:events'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { routeUpgradeRequests } from './upgrade-request-route.mjs'
+import { runInNewContext } from 'node:vm'
+import { routeUpgradeRequests, upgradeTransportScript } from './upgrade-request-route.mjs'
+import { verifyUpgradeStartup } from './upgrade-startup-probe.mjs'
 
 const require = createRequire(new URL('../../../electron/package.json', import.meta.url))
+
+test('installs transport before whenReady consumers when the ready event follows resolution', async () => {
+  const app = new EventEmitter()
+  const ready = Promise.withResolvers()
+  let installed = false
+  let listener
+  app.isReady = () => false
+  app.whenReady = () => ready.promise
+  app.commandLine = { removeSwitch() {} }
+  app.relaunch = () => {}
+  const session = {
+    defaultSession: {
+      webRequest: {
+        onBeforeRequest(_filter, callback) {
+          installed = true
+          listener = callback
+        },
+      },
+    },
+  }
+  const process = {
+    argv: ['electron', '--inspect-brk=127.0.0.1:0', 'app'],
+    execArgv: [],
+    execPath: '/electron',
+    getBuiltinModule: () => ({ createRequire: () => () => ({ app, session }) }),
+  }
+  runInNewContext(upgradeTransportScript('http://127.0.0.1:8000', process.argv[1]), {
+    process,
+    console,
+  })
+  const request = app.whenReady().then(() => {
+    assert.equal(installed, true, 'The first ready-promise consumer must see its transport')
+    let redirect
+    listener(
+      {
+        url: 'https://github.com/wecode-ai/Wegent/releases/download/wework-updater/manifest.json',
+      },
+      result => (redirect = result.redirectURL)
+    )
+    assert.equal(redirect, 'http://127.0.0.1:8000/manifest.json')
+  })
+  // Electron resolves its ready promise before notifying ready-event observers.
+  ready.resolve()
+  await request
+  app.emit('ready')
+})
+
+// Observe the first native startup without introducing a diagnostic heartbeat.
+test(
+  'starts fresh isolated Electron profiles in both upgrade transport modes',
+  { timeout: 60_000 },
+  async context => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-upgrade-startups-'))
+    const requests = []
+    const server = createServer((request, response) => {
+      requests.push(request.url)
+      response.end('real loopback transport')
+    })
+    try {
+      await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+      const signal = AbortSignal.any([context.signal, AbortSignal.timeout(50_000)])
+      for (let index = 0; index < 10; index++) {
+        const result = await verifyUpgradeStartup({
+          binary: require('electron'),
+          root,
+          origin: `http://127.0.0.1:${server.address().port}`,
+          index,
+          signal,
+          recordTransportLog: index % 2 === 1,
+        })
+        assert.equal(requests.length, index + 1)
+        assert.equal(requests[index], result.path)
+        console.log('Verified isolated startup:', index, result.recordTransportLog, result.phases)
+      }
+    } catch (error) {
+      console.error('Observed isolated startup requests:', requests)
+      throw error
+    } finally {
+      server.closeAllConnections()
+      await new Promise(resolve => server.close(resolve))
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+)
 
 test('routes the default update URL through the real Electron network stack', async () => {
   const root = await mkdtemp(join(tmpdir(), 'wework-upgrade-transport-'))

@@ -16,6 +16,7 @@ export function StandInConversation({
   onOpenTask,
   active = true,
   pendingConfiguration,
+  hasPendingWork = false,
 }: {
   api: StandInExecutorApi
   userId: number
@@ -24,6 +25,7 @@ export function StandInConversation({
   onOpenTask?(address: RuntimeTaskAddress): Promise<void> | void
   active?: boolean
   pendingConfiguration?: ReactNode
+  hasPendingWork?: boolean
 }) {
   useStandInOpened('conversation', roleId ? 'role' : 'primary', active)
   const { t } = useTranslation('common')
@@ -84,7 +86,11 @@ export function StandInConversation({
       composerHeader={pendingConfiguration}
       placeholder={t(roleId ? 'standIn.workspace.role_prompt' : 'standIn.workspace.primary_prompt')}
       emptyStateText={t(
-        roleId ? 'standIn.workspace.role_empty' : 'standIn.workspace.primary_empty'
+        hasPendingWork
+          ? 'standIn.workspace.pending_work_help'
+          : roleId
+            ? 'standIn.workspace.role_empty'
+            : 'standIn.workspace.primary_empty'
       )}
       onOpenRuntimeTask={onOpenTask}
       createTask={async (message, options) => {

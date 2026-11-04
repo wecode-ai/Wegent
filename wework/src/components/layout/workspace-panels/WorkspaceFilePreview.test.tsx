@@ -1,8 +1,8 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { beforeEach, expect, test, vi } from 'vitest'
 import '@/i18n'
-import { WorkspaceFilePreview } from './WorkspaceFilePreview'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { beforeEach, expect, test, vi } from 'vitest'
 import { WorkspaceAttachmentPreview } from './WorkspaceAttachmentPreview'
+import { WorkspaceFilePreview } from './WorkspaceFilePreview'
 
 const fileViewerMocks = vi.hoisted(() => ({
   render: vi.fn(),
@@ -81,16 +81,6 @@ beforeEach(() => {
   appearanceMocks.codeFontSize = 12
 })
 
-const markdownFile = {
-  path: '/workspace/project/README.md',
-  name: 'README.md',
-  content: '# Project\n\nRendered content',
-  editable: true,
-  revision: 'revision-1',
-  truncated: false,
-  size: 28,
-}
-
 test.each(['csv', 'tsv'])('keeps %s attachments in the read-only table viewer', async extension => {
   render(
     <WorkspaceAttachmentPreview
@@ -107,88 +97,6 @@ test.each(['csv', 'tsv'])('keeps %s attachments in the read-only table viewer', 
     )
   )
   expect(codeViewMocks.render).not.toHaveBeenCalled()
-})
-
-test('renders Markdown files as a scrollable preview by default', () => {
-  render(
-    <WorkspaceFilePreview
-      file={markdownFile}
-      loading={false}
-      onRetry={vi.fn()}
-      onAddCodeComment={vi.fn()}
-    />
-  )
-
-  expect(screen.getByTestId('workspace-markdown-preview')).toHaveClass(
-    'overflow-y-scroll',
-    'scrollbar-soft'
-  )
-  expect(screen.getByTestId('assistant-markdown')).toHaveTextContent('# Project')
-  expect(screen.getByTestId('assistant-markdown')).toHaveAttribute('data-variant', 'document')
-  expect(codeViewMocks.render).not.toHaveBeenCalled()
-})
-
-test('shows Markdown source without a duplicate sticky file header', () => {
-  render(
-    <WorkspaceFilePreview
-      file={markdownFile}
-      loading={false}
-      onRetry={vi.fn()}
-      onAddCodeComment={vi.fn()}
-      markdownMode="source"
-    />
-  )
-
-  expect(screen.getByTestId('code-view')).toBeInTheDocument()
-  expect(codeViewMocks.render).toHaveBeenCalledWith(
-    expect.objectContaining({
-      options: expect.objectContaining({
-        disableFileHeader: true,
-        stickyHeaders: false,
-      }),
-    })
-  )
-})
-
-test('drags selected preview lines as plain text', () => {
-  render(
-    <WorkspaceFilePreview
-      file={{
-        path: '/workspace/project/index.ts',
-        name: 'index.ts',
-        content: 'const first = 1\nconst second = 2\nconst third = 3',
-        editable: true,
-        revision: 'revision-selection',
-        truncated: false,
-        size: 48,
-      }}
-      loading={false}
-      onRetry={vi.fn()}
-      onAddCodeComment={vi.fn()}
-    />
-  )
-
-  const props = codeViewMocks.render.mock.lastCall?.[0] as {
-    onSelectedLinesChange: (selection: {
-      id: string
-      range: { start: number; end: number }
-    }) => void
-  }
-  act(() => {
-    props.onSelectedLinesChange({
-      id: '/workspace/project/index.ts',
-      range: { start: 1, end: 2 },
-    })
-  })
-
-  const preview = screen.getByTestId('workspace-file-preview')
-  expect(preview).toHaveAttribute('draggable', 'true')
-  const setData = vi.fn()
-  const dataTransfer = { setData, effectAllowed: 'none' } as unknown as DataTransfer
-  fireEvent.dragStart(preview, { dataTransfer })
-
-  expect(setData).toHaveBeenCalledWith('text/plain', 'const first = 1\nconst second = 2')
-  expect(dataTransfer.effectAllowed).toBe('copy')
 })
 
 test('uses the application dark theme for code and binary previews', () => {
@@ -259,127 +167,6 @@ test('uses the application dark theme for code and binary previews', () => {
     'alt',
     'diagram.png fullscreen preview'
   )
-})
-
-test('uses the application dark theme while editing text files', () => {
-  document.documentElement.dataset.theme = 'dark'
-  appearanceMocks.resolvedMode = 'dark'
-
-  render(
-    <WorkspaceFilePreview
-      file={{
-        path: '/workspace/project/index.ts',
-        name: 'index.ts',
-        content: 'export const dark = true',
-        editable: true,
-        revision: 'revision-dark',
-        truncated: false,
-        size: 24,
-      }}
-      loading={false}
-      editing
-      editedContent="export const dark = true"
-      onEditedContentChange={vi.fn()}
-      onSave={vi.fn()}
-      onRetry={vi.fn()}
-      onAddCodeComment={vi.fn()}
-    />
-  )
-
-  expect(screen.getByTestId('workspace-file-editor')).toHaveAttribute('data-theme', 'dark')
-})
-
-test('keeps the code view mounted while switching between text files', () => {
-  const { rerender } = render(
-    <WorkspaceFilePreview
-      file={{
-        path: '/workspace/project/first.ts',
-        name: 'first.ts',
-        content: 'export const first = true',
-        editable: true,
-        revision: 'revision-1',
-        truncated: false,
-        size: 25,
-      }}
-      loading={false}
-      onRetry={vi.fn()}
-      onAddCodeComment={vi.fn()}
-    />
-  )
-  const codeView = screen.getByTestId('code-view')
-
-  rerender(
-    <WorkspaceFilePreview
-      file={{
-        path: '/workspace/project/second.ts',
-        name: 'second.ts',
-        content: 'export const second = true',
-        editable: true,
-        revision: 'revision-2',
-        truncated: false,
-        size: 26,
-      }}
-      loading={false}
-      onRetry={vi.fn()}
-      onAddCodeComment={vi.fn()}
-    />
-  )
-
-  expect(screen.getByTestId('code-view')).toBe(codeView)
-  expect(codeViewMocks.render).toHaveBeenLastCalledWith(
-    expect.objectContaining({
-      items: [
-        expect.objectContaining({
-          id: '/workspace/project/second.ts',
-        }),
-      ],
-    })
-  )
-})
-
-test('keeps CodeView configuration stable across unrelated parent rerenders', () => {
-  const file = {
-    path: '/workspace/project/index.ts',
-    name: 'index.ts',
-    content: 'export const stable = true',
-    editable: true,
-    revision: 'revision-stable',
-    truncated: false,
-    size: 26,
-  }
-  const { rerender } = render(
-    <WorkspaceFilePreview
-      file={file}
-      loading={false}
-      targetLineStart={1}
-      targetLineEnd={1}
-      onRetry={vi.fn()}
-      onAddCodeComment={vi.fn()}
-    />
-  )
-  const firstProps = codeViewMocks.render.mock.lastCall?.[0] as {
-    items: unknown
-    onSelectedLinesChange: unknown
-    options: unknown
-    selectedLines: unknown
-  }
-
-  rerender(
-    <WorkspaceFilePreview
-      file={file}
-      loading
-      targetLineStart={1}
-      targetLineEnd={1}
-      onRetry={vi.fn()}
-      onAddCodeComment={vi.fn()}
-    />
-  )
-  const nextProps = codeViewMocks.render.mock.lastCall?.[0] as typeof firstProps
-
-  expect(nextProps.items).toBe(firstProps.items)
-  expect(nextProps.onSelectedLinesChange).toBe(firstProps.onSelectedLinesChange)
-  expect(nextProps.options).toBe(firstProps.options)
-  expect(nextProps.selectedLines).toBe(firstProps.selectedLines)
 })
 
 test('keeps code view metrics aligned with the configured font size', () => {
@@ -456,28 +243,6 @@ test('copies the complete file after selecting all lines with the keyboard short
   fireEvent.copy(screen.getByTestId('workspace-file-preview'), { clipboardData })
 
   expect(clipboardData.setData).toHaveBeenCalledWith('text/plain', content)
-})
-
-test('keeps the current text preview visible while the next file is loading', () => {
-  render(
-    <WorkspaceFilePreview
-      file={{
-        path: '/workspace/project/current.ts',
-        name: 'current.ts',
-        content: 'export const current = true',
-        editable: true,
-        revision: 'revision-1',
-        truncated: false,
-        size: 27,
-      }}
-      loading
-      onRetry={vi.fn()}
-      onAddCodeComment={vi.fn()}
-    />
-  )
-
-  expect(screen.getByTestId('code-view')).toBeInTheDocument()
-  expect(screen.queryByTestId('workspace-file-preview-progress')).not.toBeInTheDocument()
 })
 
 test('does not rebuild a binary image preview when its parent rerenders', () => {

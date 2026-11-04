@@ -82,12 +82,15 @@ export interface CollaborationIssueDetailRenderContext {
   onClose(): void;
   onChange(issue: CollaborationIssue): void;
   onRead(issue: CollaborationIssue): void;
+  onOpenRelatedIssue(issue: CollaborationIssue): void;
+  onAddChild?(): void;
   onCreateTask?(): void;
   /** Present only for completed Issues when archiving is enabled. */
   onDelete?(): void;
 }
 
 interface CollaborationAppProps {
+  parentGroupingEnabled?: boolean;
   api: SharedWorkspaceApi;
   host: CollaborationHostAdapter;
   initialProject?: CollaborationProject;
@@ -138,6 +141,7 @@ function projectStatuses(
 }
 
 export function CollaborationApp({
+  parentGroupingEnabled = false,
   api,
   host,
   initialProject,
@@ -161,7 +165,8 @@ export function CollaborationApp({
   );
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
   const [createIssueOpen, setCreateIssueOpen] = useState(false);
-  const [createIssueDefaults, setCreateIssueDefaults] = useState<BoardIssueCreateDefaults>();
+  const [createIssueDefaults, setCreateIssueDefaults] =
+    useState<BoardIssueCreateDefaults>();
   const [settingsSectionId, setSettingsSectionId] =
     useState<ProjectSettingsSectionId>(
       host.location.projectSettingsSection ?? "project",
@@ -679,6 +684,7 @@ export function CollaborationApp({
                 board: (
                   <div className="relative flex min-h-0 min-w-0 flex-1">
                     <ProjectBoardAdapter
+                      parentGroupingEnabled={parentGroupingEnabled}
                       emptyState={
                         <div
                           className="collaboration-empty-project"
@@ -1020,6 +1026,7 @@ export function CollaborationApp({
                               testId: "collaboration-project-settings-sharing",
                               content: (
                                 <ProjectTemplateSettings
+                                  agentConfiguration={host.projectAgentConfiguration}
                                   key={project.id}
                                   onChange={commands.replaceProject}
                                   api={api}
@@ -1074,6 +1081,15 @@ export function CollaborationApp({
                         ),
                         groupsContent: api.projects.listCollaborationGroups ? (
                           <ProjectCollaborationGroups
+                            agentConfiguration={host.projectAgentConfiguration}
+                            agentResourceContext={
+                              host.projectAgentResourceContext
+                            }
+                            location={
+                              project.project_store === "local"
+                                ? "local"
+                                : "cloud"
+                            }
                             onProjectChanged={commands.replaceProject}
                             api={api}
                             currentUserId={templateStore?.library.ownerId}
@@ -1220,6 +1236,31 @@ export function CollaborationApp({
                 },
                 onChange: commands.replaceIssue,
                 onRead: commands.confirmIssueRead,
+                onOpenRelatedIssue: (related) => {
+                  if (
+                    related.can_view_detail === false ||
+                    related.cloud_project_id !== project.id
+                  )
+                    return;
+                  host.navigate({
+                    projectId: project.id,
+                    issueId: related.id,
+                    view: host.location.view,
+                  });
+                },
+                onAddChild: canEditCollaborationIssue(selectedIssue)
+                  ? () => {
+                      setCreateIssueDefaults({
+                        status:
+                          projectStatuses(project, messages, translate)[0]
+                            ?.id ?? "inbox",
+                        tags: [],
+                        draftScope: `child:${selectedIssue.id}`,
+                        parent: selectedIssue,
+                      });
+                      setCreateIssueOpen(true);
+                    }
+                  : undefined,
                 onCreateTask: onCreateTask
                   ? () => onCreateTask(project, selectedIssue)
                   : undefined,

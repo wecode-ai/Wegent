@@ -108,9 +108,10 @@ export function useConversationScrollController({
   const inputDirectionRef = useRef<'backward' | 'forward' | null>(null)
   const motionRef = useRef<{
     frame: SafeAnimationFrameHandle | null
+    position: number | null
     velocity: number
     at: number | null
-  }>({ frame: null, velocity: 0, at: null })
+  }>({ frame: null, position: null, velocity: 0, at: null })
   const followBehaviorRef = useRef<'auto' | 'smooth'>('auto')
   const initializedKeyRef = useRef<string | null | undefined>(undefined)
   const commandRef = useRef(false)
@@ -137,6 +138,7 @@ export function useConversationScrollController({
     const motion = motionRef.current
     if (motion.frame !== null) cancelSafeAnimationFrame(motion.frame)
     motion.frame = null
+    motion.position = null
     motion.velocity = 0
     motion.at = null
     setMotionActive(false)
@@ -215,7 +217,7 @@ export function useConversationScrollController({
         return
       const viewport = activeScrollRefRef.current.current
       if (!viewport) return
-      if (getDistanceFromBottom(viewport) < 1) {
+      if (motionRef.current.position === null && getDistanceFromBottom(viewport) < 1) {
         cancelMotion()
         save()
         return
@@ -229,6 +231,7 @@ export function useConversationScrollController({
         return
       }
       if (motionRef.current.frame !== null) return
+      motionRef.current.position ??= viewport.scrollTop
       const engine = virtualizerRef.current
       if (engine) {
         engine.cancelScroll()
@@ -254,7 +257,9 @@ export function useConversationScrollController({
           return
         }
         const end = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
-        const lag = Math.max(0, end - viewport.scrollTop)
+        // Keep subpixel progress even when the browser quantizes scrollTop writes.
+        const position = Math.min(end, motion.position ?? viewport.scrollTop)
+        const lag = Math.max(0, end - position)
         if (lag <= STREAM_FOLLOW_SETTLE_PX) {
           writeOffset(end)
           cancelMotion()
@@ -268,7 +273,8 @@ export function useConversationScrollController({
         )
         motion.at = now
         motion.velocity = step.velocityPxPerSecond
-        writeOffset(Math.min(end, viewport.scrollTop + step.advancePx))
+        motion.position = Math.min(end, position + step.advancePx)
+        writeOffset(motion.position)
         setShowScrollButton(false)
         motion.frame = requestSafeAnimationFrame(advance)
       }
@@ -387,7 +393,13 @@ export function useConversationScrollController({
       !changed &&
       !loading &&
       !previous.loading &&
-      ((previous.user !== null && user !== previous.user) ||
+      // A paged Goal history can contain only assistant replies. Distinguish a
+      // new request after its tail from an older user prompt prepended by paging.
+      ((user !== null &&
+        user !== previous.user &&
+        (previous.user !== null ||
+          (previousTailIndex >= 0 &&
+            messages.findIndex(message => message.id === user) > previousTailIndex))) ||
         (previous.count === 0 && messages.at(-1)?.role === 'user') ||
         newGuidance)
     // Opening/hydrating history establishes a position; only new content in an

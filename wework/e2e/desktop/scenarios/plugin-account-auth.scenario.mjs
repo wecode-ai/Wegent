@@ -1,4 +1,7 @@
-import { createAccountAuthFixture } from '../modules/plugin-account-auth-fixture.mjs'
+import {
+  createAccountAuthFixture,
+  seedHistoricalAccountAuth,
+} from '../modules/plugin-account-auth-fixture.mjs'
 import { verifyPluginAuthCoordination } from '../modules/plugin-auth-coordination.mjs'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
@@ -8,6 +11,8 @@ import { promisify } from 'node:util'
 import { verifyDwsCloudAccount } from '../modules/dws-account-auth.mjs'
 import { accountCommandResult } from '../modules/account-auth-command.mjs'
 import { managedRoot } from '../modules/managed-plugin-root.mjs'
+import { verifyResponsesApiGateway } from './responses-api-gateway.scenario.mjs'
+import { DESKTOP_CHECKPOINT_CI_HOSTS } from '../checkpoints.mjs'
 import {
   createConversationAuthModelFixture,
   sendOrdinaryChat,
@@ -64,6 +69,8 @@ export async function createDesktopScenario({
   executorHome,
   homePath,
   resultDir,
+  uiTimeoutMs,
+  modelResponseTimeoutMs,
   workbenchReadyTimeoutMs,
 }) {
   const dwsSourceRoot = join(resultDir, 'dws-source')
@@ -224,6 +231,14 @@ export async function createDesktopScenario({
         false,
         'Plugin account auth scenario must not start background reply predictions'
       )
+      if (checkpoint === DESKTOP_CHECKPOINT_CI_HOSTS.get('responses-api-gateway')) {
+        await verifyResponsesApiGateway(control, cloud, {
+          checkpoint,
+          resultDir,
+          uiTimeoutMs,
+          modelResponseTimeoutMs,
+        })
+      }
       const local = await cloud.waitForConnectedAppDevice()
       assert.equal((await api('/plugin-connections/automation')).enabled, true)
       await rm(sourceAuth)
@@ -232,6 +247,9 @@ export async function createDesktopScenario({
         version: '1.0.0',
         packageRoot: fixtureRoot,
       })
+      if (checkpoint === 'plugin-account-auth-password') {
+        await seedHistoricalAccountAuth(cloud, 'scan', release.releaseId)
+      }
       await control.command('click', '[data-testid="plugins-button"]')
       await control.command('waitFor', '[data-testid="plugins-search-input"]')
       await control.command('fill', '[data-testid="plugins-search-input"]', { value: slug })
@@ -257,6 +275,28 @@ export async function createDesktopScenario({
         item => item.spec.source.pluginKey === slug
       )
       const installedId = Number(installed.metadata.labels.id)
+      if (checkpoint === 'plugin-account-auth-password') {
+        assert.ok(
+          installed.spec.components.connectors.find(connector => connector.slug === 'mail')
+            ?.accountAuth,
+          'Installing a historical release must preserve manifest accountAuth'
+        )
+        await seedHistoricalAccountAuth(cloud, 'installed', installedId)
+        await api(
+          `/plugins/installed/sync-device?device_id=${encodeURIComponent(local.device_id)}`,
+          'POST'
+        )
+        const repaired = (await api('/plugins/installed')).items.find(
+          item => Number(item.metadata.labels.id) === installedId
+        )
+        assert.ok(
+          repaired.spec.components.connectors.find(connector => connector.slug === 'mail')
+            ?.accountAuth,
+          'Synchronizing a historical installation must restore manifest accountAuth'
+        )
+        assert.equal(repaired.spec.releaseId, installed.spec.releaseId)
+        assert.equal(repaired.spec.packageRef.checksum, installed.spec.packageRef.checksum)
+      }
       const cloudHome = dirname(cloud.remoteCodexHome)
       const cloudRoot = await waitForValue(
         () => managedRoot(cloudHome, installedId),
@@ -727,7 +767,21 @@ export async function createDesktopScenario({
       }
       await writeFile(
         join(resultDir, `${checkpoint}-verification.json`),
-        JSON.stringify({ checkpoint, completed: true, noCredentialLogs: true }, null, 2)
+        JSON.stringify(
+          {
+            checkpoint,
+            completed: true,
+            noCredentialLogs: true,
+            environment: {
+              processId: process.pid,
+              backendUrl: cloud.backendUrl,
+              backendLogPath: cloud.backendLogPath,
+              runtimeLogPath: cloud.remoteExecutorLogPath,
+            },
+          },
+          null,
+          2
+        )
       )
     },
   }

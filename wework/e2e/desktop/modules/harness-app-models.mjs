@@ -135,6 +135,7 @@ export async function verifyHarnessAppModels(
   const failingPackagePath = await createHarnessPackage(resultDir, FAILING_APP_ID, '0.2.0-rc.2', {
     cordisPatch: '- id: [unterminated\n',
   })
+  await selectOwnedAppsTab(control, ownedTabId, uiTimeoutMs)
   await control.command('dropPaths', '[data-testid="smart-apps-owned-page"]', {
     value: JSON.stringify([
       {
@@ -284,8 +285,13 @@ async function startWithCatalogRefresh(control, { gates, uiTimeoutMs, resultDir 
 }
 
 async function selectOwnedAppsTab(control, tabId, uiTimeoutMs) {
-  await control.command('click', `[data-testid="workspace-tab-select-${tabId}"]`)
+  const tabSelector = `[data-testid="workspace-tab-select-${tabId}"]`
+  await control.command('click', tabSelector)
+  await control.command('waitFor', `${tabSelector}[aria-selected="true"]`, {
+    timeoutMs: uiTimeoutMs,
+  })
   await control.command('waitFor', '[data-testid="smart-apps-owned-page"]', {
+    visible: true,
     timeoutMs: uiTimeoutMs,
   })
 }

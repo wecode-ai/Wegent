@@ -131,6 +131,7 @@ import { usePluginInstallActions } from './hooks/usePluginInstallActions'
 import { InstalledPluginStrip } from './workspace/InstalledPluginStrip'
 import { MarketplaceCatalogView } from './workspace/MarketplaceCatalogView'
 import {
+  acquirePluginDeviceSync,
   beginPluginDeviceSync,
   collectPluginDeviceStatusReports,
   getPluginDeviceSyncRevision,
@@ -776,6 +777,7 @@ export function PluginsWorkspace({
     setPendingPluginUninstall(null)
     uninstallingPluginIdsRef.current = new Set()
     setUninstallingPluginIds(new Set())
+    setUpdatingPluginPolicyIds(new Set())
     initialMarketplaceLoadKeyRef.current = null
   }, [cloudMarketplaceAvailable, marketplaceCacheKeyValue, knownExecutorDeviceId, t])
   const lastMarketplaceRefreshTickRef = useRef(0)
@@ -934,6 +936,8 @@ export function PluginsWorkspace({
           localState.marketplaceItems.length === 0 &&
           previousCloudItems.some(marketplaceItemNeedsDeviceSync)
         ) {
+          if (import.meta.env.VITE_WEWORK_E2E === 'true')
+            console.info('[plugin-catalog-publication] retained-pending-catalog')
           if (localState.deviceId) setCurrentDeviceId(localState.deviceId)
           setIsMarketplaceRefreshing(false)
           return
@@ -1715,39 +1719,34 @@ export function PluginsWorkspace({
 
   const changePluginAutoUpdatePolicy = (plugin: InstalledPluginItem, enabled: boolean) => {
     if (!isCloudManagedInstalledPlugin(plugin.raw)) return
+    const isCurrent = capturePluginScope()
     const attempt = beginOperation('plugin.update_policy')
     const updatePolicy = enabled ? 'auto' : 'manual'
     const pluginId = plugin.id
     setUpdatingPluginPolicyIds(previous => new Set(previous).add(pluginId))
     setPluginMarketplaceState(previous => ({ ...previous, error: null }))
-    setInstalledPlugins(previous =>
-      previous.map(item =>
-        String(item.id) === String(pluginId)
-          ? {
-              ...item,
-              raw: {
-                ...item.raw,
-                spec: { ...item.raw.spec, updatePolicy },
-              },
-            }
-          : item
-      )
-    )
 
-    pluginApi
-      .updateInstalledPlugin(pluginId, { updatePolicy }, currentDeviceId)
+    let finishDeviceSync: (() => void) | undefined
+    const deviceLease = currentDeviceId
+      ? acquirePluginDeviceSync(currentDeviceId)
+      : Promise.resolve(() => {})
+    void deviceLease
+      .then(finish => {
+        finishDeviceSync = finish
+        if (!isCurrent()) throw new DOMException('Plugin scope changed', 'AbortError')
+        return pluginApi.updateInstalledPlugin(pluginId, { updatePolicy }, currentDeviceId)
+      })
       .then(updated => {
+        if (!isCurrent()) return attempt.cancel()
         updatePluginInventoryInstallation(marketplaceCacheKeyValue, pluginId, updated, {
           updatePolicy,
         })
         attempt.succeed()
       })
       .catch(error => {
+        if (!isCurrent()) return attempt.cancel()
         attempt.fail('request')
         const errorMessage = getErrorMessage(error, 'Unknown error')
-        setInstalledPlugins(previous =>
-          previous.map(item => (String(item.id) === String(pluginId) ? plugin : item))
-        )
         setPluginMarketplaceState(previous => ({
           ...previous,
           error: t('workbench.plugins_update_policy_failed', {
@@ -1757,6 +1756,8 @@ export function PluginsWorkspace({
         }))
       })
       .finally(() => {
+        finishDeviceSync?.()
+        if (!isCurrent()) return
         setUpdatingPluginPolicyIds(previous => {
           const next = new Set(previous)
           next.delete(pluginId)
@@ -1898,7 +1899,9 @@ export function PluginsWorkspace({
   }
 
   const pluginMutationInFlight =
-    installingMarketplacePluginIds.size > 0 || uninstallingPluginIds.size > 0
+    installingMarketplacePluginIds.size > 0 ||
+    uninstallingPluginIds.size > 0 ||
+    updatingPluginPolicyIds.size > 0
   const isReconcilingPlugins = usePluginRefreshReconciliation({
     request:
       reconciliationScope.accountKey === marketplaceCacheKeyValue &&
@@ -3026,10 +3029,7 @@ export function PluginsWorkspace({
     plugin: InstalledPlugin,
     isCurrent: () => boolean
   ) => {
-    const listedConnectors = item.components.connectors ?? []
-    const installedConnectors = plugin.spec.components.connectors ?? []
-    const connectors = listedConnectors.length > 0 ? listedConnectors : installedConnectors
-    const required = connectors.filter(
+    const required = (plugin.spec.components.connectors ?? []).filter(
       connector => requiresInstallConnectorAuth(connector) && isLocalConnector(connector)
     )
     if (required.length === 0) return
@@ -4599,16 +4599,31 @@ export function PluginsWorkspace({
         refresh: true,
       })
       .then(localState => {
-        if (cancelled) return
-        if (!pluginInstallationReadIsCurrent(marketplaceCacheKeyValue, inventoryAtStart)) return
+        const trace = (reason: string) => {
+          if (import.meta.env.VITE_WEWORK_E2E === 'true')
+            console.info('[plugin-catalog-publication]', reason)
+        }
+        if (cancelled) {
+          trace('cancelled')
+          return
+        }
+        if (!pluginInstallationReadIsCurrent(marketplaceCacheKeyValue, inventoryAtStart)) {
+          trace('membership-superseded')
+          return
+        }
         if (
           !sameLocalPluginSources(
             getPluginMarketplaceCache(marketplaceCacheKeyValue),
             inventoryAtStart
           )
-        )
+        ) {
+          trace('sources-superseded')
           return
-        if (deferredCodexCatalogRequestRef.current !== requestKey) return
+        }
+        if (deferredCodexCatalogRequestRef.current !== requestKey) {
+          trace('request-superseded')
+          return
+        }
         if (localState.partial) {
           inventoryCompleteRef.current = false
           setLocalInstalledStateReadyKey(null)
@@ -4618,6 +4633,7 @@ export function PluginsWorkspace({
             message: t('workbench.plugins_load_failed', '加载插件失败'),
           })
         }
+        trace('applying')
         applyLiveCodexCatalog(localState)
       })
       .catch(() => {
