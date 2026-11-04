@@ -9,6 +9,7 @@ from app.services.subscription.execution import background_execution_manager
 def test_create_execution_appends_group_notification_instruction(
     test_db, test_user
 ) -> None:
+    """Bound-group executions qualify legacy delivery without suppressing controls."""
     subscription = Kind(
         user_id=test_user.id,
         kind="Subscription",
