@@ -243,7 +243,14 @@ export async function verifyStartupSplashProgress({
     snapshot =>
       snapshot.progress?.startedAt === timeout.progress.startedAt && !snapshot.timeoutHidden
   )
-  assert.ok(slow.capturedAt < timeoutObservation.capturedAt)
+  await writeFile(
+    join(resultDir, 'startup-timer-observations.json'),
+    `${JSON.stringify({ slow, timeout }, null, 2)}\n`
+  )
+  assert.ok(
+    slow.capturedAt < timeoutObservation.capturedAt,
+    `Startup timer observation order: ${JSON.stringify({ slow, timeoutObservation })}`
+  )
   assert.ok(Date.now() - timeout.progress.startedAt >= timeout.progress.stage.timeoutMs)
   assert.equal(timeout.recoveryHidden, true)
   assert.match(timeout.timeoutTitle, /首次启动可能较慢|First startup can take longer/)

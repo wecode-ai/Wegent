@@ -26,6 +26,7 @@ import { reservePort } from '../port-reservation.mjs'
 import { appendProcessOutput } from '../process-output.mjs'
 import {
   crashOwnedProcessTree,
+  logDesktopE2eSignal,
   processIsAlive,
   stopProcess,
   stopProcessGroup,
@@ -1056,12 +1057,18 @@ async function stopDesktopAppProcess(app, { forceSnapshot } = {}) {
     return
   }
 
-  if (processIsAlive(app.pid)) process.kill(app.pid, 'SIGTERM')
+  if (processIsAlive(app.pid)) {
+    logDesktopE2eSignal({ action: 'stop-app', pid: app.pid, signal: 'SIGTERM' })
+    process.kill(app.pid, 'SIGTERM')
+  }
   const startedAt = Date.now()
   while (processIsAlive(app.pid) && Date.now() - startedAt < 10_000) {
     await new Promise(resolvePromise => setTimeout(resolvePromise, 25))
   }
-  if (processIsAlive(app.pid)) process.kill(app.pid, 'SIGKILL')
+  if (processIsAlive(app.pid)) {
+    logDesktopE2eSignal({ action: 'stop-app', pid: app.pid, signal: 'SIGKILL' })
+    process.kill(app.pid, 'SIGKILL')
+  }
   await stopProcess(app.launcher)
 }
 
@@ -1506,6 +1513,12 @@ async function selectE2EModel(
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     visible: true,
   })
+  if (expectedProviderId) {
+    // The recovery control stays mounted while startup reconciles the local catalog.
+    await control.command('ensureLocalModelCatalogReady', 'body', {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+  }
   const selectedModelLabel = await control.command('getText', modelSelectorButton, {
     visible: true,
   })

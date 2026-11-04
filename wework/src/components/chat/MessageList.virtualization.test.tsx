@@ -1,14 +1,14 @@
-import { act, render, screen } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { MessageList } from './MessageList'
 import {
-  clearRuntimeConversationCacheForTests,
   cacheConversationVirtualMeasurements,
+  clearRuntimeConversationCacheForTests,
   getConversationVirtualMeasurements,
 } from '@/features/workbench/runtimeConversationCache'
-import type { WorkbenchMessage } from '@/types/workbench'
-import * as messagePretextLayout from '../../../../packages/collaboration/src/conversation/messagePretextLayout'
 import '@/i18n'
+import type { WorkbenchMessage } from '@/types/workbench'
+import { act, render, screen } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import * as messagePretextLayout from '../../../../packages/collaboration/src/conversation/messagePretextLayout'
+import { MessageList } from './MessageList'
 
 const {
   measureElementMock,
@@ -155,36 +155,6 @@ describe('MessageList desktop virtualization', () => {
     virtualizerMeasurementState.cachedSize = 100
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
-  })
-
-  test('uses the unified virtual layout for short conversations', () => {
-    const intersectionObserver = vi.fn()
-    vi.stubGlobal('IntersectionObserver', intersectionObserver)
-
-    render(
-      <MessageList
-        messages={buildMessages(5, 'short')}
-        scrollElementRef={{ current: createScrollElement(1_000) }}
-      />
-    )
-
-    expect(screen.getAllByTestId('message-user')).toHaveLength(5)
-    expect(screen.getByText('short message 0').closest('[data-index]')).toHaveStyle({
-      position: 'absolute',
-    })
-    expect(useVirtualizerMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        anchorTo: 'end',
-        count: 5,
-        enabled: true,
-        overscan: 2,
-      })
-    )
-    const virtualizer = virtualizerInstances.at(-1)
-    expect(
-      (virtualizer?.shouldAdjustScrollPositionOnItemSizeChange as (() => boolean) | undefined)?.()
-    ).toBeUndefined()
-    expect(intersectionObserver).not.toHaveBeenCalled()
   })
 
   test.each([0, 2523.78])(

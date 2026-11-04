@@ -104,7 +104,10 @@ impl RuntimeWorkRpcHandler {
                         &[("local_task_id", task_id)],
                     );
                 }
-                if let Err(error) = self.persist_turn_queue(remaining_queued_turns, None).await {
+                if let Err(error) = self
+                    .persist_turn_queue(remaining_queued_turns, None, &[])
+                    .await
+                {
                     log_executor_event(
                         "runtime turn queue reconciliation persistence failed",
                         &[("error", error.message)],

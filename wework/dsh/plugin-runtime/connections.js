@@ -25,12 +25,20 @@ export function parseConnections(manifest) {
   for (const [alias, dependency] of Object.entries(dependencies)) {
     requireValue(ID.test(alias), 'Invalid dependency alias')
     requireValue(dependency?.kind === 'codexPlugin', 'Unsupported connection dependency')
-    requireValue(record(dependency.source), 'Missing dependency source')
-    for (const key of ['marketplaceId', 'pluginId']) {
-      requireValue(
-        typeof dependency.source[key] === 'string' && dependency.source[key].trim(),
-        `Missing ${key}`
-      )
+    requireValue(
+      dependency.alternateSources === undefined || Array.isArray(dependency.alternateSources),
+      'Invalid alternate dependency sources'
+    )
+    const sources = dependencySources(dependency)
+    const identities = new Set()
+    for (const source of sources) {
+      requireValue(record(source), 'Missing dependency source')
+      for (const key of ['marketplaceId', 'pluginId']) {
+        requireValue(typeof source[key] === 'string' && source[key].trim(), `Missing ${key}`)
+      }
+      const identity = JSON.stringify([source.marketplaceId, source.pluginId])
+      requireValue(!identities.has(identity), 'Duplicate dependency source')
+      identities.add(identity)
     }
     requireValue(
       typeof dependency.version === 'string' && validRange(dependency.version),
@@ -74,6 +82,12 @@ export function parseConnections(manifest) {
       'Missing resource labels'
     )
     requireValue(
+      provider.allResourceKinds === undefined ||
+        (Array.isArray(provider.allResourceKinds) &&
+          provider.allResourceKinds.every(kind => provider.resourceKinds.includes(kind))),
+      'Invalid all-resource kinds'
+    )
+    requireValue(
       Array.isArray(provider.eventTypes) &&
         provider.eventTypes.length > 0 &&
         provider.eventTypes.every(kind => typeof kind === 'string' && ID.test(kind)),
@@ -107,8 +121,12 @@ export function parseConnections(manifest) {
         requireValue(provider.uses.includes(alias), 'CLI tools must use a declared dependency')
         requireValue(
           record(declaration) &&
-            typeof declaration.connectorSlug === 'string' &&
-            ID.test(declaration.connectorSlug),
+            ((typeof declaration.connectorSlug === 'string' &&
+              ID.test(declaration.connectorSlug) &&
+              declaration.toolId === undefined) ||
+              (typeof declaration.toolId === 'string' &&
+                ID.test(declaration.toolId) &&
+                declaration.connectorSlug === undefined)),
           'Missing CLI connector'
         )
         requireValue(
@@ -158,16 +176,22 @@ export function parseConnections(manifest) {
   })
 }
 
+export function dependencySources(dependency) {
+  return [dependency.source, ...(dependency.alternateSources ?? [])]
+}
+
 // The caller supplies its existing version implementation; no second resolver is maintained.
 export function dependencyPlan(definition, inventory, satisfies) {
   return Object.entries(definition.dependencies).map(([alias, dependency]) => {
-    const matches = inventory.filter(
-      item =>
-        item.marketplaceId === dependency.source.marketplaceId &&
-        item.pluginId === dependency.source.pluginId
-    )
-    requireValue(matches.length <= 1, `Ambiguous dependency: ${alias}`)
-    const installed = matches[0]
+    const candidates = dependencySources(dependency).flatMap(source => {
+      const matches = inventory.filter(
+        item => item.marketplaceId === source.marketplaceId && item.pluginId === source.pluginId
+      )
+      requireValue(matches.length <= 1, `Ambiguous dependency: ${alias}`)
+      return matches
+    })
+    // Reuse an installed declared source before considering a fresh installation.
+    const installed = candidates.find(item => item.installed) ?? candidates[0]
     const status = !installed?.installed
       ? 'missing'
       : !installed.enabled
@@ -263,7 +287,11 @@ export class ConnectionRegistry {
           id: entry.id,
           packageName: entry.definition.packageName,
           dependencies,
-          availability,
+          authTarget: availability.authTarget ?? entry.provider.authTarget,
+          availability: {
+            status: availability.status,
+            ...(availability.code ? { code: availability.code } : {}),
+          },
         }
       })
     )
@@ -289,6 +317,21 @@ export class ConnectionRegistry {
       throw new ConnectionError('connection_unavailable', 'Connection plugin was stopped')
     const context = this.contextFor(entry, dependencies)
     const params = structuredClone(input)
+    if (method === 'listResources' && params.scope === 'all') {
+      requireValue(
+        entry.provider.allResourceKinds?.includes(params.kind),
+        'Unsupported all-resource scope'
+      )
+    }
+    const source = method === 'collect' ? params.source : method === 'validate' ? params : null
+    if (source?.scope === 'all') {
+      requireValue(
+        source.id === '*' && entry.provider.allResourceKinds?.includes(source.kind),
+        'Unsupported all-resource scope'
+      )
+    } else if (source) {
+      requireValue(source.scope === undefined && source.id !== '*', 'Invalid resource scope')
+    }
     if (method === 'collect') {
       requireValue(params.source?.providerId === id, 'Source belongs to another provider')
       await entry.implementation.validate(context, params.source)
@@ -300,7 +343,32 @@ export class ConnectionRegistry {
     const result = await entry.implementation[method](context, params)
     entry.controller.signal.throwIfAborted()
     validateProviderResult(entry.provider, method, result)
+    if (method === 'collect' && source.scope === 'all') {
+      requireValue(
+        result.events.every(
+          event =>
+            record(event.resource) &&
+            event.resource.kind === source.kind &&
+            ['id', 'name'].every(
+              key =>
+                typeof event.resource[key] === 'string' &&
+                event.resource[key].trim() &&
+                event.resource[key].length <= 512
+            ) &&
+            event.resource.id !== '*'
+        ),
+        'Missing concrete event resource'
+      )
+    }
     if (method === 'listResources') {
+      requireValue(
+        result.items.every(item =>
+          params.scope === 'all'
+            ? item.scope === 'all' && item.id === '*'
+            : item.scope === undefined && item.id !== '*'
+        ),
+        'Invalid resource selection scope'
+      )
       return { ...result, items: result.items.map(item => ({ ...item, providerId: id })) }
     }
     return result

@@ -892,6 +892,10 @@ export function normalizeModelOptions(
   if (options[MODEL_SELECTION_OPTION]) {
     normalized[MODEL_SELECTION_OPTION] = options[MODEL_SELECTION_OPTION];
   }
+  // Native task routing is execution identity, not a model-picker control.
+  if (model.type === "runtime" && options.runnerModelProvider) {
+    normalized.runnerModelProvider = options.runnerModelProvider;
+  }
   return normalized;
 }
 

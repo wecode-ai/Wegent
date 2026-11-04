@@ -2,27 +2,75 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   DESKTOP_CHECKPOINTS,
+  DESKTOP_CHECKPOINT_CI_HOSTS,
   DESKTOP_CHECKPOINT_GROUPS,
   expandDesktopCheckpoints,
 } from './checkpoints.mjs'
-import { UPGRADE_CHECKPOINTS, UPGRADE_CHECKPOINT_GROUP } from './upgrade-suite.mjs'
+import {
+  UPGRADE_CHECKPOINTS,
+  UPGRADE_CHECKPOINT_GROUP,
+  UPGRADE_PACKAGE_CHECKPOINTS,
+  UPGRADE_DIAGNOSTIC_CHECKPOINTS,
+  upgradeVerificationCheckpoint,
+} from './upgrade-suite.mjs'
 
-test('upgrade verification has one maintained group for all supported operating systems', () => {
+test('Responses retains standalone selection and shares an existing CI Cloud lifecycle', () => {
+  assert.deepEqual(expandDesktopCheckpoints(['responses-api-gateway']), ['responses-api-gateway'])
+  assert.equal(DESKTOP_CHECKPOINT_CI_HOSTS.get('responses-api-gateway'), 'plugin-account-auth-dws')
+  for (const [checkpoint, host] of DESKTOP_CHECKPOINT_CI_HOSTS) {
+    assert.ok(DESKTOP_CHECKPOINTS.includes(checkpoint), checkpoint)
+    assert.ok(DESKTOP_CHECKPOINTS.includes(host), host)
+    assert.notEqual(checkpoint, host)
+  }
+})
+
+test('Windows certifies the core round trip while macOS retains complete recovery coverage', () => {
   assert.deepEqual(expandDesktopCheckpoints([UPGRADE_CHECKPOINT_GROUP]), UPGRADE_CHECKPOINTS)
+  assert.deepEqual(expandDesktopCheckpoints([upgradeVerificationCheckpoint('windows')]), [
+    'app-rollback',
+  ])
+  assert.deepEqual(
+    expandDesktopCheckpoints([upgradeVerificationCheckpoint('macos')]),
+    UPGRADE_CHECKPOINTS
+  )
+  assert.throws(
+    () => upgradeVerificationCheckpoint('linux'),
+    /Unsupported upgrade verification platform/
+  )
   for (const checkpoint of UPGRADE_CHECKPOINTS) assert.ok(DESKTOP_CHECKPOINTS.includes(checkpoint))
+})
+
+test('the refresh diagnostic uses the shared package runner without certifying an upgrade edge', () => {
+  assert.ok(DESKTOP_CHECKPOINTS.includes('app-update-refresh'))
+  assert.ok(UPGRADE_DIAGNOSTIC_CHECKPOINTS.includes('app-update-refresh'))
+  assert.equal(UPGRADE_PACKAGE_CHECKPOINTS.includes('app-update-refresh'), false)
 })
 
 test('the existing CI profile checkpoint includes the original and model catalog regressions', () => {
   assert.deepEqual(expandDesktopCheckpoints(['stand-in-profile']), [
     'stand-in-profile-settings',
     'stand-in-model-catalog',
+    'stand-in-processing',
+    'coordination-runtime',
+    'coordination-arrangements',
+    'project-coordinator-publication',
+    'project-coordination',
   ])
 })
 
 test('group expansion preserves ordering and runs each checkpoint once', () => {
   assert.deepEqual(
     expandDesktopCheckpoints(['stand-in-profile', 'stand-in-model-catalog', 'stand-in-controls']),
-    ['stand-in-profile-settings', 'stand-in-model-catalog', 'stand-in-controls']
+    [
+      'stand-in-profile-settings',
+      'stand-in-model-catalog',
+      'stand-in-processing',
+      'coordination-runtime',
+      'coordination-arrangements',
+      'project-coordinator-publication',
+      'project-coordination',
+      'stand-in-controls',
+    ]
   )
 })
 

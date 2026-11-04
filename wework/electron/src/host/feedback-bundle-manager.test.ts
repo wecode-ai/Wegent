@@ -1,9 +1,9 @@
-import extract from 'extract-zip'
 import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { FeedbackBundleManager, type FeedbackExportRequest } from './feedback-bundle-manager.js'
+import { extractSmartAppArchive } from './smart-app-package-validator.js'
 
 const temporaryRoots: string[] = []
 
@@ -73,7 +73,7 @@ describe('FeedbackBundleManager', () => {
     await expect(stat(exported.path)).resolves.toMatchObject({ size: expect.any(Number) })
 
     const extracted = join(root, 'extracted')
-    await extract(exported.path, { dir: extracted })
+    await extractSmartAppArchive(exported.path, extracted)
     const log = await readFile(join(extracted, 'logs', 'executor', 'executor.log'), 'utf8')
     expect(log).toContain('Authorization: Bearer [REDACTED]')
     expect(log).toContain('password=[REDACTED]')
@@ -132,7 +132,7 @@ describe('FeedbackBundleManager', () => {
     expect(preview.warnings).toEqual([])
     const exported = await manager.confirm(preview.stagingId)
     const extracted = join(root, 'extracted')
-    await extract(exported.path, { dir: extracted })
+    await extractSmartAppArchive(exported.path, extracted)
     await expect(
       stat(join(extracted, 'logs', 'webview', 'conversation-diagnostics.json'))
     ).rejects.toMatchObject({ code: 'ENOENT' })

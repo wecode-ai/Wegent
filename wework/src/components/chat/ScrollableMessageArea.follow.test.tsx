@@ -23,6 +23,57 @@ vi.mock('@/lib/runtime-environment', async importOriginal => ({
 describe('ScrollableMessageArea: follow', () => {
   installScrollTestEnvironment()
 
+  test.each(['append', 'prepend'] as const)(
+    'handles a %s user request after assistant-only history',
+    placement => {
+      const conversationKey = 'assistant-only-history-follow-up'
+      cacheConversationScrollSnapshot(conversationKey, {
+        pinnedToBottom: false,
+        distanceFromBottomPx: 240,
+      })
+      const history = {
+        id: 'goal-continuation',
+        role: 'assistant' as const,
+        content: 'Completed automatic Goal continuation',
+        status: 'done' as const,
+        createdAt: '2026-05-29T00:00:00.000Z',
+      }
+      const { rerender } = render(
+        <ScrollableMessageArea conversationKey={conversationKey} messages={[history]} />
+      )
+      const scroller = screen.getByTestId('chat-message-scroll-area')
+      Object.defineProperties(scroller, {
+        clientHeight: { value: 200, configurable: true },
+        scrollHeight: { value: 1000, configurable: true },
+        scrollTop: { value: 560, writable: true, configurable: true },
+      })
+      scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+        scroller.scrollTop = Number(top)
+      })
+      flushScheduledTimers()
+
+      const user = {
+        id: 'follow-up',
+        role: 'user' as const,
+        content: 'Continue with the next requirement',
+        status: 'done' as const,
+        createdAt: placement === 'append' ? '2026-05-29T00:00:01.000Z' : '2026-05-28T00:00:00.000Z',
+      }
+      rerender(
+        <ScrollableMessageArea
+          conversationKey={conversationKey}
+          messages={placement === 'append' ? [history, user] : [user, history]}
+        />
+      )
+      flushStreamingFollow()
+
+      expect(scroller.scrollTop).toBe(placement === 'append' ? 800 : 560)
+      expect(getConversationScrollSnapshot(conversationKey)?.pinnedToBottom).toBe(
+        placement === 'append'
+      )
+    }
+  )
+
   test('pins the conversation to the bottom after opening a chat', () => {
     render(
       <ScrollableMessageArea

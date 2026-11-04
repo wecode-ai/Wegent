@@ -115,7 +115,11 @@ export async function prepareWorkbenchDshLaunch(
 ): Promise<WorkbenchDshLaunch> {
   const runtime = await resolveWorkbenchRuntime(options, options.manifest.requirements.dsh)
   validateRequirements(options.manifest, runtime)
-  if (options.includeElectronHostBridge !== false && runtime.version !== WORKBENCH_DSH_VERSION) {
+  // Legacy apps retain their declared runtime. The privileged host bridge also
+  // needs the native connection service's authenticated request checks.
+  const includeElectronHostBridge =
+    options.includeElectronHostBridge ?? runtime.version === WORKBENCH_DSH_VERSION
+  if (includeElectronHostBridge && runtime.version !== WORKBENCH_DSH_VERSION) {
     throw new Error(`The trusted Electron host bridge requires DSH ${WORKBENCH_DSH_VERSION}`)
   }
   const nodeCommand = options.environment.WEWORK_NODE_PATH?.trim() || 'node'
@@ -155,8 +159,16 @@ export async function prepareWorkbenchDshLaunch(
       environment,
       run
     )
+  } else {
+    // Legacy DSH has an origin fence, but no browser session authentication.
+    // Install the HTTP boundary before any of its routes can begin listening.
+    await cp(
+      new URL('./legacy-dsh-browser-auth.cjs', import.meta.url),
+      join(dshHome, 'browser-auth.cjs')
+    )
+    environment.WEWORK_DSH_BROWSER_AUTH = 'legacy'
   }
-  if (options.includeElectronHostBridge !== false) {
+  if (includeElectronHostBridge) {
     // The workbench is an isolated harness profile. Without the electron-host
     // plugin its DSH client has no route to the scoped host pipe, so calling
     // /wework/electron-host/v1/invoke hits a plain page and every capability
@@ -207,6 +219,9 @@ export async function prepareWorkbenchDshLaunch(
     command: nodeCommand,
     entry: runtime.entry,
     args: runtimeNodeArgs(environment, [
+      ...(environment.WEWORK_DSH_BROWSER_AUTH === 'legacy'
+        ? ['--require', join(dshHome, 'browser-auth.cjs')]
+        : []),
       runtime.entry,
       '--profile',
       options.manifest.entry.profile,
@@ -627,8 +642,12 @@ function runtimeEnvironment(
   nodeCommand: string,
   options: PrepareWorkbenchDshOptions
 ): NodeJS.ProcessEnv {
+  const inherited = withRuntimePath(environment, runtimeRoot, nodeCommand)
+  // Browser authentication belongs to this runtime's launch, not its parent.
+  delete inherited.WEWORK_DSH_BROWSER_AUTH
+  delete inherited.WEWORK_DSH_BROWSER_AUTH_FD
   return {
-    ...withRuntimePath(environment, runtimeRoot, nodeCommand),
+    ...inherited,
     DSH_HOME: dshHome,
     ...(options.modelBaseUrl ? { WEWORK_HARNESS_API_KEY: 'wework-local-router' } : {}),
     ...(options.contextBaseUrl ? { WEWORK_HARNESS_CONTEXT_BASE_URL: options.contextBaseUrl } : {}),

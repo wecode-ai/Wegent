@@ -30,6 +30,14 @@ pnpm --filter wework e2e
 pnpm --filter wework e2e:desktop
 ```
 
+仅运行 Codex cloud-config 故障恢复回归：
+
+```bash
+pnpm --filter wework e2e:desktop -- --segment codex-cloud-config-recovery
+```
+
+该检查点使用真实 Electron、executor 和 Codex，仅在隔离的模型订阅服务中模拟企业账号的 cloud-config bundle 失败。它覆盖已有线程续聊、新线程、配置和模型读取、Goal 重启恢复、官方订阅认证恢复，以及云模型运行期间的认证并发保护；同时检查最终回复、原生会话记录和重载后的任务状态。测试账号与目录均由 fixture 创建。该检查点通过现有桌面 CI 的 Core 分片执行。
+
 仅运行云端项目桌面 E2E：
 
 ```bash
@@ -223,6 +231,14 @@ Linux Core/Cloud 测试在开始、结束和每 15 秒输出 `[runner-resources]
 `[desktop-e2e-schedule]` 日志在 checkpoint 启停时记录活动列表和实际并发数，可用于确认
 测试是否真正重叠；不能只凭配置的并发上限推断并行效果。提高并发后需要对比同一分片的
 耗时和这些指标，确认没有把等待转成 CPU、内存或 I/O 争抢。
+运行器向应用进程或进程组发出的每个信号都以单行 `[desktop-e2e-signal]` JSON
+记录落盘，带 ISO 时间戳，覆盖进程停止、进程组终止、崩溃注入的冻结/杀死以及场景内
+强制退出应用。Chromium 在 `app.log` 中的 `Network service crashed` 行使用
+runner 本地时间，把两类记录对齐后，可以把每次崩溃归因为运行器清理，或标记为仍需
+调查的未解释事件。checkpoint 步骤失败时，运行器还会在失败三秒后采集
+`failure-followup.json`，包含重复的 UI 快照和工作台调试状态，用于区分超时后
+自行收敛的慢速异步更新和卡死状态。可通过 `WEWORK_E2E_FAILURE_FOLLOWUP_MS`
+调整观察延迟，设为 `0` 关闭采集。
 抽屉动画逐帧检查从操作前持续采样，观察到位移且轨道动画结束后主动停止；采样上限沿用
 共享单步超时。这样命令传输和渲染延迟不会耗尽固定的 800ms 采样窗口；位移、连续性、
 中间帧和减弱动态效果的断言仍完整执行。

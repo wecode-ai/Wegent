@@ -14,6 +14,14 @@ pub(super) const CODEX_HOME_ENV: &str = "CODEX_HOME";
 pub(super) const WEGENT_CODEX_HOME_ENV: &str = "WEGENT_CODEX_HOME";
 pub(super) const WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV: &str = "WEWORK_CODEX_SUBSCRIPTION_ENABLED";
 
+#[path = "home_auth.rs"]
+mod auth;
+pub(super) use auth::acquire_shared_auth;
+
+#[cfg(test)]
+#[path = "home_auth_tests.rs"]
+mod auth_tests;
+
 /// Returns whether the local Codex subscription is opted in via the desktop
 /// preference threaded through the executor environment.
 pub(super) fn codex_subscription_enabled() -> bool {

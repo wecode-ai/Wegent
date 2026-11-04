@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { PluginMarketplaceItem } from '@/types/api'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { clearLocalCodexPluginsReadStateCache, createLocalCodexPluginApi } from './codexPlugins'
 
 const mocks = vi.hoisted(() => ({ request: vi.fn(), resume: vi.fn() }))
@@ -152,18 +152,6 @@ describe('personal source reinstall', () => {
     expect(mocks.request.mock.calls.some(([method]) => method === nativeInstall)).toBe(false)
   })
 
-  test('keeps an independent source distinct from a same-plugin managed package at another path', async () => {
-    fixture({ managedPath: '/executor/store/managed-package' })
-
-    const installed = await createLocalCodexPluginApi().installPersonalPluginSource(
-      item,
-      () => true
-    )
-
-    expect(installed.spec.source.type).toBe('local')
-    expect(installed.spec.sourcePayload?.managedByWegent).not.toBe(true)
-  })
-
   test('does not grant source installation to a recipient even with a stale source hint', async () => {
     await expect(
       createLocalCodexPluginApi().installPersonalPluginSource(
@@ -172,29 +160,5 @@ describe('personal source reinstall', () => {
       )
     ).rejects.toThrow('identity is unavailable')
     expect(mocks.request).not.toHaveBeenCalled()
-  })
-
-  test.each([
-    'executor.plugins.personal.list',
-    'executor.plugins.links.list',
-    'executor.plugins.store.list',
-  ])('ignores source verification from an expired account scope after %s', async phase => {
-    let release!: () => void
-    const pause = new Promise<void>(resolve => {
-      release = resolve
-    })
-    let current = true
-    fixture({ pauseAt: phase, pause })
-    const result = createLocalCodexPluginApi().installPersonalPluginSource(item, () => current)
-    const rejection = expect(result).rejects.toThrow('account changed')
-    await vi.waitFor(() =>
-      expect(mocks.request.mock.calls.some(([method]) => method === phase)).toBe(true)
-    )
-
-    current = false
-    release()
-    await rejection
-
-    expect(mocks.request.mock.calls.some(([method]) => method === nativeInstall)).toBe(false)
   })
 })

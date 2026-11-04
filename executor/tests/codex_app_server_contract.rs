@@ -505,6 +505,64 @@ async fn codex_shared_app_server_starts_cloud_thread_after_cloud_config_failure(
     );
 }
 
+async fn codex_shared_app_server_recovers_goal_notifications_after_cloud_config_failure() {
+    let _lock = env_lock().await;
+    let fixture = cloud_config_fallback_fixture("resume-goal");
+    let fake_codex = write_fake_codex_cloud_config_fallback_for(
+        &fixture.log_path,
+        &fixture.auth_log_path,
+        "resume-goal",
+    );
+    let client = CodexAppServerClient::new(fake_codex.display().to_string());
+    let result = client
+        .run_turn_with_cancel(
+            cloud_config_fallback_request(),
+            CodexAppServerTurnOptions {
+                resume_thread_id: Some("thread-1".to_owned()),
+                resume_goal_only: true,
+                ..CodexAppServerTurnOptions::default()
+            },
+        )
+        .await;
+    client.restart().await;
+    let outcome = result.expect("Goal recovery must receive the replacement process notifications");
+    assert_eq!(outcome.outcome, ExecutionOutcome::Completed { content: "goal done".to_owned() });
+    assert_eq!(outcome.goal_status.as_deref(), Some("complete"));
+    assert!(outcome.goal_status_observed);
+    assert_cloud_config_fallback_auth_states(&fixture.auth_log_path);
+    let messages = read_json_lines(&fixture.log_path);
+    assert_eq!(messages.iter().filter(|message| message["method"] == "thread/resume").count(), 2);
+    assert!(messages.iter().all(|message| message["method"] != "turn/start"));
+}
+
+async fn codex_shared_app_server_restores_thread_before_retrying_failed_turn_start() {
+    let _lock = env_lock().await;
+    let fixture = cloud_config_fallback_fixture("turn-start");
+    let fake_codex = write_fake_codex_cloud_config_fallback_for(
+        &fixture.log_path,
+        &fixture.auth_log_path,
+        "turn/start",
+    );
+    let client = CodexAppServerClient::new(fake_codex.display().to_string());
+    let result = client
+        .run_turn_with_cancel(
+            cloud_config_fallback_request(),
+            CodexAppServerTurnOptions {
+                resume_thread_id: Some("thread-1".to_owned()),
+                ..CodexAppServerTurnOptions::default()
+            },
+        )
+        .await;
+    client.restart().await;
+    let outcome = result.expect("turn/start recovery must reload its thread in the replacement process");
+    assert_eq!(outcome.outcome, ExecutionOutcome::Completed { content: "done".to_owned() });
+    assert_cloud_config_fallback_auth_states(&fixture.auth_log_path);
+    let messages = read_json_lines(&fixture.log_path);
+    let methods = messages.iter().filter_map(|message| message["method"].as_str()).collect::<Vec<_>>();
+    let restarted = methods.iter().rposition(|method| *method == "initialize").unwrap();
+    assert_eq!(&methods[restarted..restarted + 4], &["initialize", "initialized", "thread/resume", "turn/start"]);
+}
+
 async fn codex_shared_app_server_recovers_config_read_after_cloud_config_failure() {
     let _lock = env_lock().await;
     let fixture = cloud_config_fallback_fixture("config-read");
@@ -1560,7 +1618,9 @@ while IFS= read -r line; do
     *'"method":"initialized"'*)
       ;;
     *'"method":"thread/unsubscribe"'*)
-      printf '{{"id":%s,"result":{{}}}}\n' "$request_id"
+      printf '{{"id":%s,"result":{{"status":"unsubscribed"}}}}\n' "$request_id"
+      closed_thread_id=$(printf '%s\n' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
+      printf '%s\n' '{{"method":"thread/closed","params":{{"threadId":"'"$closed_thread_id"'"}}}}'
       ;;
     *'"method":"thread/resume"'*)
       if [ "$process_count" -eq 1 ]; then
@@ -1635,6 +1695,7 @@ else
   browser_auth='absent'
 fi
 printf '%s %s %s\n' "$process_count" "$auth_state" "$browser_auth" >> "$AUTH_LOG_PATH"
+thread_loaded=0
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$LOG_PATH"
   request_id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
@@ -1645,9 +1706,16 @@ while IFS= read -r line; do
     *'"method":"initialized"'*)
       ;;
     *'"method":"thread/resume"'*)
-      if [ "$process_count" -eq 1 ] && [ "$FAILING_METHOD" = "thread/resume" ]; then
+      if [ "$process_count" -eq 1 ] && {{ [ "$FAILING_METHOD" = "thread/resume" ] || [ "$FAILING_METHOD" = "resume-goal" ]; }}; then
         printf '{{"id":%s,"error":{{"code":-32603,"message":"failed to load configuration: timed out refreshing cloud config bundle"}}}}\n' "$request_id"
       else
+        thread_loaded=1
+        if [ "$FAILING_METHOD" = "resume-goal" ]; then
+          printf '%s\n' '{{"method":"turn/started","params":{{"threadId":"thread-1","turn":{{"id":"goal-turn","status":"inProgress"}}}}}}'
+          printf '%s\n' '{{"method":"item/completed","params":{{"threadId":"thread-1","turnId":"goal-turn","item":{{"id":"goal-message","type":"agentMessage","phase":"final_answer","text":"goal done"}}}}}}'
+          printf '%s\n' '{{"method":"thread/goal/updated","params":{{"threadId":"thread-1","goal":{{"status":"complete"}}}}}}'
+          printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-1","turn":{{"id":"goal-turn","status":"completed"}}}}}}'
+        fi
         printf '{{"id":%s,"result":{{"modelProvider":"wework-router","thread":{{"id":"thread-1","modelProvider":"wework-router"}}}}}}\n' "$request_id"
       fi
       ;;
@@ -1676,12 +1744,22 @@ while IFS= read -r line; do
       printf '{{"id":%s,"result":{{"data":[]}}}}\n' "$request_id"
       ;;
     *'"method":"thread/goal/get"'*)
-      printf '{{"id":%s,"result":{{"goal":null}}}}\n' "$request_id"
+      if [ "$FAILING_METHOD" = "resume-goal" ]; then
+        printf '{{"id":%s,"result":{{"goal":{{"status":"complete"}}}}}}\n' "$request_id"
+      else
+        printf '{{"id":%s,"result":{{"goal":null}}}}\n' "$request_id"
+      fi
       ;;
     *'"method":"turn/start"'*)
-      printf '{{"id":%s,"result":{{"turn":{{"id":"turn-1","status":"inProgress"}}}}}}\n' "$request_id"
-      printf '%s\n' '{{"method":"item/completed","params":{{"threadId":"thread-1","turnId":"turn-1","item":{{"id":"message-1","type":"agentMessage","phase":"final_answer","text":"done"}}}}}}'
-      printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-1","turn":{{"id":"turn-1","status":"completed"}}}}}}'
+      if [ "$process_count" -eq 1 ] && [ "$FAILING_METHOD" = "turn/start" ]; then
+        printf '{{"id":%s,"error":{{"code":-32603,"message":"failed to load configuration: timed out refreshing cloud config bundle"}}}}\n' "$request_id"
+      elif [ "$FAILING_METHOD" = "turn/start" ] && [ "$thread_loaded" -eq 0 ]; then
+        printf '{{"id":%s,"error":{{"code":-32603,"message":"thread not found: thread-1"}}}}\n' "$request_id"
+      else
+        printf '{{"id":%s,"result":{{"turn":{{"id":"turn-1","status":"inProgress"}}}}}}\n' "$request_id"
+        printf '%s\n' '{{"method":"item/completed","params":{{"threadId":"thread-1","turnId":"turn-1","item":{{"id":"message-1","type":"agentMessage","phase":"final_answer","text":"done"}}}}}}'
+        printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-1","turn":{{"id":"turn-1","status":"completed"}}}}}}'
+      fi
       ;;
   esac
 done
@@ -2047,7 +2125,9 @@ while IFS= read -r line; do
     *'"method":"initialized"'*)
       ;;
     *'"method":"thread/unsubscribe"'*)
-      printf '{"id":%s,"result":{}}\n' "$request_id"
+      printf '{"id":%s,"result":{"status":"unsubscribed"}}\n' "$request_id"
+      closed_thread_id=$(printf '%s\n' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
+      printf '%s\n' '{"method":"thread/closed","params":{"threadId":"'"$closed_thread_id"'"}}'
       ;;
     *'"method":"thread/resume"'*)
       printf '{"id":%s,"result":{"thread":{"id":"thread-1"}}}\n' "$request_id"
@@ -2218,6 +2298,8 @@ struct CloudConfigFallbackFixture {
     _wework_codex_home: EnvGuard,
     _executor_home: EnvGuard,
     _subscription: EnvGuard,
+    _workbench: EnvGuard,
+    _capabilities: EnvGuard,
     log_path: PathBuf,
     auth_log_path: PathBuf,
 }
@@ -2241,6 +2323,14 @@ fn cloud_config_fallback_fixture(name: &str) -> CloudConfigFallbackFixture {
         ),
         _executor_home: EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string()),
         _subscription: EnvGuard::set("WEWORK_CODEX_SUBSCRIPTION_ENABLED", "true"),
+        _workbench: EnvGuard::set(
+            "WEGENT_WORKBENCH_HOME",
+            &home.join("workbench").display().to_string(),
+        ),
+        _capabilities: EnvGuard::set(
+            "WEGENT_CAPABILITIES_HOME",
+            &home.join("capabilities").display().to_string(),
+        ),
         log_path: std::env::temp_dir().join(format!(
             "wegent-executor-codex-cloud-config-{name}-{}.jsonl",
             std::process::id()

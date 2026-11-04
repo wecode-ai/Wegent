@@ -727,6 +727,106 @@ fn fresh_cloud_manager_reuses_the_in_memory_runtime_model_config() {
 }
 
 #[test]
+fn coordination_manager_round_retains_enabling_identity_instead_of_device_account() {
+    use super::super::project_coordination_execution::{capture_identity, IDENTITY_KEY};
+    let snapshot = Arc::new(Mutex::new(Some(ConnectionConfig {
+        backend_url: "https://backend.example.com".into(),
+        socket_url: "wss://backend.example.com".into(),
+        auth_token: "device-owner-session".into(),
+        runtime_auth_token: "device-owner-runtime".into(),
+    })));
+    let handler =
+        RuntimeWorkRpcHandler::new("runner-device", "/bin/false").with_backend_connection(snapshot);
+    let mut source = source_link();
+    let scope = json!({"userId":7,"deviceId":"coordination-host","projectId":"1001",
+        "groupId":"101","commandId":"command","generation":"one","inputDigest":"digest"});
+    source.runtime_handle["origin"]["project_coordination"] = scope.clone();
+    let original = ExecutionRequest {
+        auth_token: Some("enabling-member-token".into()),
+        runtime_auth_token: Some("enabling-member-runtime".into()),
+        skill_identity_token: Some("enabling-member-skill".into()),
+        extra: serde_json::from_value(json!({"origin":{"project_coordination":scope}})).unwrap(),
+        ..Default::default()
+    };
+    source.runtime_handle[IDENTITY_KEY] = capture_identity(&original).unwrap();
+    let result = handler
+        .prepare_fresh_cloud_manager(&source, &command(), &[])
+        .unwrap();
+    assert_eq!(
+        result["executionRequest"]["auth_token"],
+        "enabling-member-token"
+    );
+    assert_eq!(
+        result["executionRequest"]["runtime_auth_token"],
+        "enabling-member-runtime"
+    );
+    assert_eq!(
+        result["executionRequest"]["skill_identity_token"],
+        "enabling-member-skill"
+    );
+    assert_eq!(result["origin"]["project_coordination"], scope);
+    assert_eq!(
+        result["runtimeHandle"][IDENTITY_KEY],
+        source.runtime_handle[IDENTITY_KEY]
+    );
+    let mut missing_optional = original.clone();
+    missing_optional.runtime_auth_token = None;
+    missing_optional.skill_identity_token = None;
+    source.runtime_handle[IDENTITY_KEY] = capture_identity(&missing_optional).unwrap();
+    let result = handler
+        .prepare_fresh_cloud_manager(&source, &command(), &[])
+        .unwrap();
+    assert_eq!(
+        result["executionRequest"]["auth_token"],
+        "enabling-member-token"
+    );
+    assert!(result["executionRequest"]["runtime_auth_token"].is_null());
+    assert!(result["executionRequest"]["skill_identity_token"].is_null());
+    let mut without_identity = missing_optional;
+    without_identity.auth_token = None;
+    handler.apply_backend_connection(&mut without_identity);
+    assert!(without_identity.auth_token.is_none());
+    assert!(without_identity.runtime_auth_token.is_none());
+    source.runtime_handle[IDENTITY_KEY]["context"]["generation"] = json!("another");
+    assert!(handler
+        .prepare_fresh_cloud_manager(&source, &command(), &[])
+        .is_err());
+    source
+        .runtime_handle
+        .as_object_mut()
+        .unwrap()
+        .remove(IDENTITY_KEY);
+    assert!(handler
+        .prepare_fresh_cloud_manager(&source, &command(), &[])
+        .is_err());
+}
+
+#[test]
+fn coordination_member_materialization_keeps_exact_original_command_scope() {
+    let scope = json!({"userId":7,"projectId":"1001","groupId":"101","commandId":"command",
+        "deviceId":"coordination-host","generation":"one","inputDigest":"digest"});
+    let mut payload = json!({"taskId":"profile","origin":{"project_coordination":scope,"executionId":91},
+        "executionRequest":{"extra":{"origin":{"project_coordination":scope,"executionId":91}}}});
+    let command = command();
+    materialize_collaboration_member_payload(
+        &mut payload,
+        "member-task",
+        &command,
+        &command.assignments[0],
+    )
+    .unwrap();
+    assert_eq!(payload["origin"]["project_coordination"], scope);
+    assert_eq!(
+        payload["executionRequest"]["extra"]["origin"]["project_coordination"],
+        scope
+    );
+    assert!(payload["origin"].get("executionId").is_none());
+    assert!(payload["executionRequest"]["extra"]["origin"]
+        .get("executionId")
+        .is_none());
+}
+
+#[test]
 fn fresh_cloud_manager_identity_is_stable_per_round() {
     let command = command();
 

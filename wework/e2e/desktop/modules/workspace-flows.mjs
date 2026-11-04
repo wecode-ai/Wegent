@@ -514,16 +514,15 @@ export async function enterLocalCollaborationWorkspace(control, contentSelector)
     contentSelector
   )
   const localWorkspaceIdentity = `${localWorkspaceTree} .collaboration-workspace-identity`
-  const workspaceReadyTimeoutMs = Math.max(DEFAULT_STEP_TIMEOUT_MS, 30_000)
   await control.command('waitFor', localWorkspaceIdentity, {
     visible: true,
-    timeoutMs: workspaceReadyTimeoutMs,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('click', localWorkspaceIdentity)
   const activeWorkspaceHome = `${localWorkspaceTree} [data-testid="collaboration-workspace-nav-projects"]`
   await control.command('waitFor', `${activeWorkspaceHome}[aria-current="page"]`, {
     visible: true,
-    timeoutMs: workspaceReadyTimeoutMs,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command(
     'waitFor',
@@ -2399,12 +2398,12 @@ async function verifyWorkspaceTabIsolation(control, restartDesktopApp) {
   assert.ok(fourthTaskTestId, 'The fourth task tab identity was not observable')
   const fourthTaskId = fourthTaskTestId.slice('workspace-tab-'.length)
   const fourthTaskContent = `[data-testid="workspace-tab-content-${fourthTaskId}"]`
-  await control.command('waitFor', `${fourthTaskContent} [data-testid="automation-button"]`, {
+  await control.command('waitFor', `${fourthTaskContent} [data-testid="plugins-button"]`, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('click', `${fourthTaskContent} [data-testid="automation-button"]`)
-  await control.command('waitFor', '[data-testid="create-automation-button"]', {
+  await control.command('click', `${fourthTaskContent} [data-testid="plugins-button"]`)
+  await control.command('waitFor', '[data-testid="plugins-workspace"]', {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })

@@ -143,13 +143,7 @@ async function waitForSnapshot(control, predicate, message, timeoutMs) {
 async function assertQueuePosition(control, selector, expected, visible, message) {
   // Queue admission can render before positional metadata reaches the sidebar.
   await control.command('waitFor', selector, visible ? { visible: true } : {})
-  let text = ''
-  const deadline = Date.now() + 10_000
-  while (Date.now() < deadline) {
-    text = await control.command('getText', selector, { visible })
-    if (text.split('\n').filter(Boolean).includes(expected)) break
-    await new Promise(resolve => setTimeout(resolve, 100))
-  }
+  const text = await control.command('getText', selector, { visible })
   const positions = text.split('\n').filter(Boolean)
   assert.ok(positions.length > 0, message ?? `No queue position found for ${selector}`)
   assert.ok(

@@ -466,6 +466,7 @@ fn store_runtime_execution_request(runtime_handle: &mut Value, request: &Executi
                 | "runtimePermissionProfile"
                 | "skill_names"
                 | "standaloneChatWorkspace"
+                | "standInDelegation"
                 | "team_id"
                 | "team_name"
                 | "team_owner"

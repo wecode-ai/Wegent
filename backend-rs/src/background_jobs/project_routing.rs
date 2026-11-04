@@ -8,6 +8,7 @@ use super::{
     authority,
     store::{self, COLUMNS, LIVE, Node},
 };
+use crate::plugins_marketplace::query::PluginQuery;
 use crate::state::AppState;
 use anyhow::{Context, Result, bail};
 use brz_mysql::FromMysqlRow;
@@ -31,9 +32,17 @@ pub(crate) async fn allowed_devices(
     project_id: &str,
     agent_id: &str,
 ) -> Result<BTreeSet<i64>> {
-    let workspace = authority::parent(state, project_id).await?;
-    let workspace_grants:Vec<Grant>=state.mysql.fetch_all("SELECT resource_id,status,role FROM resource_members WHERE resource_type='Device' AND entity_type='workspace' AND entity_id=?",(workspace.to_string(),)).await?;
-    let project_grants:Vec<Grant>=state.mysql.fetch_all("SELECT resource_id,status,role FROM resource_members WHERE resource_type='Device' AND entity_type='project' AND entity_id=?",(project_id,)).await?;
+    allowed_devices_on(&mut &state.mysql, project_id, agent_id).await
+}
+
+pub(crate) async fn allowed_devices_on(
+    query: &mut impl PluginQuery,
+    project_id: &str,
+    agent_id: &str,
+) -> Result<BTreeSet<i64>> {
+    let workspace = authority::parent_on(query, project_id).await?;
+    let workspace_grants:Vec<Grant>=query.fetch_all("SELECT resource_id,status,role FROM resource_members WHERE resource_type='Device' AND entity_type='workspace' AND entity_id=?",(workspace.to_string(),)).await?;
+    let project_grants:Vec<Grant>=query.fetch_all("SELECT resource_id,status,role FROM resource_members WHERE resource_type='Device' AND entity_type='project' AND entity_id=?",(project_id,)).await?;
     let approved = |grant: &Grant| {
         grant.status == "approved"
             && matches!(grant.role.as_str(), "Owner" | "Maintainer" | "Developer")
@@ -51,10 +60,10 @@ pub(crate) async fn allowed_devices(
     if agent_id.is_empty() {
         return Ok(ids);
     }
-    let project = store::get(&state.mysql, "project", project_id)
+    let project = store::get_on(query, "project", project_id)
         .await?
         .context("Project unavailable")?;
-    let agents:Vec<Node>=state.mysql.fetch_all(format!("SELECT {COLUMNS} FROM loop_items WHERE resource_type='chat_agent' AND id=? AND cloud_project_id=? AND status='active' AND {LIVE}"),(agent_id,project_id)).await?;
+    let agents:Vec<Node>=query.fetch_all(format!("SELECT {COLUMNS} FROM loop_items WHERE resource_type='chat_agent' AND id=? AND cloud_project_id=? AND status='active' AND {LIVE}"),(agent_id,project_id)).await?;
     for agent in agents {
         if authority::truthy(&agent.metadata.0["authorization_version"])
             || agent.device_id.is_empty()
@@ -62,8 +71,8 @@ pub(crate) async fn allowed_devices(
         {
             continue;
         }
-        if let Some(device) = crate::device_identity::resolve_owned_device_alias(
-            &state.mysql,
+        if let Some(device) = crate::device_identity::resolve_owned_device_alias_on(
+            query,
             agent.created_by_user_id,
             &agent.device_id,
         )

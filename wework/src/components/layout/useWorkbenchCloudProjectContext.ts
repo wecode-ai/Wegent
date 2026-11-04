@@ -35,6 +35,7 @@ import {
   rememberProjectTaskStore,
   type ProjectTaskRuntimeApi,
 } from '@/features/workbench/projectTaskTracking'
+import { useProjectSpaceProjects } from './useProjectSpaceProjects'
 
 interface PendingTodoBinding {
   paneKey: string
@@ -369,7 +370,7 @@ export function useWorkbenchCloudProjectContext({
     pendingProjectForTask(contextRuntimeTask, paneKey)
   )
   const [todoBindingError, setTodoBindingError] = useState<string | null>(null)
-  const [cloudProjects, setCloudProjects] = useState<CloudProject[]>([])
+  const cloudProjects = useProjectSpaceProjects(contextActive, projectSpaceDataApis)
   const [dismissedDefaultCloudProjectKey, setDismissedDefaultCloudProjectKey] = useState<
     string | null
   >(null)
@@ -763,48 +764,6 @@ export function useWorkbenchCloudProjectContext({
     cloudMentionState?.todoId === (composerTodoItem?.id ?? `project:${composerCloudProject.id}`)
       ? cloudMentionState.candidates
       : []
-
-  useEffect(() => {
-    if (!contextActive) return
-    let active = true
-    const apis = projectSpaceDataApis
-    if (!apis.length) {
-      queueMicrotask(() => {
-        if (active) setCloudProjects([])
-      })
-      return () => {
-        active = false
-      }
-    }
-    const projectsByApi: Array<CloudProject[] | undefined> = new Array(apis.length)
-    const publishSettledProjects = () => {
-      if (!active) return
-      const candidates = projectsByApi.flatMap(projects => projects ?? [])
-      setCloudProjects(
-        candidates.filter(
-          (candidate, index) =>
-            candidates.findIndex(
-              other => other.id === candidate.id && other.project_store === candidate.project_store
-            ) === index
-        )
-      )
-    }
-    apis.forEach((api, index) => {
-      void Promise.resolve()
-        .then(() => api.listCloudProjects())
-        .then(result => {
-          projectsByApi[index] = result.items
-          publishSettledProjects()
-        })
-        .catch(() => {
-          projectsByApi[index] = []
-          publishSettledProjects()
-        })
-    })
-    return () => {
-      active = false
-    }
-  }, [contextActive, projectSpaceDataApis])
 
   useEffect(() => {
     const pendingAutoJoin = pendingAutoJoinResolutionRef.current

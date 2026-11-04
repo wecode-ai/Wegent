@@ -6,8 +6,8 @@ packages:
   - packages/*
 confirmModulesPurge: false
 overrides:
-  # yauzl 2's fd-slicer marks buffered EOF as destroyed and hangs on Node >=24.16.
-  "extract-zip>yauzl": 3.4.0
+  # Keep Office 2.x with the drawing fix and a self-contained XML parse Worker.
+  "@file-viewer/renderer-word@2.1.27>@file-viewer/docx": 0.3.34
 allowBuilds:
   core-js: true
   dingtalk-workspace-cli: false

@@ -139,11 +139,15 @@ export async function createHarnessPackage(
     archiveName = installationId,
     version = '0.1.0',
     cordisPatch = '- id: ui-model-selection\n  config:\n    provider: fixture\n    model: fixture\n',
+    deliveryFiles = {},
   } = {}
 ) {
   const packagePath = join(resultDir, `${archiveName}.zip`)
   const root = `harness-e2e-plugin-${installationId}`
   await createZipFixture(packagePath, {
+    ...Object.fromEntries(
+      Object.entries(deliveryFiles).map(([name, bytes]) => [`${root}/${name}`, bytes])
+    ),
     [`${root}/PLUGIN.md`]: '# Harness desktop E2E\n',
     [`${root}/INSTALL.zh-CN.md`]: '# 安装\n',
     [`${root}/plugin-manifest.json`]: JSON.stringify(

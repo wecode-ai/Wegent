@@ -1,14 +1,48 @@
 import type { BrowserWindow } from 'electron'
 import { EventEmitter } from 'node:events'
+import { runInNewContext } from 'node:vm'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
   observeStartupSplash,
+  inspectStartupSplash,
   type StartupSplashInspection,
 } from './startup-splash-verification.js'
 
 afterEach(() => vi.useRealTimers())
 
 describe('native startup splash observations', () => {
+  test('keeps the rendered stage with its timeout state while the host advances', async () => {
+    const renderedProgress = { stage: { id: 'core-dsh' }, startedAt: 100 }
+    const context = {
+      currentUpdate: renderedProgress,
+      structuredClone,
+      document: {
+        getElementById: (id: string) => (id === 'startup-timeout' ? { hidden: false } : undefined),
+      },
+    }
+    let release: () => void = () => {}
+    const pending = new Promise<void>(resolve => {
+      release = resolve
+    })
+    const window = {
+      isDestroyed: () => false,
+      webContents: {
+        executeJavaScript: async (script: string) => {
+          const snapshot = runInNewContext(script, context)
+          await pending
+          return snapshot
+        },
+      },
+    }
+    const inspection = inspectStartupSplash(window as unknown as BrowserWindow)
+    context.currentUpdate = { stage: { id: 'renderer' }, startedAt: 200 }
+    release()
+    expect(await inspection).toMatchObject({
+      progress: renderedProgress,
+      timeoutHidden: false,
+    })
+  })
+
   test('retains a slow state that ended before the workbench controller connected', async () => {
     vi.useFakeTimers()
     const window = new EventEmitter()

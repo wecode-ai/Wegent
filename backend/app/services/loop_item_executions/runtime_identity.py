@@ -5,8 +5,29 @@
 """Separate collaboration handoff identities from conversation identities."""
 
 from app.models.loop_item_execution import LoopItemExecution
+from app.schemas.runtime_work import RuntimeTaskCreateRequest
 
 RUNTIME_TASK_ID_PREFIX = "codex-queue"
+
+
+def bind_comment_user_identity(
+    request: RuntimeTaskCreateRequest, execution: LoopItemExecution
+) -> RuntimeTaskCreateRequest:
+    """Bind either producer's request to its persisted source comment at dispatch."""
+    message_id = execution.runtime_origin_context.get("comment_trigger_message_id")
+    if not isinstance(message_id, str) or not message_id.strip():
+        return request
+    return request.model_copy(update={"client_user_message_id": message_id})
+
+
+def execution_actor_options(execution: LoopItemExecution) -> dict[str, int]:
+    """Keep the enabling member as actor, independently of device/definition ownership."""
+    if (
+        execution.uses_runner_routing
+        or "project_coordination" in execution.runtime_origin_context
+    ):
+        return {"execution_user_id": execution.assigner_user_id}
+    return {}
 
 
 def runtime_task_id_for(execution_id: int) -> str:
