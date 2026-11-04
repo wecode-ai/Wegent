@@ -165,6 +165,17 @@ Legacy `creator_admin` input remains accepted, while shared bindings follow proj
 
 Local private projects retain owner authority offline. Shared cloud operations use server-side relationships.
 
+Source rules retain verified account evidence in device-private storage: a user ID and
+an irreversible fingerprint of the current connection configuration. During transport
+or server outages, local rule management and collection require the same device,
+connection configuration and user. Switching accounts or receiving an explicit 401/403
+invalidates the evidence. Collection responses and publication recheck account changes.
+This evidence grants no cloud project authority: cloud creation, delivery and execution
+retain current credentials and the original server authorization, waiting through a
+transport outage. `connection_identity::tests` and `connection_automation_contract`
+cover offline use, switching, denial, persistence and absence of persisted credentials,
+preserving CP15's current cloud execution authorization.
+
 ## Incident and recovery evidence
 
 Development startup automatically runs Alembic. The original permission migration was automatically applied while under development and failed serializing backup data. MySQL retained completed DDL while rolling back project-parent backfill. Startup swallowed the failure, and queries against the empty new parent column hid projects. The earlier claim that no real database had been migrated was inaccurate.

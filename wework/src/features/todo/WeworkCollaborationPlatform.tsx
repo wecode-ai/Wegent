@@ -1,3 +1,4 @@
+import { useConnectionAutomationHost } from '@/features/collaboration/useConnectionAutomationHost'
 import { IssueChangeRequestBadges } from '@/features/change-requests/IssueChangeRequestBadges'
 import { requireIssueTaskAvailable } from './issueTaskAvailability'
 import { useStandInProjects } from './useStandInProjects'
@@ -533,8 +534,10 @@ export function WeworkSharedProject({
       project.project_store,
     ]
   )
+  const connectionAutomation = useConnectionAutomationHost(services, Number(userId), scopedApi)
   const projectHost = useMemo<CollaborationHostAdapter>(
     () => ({
+      connectionAutomation,
       renderProjectHeaderAction: currentProject =>
         experimentalFeaturesEnabled ? (
           <div className="flex items-center gap-2">
@@ -624,6 +627,7 @@ export function WeworkSharedProject({
       ),
     }),
     [
+      connectionAutomation,
       focusedItemId,
       devices,
       experimentalFeaturesEnabled,

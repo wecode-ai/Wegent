@@ -404,6 +404,14 @@ export function StandInEmailConnections({
           name: row.name,
           testId: `stand-in-email-policy-${row.profile}`,
           policy: row.policy,
+          processing: row,
+          onProcessingChange: processing =>
+            onChange({
+              ...role,
+              connections: (role.connections ?? []).map(value =>
+                value === row ? { ...value, ...processing } : value
+              ),
+            }),
           onChange: policy =>
             onChange({
               ...role,

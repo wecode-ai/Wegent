@@ -504,6 +504,11 @@ export function StandInSourceConnections({
                 key: identity(row),
                 name: row.name,
                 policy: row.policy,
+                processing: row,
+                onProcessingChange: processing =>
+                  updateRows(
+                    rows.map(value => (value === row ? { ...value, ...processing } : value))
+                  ),
                 testId: `${prefix}-policy-${row.id}`,
                 onChange: policy =>
                   updateRows(rows.map(value => (value === row ? { ...value, policy } : value))),

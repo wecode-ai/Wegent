@@ -69,7 +69,10 @@ pub(super) fn validate_rules(
             "event"
                 if matches!(
                     text(rule, "eventType"),
-                    "task.created" | "task.tag_added" | "task.status_changed"
+                    "task.created"
+                        | "task.tag_added"
+                        | "task.status_changed"
+                        | "connection.result_published"
                 ) => {}
             _ => {
                 return Err(TaskRuntimeError::Invalid(
@@ -132,7 +135,7 @@ pub(super) fn on_event_with_origin(
     Ok(())
 }
 
-fn run_for_issue(
+pub(super) fn run_for_issue(
     connection: &Connection,
     project: &LoopItem,
     task_id: &str,
@@ -253,6 +256,7 @@ fn dispatch(
         }
         "collaboration_group" => {
             let group = collaboration_group(project, target_id)?;
+            let description = format!("{}\n\n{}", text(rule, "prompt"), task.description);
             let execution = dispatch_collaboration_group_assignment(
                 connection,
                 CollaborationGroupExecutionInput {
@@ -260,7 +264,7 @@ fn dispatch(
                     project_id: &project.id,
                     group: &group,
                     issue_title: task.title.as_deref().unwrap_or_default(),
-                    issue_description: &task.description,
+                    issue_description: &description,
                     issue_status: task.status.as_deref(),
                     priority: task.priority.as_deref().unwrap_or("none"),
                     payload: json!({"automation_run_id":run_id,"runnerSelection":rule["runnerSelection"]}),

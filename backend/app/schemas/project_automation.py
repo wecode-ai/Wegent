@@ -33,6 +33,7 @@ AutomationEventType = Literal[
     "change_request.review_submitted",
     "change_request.comment_created",
     "document.changed",
+    "connection.result_published",
 ]
 
 

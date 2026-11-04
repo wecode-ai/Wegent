@@ -91,12 +91,14 @@ class ProjectIncomingHookService:
         user_id: int,
         *,
         limit: int = 50,
+        event_id: str | None = None,
     ) -> list[ProjectIncomingEvent]:
         self.get(db, project_id, hook_id, user_id)
         return (
             db.query(ProjectIncomingEvent)
             .filter(
                 ProjectIncomingEvent.parent_id == hook_id,
+                *([ProjectIncomingEvent.id == event_id] if event_id else []),
                 loop_datetime_is_unset(ProjectIncomingEvent.deleted_at),
             )
             .order_by(ProjectIncomingEvent.created_at.desc())
@@ -347,6 +349,13 @@ class ProjectIncomingHookService:
                 status.HTTP_400_BAD_REQUEST,
                 str(exc),
             ) from exc
+        if source_type == "connection" and not normalize_webhook_events(
+            source_type, payload, headers
+        ):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "Connection publications accept only the configured result envelope",
+            )
         event_public_id = self._event_public_id(
             hook,
             source_type,

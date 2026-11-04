@@ -1719,6 +1719,32 @@ export function createHybridWorkbenchServices(
     deviceApi: hybridDeviceApi,
     runtimeWorkApi: hybridRuntimeWorkApi,
     standInApi: {
+      connectionRules(userId, deviceId) {
+        const resolve = async () => {
+          const localIdentity = deviceId ? null : await getLocalRuntimeSidebarIdentity()
+          if (!deviceId && !localIdentity) throw new Error('Local Executor identity is unavailable')
+          const target = deviceId ?? localIdentity!.deviceId
+          const selected = deviceId ? await standInApiForDevice(deviceId) : localServices.standInApi
+          const api = selected?.connectionRules?.(userId, target)
+          if (!api) throw new Error('Connection automation is unavailable on this Executor')
+          return api
+        }
+        return {
+          list: async project => (await resolve()).list(project),
+          save: async rule => (await resolve()).save(rule),
+          remove: async (id, version) => (await resolve()).remove(id, version),
+          runs: async id => (await resolve()).runs(id),
+          retry: async id => (await resolve()).retry(id),
+          retrySource: async id => {
+            const api = await resolve()
+            if (!api.retrySource) throw new Error('Source recovery is unavailable on this Executor')
+            await api.retrySource(id)
+          },
+          providers: async () => (await resolve()).providers(),
+          resources: async (providerId, kind, query) =>
+            (await resolve()).resources(providerId, kind, query),
+        }
+      },
       async projectProcessing(userId, deviceId, target, check) {
         return (await standInApiForDevice(deviceId)).projectProcessing(
           userId,

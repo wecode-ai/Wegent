@@ -5,6 +5,18 @@
 use super::*;
 
 impl RuntimeWorkHandler for RuntimeWorkRpcHandler {
+    fn update_local_account_identity(
+        &self,
+        connection: Option<&ConnectionConfig>,
+    ) -> Result<(), AppIpcError> {
+        let fingerprint = connection.map(super::connection_identity::connection_fingerprint);
+        LocalTaskStore::open(self.task_store_path.as_ref())
+            .map_err(super::stand_in::settings_error)?
+            .update_connection_identity(&self.device_id, fingerprint.as_deref())
+            .map_err(super::stand_in::settings_error)?;
+        Ok(())
+    }
+
     fn reconcile_bound_task_statuses<'a>(
         &'a self,
     ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> {

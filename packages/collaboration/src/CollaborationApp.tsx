@@ -1149,6 +1149,27 @@ export function CollaborationApp({
                                 "collaboration-project-settings-automatic-processing",
                               content: (
                                 <ProjectAutomaticProcessing
+                                  connectionRules={
+                                    host.connectionAutomation?.api
+                                  }
+                                  renderConnectionRunnerSelection={
+                                    host.connectionAutomation
+                                      ?.renderRunnerSelection
+                                  }
+                                  connectionProject={{
+                                    id: project.id,
+                                    store:
+                                      project.project_store === "local"
+                                        ? "local"
+                                        : "cloud",
+                                  }}
+                                  onOpenConnectionIssue={async (issueId) => {
+                                    await api.issues.get(issueId);
+                                    host.navigate({
+                                      ...host.location,
+                                      issueId,
+                                    });
+                                  }}
                                   api={api}
                                   project={project}
                                   members={members}
@@ -1232,9 +1253,9 @@ export function CollaborationApp({
                 onClose: () => {
                   commands.clearSelectedIssue();
                   host.navigate({
+                    ...host.location,
                     projectId: project.id,
                     issueId: null,
-                    view: host.location.view,
                   });
                 },
                 onChange: commands.replaceIssue,
@@ -1290,9 +1311,9 @@ export function CollaborationApp({
                 onClose={() => {
                   commands.clearSelectedIssue();
                   host.navigate({
+                    ...host.location,
                     projectId: project.id,
                     issueId: null,
-                    view: host.location.view,
                   });
                 }}
                 onChange={commands.replaceIssue}

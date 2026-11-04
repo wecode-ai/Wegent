@@ -4,6 +4,7 @@ import { UPGRADE_CHECKPOINTS, UPGRADE_CHECKPOINT_GROUP } from './upgrade-suite.m
 // Cloud checkpoint in CI, sharing its service and Runtime lifecycle.
 export const DESKTOP_CHECKPOINT_CI_HOSTS = new Map([
   ['responses-api-gateway', 'plugin-account-auth-dws'],
+  ['connection-automations', 'stand-in-plugin-bridge'],
 ])
 
 export const DESKTOP_CHECKPOINTS = [
@@ -54,6 +55,7 @@ export const DESKTOP_CHECKPOINTS = [
   'stand-in-mcp',
   'stand-in-cli',
   'stand-in-plugin-bridge',
+  'connection-automations',
   'stand-in-alternate-source',
   'stand-in-assignment-notifications',
   'stand-in-personal-task',

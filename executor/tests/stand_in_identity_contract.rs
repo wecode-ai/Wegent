@@ -417,3 +417,46 @@ fn continuous_connection_scopes_preserve_account_kind_and_memory_isolation() {
         .push(specific);
     assert!(store.save_personal_stand_in(7, "mac", overlap).is_err());
 }
+
+#[test]
+fn connection_rule_pause_preserves_execution_policy_and_resets_only_intake_boundary() {
+    let root = tempfile::tempdir().unwrap();
+    let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+    let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    let mut connection = source();
+    connection["providerId"] = json!("@test/source");
+    connection["condition"] = json!({"contains":"failure","senderId":"customer"});
+    connection["instruction"] = json!("Investigate");
+    settings["primary"] =
+        json!({"enabled":true,"prompt":"","preferences":"","connections":[connection]});
+    let mut saved = store.save_personal_stand_in(7, "mac", settings).unwrap();
+    saved["primary"]["connections"][0]["enabledAfter"] = json!("2020-01-01T00:00:00Z");
+    saved["primary"]["connections"][0]["policy"]["enabled"] = json!(false);
+    let paused = store.save_personal_stand_in(7, "mac", saved).unwrap();
+    assert_eq!(
+        paused["primary"]["connections"][0]["policy"]["automatic"],
+        true
+    );
+    assert_eq!(
+        paused["primary"]["connections"][0]["policy"]["askBeforeAct"],
+        true
+    );
+    assert_eq!(
+        paused["primary"]["connections"][0]["condition"]["contains"],
+        "failure"
+    );
+    let mut invalid = paused.clone();
+    invalid["primary"]["connections"][0]["condition"] = json!({"unknown":"unsafe"});
+    assert!(store.save_personal_stand_in(7, "mac", invalid).is_err());
+    let mut invalid = paused.clone();
+    invalid["primary"]["connections"][0]["instruction"] = json!(false);
+    assert!(store.save_personal_stand_in(7, "mac", invalid).is_err());
+    let mut resumed = paused;
+    resumed["primary"]["connections"][0]["enabledAfter"] = json!("2020-01-01T00:00:00Z");
+    resumed["primary"]["connections"][0]["policy"]["enabled"] = json!(true);
+    let resumed = store.save_personal_stand_in(7, "mac", resumed).unwrap();
+    assert_ne!(
+        resumed["primary"]["connections"][0]["enabledAfter"],
+        "2020-01-01T00:00:00Z"
+    );
+}

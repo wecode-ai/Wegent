@@ -133,6 +133,8 @@ mod codex_config;
 mod collection;
 mod command_items;
 mod command_journal;
+mod connection_identity;
+mod connection_rules;
 mod connections;
 mod context_compaction;
 mod fork_transfer;
@@ -1113,6 +1115,14 @@ impl RuntimeWorkRpcHandler {
         backend_connection: Arc<Mutex<Option<ConnectionConfig>>>,
     ) -> Self {
         self.backend_connection = backend_connection;
+        if let Ok(connection) = self.backend_connection_snapshot() {
+            if let Err(error) = self.update_local_account_identity(connection.as_ref()) {
+                log_executor_event(
+                    "Local account identity initialization failed",
+                    &[("code", error.code)],
+                );
+            }
+        }
         self.start_local_stand_in_scheduler();
         self.start_connection_stand_in_scheduler();
         self.register_cloud_collaboration_dispatcher();

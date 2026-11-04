@@ -18,9 +18,19 @@ import {
   Webhook,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { AutomationEventType } from "../automation/types";
+import {
+  AUTOMATION_EVENT_TYPES,
+  type AutomationEventType,
+} from "../automation/types";
+import { ConnectionRulesPanel } from "../automation/ConnectionRulesPanel";
+import { AutomationInstructionField } from "../automation/AutomationInstructionField";
+import type {
+  ConnectionRulesApi,
+  ConnectionProjectTarget,
+  ConnectionAutomationRule,
+} from "../automation/connectionRules";
 import type { CollaborationTranslate } from "../i18n";
 import type {
   SharedWorkspaceApi,
@@ -93,6 +103,7 @@ interface AutomaticProcessingDraft {
   id: string | null;
   version: number | null;
   name: string;
+  prompt: string;
   trigger: TriggerKind;
   tag: string;
   cronExpression: string;
@@ -108,6 +119,7 @@ const EMPTY_DRAFT: AutomaticProcessingDraft = {
   id: null,
   version: null,
   name: "",
+  prompt: "",
   trigger: "created",
   tag: "",
   cronExpression: "0 9 * * 1-5",
@@ -176,24 +188,17 @@ function sourceType(hook: WorkspaceIncomingHook) {
   );
 }
 
-function eventTypesForHook(hook: WorkspaceIncomingHook): AutomationEventType[] {
-  const source = sourceType(hook);
-  if (source === "github") {
-    return [
-      "change_request.checks_failed",
-      "change_request.merge_conflict",
-      "change_request.review_submitted",
-      "change_request.comment_created",
-    ];
-  }
-  if (source === "gitlab") {
-    return [
-      "change_request.checks_failed",
-      "change_request.merge_conflict",
-      "change_request.comment_created",
-    ];
-  }
-  return ["document.changed"];
+function eventTypesForHook(
+  hook: WorkspaceIncomingHook,
+  catalog: Record<string, unknown>[],
+): AutomationEventType[] {
+  const entry = catalog.find(
+    (item) => text(item, "sourceType", "source_type") === sourceType(hook),
+  );
+  const events = entry?.eventTypes ?? entry?.event_types;
+  return Array.isArray(events)
+    ? AUTOMATION_EVENT_TYPES.filter((event) => events.includes(event))
+    : [];
 }
 
 function eventLabel(value: string, locale: "zh-CN" | "en") {
@@ -203,6 +208,10 @@ function eventLabel(value: string, locale: "zh-CN" | "en") {
     "change_request.review_submitted": ["提交代码评审", "Review submitted"],
     "change_request.comment_created": ["新增代码评论", "Comment created"],
     "document.changed": ["外部文档变化", "External document changed"],
+    "connection.result_published": [
+      "外部来源发布结果",
+      "Source result published",
+    ],
   };
   const label = labels[value];
   return label ? label[locale === "zh-CN" ? 0 : 1] : value;
@@ -290,6 +299,7 @@ function draftFromRule(
     id: rule.id,
     version: rule.version,
     name: rule.name,
+    prompt: rule.prompt ?? "",
     trigger,
     tag: typeof tags[0] === "string" ? tags[0] : "",
     cronExpression: rule.cronExpression ?? "",
@@ -311,6 +321,10 @@ export function ProjectAutomaticProcessing({
   agents,
   locale,
   translate,
+  connectionRules,
+  connectionProject,
+  renderConnectionRunnerSelection,
+  onOpenConnectionIssue,
 }: {
   api: SharedWorkspaceApi;
   project: CollaborationProject;
@@ -318,6 +332,10 @@ export function ProjectAutomaticProcessing({
   agents: CollaborationAgent[];
   locale: "zh-CN" | "en";
   translate: CollaborationTranslate;
+  connectionRules?: ConnectionRulesApi;
+  connectionProject?: ConnectionProjectTarget;
+  renderConnectionRunnerSelection?: import("../automation/ConnectionRulesPanel").ConnectionRulesPanelProps["renderRunnerSelection"];
+  onOpenConnectionIssue?(issueId: string): void | Promise<void>;
 }) {
   const {
     rules,
@@ -332,6 +350,33 @@ export function ProjectAutomaticProcessing({
     useState<CollaborationMember[]>(members);
   const [optionsLoading, setOptionsLoading] = useState(true);
   const [hooks, setHooks] = useState<WorkspaceIncomingHook[]>([]);
+  const [sourceCatalog, setSourceCatalog] = useState<Record<string, unknown>[]>(
+    [],
+  );
+  const sourceProjectKey = `${connectionProject?.store}:${connectionProject?.id}`;
+  const [privateRules, setPrivateRules] = useState<{
+    project: string;
+    ids: string[];
+  } | null>(null);
+  const sourceRulesChanged = useCallback(
+    (rules: ConnectionAutomationRule[]) => {
+      setPrivateRules({
+        project: sourceProjectKey,
+        ids: rules.map((rule) => rule.cloudRuleId ?? rule.id),
+      });
+    },
+    [sourceProjectKey],
+  );
+  const sourcesLoading = Boolean(
+    connectionRules &&
+    connectionProject &&
+    privateRules?.project !== sourceProjectKey,
+  );
+  const privateRuleIds =
+    privateRules?.project === sourceProjectKey ? privateRules.ids : [];
+  const visibleRules = rules.filter(
+    (rule) => !privateRuleIds.includes(rule.id),
+  );
   const [draft, setDraft] = useState<AutomaticProcessingDraft>(EMPTY_DRAFT);
   const [editing, setEditing] = useState(false);
   const [targetPickerOpen, setTargetPickerOpen] = useState(false);
@@ -413,11 +458,14 @@ export function ProjectAutomaticProcessing({
     let active = true;
     setHooksLoading(true);
     setHooksError("");
-    void api.incomingHooks
-      .list(project.id)
-      .then((nextHooks) => {
+    void Promise.all([
+      api.incomingHooks.list(project.id),
+      api.incomingHooks.catalog(),
+    ])
+      .then(([nextHooks, catalog]) => {
         if (!active) return;
         setHooks(nextHooks);
+        setSourceCatalog(catalog);
         const hook = nextHooks[0];
         if (hook)
           setDraft((current) =>
@@ -426,7 +474,7 @@ export function ProjectAutomaticProcessing({
               : {
                   ...current,
                   hookId: hook.id,
-                  eventType: eventTypesForHook(hook)[0] ?? "",
+                  eventType: eventTypesForHook(hook, catalog)[0] ?? "",
                 },
           );
       })
@@ -472,7 +520,7 @@ export function ProjectAutomaticProcessing({
   );
   const selectedHook = hooks.find((hook) => hook.id === draft.hookId) ?? null;
   const externalEventTypes = selectedHook
-    ? eventTypesForHook(selectedHook)
+    ? eventTypesForHook(selectedHook, sourceCatalog)
     : [];
   const targetAvailable = targetOptions[draft.targetKind].some(
     (option) => option.id === draft.targetId,
@@ -578,7 +626,9 @@ export function ProjectAutomaticProcessing({
 
   function selectTrigger(trigger: TriggerKind) {
     const hook = hooks[0];
-    const eventType = hook ? (eventTypesForHook(hook)[0] ?? "") : "";
+    const eventType = hook
+      ? (eventTypesForHook(hook, sourceCatalog)[0] ?? "")
+      : "";
     updateDraft({
       trigger,
       ...(trigger === "external"
@@ -625,10 +675,12 @@ export function ProjectAutomaticProcessing({
             : eventLabel(value.eventType, locale);
     return {
       name: value.name.trim() || `${triggerName} → ${targetName}`,
-      prompt: translate(
-        "todo.automatic_processing_default_instruction",
-        "按照目标职责和 Issue 内容完成处理，并记录清晰的执行结果。",
-      ),
+      prompt:
+        value.prompt.trim() ||
+        translate(
+          "todo.automatic_processing_default_instruction",
+          "按照目标职责和 Issue 内容完成处理，并记录清晰的执行结果。",
+        ),
       triggerType: isSchedule ? "schedule" : "event",
       eventType,
       eventConfig,
@@ -749,7 +801,7 @@ export function ProjectAutomaticProcessing({
       title={translate("todo.automatic_processing", "自动处理")}
     >
       <div className="space-y-4" data-testid="automatic-processing">
-        {loading ? (
+        {loading || sourcesLoading ? (
           <p
             className="py-8 text-center text-sm text-text-muted"
             data-testid="automatic-processing-loading"
@@ -764,9 +816,9 @@ export function ProjectAutomaticProcessing({
               </div>
             ) : null}
 
-            {rules.length ? (
+            {visibleRules.length ? (
               <div className="divide-y divide-border overflow-hidden rounded-2xl border border-border bg-background">
-                {rules.map((rule) => {
+                {visibleRules.map((rule) => {
                   const ruleDraft = draftFromRule(rule);
                   const triggerLabel =
                     ruleDraft.trigger === "created"
@@ -839,12 +891,35 @@ export function ProjectAutomaticProcessing({
               </div>
             ) : !editing && !error ? (
               <div className="py-12 text-center text-sm text-text-secondary">
-                {translate("todo.no_automatic_processing", "暂无自动处理规则")}
+                {translate(
+                  "automation_rules.no_issue_rules",
+                  "暂无 Issue / 定时规则",
+                )}
               </div>
             ) : null}
           </>
         )}
       </div>
+
+      {connectionRules && connectionProject ? (
+        <ConnectionRulesPanel
+          api={connectionRules}
+          renderRunnerSelection={renderConnectionRunnerSelection}
+          onOpenIssue={onOpenConnectionIssue}
+          onRulesChange={sourceRulesChanged}
+          onMutation={() => void load()}
+          project={connectionProject}
+          targets={targetKinds.flatMap((target) =>
+            target.options.map((option) => ({
+              id: option.id,
+              kind: target.kind,
+              name: option.name,
+            })),
+          )}
+          translate={translate}
+          disabled={!canManage || optionsLoading || Boolean(optionsError)}
+        />
+      ) : null}
 
       {editing ? (
         <div className="collaboration-dialog-backdrop !bg-black/20">
@@ -916,6 +991,20 @@ export function ProjectAutomaticProcessing({
                   </span>
                 </p>
               </div>
+
+              <label className="block space-y-2 text-sm">
+                <span>
+                  {translate("automation_rules.instruction", "处理指令")}
+                </span>
+                <AutomationInstructionField
+                  className="min-h-24 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                  data-testid="automatic-processing-instruction"
+                  value={draft.prompt}
+                  onChange={(event) =>
+                    updateDraft({ prompt: event.target.value })
+                  }
+                />
+              </label>
 
               <fieldset
                 className="grid grid-cols-2 gap-2"
@@ -1184,7 +1273,8 @@ export function ProjectAutomaticProcessing({
                             updateDraft({
                               hookId: event.target.value,
                               eventType: hook
-                                ? (eventTypesForHook(hook)[0] ?? "")
+                                ? (eventTypesForHook(hook, sourceCatalog)[0] ??
+                                  "")
                                 : "",
                             });
                           }}

@@ -1,9 +1,4 @@
-import {
-  cloudRunnerModels,
-  requiresCloudModelCatalog,
-  resolveRunnerSelection,
-} from '@wegent/collaboration'
-import { requestRunnerSelection } from '@/lib/runner-selection'
+import { validateAutomationRunnerSelections } from '@/features/collaboration/automationRunnerSelection'
 import {
   mapAutomationExecutionCatalog,
   type CollaborationExecutionEnvironmentConfig,
@@ -416,93 +411,15 @@ export function createLocalWorkspaceApi(
     const agents = await projectAgentApi.list(projectId, { forceRefresh: true })
     const groups = await projectCollaborationGroups(projectId)
     const environments = await projectAgentApi.listRunnerEnvironments(projectId)
-    for (const rule of rules) {
-      if (!rule.enabled || rule.targetKind === 'human') continue
-      const group =
-        rule.targetKind === 'collaboration_group'
-          ? groups.find(item => item.id === rule.targetId)
-          : undefined
-      const ids = group
-        ? [group.leader, ...group.members]
-            .filter(item => item.kind === 'agent')
-            .map(item => item.id)
-        : [rule.targetId]
-      const members = [...new Set(ids)].map(id => {
-        const agent = agents.find(item => item.id === id)
-        if (!agent) throw new Error(`Automation agent '${id}' is unavailable`)
-        return agent
-      })
-      const cloudModels = members.some(
-        agent =>
-          agent.executionPolicy &&
-          requiresCloudModelCatalog(agent.modelPolicy, rule.runnerSelection)
-      )
-        ? await projectAgentApi.listModels()
-        : []
-      for (const agent of members) {
-        if (!agent.executionPolicy || !agent.modelPolicy) continue
-        const selection = () => ({
-          ...(agent.executionPolicy?.mode === 'user_select'
-            ? { execution_policy: rule.runnerSelection?.execution_policy }
-            : {}),
-          ...(agent.modelPolicy?.mode === 'user_select'
-            ? { model: rule.runnerSelection?.model }
-            : {}),
-        })
-        const input = {
-          environments,
-          cloudModels: cloudRunnerModels(cloudModels),
-          executionPolicy: agent.executionPolicy,
-          modelPolicy: agent.modelPolicy,
-          runtime: agent.runtime,
-          automatic: true,
-        }
-        try {
-          resolveRunnerSelection({ ...input, selection: selection() })
-        } catch (error) {
-          if (
-            !(error instanceof Error) ||
-            !/^(AUTOMATION_RUNNER_REQUIRED|RUNNER_MODEL_REQUIRED):/.test(error.message)
-          )
-            throw error
-          rule.runnerSelection = {
-            ...rule.runnerSelection,
-            ...(await requestRunnerSelection({
-              environments,
-              cloud_models: cloudModels,
-              cloud_only: agent.executionPolicy.mode !== 'fixed',
-              runtime: agent.runtime,
-              execution_policy: agent.executionPolicy,
-              model_policy: agent.modelPolicy,
-              automatic: true,
-            })),
-          }
-          resolveRunnerSelection({ ...input, selection: selection() })
-        }
-      }
-      // Recheck the entire group after the last choice: one deferred selection
-      // must satisfy every member that delegates that choice to the operator.
-      for (const agent of members) {
-        if (!agent.executionPolicy || !agent.modelPolicy) continue
-        resolveRunnerSelection({
-          environments,
-          cloudModels: cloudRunnerModels(cloudModels),
-          executionPolicy: agent.executionPolicy,
-          modelPolicy: agent.modelPolicy,
-          runtime: agent.runtime,
-          automatic: true,
-          selection: {
-            ...(agent.executionPolicy.mode === 'user_select'
-              ? { execution_policy: rule.runnerSelection?.execution_policy }
-              : {}),
-            ...(agent.modelPolicy.mode === 'user_select'
-              ? { model: rule.runnerSelection?.model }
-              : {}),
-          },
-        })
-      }
-    }
+    await validateAutomationRunnerSelections(
+      agents,
+      groups,
+      environments,
+      () => projectAgentApi.listModels(),
+      rules
+    )
   }
+
   const persistProjectAutomaticProcessingRules = async (
     projectId: string,
     rules: WorkspaceAutomationRule[]

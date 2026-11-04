@@ -6,6 +6,32 @@ import { bindProjectStandInApi, createStandInExecutorApi, type StandInExecutorAp
 
 const settings = { enabled: false, prompt: '', executionDeviceId: '', version: 0 }
 
+it('keeps connection rules and their private source discovery on the selected Executor', async () => {
+  const request = vi.fn().mockResolvedValue({ items: [] })
+  const api = createStandInExecutorApi(request).connectionRules!(7, 'collector-device')
+  const project = { id: 'project', store: 'cloud' as const }
+  await api.list(project)
+  expect(request).toHaveBeenLastCalledWith(
+    'runtime.connection_rules.list',
+    { userId: 7, project },
+    'collector-device'
+  )
+  await api.providers()
+  expect(request).toHaveBeenLastCalledWith('runtime.connections.catalog', {}, 'collector-device')
+  await api.resources('provider', 'inbox', 'query')
+  expect(request).toHaveBeenLastCalledWith(
+    'runtime.connections.resources',
+    { providerId: 'provider', kind: 'inbox', query: 'query' },
+    'collector-device'
+  )
+  await api.runs('rule')
+  expect(request).toHaveBeenLastCalledWith(
+    'runtime.connection_rules.runs',
+    { userId: 7, id: 'rule' },
+    'collector-device'
+  )
+})
+
 it('addresses project binding reads and explicit generation updates to the selected Executor', async () => {
   const state = { binding: null, canEnable: true, canStop: false }
   const request = vi.fn().mockResolvedValue(state)

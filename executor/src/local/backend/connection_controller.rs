@@ -123,7 +123,12 @@ impl LocalBackendConnectionController {
             connection_status: Arc::new(AtomicBool::new(false)),
             device_route_id,
         };
-        controller.replace_connection(initial_profile).await;
+        if let Err(error) = controller.replace_connection(initial_profile, true).await {
+            write_executor_error_line(&format_executor_log(
+                "local identity initialization failed",
+                &[("code", error.code)],
+            ));
+        }
         controller
     }
 
@@ -131,10 +136,21 @@ impl LocalBackendConnectionController {
         Arc::clone(&self.connection_snapshot)
     }
 
-    async fn replace_connection(&self, profile: Option<LocalBackendConnectionProfile>) -> bool {
+    async fn replace_connection(
+        &self,
+        profile: Option<LocalBackendConnectionProfile>,
+        explicit: bool,
+    ) -> Result<bool, AppIpcError> {
         let mut state = self.state.lock().await;
-        if state.profile == profile {
-            return false;
+        let changed = state.profile != profile;
+        if !changed && !explicit {
+            return Ok(false);
+        }
+        if let Some(handler) = &self.runtime_work_handler {
+            handler.update_local_account_identity(profile.as_ref().map(|p| &p.connection))?;
+        }
+        if !changed {
+            return Ok(false);
         }
         if let Ok(mut snapshot) = self.connection_snapshot.lock() {
             *snapshot = profile.as_ref().map(|value| value.connection.clone());
@@ -154,7 +170,7 @@ impl LocalBackendConnectionController {
             })
         {
             state.profile = profile;
-            return true;
+            return Ok(true);
         }
 
         if let Some(task) = state.task.take() {
@@ -241,7 +257,7 @@ impl LocalBackendConnectionController {
                 ),
             ],
         ));
-        true
+        Ok(true)
     }
 }
 
@@ -304,7 +320,7 @@ impl BackendConnectionHandler for LocalBackendConnectionController {
     ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
         Box::pin(async move {
             let profile = connection_profile_from_params(&params)?;
-            let changed = self.replace_connection(profile.clone()).await;
+            let changed = self.replace_connection(profile.clone(), true).await?;
             Ok(json!({
                 "changed": changed,
                 "connected": profile.is_some(),

@@ -38,6 +38,10 @@ use super::model::{
     TaskUpdate,
 };
 
+#[path = "connection_identity.rs"]
+mod connection_identity;
+#[path = "connection_rules.rs"]
+pub(crate) mod connection_rules;
 #[path = "local_automation.rs"]
 mod local_automation;
 
@@ -555,13 +559,26 @@ impl LocalTaskStore {
         start_at: Option<String>,
         due_at: Option<String>,
     ) -> Result<LoopItem, TaskRuntimeError> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let item = Self::create_task_on(&transaction, project_id, input, start_at, due_at, true)?;
+        transaction.commit()?;
+        Ok(item)
+    }
+
+    fn create_task_on(
+        transaction: &Connection,
+        project_id: &str,
+        input: TaskCreate,
+        start_at: Option<String>,
+        due_at: Option<String>,
+        dispatch_created: bool,
+    ) -> Result<LoopItem, TaskRuntimeError> {
         validate_name(&input.title, "task title")?;
         validate_status(&input.status)?;
         validate_priority(&input.priority)?;
         super::tagging::validate_tags(&input.tags)?;
         validate_schedule_range(start_at.as_deref(), due_at.as_deref())?;
-        let mut connection = self.connection()?;
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let project = get_item_from(&transaction, project_id, "project")?
             .ok_or(TaskRuntimeError::ProjectNotFound)?;
         if task_provider(&project)? != TaskProviderKind::Local {
@@ -707,10 +724,16 @@ impl LocalTaskStore {
         if let Some(parent_id) = parent_id.as_deref() {
             refresh_runtime_projection_additional_context(&transaction, parent_id)?;
         }
-        local_automation::on_event_with_origin(&transaction, project_id, &id, "task.created", &[])?;
-        transaction.commit()?;
-        drop(connection);
-        self.get_item(&id, "task")
+        if dispatch_created {
+            local_automation::on_event_with_origin(
+                &transaction,
+                project_id,
+                &id,
+                "task.created",
+                &[],
+            )?;
+        }
+        get_item_from(transaction, &id, "task")?.ok_or(TaskRuntimeError::TaskNotFound)
     }
 
     pub fn update_task(

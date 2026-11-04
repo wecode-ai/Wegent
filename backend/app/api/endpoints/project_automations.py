@@ -3,7 +3,7 @@
 
 """Wework project automation endpoints."""
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -221,11 +221,12 @@ async def run_automation(
 def list_runs(
     project_id: str,
     automation_id: str,
+    run_ids: list[str] = Query(default=[], max_length=200),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[ProjectAutomationRunView]:
     return project_automation_service.list_runs(
-        db, project_id, automation_id, current_user.id
+        db, project_id, automation_id, current_user.id, run_ids=run_ids
     )
 
 

@@ -78,6 +78,7 @@ vi.mock('@wegent/collaboration', async importOriginal => {
       host: {
         location: { projectId: string | null }
         manageResource?(kind: 'agents' | 'environments', resourceId?: string): void
+        connectionAutomation?: { api?: unknown }
       }
       initialProject?: { id: string }
       onCreateTask?: (project: unknown, issue: unknown) => Promise<void> | void
@@ -152,6 +153,7 @@ vi.mock('@wegent/collaboration', async importOriginal => {
         'div',
         {
           'data-testid': `collaboration-app-refresh-probe-${host.location.projectId}`,
+          'data-has-source-rules': Boolean(host.connectionAutomation?.api),
           'data-refresh-key': refreshProjectRequestKey,
           'data-render-count': renderCount.current,
           'data-project-ids': projectIds,
@@ -520,6 +522,45 @@ function deferred<T>() {
 }
 
 describe('Wework collaboration workspace API', () => {
+  it.each(['local', 'backend'] as const)(
+    'exposes device-owned source rules in the active %s project host',
+    async projectStore => {
+      const connectionRules = vi.fn(() => ({ list: vi.fn().mockResolvedValue([]), save: vi.fn() }))
+      render(
+        createElement(WeworkSharedProject, {
+          api: {
+            projects: { list: vi.fn().mockResolvedValue([]) },
+            issues: {},
+          } as unknown as SharedWorkspaceApi,
+          localProjects: [],
+          locale: 'zh-CN',
+          location: {
+            platformView: 'project',
+            workspaceId: 'space',
+            workspaceView: 'projects',
+            projectId: 'source-project',
+            projectView: 'manage',
+            issueId: null,
+          },
+          project: {
+            id: 'source-project',
+            name: 'Source project',
+            project_store: projectStore,
+          } as never,
+          services: { standInApi: { connectionRules } } as never,
+          setLocation: vi.fn(),
+          userId: 7,
+          workspace: { id: 'space', name: 'Space' } as never,
+        })
+      )
+      expect(screen.getByTestId('collaboration-app-refresh-probe-source-project')).toHaveAttribute(
+        'data-has-source-rules',
+        'true'
+      )
+      expect(connectionRules).toHaveBeenCalledWith(7)
+    }
+  )
+
   it('does not reject task creation when the Issue start update fails', async () => {
     const issues = {
       get: vi.fn().mockResolvedValue({

@@ -1,17 +1,17 @@
 import type { WorkspaceStandInSettings } from '@wegent/collaboration'
+import type {
+  ConnectionHandlingPolicy,
+  ConnectionRuleProcessing,
+} from '@wegent/collaboration/automation'
 
 export interface StandInProjectRef {
   id: string
   store: 'local' | 'cloud'
 }
 
-export interface StandInHandlingPolicy {
-  automatic: boolean
-  askBeforeAct: boolean
-  immediate?: boolean
-}
+export type StandInHandlingPolicy = ConnectionHandlingPolicy
 
-export interface StandInSourceConnection {
+export interface StandInSourceConnection extends ConnectionRuleProcessing {
   providerId: string
   id: string
   profile: string

@@ -11,7 +11,7 @@ from pydantic import Field, field_validator, model_validator
 from app.schemas.project_chat import ProjectChatSchema
 
 IncomingHookStatus = Literal["active", "disabled"]
-EventSourceType = Literal["github", "gitlab", "wework", "generic"]
+EventSourceType = Literal["github", "gitlab", "wework", "generic", "connection"]
 EventCollectionMode = Literal["webhook", "poll", "internal", "hybrid"]
 
 

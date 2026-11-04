@@ -553,8 +553,9 @@ impl RuntimeWorkRpcHandler {
             }
         }
         if event["kind"] == "connection"
-            && !stand_in_connection(role, &event["source"])
-                .is_some_and(|source| source["policy"]["automatic"] == true)
+            && !stand_in_connection(role, &event["source"]).is_some_and(|source| {
+                source["policy"]["automatic"] == true && source["policy"]["enabled"] != false
+            })
         {
             return Err(AppIpcError::new(
                 "source_removed",
@@ -563,7 +564,12 @@ impl RuntimeWorkRpcHandler {
         }
         if event["kind"] == "connection" {
             let source = stand_in_connection(role, &event["source"]).unwrap();
-            if !super::stand_in_ingress::source_accepts_message(source, &event["message"]) {
+            if !super::stand_in_ingress::source_accepts_message(source, &event["message"])
+                || !crate::task_runtime::connection_rules::matches_condition(
+                    &source["condition"],
+                    &event["message"],
+                )
+            {
                 return Err(AppIpcError::new(
                     "source_removed",
                     "Event predates the current source connection",
@@ -613,9 +619,9 @@ impl RuntimeWorkRpcHandler {
             let work = store
                 .stand_in_work(user, &link.local_task_id)
                 .map_err(settings_error)?;
-            if !stand_in_connection(role, &work["source"])
-                .is_some_and(|source| source["policy"]["automatic"] == true)
-            {
+            if !stand_in_connection(role, &work["source"]).is_some_and(|source| {
+                source["policy"]["automatic"] == true && source["policy"]["enabled"] != false
+            }) {
                 return Err(AppIpcError::new(
                     "source_removed",
                     "Work source is no longer connected",
@@ -625,9 +631,9 @@ impl RuntimeWorkRpcHandler {
                 .stand_in_messages(user, &link.local_task_id)
                 .map_err(settings_error)?
             {
-                if !stand_in_connection(role, &message["source"])
-                    .is_some_and(|source| source["policy"]["automatic"] == true)
-                {
+                if !stand_in_connection(role, &message["source"]).is_some_and(|source| {
+                    source["policy"]["automatic"] == true && source["policy"]["enabled"] != false
+                }) {
                     return Err(AppIpcError::new(
                         "source_removed",
                         "A merged work source is no longer connected",

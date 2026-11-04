@@ -1,3 +1,4 @@
+import { automationRuleMessages } from "./automation/messages";
 import { pluginTrialMessages } from "./composer/pluginTrialMessages";
 import { pluginPickerMessages } from "./composer/pluginPickerMessages";
 import { quickPhraseMessages } from "./composer/quickPhraseMessages";
@@ -1371,6 +1372,7 @@ export function createCollaborationTranslator(
         ? `${key}_${pluralRules.select(options.count)}`
         : key;
     let value =
+      automationRuleMessages[locale][key] ??
       autocompleteMessages[locale][key] ??
       contextUsageMessages[locale][key] ??
       pluginPickerMessages[locale][key] ??

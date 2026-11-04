@@ -42,7 +42,13 @@ function fixture() {
     projects: { listCollaborationGroups: jest.fn().mockResolvedValue([]) },
     agents: { list: jest.fn().mockResolvedValue(agents) },
     members: { list: jest.fn().mockResolvedValue([]) },
-    incomingHooks: { list: jest.fn().mockResolvedValue([]) },
+    incomingHooks: {
+      list: jest.fn().mockResolvedValue([]),
+      catalog: jest.fn().mockResolvedValue([
+        { sourceType: 'github', eventTypes: ['change_request.checks_failed'] },
+        { sourceType: 'generic', eventTypes: ['document.changed'] },
+      ]),
+    },
   }
   return {
     api,
@@ -210,11 +216,11 @@ describe('ProjectAutomaticProcessing loading', () => {
     expect(screen.getByText('自动分配')).toBeInTheDocument()
     expect(screen.queryByTestId('automatic-processing-loading')).not.toBeInTheDocument()
     await act(async () => refresh.resolve([]))
-    expect(screen.getByText('暂无自动处理规则')).toBeInTheDocument()
+    expect(screen.getByText('暂无 Issue / 定时规则')).toBeInTheDocument()
     mounted.unmount()
     api.automations.list.mockReturnValue(new Promise(() => {}))
     render(view())
-    expect(screen.getByText('暂无自动处理规则')).toBeInTheDocument()
+    expect(screen.getByText('暂无 Issue / 定时规则')).toBeInTheDocument()
     await act(async () => {})
   })
 })

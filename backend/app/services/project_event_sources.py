@@ -43,6 +43,15 @@ class NormalizedProjectEvent:
 
 
 _SOURCES = {
+    "connection": EventSourceDefinition(
+        source_type="connection",
+        collection_modes=("webhook",),
+        resource_types=("publication",),
+        event_types=("connection.result_published",),
+        execution_targets=("create_issue",),
+        name_key="event_sources.connection.name",
+        description_key="event_sources.connection.description",
+    ),
     "github": EventSourceDefinition(
         source_type="github",
         collection_modes=("webhook", "poll", "hybrid"),
@@ -233,7 +242,53 @@ def normalize_webhook_events(
         return _gitlab_events(payload, headers)
     if source_type == "generic":
         return _generic_events(payload)
+    if source_type == "connection":
+        return _connection_publications(payload)
     return []
+
+
+def _connection_publications(
+    payload: Mapping[str, Any],
+) -> list[NormalizedProjectEvent]:
+    """Project events accept published text, never private source envelopes."""
+    allowed = {"event_type", "resource", "subject", "title", "description"}
+    if (
+        set(payload) - allowed
+        or payload.get("event_type") != "connection.result_published"
+    ):
+        return []
+    subject = _mapping(payload.get("subject"))
+    if set(subject) != {"id"} or not _text(subject.get("id")):
+        return []
+    resource_input = _mapping(payload.get("resource"))
+    if set(resource_input) != {"resource_type", "external_id"}:
+        return []
+    if not all(isinstance(payload.get(key), str) for key in ("title", "description")):
+        return []
+    title, description = _text(payload.get("title")), _text(payload.get("description"))
+    if (
+        not title
+        or not description
+        or len(title) > 255
+        or len(description.encode("utf-8")) > 32000
+    ):
+        return []
+    try:
+        resource = normalize_observed_resource(
+            "connection", _mapping(payload.get("resource"))
+        )
+    except ValueError:
+        return []
+    safe = {"title": title, "description": description}
+    return [
+        NormalizedProjectEvent(
+            event_type="connection.result_published",
+            source_type="connection",
+            resource=resource,
+            subject={"type": "publication", "id": subject["id"]},
+            payload=safe,
+        )
+    ]
 
 
 def normalized_event_identity(event: NormalizedProjectEvent) -> str:

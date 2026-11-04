@@ -274,6 +274,7 @@ def list_incoming_events(
     project_id: str,
     hook_id: str,
     limit: int = Query(default=50, ge=1, le=200),
+    event_id: str | None = Query(default=None, max_length=100),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[ProjectIncomingEventView]:
@@ -285,6 +286,7 @@ def list_incoming_events(
             hook_id,
             current_user.id,
             limit=limit,
+            event_id=event_id,
         )
     ]
 

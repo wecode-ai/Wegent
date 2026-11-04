@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { AutomationInstructionField } from '@wegent/collaboration/automation'
 import {
   Check,
   ChevronDown,
@@ -268,7 +269,7 @@ export function AutomationDetailWorkspace({
       </header>
 
       <div className={`min-h-0 flex-1 overflow-y-auto ${compact ? 'pb-4' : 'px-6 pb-28 pt-3'}`}>
-        <textarea
+        <AutomationInstructionField
           ref={promptRef}
           aria-label={t(
             calendarMode ? 'standIn.workspace.calendar_event' : 'todo.automation_prompt',
