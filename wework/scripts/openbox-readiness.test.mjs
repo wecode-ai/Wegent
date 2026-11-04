@@ -61,10 +61,14 @@ exec "$OPENBOX_TEST_DIR/xprop-window-manager" "$@"
 `,
       { mode: 0o755 }
     )
-    writeFileSync(join(directory, 'sleep'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
     const result = spawnSync(
       'sh',
       [
+        '-c',
+        // Keep the existing zero-delay fixture in-process instead of launching
+        // another shell for every readiness probe.
+        'sleep() { :; }; launcher="$1"; shift; . "$launcher"',
+        'openbox-readiness-fixture',
         launcher,
         'sh',
         '-c',
@@ -81,7 +85,7 @@ exec "$OPENBOX_TEST_DIR/xprop-window-manager" "$@"
         timeout: fixtureTimeoutMs,
       }
     )
-    expect(result.error).toBeUndefined()
+    expect(result.error, result.stderr).toBeUndefined()
     const displayQueries = join(directory, 'display-queries')
     return {
       ...result,
