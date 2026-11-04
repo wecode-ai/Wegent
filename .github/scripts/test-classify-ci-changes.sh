@@ -131,9 +131,9 @@ assert_checkpoint_runtime_failure_rejected() {
 assert_checkpoint_runtime_failure_rejected
 
 if ! grep -Fq 'node wework/scripts/verify-release-upgrades.mjs' "$wework_app_workflow" ||
-  ! grep -Fq '${UPGRADE_CHECKPOINT_GROUP},app-update-full' \
+  ! grep -Fq 'diagnosticCheckpoint || upgradeVerificationCheckpoint(platform)' \
     "$repo_root/wework/scripts/verify-release-upgrades.mjs"; then
-  printf 'The formal release verifier must invoke app-update-full with the upgrade group\n' >&2
+  printf 'The formal release verifier must invoke the registered platform upgrade checkpoints\n' >&2
   exit 1
 fi
 
@@ -2783,7 +2783,9 @@ if [[ "$wework_windows_desktop_core_build_job" != *"runs-on: windows-latest"* ]]
   [[ "$wework_windows_desktop_core_build_job" != *"WeWork-win32-x64/WeWork.exe"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"resources/bin/wegent-executor.exe"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"resources/codex/vendor/x86_64-pc-windows-msvc/bin/codex.exe"* ]] ||
-  [[ "$wework_windows_desktop_core_build_job" != *"resources/bundled-plugins/wework-personal/.agents/plugins/marketplace.json"* ]] ||
+  [[ "$wework_windows_desktop_core_build_job" != *"resources/wework-core-plugins.tar.gz"* ]] ||
+  [[ "$wework_windows_desktop_core_build_job" != *"resources/wework-app-static.tar.gz"* ]] ||
+  [[ "$wework_windows_desktop_core_build_job" != *"resources/bundled-plugins.tar.gz"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"include-hidden-files: true"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"REDIS_WINDOWS_VERSION: 8.10.1"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"REDIS_WINDOWS_SHA256: 4e8f2f956ed92feadf3f64b4e137ed34026438821e692e7ae22c9bba5976607a"* ]] ||
@@ -2805,7 +2807,9 @@ if [[ "$wework_windows_desktop_core_job" != *"runs-on: windows-latest"* ]] ||
   [[ "$wework_windows_desktop_core_job" != *"WEWORK_E2E_APP_BIN:"* ]] ||
   [[ "$wework_windows_desktop_core_job" != *"WEWORK_E2E_EXECUTOR_BIN:"* ]] ||
   [[ "$wework_windows_desktop_core_job" != *"WEWORK_E2E_CODEX_BIN:"* ]] ||
-  [[ "$wework_windows_desktop_core_job" != *"bundled-plugins/wework-personal/.agents/plugins/marketplace.json"* ]] ||
+  [[ "$wework_windows_desktop_core_job" != *"wework-core-plugins.tar.gz"* ]] ||
+  [[ "$wework_windows_desktop_core_job" != *"wework-app-static.tar.gz"* ]] ||
+  [[ "$wework_windows_desktop_core_job" != *"bundled-plugins.tar.gz"* ]] ||
   [[ "$wework_windows_desktop_core_job" != *"name: wework-desktop-windows-redis-e2e-tools"* ]] ||
   [[ "$wework_windows_desktop_core_job" != *"uses: ./.github/actions/setup-python-uv-cache"* ]] ||
   [[ "$wework_windows_desktop_core_job" != *'python-version: "3.12"'* ]] ||

@@ -28,6 +28,7 @@ const defaultPreferences: AppPreferences = {
   browserExternalLinkTarget: 'system',
   browserLocalLinkTarget: 'wework',
   browserDownloadDirectory: null,
+  browserFullControl: false,
   browserAskBeforeDownload: false,
   appshotsPlaySound: true,
 }
@@ -59,6 +60,7 @@ vi.mock('@/desktop/appPreferences', () => ({
     browserExternalLinkTarget: 'system',
     browserLocalLinkTarget: 'wework',
     browserDownloadDirectory: null,
+    browserFullControl: false,
     browserAskBeforeDownload: false,
     appshotsPlaySound: true,
   },

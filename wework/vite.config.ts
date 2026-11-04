@@ -7,6 +7,7 @@ import react from '@vitejs/plugin-react'
 import { fileViewerRenderers } from '@file-viewer/vite-plugin'
 import { configDefaults } from 'vitest/config'
 import { excalidrawAssets } from './vite/excalidrawAssets'
+import { lucideIconChunks } from './vite/lucideIconChunks'
 import {
   parseTelemetryIdentity,
   parseTelemetryContextFields,
@@ -140,6 +141,7 @@ export default defineConfig({
     },
     react(),
     excalidrawAssets(),
+    lucideIconChunks(),
     ...internalVitePlugins,
     preserveDshUiEntryExports(),
     fileViewerRenderers({
