@@ -181,22 +181,42 @@ fn refresh_work(connection: &Connection, work: &mut Value) -> Result<(), TaskRun
     )
 }
 
-impl LocalTaskStore {
-    pub(crate) fn queue_git_disconnect(
-        &self,
-        user: i64,
-        subscription: &str,
-        generation: &Value,
-    ) -> Result<(), TaskRuntimeError> {
-        let connection = self.connection()?;
-        let id = stand_in_record_key("git-disconnect", &json!([user, subscription]));
-        write_record(
-            &connection,
-            &id,
-            "stand_in_git_disconnect",
-            &json!({"id":id,"userId":user,"subscriptionId":subscription,"generation":generation}),
-        )
+pub(super) fn queue_removed_git_connections(
+    connection: &Connection,
+    user: i64,
+    previous: &Value,
+    saved: &Value,
+) -> Result<(), TaskRuntimeError> {
+    use super::personal_stand_in::stand_in_identities;
+    let active: std::collections::HashSet<String> = stand_in_identities(saved)
+        .iter()
+        .flat_map(|role| role["connections"].as_array().into_iter().flatten())
+        .filter_map(|source| source["subscriptionId"].as_str().map(str::to_owned))
+        .collect();
+    for role in stand_in_identities(previous) {
+        for source in role["connections"].as_array().into_iter().flatten() {
+            let Some(subscription) = source["subscriptionId"]
+                .as_str()
+                .filter(|id| !active.contains(*id))
+            else {
+                continue;
+            };
+            let id = stand_in_record_key(
+                "git-disconnect",
+                &json!([user, subscription, source["generation"]]),
+            );
+            write_record(
+                connection,
+                &id,
+                "stand_in_git_disconnect",
+                &json!({"id":id,"userId":user,"subscriptionId":subscription,"generation":source["generation"]}),
+            )?;
+        }
     }
+    Ok(())
+}
+
+impl LocalTaskStore {
     pub(crate) fn pending_git_disconnects(
         &self,
         user: i64,

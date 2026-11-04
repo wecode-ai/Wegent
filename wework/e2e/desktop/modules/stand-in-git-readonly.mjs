@@ -15,6 +15,7 @@ import {
 } from './response-protocol.mjs'
 
 const MARKER = 'GIT_READONLY_RESTART_VERIFICATION'
+const REMOVAL_MARKER = 'GIT_REMOVE_CONNECTION_PROPOSAL_VERIFICATION'
 const PROVIDER = '@wegent/dsh-connection-git/github'
 
 export function createGitReadonlyVerification({
@@ -79,6 +80,33 @@ export function createGitReadonlyVerification({
             argumentsValue: {},
             searchCallId: `git-intake-search-${round}`,
             toolCallId: readId,
+          }).events
+      } else if (input.includes(REMOVAL_MARKER)) {
+        if (requestContainsToolOutput(body, 'git-live-remove-proposal')) {
+          const proposal = JSON.parse(readMcpToolOutput(body, 'git-live-remove-proposal'))
+          assert.equal(proposal.status, 'pending')
+          events = [assistantMessage('已准备移除验证连接的提案，请确认。')]
+        } else if (requestContainsToolOutput(body, 'git-live-profile')) {
+          const settings = JSON.parse(readMcpToolOutput(body, 'git-live-profile'))
+          const role = settings.roles.find(row => row.id === live.roleId)
+          assert.ok(role, 'The readonly role must still exist')
+          role.connections = role.connections.filter(
+            row => row.subscriptionId !== live.subscriptionId
+          )
+          events = mcpToolRequestEvents(body, {
+            toolName: 'propose_profile',
+            directToolName: 'mcp__wework_stand_in__propose_profile',
+            argumentsValue: { summary: '移除验证用仓库连接', settings },
+            searchCallId: 'git-live-proposal-search',
+            toolCallId: 'git-live-remove-proposal',
+          }).events
+        } else
+          events = mcpToolRequestEvents(body, {
+            toolName: 'get_profile',
+            directToolName: 'mcp__wework_stand_in__get_profile',
+            argumentsValue: {},
+            searchCallId: 'git-live-profile-search',
+            toolCallId: 'git-live-profile',
           }).events
       } else if (input.includes(MARKER)) {
         if (requestContainsToolOutput(body, 'git-live-denied-write')) {
@@ -176,6 +204,8 @@ export function createGitReadonlyVerification({
         },
       })
       const connection = saved.roles[0].connections[0]
+      live.roleId = saved.roles[0].id
+      live.subscriptionId = connection.subscriptionId
       const binding = { deviceId: saved.executionDeviceId, generation: connection.generation }
       const base = `/v1/git-connections/subscriptions/${connection.subscriptionId}`
       try {
@@ -279,6 +309,40 @@ export function createGitReadonlyVerification({
           timeoutMs: modelResponseTimeoutMs,
         })
         await captureScreenshot(control, 'git-09-external-write-denied-no-publication.png')
+        await rpc(control, 'runtime.stand_in.conversation', {
+          userId,
+          roleId: live.roleId,
+          message: REMOVAL_MARKER,
+        })
+        await waitFor(
+          () => rpc(control, 'runtime.stand_in.proposal.get', { userId, roleId: live.roleId }),
+          proposal => proposal.status === 'pending'
+        )
+        const beforeRemoval = await request('/v1/git-connections/subscriptions')
+        assert.ok(
+          beforeRemoval.items.some(row => row.id === connection.subscriptionId && row.active),
+          'A removal proposal alone must not revoke the cloud receiver'
+        )
+        await control.command('navigate', 'body', { value: '/stand-in' })
+        await control.command(
+          'clickWhenEnabled',
+          `[data-testid="stand-in-overview-role-${live.roleId}"]`
+        )
+        await control.command('waitFor', '[data-testid="stand-in-proposal-accept"]')
+        await captureScreenshot(
+          control,
+          'git-10-remove-connection-proposal-awaiting-confirmation.png'
+        )
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-proposal-accept"]')
+        await waitFor(
+          () => rpc(control, 'runtime.stand_in.personal.get', { userId }),
+          settings => settings.roles.find(row => row.id === live.roleId)?.connections?.length === 0
+        )
+        await waitFor(
+          () => request('/v1/git-connections/subscriptions'),
+          result => !result.items.some(row => row.id === connection.subscriptionId && row.active)
+        )
+        await captureScreenshot(control, 'git-11-accepted-removal-revokes-cloud-receiver.png')
       } finally {
         const latest = await rpc(control, 'runtime.stand_in.personal.get', { userId })
         await rpc(control, 'runtime.stand_in.personal.save', {

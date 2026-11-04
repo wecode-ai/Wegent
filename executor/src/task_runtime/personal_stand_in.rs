@@ -548,6 +548,7 @@ impl LocalTaskStore {
         value["userId"] = json!(user);
         value["version"] = json!(previous["version"].as_i64().unwrap_or(0) + 1);
         write_personal(connection, &value)?;
+        super::stand_in_inbox::queue_removed_git_connections(connection, user, &previous, &value)?;
         super::stand_in_processing::update_processing_configuration(
             connection, user, &previous, &value,
         )?;

@@ -237,42 +237,11 @@ impl RuntimeWorkRpcHandler {
                 .validate_personal_stand_in_settings(user, &self.device_id, settings.clone())
                 .map_err(settings_error)?;
             self.preflight_git_connections(&settings, &previous).await?;
-            if let Err(error) = self
-                .prepare_connection_boundaries(&mut settings, &previous)
-                .await
-            {
-                let has_git = stand_in_identities(&settings).iter().any(|r| {
-                    r["connections"].as_array().into_iter().flatten().any(|s| {
-                        s["providerId"]
-                            .as_str()
-                            .is_some_and(|p| p.starts_with(super::super::git_connections::PACKAGE))
-                    })
-                });
-                if has_git {
-                    return Err(AppIpcError::new("git_connection_save_incomplete",format!("Cloud connection changes may be partially applied; retry this draft or recover existing receivers ({})",error.code)));
-                }
-                return Err(error);
-            }
+            self.prepare_connection_boundaries(&mut settings, &previous)
+                .await?;
             let saved = store
                 .save_personal_stand_in(user, &self.device_id, settings)
                 .map_err(settings_error)?;
-            let active: HashSet<String> = stand_in_identities(&saved)
-                .iter()
-                .flat_map(|role| role["connections"].as_array().into_iter().flatten())
-                .filter_map(|source| source["subscriptionId"].as_str().map(str::to_owned))
-                .collect();
-            for role in stand_in_identities(&previous) {
-                for source in role["connections"].as_array().into_iter().flatten() {
-                    if let Some(id) = source["subscriptionId"]
-                        .as_str()
-                        .filter(|id| !active.contains(*id))
-                    {
-                        store
-                            .queue_git_disconnect(user, id, &source["generation"])
-                            .map_err(settings_error)?;
-                    }
-                }
-            }
             Ok(saved)
         } else {
             store
@@ -282,6 +251,29 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn prepare_connection_boundaries(
+        &self,
+        settings: &mut Value,
+        previous: &Value,
+    ) -> Result<(), AppIpcError> {
+        self.prepare_connection_boundaries_inner(settings, previous)
+            .await
+            .map_err(|error| {
+                let has_git = stand_in_identities(settings).iter().any(|role| {
+                    role["connections"].as_array().into_iter().flatten().any(|source| {
+                        source["providerId"].as_str().is_some_and(|provider| {
+                            provider.starts_with(super::super::git_connections::PACKAGE)
+                        })
+                    })
+                });
+                if has_git {
+                    AppIpcError::new("git_connection_save_incomplete", format!("Cloud connection changes may be partially applied; retry this draft or recover existing receivers ({})", error.code))
+                } else {
+                    error
+                }
+            })
+    }
+
+    async fn prepare_connection_boundaries_inner(
         &self,
         settings: &mut Value,
         previous: &Value,
