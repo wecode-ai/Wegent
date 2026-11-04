@@ -255,12 +255,16 @@ test('rebuilds unchanged CSS assets and publishes subsequent asset edits with fr
   const root = await realpath(await mkdtemp(path.join(tmpdir(), 'wework-css-build-')))
   const output = path.join(root, 'output')
   await writeFile(path.join(root, 'index.html'), '<script type="module" src="/entry.js"></script>')
-  await writeFile(path.join(root, 'entry.js'), 'import "./style.css"; console.log("one")')
+  await writeFile(
+    path.join(root, 'entry.js'),
+    'import "./style.css"; console.log("wework-watch-version-one")'
+  )
   await writeFile(path.join(root, 'style.css'), 'body { background: url("./image.svg") }')
   const svg = color =>
     `<svg xmlns="http://www.w3.org/2000/svg"><rect fill="${color}" width="10" height="10"/></svg>`
   await writeFile(path.join(root, 'image.svg'), svg('red'))
-  let completed = 0
+  let publishedScripts = ''
+  let publishedImages = []
   const onError = vi.fn()
   const watcher = await watchDevelopmentBuild({
     directories: [root],
@@ -275,18 +279,30 @@ test('rebuilds unchanged CSS assets and publishes subsequent asset edits with fr
         logLevel: 'silent',
         build: { outDir: output, emptyOutDir: false, assetsInlineLimit: 0 },
       })
-      completed += 1
+      const assets = path.join(output, 'assets')
+      const files = await readdir(assets)
+      const readAssets = extension =>
+        Promise.all(
+          files
+            .filter(file => file.endsWith(extension))
+            .map(file => readFile(path.join(assets, file), 'utf8'))
+        )
+      publishedScripts = (await readAssets('.js')).join('\n')
+      publishedImages = (await readAssets('.svg')).sort()
     },
   })
   try {
-    await writeFile(path.join(root, 'entry.js'), 'import "./style.css"; console.log("two")')
-    await expect.poll(() => completed, { timeout: 10000 }).toBe(2)
+    expect(publishedScripts).toContain('wework-watch-version-one')
+    await writeFile(
+      path.join(root, 'entry.js'),
+      'import "./style.css"; console.log("wework-watch-version-two")'
+    )
+    await expect
+      .poll(() => publishedScripts, { timeout: 10000 })
+      .toContain('wework-watch-version-two')
     await writeFile(path.join(root, 'image.svg'), svg('blue'))
-    await expect.poll(() => completed, { timeout: 10000 }).toBe(3)
+    await expect.poll(() => publishedImages, { timeout: 10000 }).toEqual([svg('blue'), svg('red')])
     expect(onError).not.toHaveBeenCalled()
-    expect(
-      (await readdir(path.join(output, 'assets'))).filter(file => file.endsWith('.svg'))
-    ).toHaveLength(2)
   } finally {
     await watcher.close()
     await rm(root, { recursive: true, force: true })
