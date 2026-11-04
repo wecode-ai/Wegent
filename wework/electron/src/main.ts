@@ -148,6 +148,7 @@ import {
   type ElectronNodeRuntime,
 } from './runtime/electron-node-runtime.js'
 import { PythonRuntimeManager } from './runtime/python-runtime.js'
+import { fetchPythonRuntimeDownloads } from './runtime/python-runtime-downloads.js'
 import type { BrandRuntimeMetadata } from './runtime/brand-runtime-environment.js'
 import {
   prepareWorkbenchEnvironment,
@@ -2967,6 +2968,16 @@ function managedPythonRuntime(): Promise<PythonRuntimeManager> {
     return new PythonRuntimeManager({
       dataDirectory: app.getPath('userData'),
       environment: nodeRuntime.environment,
+      resolveDownloads: () =>
+        fetchPythonRuntimeDownloads({
+          connection: () => {
+            if (!rendererStorage) throw new Error('Desktop cloud settings are unavailable')
+            return readMcpAppConnection(rendererStorage)
+          },
+          environment: startupRuntimeEnvironment ?? process.env,
+          backendUrl: packageMetadata.weworkBackendUrl,
+          fetch: cloudFetch,
+        }),
       fetch: cloudFetch,
       resolveProxy: targetUrl => resolveSystemProxy(session.defaultSession, targetUrl),
       log: event => console.info('[python-runtime]', event),

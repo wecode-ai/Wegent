@@ -37,7 +37,6 @@ module.exports = {
     weworkReadableDataSchemas: [1],
     name: identity.packageName,
     weworkUpdateBaseUrl: updateBaseUrl,
-    weworkRuntimeDownloads: require('./package.json').weworkRuntimeDownloads,
     weworkAppId: identity.identifier,
     weworkProductName: identity.productName,
     weworkExecutableName: identity.executableName,

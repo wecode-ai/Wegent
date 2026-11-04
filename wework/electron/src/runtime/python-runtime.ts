@@ -2,23 +2,19 @@ import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream, createWriteStream } from 'node:fs'
 import { chmod, copyFile, mkdir, rename, rm, stat } from 'node:fs/promises'
-import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { promisify } from 'node:util'
 import * as tar from 'tar'
 import { extractPythonBootstrapZip } from './python-runtime-zip.js'
+import type { PythonRuntimeDownloads } from './python-runtime-downloads.js'
 import {
   findCompatibleSystemPython,
   type PluginPythonInterpreter,
 } from './python-runtime-selection.js'
 
 const execFileAsync = promisify(execFile)
-const { weworkRuntimeDownloads } = createRequire(import.meta.url)('../../package.json') as {
-  weworkRuntimeDownloads: { uvDownloadBaseUrl: string; pythonInstallMirror: string }
-}
-
 const PYTHON_VERSION = '3.12.12'
 const UV_VERSION = '0.9.5'
 const UV_DOWNLOAD_TIMEOUT_MS = 5 * 60_000
@@ -110,6 +106,7 @@ type RunFile = (
 export interface PythonRuntimeManagerOptions {
   dataDirectory: string
   environment: NodeJS.ProcessEnv
+  resolveDownloads: () => Promise<PythonRuntimeDownloads>
   platform?: NodeJS.Platform
   arch?: string
   fetch?: typeof fetch
@@ -125,8 +122,7 @@ export class PythonRuntimeManager {
   private readonly root: string
   private readonly runtimeEnvironment: NodeJS.ProcessEnv
   private readonly runtimeBin: string
-  private readonly uvDownloadBaseUrl: string
-  private readonly pythonInstallMirror: string
+  private readonly resolveDownloads: () => Promise<PythonRuntimeDownloads>
   private readonly platform: NodeJS.Platform
   private readonly arch: string
   private readonly fetch: typeof fetch
@@ -146,14 +142,7 @@ export class PythonRuntimeManager {
   constructor(options: PythonRuntimeManagerOptions) {
     this.root = join(options.dataDirectory, 'managed-runtimes', 'python')
     this.runtimeBin = join(this.root, 'bin')
-    this.uvDownloadBaseUrl = (
-      options.environment.WEWORK_UV_DOWNLOAD_BASE_URL?.trim() ||
-      weworkRuntimeDownloads.uvDownloadBaseUrl
-    ).replace(/\/*$/, '/')
-    this.pythonInstallMirror = (
-      options.environment.WEWORK_PYTHON_INSTALL_MIRROR?.trim() ||
-      weworkRuntimeDownloads.pythonInstallMirror
-    ).replace(/\/*$/, '/')
+    this.resolveDownloads = options.resolveDownloads
     this.platform = options.platform ?? process.platform
     this.arch = options.arch ?? process.arch
     this.fetch = options.fetch ?? globalThis.fetch
@@ -283,7 +272,8 @@ export class PythonRuntimeManager {
     }
 
     try {
-      const uvPath = await this.ensureUv()
+      const downloads = await this.resolveDownloads()
+      const uvPath = await this.ensureUv(downloads.uvDownloadBaseUrl)
       this.setStatus(this.statusValue('downloading', { phase: 'install' }))
       this.log({ event: 'python-runtime-install-started', version: PYTHON_VERSION })
       await mkdir(this.runtimeBin, { recursive: true, mode: 0o700 })
@@ -300,7 +290,10 @@ export class PythonRuntimeManager {
           '--default',
           PYTHON_VERSION,
         ],
-        { env: await this.bootstrapEnvironment(), timeout: 10 * 60_000 }
+        {
+          env: await this.bootstrapEnvironment(downloads.pythonInstallMirror),
+          timeout: 10 * 60_000,
+        }
       )
       const warning = installResult.stderr.trim()
       if (warning) {
@@ -355,7 +348,7 @@ export class PythonRuntimeManager {
     }
   }
 
-  private async ensureUv(): Promise<string> {
+  private async ensureUv(uvDownloadBaseUrl: string): Promise<string> {
     const artifact = this.artifact()
     this.log({ event: 'python-runtime-uv-prepare-started', archive: artifact.archiveName })
     const executableName = this.platform === 'win32' ? 'uv.exe' : 'uv'
@@ -387,7 +380,7 @@ export class PythonRuntimeManager {
 
     let stage = 'download'
     try {
-      await this.downloadUv(artifact, archivePath)
+      await this.downloadUv(artifact, archivePath, uvDownloadBaseUrl)
       stage = 'extract'
       this.log({ event: 'python-runtime-uv-extract-started', archive: artifact.archiveName })
       if (artifact.archiveName.endsWith('.zip')) {
@@ -426,7 +419,7 @@ export class PythonRuntimeManager {
     }
   }
 
-  private async bootstrapEnvironment(): Promise<NodeJS.ProcessEnv> {
+  private async bootstrapEnvironment(pythonInstallMirror: string): Promise<NodeJS.ProcessEnv> {
     const inherited = Object.fromEntries(
       Object.entries(isolatedPythonEnvironment(this.runtimeEnvironment, this.platform)).filter(
         ([key]) => !key.toUpperCase().startsWith('UV_')
@@ -439,12 +432,12 @@ export class PythonRuntimeManager {
       UV_PYTHON_BIN_DIR: this.runtimeBin,
       UV_PYTHON_INSTALL_DIR: join(this.root, 'installations'),
       UV_PYTHON_INSTALL_REGISTRY: 'false',
-      UV_PYTHON_INSTALL_MIRROR: this.pythonInstallMirror,
+      UV_PYTHON_INSTALL_MIRROR: pythonInstallMirror,
     }
     if (!this.resolveProxy) return environment
 
     try {
-      const proxy = await this.resolveProxy(this.pythonInstallMirror)
+      const proxy = await this.resolveProxy(pythonInstallMirror)
       if (proxy) {
         environment.HTTP_PROXY = proxy
         environment.HTTPS_PROXY = proxy
@@ -456,7 +449,11 @@ export class PythonRuntimeManager {
     return environment
   }
 
-  private async downloadUv(artifact: UvArtifact, destination: string): Promise<void> {
+  private async downloadUv(
+    artifact: UvArtifact,
+    destination: string,
+    uvDownloadBaseUrl: string
+  ): Promise<void> {
     const controller = new AbortController()
     let timedOut = false
     this.log({
@@ -476,12 +473,9 @@ export class PythonRuntimeManager {
     }, this.downloadTimeoutMs)
 
     try {
-      const response = await this.fetch(
-        new URL(artifact.archiveName, this.uvDownloadBaseUrl).href,
-        {
-          signal: controller.signal,
-        }
-      )
+      const response = await this.fetch(new URL(artifact.archiveName, uvDownloadBaseUrl).href, {
+        signal: controller.signal,
+      })
       if (!response.ok || !response.body) {
         throw new Error(`Failed to download uv: HTTP ${response.status}`)
       }

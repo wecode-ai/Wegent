@@ -396,6 +396,44 @@ fn config_is_registered_in_the_public_group() {
     assert_eq!(paths, ["/api/auth/wework/config"]);
 }
 
+#[test]
+fn download_settings_are_additive_and_do_not_replace_web_or_socket_settings() {
+    let mut response = web_config(
+        TEST_FRONTEND_URL,
+        Some("wss://socket.example.invalid/".into()),
+    );
+    append_runtime_downloads(&mut response, RuntimeDownloads::from_config(|_| None));
+    let payload = serde_json::to_value(response).unwrap();
+    assert_eq!(payload["web_url"], TEST_FRONTEND_URL);
+    assert_eq!(payload["socket_url"], "wss://socket.example.invalid");
+    assert_eq!(
+        payload["runtime_downloads"]["uvDownloadBaseUrl"],
+        "https://github.com/astral-sh/uv/releases/download/0.9.5/"
+    );
+    assert_eq!(
+        payload["runtime_downloads"]["pythonInstallMirror"],
+        "https://github.com/astral-sh/python-build-standalone/releases/download/"
+    );
+}
+
+#[test]
+fn invalid_download_settings_preserve_the_complete_original_config_response() {
+    let mut response = web_config(
+        TEST_FRONTEND_URL,
+        Some("wss://socket.example.invalid/".into()),
+    );
+    let original = serde_json::to_value(&response).unwrap();
+    append_runtime_downloads(
+        &mut response,
+        RuntimeDownloads::from_config(|_| Some("invalid-url".into())),
+    );
+    assert_eq!(serde_json::to_value(response).unwrap(), original);
+    assert_eq!(
+        original,
+        serde_json::json!({"web_url": TEST_FRONTEND_URL, "socket_url": "wss://socket.example.invalid"})
+    );
+}
+
 /// RFC 7638 thumbprint of the standard P-256 generator point; no recorded
 /// device identity is used.
 #[test]

@@ -4,6 +4,11 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { PythonRuntimeManager } from './python-runtime.js'
 
+const resolveDownloads = async () => ({
+  uvDownloadBaseUrl: 'https://github.com/astral-sh/uv/releases/download/0.9.5/',
+  pythonInstallMirror: 'https://github.com/astral-sh/python-build-standalone/releases/download/',
+})
+
 const temporaryDirectories: string[] = []
 
 afterEach(async () => {
@@ -19,10 +24,89 @@ async function temporaryDirectory(): Promise<string> {
 }
 
 describe('PythonRuntimeManager', () => {
+  test('uses an installed Python offline without requesting download configuration', async () => {
+    const directory = await temporaryDirectory()
+    const runtimeBin = join(directory, 'managed-runtimes', 'python', 'bin')
+    await mkdir(runtimeBin, { recursive: true })
+    const pythonPath = join(runtimeBin, 'python3')
+    await writeFile(pythonPath, 'installed launcher')
+    const resolveDownloads = vi.fn().mockRejectedValue(new Error('backend is offline'))
+    const fetch = vi.fn()
+    const manager = new PythonRuntimeManager({
+      dataDirectory: directory,
+      environment: {},
+      platform: 'darwin',
+      arch: 'arm64',
+      resolveDownloads,
+      fetch,
+      runFile: vi.fn().mockResolvedValue({ stdout: 'Python 3.12.12', stderr: '' }),
+    })
+    await expect(manager.status()).resolves.toMatchObject({ state: 'installed' })
+    await expect(manager.prewarm()).resolves.toMatchObject({ state: 'installed', path: pythonPath })
+    await expect(manager.ensure()).resolves.toMatchObject({ state: 'installed', path: pythonPath })
+    expect(resolveDownloads).not.toHaveBeenCalled()
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  test('configuration failure does not loop and manual retry requests fresh backend metadata', async () => {
+    const directory = await temporaryDirectory()
+    const resolveDownloads = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Python download configuration timed out after 200ms'))
+      .mockResolvedValueOnce({
+        uvDownloadBaseUrl: 'https://new-backend.example.invalid/uv/',
+        pythonInstallMirror: 'https://new-backend.example.invalid/python/',
+      })
+    const fetch = vi.fn().mockResolvedValue(new Response(new Uint8Array([1, 2, 3])))
+    const manager = new PythonRuntimeManager({
+      dataDirectory: directory,
+      environment: {},
+      platform: 'darwin',
+      arch: 'arm64',
+      resolveDownloads,
+      fetch,
+    })
+    await expect(manager.prewarm()).rejects.toThrow('timed out after 200ms')
+    await expect(manager.prewarm()).resolves.toMatchObject({
+      state: 'error',
+      error: expect.stringContaining('timed out after 200ms'),
+    })
+    expect(resolveDownloads).toHaveBeenCalledOnce()
+    expect(fetch).not.toHaveBeenCalled()
+    await expect(manager.ensure()).rejects.toThrow('uv archive size mismatch')
+    expect(resolveDownloads).toHaveBeenCalledTimes(2)
+    expect(fetch).toHaveBeenCalledExactlyOnceWith(
+      'https://new-backend.example.invalid/uv/uv-aarch64-apple-darwin.tar.gz',
+      { signal: expect.any(AbortSignal) }
+    )
+  })
+
+  test('retains a usable older managed Python when backend configuration is unavailable', async () => {
+    const directory = await temporaryDirectory()
+    const runtimeBin = join(directory, 'managed-runtimes', 'python', 'bin')
+    await mkdir(runtimeBin, { recursive: true })
+    await writeFile(join(runtimeBin, 'python3'), 'installed launcher')
+    const resolveDownloads = vi.fn().mockRejectedValue(new Error('backend is offline'))
+    const fetch = vi.fn()
+    const manager = new PythonRuntimeManager({
+      dataDirectory: directory,
+      environment: {},
+      platform: 'darwin',
+      arch: 'arm64',
+      resolveDownloads,
+      fetch,
+      runFile: vi.fn().mockResolvedValue({ stdout: 'Python 3.12.8', stderr: '' }),
+    })
+    await expect(manager.ensure()).resolves.toMatchObject({ state: 'installed', version: '3.12.8' })
+    expect(resolveDownloads).toHaveBeenCalledOnce()
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
   test('does not install or change ordinary task environments before Python is requested', async () => {
     const directory = await temporaryDirectory()
     const runtimeBin = join(directory, 'managed-runtimes', 'python', 'bin')
     const manager = new PythonRuntimeManager({
+      resolveDownloads,
       dataDirectory: directory,
       environment: { PATH: '/system/bin', WEWORK_RUNTIME_BIN: '/node/bin' },
       platform: 'darwin',
@@ -75,6 +159,7 @@ describe('PythonRuntimeManager', () => {
             }
       const original = { ...environment }
       const manager = new PythonRuntimeManager({
+        resolveDownloads,
         dataDirectory: directory,
         environment,
         platform,
@@ -92,23 +177,23 @@ describe('PythonRuntimeManager', () => {
 
   test.each([
     [
-      'default mirror',
+      'public backend mirror',
       undefined,
       'https://github.com/astral-sh/python-build-standalone/releases/download/',
     ],
     [
-      'empty override',
-      '  ',
+      'public backend mirror with slash',
+      'https://github.com/astral-sh/python-build-standalone/releases/download/',
       'https://github.com/astral-sh/python-build-standalone/releases/download/',
     ],
     [
-      'environment override',
+      'internal backend mirror',
       ' https://python.example.com/releases ',
       'https://python.example.com/releases/',
     ],
   ])(
     'installs Python once and validates the managed launcher with %s',
-    async (_name, mirrorOverride, expectedMirror) => {
+    async (_name, _mirrorValue, expectedMirror) => {
       const directory = await temporaryDirectory()
       const runtimeBin = join(directory, 'managed-runtimes', 'python', 'bin')
       const pythonPath = join(runtimeBin, 'python3')
@@ -166,6 +251,10 @@ describe('PythonRuntimeManager', () => {
         }
       )
       const manager = new PythonRuntimeManager({
+        resolveDownloads: async () => ({
+          uvDownloadBaseUrl: 'https://github.com/astral-sh/uv/releases/download/0.9.5/',
+          pythonInstallMirror: expectedMirror,
+        }),
         dataDirectory: directory,
         environment: {
           PYTHONHOME: '/external/python',
@@ -175,7 +264,6 @@ describe('PythonRuntimeManager', () => {
           UV_PYTHON_INSTALL_DIR: '/user-python',
           UV_PYTHON_INSTALL_MIRROR: 'https://user-mirror.invalid/',
           UV_PYTHON_INSTALL_MIRROR_URL: 'https://incorrect-mirror.invalid/',
-          WEWORK_PYTHON_INSTALL_MIRROR: mirrorOverride,
         },
         platform: 'darwin',
         arch: 'arm64',
@@ -230,6 +318,7 @@ describe('PythonRuntimeManager', () => {
       throw new Error(`Unexpected command: ${file}`)
     })
     const manager = new PythonRuntimeManager({
+      resolveDownloads,
       dataDirectory: directory,
       environment: {},
       platform: 'darwin',
@@ -273,6 +362,7 @@ describe('PythonRuntimeManager', () => {
         throw new Error(`Unexpected command: ${file}`)
       })
       const manager = new PythonRuntimeManager({
+        resolveDownloads,
         dataDirectory: directory,
         environment: {},
         platform: 'darwin',
@@ -334,6 +424,7 @@ describe('PythonRuntimeManager', () => {
         throw new Error(`Unexpected command: ${file}`)
       })
       const manager = new PythonRuntimeManager({
+        resolveDownloads,
         dataDirectory: directory,
         environment: {},
         platform: 'darwin',
@@ -361,6 +452,7 @@ describe('PythonRuntimeManager', () => {
     await mkdir(runtimeBin, { recursive: true })
     await writeFile(pythonPath, 'fake python')
     const manager = new PythonRuntimeManager({
+      resolveDownloads,
       dataDirectory: directory,
       environment: {},
       platform: 'darwin',
@@ -382,6 +474,7 @@ describe('PythonRuntimeManager', () => {
       throw new Error('ModuleNotFoundError: No module named _ssl')
     })
     const manager = new PythonRuntimeManager({
+      resolveDownloads,
       dataDirectory: directory,
       environment: {},
       platform: 'darwin',
@@ -398,13 +491,21 @@ describe('PythonRuntimeManager', () => {
   })
 
   test.each([
-    ['default source', undefined, 'https://github.com/astral-sh/uv/releases/download/0.9.5/'],
-    ['empty override', '  ', 'https://github.com/astral-sh/uv/releases/download/0.9.5/'],
-    ['environment override', ' https://uv.example.com/0.9.5 ', 'https://uv.example.com/0.9.5/'],
+    [
+      'public backend source',
+      undefined,
+      'https://github.com/astral-sh/uv/releases/download/0.9.5/',
+    ],
+    [
+      'public backend source with slash',
+      'https://github.com/astral-sh/uv/releases/download/0.9.5/',
+      'https://github.com/astral-sh/uv/releases/download/0.9.5/',
+    ],
+    ['internal backend source', ' https://uv.example.com/0.9.5 ', 'https://uv.example.com/0.9.5/'],
     ['trailing slash', 'https://uv.example.com/0.9.5/', 'https://uv.example.com/0.9.5/'],
   ])(
     'removes a corrupted cached uv executable before redownloading from %s',
-    async (_name, sourceOverride, expectedBaseUrl) => {
+    async (_name, _sourceValue, expectedBaseUrl) => {
       const directory = await temporaryDirectory()
       const uvPath = join(directory, 'managed-runtimes', 'python', 'bootstrap', 'uv-0.9.5', 'uv')
       await mkdir(join(directory, 'managed-runtimes', 'python', 'bootstrap', 'uv-0.9.5'), {
@@ -413,8 +514,13 @@ describe('PythonRuntimeManager', () => {
       await writeFile(uvPath, 'corrupted uv')
       const fetch = vi.fn().mockResolvedValue(new Response(new Uint8Array([1, 2, 3])))
       const manager = new PythonRuntimeManager({
+        resolveDownloads: async () => ({
+          uvDownloadBaseUrl: expectedBaseUrl,
+          pythonInstallMirror:
+            'https://github.com/astral-sh/python-build-standalone/releases/download/',
+        }),
         dataDirectory: directory,
-        environment: { WEWORK_UV_DOWNLOAD_BASE_URL: sourceOverride },
+        environment: {},
         platform: 'darwin',
         arch: 'arm64',
         fetch,
@@ -434,6 +540,7 @@ describe('PythonRuntimeManager', () => {
     const directory = await temporaryDirectory()
     const log = vi.fn()
     const manager = new PythonRuntimeManager({
+      resolveDownloads,
       dataDirectory: directory,
       environment: {},
       platform: 'darwin',
@@ -478,6 +585,7 @@ describe('PythonRuntimeManager', () => {
     const fetch = vi.fn().mockResolvedValue(new Response(body))
     const log = vi.fn()
     const manager = new PythonRuntimeManager({
+      resolveDownloads,
       dataDirectory: directory,
       environment: {},
       platform: 'darwin',
@@ -511,6 +619,7 @@ describe('PythonRuntimeManager', () => {
         })
     )
     const manager = new PythonRuntimeManager({
+      resolveDownloads,
       dataDirectory: directory,
       environment: {},
       platform: 'darwin',

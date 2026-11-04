@@ -5,6 +5,11 @@ import { afterEach, expect, test, vi } from 'vitest'
 import { findCompatibleSystemPython } from './python-runtime-selection.js'
 import { PythonRuntimeManager } from './python-runtime.js'
 
+const resolveDownloads = async () => ({
+  uvDownloadBaseUrl: 'https://github.com/astral-sh/uv/releases/download/0.9.5/',
+  pythonInstallMirror: 'https://github.com/astral-sh/python-build-standalone/releases/download/',
+})
+
 const roots: string[] = []
 afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
@@ -111,6 +116,7 @@ test('temporary execution shares one installation and a failed prewarm never loo
   })
   const environment = { PATH: bin, PYTHONHOME: 'ordinary-home' }
   const manager = new PythonRuntimeManager({
+    resolveDownloads,
     dataDirectory: root,
     environment,
     runFile: probe,
@@ -153,6 +159,7 @@ test('a ready managed interpreter is preferred without probing the system or dow
   const probe = vi.fn(async () => ({ stdout: 'Python 3.12.12', stderr: '' }))
   const fetch = vi.fn()
   const manager = new PythonRuntimeManager({
+    resolveDownloads,
     dataDirectory: root,
     environment: { PATH: bin },
     runFile: probe,
@@ -173,6 +180,7 @@ test('selection after an authorization claim cannot start or wait for a new inst
   const fetch = vi.fn()
   const probe = vi.fn()
   const manager = new PythonRuntimeManager({
+    resolveDownloads,
     dataDirectory: root,
     environment: { PATH: bin },
     runFile: probe,
@@ -194,6 +202,7 @@ test('managed readiness does not wait for an unfinished local Python probe', asy
       })
   )
   const manager = new PythonRuntimeManager({
+    resolveDownloads,
     dataDirectory: root,
     environment: { PATH: bin },
     runFile: probe,

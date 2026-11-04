@@ -1305,14 +1305,15 @@ async function main() {
     }
     desktopScenario?.setExecutorBinary?.(executorBinary)
     const desktopAppPromise = buildDesktopApp(appIdentifier, codexBinary)
-    const desktopApp = cloudEnvironment
-      ? (
-          await Promise.all([
-            desktopAppPromise,
-            cloudEnvironment.startRemoteExecutor(executorBinary),
-          ])
-        )[0]
-      : await desktopAppPromise
+    const desktopApp =
+      cloudEnvironment && desktopScenario?.requiresRemoteExecutor !== false
+        ? (
+            await Promise.all([
+              desktopAppPromise,
+              cloudEnvironment.startRemoteExecutor(executorBinary),
+            ])
+          )[0]
+        : await desktopAppPromise
     desktopScenario?.setCloudEnvironment?.(cloudEnvironment)
     const appBinary = desktopApp.binaryPath
     appBundlePath = desktopApp.appBundlePath

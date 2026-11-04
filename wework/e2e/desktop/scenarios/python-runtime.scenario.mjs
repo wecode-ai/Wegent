@@ -46,13 +46,20 @@ export async function createDesktopScenario({
     )
   }
 
+  const appEnvironment = {
+    WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP: '0',
+    PATH: [dirname(localPython), process.env.PATH].filter(Boolean).join(delimiter),
+  }
+
   return {
+    requiresCloudEnvironment: true,
+    requiresRemoteExecutor: false,
     requiresPackagedHarnessRuntime: true,
-    launchWorkingDirectory: launchDirectory,
-    appEnvironment: {
-      WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP: '0',
-      PATH: [dirname(localPython), process.env.PATH].filter(Boolean).join(delimiter),
+    async prepareCloud({ backendUrl }) {
+      appEnvironment.WEWORK_BACKEND_URL = backendUrl
     },
+    launchWorkingDirectory: launchDirectory,
+    appEnvironment,
     setRestartDesktopApp(restart) {
       restartDesktopApp = restart
     },

@@ -46,8 +46,11 @@
 //! request-time timestamps, so they cannot byte-match the recording at replay
 //! time; the recordings are structural references, not literal value
 //! fixtures.
+mod runtime_downloads;
+
 use base64::Engine as _;
 use brz_redis::{Redis, RedisBytes, SetExpiration, SetOptions};
+use runtime_downloads::RuntimeDownloads;
 use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
@@ -104,6 +107,8 @@ struct CreateResponse {
 struct WebConfigResponse {
     web_url: String,
     socket_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    runtime_downloads: Option<RuntimeDownloads>,
 }
 
 /// GET /api/auth/wework/config: the source declares no authentication
@@ -112,10 +117,15 @@ struct WebConfigResponse {
 async fn get_wework_web_config(
     #[inject(state)] state: &AppState,
 ) -> Result<WebConfigResponse, FastApiError> {
-    Ok(web_config(
+    let mut response = web_config(
         &state.oidc_config.frontend_url,
         crate::config::env_or_dotenv("WEGENT_SOCKET_URL"),
-    ))
+    );
+    append_runtime_downloads(
+        &mut response,
+        RuntimeDownloads::from_config(|key| std::env::var(key).ok()),
+    );
+    Ok(response)
 }
 
 /// Handler body of `get_wework_web_config`:
@@ -130,6 +140,22 @@ fn web_config(frontend_url: &str, socket_url: Option<String>) -> WebConfigRespon
     WebConfigResponse {
         web_url: frontend_url.trim_end_matches('/').to_string(),
         socket_url: (!socket_url.is_empty()).then_some(socket_url),
+        runtime_downloads: None,
+    }
+}
+
+// Download metadata is optional and must never prevent the original config response.
+// This reads local deployment settings only; no network or storage request is added.
+fn append_runtime_downloads(
+    response: &mut WebConfigResponse,
+    downloads: Result<RuntimeDownloads, &'static str>,
+) {
+    match downloads {
+        Ok(downloads) => response.runtime_downloads = Some(downloads),
+        Err(error) => tracing::warn!(
+            error,
+            "Wework runtime download configuration is unavailable"
+        ),
     }
 }
 

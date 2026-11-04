@@ -111,17 +111,24 @@ export async function createDesktopScenario({
   assert.ok(websiteAddress && typeof websiteAddress !== 'string')
   const websiteUrl = `http://127.0.0.1:${websiteAddress.port}/`
 
+  const appEnvironment = {
+    WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP: '0',
+    WEWORK_E2E_OPEN_DIALOG_PATH: pluginRoot,
+    WEWORK_PLUGIN_DEVELOPMENT_E2E: '1',
+    WEWORK_DESKTOP_CONTROL_REGISTRY_DIR: controlRegistry,
+  }
+
   return {
+    requiresCloudEnvironment: true,
+    requiresRemoteExecutor: false,
     requiresPackagedHarnessRuntime: true,
+    async prepareCloud({ backendUrl }) {
+      appEnvironment.WEWORK_BACKEND_URL = backendUrl
+    },
     async prepareApp() {
       await upgradeFixture.prepare()
     },
-    appEnvironment: {
-      WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP: '0',
-      WEWORK_E2E_OPEN_DIALOG_PATH: pluginRoot,
-      WEWORK_PLUGIN_DEVELOPMENT_E2E: '1',
-      WEWORK_DESKTOP_CONTROL_REGISTRY_DIR: controlRegistry,
-    },
+    appEnvironment,
 
     async verify(control) {
       const mainAssets = join(
