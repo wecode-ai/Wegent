@@ -5,6 +5,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
+import { verifyBrowserFullControl } from '../modules/browser-full-control.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   EMBEDDED_BROWSER_BRIDGE_COLLISION_COMPLETION_TEXT,
@@ -1628,6 +1629,12 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
                 text: request.text,
               })
             )
+        )
+        await verifyBrowserFullControl(
+          control,
+          bridgeCall,
+          async request => parseToolJson(await callTool('browser_fill', request)),
+          uiTimeoutMs
         )
       })
 
