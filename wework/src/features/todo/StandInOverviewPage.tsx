@@ -580,7 +580,7 @@ export function StandInOverviewPage({
       userId={props.userId}
       deviceId={deviceId ?? ''}
       active={active}
-      bypass={Boolean(props.initialProfileId || (!deviceId && state.error))}
+      bypass={Boolean(props.initialProfileId || profile || chatting || (!deviceId && state.error))}
       onClose={props.onCancel}
     >
       {content}
