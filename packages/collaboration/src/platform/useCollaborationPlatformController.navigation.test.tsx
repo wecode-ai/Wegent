@@ -35,6 +35,7 @@ const location: CollaborationPlatformLocation = {
 }
 let root: Root | undefined
 let container: HTMLDivElement
+let commands: ReturnType<typeof useCollaborationPlatformController>['commands'] | undefined
 
 function currentState(): CollaborationPlatformState {
   return JSON.parse(container.textContent ?? '{}')
@@ -53,11 +54,12 @@ function Harness(props: {
   location: CollaborationPlatformLocation
   refreshKey?: string
 }) {
-  const { state } = useCollaborationPlatformController({
+  const controller = useCollaborationPlatformController({
     ...props,
     loadFailedMessage: 'Failed',
   })
-  return <output>{JSON.stringify(state)}</output>
+  commands = controller.commands
+  return <output>{JSON.stringify(controller.state)}</output>
 }
 
 async function render(
@@ -86,8 +88,44 @@ beforeEach(() => vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true))
 afterEach(() => {
   act(() => root?.unmount())
   root = undefined
+  commands = undefined
   container?.remove()
   vi.unstubAllGlobals()
+})
+
+it('completes local navigation after creating a cloud workspace during the initial load', async () => {
+  const created = { id: 'created', project_count: 0 } as CollaborationWorkspace
+  const cloudApi = apiFor(cloudWorkspace, [])
+  cloudApi.workspaces!.create = vi.fn(async () => {
+    vi.mocked(cloudApi.workspaces!.list).mockResolvedValue([cloudWorkspace, created])
+    return created
+  })
+  cloudApi.workspaces!.get = vi.fn(async () => created)
+  cloudApi.workspaces!.listMembers = vi.fn(async () => [])
+  const localApi = apiFor(localWorkspace, [])
+  let resolveLocal!: (workspaces: CollaborationWorkspace[]) => void
+  const pendingLocal = new Promise<CollaborationWorkspace[]>(resolve => {
+    resolveLocal = resolve
+  })
+  vi.mocked(localApi.workspaces!.list).mockReturnValue(pendingLocal)
+  const sources = [cloudApi, localApi]
+  const rootLocation = {
+    ...location,
+    projectId: null,
+    workspaceId: null,
+    rootView: 'home' as const,
+  }
+  await render(sources, rootLocation)
+  await act(async () => {
+    await commands!.createWorkspace({ name: 'Created' })
+  })
+  await render(sources, { ...rootLocation, workspaceId: created.id })
+  expect(currentState().workspace?.id).toBe(created.id)
+  expect(currentState().loading).toBe(false)
+  await act(async () => resolveLocal([localWorkspace]))
+  expect(currentState().workspaces.map(workspace => workspace.id)).toContain(localWorkspace.id)
+  expect(currentState().navigationIncomplete).toBe(false)
+  expect(localApi.workspaces!.list).toHaveBeenCalledTimes(2)
 })
 
 it.each([
