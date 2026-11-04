@@ -26,11 +26,11 @@ const COMPLETE = 'WEWORK_CONSECUTIVE_ANSWERS_ACCEPTED'
 const FIRST = 'Which audience should receive the report?'
 const SECOND = 'Which format should the report use?'
 const THIRD = 'When should the report be delivered?'
-const ANSWER = 'Engineering team\nPDF\nTomorrow'
+const ANSWER = 'STAFF\nPDF\nTomorrow'
 const CARD = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="request-user-input-card"]`
 const INPUT = `${CARD} [data-testid="request-user-input-custom-question_1"]`
 
-export function createDesktopScenario({ executorHome, workspacePath }) {
+export function createDesktopScenario({ executorHome, workspacePath, resultDir }) {
   let active = false
   let releaseSecond
   const secondReady = new Promise(resolve => {
@@ -66,7 +66,7 @@ export function createDesktopScenario({ executorHome, workspacePath }) {
       } else {
         const input = body.input ?? body.messages ?? []
         const answered = input.some(
-          message => message.role === 'user' && JSON.stringify(message).includes('Engineering team')
+          message => message.role === 'user' && JSON.stringify(message).includes('STAFF')
         )
         if (answered)
           assert.ok(
@@ -106,12 +106,54 @@ export function createDesktopScenario({ executorHome, workspacePath }) {
       await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
       try {
         await control.command('waitFor', CARD, { text: FIRST, visible: true })
-        await control.command('fill', INPUT, { value: 'Engineering team' })
-        releaseSecond()
-        await control.command('waitFor', CARD, { text: THIRD, visible: true })
+        for (const key of 'STAFF') {
+          await control.command('nativePress', INPUT, { key: key === ' ' ? 'Space' : key })
+        }
         assert.equal(
           await control.command('getValue', INPUT),
-          'Engineering team',
+          'STAFF',
+          'The native keyboard must establish a draft before more questions arrive'
+        )
+        const readQuestions = async () => {
+          const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+          const task = snapshot.pane.currentRuntimeTask
+          const messages = JSON.parse(
+            await control.command('getRuntimeConversationMessages', 'body', {
+              value: JSON.stringify({ deviceId: task.deviceId, taskId: task.taskId }),
+            })
+          )
+          return {
+            input: await control.command('getValue', INPUT),
+            inputAttribute: await control.command('getAttribute', INPUT, { value: 'value' }),
+            mountId: await control.command(
+              'getAttribute',
+              `${CARD} [data-testid="request-user-input-question-question_1"]`,
+              { value: 'id' }
+            ),
+            questions: messages.flatMap(message =>
+              (message.blocks ?? []).flatMap(block =>
+                block.renderPayload?.kind === 'request_user_input' ? [block.renderPayload] : []
+              )
+            ),
+          }
+        }
+        const firstState = await readQuestions()
+        releaseSecond()
+        await control.command('waitFor', CARD, { text: THIRD, visible: true })
+        await writeFile(
+          join(resultDir, 'consecutive-question-identities.json'),
+          JSON.stringify(
+            {
+              first: firstState,
+              afterArrival: await readQuestions(),
+            },
+            null,
+            2
+          )
+        )
+        assert.equal(
+          await control.command('getValue', INPUT),
+          'STAFF',
           'New questions must preserve the first draft'
         )
         const text = await control.command('getText', CARD)
