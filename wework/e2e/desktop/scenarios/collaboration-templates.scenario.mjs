@@ -296,6 +296,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       )
       await capture(control, '00-account-available')
       await click(control, `template-details-${accountTemplate.id}`)
+      // Singleton workspace routing requires the independently loaded local catalog.
+      await wait(control, 'collaboration-workspace-wework-local-workspace')
       await click(control, 'template-use')
       await wait(
         control,
