@@ -1113,6 +1113,7 @@ classify_wework_path() {
       return
       ;;
     wework/e2e/desktop/scenarios/collaboration-remote-agent-dispatch.scenario.mjs | \
+      wework/e2e/desktop/modules/unconfigured-issue-archive.mjs | \
       wework/e2e/desktop/modules/dispatch-issue-boundary.mjs)
       select_target "core:collaboration-remote-agent-dispatch"
       return
