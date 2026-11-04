@@ -517,7 +517,7 @@ export interface KnowledgeBaseUpdate {
 
 export interface DocumentProtection {
   original_download_allowed: boolean
-  watermark_text: string
+  watermark_text?: string | null
 }
 
 export interface KnowledgeBaseListResponse {

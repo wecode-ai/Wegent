@@ -58,12 +58,50 @@ def test_document_protection_is_private_and_includes_watermark(
     response = test_client.get(
         f"/api/knowledge-bases/{kb_id}/document-protection",
         headers={"Authorization": f"Bearer {test_token}"},
+        params={"preview_watermark": "true"},
     )
     assert response.status_code == 200
     assert response.headers["cache-control"] == "private, no-store"
     assert response.json() == {
         "original_download_allowed": allowed,
         "watermark_text": f"{test_user.user_name}{expected_suffix}",
+    }
+
+
+@pytest.mark.parametrize(
+    ("allowed", "includes_watermark"),
+    [(True, False), (False, True)],
+)
+def test_document_protection_preserves_default_watermark_contract(
+    test_client,
+    test_db,
+    test_user,
+    test_token,
+    allowed,
+    includes_watermark,
+):
+    from app.schemas.knowledge import KnowledgeBaseCreate, KnowledgeBaseUpdate
+    from app.services.knowledge.knowledge_service import KnowledgeService
+
+    kb_id = KnowledgeService.create_knowledge_base(
+        test_db, test_user.id, KnowledgeBaseCreate(name="protection-default")
+    )
+    KnowledgeService.update_knowledge_base(
+        test_db,
+        kb_id,
+        test_user.id,
+        KnowledgeBaseUpdate(allow_document_download=allowed),
+    )
+
+    response = test_client.get(
+        f"/api/knowledge-bases/{kb_id}/document-protection",
+        headers={"Authorization": f"Bearer {test_token}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "original_download_allowed": allowed,
+        "watermark_text": test_user.user_name if includes_watermark else None,
     }
 
 

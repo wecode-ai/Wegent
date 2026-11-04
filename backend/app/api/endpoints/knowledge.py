@@ -566,6 +566,10 @@ def create_knowledge_base(
 def get_document_protection(
     knowledge_base_id: int,
     response: Response,
+    preview_watermark: bool = Query(
+        False,
+        description="Include the viewer identity required by external-link previews",
+    ),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ) -> DocumentProtectionResponse:
@@ -585,7 +589,11 @@ def get_document_protection(
     response.headers["Cache-Control"] = "private, no-store"
     return DocumentProtectionResponse(
         original_download_allowed=download_allowed,
-        watermark_text=_document_watermark_text(current_user),
+        watermark_text=(
+            _document_watermark_text(current_user)
+            if preview_watermark or not download_allowed
+            else None
+        ),
     )
 
 

@@ -28,7 +28,7 @@ describe('VideoPreview', () => {
     const video = container.querySelector('video')
     expect(video).toHaveAttribute('src', url)
     expect(video).toHaveAttribute('playsinline')
-    expect(video).toHaveAttribute('controlslist', 'nodownload noremoteplayback')
+    expect(video).toHaveAttribute('controlslist', 'nodownload nofullscreen noremoteplayback')
   })
 
   it('contains the video inside the available preview viewport', () => {

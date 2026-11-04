@@ -125,6 +125,7 @@ function CoreProtectedKnowledgePreview({
         style={{ backgroundImage: `url(${generation.pattern})` }}
         data-testid="knowledge-document-watermark"
         data-watermark-pattern="tiled"
+        data-watermark-text={watermarkText}
       />
     </div>
   )
