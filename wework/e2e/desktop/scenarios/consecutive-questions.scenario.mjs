@@ -30,7 +30,12 @@ const ANSWER = 'STAFF\nPDF\nTomorrow'
 const CARD = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="request-user-input-card"]`
 const INPUT = `${CARD} [data-testid="request-user-input-custom-question_1"]`
 
-export function createDesktopScenario({ executorHome, workspacePath, resultDir }) {
+export function createDesktopScenario({
+  executorHome,
+  workspacePath,
+  resultDir,
+  workbenchReadyTimeoutMs,
+}) {
   let active = false
   let releaseSecond
   const secondReady = new Promise(resolve => {
@@ -93,6 +98,9 @@ export function createDesktopScenario({ executorHome, workspacePath, resultDir }
         ])
       )
       await rm(join(executorHome, 'codex', 'models_cache.json'), { force: true })
+      await control.command('waitFor', '[data-testid="new-chat-button"]', {
+        timeoutMs: workbenchReadyTimeoutMs,
+      })
       await control.command('click', '[data-testid="new-chat-button"]')
       const workspace = join(workspacePath, 'consecutive-questions')
       await mkdir(workspace, { recursive: true })
