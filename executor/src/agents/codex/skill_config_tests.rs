@@ -99,6 +99,25 @@ async fn pid(client: &CodexAppServerClient) -> u32 {
 }
 
 #[tokio::test]
+async fn existing_requests_preserve_the_process_until_the_next_startup() {
+    let fixture = Fixture::new();
+    let _activation = crate::services::capability_activation::activate().await;
+    let client = fixture.client("existing-request");
+    client.ensure_started().await.unwrap();
+    let original_pid = pid(&client).await;
+    client.state.lock().await.process_environment.insert(
+        "WEGENT_CAPABILITY_REVISION".to_owned(),
+        "stale-revision".to_owned(),
+    );
+
+    client.reload_user_skills().await.unwrap();
+
+    assert_eq!(pid(&client).await, original_pid);
+    client.ensure_started().await.unwrap();
+    assert_ne!(pid(&client).await, original_pid);
+}
+
+#[tokio::test]
 async fn skill_write_and_reload_preserve_the_process_and_capability_revision() {
     let fixture = Fixture::new();
     // Pin capability publication across both startup and the reload under test.
