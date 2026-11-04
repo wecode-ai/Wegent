@@ -779,6 +779,7 @@ async function change(
 
 function PlatformHarness({
   templateStore,
+  projectTemplateRequest,
   refreshKey,
   cloudAccess,
   api,
@@ -802,6 +803,7 @@ function PlatformHarness({
   capabilities = { automation: false, dingtalkAitable: false },
 }: {
   templateStore?: CollaborationPlatformHostAdapter["templateStore"];
+  projectTemplateRequest?: CollaborationPlatformHostAdapter["projectTemplateRequest"];
   refreshKey?: string;
   renderIssueComposer?: CollaborationPlatformHostAdapter["renderIssueComposer"];
   renderStandInPage?: CollaborationPlatformHostAdapter["renderStandInPage"];
@@ -827,6 +829,7 @@ function PlatformHarness({
   const [location, setLocation] = useState(start);
   const host: CollaborationPlatformHostAdapter = {
     templateStore,
+    projectTemplateRequest,
     cloudAccess,
     renderIssueComposer,
     renderStandInPage,
@@ -3906,6 +3909,40 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(leader?.textContent).toBe(agent.name);
   });
 
+  it("opens project creation with a requested marketplace template only once", async () => {
+    const { api } = createApi({ initialProjects: [] });
+    const templateStore = new CollaborationTemplateStore({
+      scope: "marketplace-request",
+      ownerId: 7,
+      persistence: { read: async () => [], write: async () => {} },
+    });
+    const document = builtinCollaborationTemplates()[0].document;
+    const onHandled = vi.fn();
+    await render(
+      <PlatformHarness
+        api={api}
+        templateStore={templateStore}
+        projectTemplateRequest={{ key: "requested", document, onHandled }}
+      />,
+    );
+    expect(onHandled).toHaveBeenCalledOnce();
+    expect(
+      (byTestId("collaboration-project-name-input") as HTMLInputElement).value,
+    ).toBe(document.spec.resources.collaboration.project.name);
+    expect(container.textContent).toContain(document.spec.displayName);
+    await click(
+      container.querySelector<HTMLButtonElement>(
+        ".collaboration-project-create-footer-actions button",
+      )!,
+    );
+    expect(onHandled).toHaveBeenCalledOnce();
+    expect(
+      container.querySelector(
+        '[data-testid="collaboration-project-name-input"]',
+      ),
+    ).toBeNull();
+  });
+
   it.each([
     ["template_model_default_unavailable", "请先为当前执行环境设置默认模型"],
     ["template_environment_unavailable", "当前执行设备暂不可用"],
@@ -4021,6 +4058,52 @@ describe("CollaborationPlatformApp real component flow", () => {
     );
     expect(api.projects.create).not.toHaveBeenCalled();
     expect(container.textContent).toContain("请先为当前执行环境设置默认模型");
+  });
+
+  it("requires explicit environment authorization before creating a web template project", async () => {
+    const { api } = createApi({ initialProjects: [] });
+    const templateStore = new CollaborationTemplateStore({
+      scope: "web-environment",
+      ownerId: 7,
+      persistence: { read: async () => [], write: async () => {} },
+    });
+    await render(
+      <PlatformHarness
+        api={api}
+        templateStore={templateStore}
+        projectAgentConfiguration={{
+          requiresTemplateEnvironmentSelection: true,
+          resolveTemplateAgentRouting: async () => ({
+            executionPolicy: {
+              mode: "fixed",
+              environment_id: String(environment.device_id),
+            },
+            modelPolicy: {
+              mode: "fixed",
+              model: {
+                runtime: "codex",
+                provider: "openai",
+                model_id: "default",
+              },
+            },
+          }),
+        }}
+        start={{ ...initialLocation, rootView: "templates" }}
+      />,
+    );
+    await click(byTestId("template-details-product-lifecycle"));
+    await click(byTestId("template-use"));
+    await click(byTestId("collaboration-project-create-confirm"));
+    expect(container.textContent).toContain("请先选择要授权的默认执行环境");
+    expect(api.projects.create).not.toHaveBeenCalled();
+    expect(api.projects.addExecutionEnvironment).not.toHaveBeenCalled();
+    await click(byTestId("template-authorize-environment-21"));
+    await click(byTestId("collaboration-project-create-confirm"));
+    expect(api.projects.create).toHaveBeenCalledOnce();
+    expect(api.projects.addExecutionEnvironment).toHaveBeenCalledWith(
+      expect.any(String),
+      21,
+    );
   });
 
   it("locks template selection after a project has been partially configured", async () => {
