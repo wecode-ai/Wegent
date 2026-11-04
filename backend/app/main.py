@@ -179,10 +179,15 @@ def _load_system_initialization_state(logger: logging.Logger) -> None:
 async def lifespan(app: FastAPI):
     # Keep the cache available through startup, channel draining and shutdown.
     from app.services.execution.chat_shell_client import chat_shell_clients
+    from app.services.execution.package_runtime import package_runtime_lifespan
 
     await cache_manager.start()
     try:
-        async with chat_shell_clients.lifespan(), _application_lifespan(app):
+        async with (
+            chat_shell_clients.lifespan(),
+            _application_lifespan(app),
+            package_runtime_lifespan(),
+        ):
             yield
     finally:
         try:
@@ -940,6 +945,10 @@ def create_app():
         app.state.limiter = limiter
         app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
         logger.info("Rate limiting enabled for API endpoints")
+
+    from app.services.execution.package_runtime import mount_package_runtime
+
+    mount_package_runtime(app)
 
     # Include API routes
     app.include_router(oauth_metadata_router)

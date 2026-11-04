@@ -214,6 +214,24 @@ pub fn latest_assistant_for_user_by_statuses_statement(table: &str, statuses: &[
     )
 }
 
+/// `subtask_store.list_running_by_executor_name`: the executor's RUNNING
+/// subtasks (`device-<route>` owns a disconnected device's in-flight work).
+pub fn running_subtasks_by_executor_statement(table: &str) -> String {
+    let projection = subtask_projection(table);
+    format!(
+        "SELECT {projection} \nFROM {table} \nWHERE {table}.executor_name = ? AND {table}.status = 'RUNNING'"
+    )
+}
+
+/// `subtask_store.update_fields` for `_handle_device_disconnect`: the flush
+/// of `status`, `error_message`, `completed_at`, and the `updated_at`
+/// onupdate, in the source model's mapped-column order.
+pub fn fail_disconnected_subtask_statement(table: &str) -> String {
+    format!(
+        "UPDATE {table} SET status=?, error_message=?, updated_at=?, completed_at=? WHERE {table}.id = ?"
+    )
+}
+
 /// `subtask_store.update_fields` for the cancel flow: persist the terminal
 /// status, progress, partial result, and timestamps on one subtask. The `SET`
 /// column order matches the source model's mapped-column order.
@@ -313,6 +331,23 @@ pub fn subtask_column_index(column: &str) -> Option<usize> {
 pub fn subtask_by_id_statement(table: &str) -> String {
     let projection = subtask_projection(table);
     format!("SELECT {projection} \nFROM {table} \nWHERE {table}.id = ? \n LIMIT 1")
+}
+
+/// `_get_migrated_legacy_subtask_by_id`'s index read: the row's task id from
+/// the base table (`db.query(Subtask.task_id).filter(Subtask.id == id).first()`).
+pub fn subtask_task_id_statement(table: &str) -> String {
+    format!(
+        "SELECT {table}.task_id AS {table}_task_id \nFROM {table} \nWHERE {table}.id = ? \n LIMIT 1"
+    )
+}
+
+/// `_get_active_streaming_from_db` (`SubtaskStore.get_latest_running_assistant_by_task`):
+/// the task's latest `RUNNING` assistant subtask.
+pub fn latest_running_assistant_subtask_statement(table: &str) -> String {
+    let projection = subtask_projection(table);
+    format!(
+        "SELECT {projection} \nFROM {table} \nWHERE {table}.task_id = ? AND {table}.`role` = 'ASSISTANT' AND {table}.status = 'RUNNING' ORDER BY {table}.id DESC \n LIMIT 1"
+    )
 }
 
 /// `subtask_store.update_fields` for the message-content update: the single
@@ -450,6 +485,21 @@ pub fn subtask_ids_for_task_page_statement(
 pub fn subtasks_by_ids_statement(table: &str, count: usize) -> String {
     let placeholders = vec!["?"; count].join(", ");
     format!("SELECT {SUBTASK_COLUMNS} \nFROM {table} \nWHERE id IN ({placeholders})")
+}
+
+/// `subtask_store.list_by_task_for_user_ordered`
+/// (`db.query(Subtask).filter(Subtask.task_id == task_id,
+/// Subtask.user_id == user_id).order_by(Subtask.message_id.asc())`): the
+/// labeled `{table}_{column}` projection, qualified predicates, and the
+/// single-key ordering the Source renders for the queued/background response
+/// render (`openapi_responses._query_subtasks`).
+pub fn subtasks_by_task_for_user_ordered_statement(table: &str) -> String {
+    let projection = subtask_projection(table);
+    format!(
+        "SELECT {projection} \nFROM {table} \n\
+         WHERE {table}.task_id = ? AND {table}.user_id = ? \n\
+         ORDER BY {table}.message_id ASC"
+    )
 }
 
 /// `subtask_store.count_by_task_for_user` (`db.query(Subtask).filter(...).count()`),
@@ -904,50 +954,9 @@ pub fn assistant_subtasks_by_task_statement(table: &str) -> String {
     )
 }
 
-/// `subtask_store.update_fields(status=RUNNING)` (`execution/dispatcher.py:347`
-/// → `chat/storage/db.py:199`): the status-only flush. SQLAlchemy's `onupdate`
-/// also refreshes `updated_at`, which is why the recorded statement carries
-/// both columns.
-pub fn update_subtask_running_statement(table: &str) -> String {
-    format!("UPDATE {table} SET status=?, updated_at=? WHERE {table}.id = ?")
-}
-
-/// `subtask_store.update_fields` flush for a terminal subtask update
-/// (`app/services/chat/storage/db.py:199`): the mapped columns that changed,
-/// in SQLAlchemy's mapper order — `executor_namespace`, `executor_name`,
-/// `status`, `result`, `error_message`, `updated_at`, `completed_at`.
-///
-/// `with_executor` mirrors the source's "only save executor info when it is
-/// provided and the row has none" branch; `with_error` mirrors the `FAILED`
-/// branch that also writes `error_message`.
-pub fn update_subtask_terminal_statement(
-    table: &str,
-    with_result: bool,
-    with_error: bool,
-    with_executor: bool,
-) -> String {
-    let mut sets: Vec<&str> = Vec::new();
-    if with_executor {
-        sets.push("executor_namespace=?");
-        sets.push("executor_name=?");
-    }
-    sets.push("status=?");
-    // `_update_subtask_sync` assigns `fields["result"]` only when the caller
-    // passed a result (`db.py:136`), so a terminal error without one leaves the
-    // stored result untouched.
-    if with_result {
-        sets.push("result=?");
-    }
-    if with_error {
-        sets.push("error_message=?");
-    }
-    sets.push("updated_at=?");
-    sets.push("completed_at=?");
-    format!(
-        "UPDATE {table} SET {} WHERE {table}.id = ?",
-        sets.join(", ")
-    )
-}
+#[path = "task_store_statements_update.rs"]
+mod update_statements;
+pub use update_statements::{update_subtask_running_statement, update_subtask_terminal_statement};
 
 #[cfg(test)]
 #[path = "task_store_statements_creation_tests.rs"]
@@ -956,3 +965,7 @@ mod task_creation_statement_tests;
 #[cfg(test)]
 #[path = "task_store_statements_group_tests.rs"]
 mod group_list_statement_tests;
+
+#[cfg(test)]
+#[path = "task_store_statements_queued_render_tests.rs"]
+mod queued_render_statement_tests;

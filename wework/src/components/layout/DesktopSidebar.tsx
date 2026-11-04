@@ -50,6 +50,7 @@ import { TextInputDialog } from '@/components/common/TextInputDialog'
 import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { Tooltip } from '@/components/ui/tooltip'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
+import { isGitCloneDeviceMissing } from '@/components/projects/gitCloneProjectRecovery'
 import { LocalProjectEditDialog } from '@/components/projects/LocalProjectEditDialog'
 import type { ProjectDevicePluginApi } from '@/api/projectDevicePlugins'
 import { getRuntimeProjectOwner } from '@/lib/runtime-project-state'
@@ -4556,16 +4557,28 @@ export function DesktopSidebar({
                                   ? t('workbench.remote_project_git_cloning', '克隆中')
                                   : operation.status === 'opening'
                                     ? t('workbench.remote_project_git_opening', '添加中')
-                                    : operation.failureReason === 'executor-offline'
-                                      ? t('workbench.remote_project_device_offline', '设备离线')
-                                      : operation.failureStage === 'open'
-                                        ? t('workbench.remote_project_git_open_failed', '添加失败')
-                                        : t('workbench.remote_project_git_failed', '克隆失败')}
+                                    : isGitCloneDeviceMissing(operation)
+                                      ? t(
+                                          'workbench.remote_project_device_unavailable',
+                                          '设备不可用'
+                                        )
+                                      : operation.failureReason === 'executor-offline'
+                                        ? t('workbench.remote_project_device_offline', '设备离线')
+                                        : operation.failureStage === 'open'
+                                          ? t(
+                                              'workbench.remote_project_git_open_failed',
+                                              '添加失败'
+                                            )
+                                          : t('workbench.remote_project_git_failed', '克隆失败')}
                               </span>
                               {operation.status === 'failed' && (
                                 <>
                                   <Tooltip
-                                    label={t('workbench.retry', '重试')}
+                                    label={
+                                      isGitCloneDeviceMissing(operation)
+                                        ? t('workbench.reselect_device', '重新选择设备')
+                                        : t('workbench.retry', '重试')
+                                    }
                                     testId={`retry-git-clone-project-${operation.id}-tooltip`}
                                   >
                                     <button
@@ -4573,7 +4586,11 @@ export function DesktopSidebar({
                                       data-testid={`retry-git-clone-project-${operation.id}`}
                                       onClick={() => onRetryGitCloneOperation?.(operation)}
                                       className="flex h-7 w-7 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
-                                      aria-label={t('workbench.retry', '重试')}
+                                      aria-label={
+                                        isGitCloneDeviceMissing(operation)
+                                          ? t('workbench.reselect_device', '重新选择设备')
+                                          : t('workbench.retry', '重试')
+                                      }
                                     >
                                       <RotateCw className="h-3.5 w-3.5" />
                                     </button>

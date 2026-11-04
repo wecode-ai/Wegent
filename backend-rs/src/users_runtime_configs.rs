@@ -171,6 +171,16 @@ struct KindDocumentRow {
 
 /// `UserRuntimeConfigService._get_kind` / `_get_proxy_kind`: the first active
 /// kind with the exact `user_id`/`kind`/`namespace`/`name`.
+/// `get_proxy_url_for_execution`: the decrypted `UserProxyConfig` URL for a
+/// remote runtime dispatch, without the per-runtime status reads.
+pub(crate) async fn proxy_url_for_execution<M: Mysql>(
+    mysql: &M,
+    user_id: i64,
+) -> Result<String, FastApiError> {
+    let proxy = fetch_kind(mysql, PROXY_CONFIG_KIND, PROXY_CONFIG_NAME, user_id).await?;
+    proxy_url(proxy.as_ref())
+}
+
 async fn fetch_kind<M: Mysql>(
     mysql: &M,
     kind: &str,

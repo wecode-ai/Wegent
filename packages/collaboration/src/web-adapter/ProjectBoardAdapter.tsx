@@ -7,6 +7,10 @@ import {
   useProjectBoardSensors,
 } from "../project-board/projectBoardDnd";
 import { ProjectBoardDragOverlay } from "../project-board/ProjectBoardDragOverlay";
+import {
+  IssueChildrenProgress,
+  collectIssueChildrenProgress,
+} from "../project-board/IssueChildrenProgress";
 import { BrowserIssueBoardCard } from "../issue-card/BrowserIssueBoardCard";
 import { useBrowserBoardRuntimeWork } from "./useBrowserBoardRuntimeWork";
 import type { SharedWorkspaceRuntimeApi } from "../ports/SharedWorkspaceApi";
@@ -178,6 +182,10 @@ export function ProjectBoardAdapter({
   statuses,
   taskBindings,
 }: ProjectBoardAdapterProps) {
+  const childrenProgress = useMemo(
+    () => collectIssueChildrenProgress(issues),
+    [issues],
+  );
   const savedViews = useSavedBoardViews({
     projectKey: `${project.project_store}:${project.id}`,
     config: project.board_views,
@@ -637,21 +645,16 @@ export function ProjectBoardAdapter({
             dragEnabled: canEditCollaborationIssue(issue),
             onOpen: () => onOpen(issue),
           };
-          const childrenAction = issues.some(
-            (candidate) => candidate.parent_id === issue.id,
-          ) ? (
-            <button
-              type="button"
-              data-testid={`collaboration-issue-children-${issue.id}`}
-              onClick={(event) => {
-                event.stopPropagation();
-                controller.setCurrentParentId(issue.id);
-              }}
-              className="mx-3 mb-3 min-h-11 text-xs text-text-secondary hover:text-text-primary md:min-h-0"
-            >
-              {translate("todo.view_child_task")}
-            </button>
-          ) : null;
+          const progress = childrenProgress.get(issue.id);
+          const childrenAction =
+            progress && issue.can_view_detail !== false ? (
+              <IssueChildrenProgress
+                itemId={issue.id}
+                progress={progress}
+                translate={translate}
+                onOpen={() => controller.setCurrentParentId(issue.id)}
+              />
+            ) : null;
           const defaultCard = (
             <IssueBoardCard {...cardProps} childrenAction={childrenAction} />
           );

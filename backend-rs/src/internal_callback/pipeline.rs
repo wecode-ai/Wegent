@@ -144,10 +144,12 @@ async fn dispatch_execution(
     .await?;
     execution.new_session = advance.previous_bot_id != advance.bot.id;
     let chat_shell = seam::chat_shell_url();
+    let chat_shell_mode = routing::chat_shell_mode();
     let executor_manager = seam::executor_manager_url();
     let shell = routing::shell_type(&execution);
     let target = routing::route(&routing::RouteInputs {
         shell_type: &shell,
+        chat_shell_mode: &chat_shell_mode,
         chat_shell_url: &chat_shell,
         executor_manager_url: &executor_manager,
         device_id: advance
@@ -190,7 +192,8 @@ async fn dispatch_execution(
     if !running {
         return Ok(());
     }
-    if routing::supports_streaming(&target) {
+    if routing::supports_streaming(&target) || target.mode == routing::CommunicationMode::Inprocess
+    {
         let url = target.url.as_deref().ok_or_else(FastApiError::internal)?;
         let job = crate::responses::dispatch::ChatShellJob {
             task_id: execution.task_id,
@@ -211,6 +214,10 @@ async fn dispatch_execution(
                 url: executor_client::executor_responses_url(url),
                 body: serde_json::to_value(dispatch::assemble(&execution, false, true))
                     .map_err(|_| FastApiError::internal())?,
+                start: state
+                    .redis
+                    .clone()
+                    .map(|redis| crate::responses::dispatch::start_event(redis, &execution)),
             });
     }
     Ok(())

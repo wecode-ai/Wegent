@@ -226,7 +226,11 @@ import {
   isImplementationPlanRequestUserInput,
   requestUserInputPayloadKey,
 } from '@/components/chat/requestUserInputMessages'
-import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
+import {
+  pendingRequestUserInputPayload,
+  pendingRequestUserInputPayloads,
+  pendingRequestUserInputResponses,
+} from './requestUserInputOverlay'
 import { useRequestUserInputExpiryRefresh } from './useRequestUserInputExpiryRefresh'
 import {
   getRuntimeWorkbenchPaneKeys,
@@ -5527,12 +5531,23 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                           isImplementationPlanRequest &&
                                           isImplementationPlanConfirmationResponse(response)
                                         return paneSession.sendRequestUserInputResponse(response, {
+                                          requestUserInputResponses:
+                                            pendingRequestUserInputResponses(
+                                              response,
+                                              paneMessages,
+                                              paneSession.answeredRequestUserInputIds
+                                            ),
                                           appendUserMessage: isImplementationPlanRequest,
                                           forceDefaultCollaborationMode: shouldImplementPlan,
                                         })
                                       }}
                                       onIgnore={() =>
-                                        paneSession.ignoreRequestUserInput(pendingRequestUserInput)
+                                        paneSession.ignoreRequestUserInput(
+                                          pendingRequestUserInputPayloads(
+                                            paneMessages,
+                                            paneSession.answeredRequestUserInputIds
+                                          )
+                                        )
                                       }
                                     />
                                   ) : (

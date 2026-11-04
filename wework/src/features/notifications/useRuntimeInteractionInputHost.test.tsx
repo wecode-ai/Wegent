@@ -31,6 +31,7 @@ function host(overrides: Partial<RuntimeInteractionsValue> = {}, taskId = 'revie
     open: vi.fn(),
     notice: null,
     dismissNotice: vi.fn(),
+    dismiss: vi.fn(),
     registerView: vi.fn(),
     ...overrides,
   }

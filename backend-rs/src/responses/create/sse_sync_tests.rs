@@ -649,6 +649,7 @@ async fn an_already_set_cancel_resolves_on_the_initial_get() {
     let executor = executor_manager();
     let request = execution_request();
     let ctx = ConsumerContext {
+        package_mode: false,
         mysql: &mysql,
         redis: Some(&redis),
         tables: tables(),
@@ -707,6 +708,7 @@ async fn cancel_is_observed_while_the_header_wait_is_outstanding() {
     let executor = executor_manager();
     let request = execution_request();
     let ctx = ConsumerContext {
+        package_mode: false,
         mysql: &mysql,
         redis: Some(&redis),
         tables: tables(),
@@ -754,6 +756,7 @@ async fn cancel_is_observed_during_a_slow_persistence_step() {
     let mysql = RecordingMysql::gated(gate);
     let executor = executor_manager();
     let ctx = ConsumerContext {
+        package_mode: false,
         mysql: &mysql,
         redis: Some(&redis),
         tables: tables(),
@@ -821,6 +824,7 @@ async fn terminal_received_with_delayed_eof_keeps_polling_during_the_drain() {
     let mysql = RecordingMysql::default();
     let executor = executor_manager();
     let ctx = ConsumerContext {
+        package_mode: false,
         mysql: &mysql,
         redis: Some(&redis),
         tables: tables(),
@@ -956,6 +960,7 @@ async fn unregister_del_waits_for_an_admitted_cancel_get() {
     let executor = executor_manager();
     let request = execution_request();
     let ctx = ConsumerContext {
+        package_mode: false,
         mysql: &mysql,
         redis: Some(&redis),
         tables: tables(),

@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Models dependency composition, retaining utf8mb4 and the +08:00 session.
-use crate::erp_provider::ErpProvider;
 use crate::models_unified::{build_state, config::AppConfig};
 use anyhow::{Context as _, Result};
 use brz_mysql::Mysql;
@@ -12,7 +11,7 @@ use std::{sync::Arc, time::Duration};
 pub async fn build<M: Mysql>(
     mysql: M,
     config: &AppConfig,
-    erp: Arc<dyn ErpProvider + Send + Sync>,
+    entity_resolvers: crate::permissions::EntityResolvers<brz_redis::RedisService>,
 ) -> Result<Arc<crate::models_unified::state::AppState<M, brz_redis::RedisService>>> {
     let redis = match build_redis(&config.redis_url, config.redis_slave_url.as_deref()).await {
         Ok(redis) => Some(redis),
@@ -21,7 +20,12 @@ pub async fn build<M: Mysql>(
             None
         }
     };
-    Ok(Arc::new(build_state(config, mysql, redis, erp)?))
+    Ok(Arc::new(build_state(
+        config,
+        mysql,
+        redis,
+        entity_resolvers,
+    )?))
 }
 
 /// Build the unsharded Redis service from `REDIS_URL` and optional
