@@ -2329,7 +2329,7 @@ async fn run_codex_app_server_turn_on_shared_client(
 
         let mut turn_fields = codex_turn_fields(request, &thread_id);
         let startup_timeout_seconds = codex_turn_startup_timeout_seconds();
-        let startup_deadline = Instant::now() + Duration::from_secs(startup_timeout_seconds);
+        let mut startup_deadline = Instant::now() + Duration::from_secs(startup_timeout_seconds);
         let active_turn_id = if awaits_initial_goal_turn || resume_goal_only {
             log_executor_event("codex shared goal turn awaiting", &turn_fields);
             None
@@ -2341,7 +2341,7 @@ async fn run_codex_app_server_turn_on_shared_client(
             let turn_start_response = startup::wait_for_shared_startup(
                 client,
                 &thread_id,
-                startup_deadline,
+                &mut startup_deadline,
                 startup_timeout_seconds,
                 &mut cancellation,
                 client.request(
@@ -3086,7 +3086,7 @@ async fn read_shared_turn_notifications(
                     let (response, restarted) = startup::wait_for_shared_startup(
                         client,
                         thread_id,
-                        startup_deadline,
+                        &mut startup_deadline,
                         startup_timeout_seconds,
                         &mut options.cancellation,
                         continuation,
