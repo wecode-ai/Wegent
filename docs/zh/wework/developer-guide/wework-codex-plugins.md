@@ -104,6 +104,8 @@ Wework 使用独立的 Codex home，避免直接污染用户命令行 Codex 的�
 - 从原生 Codex home 迁移配置到 Wework Codex home。
 - 是否启用 Codex 远端 apps 拉取。这个开关只控制远端 app 初始化，不代表特定内置能力。
 
+首次迁移和后续手动导入 Codex 配置时，会移除源配置中的顶层 `model` 字段，让目标运行时的模型目录决定默认模型；不会修改原生 Codex 的源配置文件。
+
 迁移完成后状态写入 Wework Codex home，插件页面和对话运行时都继续从同一个 Codex app-server 读取插件状态。设置页也暴露远端 apps 开关，便于用户后续修改自己的 Wework Codex 配置。
 
 ### 运行配置规范化

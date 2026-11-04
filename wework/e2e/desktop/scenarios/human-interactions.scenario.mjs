@@ -21,6 +21,10 @@ import {
 import { reloadMainWindow, waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
 import { verifyHumanInteractionOverBrowser } from '../modules/human-interaction-browser.mjs'
 import { verifyHumanInteractionAcrossWindows } from '../modules/human-interaction-windows.mjs'
+import {
+  handleArchiveInteractionModel,
+  verifyInteractionArchiving,
+} from '../modules/human-interaction-dismiss.mjs'
 import { verifyPendingInteractionsTab } from '../modules/pending-interactions-tab.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { readProjectChatMessages } from '../modules/project-chat-snapshot.mjs'
@@ -101,6 +105,7 @@ export function createDesktopScenario({
       if (handleEmptyReplyPrediction(body, response)) return true
       assert.ok(JSON.stringify(body).includes(PROMPT), 'Unexpected model request')
       response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
+      if (handleArchiveInteractionModel(body, response)) return true
       if (JSON.stringify(body.input).includes(FOLLOWUP)) {
         response.end(
           createSse([
@@ -325,6 +330,13 @@ export function createDesktopScenario({
       focusDiagnostics.afterReminderCapture = JSON.parse(
         await control.command('getWindowFocusSnapshot', 'body')
       )
+      // Native focus can change during capture; in-app reminders require the foreground window.
+      await control.command('focusMainWindow', 'body')
+      await control.command('waitFor', '[data-testid="runtime-interaction-notice"]', {
+        text: QUESTION,
+        visible: true,
+      })
+      await control.command('hover', '[data-testid="runtime-interaction-notice"]')
       await control.command('click', '[data-testid="interaction-notice-reply"]')
       try {
         await control.command(
@@ -358,6 +370,11 @@ export function createDesktopScenario({
         ? `${page} [data-testid="task-comment-form"] [data-testid="send-message-button"]`
         : `${page} [data-testid="request-user-input-submit-button"]`
       await control.command('waitFor', page, { text: QUESTION })
+      await control.command(
+        'waitFor',
+        `${page} [data-testid="interaction-source-group-${issueFixture ? 'project' : 'task'}"]`,
+        { text: QUESTION }
+      )
       await verifyPendingInteractionsTab(control, 1, { openFromMenu: true })
       await control.command('waitFor', page, { text: CONTEXT })
       if (issueFixture) {
@@ -854,6 +871,9 @@ export function createDesktopScenario({
         )
         await captureScreenshot(control, '10-original-task-followup.png')
       } else await captureScreenshot(control, '09-original-task-resumes.png')
+      if (checkpoint === 'human-interactions') {
+        await verifyInteractionArchiving(control, modelResponseTimeoutMs, originalTaskId)
+      }
     },
   }
 }

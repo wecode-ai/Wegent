@@ -1544,12 +1544,17 @@ def _compile_runtime_task_create(
 ) -> CompiledRuntimeTaskCreate:
     """Compile one already resolved runtime target."""
 
-    execution_request = _build_runtime_execution_request(
-        db=db,
-        user_id=user_id,
-        request=request,
-        target=target,
-    )
+    from app.services.skill_runtime import SkillShellMismatchError
+
+    try:
+        execution_request = _build_runtime_execution_request(
+            db=db,
+            user_id=user_id,
+            request=request,
+            target=target,
+        )
+    except SkillShellMismatchError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
     return CompiledRuntimeTaskCreate(
         target=target,
         payload=_runtime_task_create_payload(
@@ -1572,6 +1577,16 @@ def _runtime_task_create_payload(
     execution_request: Any,
 ) -> dict[str, Any]:
     """Compile one validated create request into the Executor wire payload."""
+
+    from app.services.skill_runtime import validate_skill_shells
+
+    try:
+        validate_skill_shells(
+            request.bot or getattr(execution_request, "bot", []),
+            getattr(execution_request, "skill_refs", None),
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
     runtime = request.runtime
     bots = getattr(execution_request, "bot", [])

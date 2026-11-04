@@ -55,6 +55,11 @@ export interface CollaborationPlatformLocation {
 }
 
 export interface CollaborationPlatformHostAdapter {
+  projectTemplateRequest?: {
+    key: string;
+    document: import("../templates/types").CollaborationTemplate;
+    onHandled(): void;
+  };
   templateStore?: import("../templates/store").CollaborationTemplateStore;
   templateNavigation?: boolean;
   renderStandInPage?(props: {

@@ -803,6 +803,18 @@ export function createDesktopScenario({
         WORKBENCH_READY_TIMEOUT_MS
       )
       const loadOlder = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="load-older-runtime-transcript-button"]`
+      const paginatedPane = JSON.parse(
+        await control.command('getWorkbenchDebugSnapshot', 'body')
+      ).pane
+      assert.ok(
+        paginatedPane.messageSummary.activeAssistantMessage,
+        'The running turn disappeared after native history pagination'
+      )
+      assert.equal(
+        paginatedPane.messageSummary.lastMessage?.id,
+        paginatedPane.messageSummary.activeAssistantMessage.id,
+        'History pagination placed an older reply after the live assistant'
+      )
       const nativeSnapshot = JSON.parse(await control.command('performanceSnapshot', 'body'))
       assert.ok(
         nativeSnapshot.runtimeAssistantDisplayItemCount >= PAGED_ITEM_COUNT,
