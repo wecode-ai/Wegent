@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -142,20 +142,27 @@ test('a child config selects its composite CI owner and hosted checkpoints selec
 })
 
 function classified(path, script = '.github/scripts/classify-wework-desktop-e2e.sh') {
-  const output = execFileSync('bash', [script, path], {
-    cwd: root,
-    env: { ...process.env, GITHUB_OUTPUT: '/dev/stdout' },
-    encoding: 'utf8',
-  })
-  return Object.fromEntries(
-    output
-      .trim()
-      .split('\n')
-      .map(line => {
-        const separator = line.indexOf('=')
-        return [line.slice(0, separator), line.slice(separator + 1)]
-      })
-  )
+  const directory = mkdtempSync(join(tmpdir(), 'desktop-classifier-'))
+  try {
+    // Match GitHub's file-based output protocol; child stdout can be a socket.
+    const outputFile = join(directory, 'github-output')
+    execFileSync('bash', [script, path], {
+      cwd: root,
+      env: { ...process.env, GITHUB_OUTPUT: outputFile },
+      encoding: 'utf8',
+    })
+    return Object.fromEntries(
+      readFileSync(outputFile, 'utf8')
+        .trim()
+        .split('\n')
+        .map(line => {
+          const separator = line.indexOf('=')
+          return [line.slice(0, separator), line.slice(separator + 1)]
+        })
+    )
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
 }
 
 test('a feature config selects its existing shard rather than all desktop suites', () => {
