@@ -22,13 +22,6 @@ const PARENT_EXECUTION_PREFIXES = [
   'WEWORK_EMBEDDED_BROWSER_BRIDGE_',
 ] as const
 
-const CLOUD_ENDPOINT_KEYS = [
-  'WEWORK_BACKEND_URL',
-  'WEGENT_BACKEND_URL',
-  'WEWORK_SOCKET_URL',
-  'WEGENT_SOCKET_URL',
-] as const
-
 const INSTALLATION_PATH_KEYS = new Set([
   'CLAUDE_CONFIG_DIR',
   'CODEX_HOME',
@@ -65,6 +58,8 @@ export interface DesktopEnvironmentIsolationOptions {
  * A packaged app launched from another Wework window (for example a shell
  * inside the production app) must keep its own device identity, executor IPC,
  * cloud endpoints, and workbench homes instead of attaching to the parent.
+ * Explicit cloud endpoints are launch configuration, not executor state, so
+ * they remain available to the new application.
  */
 export function isolateInheritedDesktopEnvironment(
   environment: NodeJS.ProcessEnv,
@@ -74,8 +69,7 @@ export function isolateInheritedDesktopEnvironment(
   for (const key of Object.keys(environment)) {
     if (
       PARENT_EXECUTION_KEYS.includes(key as (typeof PARENT_EXECUTION_KEYS)[number]) ||
-      PARENT_EXECUTION_PREFIXES.some(prefix => key.startsWith(prefix)) ||
-      CLOUD_ENDPOINT_KEYS.includes(key as (typeof CLOUD_ENDPOINT_KEYS)[number])
+      PARENT_EXECUTION_PREFIXES.some(prefix => key.startsWith(prefix))
     ) {
       delete environment[key]
       continue

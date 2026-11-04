@@ -30,14 +30,22 @@ describe('isolateInheritedDesktopEnvironment', () => {
     expect(environment).toEqual({})
   })
 
-  it('drops cloud endpoints inherited from the parent app', () => {
+  it('preserves explicitly configured cloud endpoints', () => {
     const environment = isolate({
       WEWORK_BACKEND_URL: 'https://wegent.example.com/api',
       WEGENT_SOCKET_URL: 'wss://socket.example.com',
+      WEGENT_BACKEND_URL: 'https://override.example.com/api',
+      WEWORK_SOCKET_URL: 'wss://override-socket.example.com',
       UNRELATED: 'kept',
     })
 
-    expect(environment).toEqual({ UNRELATED: 'kept' })
+    expect(environment).toEqual({
+      WEWORK_BACKEND_URL: 'https://wegent.example.com/api',
+      WEGENT_SOCKET_URL: 'wss://socket.example.com',
+      WEGENT_BACKEND_URL: 'https://override.example.com/api',
+      WEWORK_SOCKET_URL: 'wss://override-socket.example.com',
+      UNRELATED: 'kept',
+    })
   })
 
   it('drops homes and binaries owned by another installation', () => {
