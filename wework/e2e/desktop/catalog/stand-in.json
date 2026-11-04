@@ -1,0 +1,12 @@
+{
+  "order": 50000,
+  "scenario": "./scenarios/stand-in.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 30000,
+      "shard": 3,
+      "position": 1000
+    }
+  }
+}

@@ -7706,7 +7706,11 @@ describe('PluginsWorkspace', () => {
       const logout = vi
         .spyOn(connectorCleanup, 'logoutLocalConnectorsForPlugin')
         .mockResolvedValue(undefined)
-      const view = render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+      // Complete the immediate inventory fixture before asserting catalog rows.
+      let view!: ReturnType<typeof render>
+      await act(async () => {
+        view = render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+      })
       try {
         expect(await screen.findByText('Superpowers')).toBeInTheDocument()
         await waitFor(() =>

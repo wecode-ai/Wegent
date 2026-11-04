@@ -1,0 +1,16 @@
+{
+  "order": 173000,
+  "resources": ["macos-inspector-foreground"],
+  "ci": {
+    "core": {
+      "order": 90000,
+      "shard": 2,
+      "position": 17000
+    },
+    "cloud": {
+      "order": 15000,
+      "shard": 5,
+      "position": 1000
+    }
+  }
+}

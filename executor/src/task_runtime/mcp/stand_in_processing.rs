@@ -143,6 +143,7 @@ mod tests {
             role: None,
             work: None,
             project: None,
+            review: false,
             ask_before_act: false,
             coordinator_batch: Some("batch".into()),
         };

@@ -355,7 +355,8 @@ impl LocalTaskStore {
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let comment_context = transaction
             .query_row(
-                "SELECT task_id, json_extract(metadata, '$.dispatch_role'), message_id
+                "SELECT task_id, json_extract(metadata, '$.dispatch_role'), message_id,
+                        json_extract(metadata, '$.automation_run_id')
                  FROM loop_item_comments
                  WHERE deleted_at IS NULL AND status IN ('pending','streaming')
                    AND json_extract(metadata,'$.runtime_address.taskId')=?1
@@ -366,6 +367,7 @@ impl LocalTaskStore {
                         row.get::<_, String>(0)?,
                         row.get::<_, Option<String>>(1)?,
                         row.get::<_, String>(2)?,
+                        row.get::<_, Option<String>>(3)?,
                     ))
                 },
             )
@@ -379,7 +381,7 @@ impl LocalTaskStore {
             params![content, status, now(), runtime_task_id],
         )?;
         if matches!(status, "completed" | "failed" | "cancelled" | "canceled") {
-            if let Some((task_id, dispatch_role, message_id)) = comment_context {
+            if let Some((task_id, dispatch_role, message_id, origin_run_id)) = comment_context {
                 issue_badges::update_stored_source(
                     &transaction,
                     &task_id,
@@ -387,9 +389,26 @@ impl LocalTaskStore {
                     content,
                 )?;
                 if !matches!(dispatch_role.as_deref(), Some("manager" | "member")) {
+                    let task = get_item_from(&transaction, &task_id, "task")?
+                        .ok_or(TaskRuntimeError::TaskNotFound)?;
+                    let project = get_item_from(
+                        &transaction,
+                        task.cloud_project_id
+                            .as_deref()
+                            .ok_or(TaskRuntimeError::ProjectNotFound)?,
+                        "project",
+                    )?
+                    .ok_or(TaskRuntimeError::ProjectNotFound)?;
+                    let next_status = task.status.as_deref().map(|status| {
+                        project_status::runtime_transition_status(
+                            &project.metadata,
+                            status,
+                            "in_review",
+                        )
+                    });
                     transaction.execute(
                         "UPDATE loop_items
-                         SET status='in_review', completed_at=NULL,
+                         SET status=?3, completed_at=NULL,
                              version=version+1, updated_at=?1
                          WHERE id=?2 AND resource_type='task' AND status='in_progress'
                            AND NOT EXISTS (
@@ -406,7 +425,13 @@ impl LocalTaskStore {
                                      'cancel_requested'
                                  )
                            )",
-                        params![now(), task_id],
+                        params![now(), task_id, next_status],
+                    )?;
+                    local_automation::on_status_changed(
+                        &transaction,
+                        &task_id,
+                        task.status.as_deref(),
+                        origin_run_id.as_deref(),
                     )?;
                 }
             }

@@ -1725,6 +1725,18 @@ export function createHybridWorkbenchServices(
     deviceApi: hybridDeviceApi,
     runtimeWorkApi: hybridRuntimeWorkApi,
     standInApi: {
+      async onboarding(userId, deviceId, language) {
+        return (await standInApiForDevice(deviceId)).onboarding(userId, deviceId, language)
+      },
+      async completeOnboarding(userId, deviceId, weeklyReview, time, language) {
+        return (await standInApiForDevice(deviceId)).completeOnboarding(
+          userId,
+          deviceId,
+          weeklyReview,
+          time,
+          language
+        )
+      },
       async projectProcessing(userId, deviceId, target, check) {
         return (await standInApiForDevice(deviceId)).projectProcessing(
           userId,

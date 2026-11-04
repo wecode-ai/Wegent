@@ -1,0 +1,11 @@
+{
+  "order": 211000,
+  "scenario": "./scenarios/dsh-owner-capture.scenario.mjs",
+  "ci": {
+    "core": {
+      "order": 156000,
+      "shard": 8,
+      "position": 13000
+    }
+  }
+}

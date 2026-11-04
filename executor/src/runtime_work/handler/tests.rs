@@ -40,6 +40,9 @@ mod command_recovery_tests;
 #[path = "native_timeline_tests.rs"]
 mod native_timeline_tests;
 
+#[path = "stand_in_review_pagination_tests.rs"]
+mod stand_in_review_pagination_tests;
+
 #[path = "runtime_rpc_tests.rs"]
 mod runtime_rpc_tests;
 

@@ -1483,6 +1483,7 @@ async fn call_tool_with_runtime_context(
                                     .and_then(Value::as_array)
                                     .cloned()
                                     .unwrap_or_default(),
+                                runtime_origin: Some(address.clone()),
                             };
                             runtime
                                 .finalize_delivery(item_id, delivery_id, input)
