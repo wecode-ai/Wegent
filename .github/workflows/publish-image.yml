@@ -857,11 +857,10 @@ jobs:
         with:
           ref: ${{ env.GIT_REF }}
 
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
-
-      - name: Set up executor Rust cache
-        uses: ./.github/actions/setup-executor-rust-cache
+      - name: Set up executor Rust toolchain and cache
+        uses: ./.github/actions/setup-rust-cache
+        with:
+          manifest-path: executor/Cargo.toml
 
       - name: Install dependencies and build
         working-directory: executor
@@ -870,7 +869,7 @@ jobs:
         run: |
           cargo build --release --locked
           mkdir -p dist
-          cp target/release/wegent-executor dist/wegent-executor
+          cp "$CARGO_TARGET_DIR/release/wegent-executor" dist/wegent-executor
           chmod 0755 dist/wegent-executor
           WEGENT_EXECUTOR_VERSION="${APP_VERSION}" dist/wegent-executor --version
 
@@ -903,13 +902,11 @@ jobs:
             sudo softwareupdate --install-rosetta --agree-to-license || true
           fi
 
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+      - name: Set up executor Rust toolchain and cache
+        uses: ./.github/actions/setup-rust-cache
         with:
+          manifest-path: executor/Cargo.toml
           targets: x86_64-apple-darwin
-
-      - name: Set up executor Rust cache
-        uses: ./.github/actions/setup-executor-rust-cache
 
       - name: Install dependencies and build (x86_64)
         working-directory: executor
@@ -918,7 +915,7 @@ jobs:
         run: |
           cargo build --release --locked --target x86_64-apple-darwin
           mkdir -p dist
-          cp target/x86_64-apple-darwin/release/wegent-executor dist/wegent-executor
+          cp "$CARGO_TARGET_DIR/x86_64-apple-darwin/release/wegent-executor" dist/wegent-executor
           chmod 0755 dist/wegent-executor
           WEGENT_EXECUTOR_VERSION="${APP_VERSION}" dist/wegent-executor --version
 
@@ -950,11 +947,10 @@ jobs:
         with:
           ref: ${{ env.GIT_REF }}
 
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
-
-      - name: Set up executor Rust cache
-        uses: ./.github/actions/setup-executor-rust-cache
+      - name: Set up executor Rust toolchain and cache
+        uses: ./.github/actions/setup-rust-cache
+        with:
+          manifest-path: executor/Cargo.toml
 
       - name: Install executor Rust system dependencies
         run: .github/scripts/install-executor-rust-system-dependencies.sh
@@ -966,7 +962,7 @@ jobs:
         run: |
           cargo build --release --locked
           mkdir -p dist
-          cp target/release/wegent-executor dist/wegent-executor
+          cp "$CARGO_TARGET_DIR/release/wegent-executor" dist/wegent-executor
           chmod 0755 dist/wegent-executor
           WEGENT_EXECUTOR_VERSION="${APP_VERSION}" dist/wegent-executor --version
 
@@ -992,11 +988,10 @@ jobs:
         with:
           ref: ${{ env.GIT_REF }}
 
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
-
-      - name: Set up executor Rust cache
-        uses: ./.github/actions/setup-executor-rust-cache
+      - name: Set up executor Rust toolchain and cache
+        uses: ./.github/actions/setup-rust-cache
+        with:
+          manifest-path: executor/Cargo.toml
 
       - name: Install executor Rust system dependencies
         run: .github/scripts/install-executor-rust-system-dependencies.sh
@@ -1008,7 +1003,7 @@ jobs:
         run: |
           cargo build --release --locked
           mkdir -p dist
-          cp target/release/wegent-executor dist/wegent-executor
+          cp "$CARGO_TARGET_DIR/release/wegent-executor" dist/wegent-executor
           chmod 0755 dist/wegent-executor
           WEGENT_EXECUTOR_VERSION="${APP_VERSION}" dist/wegent-executor --version
 
@@ -1038,11 +1033,10 @@ jobs:
         with:
           ref: ${{ env.GIT_REF }}
 
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
-
-      - name: Set up executor Rust cache
-        uses: ./.github/actions/setup-executor-rust-cache
+      - name: Set up executor Rust toolchain and cache
+        uses: ./.github/actions/setup-rust-cache
+        with:
+          manifest-path: executor/Cargo.toml
 
       - name: Install dependencies and build
         working-directory: executor
@@ -1052,7 +1046,7 @@ jobs:
         run: |
           cargo build --release --locked
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item target/release/wegent-executor.exe dist/wegent-executor.exe
+          Copy-Item "$env:CARGO_TARGET_DIR/release/wegent-executor.exe" dist/wegent-executor.exe
           $env:WEGENT_EXECUTOR_VERSION = "$env:APP_VERSION"
           & "dist/wegent-executor.exe" --version
 
