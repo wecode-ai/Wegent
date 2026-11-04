@@ -4242,15 +4242,10 @@ fn build_codex_launch_config_with_route_scope(
             "memories.generate_memories=false".into(),
         ]);
     }
-    // Native authorization and agent tools must use the same gh profile.
-    if let Ok(config_dir) = env::var("GH_CONFIG_DIR") {
-        if !config_dir.is_empty() {
-            launch_config.config_overrides.push(format!(
-                "shell_environment_policy.set.GH_CONFIG_DIR={}",
-                toml_value(&config_dir)
-            ));
-        }
-    }
+    apply_git_cli_environment(
+        &mut launch_config,
+        &crate::process_environment::process_env(&[]),
+    );
     launch_config
         .thread_config
         .extend(task_identity_thread_config(request));
@@ -4576,6 +4571,22 @@ fn vision_sidecar_with_session_headers(
         inject_session_headers(&mut sidecar.default_headers, task_id);
         sidecar
     }))
+}
+
+/// Pin the effective credential directories in both the app server and tool shells.
+fn apply_git_cli_environment(
+    config: &mut CodexLaunchConfig,
+    environment: &HashMap<String, String>,
+) {
+    for key in ["GH_CONFIG_DIR", "GLAB_CONFIG_DIR", "GIT_CONFIG_GLOBAL"] {
+        if let Some(value) = environment.get(key).filter(|value| !value.is_empty()) {
+            config.env.insert(key.to_owned(), value.clone());
+            config.config_overrides.push(format!(
+                "shell_environment_policy.set.{key}={}",
+                toml_value(value)
+            ));
+        }
+    }
 }
 
 fn shell_path_config_override() -> String {
@@ -5520,7 +5531,17 @@ fn codex_base_process_environment() -> BTreeMap<String, String> {
         );
     }
     environment.extend(computer_use_mcp_config_overrides().1);
-    environment.extend(crate::services::git_credentials::environment());
+    // Auxiliary RPCs and turns must compare the same effective CLI directories.
+    environment.extend(
+        process_environment::process_env(&[])
+            .into_iter()
+            .filter(|(key, _)| {
+                matches!(
+                    key.as_str(),
+                    "GH_CONFIG_DIR" | "GLAB_CONFIG_DIR" | "GIT_CONFIG_GLOBAL"
+                )
+            }),
+    );
     environment
 }
 
