@@ -53,13 +53,19 @@ test('Stand-in confirmation waits for navigation to mount before opening the own
   const mounted = barrier()
   const reachedOwner = new Error('Owner page is ready')
   const calls: Array<{ action: string; selector: string }> = []
+  let preferencesReady = false
   const scenario = createDesktopScenario({ workspacePath: '/fixture' })
   const verification = scenario
     .verify({
-      experimentalFeaturesEnabled: true,
-      async command(action: string, selector: string) {
+      async command(action: string, selector: string, options?: { value?: string }) {
         calls.push({ action, selector })
+        if (action === 'getElementCount') return 0
+        if (action === 'setAppPreferences') {
+          assert.deepEqual(JSON.parse(options!.value!), { experimentalFeaturesEnabled: true })
+          preferencesReady = true
+        }
         if (selector === '[data-testid="personal-stand-in-button"]') {
+          assert.equal(preferencesReady, true)
           if (action === 'click') throw new Error('Stand-in navigation is still mounting')
           assert.equal(action, 'clickWhenEnabled')
           waiting.release()
