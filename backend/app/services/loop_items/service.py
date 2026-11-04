@@ -2534,6 +2534,10 @@ class LoopItemService:
             )
             pending_parent_ids = [child.id for child in children]
             archived_items.extend(children)
+        for descendant in archived_items[1:]:
+            self._require_item_access(
+                db, descendant, user_id, action=IssueAction.EDIT_CONTENT
+            )
         # An archived Issue must not leave a Run owning a real process. Cancel
         # every cancellable Run of the archived subtree in the same transaction
         # so the recycle-bin rows never disagree with the execution queue.
@@ -2613,6 +2617,10 @@ class LoopItemService:
             )
             pending_parent_ids = [child.id for child in children]
             restored_items.extend(children)
+        for descendant in restored_items[1:]:
+            self._require_item_access(
+                db, descendant, user_id, action=IssueAction.EDIT_CONTENT
+            )
         for restored_item in restored_items:
             restored_item.deleted_at = None
             restored_item.version += 1

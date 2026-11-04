@@ -11,6 +11,13 @@ export async function verifyGanttHierarchyAndDetailArchive(control, project, tim
   const rpc = (method, params) => requestExecutor(control, method, params, timeoutMs)
   const click = id => control.command('clickWhenEnabled', test(id), { timeoutMs })
   const wait = (id, visible = true) => control.command('waitFor', test(id), { visible, timeoutMs })
+  const assertFocus = id =>
+    waitForBoardValue(
+      () => control.command('getActiveElementTestId', 'body'),
+      id,
+      `Keyboard focus must remain on ${id}`,
+      timeoutMs
+    )
   const today = new Date()
   const date = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
   const create = (title, parent_id, status, scheduled = true) =>
@@ -69,6 +76,12 @@ export async function verifyGanttHierarchyAndDetailArchive(control, project, tim
   await click('collaboration-gantt-toggle-task-column')
   await click(`collaboration-gantt-toggle-${child.id}`)
   await wait(`collaboration-gantt-row-${grandchild.id}`)
+  const collapsedParentTitle = await titleMetrics(parent.id)
+  const collapsedLeafTitle = await titleMetrics(grandchild.id)
+  assert.ok(
+    Math.abs(collapsedParentTitle.left - collapsedLeafTitle.left) < 1,
+    'Collapsed parent and leaf row numbers must align'
+  )
   const [headerDate] = JSON.parse(
     await control.command('getElementMetrics', test(`collaboration-gantt-header-day-${date}`))
   )
@@ -83,8 +96,11 @@ export async function verifyGanttHierarchyAndDetailArchive(control, project, tim
     'Collapsed task columns must keep date headers aligned with row drop targets'
   )
   await click('collaboration-gantt-toggle-task-column')
+  await control.command('select', test('collaboration-gantt-status-filter'), { value: 'inbox' })
+  await wait(`collaboration-gantt-row-${grandchild.id}`, false)
   await control.command('select', test('collaboration-gantt-status-filter'), { value: 'in_review' })
   await wait(`collaboration-gantt-row-${grandchild.id}`)
+  await wait(`collaboration-gantt-row-${child.id}`)
   await wait(`collaboration-gantt-row-${parent.id}`)
   await control.command('select', test('collaboration-gantt-status-filter'), { value: '' })
 
@@ -131,6 +147,7 @@ export async function verifyGanttHierarchyAndDetailArchive(control, project, tim
   // The existing project uses tag columns, so no Completed column is required.
   await click('collaboration-tab-board')
   await click(`cloud-todo-card-${parent.id}`)
+  await control.command('focusMainWindow', 'body')
   await click('cloud-todo-more-properties')
   await control.command('clickWhenEnabled', '[data-testid="cloud-todo-detail-delete"]', {
     timeoutMs,
@@ -138,14 +155,14 @@ export async function verifyGanttHierarchyAndDetailArchive(control, project, tim
   await wait('collaboration-issue-archive-dialog')
   const cancelArchive = test('collaboration-issue-archive-cancel')
   const confirmArchive = test('collaboration-issue-archive-confirm')
-  await control.command('waitFor', `${cancelArchive}:focus`, { timeoutMs })
+  await assertFocus('collaboration-issue-archive-cancel')
   await control.command('nativePress', cancelArchive, { key: 'Shift+Tab' })
-  await control.command('waitFor', `${confirmArchive}:focus`, { timeoutMs })
+  await assertFocus('collaboration-issue-archive-confirm')
   await control.command('nativePress', confirmArchive, { key: 'Tab' })
-  await control.command('waitFor', `${cancelArchive}:focus`, { timeoutMs })
+  await assertFocus('collaboration-issue-archive-cancel')
   await click('collaboration-issue-archive-cancel')
   await wait('collaboration-issue-archive-dialog', false)
-  await control.command('waitFor', `${test('cloud-todo-more-properties')}:focus`, { timeoutMs })
+  await assertFocus('cloud-todo-more-properties')
   assert.ok(
     (await rpc('todos.list', { project_id: project.id })).some(item => item.id === parent.id),
     'Cancelling archive must leave the task tree active'

@@ -68,6 +68,8 @@ Archiving a parent Issue also archives its child Issues so the active task tree 
 
 Archiving first stops linked active runs in the subtree and cancels executions that have not started. A failure to confirm termination blocks archiving and can be addressed before resubmission. Cancelling the confirmation leaves the tree unchanged. Restoration preserves status, dates, and parent relationships.
 
+Before archiving or restoring a subtree, the server checks edit permission for every affected Issue. Any denial rejects the whole operation without changing Issues or cancelling queued executions. Project administrators retain access to all descendants.
+
 ## Gantt task hierarchy
 
 The Gantt chart indents parents, children, and grandchildren and expands them initially. Use the arrow beside a parent title to collapse or expand its subtree. Reopening a parent preserves previously collapsed children. The arrows remain usable when the task column is collapsed.

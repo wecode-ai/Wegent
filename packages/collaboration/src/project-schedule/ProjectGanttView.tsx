@@ -71,7 +71,7 @@ export function ProjectGanttView(props: ProjectScheduleViewProps) {
   const weekStartsOnMonday = locale === "zh-CN";
   const [scale, setScale] = useState<GanttScale>("month");
   const [taskColumnCollapsed, setTaskColumnCollapsed] = useState(false);
-  const taskColumnWidth = taskColumnCollapsed ? "w-20" : "w-80";
+  const taskColumnWidth = taskColumnCollapsed ? "w-20 max-md:w-24" : "w-80";
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
   const [windowStart, setWindowStart] = useState(() =>
     startOfScheduleWeek(new Date(), weekStartsOnMonday),
@@ -410,10 +410,15 @@ export function ProjectGanttView(props: ProjectScheduleViewProps) {
                                 <ChevronDown className="h-4 w-4" />
                               )}
                             </button>
-                          ) : taskColumnCollapsed ? null : (
+                          ) : (
                             <span
-                              className="w-8 shrink-0"
-                              style={{ marginLeft: depth * 16 }}
+                              aria-hidden="true"
+                              className="w-8 shrink-0 max-md:w-11"
+                              style={
+                                taskColumnCollapsed
+                                  ? undefined
+                                  : { marginLeft: depth * 16 }
+                              }
                             />
                           )}
                           <Tooltip

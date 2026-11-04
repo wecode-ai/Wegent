@@ -862,7 +862,7 @@ class ExternalLoopItemProvider:
         target = responses.get(item_id)
         if target is None or not target[1]["can_edit"]:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
-        subtree_ids = self._subtree_ids(responses, item_id)
+        subtree_ids = self._editable_subtree_ids(responses, item_id)
         closed: list[int] = []
         cancelled_runs = []
         try:
@@ -967,7 +967,7 @@ class ExternalLoopItemProvider:
                 status.HTTP_409_CONFLICT,
                 "Restore the archived subtree from its root TODO",
             )
-        subtree_ids = self._subtree_ids(responses, item_id)
+        subtree_ids = self._editable_subtree_ids(responses, item_id)
         reopened: list[dict[str, object]] = []
         opened: list[int] = []
         try:
@@ -996,7 +996,7 @@ class ExternalLoopItemProvider:
         return reopened
 
     @staticmethod
-    def _subtree_ids(
+    def _editable_subtree_ids(
         responses: dict[str, tuple[dict[str, Any], dict[str, object]]],
         root_id: str,
     ) -> list[str]:
@@ -1004,6 +1004,8 @@ class ExternalLoopItemProvider:
         pending = [root_id]
         while pending:
             current = pending.pop(0)
+            if not responses[current][1]["can_edit"]:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
             ordered.append(current)
             pending.extend(
                 candidate_id
