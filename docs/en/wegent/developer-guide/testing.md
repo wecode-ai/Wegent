@@ -275,6 +275,12 @@ instrumentation overhead. Collect focused coverage when needed with
 Full renderer push checks report the current shard's passed file count every 15 seconds;
 complete diagnostics remain in the logs.
 
+A running Executor writes to `tasks.sqlite` concurrently. Desktop E2E fixtures that
+write directly to this database must set `PRAGMA busy_timeout = 10000` on their
+independent connection so normal write transactions can release their locks.
+Keep this wait scoped to the fixture connection and preserve business assertions
+and global UI timeout budgets.
+
 ### Async Question Model Fixtures
 
 The desktop E2E async question fixture recognizes only an exact expected answer
