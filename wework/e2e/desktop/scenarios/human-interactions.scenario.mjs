@@ -330,6 +330,13 @@ export function createDesktopScenario({
       focusDiagnostics.afterReminderCapture = JSON.parse(
         await control.command('getWindowFocusSnapshot', 'body')
       )
+      // Native focus can change during capture; in-app reminders require the foreground window.
+      await control.command('focusMainWindow', 'body')
+      await control.command('waitFor', '[data-testid="runtime-interaction-notice"]', {
+        text: QUESTION,
+        visible: true,
+      })
+      await control.command('hover', '[data-testid="runtime-interaction-notice"]')
       await control.command('click', '[data-testid="interaction-notice-reply"]')
       try {
         await control.command(
