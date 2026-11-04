@@ -383,8 +383,8 @@ it('filters same-name teams by identity, clears the filter, and sorts through sh
           setTeam(value)
         }}
         availableGroups={[
-          { id: 'group-a', name: 'a', displayName: 'Same team' },
-          { id: 'group-b', name: 'b', displayName: 'Same team' },
+          { id: 'group-a', name: 'a', displayName: 'Same team', kbCount: 1 },
+          { id: 'group-b', name: 'b', displayName: 'Same team', kbCount: 1 },
         ]}
       />
     )

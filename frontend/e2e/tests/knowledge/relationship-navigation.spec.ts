@@ -91,7 +91,7 @@ test('relationship navigation deduplicates libraries and filters every receiving
     await page.getByTestId('nav-all-item').click()
     await page.getByTestId('knowledge-team-filter').click()
     await expect(page.getByTestId('knowledge-team-option-all')).toHaveAttribute(
-      'aria-selected',
+      'data-current',
       'true'
     )
     await page.keyboard.press('Escape')

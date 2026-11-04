@@ -25,6 +25,7 @@ import {
   type KnowledgeBaseCategory,
 } from './KnowledgeBaseCategoryFilter'
 import { AdvancedKnowledgeToggle } from './AdvancedKnowledgeToggle'
+import { KnowledgeTeamFilter, type KnowledgeTeamOption } from './KnowledgeTeamFilter'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import {
@@ -102,7 +103,7 @@ export interface KnowledgeGroupListPageProps {
   /** Set filter group ID (for "All" mode) */
   onFilterGroupChange?: (groupId: string | null) => void
   /** Available groups for filter (for "All" mode) */
-  availableGroups?: Array<{ id: string; name: string; displayName: string }>
+  availableGroups?: KnowledgeTeamOption[]
   /** Whether this is "Personal" mode (to show created/shared sections) */
   isPersonalMode?: boolean
   /** Knowledge bases created by current user (for personal mode) */
@@ -666,49 +667,12 @@ export function KnowledgeGroupListPage({
             className={mobile ? 'min-h-11 w-full' : 'h-9 w-48'}
           />
           {onFilterGroupChange && (
-            <Select
-              value={filterGroupId ?? 'all'}
-              onValueChange={value => onFilterGroupChange(value === 'all' ? null : value)}
-            >
-              <SelectTrigger
-                data-testid="knowledge-team-filter"
-                aria-label={t('document.navigation.teamFilter')}
-                className={`${mobile ? 'min-h-11 min-w-11' : 'h-9'} w-64 max-w-full bg-base`}
-              >
-                <SelectValue className="min-w-0 truncate">
-                  {filterGroupId
-                    ? availableGroups?.find(group => group.id === filterGroupId)?.displayName ||
-                      filterGroupId
-                    : t('document.navigation.allTeams')}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent className="max-h-[min(16rem,var(--radix-select-content-available-height))] w-[var(--radix-select-trigger-width)]">
-                <SelectItem
-                  value="all"
-                  className="min-h-11"
-                  data-testid="knowledge-team-option-all"
-                >
-                  {t('document.navigation.allTeams')}
-                </SelectItem>
-                {availableGroups?.map(group => (
-                  <SelectItem
-                    key={group.id}
-                    value={group.id}
-                    className="min-h-11 [&>span:last-child]:min-w-0 [&>span:last-child]:flex-1"
-                    data-testid={`knowledge-team-option-${group.id}`}
-                  >
-                    <span className="flex min-w-0 flex-col">
-                      <span className="break-words [overflow-wrap:anywhere]">
-                        {group.displayName}
-                      </span>
-                      {group.displayName !== group.name && (
-                        <span className="break-all text-xs text-text-muted">{group.name}</span>
-                      )}
-                    </span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <KnowledgeTeamFilter
+              groups={availableGroups ?? []}
+              value={filterGroupId ?? null}
+              onValueChange={onFilterGroupChange}
+              mobile={mobile}
+            />
           )}
           <KnowledgeBaseCategoryFilter
             value={category}
