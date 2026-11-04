@@ -18,6 +18,8 @@ sidebar_position: 1
 
 同一普通会话在设备、会话地址、后端、凭据和来源身份不变时复用个人控制 MCP 连接，避免每轮续聊重载原生线程而中断后台进程或订阅；每次调用仍校验连接绑定并读取当前执行上下文。身份变化触发原有 MCP 重载，项目授权和受限执行继续使用独立执行上下文。
 
+续聊身份通过已有 transcript 的 `conversationContextOnly` 投影读取，限制为最近一条历史并保留原工作区、Runtime 和来源信息；Codex 与 Claude 共用同一原始身份与项目执行权限校验。
+
 云端绑定会话的读取校验复用 `/runtime-work/transcript`，按其契约传递顶层 `deviceId`、`taskId` 和 `workspacePath`。列表及搜索通过 `coverage.unavailable_reasons` 区分后端参数错误、权限拒绝、连接异常和校验超时；结果不完整时不能推断会话不存在。回归覆盖严格请求解析、中文标题搜索，以及有权和无权会话同时命中的情况；既有 `workbench-control` CI checkpoint 增加真实云端创建与搜索链路。
 
 | 已接入领域 | 实际行为                                                                                                                                                                |

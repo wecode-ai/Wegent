@@ -15,6 +15,7 @@ async def resolve_continuation_address(
     """Take session identity from the existing authorized read, never client origin."""
     from app.services.runtime_work_service import get_runtime_transcript
 
+    # The canonical context projection retains provider identity and workspace metadata.
     history = await get_runtime_transcript(
         db=db,
         user_id=user_id,
@@ -22,7 +23,7 @@ async def resolve_continuation_address(
             deviceId=address.device_id,
             taskId=address.local_task_id,
             limit=1,
-            navigationOnly=True,
+            conversationContextOnly=True,
         ),
     )
     if history.local_task_id != address.local_task_id or not history.workspace_path:

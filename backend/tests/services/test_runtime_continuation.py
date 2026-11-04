@@ -96,6 +96,56 @@ def history(monkeypatch, origin, *, runtime="codex", task="original-task"):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("runtime", ["codex", "claude_code"])
+@pytest.mark.parametrize("role", ["Developer", "Viewer"])
+async def test_continuation_reads_native_identity_through_context_projection(
+    test_db, scope, transport, runtime, role
+):
+    user, grant, _, origin = scope
+    grant.role = role
+    test_db.commit()
+
+    async def dispatch(**kwargs):
+        payload = kwargs["payload"]
+        if kwargs["method"] == "runtime.tasks.transcript":
+            # The navigation index is Codex-specific and has no Claude workspace.
+            navigation_only = payload.get("navigationOnly", False)
+            return {
+                "taskId": "original-task",
+                "workspacePath": "" if navigation_only else "/original/workspace",
+                "runtime": "codex" if navigation_only else runtime,
+                "origin": origin,
+                "turns": [],
+            }
+        assert kwargs["method"] == "runtime.tasks.send"
+        assert payload["workspacePath"] == "/original/workspace"
+        assert payload["runtimeHandle"]["runtime"] == runtime
+        assert payload["executionRequest"]["origin"] == origin
+        return {"accepted": True, "taskId": "original-task"}
+
+    transport.side_effect = dispatch
+    if role == "Developer":
+        result = await service.send_runtime_message(
+            db=test_db, user_id=user.id, request=request()
+        )
+        assert result.accepted
+        assert transport.await_count == 2
+    else:
+        with pytest.raises(HTTPException) as error:
+            await service.send_runtime_message(
+                db=test_db, user_id=user.id, request=request()
+            )
+        assert error.value.status_code == 403
+        assert transport.await_count == 1
+    read = transport.await_args_list[0].kwargs
+    assert read["method"] == "runtime.tasks.transcript"
+    assert read["payload"]["limit"] == 1
+    assert read["payload"]["conversationContextOnly"] is True
+    assert not read["payload"].get("navigationOnly")
+    assert "forged" not in str(read["payload"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("runtime", ["codex", "claude_code"])
 async def test_personal_send_preserves_authorized_native_identity(
     test_db, scope, transport, monkeypatch, runtime
 ):
