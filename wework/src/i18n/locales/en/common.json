@@ -4280,6 +4280,13 @@
     "project_manager": "Project manager",
     "collaboration_participants_manager_description": "Manage project Agents, the project manager, members and collaboration groups. The manager coordinates Issues; owners execute and deliver them.",
     "automatic_processing_description": "Manage Issue processing rules and project manager triggers in one place.",
+    "trigger_status_changed": "Status reached",
+    "trigger_status_changed_description": "When an issue enters the selected status",
+    "matching_status": "Status",
+    "select_matching_status": "Select a status",
+    "trigger_entered_processing": "Processing phase entered",
+    "automatic_processing_prompt": "Prompt (optional)",
+    "automatic_processing_prompt_hint": "Sent to AI when triggered to work on the current Issue. Leave blank to use the target's responsibilities.",
     "status_action_reassignment": "Reassigned",
     "status_action_unassigned": "Unassigned",
     "navigation": "Tasks",
@@ -5857,6 +5864,20 @@
       "updated": "Mailbox credentials updated. Existing stand-in connections are preserved. If intake was paused, return to the work page and use Reload to retry.",
       "update_help": "Updates apply to all stand-ins using this account on this device. To change the mailbox or incoming server, add a new account.",
       "verify_update": "Verify and update credentials"
+    },
+    "onboarding": {
+      "title": "Get started with your stand-in",
+      "description": "Choose what your stand-in can help with, then confirm to get started.",
+      "review": "Weekly work review",
+      "scope": "Review your tasks and conversations on this device over the past seven days. Find repeated instructions, rework and blockers, with at most three suggestions backed by evidence.",
+      "time": "Every Monday (Beijing time)",
+      "manage": "Edit, pause or delete it anytime in Stand-in settings → Connections → Calendar. Deleted arrangements stay deleted.",
+      "prerequisites": "Requires an enabled primary stand-in, an online device and an available model. Runs follow your calendar processing policy. Reviews suggest changes without automatically editing memories, settings or code.",
+      "loading": "Loading stand-in feature settings…",
+      "start": "Get started",
+      "later": "Maybe later",
+      "saving": "Saving…",
+      "changed": "Stand-in features were configured in another window. Reload, then adjust them in Calendar."
     }
   },
   "workbench_error": {

@@ -9,19 +9,24 @@ import hashlib
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.models.delivery import CloudProject, LoopItem, ProjectChatAgent
-from app.models.loop_item_execution import EPOCH_TIME, LoopItemExecution
+from app.models.delivery import (
+    CloudProject,
+    LoopItem,
+    ProjectAutomationRun,
+    ProjectChatAgent,
+)
+from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.schemas.delivery import LoopItemUpdate
 from app.services.collaboration_group_execution import (
     collaboration_group_agent_matches,
     collaboration_group_snapshot_for_dispatch,
 )
+from app.services.loop_item_executions.service import loop_item_execution_service
 from app.services.loop_items.service import loop_item_service
 from app.services.project_chat.push import push_project_chat_message
 from app.services.project_chat.service import project_chat_service
@@ -149,24 +154,36 @@ def apply_collaboration_manager_decision(
         .first()
     )
     if item.status != target_status:
+        automation_run = (
+            db.get(ProjectAutomationRun, dispatch.automation_run_id)
+            if dispatch.automation_run_id
+            else None
+        )
         item = loop_item_service.update(
             db,
             item.id,
             user_id,
             LoopItemUpdate(version=item.version, status=target_status),
             commit=False,
+            automation_context=(
+                {
+                    **dispatch.runtime_origin_context,
+                    "run_id": str(automation_run.id),
+                }
+                if automation_run is not None
+                else None
+            ),
         )
     if dispatch.status not in {"completed", "failed", "cancelled"}:
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
-        dispatch.status = "completed"
-        dispatch.completed_at = now
-        dispatch.lease_expires_at = EPOCH_TIME
-        dispatch.observed_state = "succeeded"
-        dispatch.sync_state = "in_sync"
-        dispatch.observed_at = now
-        dispatch.execution_note = reason
-        dispatch.termination_reason = "manager_status_decision"
-        dispatch.version += 1
+        loop_item_execution_service.complete(
+            db,
+            execution_id=dispatch.id,
+            note=reason,
+            expected_status=dispatch.status,
+            expected_version=dispatch.version,
+            commit=False,
+            termination_reason="manager_status_decision",
+        )
     message = existing_comment
     if normalized_comment and message is None:
         message_id = str(uuid.uuid7()) if hasattr(uuid, "uuid7") else str(uuid.uuid4())

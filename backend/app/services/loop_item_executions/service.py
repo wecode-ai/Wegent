@@ -54,7 +54,10 @@ from app.services.loop_item_executions.runtime_identity import (
     execution_runtime_turn_id,
     runtime_task_id_for,
 )
-from app.services.project_automation_domain import TERMINAL_RUN_STATUSES
+from app.services.project_automation_domain import (
+    TERMINAL_RUN_STATUSES,
+    status_automation_target,
+)
 from app.services.workspaces.storage import workspace_id_for_project
 
 logger = logging.getLogger(__name__)
@@ -2196,7 +2199,11 @@ class LoopItemExecutionService:
             )
         if row is None:
             task = db.get(LoopItem, execution.loop_item_id)
-            if task is not None and task.status == "completed":
+            if (
+                task is not None
+                and task.status == "completed"
+                and status_automation_target(origin_context) != "completed"
+            ):
                 logger.info(
                     "[LoopItemExecution] Activity open skipped for completed "
                     "Issue execution=%s task=%s",
@@ -2301,6 +2308,8 @@ class LoopItemExecutionService:
         observed_at: Optional[datetime] = None,
         event_seq: Optional[int] = None,
         reconciled: bool = False,
+        commit: bool = True,
+        termination_reason: str = "runtime_succeeded",
     ) -> Optional[LoopItemExecution]:
         """Mark a run completed and release its device slot."""
 
@@ -2315,8 +2324,9 @@ class LoopItemExecutionService:
             observed_state=OBSERVED_SUCCEEDED,
             observed_at=observed_at,
             event_seq=event_seq,
-            termination_reason="runtime_succeeded",
+            termination_reason=termination_reason,
             reconciled=reconciled,
+            commit=commit,
         )
         return result
 
@@ -2689,7 +2699,10 @@ class LoopItemExecutionService:
             return False
         execution = (
             db.query(LoopItemExecution)
-            .filter(LoopItemExecution.automation_run_id == run_id)
+            .filter(
+                LoopItemExecution.automation_run_id == run_id,
+                LoopItemExecution.owns_automation_run,
+            )
             .order_by(LoopItemExecution.id.desc())
             .first()
         )
@@ -2747,7 +2760,7 @@ class LoopItemExecutionService:
         latest_query = db.query(
             LoopItemExecution.automation_run_id.label("automation_run_id"),
             func.max(LoopItemExecution.id).label("execution_id"),
-        ).filter(LoopItemExecution.automation_run_id != "")
+        ).filter(LoopItemExecution.owns_automation_run)
         if normalized_run_ids is not None:
             latest_query = latest_query.filter(
                 LoopItemExecution.automation_run_id.in_(normalized_run_ids)
@@ -2870,7 +2883,7 @@ class LoopItemExecutionService:
                     "subagent_status": terminal_status,
                 }
 
-        if execution.automation_run_id:
+        if execution.owns_automation_run:
             run = db.get(ProjectAutomationRun, execution.automation_run_id)
             if run is not None:
                 run_status = {
@@ -2935,7 +2948,7 @@ class LoopItemExecutionService:
                 row.runtime_activity_key = project_chat_message_key(
                     row.message_id, deleted=True
                 )
-        if execution.automation_run_id:
+        if execution.owns_automation_run:
             run = db.get(ProjectAutomationRun, execution.automation_run_id)
             if run is not None and run.status not in {
                 "succeeded",
@@ -3163,7 +3176,7 @@ class LoopItemExecutionService:
         *,
         commit: bool = False,
     ) -> None:
-        if not execution.automation_run_id:
+        if not execution.owns_automation_run:
             return
         from app.models.delivery import ProjectAutomationRun
 
@@ -4006,10 +4019,8 @@ class LoopItemExecutionService:
                     "Selected Runtime owner no longer matches the queued execution"
                 )
             if run is not None and rule is not None:
-                # Automation only decides who receives the task. Once a
-                # project robot is assigned it must execute through the same
-                # role + live task-context contract as an ordinary assignment;
-                # the manager's scheduling prompt is not an execution prompt.
+                # Restore automation provenance while the persisted assignment
+                # intent supplies the execution prompt and runtime selection.
                 origin_context = self._automation_runtime_context(run, rule)
             else:
                 origin_context = dict(execution.runtime_origin_context)
