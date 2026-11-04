@@ -50,11 +50,26 @@ pub async fn referenced_shell<M>(
 where
     M: Mysql,
 {
+    Ok(referenced_shells(mysql, user_id, namespace)
+        .await?
+        .into_iter()
+        .find(|row| row.name == name))
+}
+
+/// All approved referenced Shells visible in one namespace, ordered by Kind id.
+pub async fn referenced_shells<M>(
+    mysql: &M,
+    user_id: i64,
+    namespace: &str,
+) -> MysqlResult<Vec<OwnedKindRow>>
+where
+    M: Mysql,
+{
     let (entity_type, entity_id) = if namespace == "default" {
         ("user", user_id.to_string())
     } else {
         let Some(namespace_id) = namespace_id(mysql, namespace).await? else {
-            return Ok(None);
+            return Ok(Vec::new());
         };
         ("namespace", namespace_id.to_string())
     };
@@ -70,8 +85,7 @@ where
          AND kinds.kind = 'Shell' AND kinds.user_id != 0 AND kinds.is_active IS true \
          ORDER BY kinds.id"
     );
-    let rows: Vec<OwnedKindRow> = mysql.fetch_all(sql.as_str(), (entity_id.as_str(),)).await?;
-    Ok(rows.into_iter().find(|row| row.name == name))
+    mysql.fetch_all(sql.as_str(), (entity_id.as_str(),)).await
 }
 
 /// `get_shell_by_name`'s group branch for a non-`default` namespace.
