@@ -31,13 +31,14 @@ fn an_unresolved_model_is_a_400_with_the_source_message() {
     );
 }
 
+/// `_get_model_config` (`request_builder.py:318`), `_get_bot_skills` (`:393`)
+/// and only then `_build_bot_config` (`:415`), whose `_resolve_shell_info`
+/// (`:2219`) is the Shell read. Both flat-config failures return before the
+/// Shell call, and the Shell read follows the skill resolution, so a failed
+/// flat config never issues a Shell query and the Shell's team-owner group
+/// block cannot precede the Ghost/Skill reads.
 #[test]
 fn the_flat_model_config_precedes_the_shell_read() {
-    // `_get_model_config` (`request_builder.py:318`) completes before
-    // `_build_bot_config` (`:415`), whose `_resolve_shell_info` (`:2211`) is
-    // the Shell read. Both flat-config failures return before the Shell call,
-    // so a bot without a model, or a model that does not resolve, never issues
-    // a Shell query.
     let source = include_str!("request.rs");
     let no_model = source
         .find("None => return Err(flat_model_config_error(None, &input.bot.name)),")
@@ -45,11 +46,18 @@ fn the_flat_model_config_precedes_the_shell_read() {
     let unresolved = source
         .find("None => return Err(flat_model_config_error(Some(&model_name), &input.bot.name)),")
         .expect("model-not-found raise");
+    let skills = source
+        .find("let mut skills = get_bot_skills(")
+        .expect("skill resolution");
     let shell = source
         .find("let (shell_type, base_image) = resolve_shell_type(state, input).await?;")
         .expect("shell resolution");
     assert!(
         no_model < unresolved && unresolved < shell,
         "both flat-model-config failures must return before the Shell read"
+    );
+    assert!(
+        skills < shell,
+        "the Shell read belongs to _build_bot_config after _get_bot_skills"
     );
 }

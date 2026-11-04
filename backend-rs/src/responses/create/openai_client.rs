@@ -14,6 +14,8 @@
 //! drives both `user-agent` and `x-stainless-package-version`
 //! (`openai._version`). It is deployment configuration, so it is read from
 //! [`OPENAI_SDK_VERSION_ENV`] with [`OPENAI_CLIENT_HEADERS`] as the default.
+//! `x-stainless-package-version` is pinned to the recorded Source client; the
+//! installed SDK identity stays configurable.
 
 /// `AsyncOpenAI(api_key="dummy")`'s bearer header
 /// (`chat_shell_client.py:44`, `dispatcher.py:675`): the SDK sends a fixed
@@ -32,18 +34,26 @@ pub(crate) const OPENAI_ACCEPT: &str = "application/json";
 /// performs no retries. Dynamic values are deliberately not part of this set:
 /// `X-Request-ID` is generated per request, `authorization` comes from the
 /// client configuration, and `content-length` is computed by the HTTP stack.
+///
+/// `x-stainless-package-version` is the version of the Source `openai` client
+/// that produced the recorded executor/chat-shell dependencies and is sent
+/// verbatim; only the SDK `user-agent` follows the configured installed
+/// version.
 pub(crate) const OPENAI_CLIENT_HEADERS: &[(&str, &str)] = &[
     ("user-agent", "AsyncOpenAI/Python 3.37.0"),
     ("x-stainless-arch", "x64"),
     ("x-stainless-async", "async:asyncio"),
     ("x-stainless-lang", "python"),
     ("x-stainless-os", "Linux"),
-    ("x-stainless-package-version", "3.37.0"),
+    ("x-stainless-package-version", "3.42.1"),
     ("x-stainless-read-timeout", "300.0"),
     ("x-stainless-retry-count", "0"),
     ("x-stainless-runtime", "CPython"),
     ("x-stainless-runtime-version", "3.12.11"),
 ];
+
+/// The `openai` package version the default `user-agent` advertises.
+const OPENAI_SDK_DEFAULT_VERSION: &str = "3.37.0";
 
 /// The installed `openai` package version (`WEGENT_OPENAI_SDK_VERSION`).
 ///
@@ -56,13 +66,10 @@ pub(crate) const OPENAI_SDK_VERSION_ENV: &str = "WEGENT_OPENAI_SDK_VERSION";
 /// The installed `openai` package version
 /// (`AsyncOpenAI/_client.py` reads it from `openai._version`).
 ///
-/// Derived from [`OPENAI_CLIENT_HEADERS`] so the default block stays the single
-/// source of truth and cannot drift from the configured default.
+/// This is the SDK identity the `user-agent` advertises; the stainless
+/// package-version header is pinned separately in [`OPENAI_CLIENT_HEADERS`].
 fn default_openai_sdk_version() -> &'static str {
-    OPENAI_CLIENT_HEADERS
-        .iter()
-        .find_map(|(name, value)| (*name == "x-stainless-package-version").then_some(*value))
-        .expect("the OpenAI client identity pins the package version")
+    OPENAI_SDK_DEFAULT_VERSION
 }
 
 /// The SDK version the client advertises: the configured value, or the version
@@ -83,17 +90,17 @@ fn openai_sdk_version() -> &'static str {
         .as_str()
 }
 
-/// [`OPENAI_CLIENT_HEADERS`] with the version-derived entries substituted.
+/// [`OPENAI_CLIENT_HEADERS`] with the SDK-derived `user-agent` substituted.
 ///
 /// The installed `openai` package derives `user-agent` and
-/// `x-stainless-package-version` from one version string; every other entry is
-/// the recorded constant unchanged.
+/// `x-stainless-package-version` from one version string; the stainless
+/// package-version header stays pinned to the recorded Source client, while
+/// every other entry — including `user-agent` — keeps its configured identity.
 fn openai_client_headers(version: &str) -> Vec<(&'static str, String)> {
     OPENAI_CLIENT_HEADERS
         .iter()
         .map(|(name, value)| match *name {
             "user-agent" => (*name, format!("AsyncOpenAI/Python {version}")),
-            "x-stainless-package-version" => (*name, version.to_string()),
             _ => (*name, (*value).to_string()),
         })
         .collect()
@@ -133,14 +140,14 @@ mod tests {
         .build()
         .expect("build");
         let headers = request.into_reqwest().headers().clone();
-        // A deployment legitimately runs either recorded package version, so
-        // compare against the effective configured version (the same resolver
-        // the product uses) and keep every other header at the constant.
+        // A deployment legitimately runs another installed SDK version, so
+        // compare `user-agent` against the effective configured version; the
+        // stainless package-version stays the recorded Source client and every
+        // other header keeps the constant.
         let version = openai_sdk_version();
         for (name, value) in OPENAI_CLIENT_HEADERS {
             let expected = match *name {
                 "user-agent" => format!("AsyncOpenAI/Python {version}"),
-                "x-stainless-package-version" => version.to_string(),
                 _ => (*value).to_string(),
             };
             assert_eq!(
@@ -174,7 +181,7 @@ mod tests {
         );
         assert_eq!(
             header(&headers, "x-stainless-package-version"),
-            Some("3.37.0")
+            Some("3.42.1")
         );
         for (name, value) in OPENAI_CLIENT_HEADERS {
             assert_eq!(
@@ -195,14 +202,30 @@ mod tests {
                 &openai_client_headers(&version),
                 "x-stainless-package-version"
             ),
-            Some("3.37.0")
+            Some("3.42.1")
         );
     }
 
     #[test]
-    fn a_configured_sdk_version_moves_both_derived_headers() {
-        // One setting drives both entries the installed package derives from
-        // its version; every other identity header is unchanged.
+    fn the_stainless_package_version_is_the_recorded_source_client() {
+        // The recorded executor dependency pins the package-version header to
+        // the Source's installed `openai` client, independent of the SDK
+        // identity the deployment configures for `user-agent`.
+        let headers = openai_client_headers("9.9.9");
+        assert_eq!(
+            header(&headers, "x-stainless-package-version"),
+            Some("3.42.1")
+        );
+        assert_eq!(
+            header(&headers, "user-agent"),
+            Some("AsyncOpenAI/Python 9.9.9")
+        );
+    }
+
+    #[test]
+    fn a_configured_sdk_version_moves_only_the_user_agent() {
+        // The setting selects the installed SDK `user-agent`; the stainless
+        // package-version header remains the recorded Source client.
         let version = configured_openai_sdk_version(|name| {
             (name == OPENAI_SDK_VERSION_ENV).then(|| " 3.39.0 ".to_string())
         });
@@ -214,10 +237,10 @@ mod tests {
         );
         assert_eq!(
             header(&headers, "x-stainless-package-version"),
-            Some("3.39.0")
+            Some("3.42.1")
         );
         for (name, value) in OPENAI_CLIENT_HEADERS {
-            if *name == "user-agent" || *name == "x-stainless-package-version" {
+            if *name == "user-agent" {
                 continue;
             }
             assert_eq!(
