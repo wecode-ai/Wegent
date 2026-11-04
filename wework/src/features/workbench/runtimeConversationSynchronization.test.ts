@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { afterEach, expect, test, vi } from 'vitest'
 import type { RuntimeTranscriptResponse } from '@/types/api'
 import {

@@ -1,12 +1,16 @@
 import { fireEvent, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { beforeEach, expect, it, vi } from 'vitest'
 import {
   RuntimeInteractionsContext,
   type RuntimeInteractionsValue,
 } from './RuntimeInteractionsContext'
 import { RuntimeInteractionsPage } from './RuntimeInteractionsPage'
-import { interactionQuestion, interactionTask } from './runtimeInteractions.fixtures'
+import { interactionTask } from './runtimeInteractions.fixtures'
 import type { RuntimeInteraction } from './runtimeInteractions'
+import { openWeworkScheme } from './schemeEvents'
+
+vi.mock('./schemeEvents', () => ({ openWeworkScheme: vi.fn() }))
 
 vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
@@ -23,7 +27,6 @@ const approval: RuntimeInteraction = {
   requestKey: 'request:41',
   task: interactionTask,
   question: 'Allow this command? git status',
-  context: 'git status',
   createdAt: 0,
   payload: {
     kind: 'request_user_input',
@@ -70,25 +73,114 @@ function view(
   return value.registerView
 }
 
-it('routes native approvals to their original context without suggesting an ordinary reply', () => {
+vi.mock('./NotificationEntitySurface', () => ({
+  NotificationEntitySurface: ({
+    url,
+    interactionId,
+    onOriginalUrlChange,
+  }: {
+    url: string
+    interactionId: string
+    onOriginalUrlChange: (id: string, url: string) => void
+  }) => (
+    <div data-testid="test-original-entity">
+      {url}
+      <button
+        data-testid="test-native-focus-resolved"
+        onClick={() =>
+          onOriginalUrlChange(
+            interactionId,
+            'wework://boards/local/12/issues/ISSUE-1/comments/native-ai'
+          )
+        }
+      >
+        Locate
+      </button>
+    </div>
+  ),
+}))
+
+it('hosts the original entity instead of building a separate approval or reply form', () => {
   view()
-  expect(screen.getByTestId('interaction-open-original-action')).toBeInTheDocument()
+  expect(screen.getByTestId('test-original-entity')).toHaveTextContent(
+    'wework://tasks/device/review'
+  )
   expect(screen.queryByTestId('interaction-reply')).not.toBeInTheDocument()
-  expect(screen.queryByText('interactions.resume_hint')).not.toBeInTheDocument()
-})
-
-it('shows available decision context initially and lets the user collapse it', () => {
-  view()
-  expect(screen.getByTestId('interaction-evidence-content')).toHaveTextContent('git status')
-  expect(screen.getByTestId('interaction-evidence')).toHaveAttribute('aria-expanded', 'true')
-  fireEvent.click(screen.getByTestId('interaction-evidence'))
-  expect(screen.queryByTestId('interaction-evidence-content')).not.toBeInTheDocument()
-  expect(screen.getByTestId('interaction-evidence')).toHaveAttribute('aria-expanded', 'false')
-})
-
-it('does not offer an empty evidence disclosure or repeat the question as evidence', () => {
-  view(undefined, {}, { pending: [{ ...approval, context: approval.question }] })
   expect(screen.queryByTestId('interaction-evidence')).not.toBeInTheDocument()
+})
+
+it('opens the original view at the AI message resolved inside the current entity', () => {
+  vi.mocked(openWeworkScheme).mockClear()
+  view(
+    undefined,
+    {},
+    {
+      pending: [
+        {
+          ...approval,
+          project: { projectId: '12', issueId: 'ISSUE-1', rootCommentId: 'root', store: 'local' },
+        },
+      ],
+    }
+  )
+  fireEvent.click(screen.getByTestId('test-native-focus-resolved'))
+  fireEvent.click(screen.getByTestId('interaction-open-original'))
+  expect(openWeworkScheme).toHaveBeenCalledExactlyOnceWith(
+    'wework://boards/local/12/issues/ISSUE-1/comments/native-ai'
+  )
+})
+
+it('hosts an Issue destination including its owning comment', () => {
+  view(
+    undefined,
+    {},
+    {
+      pending: [
+        {
+          ...approval,
+          project: { projectId: '12', issueId: 'ISSUE-1', rootCommentId: 'root', store: 'local' },
+        },
+      ],
+    }
+  )
+  expect(screen.getByTestId('test-original-entity')).toHaveTextContent(
+    'wework://boards/local/12/issues/ISSUE-1/comments/root'
+  )
+})
+
+it.each(['local', 'backend'] as const)(
+  'opens the original %s Issue at its owning comment from the container header',
+  store => {
+    vi.mocked(openWeworkScheme).mockClear()
+    view(
+      undefined,
+      {},
+      {
+        pending: [
+          {
+            ...approval,
+            project: {
+              projectId: '12',
+              issueId: 'ISSUE-1',
+              rootCommentId: 'root',
+              store,
+            },
+          },
+        ],
+      }
+    )
+    fireEvent.click(screen.getByTestId('interaction-open-original'))
+    expect(openWeworkScheme).toHaveBeenCalledExactlyOnceWith(
+      `wework://boards/${store === 'local' ? 'local/' : ''}12/issues/ISSUE-1/comments/root`
+    )
+  }
+)
+
+it('opens the exact original task from the container header', () => {
+  vi.mocked(openWeworkScheme).mockClear()
+  view()
+  fireEvent.click(screen.getByTestId('interaction-open-original'))
+  expect(openWeworkScheme).toHaveBeenCalledExactlyOnceWith('wework://tasks/device/review')
 })
 
 it('only registers a narrow-screen request as viewed after opening it and restores list focus', () => {
@@ -102,6 +194,28 @@ it('only registers a narrow-screen request as viewed after opening it and restor
   fireEvent.click(screen.getByTestId('interactions-back-to-list'))
   expect(registerView).toHaveBeenLastCalledWith(expect.any(String), null)
   expect(row).toHaveFocus()
+})
+
+it('keeps the displayed detail open when resizing a desktop inbox to a narrow window', () => {
+  const value = interactionValue()
+  const page = (
+    <RuntimeInteractionsContext.Provider value={value}>
+      <RuntimeInteractionsPage />
+    </RuntimeInteractionsContext.Provider>
+  )
+  const { rerender } = render(page)
+  viewport.twoPanes = false
+  rerender(
+    <RuntimeInteractionsContext.Provider value={value}>
+      <RuntimeInteractionsPage />
+    </RuntimeInteractionsContext.Provider>
+  )
+  const back = screen.getByTestId('interactions-back-to-list')
+  expect(back.closest('section')).not.toHaveClass('hidden')
+  expect(value.registerView).toHaveBeenLastCalledWith(expect.any(String), approval.id)
+  fireEvent.click(back)
+  expect(screen.getByTestId('interaction-list-item').closest('section')).not.toHaveClass('hidden')
+  expect(value.registerView).toHaveBeenLastCalledWith(expect.any(String), null)
 })
 
 it('restores narrow-screen list heading focus when the handled request no longer has a row', () => {
@@ -137,40 +251,6 @@ it('focuses a narrow-screen deep-linked question when its pending data arrives l
   expect(value.registerView).toHaveBeenLastCalledWith(expect.any(String), approval.id)
 })
 
-it('keeps a multiline page draft and submits Enter without submitting IME or Shift+Enter', () => {
-  const respond = vi.fn()
-  const request = {
-    ...approval,
-    id: 'question',
-    question: 'Keep existing customer behavior?',
-    context: 'Existing customers depend on the current rule.',
-    payload: {
-      ...interactionQuestion,
-      questions: [{ ...interactionQuestion.questions![0], options: [] }],
-    },
-  }
-  view(
-    undefined,
-    {},
-    {
-      pending: [request],
-      drafts: { question: 'Keep the old rule.\nUse the new rule for new customers.' },
-      respond,
-    }
-  )
-  const input = screen.getByRole('textbox', { name: 'interactions.reply' })
-  expect(input).toHaveValue('Keep the old rule.\nUse the new rule for new customers.')
-  expect(input).not.toHaveFocus()
-  fireEvent.keyDown(input, { key: 'Enter', isComposing: true, keyCode: 229 })
-  fireEvent.keyDown(input, { key: 'Enter', shiftKey: true })
-  expect(respond).not.toHaveBeenCalled()
-  fireEvent.keyDown(input, { key: 'Enter' })
-  expect(respond).toHaveBeenCalledExactlyOnceWith(
-    request,
-    'Keep the old rule.\nUse the new rule for new customers.'
-  )
-})
-
 it('shows an expired exact destination without selecting or suppressing an unrelated request', () => {
   const registerView = view('expired-request')
   expect(screen.getByText('interactions.expired')).toBeInTheDocument()
@@ -186,3 +266,44 @@ it.each(['interactions.load_failed', 'interactions.failed', 'interactions.expire
     expect(screen.getByRole('alert')).toHaveTextContent(new RegExp('^' + error + '$'))
   }
 )
+
+it.each(['task', 'issue'])(
+  'keeps the original question visible in the %s detail when the narrow list is hidden',
+  kind => {
+    viewport.twoPanes = false
+    const question = 'Original question\nwith the complete decision and no generated summary'
+    const item = {
+      ...approval,
+      question,
+      ...(kind === 'issue'
+        ? {
+            project: {
+              projectId: 'project',
+              issueId: 'issue',
+              store: 'backend' as const,
+              rootCommentId: 'root',
+            },
+          }
+        : {}),
+    }
+    view(item.id, {}, { pending: [item] })
+    const heading = screen.getByTestId('interaction-question-heading')
+    expect(heading.textContent).toBe(question)
+    expect(heading).toHaveFocus()
+    expect(heading.closest('section')).not.toHaveClass('hidden')
+    expect(screen.getByTestId('interaction-list-item').closest('section')).toHaveClass('hidden')
+    expect(screen.getByTestId('interaction-open-original')).toBeVisible()
+    expect(screen.getByTestId('test-original-entity')).toBeVisible()
+  }
+)
+
+it('lets keyboard users enter the scrollable original question before opening the entity', async () => {
+  const question = 'Original decision and relevant choices. '.repeat(30)
+  view(approval.id, {}, { pending: [{ ...approval, question }] })
+  screen.getByTestId('interaction-list-item').focus()
+  await userEvent.tab()
+  expect(screen.getByTestId('interaction-question-heading')).toHaveFocus()
+  expect(screen.getByTestId('interaction-question-heading').textContent).toBe(question)
+  await userEvent.tab()
+  expect(screen.getByTestId('interaction-open-original')).toHaveFocus()
+})

@@ -75,24 +75,78 @@ const LEGACY_ERROR_CODES: Record<string, string> = {
   'Device offline': 'device_offline',
   'Executor offline': 'device_offline',
   'Workspace config is invalid': 'workspace_unavailable',
+  'Executor identity is unavailable': 'executor_unavailable',
+  'local-sidebar-runtime-changed': 'executor_restarted',
+}
+
+const TRANSPORT_ERROR_CODES: Record<string, string> = {
+  executor_disconnected: 'executor_unavailable',
+  protocol_mismatch: 'executor_update_required',
+  http_401: 'authentication_required',
+  http_403: 'permission_denied',
+  http_502: 'service_unavailable',
+  http_503: 'service_unavailable',
+  http_504: 'service_unavailable',
+}
+
+// Device routing emits these prefixes followed by the requested device identity.
+const DEVICE_ERROR_CODES: Record<string, string> = {
+  'executor-not-found': 'executor_unavailable',
+  'executor-offline': 'device_offline',
+  'ambiguous-executor-identity': 'executor_ambiguous',
+}
+
+/** Log routing and transport identity without request content or raw error messages. */
+export function reportStandInError(operation: string, error: unknown, deviceId?: string): void {
+  const value = error && typeof error === 'object' ? error : {}
+  const code = 'code' in value ? value.code : undefined
+  const status = 'status' in value ? value.status : undefined
+  const message = getErrorMessage(error, '').replace(/^Error: /, '')
+  console.warn('[Stand-in] Operation failed', {
+    operation,
+    deviceId,
+    code: typeof code === 'string' && /^[a-z_][a-z0-9_]{0,79}$/i.test(code) ? code : undefined,
+    status: typeof status === 'number' && status >= 100 && status <= 599 ? status : undefined,
+    routingReason: Object.hasOwn(DEVICE_ERROR_CODES, message.split(':')[0])
+      ? message.split(':')[0]
+      : undefined,
+  })
 }
 
 /** Keep protocol errors in diagnostics and present localized recovery guidance. */
-export function getStandInErrorMessage(error: unknown): string {
+export function getStandInErrorMessage(
+  error: unknown,
+  fallback:
+    | 'failed'
+    | 'load_settings_failed'
+    | 'save_settings_failed'
+    | 'load_environment_failed'
+    | 'load_projects_failed' = 'failed'
+): string {
   const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined
   const message = getErrorMessage(error, '').replace(/^Error: /, '')
   const knownCode = (value: unknown): value is string =>
     typeof value === 'string' && i18n.exists('common:standIn.errors.' + value)
-  const key = knownCode(code) ? code : knownCode(message) ? message : LEGACY_ERROR_CODES[message]
-  if (key) return i18n.t('common:standIn.errors.' + key)
+  const status = error && typeof error === 'object' && 'status' in error ? error.status : undefined
+  const transportCode = typeof code === 'string' ? TRANSPORT_ERROR_CODES[code] : undefined
+  const statusCode =
+    typeof status === 'number' ? TRANSPORT_ERROR_CODES[`http_${status}`] : undefined
+  const key = knownCode(code)
+    ? code
+    : (transportCode ??
+      statusCode ??
+      DEVICE_ERROR_CODES[message.split(':')[0]] ??
+      (knownCode(message) ? message : LEGACY_ERROR_CODES[message]))
+  if (key) return i18n.t('common:standIn.errors.' + (key === 'failed' ? fallback : key))
   // Already localized validation messages must survive nested UI error boundaries.
   for (const language of ['en', 'zh-CN']) {
     const localized = i18n.getResource(language, 'common', 'standIn.errors')
     if (localized) {
       const entry = Object.entries(localized).find(([, value]) => value === message)
-      if (entry) return i18n.t('common:standIn.errors.' + entry[0])
+      if (entry)
+        return i18n.t('common:standIn.errors.' + (entry[0] === 'failed' ? fallback : entry[0]))
     }
   }
   if (/[\u4e00-\u9fff]/.test(message)) return message
-  return i18n.t('common:standIn.errors.failed')
+  return i18n.t('common:standIn.errors.' + fallback)
 }

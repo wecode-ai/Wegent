@@ -114,6 +114,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
   cloudSpaceEnabled = false,
   onSelectCloudProject,
   onSelectExternalMention,
+  onActivateMention,
   onListLocalSkills,
   onListLocalApps,
   models = [],
@@ -943,6 +944,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
         onDrop={handleDrop}
         onOpenMentionFile={onOpenSkillFile}
         onOpenMentionPlugin={onOpenMentionPlugin}
+        onActivateMention={onActivateMention}
         onEditComposerLink={editComposerLink}
         onClick={() => updateAutocompleteTrigger()}
         onFocus={() => updateAutocompleteTrigger()}

@@ -1824,13 +1824,14 @@ export function createHybridWorkbenchServices(
           aliases
         )
       },
-      async searchConnectionResources(deviceId, providerId, kind, query, cursor) {
+      async searchConnectionResources(deviceId, providerId, kind, query, cursor, scope) {
         return (await standInApiForDevice(deviceId)).searchConnectionResources(
           deviceId,
           providerId,
           kind,
           query,
-          cursor
+          cursor,
+          ...(scope ? ([scope] as const) : [])
         )
       },
       async conversation(userId, deviceId, message, roleId, options) {

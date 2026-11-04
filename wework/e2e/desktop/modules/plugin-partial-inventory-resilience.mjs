@@ -119,6 +119,7 @@ export async function verifyPluginPartialInventoryResilience({
   const reportPath = join(resultDir, 'plugin-partial-inventory-resilience-evidence.json')
   const report = {
     scope: 'Partial live local inventory blocks automatic updates, sync and manual repair',
+    systemPressureSource: 'controlled E2E idle fixture; physical host pressure is not verified',
     preconditions: { completed: false },
     faultChecks: [],
     snapshots: [],
@@ -326,6 +327,12 @@ export async function verifyPluginPartialInventoryResilience({
 
   try {
     assert.ok(deviceId, 'Partial inventory requires a real connected desktop device')
+    const pressureFixture = await idleDiagnostics('controlled-idle-pressure-precondition')
+    assert.deepEqual(pressureFixture.systemPressure, {
+      cpuLoadRatio: 0.1,
+      freeMemoryRatio: 0.5,
+      userIdleSeconds: 60,
+    })
     fixture = await installFixture(cloud, control, slug, deviceId, timeoutMs)
     report.preconditions.expected = {
       deviceId,
@@ -445,7 +452,7 @@ export async function verifyPluginPartialInventoryResilience({
       updateAvailable: candidate.updateAvailable,
     }
     // Host pressure gates queued work, not publication. Require the real guard
-    // and physical idleness together before any UI refresh can acquire its lease.
+    // and configured idle pressure before any UI refresh can acquire its lease.
     await until(
       async () => {
         const observation = await idleDiagnostics('awaiting-real-partial-inventory-guard')

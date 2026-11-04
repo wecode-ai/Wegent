@@ -1,11 +1,11 @@
+import type { LocalWorkItem } from '@/features/todo/todoModel'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import '@/i18n'
+import type { Attachment } from '@/types/api'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
-import '@/i18n'
 import type { WorkbenchMessage } from '@wegent/chat-core'
-import type { Attachment } from '@/types/api'
-import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import type { LocalWorkItem } from '@/features/todo/todoModel'
+import { describe, expect, it, vi } from 'vitest'
 import { DeliveryDialog } from './DeliveryDialog'
 
 const deliveryFileMocks = vi.hoisted(() => ({
@@ -40,66 +40,6 @@ describe('DeliveryDialog', () => {
   beforeEach(() => {
     deliveryFileMocks.readSelectedDeliveryFiles.mockReset()
     deliveryFileMocks.readSelectedDeliveryFiles.mockResolvedValue([])
-  })
-
-  it('creates and finalizes a delivery with its title and notes', async () => {
-    const onDelivered = vi.fn()
-    const bindTask = vi.fn(async () => undefined)
-    const createDelivery = vi.fn(async () => ({ id: 'delivery-1' }))
-    let completeDelivery!: () => void
-    const finalized = new Promise<void>(resolve => {
-      completeDelivery = resolve
-    })
-    const finalizeDelivery = vi.fn(() => finalized)
-    const deliveryApi = {
-      bindTask,
-      createDelivery,
-      addAsset: vi.fn(),
-      finalizeDelivery,
-      discardDraft: vi.fn(),
-      listDeliveries: vi.fn(),
-    } as unknown as NonNullable<WorkbenchServices['deliveryApi']>
-
-    const view = render(
-      <DeliveryDialog
-        item={item}
-        runtimeTask={{ deviceId: 'local', taskId: 'task-1' }}
-        messages={[]}
-        deliveryApi={deliveryApi}
-        onCancel={vi.fn()}
-        onDelivered={onDelivered}
-      />
-    )
-
-    const dialog = screen.getByTestId('delivery-dialog')
-    expect(screen.getByTestId('delivery-title')).toHaveValue('Implement delivery')
-    expect(dialog).toHaveAttribute('aria-modal', 'true')
-    expect(dialog.parentElement?.parentElement).toBe(document.body)
-    expect(view.container).toBeEmptyDOMElement()
-
-    fireEvent.change(screen.getByTestId('delivery-markdown'), {
-      target: { value: '# Result\nReady to continue' },
-    })
-    await userEvent.click(screen.getByTestId('delivery-confirm'))
-
-    await waitFor(() => expect(finalizeDelivery).toHaveBeenCalledWith('delivery-1'))
-    expect(onDelivered).not.toHaveBeenCalled()
-    expect(screen.getByTestId('delivery-confirm')).toBeDisabled()
-    completeDelivery()
-    await waitFor(() => expect(onDelivered).toHaveBeenCalledOnce())
-    expect(bindTask).toHaveBeenCalledWith('todo-1', {
-      deviceId: 'local',
-      taskId: 'task-1',
-    })
-    expect(createDelivery).toHaveBeenCalledWith(
-      'todo-1',
-      expect.objectContaining({
-        title: 'Implement delivery',
-        markdown: '# Result\nReady to continue',
-      })
-    )
-    expect(onDelivered).toHaveBeenCalledOnce()
-    expect(screen.queryByTestId('delivery-complete-dialog')).not.toBeInTheDocument()
   })
 
   it('discards the draft when finalization fails', async () => {

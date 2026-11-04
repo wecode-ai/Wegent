@@ -26,6 +26,7 @@ export interface QueuedWorkbenchMessage {
 }
 
 export interface RuntimePaneQueuedMessage extends QueuedWorkbenchMessage {
+  interactionId?: string
   attachments?: Attachment[]
   mentions?: ProjectChatMention[]
   displayContent?: string

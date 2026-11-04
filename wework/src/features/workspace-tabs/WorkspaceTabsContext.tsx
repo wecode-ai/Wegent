@@ -163,7 +163,10 @@ function loadPersistedTabs(
     return { tabs: defaultTabs, activeTabId: defaultTabs[0].id, closedTabs: [] }
   }
   const kind = inferWorkspaceTabKind(pathname)
-  const matchingDefault = defaultTabs.find(tab => tab.kind === kind)
+  const matchingDefault = defaultTabs.find(
+    tab =>
+      tab.kind === kind && (kind !== 'auxiliary' || tab.contentRoute.split('?', 1)[0] === pathname)
+  )
   const routeTab = createWorkspaceTab(kind, labels, {
     id: location.tabId ?? matchingDefault?.id,
     title: location.tabTitle ?? workspaceTabTitle(kind, location.contentRoute, labels),

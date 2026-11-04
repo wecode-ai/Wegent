@@ -215,6 +215,9 @@ test('auth and business failures never advance checkpoints or trigger a fallback
     let calls = 0
     const ctx = {
       cli: {
+        async describe() {
+          return { pluginKey: 'dingtalk', connectorSlug: 'dingtalk-local' }
+        },
         async callTool() {
           calls++
           return { success: false, error: { code } }
@@ -229,5 +232,69 @@ test('auth and business failures never advance checkpoints or trigger a fallback
     })
     assert.deepEqual(checkpoint, { after: source.enabledAfter, cursor: '0' })
     assert.equal(calls, 2)
+  }
+})
+
+test('discovers authorization identity from the exact installed dependency', async () => {
+  const target = { pluginKey: 'dingtalk', connectorSlug: 'dingtalk-local' }
+  const status = await createProvider().check({
+    cli: {
+      describe: async () => target,
+      callTool: async () => ({ currentProfile: '' }),
+    },
+  })
+  assert.equal(status.status, 'auth_required')
+  assert.deepEqual(status.authTarget, target)
+})
+
+test('all-resource scopes retain the account and separate group and direct resources', async () => {
+  for (const kind of ['group', 'direct']) {
+    const calls = []
+    const ctx = {
+      cli: {
+        async callTool(_alias, input) {
+          calls.push(input)
+          if (input.tool === 'listProfiles')
+            return {
+              currentProfile: 'corp:user',
+              profiles: [{ profile: 'corp:user', userName: 'Me', userId: 'me' }],
+            }
+          if (input.tool === 'searchUsers')
+            return { result: [{ userId: 'me', openDingTalkId: 'own' }] }
+          return {
+            result: {
+              conversationMessagesList: [
+                conversation('group-a', false, 'alice'),
+                conversation('group-b', false, 'bob'),
+                conversation('dm-a', true, 'alice'),
+                conversation('dm-b', true, 'bob'),
+                conversation('dm-self', true, 'own'),
+              ],
+              hasMore: false,
+              nextCursor: '0',
+            },
+          }
+        },
+      },
+    }
+    const provider = createProvider()
+    const page = await provider.listResources(ctx, { kind, scope: 'all' })
+    const source = { ...page.items[0], enabledAfter: '2026-10-01T00:00:00Z' }
+    assert.equal(source.scope, 'all')
+    assert.equal(source.profile, 'corp:user')
+    const result = await provider.collect(ctx, { source, checkpoint: null })
+    assert.equal(result.events.length, 2)
+    assert.deepEqual(
+      result.events.map(event => event.resource.id),
+      kind === 'group' ? ['group-a', 'group-b'] : ['alice', 'bob']
+    )
+    assert.ok(result.events.every(event => event.resource.kind === kind))
+    assert.equal(calls.at(-1).arguments.profile, 'corp:user')
+    assert.equal(calls.at(-1).arguments.group, undefined)
+    assert.equal(calls.at(-1).arguments.senderIds, undefined)
+    await assert.rejects(
+      provider.validate(ctx, { ...source, scope: undefined }),
+      /Invalid resource scope/
+    )
   }
 })

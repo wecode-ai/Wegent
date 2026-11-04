@@ -40,7 +40,7 @@ export function reduceRuntimeTaskLifecycle(
   state: RuntimeTaskLifecycleState,
   event: RuntimeTaskLifecycleEvent
 ): RuntimeTaskLifecycleState {
-  // Content and RPC completion describe a response, never the native thread's lifetime.
+  // RPC completion cannot settle native execution or the task's aggregate pending inputs.
   if (
     state.task?.executionState &&
     [
@@ -49,6 +49,7 @@ export function reduceRuntimeTaskLifecycle(
       'turn_started',
       'turn_settled',
       'turn_recovered',
+      'user_input_responded',
     ].includes(event.type)
   ) {
     return state

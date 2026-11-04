@@ -924,3 +924,6 @@ async fn completing_goal_between_turns_settles_execution_but_not_an_open_turn() 
         let _ = fs::remove_dir_all(root);
     }
 }
+
+#[path = "guidance_tests.rs"]
+mod guidance_tests;
