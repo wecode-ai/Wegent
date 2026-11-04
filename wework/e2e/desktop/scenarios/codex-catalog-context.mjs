@@ -88,6 +88,7 @@ export function createCatalogContextVerification({
   let compactions = 0
   let heldResponse
   let expectedEffort
+  const reasoningRequests = []
 
   return {
     attachServer(server) {
@@ -120,11 +121,26 @@ export function createCatalogContextVerification({
       const prewarm = kind === 'prewarm'
       if (!prewarm) {
         assert.equal(body.model, modelId)
+        // Codex pins the request baseline and sends later effort changes in history.
+        const updates = body.input.filter(item => item.type === 'configuration_update')
+        reasoningRequests.push({
+          expectedEffort,
+          baseline: body.reasoning?.effort,
+          updates: updates.map(item => item.reasoning?.effort),
+        })
+        await writeFile(
+          join(resultDir, 'codex-catalog-reasoning.json'),
+          JSON.stringify(reasoningRequests, null, 2)
+        )
         assert.equal(
-          body.reasoning?.effort,
+          updates.at(-1)?.reasoning?.effort ?? body.reasoning?.effort,
           expectedEffort,
           'The selected Catalog effort was not forwarded to the real Codex request'
         )
+        assert.equal(body.reasoning?.effort, 'max', 'The context effort baseline must stay pinned')
+        if (expectedEffort === 'ultra') {
+          assert.equal(updates.at(-1)?.reasoning?.effort, 'ultra')
+        }
         assert.ok(JSON.stringify(body).includes(PROMPT), 'Catalog task lost its conversation')
         requests += 1
       }
