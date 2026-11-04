@@ -70,15 +70,20 @@ function createStatusAutomation({ uiTimeoutMs, workbenchReadyTimeoutMs, modelRes
   }
   const reopenProject = async message => {
     await reloadMainWindow(control, message)
-    await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+    const boardTab = '[data-testid="workspace-tab-select-fixed-board"]'
+    await control.command('clickWhenEnabled', boardTab, { timeoutMs: workbenchReadyTimeoutMs })
+    await control.command('waitFor', `${boardTab}[aria-selected="true"]`, {
+      timeoutMs: workbenchReadyTimeoutMs,
+    })
     await enterLocalCollaborationWorkspace(control, CONTENT)
     await control.command(
-      'click',
+      'clickWhenEnabled',
       inCollaborationSidebar(
         `[data-testid="collaboration-workspace-project-${projectId}"]`,
         CONTENT
       )
     )
+    await wait('cloud-project-header-title', { text: PROJECT, visible: true })
   }
   const saveRule = async () => {
     await control.command('clickWhenEnabled', scoped('automatic-processing-save'))
