@@ -460,10 +460,11 @@ export function PluginsWorkspace({
   const [localConnectorAuthBySlug, setLocalConnectorAuthBySlug] = useState<
     Record<string, 'connected' | 'disconnected'>
   >({})
+  const localConnectorAuthDetailRef = useRef<string | null>(null)
   const [pluginDetailActionError, setPluginDetailActionError] = useState<{
     pluginId: string | number
     message: string
-    source?: 'detail-read'
+    source?: 'detail-read' | 'auth-health'
   } | null>(null)
   const [marketplaceDetailLoadError, setMarketplaceDetailLoadError] = useState<string | null>(null)
   const [marketplaceDetailRevision, setMarketplaceDetailRevision] = useState(0)
@@ -4847,6 +4848,12 @@ export function PluginsWorkspace({
     const marketplaceId =
       detailPlugin?.raw.spec.source.marketplace ||
       String(detailPlugin?.raw.metadata.namespace ?? '')
+    const detailId = selectedMarketplacePluginId ?? selectedPluginId
+    const detailKey = JSON.stringify([detailId, marketplaceId, pluginKey])
+    if (localConnectorAuthDetailRef.current !== detailKey) {
+      localConnectorAuthDetailRef.current = detailKey
+      setLocalConnectorAuthBySlug({})
+    }
     const localConnectors = connectors.flatMap(connector => {
       const target = pluginLocalConnectorAuthTarget(pluginKey, marketplaceId, connector)
       return target ? [{ connector, target }] : []
@@ -4862,18 +4869,46 @@ export function PluginsWorkspace({
       localConnectors.map(async ({ connector, target }) => {
         try {
           const health = await localConnectorAuthHealth(target)
-          if (health.status === 'error') return null
+          if (health.status === 'error') {
+            throw new Error(
+              isGithubCliTarget(target)
+                ? t(`workbench.${health.errorCode || 'gh_health_failed'}`, {
+                    defaultValue: t('workbench.gh_health_failed'),
+                  })
+                : t('workbench.plugins_local_auth_health_failed')
+            )
+          }
           return [
             connector.slug,
             localQrManageActionFromHealth(health) === 'logout' ? 'connected' : 'disconnected',
+            null,
           ] as const
-        } catch {
-          return null
+        } catch (error) {
+          return [
+            connector.slug,
+            null,
+            getErrorMessage(error, t('workbench.plugins_local_auth_health_failed')),
+          ] as const
         }
       })
     ).then(entries => {
       if (cancelled || revision !== connectorAuthRevisionRef.current) return
-      setLocalConnectorAuthBySlug(Object.fromEntries(entries.filter(entry => entry !== null)))
+      setLocalConnectorAuthBySlug(previous =>
+        Object.fromEntries(
+          entries.flatMap(([slug, state]) => {
+            const known = state ?? previous[slug]
+            return known ? [[slug, known]] : []
+          })
+        )
+      )
+      const message = entries.find(([, , error]) => error)?.[2]
+      setPluginDetailActionError(previous =>
+        message && detailId != null
+          ? { pluginId: detailId, message, source: 'auth-health' }
+          : previous?.source === 'auth-health'
+            ? null
+            : previous
+      )
     })
 
     return () => {
@@ -4884,7 +4919,10 @@ export function PluginsWorkspace({
     localAuthRevision,
     selectedMarketplacePlugin,
     selectedMarketplacePluginDetail,
+    selectedMarketplacePluginId,
     selectedPlugin,
+    selectedPluginId,
+    t,
   ])
 
   const selectedMarketplacePluginRef = useRef(selectedMarketplacePlugin)

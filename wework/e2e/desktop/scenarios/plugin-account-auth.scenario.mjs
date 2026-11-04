@@ -3,6 +3,7 @@ import {
   seedHistoricalAccountAuth,
 } from '../modules/plugin-account-auth-fixture.mjs'
 import { verifyPluginAuthCoordination } from '../modules/plugin-auth-coordination.mjs'
+import { verifyPluginAuthDetailRefresh } from '../modules/plugin-auth-detail-refresh.mjs'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
@@ -628,6 +629,7 @@ export async function createDesktopScenario({
               '[data-testid="plugin-connection-manage-connector:conversation-qr"]:not([disabled])'
             )
 
+            await verifyPluginAuthDetailRefresh({ control, slug, homePath, captureScreenshot })
             await verifyConversationQrAuthorization({
               control,
               slug,

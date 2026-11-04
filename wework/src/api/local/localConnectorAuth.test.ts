@@ -181,7 +181,7 @@ describe('local connector kinds', () => {
       'https://github.com/settings/tokens',
       'invalid',
     ])
-      expect(githubVerificationUrl(address)).toBeNull()
+      expect(githubVerificationUrl(address, 'ABCD-1234')).toBeNull()
   })
   test('requires a valid code only for device authorization', () => {
     expect(githubVerificationUrl('https://github.com/login/device')).toBeNull()

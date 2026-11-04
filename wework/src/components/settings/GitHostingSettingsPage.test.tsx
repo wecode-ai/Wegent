@@ -54,8 +54,16 @@ vi.mock('@/lib/external-links', () => ({ openExternalUrl }))
 
 describe('GitHostingSettingsPage', () => {
   test('refreshes after local authentication changes and external CLI changes on focus', async () => {
+    getGitHostingCliStatus.mockResolvedValue({
+      installed: true,
+      authenticated: true,
+      detectionError: null,
+    })
     render(<GitHostingSettingsPage />)
-    await waitFor(() => expect(getGitHostingCliStatus).toHaveBeenCalledTimes(2))
+    await waitFor(() =>
+      expect(screen.getByTestId('git-hosting-cli-github-status')).toHaveTextContent('已就绪')
+    )
+    getGitHostingCliStatus.mockClear()
     getGitHostingCliStatus.mockResolvedValue({
       installed: true,
       authenticated: false,
@@ -65,6 +73,7 @@ describe('GitHostingSettingsPage', () => {
     await waitFor(() =>
       expect(screen.getByTestId('git-hosting-cli-github-status')).toHaveTextContent('未登录')
     )
+    expect(getGitHostingCliStatus.mock.calls.map(([provider]) => provider)).toContain('github')
     getGitHostingCliStatus.mockResolvedValue({
       installed: true,
       authenticated: true,
