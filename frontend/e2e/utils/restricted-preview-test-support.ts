@@ -137,6 +137,22 @@ async function verifyVideoPreview(
   expect(range.status()).toBe(206)
   const video = dialog.locator('video')
   await expect(video).toBeVisible()
+  // Visibility alone cannot detect a codec failure, so require the media
+  // element to actually decode its metadata before checking the guards.
+  const loaded = video.evaluate(element => {
+    const media = element as HTMLVideoElement
+    return new Promise<boolean>(resolve => {
+      if (media.videoWidth > 0) {
+        resolve(true)
+        return
+      }
+      media.addEventListener('loadedmetadata', () => resolve(media.videoWidth > 0), {
+        once: true,
+      })
+      media.addEventListener('error', () => resolve(false), { once: true })
+    })
+  })
+  expect(await loaded, 'video media failed to load or decode').toBe(true)
   expect((await video.getAttribute('controlslist'))?.split(/\s+/)).toContain('nofullscreen')
   await expectSingleRenderedWatermark(dialog, watermarkText)
 }

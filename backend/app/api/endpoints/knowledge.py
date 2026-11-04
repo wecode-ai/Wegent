@@ -599,6 +599,9 @@ def get_document_protection(
 
 def _document_watermark_text(user: User) -> str:
     """Build the reader identity watermark from the stored employee profile."""
+    # A blank user_name would render an empty watermark tile, so fall back to
+    # the stable user id as the visible identity.
+    user_name = user.user_name.strip() or str(user.id)
     try:
         preferences = json.loads(user.preferences or "{}")
     except (TypeError, json.JSONDecodeError):
@@ -609,11 +612,11 @@ def _document_watermark_text(user: User) -> str:
     if isinstance(employee_id, (int, float)) and not isinstance(employee_id, bool):
         employee_id = str(employee_id)
     if not isinstance(employee_id, str) or not employee_id.strip():
-        return user.user_name
+        return user_name
     employee_id = employee_id.strip()
-    if employee_id == user.user_name:
-        return user.user_name
-    return f"{user.user_name} {employee_id}"
+    if employee_id == user_name:
+        return user_name
+    return f"{user_name} {employee_id}"
 
 
 @router.get("/{knowledge_base_id}", response_model=KnowledgeBaseResponse)

@@ -105,6 +105,21 @@ def test_document_protection_preserves_default_watermark_contract(
     }
 
 
+@pytest.mark.parametrize("employee_id", [None, "   "])
+def test_document_protection_watermark_falls_back_to_id_for_blank_name(
+    test_db, test_user, employee_id
+):
+    """A blank stored user_name must not produce an empty watermark tile."""
+    from app.api.endpoints.knowledge import _document_watermark_text
+
+    test_user.user_name = "   "
+    test_user.preferences = (
+        json.dumps({"employee_id": employee_id}) if employee_id is not None else "{}"
+    )
+    test_db.commit()
+    assert _document_watermark_text(test_user) == str(test_user.id)
+
+
 def test_my_permission_returns_owner_and_missing_contract(
     test_client, test_db, test_user, test_token
 ):
