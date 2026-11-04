@@ -45,6 +45,33 @@ export function createDesktopScenario({
     }
     assert.fail(`Silent processing did not reach its expected state: ${JSON.stringify(latest)}`)
   }
+  async function verifyQueuedAssignmentReceipt(control, projectId) {
+    const issue = await rpc(control, 'todos.create', {
+      project_id: projectId,
+      todo: { title: 'Queued assignment reception', assignee_user_id: USER },
+    })
+    try {
+      const receipts = await waitFor(
+        () =>
+          rpc(control, 'todos.assignment_receipts', { project_id: projectId, task_id: issue.id }),
+        rows => rows.length === 1 && rows[0].stand_in_received_at,
+        uiTimeoutMs
+      )
+      assert.equal(receipts[0].human_read_at, null)
+      const bindings = await rpc(control, 'todos.bindings', { task_id: issue.id })
+      assert.equal(bindings.length, 1, 'Receipt retains recipient-owned task authority')
+      const task = await rpc(control, 'runtime.tasks.get', { taskId: bindings[0].task_id })
+      assert.equal(
+        task.code,
+        'task_not_found',
+        'Background intake acknowledges before starting a model'
+      )
+      assert.equal(workCalls, 0)
+      assert.equal(coordinatorCalls, 0)
+    } finally {
+      await rpc(control, 'todos.archive', { project_id: projectId, task_id: issue.id })
+    }
+  }
   return {
     async handleHttp(req, response, url) {
       if (req.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
@@ -224,6 +251,7 @@ export function createDesktopScenario({
         assert.equal(configured.roles[0].collaboration.projectPolicies[0].policy.immediate, false)
         assert.equal(configured.roles[0].collaboration.projectPolicies[0].policy.askBeforeAct, true)
         assert.equal(configured.processing, undefined)
+        await verifyQueuedAssignmentReceipt(control, project.id)
         // Direct source routing is explicit; completion feedback still uses the silent window.
         await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
         await control.command('click', '[data-testid="stand-in-connections-open"]')

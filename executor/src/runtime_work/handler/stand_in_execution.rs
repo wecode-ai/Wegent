@@ -96,6 +96,8 @@ impl RuntimeWorkRpcHandler {
             } else {
                 &binding["assignmentId"]
             };
+            self.accept_stand_in_assignment(config, issue, binding)
+                .await?;
             store.enqueue_stand_in_event(user, json!(["assignment",config["projectStore"],config["projectId"],issue["id"],assignment,config["id"]]), json!({
                 "kind":"assignment","roleScoped":true,"roleIds":[config["id"]],
                 "projectId":config["projectId"],"projectStore":config["projectStore"],
