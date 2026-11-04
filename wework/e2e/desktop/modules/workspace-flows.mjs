@@ -507,6 +507,38 @@ async function waitForNativeCollaborationPlatform(
   return weworkPlatformSelector
 }
 
+/**
+ * The collaboration navigation fetches spaces and projects over the network.
+ * A transient request failure leaves the sidebar with an inline retry action,
+ * so wait for the target and use that action instead of timing out blindly.
+ */
+async function waitForCollaborationNavigation(control, contentSelector, selector) {
+  const navigationError = `${contentSelector} [data-testid="collaboration-navigation-error"]`
+  const navigationRetry = `${contentSelector} [data-testid="collaboration-navigation-retry"]`
+  let waitError = null
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      await control.command('waitFor', selector, {
+        visible: true,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+      return
+    } catch (error) {
+      waitError = error
+    }
+    const errorVisible = Number(await control.command('getElementCount', navigationError)) > 0
+    if (!errorVisible) break
+    try {
+      await control.command('clickWhenEnabled', navigationRetry, {
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+    } catch {
+      // The retry action can disappear while the navigation finishes loading.
+    }
+  }
+  throw waitError ?? new Error(`Collaboration navigation did not render ${selector}`)
+}
+
 export async function enterLocalCollaborationWorkspace(control, contentSelector) {
   await waitForNativeCollaborationPlatform(control, contentSelector)
   const localWorkspaceTree = inCollaborationSidebar(
@@ -514,10 +546,7 @@ export async function enterLocalCollaborationWorkspace(control, contentSelector)
     contentSelector
   )
   const localWorkspaceIdentity = `${localWorkspaceTree} .collaboration-workspace-identity`
-  await control.command('waitFor', localWorkspaceIdentity, {
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
+  await waitForCollaborationNavigation(control, contentSelector, localWorkspaceIdentity)
   await control.command('click', localWorkspaceIdentity)
   const activeWorkspaceHome = `${localWorkspaceTree} [data-testid="collaboration-workspace-nav-projects"]`
   await control.command('waitFor', `${activeWorkspaceHome}[aria-current="page"]`, {
