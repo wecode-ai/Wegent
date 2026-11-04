@@ -102,12 +102,17 @@ from app.services.loop_items.ordering import (
     sibling_items,
 )
 from app.services.loop_items.read_context import LoopItemReadContext
-from app.services.loop_items.task_bindings import active_task_binding_query
+from app.services.loop_items.task_bindings import (
+    active_task_binding_query,
+    owned_binding_cancellation_targets,
+    uncovered_binding_cancellation_targets,
+)
 from app.services.project_automation_domain import (
     runnable_wegent_team,
     status_automation_target,
 )
 from app.services.project_chat.service import ProjectChatService, bot_config
+from app.services.runtime_cancellation import emit_runtime_cancellations
 from app.stores.tasks import task_store
 from app.utils.schedule_time import normalize_schedule_datetime
 from shared.telemetry.decorators import trace_sync
@@ -2560,6 +2565,13 @@ class LoopItemService:
             self._require_item_access(
                 db, descendant, user_id, action=IssueAction.EDIT_CONTENT
             )
+        item_ids = [archived_item.id for archived_item in archived_items]
+        binding_targets = owned_binding_cancellation_targets(
+            db,
+            project_id=item.cloud_project_id,
+            item_ids=item_ids,
+            user_id=user_id,
+        )
         for archived_item in archived_items:
             archived_item.deleted_at = archived_at
             archived_item.version += 1
@@ -2572,8 +2584,11 @@ class LoopItemService:
         # so the recycle-bin rows never disagree with the execution queue.
         cancelled_runs = self._cancel_runs_for_items(
             db,
-            item_ids=[archived_item.id for archived_item in archived_items],
+            item_ids=item_ids,
             note="Issue was archived while the Run was active",
+        )
+        binding_targets = uncovered_binding_cancellation_targets(
+            db, targets=binding_targets, executions=cancelled_runs
         )
         db.commit()
         db.refresh(item)
@@ -2583,6 +2598,7 @@ class LoopItemService:
             )
 
             request_execution_cancellations(cancelled_runs)
+        emit_runtime_cancellations(binding_targets)
         return item
 
     def _cancel_runs_for_items(

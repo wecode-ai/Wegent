@@ -53,9 +53,14 @@ from app.services.loop_items.assignment_notification import (
     notify_project_task_assignee,
 )
 from app.services.loop_items.change_requests import persist_external_badge_source
+from app.services.loop_items.task_bindings import (
+    owned_binding_cancellation_targets,
+    uncovered_binding_cancellation_targets,
+)
 from app.services.notification_copy import NotificationTarget
 from app.services.notification_target import board_status_label
 from app.services.project_automation_domain import runnable_wegent_team
+from app.services.runtime_cancellation import emit_runtime_cancellations
 
 logger = logging.getLogger(__name__)
 
@@ -863,6 +868,9 @@ class ExternalLoopItemProvider:
         if target is None or not target[1]["can_edit"]:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
         subtree_ids = self._editable_subtree_ids(responses, item_id)
+        binding_targets = owned_binding_cancellation_targets(
+            db, project_id=project.id, item_ids=subtree_ids, user_id=user_id
+        )
         closed: list[int] = []
         cancelled_runs = []
         try:
@@ -878,6 +886,9 @@ class ExternalLoopItemProvider:
                         note="Issue was archived while the Run was active",
                     )
                 )
+            binding_targets = uncovered_binding_cancellation_targets(
+                db, targets=binding_targets, executions=cancelled_runs
+            )
             db.commit()
         except Exception:
             db.rollback()
@@ -901,6 +912,7 @@ class ExternalLoopItemProvider:
             )
 
             request_execution_cancellations(cancelled_runs)
+        emit_runtime_cancellations(binding_targets)
         self._invalidate_issue_page_cache(project.id)
 
     def list_archived(
