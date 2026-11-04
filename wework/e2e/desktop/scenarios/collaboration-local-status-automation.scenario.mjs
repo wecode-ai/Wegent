@@ -264,7 +264,7 @@ function createStatusAutomation({ uiTimeoutMs, workbenchReadyTimeoutMs, modelRes
       assert.equal((await rule()).enabled, false)
       assert.equal((await rule()).prompt, UPDATED_PROMPT)
       expectedPrompt = UPDATED_PROMPT
-      await click(`automatic-processing-enabled-${ruleId}`)
+      await control.command('clickWhenEnabled', scoped(`automatic-processing-enabled-${ruleId}`))
       await waitForBoardValue(
         async () => (await rule()).enabled,
         true,
