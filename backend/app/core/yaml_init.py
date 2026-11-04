@@ -728,7 +728,7 @@ def run_yaml_initialization(db: Session, skip_lock: bool = False) -> Dict[str, A
     # If path doesn't exist and is an absolute path, try relative to backend directory
     if not init_dir.exists() and init_dir.is_absolute():
         # Try relative path for local development
-        relative_dir = Path(__file__).parent.parent.parent / "init_data"
+        relative_dir = Path(__file__).resolve().parents[3] / "backend-rs" / "init_data"
         logger.info(f"Checking relative path: {relative_dir}")
         if relative_dir.exists():
             init_dir = relative_dir

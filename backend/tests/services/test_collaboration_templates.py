@@ -43,7 +43,7 @@ def test_builtin_server_seeds_match_offline_definitions():
     )
     seeded = list(
         yaml.safe_load_all(
-            (root / "backend/init_data/04-collaboration-templates.yaml").read_text()
+            (root / "backend-rs/init_data/04-collaboration-templates.yaml").read_text()
         )
     )
     assert seeded == canonical
