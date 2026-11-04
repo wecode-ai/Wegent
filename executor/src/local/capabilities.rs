@@ -321,6 +321,7 @@ pub struct SkillSyncSpec {
     pub namespace: String,
     pub is_public: bool,
     pub content_hash: Option<String>,
+    pub bind_shells: Vec<String>,
 }
 
 impl SkillSyncSpec {
@@ -353,6 +354,14 @@ impl SkillSyncSpec {
             namespace,
             is_public,
             content_hash,
+            bind_shells: value
+                .get("bind_shells")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect(),
         })
     }
 
@@ -1521,6 +1530,7 @@ where
                 "namespace": spec.namespace,
                 "is_public": spec.is_public,
                 "content_hash": spec.content_hash,
+                "bind_shells": spec.bind_shells,
                 "store_path": store_path.display().to_string(),
                 "runtime": {
                     "claude_link": runtime_link.display().to_string(),

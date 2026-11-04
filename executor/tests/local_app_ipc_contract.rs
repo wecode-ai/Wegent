@@ -599,7 +599,8 @@ async fn app_ipc_imports_external_codex_content() {
     let native_codex_home = home.join(".codex");
     let codex_home = root.path().join("wework-codex");
     fs::create_dir_all(native_codex_home.join("skills/example")).unwrap();
-    fs::write(native_codex_home.join("config.toml"), "model = \"gpt-5\"\n").unwrap();
+    let source_config = "model = \"gpt-5\"\npersonality = \"friendly\"\n";
+    fs::write(native_codex_home.join("config.toml"), source_config).unwrap();
     fs::write(native_codex_home.join("skills/example/SKILL.md"), "example").unwrap();
     let _codex_home = EnvGuard::set("WEGENT_CODEX_HOME", &codex_home.display().to_string());
     let _e2e = EnvGuard::set("VITE_WEWORK_E2E", "true");
@@ -625,7 +626,11 @@ async fn app_ipc_imports_external_codex_content() {
     assert_eq!(result["importedEntries"], json!(["config.toml", "skills"]));
     assert_eq!(
         fs::read_to_string(codex_home.join("config.toml")).unwrap(),
-        "model = \"gpt-5\"\n"
+        "personality = \"friendly\"\n"
+    );
+    assert_eq!(
+        fs::read_to_string(native_codex_home.join("config.toml")).unwrap(),
+        source_config
     );
     assert_eq!(
         fs::read_to_string(codex_home.join("skills/example/SKILL.md")).unwrap(),

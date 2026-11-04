@@ -39,7 +39,7 @@ fn pipeline_stages_have_independent_homes_and_route_skills_to_the_active_task() 
     let lookup = || task_skills_directory_at(root.path(), "task-1", "1");
     assert!(lookup().unwrap_err().contains("multiple"));
     drop(first_lease);
-    assert_eq!(lookup().unwrap(), second_home.join("skills"));
+    assert_eq!(lookup().unwrap().path, second_home.join("skills"));
     assert!(acquire_at(&second, root.path(), &second_home)
         .unwrap_err()
         .contains("active"));
@@ -53,7 +53,7 @@ fn pipeline_stages_have_independent_homes_and_route_skills_to_the_active_task() 
     drop(unrelated_lease);
     first.new_session = false;
     let resumed = acquire_at(&first, root.path(), &first_home).unwrap();
-    assert_eq!(lookup().unwrap(), first_home.join("skills"));
+    assert_eq!(lookup().unwrap().path, first_home.join("skills"));
     assert_eq!(
         fs::read_to_string(first_home.join("session")).unwrap(),
         "first-stage-session"
@@ -185,7 +185,9 @@ fn followup_reuses_existing_home_and_session_across_backend_urls() {
             .is_none());
         assert_eq!(read_marker(&task_path).unwrap(), task);
         assert_eq!(
-            task_skills_directory_at(root.path(), &request.task_id, "1").unwrap(),
+            task_skills_directory_at(root.path(), &request.task_id, "1")
+                .unwrap()
+                .path,
             home.join("skills")
         );
         assert_eq!(
@@ -223,7 +225,7 @@ fn expanded_records_upgrade_without_reimporting_or_losing_other_tasks() {
         fs::write(task_binding(&home, id).unwrap(), expanded.to_string()).unwrap();
     }
     let lookup = |id| task_skills_directory_at(root.path(), id, "1");
-    assert_eq!(lookup("task-1").unwrap(), home.join("skills"));
+    assert_eq!(lookup("task-1").unwrap().path, home.join("skills"));
     let untouched = fs::read(task_binding(&home, "task-2").unwrap()).unwrap();
     drop(acquire_at(&request, root.path(), &home).unwrap());
     assert_eq!(
@@ -242,7 +244,7 @@ fn expanded_records_upgrade_without_reimporting_or_losing_other_tasks() {
     request.bot[0]["shell_type"] = json!("ClaudeCode");
     drop(acquire_at(&request, root.path(), &home).unwrap());
     // This also represents interruption after upgrading agent.json but before its task.
-    assert_eq!(lookup("task-2").unwrap(), home.join("skills"));
+    assert_eq!(lookup("task-2").unwrap().path, home.join("skills"));
     request.task_id = "task-2".to_owned();
     drop(acquire_at(&request, root.path(), &home).unwrap());
     drop(acquire_at(&request, root.path(), &home).unwrap());
@@ -366,7 +368,7 @@ fn internal_spaces_are_preserved_without_aliasing_other_names() {
     let skills = home.join("skills");
     fs::create_dir_all(&skills).unwrap();
     assert_eq!(
-        task_skills_directory_at(&root, "task-1", "1").unwrap(),
+        task_skills_directory_at(&root, "task-1", "1").unwrap().path,
         skills
     );
     drop(acquire_at(&request, &root, &home).unwrap());
@@ -409,7 +411,9 @@ fn shared_agent_home_keeps_task_bindings_when_configuration_changes() {
     fs::create_dir_all(&second).unwrap();
     for (task, expected) in [("task-1", first), ("task-2", second)] {
         assert_eq!(
-            task_skills_directory_at(root.path(), task, "1").unwrap(),
+            task_skills_directory_at(root.path(), task, "1")
+                .unwrap()
+                .path,
             expected
         );
     }
@@ -584,7 +588,9 @@ fn skills_lookup_requires_matching_account_and_task() {
     let skills = home.join("skills");
     fs::create_dir_all(&skills).unwrap();
     assert_eq!(
-        task_skills_directory_at(root.path(), "task-1", "1").unwrap(),
+        task_skills_directory_at(root.path(), "task-1", "1")
+            .unwrap()
+            .path,
         skills
     );
     assert!(task_skills_directory_at(root.path(), "task-1", "2").is_err());
@@ -615,7 +621,9 @@ fn skills_lookup_prefers_current_user_home_after_session_migration() {
     drop(acquire_at(&request, root.path(), &home).unwrap());
     fs::create_dir_all(home.join("skills")).unwrap();
     assert_eq!(
-        task_skills_directory_at(root.path(), "task-1", "1").unwrap(),
+        task_skills_directory_at(root.path(), "task-1", "1")
+            .unwrap()
+            .path,
         home.join("skills")
     );
     assert!(old.join("agent.json").is_file());
