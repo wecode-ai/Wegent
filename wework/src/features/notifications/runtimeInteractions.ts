@@ -3,7 +3,7 @@ import {
   isAsyncRequestUserInputPayload,
   isPendingRequestUserInputBlock,
   isRequestUserInputBlock,
-  hasRequestUserInputResponse,
+  isSettledRequestUserInputBlock,
   requestUserInputPayloadKey,
   resolveAsyncRequestUserInputAnswers,
   requestUserInputApprovalDescription,
@@ -12,10 +12,45 @@ import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskRe
 import { projectRuntimePaneTranscript } from '@/features/workbench/runtimeTaskLifecycle/projection'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { WorkbenchMessage } from '@/types/workbench'
-import { weworkIssueScheme, weworkTaskScheme } from './scheme'
+import { parseWeworkScheme, weworkIssueScheme, weworkTaskScheme } from './scheme'
 import i18n from '@/i18n'
 
+export const INTERACTION_SOURCES = ['task', 'project', 'stand_in'] as const
+export type InteractionSource = (typeof INTERACTION_SOURCES)[number]
+
+export function isInteractionSource(value: unknown): value is InteractionSource {
+  return INTERACTION_SOURCES.some(source => source === value)
+}
+
+export function interactionSource(
+  item: {
+    source?: InteractionSource
+    originalUrl?: string
+    project?: RuntimeInteraction['project']
+    task?: RuntimeInteraction['task']
+  },
+  origin: unknown = item.task?.task.runtimeHandle?.origin
+): InteractionSource {
+  if (item.source) return item.source
+  if (
+    origin &&
+    typeof origin === 'object' &&
+    'initiatedBy' in origin &&
+    origin.initiatedBy === 'stand_in'
+  )
+    return 'stand_in'
+  if (
+    item.project ||
+    item.task?.address.issueExecution ||
+    item.task?.address.projectSession ||
+    (item.originalUrl && parseWeworkScheme(item.originalUrl)?.kind === 'board')
+  )
+    return 'project'
+  return 'task'
+}
+
 export interface RuntimeInteraction {
+  source?: InteractionSource
   id: string
   requestKey: string
   task: RuntimeTaskReminderItem
@@ -169,8 +204,7 @@ export async function readRuntimeInteractions(
         original.interactionScope || !message.turnId || isAsyncRequestUserInputPayload(original)
           ? original
           : { ...original, interactionScope: message.turnId }
-      const answered =
-        hasRequestUserInputResponse(payload) || payload.interactionStatus === 'answered'
+      const answered = isSettledRequestUserInputBlock(block)
       if (!answered && !isPendingRequestUserInputBlock(block)) continue
       const key = requestUserInputPayloadKey(payload)
       if (!key) continue
@@ -199,6 +233,7 @@ export async function readRuntimeInteractions(
         answered,
         running,
         project,
+        source: interactionSource({ task, project }, origin),
         sourceMessageIds: message.turnId ? sourceMessageIdsByTurn.get(message.turnId) : undefined,
       })
     }

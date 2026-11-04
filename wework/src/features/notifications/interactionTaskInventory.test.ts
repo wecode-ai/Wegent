@@ -4,6 +4,34 @@ import { readInteractionTaskInventory } from './interactionTaskInventory'
 import { interactionTask } from './runtimeInteractions.fixtures'
 import { createRuntimeConversationApi } from '@wegent/chat-core/runtime-conversation-api'
 
+it('discovers healthy local task requests when the cloud device catalog calls this device offline', async () => {
+  const list = vi.fn(async ({ deviceId }) => ({
+    projects: [],
+    chats: [{ ...interactionTask.workspace, deviceId, tasks: [interactionTask.task] }],
+    totalTasks: 1,
+  }))
+  const inventory = await readInteractionTaskInventory({
+    items: [],
+    devices: [
+      { device_id: 'device', status: 'offline' },
+      { device_id: 'remote', status: 'online' },
+    ],
+    services: {
+      getLocalRuntimeSidebarIdentity: async () => ({
+        deviceId: 'device',
+        runtimeInstanceId: 'local',
+        provenance: 'local-ipc',
+      }),
+      runtimeWorkApi: { listRuntimeWork: list },
+    },
+  } as unknown as TaskSource)
+  expect(list).toHaveBeenCalledWith({ pendingOnly: true, deviceId: 'device' })
+  expect(new Set(inventory.items.map(item => item.address.deviceId))).toEqual(
+    new Set(['device', 'remote'])
+  )
+  expect(inventory.failedDevices.has('device')).toBe(false)
+})
+
 it('discovers authorized device requests independently and isolates a failed device', async () => {
   const list = vi.fn(async ({ deviceId }) => {
     if (deviceId === 'unavailable') throw new Error('Device offline')
