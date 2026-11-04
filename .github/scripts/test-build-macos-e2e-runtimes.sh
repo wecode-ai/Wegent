@@ -22,6 +22,7 @@ printf '%s\n' "$*" >> "$FAKE_CARGO_LOG"
 if [[ "$*" == *"executor/Cargo.toml"* ]]; then
   output="$CARGO_TARGET_DIR/aarch64-apple-darwin/release/wegent-executor"
 else
+  test "$CARGO_PROFILE_DEV_DEBUG" = 0
   output="$CARGO_TARGET_DIR/debug/wegent-backend-rs"
 fi
 mkdir -p "$(dirname "$output")"

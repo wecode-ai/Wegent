@@ -1579,13 +1579,6 @@ async function main() {
           ...options.appEnvironmentOverrides,
         }
       }
-      if (
-        (activeAppEnvironment.WEWORK_USER_DATA_DIR || electronUserDataDirectory) !==
-        previousUserDataDirectory
-      ) {
-        // Preferences belong to the device profile, not the reusable controller.
-        delete control.experimentalFeaturesEnabled
-      }
       app = await startDesktopAppProcess()
       await withTimeout(
         control.awaitReadyAfter(readyCountBeforeRestart),
