@@ -234,6 +234,10 @@
           "project": "chromium"
         },
         {
+          "file": "collaboration/template-use.spec.ts",
+          "project": "chromium"
+        },
+        {
           "file": "collaboration/templates.spec.ts",
           "project": "chromium"
         }

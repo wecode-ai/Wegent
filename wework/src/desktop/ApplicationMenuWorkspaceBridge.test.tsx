@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   invoke: vi.fn(async () => undefined),
   navigate: vi.fn(),
 }))
+let eventSequence = 0
 vi.mock('@/features/experimental-features/useExperimentalFeaturesEnabled', () => ({
   useExperimentalFeaturesEnabled: () => mocks.experimental,
 }))
@@ -38,10 +39,12 @@ function setup({
   kind = 'task',
   tabs = [tab({ id: 'active', kind: 'task' })],
   pathname = '/',
+  pendingEvents = [],
 }: {
   kind?: 'task' | 'board' | 'auxiliary'
   tabs?: WorkspaceTab[]
   pathname?: string
+  pendingEvents?: DesktopHostEvent[]
 } = {}) {
   const context = {
     activeTab: { ...tabs[0], kind },
@@ -53,7 +56,12 @@ function setup({
     restoreClosedTab: vi.fn(),
   } as unknown as WorkspaceTabsContextValue
   const unlisten = vi.fn()
-  mocks.subscribe.mockReturnValue(unlisten)
+  mocks.subscribe.mockImplementation((handler, options) => {
+    for (const event of pendingEvents) {
+      if (options?.replay?.(event)) handler(event)
+    }
+    return unlisten
+  })
   const view = render(
     <WorkspaceTabsContext.Provider value={context}>
       <ApplicationMenuWorkspaceBridge pathname={pathname} />
@@ -61,7 +69,11 @@ function setup({
   )
   const handle = mocks.subscribe.mock.calls.at(-1)![0] as (event: DesktopHostEvent) => void
   const send = (action: string, windowLabel = 'workspace-one') =>
-    handle({ type: 'application-menu.action', sequence: 1, payload: { action, windowLabel } })
+    handle({
+      type: 'application-menu.action',
+      sequence: ++eventSequence,
+      payload: { action, windowLabel },
+    })
   const lastCapabilities = () => {
     const call = mocks.invoke.mock.calls
       .filter(([name]) => name === 'applicationMenu.setCapabilities')
@@ -91,6 +103,20 @@ describe('application menu workspace actions', () => {
     expect(context.openTab).toHaveBeenCalledWith('task')
     expect(context.openTab).toHaveBeenCalledWith('board')
     expect(context.selectTab).not.toHaveBeenCalled()
+  })
+
+  test('handles a work menu event received before the workspace mounts only once', () => {
+    const event: DesktopHostEvent = {
+      type: 'application-menu.action',
+      sequence: ++eventSequence,
+      payload: { action: 'open-tasks', windowLabel: 'workspace-one' },
+    }
+    const first = setup({ pathname: '/settings', pendingEvents: [event] })
+    expect(first.context.selectTab).toHaveBeenCalledExactlyOnceWith('active')
+    first.view.unmount()
+
+    const remounted = setup({ pathname: '/settings', pendingEvents: [event] })
+    expect(remounted.context.selectTab).not.toHaveBeenCalled()
   })
 
   test('closes the active tab through the workspace tab context', () => {

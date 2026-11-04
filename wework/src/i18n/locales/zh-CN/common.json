@@ -5860,6 +5860,11 @@
     "unsupported_display_mode": "应用没有可用的显示模式。"
   },
   "interactions": {
+    "sources": {
+      "task": "任务",
+      "project": "项目",
+      "stand_in": "分身"
+    },
     "title": "待你处理",
     "tab_title_with_count": "待你处理（{{count}}）",
     "tab_pending_count": "（{{count}}）",
@@ -5867,6 +5872,7 @@
     "reply": "回复",
     "reply_placeholder": "补充你的判断…",
     "send": "发送",
+    "skip": "暂不处理",
     "dismiss": "关闭提醒",
     "handle_in_context": "打开原会话处理",
     "add_detail": "补充说明",

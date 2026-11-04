@@ -10,11 +10,10 @@ import { downloadTemplate, templateFromProject } from './document'
 import { templateFailureMessage, templateMessages } from './messages'
 import { TemplateDialog } from './TemplateDialog'
 import { CollaborationTemplatePage } from './CollaborationTemplatePage'
-import { TemplateBindingsDialog, type TemplateParticipant } from './TemplateBindings'
+import { ProjectTemplateApplyDialog } from './ProjectTemplateApplyDialog'
 import { TemplateSaveDialog } from './TemplateSaveDialog'
 import type { CollaborationTemplate } from './types'
-import { readTemplateAgents, templateRoutingResolver } from './agents'
-import { applyProjectTemplate } from './projectConfiguration'
+import { readTemplateAgents } from './agents'
 
 export function ProjectTemplateSettings({
   api,
@@ -40,7 +39,6 @@ export function ProjectTemplateSettings({
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [choosing, setChoosing] = useState(false)
-  const [candidates, setCandidates] = useState<TemplateParticipant[]>([])
   const [selected, setSelected] = useState<CollaborationTemplate | null>(null)
   const [saving, setSaving] = useState<CollaborationTemplate | null>(null)
   const scope = useRef(0)
@@ -109,38 +107,7 @@ export function ProjectTemplateSettings({
             className="collaboration-template-choice"
             data-testid="project-template-import"
             disabled={loading || !!error}
-            onClick={async () => {
-              const generation = scope.current
-              setLoading(true)
-              try {
-                const [members, agents] = await Promise.all([
-                  api.members.list(project.id),
-                  api.agents.list(project.id),
-                ])
-                if (scope.current !== generation) return
-                setCandidates([
-                  ...members.map(member => ({
-                    kind: 'human' as const,
-                    id: String(member.user_id),
-                    name: member.user_name,
-                    label: member.user_name,
-                    responsibility: '',
-                  })),
-                  ...agents.map(agent => ({
-                    kind: 'agent' as const,
-                    id: String(agent.team_id ?? agent.id),
-                    name: agent.name,
-                    label: agent.name,
-                    responsibility: '',
-                  })),
-                ])
-                setChoosing(true)
-              } catch {
-                if (scope.current === generation) setError(m.failed)
-              } finally {
-                if (scope.current === generation) setLoading(false)
-              }
-            }}
+            onClick={() => setChoosing(true)}
           >
             {m.importProject}
           </button>
@@ -209,33 +176,21 @@ export function ProjectTemplateSettings({
         </TemplateDialog>
       )}
       {selected && (
-        <TemplateBindingsDialog
+        <ProjectTemplateApplyDialog
+          api={api}
+          agentConfiguration={agentConfiguration}
+          projectId={project.id}
           document={selected}
           locale={locale}
-          candidates={candidates}
           currentUserId={currentUserId}
-          existingNames={groups.map(group => group.name)}
           onClose={() => {
             setSelected(null)
             void reload()
           }}
-          onApply={async (drafts, document) => {
-            await applyProjectTemplate(
-              api,
-              project.id,
-              document,
-              drafts,
-              locale,
-              m.partial,
-              templateRoutingResolver(
-                agentConfiguration,
-                project.project_store === 'local' ? 'local' : 'cloud',
-                project.id,
-                locale
-              )
-            )
-            const latest = await reload()
-            if (latest) onChange?.(latest)
+          onApplied={latest => {
+            setSelected(null)
+            void reload()
+            onChange?.(latest)
           }}
         />
       )}

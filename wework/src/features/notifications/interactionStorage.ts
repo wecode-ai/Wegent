@@ -2,6 +2,8 @@ import type { InteractionHistory } from './RuntimeInteractionsContext'
 import {
   interactionId,
   interactionOriginalScheme,
+  interactionSource,
+  isInteractionSource,
   type RuntimeInteraction,
 } from './runtimeInteractions'
 import { parseWeworkScheme } from './scheme'
@@ -63,6 +65,7 @@ export function readPendingInteractionCache(key: string): RuntimeInteraction[] {
         payload: { kind: 'request_user_input' },
         answered: false,
         cached: true,
+        source: isInteractionSource(row.source) ? row.source : undefined,
         sourceMessageIds:
           Array.isArray(row.sourceMessageIds) &&
           row.sourceMessageIds.every(id => typeof id === 'string')
@@ -81,6 +84,7 @@ export function pendingInteractionCache(items: RuntimeInteraction[]) {
   return items.map(item => ({
     address: { deviceId: item.task.address.deviceId, taskId: item.task.address.taskId },
     requestKey: item.requestKey,
+    source: interactionSource(item),
     title: item.task.task.title,
     runtime: item.task.task.runtime,
     workspacePath: item.task.task.workspacePath,
@@ -99,6 +103,7 @@ export function readInteractionHistory(key: string): InteractionHistory[] {
       (row): row is InteractionHistory =>
         record(row) &&
         typeof row.id === 'string' &&
+        (row.source === undefined || isInteractionSource(row.source)) &&
         typeof row.title === 'string' &&
         typeof row.question === 'string' &&
         typeof row.answeredAt === 'number' &&

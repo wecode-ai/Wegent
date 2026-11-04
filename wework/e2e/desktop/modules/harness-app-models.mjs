@@ -475,6 +475,7 @@ async function selectHarnessAppModel(control, installationId, label, uiTimeoutMs
   const selector = `[data-testid="harness-app-model-${installationId}"]`
   await control.command('waitFor', selector, {
     enabled: true,
+    text: label,
     stableMs: 300,
     timeoutMs: uiTimeoutMs,
   })

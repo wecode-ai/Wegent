@@ -25,6 +25,17 @@ const entry = (index: number): InteractionHistory => ({
 
 beforeEach(() => localStorage.clear())
 
+it('retains source grouping across offline cache and handled-history reloads', async () => {
+  const [item] = await readRuntimeInteractions(interactionTask, {
+    getRuntimeTranscript: vi.fn().mockResolvedValue(interactionTranscript()),
+  } as unknown as NonNullable<WorkbenchServices['runtimeWorkApi']>)
+  item.source = 'stand_in'
+  saveInteractionState('pending', pendingInteractionCache([item]))
+  expect(readPendingInteractionCache('pending')[0].source).toBe('stand_in')
+  saveInteractionState('history', [{ ...entry(1), source: item.source }])
+  expect(readInteractionHistory('history')[0].source).toBe('stand_in')
+})
+
 it('keeps native source message locators in the offline cache and handled history', async () => {
   const [item] = await readRuntimeInteractions(interactionTask, {
     getRuntimeTranscript: vi.fn().mockResolvedValue(interactionTranscript()),

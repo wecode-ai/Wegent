@@ -1,12 +1,16 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import { ArrowLeft, ArrowUpRight, RefreshCw } from 'lucide-react'
+import { ArrowLeft, ArrowUpRight, RefreshCw, X } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useIsDesktop } from '@/hooks/useIsDesktop'
 import { useRuntimeInteractions } from './RuntimeInteractionsContext'
 import { NotificationEntitySurface } from './NotificationEntitySurface'
 import { openWeworkScheme } from './schemeEvents'
 import { weworkTaskScheme } from './scheme'
-import { interactionOriginalScheme } from './runtimeInteractions'
+import {
+  INTERACTION_SOURCES,
+  interactionOriginalScheme,
+  interactionSource,
+} from './runtimeInteractions'
 import { cn } from '@/lib/utils'
 import { WorkbenchErrorBoundary } from '@/components/common/WorkbenchErrorBoundary'
 
@@ -73,9 +77,15 @@ export function RuntimeInteractionsPage({
   if (!interactions) return null
   const { pending, loading, errors } = interactions
   const rows = history
-    ? interactions.history
+    ? interactions.history.map(item => ({
+        ...item,
+        source: interactionSource(item),
+        timestamp: item.answeredAt,
+      }))
     : pending.map(item => ({
         id: item.id,
+        source: interactionSource(item),
+        timestamp: item.createdAt,
         title: item.task.task.title,
         question: item.question,
         address: item.task.address,
@@ -135,38 +145,75 @@ export function RuntimeInteractionsPage({
           </button>
         </header>
         <div className="flex-1 overflow-y-auto px-2 pb-3">
-          {rows.map(entry => (
-            <button
-              type="button"
-              key={entry.id}
-              data-testid="interaction-list-item"
-              data-interaction-id={entry.id}
-              aria-pressed={row?.id === entry.id}
-              className={cn(
-                'mb-1 flex w-full items-start rounded-lg px-3 py-3 text-left hover:bg-muted keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus',
-                row?.id === entry.id && 'bg-muted'
-              )}
-              onClick={() => {
-                setSelected(entry.id)
-                setShowList(false)
-              }}
-            >
-              <span className="min-w-0 flex-1">
-                <span
-                  data-testid="interaction-list-summary"
-                  className="line-clamp-2 text-base font-medium"
-                >
-                  {entry.question}
-                </span>
-                <span
-                  className="mt-1 block truncate text-sm text-text-secondary"
-                  title={entry.title}
-                >
-                  {entry.title}
-                </span>
-              </span>
-            </button>
-          ))}
+          {INTERACTION_SOURCES.map(source => {
+            const entries = rows
+              .filter(entry => entry.source === source)
+              .sort((a, b) => b.timestamp - a.timestamp)
+            if (!entries.length) return null
+            return (
+              <div
+                role="group"
+                key={source}
+                data-testid={`interaction-source-group-${source}`}
+                aria-label={t(`interactions.sources.${source}`)}
+              >
+                <h2 className="flex items-center gap-2 px-3 pb-2 pt-3 text-sm font-medium text-text-secondary">
+                  {t(`interactions.sources.${source}`)}
+                  <span data-testid={`interaction-source-count-${source}`}>{entries.length}</span>
+                </h2>
+                {entries.map(entry => (
+                  <div key={entry.id} className="group relative">
+                    <button
+                      type="button"
+                      data-testid="interaction-list-item"
+                      data-interaction-id={entry.id}
+                      aria-pressed={row?.id === entry.id}
+                      className={cn(
+                        'mb-1 flex w-full items-start rounded-lg px-3 py-3 text-left hover:bg-muted keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus',
+                        !history && 'pr-12',
+                        row?.id === entry.id && 'bg-muted'
+                      )}
+                      onClick={() => {
+                        setSelected(entry.id)
+                        setShowList(false)
+                      }}
+                    >
+                      <span className="min-w-0 flex-1">
+                        <span
+                          data-testid="interaction-list-summary"
+                          className="line-clamp-2 text-base font-medium"
+                        >
+                          {entry.question}
+                        </span>
+                        <span
+                          className="mt-1 block truncate text-sm text-text-secondary"
+                          title={entry.title}
+                        >
+                          {entry.title}
+                        </span>
+                      </span>
+                    </button>
+                    {!history && (
+                      <button
+                        type="button"
+                        data-testid="interaction-dismiss"
+                        aria-label={t('interactions.skip')}
+                        title={t('interactions.skip')}
+                        disabled={interactions.busy.has(entry.id)}
+                        className="absolute right-1 top-2 flex h-11 w-11 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-50 md:h-7 md:w-7 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus"
+                        onClick={() => {
+                          const item = pending.find(item => item.id === entry.id)
+                          if (item) void interactions.dismiss(item)
+                        }}
+                      >
+                        <X className="h-4 w-4" aria-hidden="true" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )
+          })}
           {!rows.length && (
             <p
               data-testid={loading ? 'interactions-loading' : 'interactions-empty'}

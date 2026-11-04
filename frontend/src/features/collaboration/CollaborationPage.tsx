@@ -49,6 +49,11 @@ import { webProjectAgentConfigurationHost } from '@/features/collaboration/Proje
 import { useUser } from '@/features/common/UserContext'
 import { useCollaborationTemplates } from '@/features/resource-library/useCollaborationTemplates'
 import {
+  templateIdentity,
+  templateMessages,
+  type CollaborationTemplate,
+} from '@wegent/collaboration/templates'
+import {
   collaborationLocationPath,
   collaborationRootViewForPath,
 } from '@/features/collaboration/routes'
@@ -130,6 +135,41 @@ export function CollaborationPage() {
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const { getCurrentLanguage } = useTranslation()
+  const templateLocale = getCurrentLanguage().startsWith('zh') ? 'zh-CN' : 'en'
+  const requestedTemplate = searchParams.get('template')
+  const [templateRequest, setTemplateRequest] = useState<{
+    key: string
+    scope: string
+    document: CollaborationTemplate
+  } | null>(null)
+  const [templateRequestError, setTemplateRequestError] = useState(false)
+  const [templateRequestAttempt, setTemplateRequestAttempt] = useState(0)
+  useEffect(() => {
+    setTemplateRequest(null)
+    setTemplateRequestError(false)
+    if (!requestedTemplate || !templateStore) return
+    let active = true
+    void templateStore
+      .load()
+      .then(() => {
+        const record = templateStore
+          .getSnapshot()
+          .records.find(record => templateIdentity(record) === requestedTemplate)
+        if (!record) throw new Error('template_unavailable')
+        if (active)
+          setTemplateRequest({
+            key: requestedTemplate,
+            scope: templateStore.library.scope,
+            document: record.document,
+          })
+      })
+      .catch(() => {
+        if (active) setTemplateRequestError(true)
+      })
+    return () => {
+      active = false
+    }
+  }, [requestedTemplate, templateStore, templateLocale, templateRequestAttempt])
   const api = useMemo(() => {
     const socketOptions = {
       socketBaseUrl: async () => {
@@ -294,6 +334,19 @@ export function CollaborationPage() {
   const platformHost = useMemo<CollaborationPlatformHostAdapter>(
     () => ({
       templateStore: templateStore ?? undefined,
+      projectTemplateRequest:
+        templateRequest &&
+        templateStore?.library.scope === templateRequest.scope &&
+        requestedTemplate === templateRequest.key
+          ? {
+              ...templateRequest,
+              onHandled() {
+                const params = new URLSearchParams(searchParams.toString())
+                params.delete('template')
+                router.replace(`${pathname}${params.size ? `?${params}` : ''}`, { scroll: false })
+              },
+            }
+          : undefined,
       ...(user
         ? {
             currentUser: {
@@ -365,8 +418,32 @@ export function CollaborationPage() {
       workspaceId,
       workspaceOwnerOptions,
       templateStore,
+      templateRequest,
+      requestedTemplate,
+      searchParams,
     ]
   )
+
+  if (requestedTemplate && templateRequestError) {
+    const m = templateMessages[templateLocale]
+    return (
+      <CollaborationWebShell
+        sidebar={<div />}
+        main={
+          <div role="alert" className="p-6">
+            {m.failed}{' '}
+            <button
+              type="button"
+              data-testid="template-request-retry"
+              onClick={() => setTemplateRequestAttempt(value => value + 1)}
+            >
+              {m.retry}
+            </button>
+          </div>
+        }
+      />
+    )
+  }
 
   if (legacyProjectId) {
     return (
