@@ -936,6 +936,10 @@ function AppShell() {
   const { pathname: path, search } = useCurrentLocation()
   const { user, isLoading } = useAuth()
   const cloudConnection = useCloudConnection()
+  const workbenchIdentity = cloudConnection.serviceKey.startsWith('fallback:')
+    ? user
+    : (cloudConnection.user ?? user)
+  const ownershipKey = JSON.stringify([cloudConnection.apiBaseUrl ?? '', workbenchIdentity?.id])
   const initialCloudConnection = {
     apiBaseUrl: cloudConnection.apiBaseUrl,
     backendUrl: cloudConnection.backendUrl,
@@ -1286,7 +1290,7 @@ function AppShell() {
   }
 
   const shell = (
-    <NotificationTaskSourceProvider key={user.id}>
+    <NotificationTaskSourceProvider key={ownershipKey}>
       <WorkspaceTabsProvider
         pathname={path}
         search={search}
@@ -1296,9 +1300,7 @@ function AppShell() {
         startupTabId={startupWorkspaceTabId}
         restoreSessionTabs={!isMainWindow}
       >
-        <RuntimeInteractionsProvider
-          accountKey={`${cloudConnection.apiBaseUrl ?? 'local'}:${user.id}`}
-        >
+        <RuntimeInteractionsProvider accountKey={ownershipKey}>
           <ElectronWorkbenchTabBridge />
           <WeworkSchemeBridge />
           {isElectron && !isPopoutWindow ? (
