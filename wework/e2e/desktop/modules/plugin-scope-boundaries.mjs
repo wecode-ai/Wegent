@@ -189,7 +189,13 @@ export async function verifyPluginScopeBoundaries({
       timeoutMs
     )
     await control.command('fill', testId('composer-plugin-picker-search'), { value: slug })
+    await control.command('waitFor', testId(`composer-plugin-picker-item-plugin:${slug}`), {
+      visible: present,
+      stableMs: 250,
+      timeoutMs,
+    })
     const picker = JSON.parse(await control.command('snapshot', testId('composer-plugin-picker')))
+    observation.picker = picker
     assert.equal(
       picker.testIds.includes(`composer-plugin-picker-item-plugin:${slug}`),
       present,
