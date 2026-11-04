@@ -4275,6 +4275,13 @@
     "project_manager": "项目管理者",
     "collaboration_participants_manager_description": "统一管理项目中的智能体、项目管理者、项目成员和协作小组。项目管理者负责协调 Issue，负责人负责执行与交付。",
     "automatic_processing_description": "统一管理 Issue 自动处理和项目管理者的触发规则。",
+    "trigger_status_changed": "进入指定状态后",
+    "trigger_status_changed_description": "Issue 进入指定状态时",
+    "matching_status": "状态",
+    "select_matching_status": "请选择状态",
+    "trigger_entered_processing": "进入处理阶段后",
+    "automatic_processing_prompt": "提示词（可选）",
+    "automatic_processing_prompt_hint": "触发时发送给 AI，用于处理当前 Issue；留空按目标职责处理。",
     "status_action_reassignment": "重新指派",
     "status_action_unassigned": "取消指派",
     "navigation": "任务",
@@ -5908,6 +5915,20 @@
       "receiving_device": "当前接收设备：{{device}}",
       "selected_device": "所选执行设备",
       "invalid_instance": "请输入 HTTPS 实例地址，例如 https://gitlab.com；不要附带用户名、密码、路径或查询参数。"
+    },
+    "onboarding": {
+      "title": "开始使用我的分身",
+      "description": "选择让分身帮你做的事，确认后开始。",
+      "review": "每周工作复盘",
+      "scope": "回顾本设备上属于你的全部任务和对话，找出过去 7 天反复交代、返工和卡住的环节，每次最多给出 3 条有证据的改进建议。",
+      "time": "每周一（北京时间）",
+      "manage": "可随时在「分身设置 → 连接 → 日历」修改、暂停或删除，删除后不会自动恢复。",
+      "prerequisites": "需主分身开启、设备在线并有可用模型，到期后按日历处理方式运行。只生成建议，不会自动修改记忆、设置或代码。",
+      "loading": "正在读取分身功能设置…",
+      "start": "开始使用",
+      "later": "稍后再说",
+      "saving": "正在保存…",
+      "changed": "分身功能已在另一个窗口完成设置。请重新加载，再到日历中调整。"
     }
   },
   "workbench_error": {

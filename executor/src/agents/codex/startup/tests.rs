@@ -64,7 +64,13 @@ async fn process_fixture() -> (
     // Make the pipe writable before manually polling an interrupt into its response wait.
     stdin.write_all(b"\n").await.unwrap();
     let (release_tx, release_rx) = oneshot::channel();
-    let pending = Arc::new(Mutex::new(HashMap::from([(999, release_tx)])));
+    let pending = Arc::new(Mutex::new(HashMap::from([(
+        999,
+        PendingCodexResponse {
+            sender: release_tx,
+            native_request: None,
+        },
+    )])));
     let notifications = CodexNotificationHub::new();
     client.state.lock().await.process = Some(CodexAppServerProcess {
         child,
@@ -142,10 +148,11 @@ async fn ready_response_while_recovery_waits_for_admission_keeps_process() {
     let request = async { response_rx.await.map_err(|error| error.to_string()) };
     let mut cancellation = None;
     let mut admission = client.state.lock().await;
+    let mut deadline = Instant::now() - Duration::from_secs(1);
     let run = wait_for_shared_startup(
         &client,
         "thread-slow",
-        Instant::now() - Duration::from_secs(1),
+        &mut deadline,
         1,
         &mut cancellation,
         request,
@@ -167,10 +174,11 @@ async fn recovery_still_restarts_without_ready_data_after_peer_finishes() {
     let request = async { response_rx.await.map_err(|error| error.to_string()) };
     let mut cancellation = None;
     let mut admission = client.state.lock().await;
+    let mut deadline = Instant::now() - Duration::from_secs(1);
     let run = wait_for_shared_startup(
         &client,
         "thread-slow",
-        Instant::now() - Duration::from_secs(1),
+        &mut deadline,
         1,
         &mut cancellation,
         request,
@@ -201,10 +209,11 @@ async fn cancellation_while_recovery_waits_for_admission_wins_over_ready_respons
         let (cancel_tx, cancel_rx) = oneshot::channel();
         let mut cancellation = Some(cancel_rx);
         let mut admission = client.state.lock().await;
+        let mut deadline = Instant::now() - Duration::from_secs(1);
         let run = wait_for_shared_startup(
             &client,
             "thread-slow",
-            Instant::now() - Duration::from_secs(1),
+            &mut deadline,
             1,
             &mut cancellation,
             request,
@@ -268,7 +277,7 @@ async fn cancellation_while_recovery_waits_for_admission_interrupts_without_rest
         let id = *pending.keys().find(|id| **id != 999).unwrap();
         pending.remove(&id).unwrap()
     };
-    interrupt_tx.send(Ok(json!({}))).unwrap();
+    interrupt_tx.sender.send(Ok(json!({}))).unwrap();
     assert!(futures_util::poll!(run.as_mut()).is_pending());
     assert!(
         matches!(release.try_recv(), Err(oneshot::error::TryRecvError::Empty)),
@@ -291,10 +300,11 @@ async fn shared_startup_timeout_keeps_original_request_pending() {
     let (response_tx, response_rx) = oneshot::channel();
     let request = async { response_rx.await.map_err(|error| error.to_string()) };
     let mut cancellation = None;
+    let mut deadline = Instant::now();
     let run = wait_for_shared_startup(
         &client,
         "thread-slow",
-        Instant::now(),
+        &mut deadline,
         1,
         &mut cancellation,
         request,
@@ -304,6 +314,36 @@ async fn shared_startup_timeout_keeps_original_request_pending() {
     response_tx.send("original response").unwrap();
     assert_eq!(run.await.unwrap(), "original response");
     assert_eq!(client.state.lock().await.active_threads.len(), 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn shared_startup_late_acceptance_retains_the_extended_deadline() {
+    let client = shared_client();
+    let original_deadline = Instant::now();
+    let mut deadline = original_deadline;
+    let (response_tx, response_rx) = oneshot::channel();
+    let request = async { response_rx.await.map_err(|error| error.to_string()) };
+    let mut cancellation = None;
+    {
+        let run = wait_for_shared_startup(
+            &client,
+            "thread-slow",
+            &mut deadline,
+            1,
+            &mut cancellation,
+            request,
+        );
+        tokio::pin!(run);
+        assert!(futures_util::poll!(&mut run).is_pending());
+        tokio::time::advance(Duration::from_millis(500)).await;
+        response_tx.send("late acceptance").unwrap();
+        assert_eq!(run.await.unwrap(), "late acceptance");
+    }
+    assert!(
+        deadline > Instant::now(),
+        "Model progress must retain the protected startup window"
+    );
+    assert_eq!(deadline, original_deadline + Duration::from_secs(1));
 }
 
 #[tokio::test]

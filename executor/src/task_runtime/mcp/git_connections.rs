@@ -223,6 +223,7 @@ mod tests {
             work: work["id"].as_str().map(str::to_owned),
             project: None,
             ask_before_act: true,
+            review: false,
             coordinator_batch: None,
         };
         let bound = bind(&store, &identity, json!({"operation":"repository"})).unwrap();

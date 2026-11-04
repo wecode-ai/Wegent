@@ -34,14 +34,14 @@ impl Drop for SharedTurnPreparation {
 pub(super) async fn wait_for_shared_startup<T: Send>(
     client: &CodexAppServerClient,
     thread_id: &str,
-    mut deadline: Instant,
+    deadline: &mut Instant,
     timeout_seconds: u64,
     cancellation: &mut Option<oneshot::Receiver<()>>,
     request: impl Future<Output = Result<T, String>> + Send,
 ) -> Result<T, String> {
     tokio::pin!(request);
     loop {
-        let response = timeout_at(deadline, &mut request);
+        let response = timeout_at(*deadline, &mut request);
         let received = if let Some(cancel_rx) = cancellation.as_mut() {
             tokio::select! {
                 biased;
@@ -77,7 +77,8 @@ pub(super) async fn wait_for_shared_startup<T: Send>(
                 }
                 // Preserve the same request while retrying recovery when other
                 // active turns may have finished since the previous deadline.
-                deadline = Instant::now() + Duration::from_secs(timeout_seconds);
+                // Carry the protected deadline into the caller's model-progress wait.
+                *deadline = Instant::now() + Duration::from_secs(timeout_seconds);
             }
         }
     }

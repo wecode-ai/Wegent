@@ -79,3 +79,24 @@ The project conversation uses the existing collaboration group leader. Its heade
 ## Connect GitHub and GitLab
 
 Roles can receive personal events or all subscribable repository events. The plugin provides capabilities; role instructions determine behavior. Cloud buffers repository Webhooks while the execution device is offline. External writes retain per-operation native approval. See [GitHub and GitLab connections](git-connections.md).
+
+## Choose features on first use
+
+Opening My stand-in for the first time shows feature onboarding, including once
+for existing users after upgrading. Weekly work review is checked by default. It
+reviews your Wework tasks and conversations on this execution device over the
+preceding seven days, every Monday at 09:00 Beijing time. Adjust the time or
+uncheck the feature before selecting Get started. Maybe later creates nothing
+and leaves onboarding available on your next visit.
+
+Reviews use the existing calendar and produce at most three suggestions with
+task evidence, referring to previous reports and your feedback. Reports stay in
+their work conversations and disclose incomplete history. They do not
+automatically change memories, settings or code, or send reports externally.
+Execution inherits the primary stand-in's device, model and calendar processing
+policy. Selecting a review does not re-enable a paused primary stand-in.
+
+Edit, pause or delete Weekly work review under **Stand-in settings → Connections
+→ Calendar**. Deleted arrangements are not automatically restored; use the
+matching template to add one again. Choices are stored separately for each
+account and Executor, without combining history from other devices.

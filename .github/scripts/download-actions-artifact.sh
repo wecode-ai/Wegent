@@ -49,7 +49,12 @@ const fs = require("node:fs")
 const payload = JSON.parse(fs.readFileSync(0, "utf8"))
 if (!Array.isArray(payload.jobs)) throw new Error("Invalid workflow jobs response")
 const job = payload.jobs.find(job => job.name === process.argv[1])
-console.log(job ? job.conclusion || job.status : "absent")
+// Job conclusions can lag behind completed steps and published artifacts.
+// Keep terminal failures authoritative; only bypass the metadata delay when
+// every reported producer step has actually finished successfully.
+const stepsComplete = job?.steps?.length > 0 && job.steps.every(step =>
+  step.status === "completed" && ["success", "skipped"].includes(step.conclusion))
+console.log(job ? job.conclusion || (stepsComplete ? "steps_completed" : job.status) : "absent")
 ' "$source_job" <<<"$jobs_json"
 }
 
@@ -105,7 +110,7 @@ for (const run of runs) console.log(run.id, run.status)
   elif [[ -n "$source_job" ]]; then
     producer_state="$(producer_state_for "$run_id")"
     case "$producer_state" in
-      success) ;;
+      success|steps_completed) ;;
       absent|queued|in_progress|waiting|pending|requested) producer_ready=false ;;
       *)
         echo "Producer $source_job in run $run_id ended with $producer_state" >&2
