@@ -58,9 +58,13 @@ test('Stand-in confirmation waits for navigation to mount before opening the own
     .verify({
       async command(action: string, selector: string, options?: { value?: string }) {
         calls.push({ action, selector })
-        if (action === 'getElementCount') return '0'
+        if (action === 'getElementCount' && selector === '[data-testid="settings-button"]')
+          return '0'
         if (action === 'setAppPreferences') {
-          assert.deepEqual(JSON.parse(options!.value!), { experimentalFeaturesEnabled: true })
+          assert.equal(selector, 'body')
+          assert.deepEqual(JSON.parse(options?.value ?? '{}'), {
+            experimentalFeaturesEnabled: true,
+          })
         }
         if (selector === '[data-testid="personal-stand-in-button"]') {
           if (action === 'click') throw new Error('Stand-in navigation is still mounting')
@@ -76,6 +80,10 @@ test('Stand-in confirmation waits for navigation to mount before opening the own
       (error: unknown) => error
     )
   assert.equal(await Promise.race([waiting.promise.then(() => 'waiting'), verification]), 'waiting')
+  assert.deepEqual(calls.slice(0, 2), [
+    { action: 'getElementCount', selector: '[data-testid="settings-button"]' },
+    { action: 'setAppPreferences', selector: 'body' },
+  ])
   assert.equal(
     calls.some(call => call.selector === '[data-testid="stand-in-overview"]'),
     false
