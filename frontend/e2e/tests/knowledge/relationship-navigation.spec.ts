@@ -7,6 +7,11 @@ import { createApiClient, type ApiClient } from '../../utils/api-client'
 import { buildStorageState, getJwtExpiryMs } from '../../utils/auth-state'
 import { ADMIN_USER, REGULAR_USER } from '../../config/test-users'
 
+async function selectKnowledgeTeam(page: Page, groupId: string) {
+  await page.getByTestId('knowledge-team-filter').click()
+  await page.getByTestId('knowledge-team-option-' + groupId).click()
+}
+
 test('relationship navigation deduplicates libraries and filters every receiving team', async ({
   page,
   request,
@@ -75,16 +80,21 @@ test('relationship navigation deduplicates libraries and filters every receiving
     await expect(page.getByTestId(`kb-row-${unrelated}`)).toHaveCount(1)
     const count = await page.getByTestId('nav-personal-item').innerText()
     for (const name of names.slice(0, 2)) {
-      await page.getByTestId('knowledge-team-filter').selectOption(`group-${name}`)
+      await selectKnowledgeTeam(page, `group-${name}`)
       await expect(page.getByTestId(`kb-row-${shared}`)).toHaveCount(1)
       await expect(page.getByTestId(`kb-row-${shared}`)).not.toContainText(name)
       await expect(page.getByTestId(`kb-row-${unrelated}`)).toHaveCount(0)
       await expect(page.getByTestId('nav-personal-item')).toHaveText(count)
     }
-    await page.getByTestId('knowledge-team-filter').selectOption(`group-${names[2]}`)
+    await selectKnowledgeTeam(page, `group-${names[2]}`)
     await expect(page.getByTestId(`kb-row-${shared}`)).toHaveCount(0)
     await page.getByTestId('nav-all-item').click()
-    await expect(page.getByTestId('knowledge-team-filter')).toHaveValue('')
+    await page.getByTestId('knowledge-team-filter').click()
+    await expect(page.getByTestId('knowledge-team-option-all')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    await page.keyboard.press('Escape')
     await expect(page.getByTestId(`kb-row-${shared}`)).toHaveCount(1)
   } finally {
     // Attempt every cleanup even if a preceding resource fails.
@@ -322,7 +332,7 @@ creationTest(
     creation.groups.add(name)
     expect((await creation.api.createGroup({ name, display_name: name })).status).toBe(201)
     await page.goto('/knowledge?type=document')
-    await page.getByTestId('knowledge-team-filter').selectOption('group-' + name)
+    await selectKnowledgeTeam(page, 'group-' + name)
     await page.getByTestId('create-kb-button').click()
     await expect(page.getByTestId('create-space-settings')).toHaveAttribute('aria-expanded', 'true')
     await expect(page.getByTestId('group-selector')).toContainText(name)
@@ -348,7 +358,7 @@ creationTest(
     creation.contexts.add(context)
     const teammate = await context.newPage()
     await teammate.goto('/knowledge?type=document')
-    await teammate.getByTestId('knowledge-team-filter').selectOption('group-' + name)
+    await selectKnowledgeTeam(teammate, 'group-' + name)
     await teammate.getByTestId('create-kb-button').click()
     await expect(teammate.getByTestId('submit-create-kb')).toBeDisabled()
     await teammate.getByTestId('create-in-personal-space').click()

@@ -27,6 +27,13 @@ import {
 import { AdvancedKnowledgeToggle } from './AdvancedKnowledgeToggle'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { getRuntimeConfigSync } from '@/lib/runtime-config'
 import {
   Table,
@@ -659,20 +666,49 @@ export function KnowledgeGroupListPage({
             className={mobile ? 'min-h-11 w-full' : 'h-9 w-48'}
           />
           {onFilterGroupChange && (
-            <select
-              data-testid="knowledge-team-filter"
-              aria-label={t('document.navigation.teamFilter')}
-              className={`${mobile ? 'min-h-11 min-w-11' : 'h-9'} max-w-64 bg-base border border-border rounded px-3 text-sm`}
-              value={filterGroupId ?? ''}
-              onChange={event => onFilterGroupChange(event.target.value || null)}
+            <Select
+              value={filterGroupId ?? 'all'}
+              onValueChange={value => onFilterGroupChange(value === 'all' ? null : value)}
             >
-              <option value="">{t('document.navigation.allTeams')}</option>
-              {availableGroups?.map(group => (
-                <option key={group.id} value={group.id}>
-                  {group.displayName} ({group.name})
-                </option>
-              ))}
-            </select>
+              <SelectTrigger
+                data-testid="knowledge-team-filter"
+                aria-label={t('document.navigation.teamFilter')}
+                className={`${mobile ? 'min-h-11 min-w-11' : 'h-9'} w-64 max-w-full bg-base`}
+              >
+                <SelectValue className="min-w-0 truncate">
+                  {filterGroupId
+                    ? availableGroups?.find(group => group.id === filterGroupId)?.displayName ||
+                      filterGroupId
+                    : t('document.navigation.allTeams')}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent className="max-h-[min(16rem,var(--radix-select-content-available-height))] w-[var(--radix-select-trigger-width)]">
+                <SelectItem
+                  value="all"
+                  className="min-h-11"
+                  data-testid="knowledge-team-option-all"
+                >
+                  {t('document.navigation.allTeams')}
+                </SelectItem>
+                {availableGroups?.map(group => (
+                  <SelectItem
+                    key={group.id}
+                    value={group.id}
+                    className="min-h-11 [&>span:last-child]:min-w-0 [&>span:last-child]:flex-1"
+                    data-testid={`knowledge-team-option-${group.id}`}
+                  >
+                    <span className="flex min-w-0 flex-col">
+                      <span className="break-words [overflow-wrap:anywhere]">
+                        {group.displayName}
+                      </span>
+                      {group.displayName !== group.name && (
+                        <span className="break-all text-xs text-text-muted">{group.name}</span>
+                      )}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           )}
           <KnowledgeBaseCategoryFilter
             value={category}
@@ -689,19 +725,29 @@ export function KnowledgeGroupListPage({
           )}
           {mobile && (
             <div className="flex max-w-full items-center gap-2">
-              <select
-                className="min-h-11 min-w-11 max-w-full rounded border border-border bg-base px-3"
-                data-testid="knowledge-sort"
-                aria-label={t('document.navigation.sortLabel')}
-                value={sortBy}
-                onChange={event => setSortBy(event.target.value as SortBy)}
-              >
-                {(['name', 'group', 'permission', 'created', 'updated'] as SortBy[]).map(value => (
-                  <option key={value} value={value}>
-                    {t('document.navigation.sort.' + value)}
-                  </option>
-                ))}
-              </select>
+              <Select value={sortBy} onValueChange={value => setSortBy(value as SortBy)}>
+                <SelectTrigger
+                  className="min-h-11 min-w-11 w-32 max-w-full bg-base"
+                  data-testid="knowledge-sort"
+                  aria-label={t('document.navigation.sortLabel')}
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(['name', 'group', 'permission', 'created', 'updated'] as SortBy[]).map(
+                    value => (
+                      <SelectItem
+                        key={value}
+                        value={value}
+                        className="min-h-11"
+                        data-testid={`knowledge-sort-option-${value}`}
+                      >
+                        {t('document.navigation.sort.' + value)}
+                      </SelectItem>
+                    )
+                  )}
+                </SelectContent>
+              </Select>
               <Button
                 variant="outline"
                 className="min-h-11 min-w-11"

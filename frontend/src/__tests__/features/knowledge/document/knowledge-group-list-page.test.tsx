@@ -349,6 +349,67 @@ it('reports the search result count without changing the relationship title', as
   expect(screen.getByRole('heading', { level: 2 })).toHaveTextContent('Created by me')
 })
 
+it('filters same-name teams by identity, clears the filter, and sorts through shared selects', async () => {
+  const onFilter = jest.fn()
+  const libraries = [
+    { ...createKnowledgeBase(91, 'Alpha', 'notebook'), team_ids: ['a'] },
+    { ...createKnowledgeBase(92, 'Beta', 'notebook'), team_ids: ['b'] },
+  ]
+  function PageWithFilters() {
+    const [team, setTeam] = useState<string | null>(null)
+    return (
+      <KnowledgeGroupListPage
+        mobile
+        isAllMode
+        groupId={null}
+        groupName="All knowledge"
+        getKbGroupInfo={() => ({
+          groupId: 'default',
+          groupName: 'Personal space',
+          groupType: 'personal',
+        })}
+        knowledgeBases={[]}
+        knowledgeBasesWithGroupInfo={libraries.map(kb => ({
+          ...kb,
+          group_id: 'default',
+          group_name: 'Personal',
+          group_type: 'personal',
+        }))}
+        isLoading={false}
+        onSelectKb={jest.fn()}
+        filterGroupId={team}
+        onFilterGroupChange={value => {
+          onFilter(value)
+          setTeam(value)
+        }}
+        availableGroups={[
+          { id: 'group-a', name: 'a', displayName: 'Same team' },
+          { id: 'group-b', name: 'b', displayName: 'Same team' },
+        ]}
+      />
+    )
+  }
+  render(<PageWithFilters />)
+  const user = userEvent.setup()
+  await user.click(screen.getByTestId('knowledge-team-filter'))
+  await user.click(screen.getByTestId('knowledge-team-option-group-b'))
+  expect(onFilter).toHaveBeenLastCalledWith('group-b')
+  expect(screen.queryByTestId('kb-row-91')).not.toBeInTheDocument()
+  expect(screen.getByTestId('kb-row-92')).toBeInTheDocument()
+  expect(screen.getByTestId('knowledge-team-filter')).toHaveTextContent('Same team')
+  await user.click(screen.getByTestId('knowledge-team-filter'))
+  await user.click(screen.getByTestId('knowledge-team-option-all'))
+  expect(onFilter).toHaveBeenLastCalledWith(null)
+  expect(screen.getAllByTestId(/^kb-row-/)).toHaveLength(2)
+  await user.click(screen.getByTestId('knowledge-sort'))
+  await user.click(screen.getByTestId('knowledge-sort-option-name'))
+  await user.click(screen.getByTestId('knowledge-sort-direction'))
+  expect(screen.getAllByTestId(/^kb-row-/).map(row => row.getAttribute('data-testid'))).toEqual([
+    'kb-row-91',
+    'kb-row-92',
+  ])
+})
+
 it('uses readable vertical mobile rows with space, role, permission and migration controls', async () => {
   const name = 'A very long library title that must remain fully readable on a small phone'
   const kb = {
