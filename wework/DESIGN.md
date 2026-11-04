@@ -2010,6 +2010,9 @@ implementation and WCAG conflict.
 - Anchor absolutely positioned title-bar drag regions to the title bar. Disable
   underlying native drag regions while the debug panel is expanded, and restore
   them when it collapses or closes.
+- 刷新期间收到的原生工作区菜单操作必须在工作区挂载后执行一次。
+- Replay native workspace-menu actions received during refresh once the workspace
+  mounts, without executing consumed actions again after a remount.
 - Respect macOS traffic-light safe areas, Windows controls, system scaling, and
   actual platform shortcuts.
 - Use the platform modifier in both behavior and visible shortcut labels.
