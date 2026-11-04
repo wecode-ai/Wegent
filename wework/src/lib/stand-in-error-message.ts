@@ -1,5 +1,6 @@
 import i18n from '@/i18n'
 import { getErrorMessage } from './error-message'
+import { logRuntimeTaskCreateStage } from './runtime-create-diagnostics'
 
 // Persisted task failures and older Executors may contain only the original message.
 const LEGACY_ERROR_CODES: Record<string, string> = {
@@ -82,6 +83,7 @@ const LEGACY_ERROR_CODES: Record<string, string> = {
 const TRANSPORT_ERROR_CODES: Record<string, string> = {
   executor_disconnected: 'executor_unavailable',
   protocol_mismatch: 'executor_update_required',
+  unsupported_method: 'executor_update_required',
   http_401: 'authentication_required',
   http_403: 'permission_denied',
   http_502: 'service_unavailable',
@@ -102,7 +104,7 @@ export function reportStandInError(operation: string, error: unknown, deviceId?:
   const code = 'code' in value ? value.code : undefined
   const status = 'status' in value ? value.status : undefined
   const message = getErrorMessage(error, '').replace(/^Error: /, '')
-  console.warn('[Stand-in] Operation failed', {
+  logRuntimeTaskCreateStage('stand-in-operation-failed', {
     operation,
     deviceId,
     code: typeof code === 'string' && /^[a-z_][a-z0-9_]{0,79}$/i.test(code) ? code : undefined,
