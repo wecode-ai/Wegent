@@ -267,6 +267,10 @@ export async function handleExecutorRpc(req, res, client) {
   const startedAt = Date.now()
   let requestId = requestIdFromRequest(req)
   let method = '<invalid>'
+  console.info('[wework-executor-runtime] RPC HTTP request received', {
+    request_id: requestId,
+    received_at: new Date(startedAt).toISOString(),
+  })
   try {
     const body = await readJsonBody(req)
     if (!isRecord(body) || typeof body.method !== 'string' || !isRecord(body.params)) {
@@ -277,6 +281,7 @@ export async function handleExecutorRpc(req, res, client) {
     console.info('[wework-executor-runtime] RPC request started', {
       request_id: requestId,
       method,
+      body_read_ms: Date.now() - startedAt,
     })
     observeRpcResponse(res, requestId, method, startedAt)
     const result = await client.request(body.method, body.params, undefined, requestId)
@@ -526,7 +531,12 @@ function sendJson(res, status, value, head = false, requestId) {
     'content-type': 'application/json; charset=utf-8',
     'cache-control': 'no-store',
     'content-length': Buffer.byteLength(body),
-    ...(requestId ? { 'x-request-id': requestId } : {}),
+    ...(requestId
+      ? {
+          'x-request-id': requestId,
+          'server-timing': `wework-rpc;desc="${encodeURIComponent(requestId)}"`,
+        }
+      : {}),
   })
   res.end(head ? undefined : body)
 }
