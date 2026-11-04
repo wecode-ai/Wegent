@@ -2310,6 +2310,7 @@ describe('Wework collaboration workspace API', () => {
         {
           source: 'local',
           catalog,
+          requestId: expect.any(Number),
           status: 'rejected',
           elapsedMs: expect.any(Number),
           errorName: 'Error',
