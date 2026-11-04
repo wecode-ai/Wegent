@@ -5865,6 +5865,11 @@
     "unsupported_display_mode": "The app has no supported display mode."
   },
   "interactions": {
+    "sources": {
+      "task": "Tasks",
+      "project": "Projects",
+      "stand_in": "Stand-in"
+    },
     "title": "Needs your input",
     "tab_title_with_count": "Needs your input ({{count}})",
     "tab_pending_count": " ({{count}})",
@@ -5872,6 +5877,7 @@
     "reply": "Reply",
     "reply_placeholder": "Write a reply…",
     "send": "Send",
+    "skip": "Dismiss item",
     "dismiss": "Dismiss reminder",
     "handle_in_context": "Open to handle",
     "add_detail": "Add a note",

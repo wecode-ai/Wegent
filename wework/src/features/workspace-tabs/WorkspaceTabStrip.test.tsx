@@ -390,6 +390,7 @@ describe('WorkspaceTabStrip', () => {
       open: vi.fn(),
       notice: null,
       dismissNotice: vi.fn(),
+      dismiss: vi.fn(),
       registerView: vi.fn(),
     }
     const tab = createWorkspaceTab('auxiliary', labels, {
