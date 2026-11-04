@@ -57,6 +57,7 @@ impl GlobalCapabilityStore {
             for (path, field) in &pending {
                 if exists(path)
                     && !same_runtime_contents(path, &template)?
+                    && !self.matches_verified_legacy_contents(spec, path, package)?
                     && !self.relocated_runtime_matches_previous(spec, path, field, manifest)?
                 {
                     return Err(CapabilitySyncError::invalid_payload(
@@ -94,13 +95,18 @@ impl GlobalCapabilityStore {
             .and_then(Value::as_str)
             .map(Path::new);
         if previous.version != spec.version
-            || previous.checksum == spec.checksum
             || !recorded.is_some_and(|old| historical_cache_path(old, &previous, field))
             || !self
                 .plugin_runtime_targets(&previous)
                 .iter()
                 .any(|(target, target_field)| target == path && *target_field == field)
         {
+            return Ok(false);
+        }
+        if self.matches_legacy_runtime_source(&previous, path, entry)? {
+            return Ok(true);
+        }
+        if previous.checksum == spec.checksum {
             return Ok(false);
         }
         let Some(hash) = previous.checksum.as_deref() else {
@@ -116,7 +122,8 @@ impl GlobalCapabilityStore {
         copy_dir_atomic(&package.path, &template)?;
         ensure_dual_plugin_manifests(&template)?;
         ensure_plugin_hook_permissions(&template)?;
-        same_runtime_contents(path, &template)
+        Ok(same_runtime_contents(path, &template)?
+            || self.matches_verified_legacy_contents(&previous, path, &package.path)?)
     }
 
     pub(in crate::local::capabilities) fn can_remove_personal_marketplace_plugin(
@@ -159,6 +166,22 @@ impl GlobalCapabilityStore {
                             .map(Path::new)
                             == Some(link.as_path())
                 });
+        }
+        // Publishing source does not transfer its ownership to an account install,
+        // even when the source still has exactly the published package's bytes.
+        match crate::local::plugin_import::personal_plugin_has_cloud_link(
+            &self.personal_marketplace_dir(),
+            &spec.name,
+        ) {
+            Ok(false) => (),
+            Ok(true) => return false,
+            Err(error) => {
+                crate::logging::log_executor_event(
+                    "personal plugin source preserved after cloud link read failure",
+                    &[("plugin_key", spec.key.clone()), ("error", error)],
+                );
+                return false;
+            }
         }
         let Some(hash) = spec.checksum.as_deref() else {
             return false;

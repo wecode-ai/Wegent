@@ -37,7 +37,6 @@ from app.schemas.subscription import (
 from app.schemas.subscription import NotificationLevel as SchemaNotificationLevel
 from app.schemas.subscription import (
     SubscriptionFollowConfig,
-    normalize_dingtalk_mention_user_ids,
 )
 from app.services.subscription.websocket import (
     emit_subscription_binding_update,
@@ -59,17 +58,11 @@ def _normalize_channel_binding_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
     """Normalize persisted or requested channel binding values."""
     bind_group = bool(cfg.get("bind_group", False))
     group_conversation_id = cfg.get("group_conversation_id")
-    mention_user_ids = normalize_dingtalk_mention_user_ids(
-        cfg.get("group_mention_user_ids") or []
-    )
-    if not bind_group or not group_conversation_id:
-        mention_user_ids = []
     return {
         "bind_private": bool(cfg.get("bind_private", True)),
         "bind_group": bind_group,
         "group_conversation_id": group_conversation_id,
         "group_name": cfg.get("group_name"),
-        "group_mention_user_ids": mention_user_ids,
     }
 
 
@@ -358,39 +351,12 @@ class SubscriptionNotificationService:
             json_data = deepcopy(subscription.json or {})
             internal = json_data.get("_internal", {})
             channel_binding_map: Dict[str, Any] = {}
-            existing_binding_map = internal.get("notification_channel_bindings", {})
             for item in channel_binding_configs:
-                explicit_fields = set(getattr(item, "model_fields_set", set()))
                 if hasattr(item, "model_dump"):
                     item_data = item.model_dump()
                 else:
                     item_data = dict(item)
                 channel_id = str(item_data["channel_id"])
-                existing_binding = existing_binding_map.get(channel_id, {})
-                is_model = hasattr(item, "model_dump")
-                mention_omitted = (
-                    "group_mention_user_ids" not in explicit_fields
-                    if is_model
-                    else "group_mention_user_ids" not in item_data
-                )
-                group_was_supplied = (
-                    "group_conversation_id" in explicit_fields
-                    if is_model
-                    else "group_conversation_id" in item_data
-                )
-                incoming_group_id = (
-                    item_data.get("group_conversation_id")
-                    if group_was_supplied
-                    else existing_binding.get("group_conversation_id")
-                )
-                if mention_omitted and incoming_group_id == existing_binding.get(
-                    "group_conversation_id"
-                ):
-                    item_data["group_mention_user_ids"] = existing_binding.get(
-                        "group_mention_user_ids", []
-                    )
-                elif mention_omitted:
-                    item_data["group_mention_user_ids"] = []
                 channel_binding_map[channel_id] = {
                     **_normalize_channel_binding_config(item_data),
                     "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -798,7 +764,6 @@ class SubscriptionNotificationService:
         bind_group: Optional[bool] = None,
         group_conversation_id: Optional[str] = None,
         group_name: Optional[str] = None,
-        group_mention_user_ids: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Create or update one channel binding and return the stored settings."""
         json_data = deepcopy(subscription.json or {})
@@ -806,18 +771,6 @@ class SubscriptionNotificationService:
         binding_map = internal.get("notification_channel_bindings", {})
         existing = binding_map.get(str(channel_id), {})
         existing_group_id = existing.get("group_conversation_id")
-        effective_group_id = (
-            group_conversation_id
-            if group_conversation_id is not None
-            else existing_group_id
-        )
-        mention_user_ids = (
-            group_mention_user_ids
-            if group_mention_user_ids is not None
-            else existing.get("group_mention_user_ids", [])
-        )
-        if group_mention_user_ids is None and effective_group_id != existing_group_id:
-            mention_user_ids = []
 
         merged = {
             "bind_private": (
@@ -838,7 +791,6 @@ class SubscriptionNotificationService:
             "group_name": (
                 group_name if group_name is not None else existing.get("group_name")
             ),
-            "group_mention_user_ids": mention_user_ids,
         }
         updated = {
             **_normalize_channel_binding_config(merged),

@@ -29,11 +29,11 @@ function buildDevice(overrides: Partial<DeviceInfo>): DeviceInfo {
 }
 
 describe('subscription device selection', () => {
-  test('accepts local, cloud, and remote devices but not app devices', () => {
+  test('accepts local, app, cloud, and remote devices', () => {
     expect(isSubscriptionDevice(buildDevice({ device_type: 'local' }))).toBe(true)
     expect(isSubscriptionDevice(buildDevice({ device_type: 'cloud' }))).toBe(true)
     expect(isSubscriptionDevice(buildDevice({ device_type: 'remote' }))).toBe(true)
-    expect(isSubscriptionDevice(buildDevice({ device_type: 'app' }))).toBe(false)
+    expect(isSubscriptionDevice(buildDevice({ device_type: 'app' }))).toBe(true)
   })
 
   test('keeps remote devices in the selectable list', () => {
@@ -42,7 +42,11 @@ describe('subscription device selection', () => {
       buildDevice({ device_id: 'app-1', name: 'app-1', device_type: 'app' }),
     ]
 
-    expect(sortDevicesForSelection(devices).map(device => device.device_id)).toEqual(['remote-1'])
+    expect(sortDevicesForSelection(devices).map(device => device.device_id)).toEqual([
+      'app-1',
+      'remote-1',
+    ])
+    expect(sortDevicesForSelection(devices)[0].device_type).toBe('local')
   })
 
   test('orders devices by type, then default, then name', () => {
@@ -86,6 +90,11 @@ describe('subscription device selection', () => {
       ])?.device_id
     ).toBe('remote-1')
 
-    expect(getPreferredDevice([buildDevice({ device_id: 'app-1', device_type: 'app' })])).toBeNull()
+    expect(
+      getPreferredDevice([buildDevice({ device_id: 'app-1', device_type: 'app' })])
+    ).toMatchObject({
+      device_id: 'app-1',
+      device_type: 'local',
+    })
   })
 })

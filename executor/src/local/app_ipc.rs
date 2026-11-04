@@ -44,6 +44,7 @@ use crate::{
         list_wegent_store_plugins, read_plugin_manifest, save_plugin_example,
         ReadPluginManifestRequest, SavePluginExampleRequest,
     },
+    local::plugin_images::{read_plugin_image, ReadPluginImageRequest},
     local::plugin_import::{
         cleanup_personal_plugin_package, delete_personal_plugin, ensure_personal_plugin,
         finalize_plugin_import, import_personal_plugin_copy, import_plugin_package,
@@ -94,6 +95,9 @@ const APP_IPC_AUTH_TIMEOUT_SECONDS: u64 = 5;
 const APP_IPC_MAX_AUTH_FRAME_BYTES: usize = 4096;
 const APP_IPC_BULK_WRITE_BUFFER_CAPACITY: usize = 65_535;
 const APP_IPC_CAPABILITIES: &[&str] = &[
+    "runtime.command-receipts-v1",
+    "runtime.coordination-v1",
+    "runtime.coordination-arrangements-v1",
     "device.command",
     "executor.backend",
     "executor.codex_home",
@@ -156,6 +160,7 @@ const APP_IPC_RENDERER_METHODS: &[&str] = &[
     "executor.plugins.personal.rollback_copy",
     "executor.plugins.store.list",
     "executor.plugins.manifest.read",
+    "executor.plugins.image.read",
     "executor.plugins.example.save",
     "external_attachments.*",
     "external_projects.*",
@@ -789,6 +794,19 @@ impl AppIpcServer {
             return Ok(manifest);
         }
 
+        if method == "executor.plugins.image.read" {
+            let request = serde_json::from_value::<ReadPluginImageRequest>(params)
+                .map_err(|_| AppIpcError::new("bad_request", "Invalid plugin image request"))?;
+            return tokio::task::spawn_blocking(move || read_plugin_image(request))
+                .await
+                .map_err(|_| {
+                    AppIpcError::new("plugin_image_read_failed", "Plugin image is unavailable")
+                })?
+                .map_err(|_| {
+                    AppIpcError::new("plugin_image_read_failed", "Plugin image is unavailable")
+                });
+        }
+
         if method == "executor.plugins.example.save" {
             let request = serde_json::from_value::<SavePluginExampleRequest>(params)
                 .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
@@ -1249,6 +1267,16 @@ impl AppIpcServer {
                     let response_tx = priority_write_tx.clone();
                     let (request_id, method, command_key) =
                         app_ipc_request_metadata(&request_line);
+                    if matches!(command_key.as_deref(), Some("home_dir" | "ls_dirs")) {
+                        log_app_ipc_request(
+                            "app IPC request received",
+                            request_id.as_deref(),
+                            method.as_deref(),
+                            command_key.as_deref(),
+                            None,
+                            None,
+                        );
+                    }
                     tokio::spawn(async move {
                         let started_at = Instant::now();
                         log_app_ipc_request(
@@ -3320,13 +3348,13 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
         "mkdir_p" => Some(command_definition("mkdir -p", &["mkdir", "-p"], None)),
         "path_exists" => Some(command_definition("test -e", &["test", "-e"], None)),
         "git_branch" => Some(command_definition(
-            "git branch --show-current",
-            &["git", "branch", "--show-current"],
+            "git symbolic-ref --quiet --short HEAD",
+            super::command::GIT_CURRENT_BRANCH_ARGV,
             None,
         )),
         "git_branch_list" => Some(command_definition(
-            "git branch --format=%(refname:short)",
-            &["git", "branch", "--format=%(refname:short)"],
+            "git for-each-ref --format=%(refname:short) refs/heads/",
+            super::command::GIT_BRANCH_LIST_ARGV,
             None,
         )),
         "git_checkout" => Some(command_definition("git checkout", &["git", "checkout"], None)),

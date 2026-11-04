@@ -14,6 +14,7 @@ import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path
 import { fileURLToPath } from 'node:url'
 import { buildAiVerifyEnvironment } from './ai-verify-environment.mjs'
 import { readRolloutHeader, seedAiVerifyRollout } from './ai-verify-rollout.mjs'
+import { WindowCommandQueue } from './desktop-control-queue.mjs'
 import { wrapWindowsScriptCommand } from './child-process-command.mjs'
 import { processIsAlive, windowsTaskkillArguments } from '../e2e/desktop/process-lifecycle.mjs'
 
@@ -486,17 +487,11 @@ export function monitorAppProcess(app, pending, onExit) {
   })
 }
 
-export function takeWindowCommand(queue, windowLabel) {
-  const index = queue.findIndex(command => command.windowLabel === windowLabel)
-  return index < 0 ? null : queue.splice(index, 1)[0]
-}
-
 async function runServer(sessionPath, token) {
   const session = JSON.parse(await readFile(sessionPath, 'utf8'))
-  const queue = []
+  const queue = new WindowCommandQueue(corsHeaders)
   const pending = new Map()
   let ready = null
-  const readyByClientId = new Map()
   let app = null
   let appExit = null
   let shutdownPromise = null
@@ -512,15 +507,15 @@ async function runServer(sessionPath, token) {
       if (!authorized(request, token)) return json(response, 401, { error: 'Unauthorized' })
       if (request.method === 'POST' && url.pathname === '/ready') {
         ready = await readBody(request)
-        readyByClientId.set(ready.clientId, ready)
+        queue.register(ready.clientId, ready.windowLabel)
         return json(response, 200, { ok: true })
       }
       if (request.method === 'GET' && url.pathname === '/commands') {
-        const client = readyByClientId.get(url.searchParams.get('clientId'))
-        const command = takeWindowCommand(queue, client?.windowLabel)
-        if (command) return json(response, 200, command)
-        response.writeHead(204, corsHeaders)
-        return response.end()
+        return queue.poll(
+          url.searchParams.get('clientId'),
+          response,
+          url.searchParams.get('wait') === '1'
+        )
       }
       if (request.method === 'GET' && url.pathname === '/control-tick') {
         return setTimeout(() => {
@@ -566,7 +561,7 @@ async function runServer(sessionPath, token) {
           pending.set(id, { resolve: resolvePromise, reject })
         )
         const nextCommand = { id, windowLabel: 'main', ...command }
-        queue.push(nextCommand)
+        queue.enqueue(nextCommand)
         try {
           return json(response, 200, {
             ok: true,
@@ -578,8 +573,7 @@ async function runServer(sessionPath, token) {
           })
         } catch (error) {
           pending.delete(id)
-          const queuedIndex = queue.findIndex(item => item.id === id)
-          if (queuedIndex >= 0) queue.splice(queuedIndex, 1)
+          queue.remove(id)
           return json(response, 500, { ok: false, error: String(error.message ?? error) })
         }
       }
@@ -605,6 +599,7 @@ async function runServer(sessionPath, token) {
   }
   const shutdown = exitCode => {
     if (shutdownPromise) return shutdownPromise
+    queue.close()
     shutdownPromise = stopOwnedSessionProcesses({ launcherPid: app?.pid })
       .then(() => removeSessionAuthLink(session))
       .finally(() => {

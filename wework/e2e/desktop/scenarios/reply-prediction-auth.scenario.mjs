@@ -1,6 +1,8 @@
+import { fetchLocalRuntimeJson } from '../modules/runtime-request.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { accountCommandResult } from '../modules/account-auth-command.mjs'
+import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 import {
   shellCommandResponse,
   shellCommandPollResponse,
@@ -9,7 +11,6 @@ import {
   ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_WORKBENCH_SELECTOR,
   createSingleRootLocalProject,
-  fetchJson,
   selectE2EModel,
 } from '../modules/shared.mjs'
 import {
@@ -41,7 +42,7 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
     const address = state.workbench?.currentRuntimeTask
     assert.ok(address?.taskId, 'The conversation address is missing')
     const origin = await control.command('getLocationOrigin', 'body')
-    const response = await fetchJson(`${origin}/wework/executor/v1/rpc`, {
+    const response = await fetchLocalRuntimeJson(control, `${origin}/wework/executor/v1/rpc`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -49,7 +50,7 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
         method: 'runtime.tasks.get',
         params: { address },
       }),
-      signal: AbortSignal.timeout(modelResponseTimeoutMs),
+      timeoutMs: modelResponseTimeoutMs,
     })
     assert.equal(response.ok, true)
     const task = response.result?.task
@@ -185,8 +186,12 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
       await assertRedactedTask(control)
       // Make prediction the first reader to restore this parent after a native restart.
       // The following real shell call must retain task identity even in this ordering.
-      const restarted = JSON.parse(
-        await control.command('restartLocalCodexAppServerIfIdle', 'body')
+      // Sidebar reads may still be in flight after the prediction has completed.
+      const restarted = await waitForValue(
+        async () => JSON.parse(await control.command('restartLocalCodexAppServerIfIdle', 'body')),
+        result => result.restarted === true,
+        'The native app server did not become idle before prediction',
+        10_000
       )
       assert.equal(restarted.restarted, true, 'The parent must be unloaded before prediction')
       const predicted = await requestExecutor(

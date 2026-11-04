@@ -489,7 +489,7 @@ export async function waitForHighlightedHistoryMatch(
 ) {
   // Annotation controls add DOM labels; the metrics verify only searchable text and ranges.
   await control.command('waitFor', content, { timeoutMs })
-  const scroller = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll"]`
+  const scroller = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`
   const deadline = Date.now() + timeoutMs
   let actual
   do {
@@ -682,8 +682,17 @@ export async function verifyTerminalHistorySearch(
         for (let page = 0; page < pageCount; page += 1) {
           await control.command('scrollIntoView', button)
           await control.command('clickWhenEnabled', button)
-          await control.command('waitFor', `${button}:not([disabled])`, { timeoutMs })
+          await control.command(
+            'waitFor',
+            `${button}:not([disabled]):not([aria-disabled="true"])`,
+            {
+              timeoutMs,
+            }
+          )
         }
+        // Prepending keeps the current passage anchored. Browse to the expanded boundary
+        // before checking a neighboring turn that can still be outside the virtual range.
+        await control.command('scrollIntoViewAsUser', button)
         await control.command(
           'waitFor',
           `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="user-message-content"]`,
@@ -714,7 +723,7 @@ export async function verifyTerminalHistorySearch(
 }
 
 export async function verifyNativeTerminalHistorySearch(control, address, timeoutMs, search) {
-  const loadOlder = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="load-older-runtime-transcript-button"]`
+  const historyStart = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="runtime-transcript-history-start"]`
   const loadNewer = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="load-newer-runtime-transcript-button"]`
   const latest = `Native search answer ${TERMINAL_HISTORY_TURN_COUNT - 1}`
   assert.ok(address.threadId, 'Native history requires a resolved thread identity')
@@ -731,7 +740,7 @@ export async function verifyNativeTerminalHistorySearch(control, address, timeou
         timeoutMs
       )
     ).pane
-  await control.command('waitFor', loadOlder, { timeoutMs })
+  await control.command('waitFor', historyStart, { timeoutMs })
   await control.command('waitFor', ANSWERS, { text: latest })
   // Seeded content can stay visible while the resolved thread identity triggers a reload.
   const original = await settledPane()
@@ -753,7 +762,7 @@ export async function verifyNativeTerminalHistorySearch(control, address, timeou
       'Native search indexed a hidden terminal body or omitted useful output'
     )
   }
-  await control.command('nativePress', loadOlder, {
+  await control.command('nativePress', `${ACTIVE_WORKBENCH_SELECTOR} [role="scrollbar"]`, {
     key: `${process.platform === 'darwin' ? 'Meta' : 'Control'}+F`,
   })
   // The first newer page finishes the partially loaded neighbor before advancing a turn.

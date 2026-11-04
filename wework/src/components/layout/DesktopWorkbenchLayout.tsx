@@ -48,6 +48,8 @@ import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskRe
 import { useRuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
 import { CloudTodoWorkspace } from '@/features/todo/CloudTodoWorkspace'
 import { TaskBoardView } from '@/features/todo/TaskBoardView'
+import { PersonalStandInWorkspace } from '@/features/todo/PersonalStandInWorkspace'
+import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { WeworkCollaborationPlatform } from '@/features/todo/WeworkCollaborationPlatform'
 import { LOCAL_USER } from '@/api/local/localSession'
 import { resolveLocalTodoProjects } from '@/features/todo/localTodoProjects'
@@ -64,7 +66,11 @@ import { WorkbenchBackground } from '@/features/appearance'
 import { useResizableSidebar } from './useResizableSidebar'
 import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
-import { requestWorkbenchComposerFocus } from '@/lib/workbenchComposerFocus'
+import {
+  consumeNewChatComposerRequest,
+  requestWorkbenchComposerFocus,
+  WORKBENCH_NEW_CHAT_FOCUS_EVENT,
+} from '@/lib/workbenchComposerFocus'
 import {
   archiveLocalHarnessSession,
   closeLocalTerminal,
@@ -105,7 +111,7 @@ import {
 import { GlobalFeedbackButton } from '@/features/feedback/GlobalFeedbackButton'
 import { TaskBoardCreateButton } from '@/features/todo/TaskBoardActions'
 
-type ImNotificationDialogMode = { type: 'global' } | { type: 'task'; address: RuntimeTaskAddress }
+type ImNotificationDialogMode = { type: 'task'; address: RuntimeTaskAddress }
 
 const SIDEBAR_AUTO_COLLAPSE_WINDOW_WIDTH = 960
 
@@ -215,7 +221,6 @@ export function DesktopWorkbenchLayout({
     cloneGitRepository: onCloneGitRepository,
     listImPrivateSessions: onListImPrivateSessions,
     getImNotificationSettings: onGetImNotificationSettings,
-    updateGlobalImNotification: onUpdateGlobalImNotification,
     subscribeRuntimeTaskNotifications: onSubscribeRuntimeTaskNotifications,
     unsubscribeRuntimeTaskNotifications: onUnsubscribeRuntimeTaskNotifications,
     runtimeTaskReminders,
@@ -294,7 +299,14 @@ export function DesktopWorkbenchLayout({
     ownedWorkspaceTab?.kind === 'board'
       ? ownedWorkspaceTab.contentRoute
       : `${currentPath}${window.location.search}`
-  const taskBoardOpen = taskView === 'default-work-items'
+  const standInContentRoute =
+    ownedWorkspaceTab?.contentRoute ?? `${currentPath}${window.location.search}`
+  const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
+  const standInOpen =
+    experimentalFeaturesEnabled &&
+    !routeWorkItemsOpen &&
+    standInContentRoute.split('?')[0] === '/stand-in'
+  const taskBoardOpen = !standInOpen && taskView === 'default-work-items'
   const routedDefaultWorkItemsOpen =
     routeWorkItemsOpen && projectSpaceRouteTargetsDefaultWorkItems(activeProjectSpaceContentRoute)
   const workItemSurfaceOpen = routeWorkItemsOpen || taskBoardOpen
@@ -464,25 +476,36 @@ export function DesktopWorkbenchLayout({
       window.removeEventListener(WEWORK_LOCAL_HARNESS_SESSIONS_CHANGED_EVENT, handleSessionsChanged)
     }
   }, [loadLocalHarnessSessions, workItemSurfaceOpen])
-  const activeItem = 'chat'
+  const activeItem = standInOpen ? 'stand-in' : 'chat'
   const taskReminders = runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
   const toggleMyWork = useCallback(() => {
     setTaskView(currentView =>
       currentView === 'default-work-items' ? 'workbench' : 'default-work-items'
     )
   }, [])
+  const activateBlankComposer = useCallback(() => {
+    setTaskView('workbench')
+    setActiveLocalHarnessSessionId(null)
+    activateSplitPane(blankPaneKey)
+  }, [activateSplitPane, blankPaneKey])
+  useEffect(() => {
+    const activateRequestedComposer = () => {
+      if (consumeNewChatComposerRequest(workspaceTabId)) activateBlankComposer()
+    }
+    activateRequestedComposer()
+    window.addEventListener(WORKBENCH_NEW_CHAT_FOCUS_EVENT, activateRequestedComposer)
+    return () => {
+      window.removeEventListener(WORKBENCH_NEW_CHAT_FOCUS_EVENT, activateRequestedComposer)
+    }
+  }, [activateBlankComposer, workspaceTabId])
   const startNewChatOutsideHarness = useCallback(() => {
-    setTaskView('workbench')
-    setActiveLocalHarnessSessionId(null)
-    activateSplitPane(blankPaneKey)
+    activateBlankComposer()
     onNewChat()
-  }, [activateSplitPane, blankPaneKey, onNewChat])
+  }, [activateBlankComposer, onNewChat])
   const startStandaloneChatOutsideHarness = useCallback(() => {
-    setTaskView('workbench')
-    setActiveLocalHarnessSessionId(null)
-    activateSplitPane(blankPaneKey)
+    activateBlankComposer()
     onStartStandaloneChat()
-  }, [activateSplitPane, blankPaneKey, onStartStandaloneChat])
+  }, [activateBlankComposer, onStartStandaloneChat])
   const selectProjectOutsideHarness = useCallback(
     (projectId: number) => {
       setTaskView('workbench')
@@ -896,45 +919,6 @@ export function DesktopWorkbenchLayout({
     setImSessionsLoading(false)
   }, [])
 
-  const toggleGlobalImNotification = useCallback(async () => {
-    if (!onUpdateGlobalImNotification) return
-
-    const currentSettings = imNotificationSettings
-    if (currentSettings?.global.enabled) {
-      try {
-        const settings = await onUpdateGlobalImNotification({
-          enabled: false,
-          sessionKey: currentSettings.global.sessionKey ?? undefined,
-        })
-        setImNotificationSettings(settings)
-      } catch {
-        setNotice({
-          message: t('workbench.im_notification_update_failed', 'IM 通知设置失败'),
-          tone: 'error',
-        })
-      }
-      return
-    }
-
-    if (currentSettings?.global.sessionKey) {
-      try {
-        const settings = await onUpdateGlobalImNotification({
-          enabled: true,
-          sessionKey: currentSettings.global.sessionKey,
-        })
-        setImNotificationSettings(settings)
-      } catch {
-        setNotice({
-          message: t('workbench.im_notification_update_failed', 'IM 通知设置失败'),
-          tone: 'error',
-        })
-      }
-      return
-    }
-
-    openImNotificationTargetDialog({ type: 'global' })
-  }, [imNotificationSettings, onUpdateGlobalImNotification, openImNotificationTargetDialog, t])
-
   const toggleRuntimeTaskNotification = useCallback(
     async (address: RuntimeTaskAddress, subscribed: boolean) => {
       if (subscribed) {
@@ -963,12 +947,6 @@ export function DesktopWorkbenchLayout({
 
   const notificationDefaultSessionKeys = useMemo(() => {
     if (!imNotificationDialogMode || !imNotificationSettings) return []
-    if (imNotificationDialogMode.type === 'global') {
-      return imNotificationSettings.global.sessionKey
-        ? [imNotificationSettings.global.sessionKey]
-        : []
-    }
-
     const taskKey = `${imNotificationDialogMode.address.deviceId}\0${imNotificationDialogMode.address.taskId}`
     const subscription = imNotificationSettings.runtimeTaskSubscriptions.find(
       item => `${item.address.deviceId}\0${item.address.taskId}` === taskKey
@@ -987,25 +965,14 @@ export function DesktopWorkbenchLayout({
 
       setImSessionsSubmitting(true)
       try {
-        if (imNotificationDialogMode.type === 'global') {
-          if (!onUpdateGlobalImNotification) {
-            throw new Error('Global IM notification handler is not available')
-          }
-          const settings = await onUpdateGlobalImNotification({
-            enabled: true,
-            sessionKey: sessionKeys[0],
-          })
-          setImNotificationSettings(settings)
-        } else {
-          if (!onSubscribeRuntimeTaskNotifications) {
-            throw new Error('Runtime task IM notification handler is not available')
-          }
-          await onSubscribeRuntimeTaskNotifications({
-            address: imNotificationDialogMode.address,
-            sessionKeys,
-          })
-          await refreshImNotificationSettings()
+        if (!onSubscribeRuntimeTaskNotifications) {
+          throw new Error('Runtime task IM notification handler is not available')
         }
+        await onSubscribeRuntimeTaskNotifications({
+          address: imNotificationDialogMode.address,
+          sessionKeys,
+        })
+        await refreshImNotificationSettings()
         setImNotificationDialogMode(null)
         setNotice({
           message: t('workbench.im_notification_update_success', 'IM 通知已更新'),
@@ -1023,7 +990,6 @@ export function DesktopWorkbenchLayout({
     [
       imNotificationDialogMode,
       onSubscribeRuntimeTaskNotifications,
-      onUpdateGlobalImNotification,
       refreshImNotificationSettings,
       t,
     ]
@@ -1076,6 +1042,7 @@ export function DesktopWorkbenchLayout({
       onPointerLeave={onPointerLeave}
       onToggleSidebar={onToggleSidebar ?? (() => updateSidebarCollapsed(!collapsed))}
       onNewChat={startNewChatOutsideHarness}
+      onOpenStandIn={() => navigateTo('/stand-in')}
       onStartStandaloneChat={startStandaloneChatOutsideHarness}
       onOpenLocalHarnessSession={openLocalHarnessSession}
       onCloseLocalHarnessSession={closeLocalHarnessSession}
@@ -1091,8 +1058,6 @@ export function DesktopWorkbenchLayout({
       onArchiveProjectsConversations={onArchiveProjectsConversations}
       onArchiveChatConversations={onArchiveChatConversations}
       onToggleRuntimeTaskNotification={toggleRuntimeTaskNotification}
-      onToggleGlobalImNotification={toggleGlobalImNotification}
-      onOpenGlobalImNotificationSettings={() => openImNotificationTargetDialog({ type: 'global' })}
       onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
       onCreatePermanentWorktree={createPermanentWorktree}
       onSelectStandaloneDevice={selectStandaloneDevice}
@@ -1180,6 +1145,17 @@ export function DesktopWorkbenchLayout({
           />
         )}
         <div style={{ display: settingsOpen ? 'none' : 'contents' }} aria-hidden={settingsOpen}>
+          {standInOpen && (
+            <PersonalStandInWorkspace
+              contentRoute={standInContentRoute}
+              services={services}
+              user={state.user ?? LOCAL_USER}
+              devices={state.devices}
+              active={routeActive && !settingsOpen}
+              onClose={() => navigateTo('/')}
+              onOpenTask={openRuntimeTaskOutsideHarness}
+            />
+          )}
           {taskBoardOpen && routeActive && !settingsOpen ? (
             <>
               <TitlebarActionsPortal>
@@ -1467,11 +1443,11 @@ export function DesktopWorkbenchLayout({
             ))}
           {!routeWorkItemsOpen ? (
             <div
-              style={{ display: taskBoardOpen ? 'none' : 'contents' }}
-              aria-hidden={taskBoardOpen}
+              style={{ display: taskBoardOpen || standInOpen ? 'none' : 'contents' }}
+              aria-hidden={taskBoardOpen || standInOpen}
             >
               <DesktopWorkbenchMain
-                visible={routeActive && !settingsOpen && !taskBoardOpen}
+                visible={routeActive && !settingsOpen && !taskBoardOpen && !standInOpen}
                 sidebarCollapsed={effectiveSidebarCollapsed}
                 sidebarResizing={sidebarResizing}
                 onSidebarCollapsedChange={updateSidebarCollapsed}
@@ -1576,17 +1552,13 @@ export function DesktopWorkbenchLayout({
         loading={imSessionsLoading}
         submitting={imSessionsSubmitting}
         sessions={imSessions}
-        title={
-          imNotificationDialogMode?.type === 'global'
-            ? t('workbench.global_im_notifications_title', '全局 IM 通知')
-            : t('workbench.runtime_task_im_notifications_title', '订阅任务通知')
-        }
+        title={t('workbench.runtime_task_im_notifications_title', '订阅任务通知')}
         emptyGuide={t(
           'workbench.im_notifications_empty_guide',
           '还没有可用的 IM 会话，请先从 IM 给 Wegent 发送一条消息。'
         )}
         submitLabel={t('workbench.save', '保存')}
-        allowMultiple={imNotificationDialogMode?.type !== 'global'}
+        allowMultiple
         defaultSelectedSessionKeys={notificationDefaultSessionKeys}
         onClose={closeImNotificationDialog}
         onSubmit={submitImNotificationTarget}

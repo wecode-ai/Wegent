@@ -66,7 +66,8 @@ export function ApplicationMenuWorkspaceBridge({ pathname }: { pathname: string 
             current.openTab(kind)
           }
         } else if (typeof action === 'string' && action in APPLICATION_MENU_WORK_ROUTES) {
-          navigateTo(APPLICATION_MENU_WORK_ROUTES[action])
+          const route = APPLICATION_MENU_WORK_ROUTES[action]
+          navigateTo(route)
         }
       }),
     []

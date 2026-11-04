@@ -2,8 +2,6 @@ import type { AnalyticsEvent } from './events'
 import type { DomainGeneratedEventMap } from './domainRegistry'
 import type { SmartAppGeneratedEventMap } from './generated/smartAppEvents'
 
-export const TELEMETRY_SINK_PROTOCOL = 'telemetry-sink/v1' as const
-
 export type SmartAppTelemetryEvent = {
   [Name in keyof SmartAppGeneratedEventMap]: {
     readonly name: Name
@@ -18,17 +16,19 @@ export type DomainTelemetryEvent = {
   }
 }[keyof DomainGeneratedEventMap]
 
+export const SMART_APP_SOURCES = ['managed', 'linked', 'market'] as const
+
+export type SmartAppSource = (typeof SMART_APP_SOURCES)[number]
+
+export function parseSmartAppSource(value: unknown): SmartAppSource | undefined {
+  return SMART_APP_SOURCES.find(source => source === value)
+}
+
 export interface SmartAppIdentityContext {
   readonly key: string
   readonly name: string
-  readonly source: 'managed' | 'linked' | 'market'
+  readonly source: SmartAppSource
   readonly version: string
-}
-
-export interface TelemetryUserContext {
-  readonly email: string
-  readonly id: number
-  readonly userName: string
 }
 
 export interface PluginInvocationIdentityContext {
@@ -42,7 +42,6 @@ export interface PluginInvocationIdentityContext {
 export interface WeworkTelemetryContext {
   readonly pluginInvocation?: PluginInvocationIdentityContext
   readonly smartApp?: SmartAppIdentityContext
-  readonly user?: TelemetryUserContext
 }
 
 export type WeworkTelemetryFact = AnalyticsEvent & {
@@ -50,9 +49,22 @@ export type WeworkTelemetryFact = AnalyticsEvent & {
   readonly occurredAt: string
 }
 
-export type WeworkTelemetryEnvelope = WeworkTelemetryFact & {
+/** Context delivered to sinks after the collection policy projects each field. */
+export type WeworkTelemetrySinkContext = {
+  readonly pluginInvocation?: Partial<PluginInvocationIdentityContext>
+  readonly smartApp?: Partial<SmartAppIdentityContext>
+}
+
+type DistributiveOmit<Value, Key extends PropertyKey> = Value extends unknown
+  ? Omit<Value, Key>
+  : never
+
+export type WeworkTelemetryEnvelope = DistributiveOmit<WeworkTelemetryFact, 'context'> & {
+  readonly context?: WeworkTelemetrySinkContext
   readonly eventId: string
 }
+
+export const TELEMETRY_SINK_PROTOCOL = 'telemetry-sink/v1' as const
 
 export interface WeworkTelemetrySink {
   readonly id: string

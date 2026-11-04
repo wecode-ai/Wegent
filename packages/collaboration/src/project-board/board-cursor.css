@@ -1,41 +1,28 @@
-/* The active board owns the page policy, including portals attached to body.
-   Hidden workspace tabs must not affect another page's cursor. */
-body:has(
-    [data-board-cursor-policy="arrow"]:not(
-      [hidden],
-      [hidden] *,
-      [inert],
-      [inert] *,
-      .hidden,
-      .hidden *,
-      [style*="display: none"],
-      [style*="display: none"] *,
-      [aria-hidden="true"],
-      [aria-hidden="true"] *
-    )
-  )
+/* Visible board owners set this once per visibility change, including portals.
+   Scrolling must never invalidate a body-wide relational selector. */
+body[data-board-cursor-policy='arrow']
   :is(
     button,
     a[href],
     label,
     select,
     summary,
-    input[type="button"],
-    input[type="submit"],
-    input[type="reset"],
-    input[type="checkbox"],
-    input[type="radio"],
-    [role="button"],
-    [role="link"],
-    [role="tab"],
-    [role="menuitem"],
-    [role="option"],
-    [role="checkbox"],
-    [role="switch"],
+    input[type='button'],
+    input[type='submit'],
+    input[type='reset'],
+    input[type='checkbox'],
+    input[type='radio'],
+    [role='button'],
+    [role='link'],
+    [role='tab'],
+    [role='menuitem'],
+    [role='option'],
+    [role='checkbox'],
+    [role='switch'],
     .cursor-pointer
   ):not(
-    [role="separator"],
-    [contenteditable="true"],
+    [role='separator'],
+    [contenteditable='true'],
     .cursor-grab,
     .cursor-grabbing,
     .cursor-move,

@@ -21,8 +21,8 @@ use super::models::{
 };
 use super::service::list_public;
 
-/// `^(agent|skill|model|shell|retriever)$`.
-const RESOURCE_TYPE_PATTERN: &str = "^(agent|skill|model|shell|retriever)$";
+/// `^(agent|skill|model|shell|retriever|template)$`.
+const RESOURCE_TYPE_PATTERN: &str = "^(agent|skill|model|shell|retriever|template)$";
 /// `keyword` maximum length.
 const KEYWORD_MAX_LENGTH: usize = 200;
 /// `target_namespace` bounds.
@@ -343,7 +343,7 @@ mod tests {
         let detail = error.validation_detail();
         assert!(detail.contains("\"string_pattern_mismatch\""));
         assert!(detail.contains("[\"query\",\"resource_type\"]"));
-        assert!(detail.contains("^(agent|skill|model|shell|retriever)$"));
+        assert!(detail.contains("^(agent|skill|model|shell|retriever|template)$"));
     }
 
     #[test]

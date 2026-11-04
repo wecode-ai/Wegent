@@ -1,10 +1,12 @@
-import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, open, readFile, realpath, rm } from 'node:fs/promises'
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
-import { promisify } from 'node:util'
+import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { cloudFetch } from './cloud-http.js'
-import type { WeworkUpdateDownloadProgress } from './app-update-progress.js'
+import type {
+  WeworkUpdateChannel,
+  WeworkUpdateDownloadProgress,
+  WeworkUpdateInfo,
+} from './app-update-progress.js'
 import {
   compareVersions,
   planUpgrade,
@@ -18,25 +20,20 @@ import {
   ReleaseStore,
   type DesktopRelease,
 } from '../runtime/release-store.js'
-import { currentCoreProfile, profileRevision } from '../runtime/release-profile.js'
+import {
+  currentCoreProfile,
+  profileRevision,
+  retainReleaseProfile,
+} from '../runtime/release-profile.js'
+import type { ComponentPaths } from '../runtime/component-update-manager.js'
 import { restoreReleaseData, snapshotReleaseData } from '../runtime/release-snapshot.js'
 import { verifyReleaseSignature } from '../runtime/release-signature.js'
-import {
-  copyPhysicalRelease,
-  extractPhysicalRelease,
-  removePhysicalRelease,
-} from '../runtime/physical-release-files.js'
+import { extractPhysicalRelease, removePhysicalRelease } from '../runtime/physical-release-files.js'
+import { preparationStep } from '../runtime/release-preparation.js'
+import { prepareReleaseProcess } from '../runtime/release-preparation-progress.mjs'
+import { terminateProcessTree } from '../runtime/runtime-supervisor.js'
 
-const execute = promisify(execFile)
-
-export type WeworkUpdateChannel = 'stable' | 'beta'
-export interface WeworkUpdateInfo {
-  currentVersion: string
-  version: string
-  body?: string
-  targetVersion?: string
-  path?: string[]
-}
+export type { WeworkUpdateChannel, WeworkUpdateInfo } from './app-update-progress.js'
 export type AppUpdateController = Pick<
   AppUpdateService,
   'check' | 'download' | 'downloadProgress' | 'createInstallAction'
@@ -52,6 +49,8 @@ export interface AppUpdateServiceOptions {
   executable: string
   resources: string
   runtimeRoot: string
+  componentDataDirectory?: string
+  runningComponents?: () => ComponentPaths | null | Promise<ComponentPaths | null>
   dataSchema: number
   readableDataSchemas: number[]
   updateBaseUrl: string
@@ -66,9 +65,19 @@ export interface AppUpdateServiceOptions {
 export class AppUpdateService {
   private progress: WeworkUpdateDownloadProgress = { downloadedBytes: 0, totalBytes: null }
   private pending: UpgradeRelease | null = null
+  private pendingUpdate: WeworkUpdateInfo | null = null
   private prepared: DesktopRelease | null = null
+  private readyProgress: WeworkUpdateDownloadProgress | null = null
   private channel: WeworkUpdateChannel = 'stable'
-  private downloadPromise: Promise<void> | null = null
+  private checkTask: {
+    channel: WeworkUpdateChannel
+    promise: Promise<WeworkUpdateInfo | null>
+  } | null = null
+  private downloadTask: {
+    channel: WeworkUpdateChannel
+    refresh: Promise<WeworkUpdateInfo | null>
+    promise: Promise<void>
+  } | null = null
   private installPromise: Promise<void> | null = null
   private stopping = false
   private readonly fetch: typeof fetch
@@ -100,10 +109,31 @@ export class AppUpdateService {
   }
 
   async check(channel: WeworkUpdateChannel): Promise<WeworkUpdateInfo | null> {
+    this.assertNotInstalling()
+    const download = this.downloadTask
+    if (download) {
+      if (download.channel === channel) return download.refresh
+      await download.promise.catch(() => undefined)
+      return this.check(channel)
+    }
+    const check = this.checkTask
+    if (check) {
+      if (check.channel === channel) return check.promise
+      await check.promise.catch(() => undefined)
+      return this.check(channel)
+    }
+    const promise = this.performCheck(channel)
+    this.checkTask = { channel, promise }
+    try {
+      return await promise
+    } finally {
+      this.checkTask = null
+    }
+  }
+
+  private async performCheck(channel: WeworkUpdateChannel): Promise<WeworkUpdateInfo | null> {
     if (!this.options.isPackaged)
       throw new Error('Wework updater is only available in a packaged desktop app.')
-    if (this.downloadPromise || this.installPromise)
-      throw new Error('An update operation is in progress')
     const catalog = await this.readCatalog(channel)
     const rolledBack = await optionalText(
       join(this.options.store.root, 'rolled-back-versions.json')
@@ -121,6 +151,8 @@ export class AppUpdateService {
     this.channel = channel
     if (!plan) {
       this.pending = null
+      this.pendingUpdate = null
+      this.clearPreparedRelease()
       if (
         catalog.releases.some(
           r => !r.revoked && compareVersions(r.version, this.options.currentVersion) > 0
@@ -135,14 +167,30 @@ export class AppUpdateService {
       }
       return null
     }
-    if (this.pending?.sha256 !== plan.next.sha256) this.prepared = null
+    if (
+      !matchesRelease(this.pending, plan.next) ||
+      (this.prepared && !(await this.profileStillCurrent()))
+    ) {
+      this.clearPreparedRelease()
+    }
     this.pending = plan.next
-    return {
+    this.pendingUpdate = {
       currentVersion: this.options.currentVersion,
       version: plan.next.version,
+      readyToInstall: this.prepared !== null,
       body: plan.next.notes,
       targetVersion: plan.targetVersion,
       path: plan.path,
+    }
+    this.progress = { ...this.progress, update: this.pendingUpdate }
+    return this.pendingUpdate
+  }
+
+  private clearPreparedRelease(): void {
+    this.prepared = null
+    this.readyProgress = null
+    if (this.progress.phase === 'ready') {
+      this.progress = { downloadedBytes: 0, totalBytes: null }
     }
   }
 
@@ -150,14 +198,31 @@ export class AppUpdateService {
     return this.progress
   }
 
-  async download(): Promise<void> {
-    if (this.downloadPromise) return this.downloadPromise
-    if (!this.pending) throw new Error('No verified Wework update is available')
-    if (this.prepared && (await this.profileStillCurrent())) return
-    const pending = this.pending
-    this.downloadPromise = this.prepare(pending)
+  async download(channel = this.channel): Promise<void> {
+    this.assertNotInstalling()
+    const download = this.downloadTask
+    if (download) {
+      if (download.channel === channel) return download.promise
+      await download.promise.catch(() => undefined)
+      return this.download(channel)
+    }
+    const canReuse = this.channel === channel && this.progress.phase === 'ready'
+    this.progress = { downloadedBytes: 0, totalBytes: null, phase: 'preparing' }
+    const refresh = Promise.resolve(this.checkTask?.promise)
+      .catch(() => undefined)
+      .then(async () => {
+        if (
+          canReuse &&
+          this.channel === channel &&
+          this.prepared &&
+          (await this.profileStillCurrent())
+        )
+          return this.pendingUpdate
+        return this.performCheck(channel)
+      })
+    const promise = this.performDownload(refresh)
       .catch(error => {
-        this.options.log?.({
+        this.log({
           event: 'release-preparation-failed',
           phase: this.progress.phase,
           errorType: error instanceof Error ? error.name : typeof error,
@@ -169,36 +234,70 @@ export class AppUpdateService {
         this.progress = {
           ...this.progress,
           phase: 'failed',
-          failure: { message: error instanceof Error ? error.message : String(error) },
+          failure: {
+            message: error instanceof Error ? error.message : String(error),
+            ...(error instanceof Error && 'code' in error && typeof error.code === 'string'
+              ? { code: error.code }
+              : {}),
+          },
         }
         throw error
       })
       .finally(() => {
-        this.downloadPromise = null
+        this.downloadTask = null
       })
-    return this.downloadPromise
+    this.downloadTask = { channel, refresh, promise }
+    return promise
+  }
+
+  private async performDownload(refresh: Promise<WeworkUpdateInfo | null>): Promise<void> {
+    const update = await refresh
+    if (!update) {
+      this.progress = { ...this.progress, phase: 'upToDate', update: null }
+      return
+    }
+    this.progress = { ...this.progress, update }
+    if (this.prepared && this.readyProgress && (await this.profileStillCurrent())) {
+      this.progress = { ...this.readyProgress, update }
+      return
+    }
+    this.prepared = null
+    this.readyProgress = null
+    await this.prepare(this.pending!)
+    this.readyProgress = this.progress
   }
 
   private async prepare(pending: UpgradeRelease): Promise<void> {
     const started = performance.now()
-    this.options.log?.({ event: 'release-preparation-started', version: pending.version })
-    this.progress = { downloadedBytes: 0, totalBytes: pending.bytes, phase: 'host' }
+    this.log({ event: 'release-preparation-started', version: pending.version })
+    this.progress = {
+      ...this.progress,
+      downloadedBytes: 0,
+      totalBytes: pending.bytes,
+      phase: 'host',
+    }
     const store = this.options.store
-    await this.registerInstalledRelease()
+    const id = `${pending.version}-${randomUUID()}`
+    const step = <T>(stage: string, run: () => Promise<T>) =>
+      preparationStep(
+        { write: async (_source, line) => this.options.log?.(JSON.parse(line)) },
+        { id, version: pending.version },
+        stage,
+        run
+      )
+    await step('retain-source', () => this.registerInstalledRelease())
     // Download preparation owns cleanup. Startup cleanup could race creation
     // of the next slot when automatic downloads start immediately after readiness.
-    await store.prune()
-    await this.preserveInstalledHost()
-    const id = `${pending.version}-${randomUUID()}`
+    await step('prune', () => store.prune())
     const slot = store.slot(id)
     await mkdir(slot, { recursive: true, mode: 0o700 })
     const archive = join(slot, 'host.tar.gz')
     try {
-      await this.downloadArchive(pending, archive)
+      await step('download', () => this.downloadArchive(pending, archive))
       this.progress = { ...this.progress, phase: 'extracting' }
       const host = join(slot, 'host')
       await mkdir(host, { recursive: true, mode: 0o700 })
-      await extractPhysicalRelease(archive, host)
+      await step('host-extraction', () => extractPhysicalRelease(archive, host))
       const manifest = JSON.parse(await readFile(join(host, 'wework-release.json'), 'utf8')) as {
         schemaVersion: number
         version: string
@@ -223,29 +322,15 @@ export class AppUpdateService {
         dataSchema: pending.dataSchema,
         readableDataSchemas: pending.readableDataSchemas,
       }
-      await verifyReleaseSignature(this.options.executable, release.executable)
+      await step('signature', () =>
+        verifyReleaseSignature(this.options.executable, release.executable)
+      )
       this.progress = { ...this.progress, phase: 'runtime' }
-      await this.prepareHostEnvironment(release)
-      await store.read(id)
-      const current = await store.active()
-      if (
-        current?.id.startsWith('installed-') &&
-        resolve(await realpath(currentCoreProfile(this.options.dataDirectory))) !==
-          resolve(current.profileRoot)
-      ) {
-        const revisions = await Promise.all(
-          [current.id, id].map(
-            async releaseId =>
-              JSON.parse(await readFile(join(store.slot(releaseId), 'prepared.json'), 'utf8'))
-                .sourceRevision
-          )
-        )
-        if (revisions[0] !== revisions[1])
-          throw new Error('Plugins changed between source and target preparation; prepare again')
-      }
-      this.prepared = release
-      this.progress = { ...this.progress, phase: 'ready' }
-      this.options.log?.({
+      await step('target-preparation', () => this.prepareHostEnvironment(release))
+      this.prepared = await store.read(id)
+      this.pendingUpdate = { ...this.pendingUpdate!, readyToInstall: true }
+      this.progress = { ...this.progress, phase: 'ready', update: this.pendingUpdate }
+      this.log({
         event: 'release-prepared',
         version: release.version,
         durationMs: Math.round(performance.now() - started),
@@ -288,8 +373,11 @@ export class AppUpdateService {
 
   private async registerInstalledRelease(): Promise<void> {
     const store = this.options.store
-    if (await store.active()) return
-    const id = `installed-${this.options.currentVersion}-${randomUUID()}`
+    const current = await store.active()
+    if (current && !current.id.startsWith('installed-')) return
+    const components = await this.options.runningComponents?.()
+    if (!components) throw new Error('The running release component composition is unavailable')
+    const id = current?.id ?? `installed-${this.options.currentVersion}-${randomUUID()}`
     const release: DesktopRelease = {
       schemaVersion: 1,
       id,
@@ -297,11 +385,13 @@ export class AppUpdateService {
       executable: this.options.executable,
       resources: this.options.resources,
       runtimeRoot: this.options.runtimeRoot,
-      profileRoot: join(store.slot(id), 'profile'),
+      componentDataDirectory: this.options.componentDataDirectory ?? this.options.dataDirectory,
+      profileRoot: await realpath(currentCoreProfile(this.options.dataDirectory)),
       dataSchema: this.options.dataSchema,
       readableDataSchemas: this.options.readableDataSchemas,
     }
     await store.save(release)
+    await atomicReleaseWrite(join(store.slot(id), 'prepared.json'), JSON.stringify({ components }))
     await atomicReleaseWrite(join(store.root, 'bridge'), this.options.executable)
     await atomicReleaseWrite(join(store.root, 'active'), id)
   }
@@ -317,38 +407,6 @@ export class AppUpdateService {
     )
   }
 
-  private async preserveInstalledHost(): Promise<void> {
-    const store = this.options.store
-    const current = await store.active()
-    if (!current || !current.id.startsWith('installed-')) return
-    if (current.executable.startsWith(store.root + sep)) {
-      if (
-        resolve(await realpath(currentCoreProfile(this.options.dataDirectory))) !==
-        resolve(current.profileRoot)
-      ) {
-        await this.prepareHostEnvironment({
-          ...current,
-          profileRoot: join(store.slot(current.id), `baseline-profile-${randomUUID()}`),
-        })
-      }
-      return
-    }
-    const hostSource =
-      process.platform === 'darwin'
-        ? resolve(this.options.executable, '..', '..', '..')
-        : dirname(this.options.executable)
-    const hostTarget = join(store.slot(current.id), 'host', basename(hostSource))
-    await removePhysicalRelease(hostTarget)
-    await copyPhysicalRelease(hostSource, hostTarget)
-    const preserved = {
-      ...current,
-      executable: join(hostTarget, relative(hostSource, this.options.executable)),
-      resources: join(hostTarget, relative(hostSource, this.options.resources)),
-    }
-    await store.save(preserved)
-    await this.prepareHostEnvironment(preserved)
-  }
-
   private async prepareHostEnvironment(release: DesktopRelease): Promise<void> {
     const request = join(this.options.store.slot(release.id), 'prepare-request.json')
     await atomicReleaseWrite(
@@ -356,7 +414,7 @@ export class AppUpdateService {
       JSON.stringify({
         release,
         storeRoot: this.options.store.root,
-        sourceProfile: currentCoreProfile(this.options.dataDirectory),
+        sourceProfile: await realpath(currentCoreProfile(this.options.dataDirectory)),
       })
     )
     const environment = { ...process.env }
@@ -367,7 +425,7 @@ export class AppUpdateService {
       'ELECTRON_RUN_AS_NODE',
     ])
       delete environment[key]
-    await execute(
+    await prepareReleaseProcess(
       release.executable,
       [
         join(release.resources, 'app.asar', 'dist', 'runtime', 'release-preparation-cli.js'),
@@ -375,19 +433,24 @@ export class AppUpdateService {
       ],
       {
         env: { ...environment, ELECTRON_RUN_AS_NODE: '1' },
-        timeout: 300_000,
-        maxBuffer: 1024 * 1024,
+        progress: 'stdout',
+        releaseId: release.id,
+        version: release.version,
+        stop: child => terminateProcessTree(child, 10_000),
       }
     )
   }
 
-  createInstallAction(): () => Promise<void> {
-    if (!this.prepared || this.prepared.version !== this.pending?.version)
-      throw new Error('The pending Wework update is not ready')
+  createInstallAction(version = this.pending?.version): () => Promise<void> {
+    this.assertReady(version)
     return () => {
-      if (this.installPromise) return this.installPromise
+      this.assertReady(version)
+      const release = this.prepared!
+      const pending = this.pending!
+      const channel = this.channel
       this.progress = { ...this.progress, phase: 'installing' }
-      this.installPromise = this.install()
+      this.installPromise = Promise.resolve()
+        .then(() => this.install(release, pending, channel))
         .catch(error => {
           this.failInstall(error)
           throw error
@@ -399,14 +462,34 @@ export class AppUpdateService {
     }
   }
 
-  private async install(): Promise<void> {
-    const release = this.prepared!
-    const catalog = await this.readCatalog(this.channel)
+  private assertNotInstalling(): void {
+    if (this.installPromise || this.stopping) throw new Error('An update operation is in progress')
+  }
+
+  private assertReady(version: string | undefined): void {
+    this.assertNotInstalling()
+    if (
+      this.downloadTask ||
+      this.checkTask ||
+      !version ||
+      !this.prepared ||
+      this.prepared.version !== version ||
+      this.pending?.version !== version
+    )
+      throw new Error('The pending Wework update is not ready')
+  }
+
+  private async install(
+    release: DesktopRelease,
+    pending: UpgradeRelease,
+    channel: WeworkUpdateChannel
+  ): Promise<void> {
+    const catalog = await this.readCatalog(channel)
     const edge = catalog.edges.find(
       e => e.from === this.options.currentVersion && e.to === release.version && !e.revoked
     )
     const target = catalog.releases.find(r => r.version === release.version && !r.revoked)
-    if (!edge || !target || target.sha256 !== this.pending?.sha256)
+    if (!edge || !target || !matchesRelease(pending, target))
       throw new Error('The verified upgrade path was revoked or changed')
     if (!(await this.profileStillCurrent()))
       throw new Error(
@@ -424,6 +507,12 @@ export class AppUpdateService {
       store.root,
       process.env.WEGENT_EXECUTOR_HOME?.trim() || this.options.dataDirectory
     )
+    if (current.id.startsWith('installed-')) {
+      const profileRoot = join(store.slot(current.id), `retained-profile-${randomUUID()}`)
+      // Record recovery's destination before moving the stopped writer's profile.
+      await store.save({ ...current, profileRoot })
+      await retainReleaseProfile(this.options.dataDirectory, profileRoot)
+    }
     await store.activate(release, snapshot)
     this.options.restart()
   }
@@ -442,7 +531,7 @@ export class AppUpdateService {
   createRollbackAction(restoreConfirmed: boolean): () => Promise<void> {
     return () => {
       if (this.installPromise) return this.installPromise
-      if (this.downloadPromise)
+      if (this.downloadTask || this.checkTask || this.stopping)
         return Promise.reject(new Error('An update operation is in progress'))
       this.progress = { ...this.progress, phase: 'installing' }
       this.installPromise = (async () => {
@@ -451,26 +540,8 @@ export class AppUpdateService {
         if (previous.restoreRequired && !restoreConfirmed)
           throw new Error('Restoring pre-update data requires confirmation')
         const store = this.options.store
-        let sourceRevision: string | undefined
-        if (!previous.restoreRequired) {
-          const previousId = await optionalText(join(store.root, 'previousHealthy'))
-          const release = await store.read(previousId!)
-          const refreshed = {
-            ...release,
-            profileRoot: join(store.slot(release.id), `rollback-profile-${randomUUID()}`),
-          }
-          await this.prepareHostEnvironment(refreshed)
-          sourceRevision = JSON.parse(
-            await readFile(join(store.slot(release.id), 'prepared.json'), 'utf8')
-          ).sourceRevision
-        }
         this.stopping = true
         await this.options.shutdown()
-        if (
-          sourceRevision &&
-          sourceRevision !== (await profileRevision(currentCoreProfile(this.options.dataDirectory)))
-        )
-          throw new Error('Plugins changed while preparing rollback; prepare again')
         const activation = await store.requestRollback()
         if (
           process.env.WEWORK_E2E_CONTROL_URL &&
@@ -506,8 +577,33 @@ export class AppUpdateService {
       phase: 'failed',
       failure: { message: error instanceof Error ? error.message : String(error) },
     }
+    this.log({
+      event: 'release-operation-failed',
+      stopping: this.stopping,
+      message: this.progress.failure?.message,
+    })
     this.options.onInstallFailure?.(error, this.stopping)
   }
+
+  private log(event: Record<string, unknown>): void {
+    try {
+      this.options.log?.(event)
+    } catch {
+      console.error('[app-update] failed to persist release operation log')
+    }
+  }
+}
+
+function matchesRelease(left: UpgradeRelease | null, right: UpgradeRelease): boolean {
+  return (
+    left?.version === right.version &&
+    left.sha256 === right.sha256 &&
+    left.sourceSha === right.sourceSha &&
+    left.bytes === right.bytes &&
+    left.dataSchema === right.dataSchema &&
+    left.readableDataSchemas.length === right.readableDataSchemas.length &&
+    left.readableDataSchemas.every((schema, index) => right.readableDataSchemas[index] === schema)
+  )
 }
 
 function ownedPath(root: string, path: string): string {

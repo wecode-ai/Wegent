@@ -121,33 +121,24 @@ class ExecutionDispatcher:
             await self._recover_executor_if_needed(request, device_id=device_id)
 
             # Route to execution target
-            target = self.router.route(request, device_id)
+            target = self.router.route(
+                request,
+                await self._resolve_device_route_id(request, device_id),
+            )
             logger.info(
                 f"[ExecutionDispatcher] Routed: task_id={request.task_id}, "
                 f"subtask_id={request.subtask_id}, device_id={device_id} -> {target}"
             )
             # Create default emitter if not provided
             if emitter is None:
-                # Extract team info from request for task:created event
-                team_id = None
-                team_name = None
-                is_group_chat = False
-                if request.bot and len(request.bot) > 0:
-                    team_id = request.bot[0].get("team_id")
-                    team_name = request.bot[0].get("team_name")
-                    is_group_chat = request.bot[0].get("is_group_chat", False)
-
-                # Extract task title from request
-                task_title = request.task_title
-
                 emitter = WebSocketResultEmitter(
                     task_id=request.task_id,
                     subtask_id=request.subtask_id,
                     user_id=request.user.get("id") if request.user else None,
-                    team_id=team_id,
-                    team_name=team_name,
-                    task_title=task_title,
-                    is_group_chat=is_group_chat,
+                    team_id=request.team_id,
+                    team_name=request.team_name,
+                    task_title=request.task_title,
+                    is_group_chat=request.is_group_chat,
                     project_id=request.project_id,
                 )
 
@@ -397,6 +388,32 @@ class ExecutionDispatcher:
                 f"[ExecutionDispatcher] Failed to update subtask {subtask_id} to RUNNING: {e}"
             )
 
+    async def _resolve_device_route_id(
+        self, request: ExecutionRequest, device_id: Optional[str]
+    ) -> Optional[str]:
+        """Resolve a logical App device to its registered Socket.IO route."""
+        if (
+            not device_id
+            or not request.user
+            or request.user.get("id") is None
+            or self._has_fork_workspace_archive(request)
+        ):
+            return device_id
+
+        from app.services.device.identity import device_connection_route_id
+        from app.services.device_service import device_service
+
+        def resolve() -> Optional[str]:
+            with SessionLocal() as db:
+                device = device_service.get_device_by_device_id(
+                    db,
+                    user_id=request.user["id"],
+                    device_id=device_id,
+                )
+                return device_connection_route_id(device) if device else device_id
+
+        return await asyncio.to_thread(resolve)
+
     async def _set_subtask_executor(
         self,
         subtask_id: int,
@@ -614,11 +631,15 @@ class ExecutionDispatcher:
         """
 
         async def _emit() -> None:
-            await sio.emit(
-                target.event,
-                payload,
-                room=target.room,
-                namespace=target.namespace,
+            from app.services.execution.device_socketio import (
+                publish_device_execution,
+            )
+
+            await publish_device_execution(
+                event=target.event,
+                namespace=target.namespace or "/",
+                room=target.room or "",
+                payload=payload,
             )
 
         await run_in_main_loop(_emit)

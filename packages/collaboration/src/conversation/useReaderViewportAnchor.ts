@@ -99,6 +99,7 @@ export function useReaderViewportAnchor({
       captureUserViewportAnchor()
       return
     }
+    anchor.element = anchorElement
     const anchorRect =
       anchor.textOffset === null
         ? anchorElement.getBoundingClientRect()

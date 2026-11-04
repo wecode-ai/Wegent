@@ -321,6 +321,18 @@ average between samples; its initial value is `null`.
 each start and completion, making overlap visible independently of the configured
 worker limit. Compare shard durations and these metrics after increasing
 concurrency to identify CPU, memory, or I/O contention.
+Every signal the runner delivers to an application process or process group is
+logged as a single-line `[desktop-e2e-signal]` JSON record with an ISO timestamp,
+covering process stops, process-group termination, crash-injection freeze/kill,
+and forced in-scenario application kills. Chromium's `Network service crashed`
+lines in `app.log` use runner-local time, so correlating both records attributes
+each crash to harness teardown or leaves it as an unexplained event that needs
+further investigation. When a checkpoint step fails, the runner also captures
+`failure-followup.json` three seconds after the failure with a repeated UI
+snapshot and workbench debug state, distinguishing a slow asynchronous update
+that settled after the timeout from a stuck state. Set
+`WEWORK_E2E_FAILURE_FOLLOWUP_MS` to adjust the observation delay or `0` to
+disable the capture.
 Drawer animation checks sample from before the action until movement is observed
 and the track animation completes, then stop explicitly within the shared step
 timeout. Command transport and rendering delays cannot exhaust a fixed 800ms
@@ -474,6 +486,12 @@ Role settings load asynchronously, so source management uses `clickWhenEnabled` 
 The main desktop flow also covers pasting or dropping ordinary files and folders from Finder. The composer must render file and folder path chips without creating an attachment badge. The request sent to Codex must contain the matching absolute paths without inlining file contents. This decision depends on whether the native desktop transfer resolves a file path; the composer must not switch to attachment upload early only because its current workspace is marked as remote. The top quick-send window uses the same rule and reads bytes only for image attachments. Both scenarios use ordinary small files. For focused local diagnosis, run `node wework/e2e/desktop/run-checkpoints.mjs --pasted-workspace-paths-only` or `node wework/e2e/desktop/run-checkpoints.mjs --dropped-workspace-paths-only`.
 
 Following the cc-switch conversion boundary, the mock strictly validates what reaches the model side: authentication, model ID, stream settings, message history, tool choice, shell tools, and either the `apply_patch` Lark grammar or its function wrapper. Any incorrect field returns a non-2xx response and fails the test. The desktop test stores a follow-up screenshot for each interface plus the complete `model-requests.json`; GitHub Actions uploads desktop diagnostics on both success and failure.
+
+Plugin boundary regressions are integrated into existing checkpoints, keeping the Cloud matrix at eight shards. After its original write-coordination checks, `plugin-write-coordination` verifies installation, manual updates, and automatic update recovery using the real MinIO, Backend, Executor, and fault proxies already running in that scenario. Run it independently with `pnpm --filter wework e2e:desktop -- --segment plugin-write-coordination`; these boundary checks do not need additional jobs.
+
+Operation coverage includes disconnection, lost committed responses, failed initial package publication, retaining the working version after an upgrade failure, and continuing healthy updates after a failed item. Faults affect real transports without replacing business responses. SHA-256 request ID fingerprints distinguish logical operations from transport attempts without recording headers or credentials. Assertions check the UI, database, device versions, and actual skill contents.
+
+Before its original lost-response uninstall check, `plugin-uninstall-lost-response` runs the catalog boundary groups for source failure continuation, late responses, account and device cache isolation, detail and image failures, and blocking automatic writes from incomplete inventories before resuming after recovery. Run these groups before publishing other plugin fixtures so the real empty-catalog and exact-membership assertions remain valid. The groups share the scenario's services and retain their own cleanup and evidence. Run them with `pnpm --filter wework e2e:desktop -- --segment plugin-uninstall-lost-response`; CI covers this checkpoint too. Each group saves JSON evidence and screenshots; any failed assertion makes the checkpoint exit nonzero.
 
 The environment needs Rust, Electron build dependencies, and a real Codex binary. The runner finds `codex` on `PATH` by default; an installed or `prepare:codex`-prepared real binary can also be selected explicitly:
 

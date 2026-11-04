@@ -15,16 +15,16 @@ export function createStandInFailureRegression() {
       response.end(JSON.stringify({ error: { message: FAILURE, type: 'invalid_request_error' } }))
       return true
     },
-    async verify(control, projectId, uiTimeoutMs, modelResponseTimeoutMs) {
+    async verify(control, projectId, uiTimeoutMs, modelResponseTimeoutMs, userId) {
       const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
       const issue = await rpc('todos.create', {
         project_id: projectId,
-        todo: { title: FAILURE, assignee_user_id: 9001 },
+        todo: { title: FAILURE, assignee_user_id: userId },
       })
       const address = await rpc('runtime.stand_in.run', {
         projectId,
         issueId: issue.id,
-        userId: 9001,
+        userId,
         projectStore: 'local',
       })
       const waitForStatus = async status => {
@@ -55,7 +55,7 @@ export function createStandInFailureRegression() {
       await control.command('click', '[data-testid="wework-notifications-category-collaboration"]')
       await control.command('waitFor', status, { text: '处理失败' })
       await control.command('waitFor', `${processing} p`, {
-        text: '分身操作失败，请稍后重试；如仍失败，请查看执行设备日志。',
+        text: '暂时无法完成此操作。请保留当前修改，重新加载后再试。',
       })
       const text = await control.command('getText', processing)
       assert.ok(!/模型回复已完成|Model reply is ready/.test(text), text)

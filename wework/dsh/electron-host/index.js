@@ -1,13 +1,19 @@
+import { createRequestSecurity } from './request-security.js'
 import { ElectronHostClient, ElectronHostError } from './electron-host-client.js'
 import { createWeworkDesktopService, WEWORK_DESKTOP_SERVICE_KEY } from './desktop-service.js'
 
 export const name = 'wework-electron-host'
-export const inject = ['webServer']
+export const inject = ['webServer', 'connection']
 
 const BASE_PATH = '/wework/electron-host/v1'
 const MAX_REQUEST_BODY_BYTES = 64 * 1024 * 1024
 
 export async function apply(ctx) {
+  const security = createRequestSecurity(ctx.connection, ctx.webServer.port)
+  ctx.effect(
+    () => ctx.reflect.provide('weworkRequestSecurity', security),
+    'wework-electron-host: local HTTP authentication'
+  )
   const client = ElectronHostClient.fromEnvironment(process.env, {
     onDisconnect: hostDisconnectHandler(ctx),
   })
@@ -26,7 +32,7 @@ export async function apply(ctx) {
       ctx.webServer.register({
         kind: 'exact',
         path: BASE_PATH,
-        handler: (req, res) => describe(req, res, client),
+        handler: security.wrap((req, res) => describe(req, res, client)),
       }),
     `wework-electron-host: ${BASE_PATH}`
   )
@@ -35,7 +41,7 @@ export async function apply(ctx) {
       ctx.webServer.register({
         kind: 'exact',
         path: `${BASE_PATH}/invoke`,
-        handler: (req, res) => invoke(req, res, client),
+        handler: security.wrap((req, res) => invoke(req, res, client)),
       }),
     `wework-electron-host: ${BASE_PATH}/invoke`
   )
@@ -50,10 +56,6 @@ export function hostDisconnectHandler(ctx) {
 }
 
 async function describe(req, res, client) {
-  if (!trustedBrowserRequest(req)) {
-    sendJson(res, 403, { error: { code: 'forbidden', message: 'Forbidden' } })
-    return
-  }
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     methodNotAllowed(res, 'GET, HEAD')
     return
@@ -62,10 +64,6 @@ async function describe(req, res, client) {
 }
 
 async function invoke(req, res, client) {
-  if (!trustedBrowserRequest(req)) {
-    sendJson(res, 403, { error: { code: 'forbidden', message: 'Forbidden' } })
-    return
-  }
   if (req.method !== 'POST') {
     methodNotAllowed(res, 'POST')
     return
@@ -93,24 +91,6 @@ async function invoke(req, res, client) {
         details: normalized.details,
       },
     })
-  }
-}
-
-function trustedBrowserRequest(req) {
-  const remoteAddress = req.socket?.remoteAddress ?? ''
-  if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(remoteAddress)) {
-    return false
-  }
-  const fetchSite = singleHeader(req.headers['sec-fetch-site'])
-  if (fetchSite && !['same-origin', 'none'].includes(fetchSite)) return false
-  const origin = singleHeader(req.headers.origin)
-  const host = singleHeader(req.headers.host)
-  if (!origin) return true
-  if (!host) return false
-  try {
-    return new URL(origin).host === host
-  } catch {
-    return false
   }
 }
 
@@ -157,10 +137,6 @@ function statusForError(error) {
     return 503
   }
   return 500
-}
-
-function singleHeader(value) {
-  return Array.isArray(value) ? value[0] : value
 }
 
 function isRecord(value) {

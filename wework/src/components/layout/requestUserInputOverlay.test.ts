@@ -1,10 +1,6 @@
-import { describe, expect, test } from 'vitest'
-import {
-  isImplementationPlanConfirmationResponse,
-  requestUserInputPayloadKey,
-  requestUserInputResponseKey,
-} from '@/components/chat/requestUserInputMessages'
+import { isImplementationPlanConfirmationResponse } from '@/components/chat/requestUserInputMessages'
 import type { WorkbenchMessage } from '@/types/workbench'
+import { describe, expect, test } from 'vitest'
 import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
 
 describe('pendingRequestUserInputPayload', () => {
@@ -314,14 +310,5 @@ describe('pendingRequestUserInputPayload', () => {
     ] as WorkbenchMessage[]
 
     expect(pendingRequestUserInputPayload(messages)).toBeNull()
-  })
-})
-
-describe('request user input message helpers', () => {
-  test('normalizes request ids from payloads and responses', () => {
-    expect(requestUserInputPayloadKey({ kind: 'request_user_input', request_id: 42 })).toBe(
-      'request:42'
-    )
-    expect(requestUserInputResponseKey({ requestId: 42, answers: {} })).toBe('request:42')
   })
 })

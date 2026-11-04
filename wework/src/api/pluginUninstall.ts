@@ -20,6 +20,16 @@ async function withDeadline<T>(
   }
 }
 
+/** Bound the account read required before uninstall can change account or local state. */
+export function readInstalledPluginsForUninstall(
+  client: HttpClient
+): Promise<InstalledPluginListResponse> {
+  return withDeadline(
+    signal => client.get<InstalledPluginListResponse>('/plugins/installed', { signal }),
+    PLUGIN_UNINSTALL_CHECK_TIMEOUT_MS
+  )
+}
+
 /** Confirm ambiguous DELETE outcomes against account state, never a local/device cache. */
 export async function uninstallCloudPlugin(
   client: HttpClient,
@@ -45,10 +55,7 @@ export async function uninstallCloudPlugin(
 
   try {
     // No device filter: a plugin missing on this device can still be installed on the account.
-    const inventory = await withDeadline(
-      signal => client.get<InstalledPluginListResponse>('/plugins/installed', { signal }),
-      PLUGIN_UNINSTALL_CHECK_TIMEOUT_MS
-    )
+    const inventory = await readInstalledPluginsForUninstall(client)
     const ids = inventory?.items?.map(plugin => {
       const labels = plugin.metadata?.labels
       return labels && typeof labels === 'object'

@@ -337,7 +337,10 @@ export function createCloudHistorySearchVerification() {
           'The bound cloud task did not open',
           WORKBENCH_READY_TIMEOUT_MS
         )
-        await control.command('waitFor', OLDER)
+        await control.command(
+          'waitFor',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="runtime-transcript-history-start"]`
+        )
         await control.command('waitFor', ANSWERS, { text: answer(TURN_COUNT - 1) })
         const original = await waitForPane(
           control,

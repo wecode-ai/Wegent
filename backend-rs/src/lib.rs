@@ -105,6 +105,7 @@ mod cloud_project_automations;
 mod cloud_projects;
 mod cloud_projects_members;
 mod cloud_projects_runtime_default;
+mod collaboration_templates;
 pub mod config;
 mod connector_runtime;
 mod conversion_callback;
@@ -170,6 +171,7 @@ mod loop_tasks;
 mod market_subscriptions;
 mod marketplace_tags;
 mod mcp;
+mod project_coordination;
 pub mod task_store_background;
 pub mod task_store_maintenance;
 

@@ -6,6 +6,7 @@ export function summarizeRuntimeTaskExecution(task: RuntimeTaskSummary | null) {
   if (!task) return null
   return {
     taskId: task.taskId,
+    executionState: task.executionState ?? null,
     status: task.status ?? null,
     running: task.running ?? null,
     threadStatus: task.threadStatus ?? null,
@@ -50,6 +51,7 @@ export function runtimeTaskBoardState(task: RuntimeTaskSummary): RuntimeTaskBoar
 }
 
 export function normalizeRuntimeTaskSummary(task: RuntimeTaskSummary): RuntimeTaskSummary {
+  if (task.executionState) return task
   if (!isRuntimeTaskAuthoritativeCompletion(task)) return task
 
   const status = task.status?.trim().toLowerCase()
@@ -102,6 +104,11 @@ export function shouldReplaceRuntimeTaskProjection(
 ): boolean {
   const current = normalizeRuntimeTaskSummary(currentTask)
   const candidate = normalizeRuntimeTaskSummary(candidateTask)
+  if (current.executionState || candidate.executionState) {
+    if (!candidate.executionState) return false
+    if (!current.executionState) return true
+    return BigInt(candidate.executionState.revision) > BigInt(current.executionState.revision)
+  }
   if (current.cachedProjection !== candidate.cachedProjection) {
     return current.cachedProjection === true
   }
@@ -146,6 +153,7 @@ export function shouldReplaceRuntimeTaskProjection(
 }
 
 export function isRuntimeTaskAuthoritativeCompletion(task: RuntimeTaskSummary): boolean {
+  if (task.executionState) return task.executionState.phase === 'idle'
   return task.running === false && task.completedAt != null && !isRuntimeGoalExecutionActive(task)
 }
 
@@ -160,6 +168,8 @@ export type RuntimeTaskTrackingExecutionStatus =
 export function runtimeTaskTrackingExecutionStatus(
   lifecycle: RuntimeTaskLifecycleSnapshot
 ): RuntimeTaskTrackingExecutionStatus | null {
+  if (lifecycle.task?.executionState)
+    return runtimeTaskSummaryTrackingExecutionStatus(lifecycle.task)
   if (lifecycle.derived.isQueued) return 'queued'
   if (lifecycle.turn.active) return 'running'
   if (lifecycle.turn.outcome) return lifecycle.turn.outcome
@@ -210,6 +220,7 @@ export function runtimeTaskSummaryTrackingExecutionStatus(
 }
 
 export function isRuntimeTaskConfirmedActive(task: RuntimeTaskSummary): boolean {
+  if (task.executionState) return isRuntimeTaskExecutionRunning(task)
   if (task.optimistic === true) return false
   if (isRuntimeGoalExecutionActive(task)) return true
   return (
@@ -220,6 +231,8 @@ export function isRuntimeTaskConfirmedActive(task: RuntimeTaskSummary): boolean 
 }
 
 export function isRuntimeTaskExecutionRunning(task: RuntimeTaskSummary): boolean {
+  if (task.executionState)
+    return task.executionState.phase !== 'idle' && task.executionState.phase !== 'queued'
   const normalizedTask = normalizeRuntimeTaskSummary(task)
   if (normalizedTask.optimistic === true) return false
   if (isRuntimeGoalExecutionActive(normalizedTask)) return true
@@ -227,6 +240,8 @@ export function isRuntimeTaskExecutionRunning(task: RuntimeTaskSummary): boolean
 }
 
 export function isRuntimeGoalExecutionActive(task: RuntimeTaskSummary): boolean {
+  if (task.executionState)
+    return task.goalStatus === 'active' && isRuntimeTaskExecutionRunning(task)
   if (task.goalExecutionStatus === 'running' || task.goalExecutionStatus === 'recovering') {
     return true
   }

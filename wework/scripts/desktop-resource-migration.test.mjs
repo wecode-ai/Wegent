@@ -291,17 +291,17 @@ describe('desktop resource migration', () => {
     expect(source).toContain('WeWorkHostUpdate_${escape(version)}_linux_')
   })
 
-  test('creates component archives from immutable prepared resources', async () => {
+  test('creates component archives from the delivered application', async () => {
     const source = await readFile(
       join(weworkRoot, 'scripts/prepare-desktop-release-assets.mjs'),
       'utf8'
     )
 
-    expect(source).toContain('const packagedComponentResourcesRoot = componentResourcesRoot')
-    expect(source).toContain("join(packagedComponentResourcesRoot, 'components.json')")
-    expect(source).toContain('join(packagedComponentResourcesRoot, component.path)')
-    expect(source).toContain('contentSha256 = await hashComponentPath(sourcePath)')
-    expect(source).toContain('releaseScope: componentReleaseScope(id)')
+    expect(source).toContain('deliveredPackagePaths(installerRoot, platform, arch)')
+    expect(source).toContain(
+      'preparePackagedComponentAssets({ resourcesRoot, version, platform, arch, output })'
+    )
+    expect(source).not.toContain("'electron', 'resources'")
     expect(source).not.toContain('async function findDirectory')
   })
 
@@ -325,7 +325,8 @@ describe('desktop resource migration', () => {
     expect(source).toContain(
       "const packagedResources = join(packagedResourcesRoot, 'harness-runtime')"
     )
-    expect(source).toContain("corePluginsRoot: join(packagedResourcesRoot, 'wework-core-plugins')")
+    expect(source).toContain('corePluginsRoot: componentRoots.weworkCorePlugins')
+    expect(source).toContain('await packagedComponentRoots(')
     expect(source).toContain('harnessRuntimeRoot: runtimeRoot')
     expect(source).not.toContain("['prepare:harness-runtime', '--materialize']")
   })
@@ -333,7 +334,10 @@ describe('desktop resource migration', () => {
   test('packages split Wework app static resources for local Electron verification', async () => {
     const source = await readFile(join(weworkRoot, 'electron/scripts/package-app.mjs'), 'utf8')
 
-    expect(source).toContain("join(electronRoot, 'resources', 'wework-app-static')")
+    const { default: layout } = await import('../electron/scripts/bundled-component-layout.cjs')
+    expect(layout.directories).toContain('wework-app-static')
+    expect(source).toContain('bundledComponentLayout.directories.map')
+    expect(source).toContain('`${name}.tar.gz`')
   })
 
   test('prepares AI verification source mode without packaged Node resources', async () => {

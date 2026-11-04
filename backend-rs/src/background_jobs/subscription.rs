@@ -11,6 +11,8 @@ mod completion_tests;
 mod context;
 #[path = "subscription_delivery.rs"]
 pub(crate) mod delivery;
+#[path = "subscription_directives.rs"]
+pub(crate) mod directives;
 #[path = "subscription_execution.rs"]
 mod execution;
 #[path = "subscription_history.rs"]

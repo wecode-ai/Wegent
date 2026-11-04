@@ -2,8 +2,13 @@ import assert from 'node:assert/strict'
 import { cp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { fetchLocalRuntime } from '../modules/runtime-request.mjs'
 import { withTimeout } from '../modules/shared.mjs'
 import { waitForBundledMarketplaceRegistration } from '../modules/plugin-flows.mjs'
+import {
+  verifyStandInResourceScopes,
+  verifyStandInCalendarPolicy,
+} from '../modules/stand-in-resource-scope-flows.mjs'
 
 const PACKAGE = '@test/connection-source'
 const PROVIDER = `${PACKAGE}/records`
@@ -27,11 +32,11 @@ export function createDesktopScenario({
     rpc(control, 'runtime.codex.app_server.request', { method, params })
   async function host(control, capability, params) {
     const origin = await control.command('getLocationOrigin', 'body')
-    const response = await fetch(`${origin}/wework/electron-host/v1/invoke`, {
+    const response = await fetchLocalRuntime(control, `${origin}/wework/electron-host/v1/invoke`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ capability, params }),
-      signal: AbortSignal.timeout(workbenchReadyTimeoutMs),
+      timeoutMs: workbenchReadyTimeoutMs,
     })
     const result = await response.json()
     assert.equal(result.ok, true, JSON.stringify(result.error))
@@ -106,6 +111,7 @@ export function createDesktopScenario({
                   uses: ['source'],
                   collectionModes: ['poll'],
                   resourceKinds: ['record'],
+                  allResourceKinds: ['record'],
                   resourceLabels: { record: 'Records' },
                   eventTypes: ['record.received'],
                 },
@@ -172,6 +178,15 @@ export function createDesktopScenario({
         calls.map(call => call.name),
         ['read_record']
       )
+      await writeFile(
+        records,
+        JSON.stringify([
+          { id: 'record-1', value: 'existing-plugin-value' },
+          { id: 'record-2', value: 'second-record' },
+        ])
+      )
+      await verifyStandInResourceScopes(control, rpc, PROVIDER)
+      await verifyStandInCalendarPolicy(control, rpc)
       await assert.rejects(
         codex(control, 'plugin/uninstall', { pluginId: PLUGIN }),
         /Disable connection plugin/

@@ -476,6 +476,7 @@ function hasLocalExecutorResponseHandlers(handlers: ChatStreamHandlers): boolean
     handlers.onRuntimeGoalUpdated ||
     handlers.onRuntimeGoalCleared ||
     handlers.onRuntimeSupervisorUpdated ||
+    handlers.onRuntimeTurnUpdated ||
     handlers.onRuntimePlanUpdated ||
     handlers.onGuidanceApplied ||
     handlers.onRuntimeEventLagged ||
@@ -616,6 +617,9 @@ function logRuntimeChatStreamNativeEvent(
     subtaskId: stringField(payload, 'subtaskId'),
     deviceId: stringField(payload, 'deviceId'),
     blockId: stringField(data, 'blockId') ?? stringField(data, 'block_id'),
+    blockType: stringField(asRecord(data.block), 'type'),
+    replacesItemId: stringField(data, 'replacesItemId'),
+    itemId: stringField(data, 'itemId'),
     contentDeltaLength: contentDelta?.length,
     contentDeltaFingerprint: contentDelta ? textFingerprint(contentDelta) : undefined,
     matchingSubscriptionIds: subscriptions

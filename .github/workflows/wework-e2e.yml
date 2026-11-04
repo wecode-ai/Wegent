@@ -201,7 +201,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          filter: blob:none
 
       - name: Set up Node workspace
         uses: ./.github/actions/setup-node-workspace
@@ -252,8 +251,10 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          filter: blob:none
           persist-credentials: false
+
+      - name: Verify isolated Xvfb lifecycle
+        run: node --test wework/e2e/desktop/xvfb-lifecycle.test.mjs
 
       - name: Set up ORAS
         uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d
@@ -363,11 +364,18 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          filter: blob:none
           persist-credentials: false
 
       - name: Verify native sandbox namespaces
         run: bash .github/scripts/verify-native-sandbox-namespaces.sh
+
+      - name: Prepare real mailbox server runtime
+        if: contains(matrix.segments, 'stand-in-email')
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends openjdk-21-jre-headless
+          java -version
+          keytool -help >/dev/null
 
       - name: Restore local harness CLIs
         if: contains(matrix.segments, 'local-harness') || contains(matrix.segments, 'claude-runtime') || contains(matrix.segments, 'collaboration-agent-automation-chain')
@@ -400,6 +408,15 @@ jobs:
         with:
           setup-toolchain: "false"
 
+      - name: Install the native log-folder opener
+        if: contains(matrix.segments, 'native-window-startup')
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends file xdg-utils pcmanfm
+          XDG_CONFIG_HOME=/etc/xdg xdg-mime default pcmanfm.desktop inode/directory
+          test "$(XDG_CONFIG_HOME=/tmp/wework-e2e-unconfigured xdg-mime query default inode/directory)" = pcmanfm.desktop
+          test "$(xdg-mime query filetype /tmp)" = inode/directory
+
       - name: Install Electron for native startup and schema verification
         if: contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'native-window-startup')
         run: |
@@ -417,6 +434,7 @@ jobs:
           CI: true
           RUNNER_PROCESS_DIAGNOSTICS: ${{ contains(matrix.segments, 'background-terminals') && '1' || '0' }}
           WEWORK_E2E_SOCKET_IO_CLIENT: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/e2e-client/socket.io-client.cjs
+          WEWORK_E2E_YAML_PARSER: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/e2e-client/yaml.cjs
           WEWORK_E2E_APP_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/WeWork
           WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/resources/bin/wegent-executor
           WEWORK_E2E_CODEX_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex
@@ -486,7 +504,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          filter: blob:none
           persist-credentials: false
 
       - name: Restore or build Windows Wework desktop E2E package
@@ -575,7 +592,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          filter: blob:none
           persist-credentials: false
 
       - name: Set up Node.js for prebuilt desktop tests
@@ -725,6 +741,18 @@ jobs:
           pnpm --dir wework/electron install --frozen-lockfile
           pnpm --dir wework/electron exec node -e "require('node:fs').statSync(require('electron'))"
 
+      - name: Prepare DingTalk protocol fixture for the standard account
+        if: contains(matrix.segments, 'stand-in-identities') || contains(matrix.segments, 'stand-in-connections') || contains(matrix.segments, 'stand-in-cli')
+        shell: pwsh
+        run: |
+          $directory = Join-Path $env:GITHUB_WORKSPACE "wework/test-results/windows-e2e-tools/dingtalk"
+          New-Item -ItemType Directory -Force -Path $directory | Out-Null
+          $binary = Join-Path $directory "dws-fixture.exe"
+          rustc wework/e2e/desktop/fixtures/connection-dingtalk-cli.rs --edition 2021 -o $binary
+          if ($LASTEXITCODE -ne 0) { throw "Failed to compile the DingTalk protocol fixture" }
+          "WEWORK_E2E_DWS_FIXTURE_BIN=$binary" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Run Windows Wework desktop Core shard E2E
         id: windows-core-e2e
         # Finish before the job deadline so failure logs and artifacts can upload.
@@ -735,6 +763,7 @@ jobs:
           CI: true
           WEWORK_E2E_APP_BIN: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/WeWork.exe
           WEWORK_E2E_SOCKET_IO_CLIENT: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/resources/e2e-client/socket.io-client.cjs
+          WEWORK_E2E_YAML_PARSER: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/resources/e2e-client/yaml.cjs
           WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/resources/bin/wegent-executor.exe
           WEWORK_E2E_BACKEND_RS_BIN: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/resources/bin/wegent-backend-rs.exe
           WEWORK_E2E_CODEX_BIN: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/resources/codex/vendor/x86_64-pc-windows-msvc/bin/codex.exe
@@ -748,7 +777,9 @@ jobs:
             $env:WEWORK_E2E_EXECUTOR_BIN,
             $env:WEWORK_E2E_BACKEND_RS_BIN,
             $env:WEWORK_E2E_CODEX_BIN,
-            (Join-Path (Split-Path $env:WEWORK_E2E_APP_BIN) "resources/bundled-plugins/wework-personal/.agents/plugins/marketplace.json")
+            (Join-Path (Split-Path $env:WEWORK_E2E_APP_BIN) "resources/wework-core-plugins.tar.gz"),
+            (Join-Path (Split-Path $env:WEWORK_E2E_APP_BIN) "resources/wework-app-static.tar.gz"),
+            (Join-Path (Split-Path $env:WEWORK_E2E_APP_BIN) "resources/bundled-plugins.tar.gz")
           )) {
             if (-not (Test-Path $path -PathType Leaf)) {
               Get-ChildItem -Path (Split-Path $env:WEWORK_E2E_APP_BIN) -Force -ErrorAction Continue |
@@ -846,7 +877,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          filter: blob:none
           persist-credentials: false
 
       - name: Verify native sandbox namespaces
@@ -895,7 +925,9 @@ jobs:
       - name: Run Wework desktop Cloud E2E checkpoints
         env:
           CI: true
+          RUNNER_PROCESS_SAMPLE_AFTER_MS: ${{ contains(matrix.segments, 'plugin-write-coordination') && '390000' || '' }}
           WEWORK_E2E_SOCKET_IO_CLIENT: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/e2e-client/socket.io-client.cjs
+          WEWORK_E2E_YAML_PARSER: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/e2e-client/yaml.cjs
           WEWORK_E2E_APP_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/WeWork
           WEWORK_E2E_CODEX_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex
           WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/resources/bin/wegent-executor
@@ -995,7 +1027,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          filter: blob:none
           persist-credentials: false
 
       - name: Verify native sandbox namespaces
@@ -1014,6 +1045,7 @@ jobs:
         env:
           CI: true
           WEWORK_E2E_SOCKET_IO_CLIENT: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/e2e-client/socket.io-client.cjs
+          WEWORK_E2E_YAML_PARSER: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/e2e-client/yaml.cjs
           CODEX_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex
           E2E_COMMAND: ${{ matrix.command }}
           E2E_SEGMENT: ${{ matrix.segment }}
@@ -1028,14 +1060,14 @@ jobs:
           test -x "$WEWORK_E2E_EXECUTOR_BIN"
           test -x "$WEWORK_E2E_BACKEND_RS_BIN"
           if [[ -z "$E2E_SEGMENT" ]]; then
-            xvfb-run -a --server-args="-screen 0 1280x720x24" \
+            xvfb-run -a --server-args="-noreset -screen 0 1280x720x24" \
               pnpm --filter wework "$E2E_COMMAND"
             exit 0
           fi
           IFS=',' read -ra segments <<< "$E2E_SEGMENT"
           status=0
           for segment in "${segments[@]}"; do
-            xvfb-run -a --server-args="-screen 0 1280x720x24" \
+            xvfb-run -a --server-args="-noreset -screen 0 1280x720x24" \
               pnpm --filter wework "$E2E_COMMAND" -- --segment "$segment" || status=$?
           done
           exit "$status"
@@ -1167,7 +1199,7 @@ jobs:
     name: Wework Desktop macOS E2E
     needs: changes
     if: github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all') && (needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all'))))
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 45
     permissions:
       contents: read
@@ -1180,7 +1212,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          filter: blob:none
 
       - name: Set up ORAS
         uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d
@@ -1376,20 +1407,11 @@ jobs:
 
           .github/scripts/build-macos-e2e-runtimes.sh \
             "$executor_runtime" \
-            "$backend_runtime" &
-          runtimes_pid=$!
+            "$backend_runtime"
+          # Package only after the runtime producers have completed successfully.
           WEWORK_E2E_PREBUILT_EXECUTOR_PATH="$executor_runtime" \
-            WEWORK_E2E_PREBUILT_EXECUTOR_WAIT_SECONDS="900" \
             CARGO_BUILD_TARGET=aarch64-apple-darwin \
-            pnpm --filter wework ai:verify:electron:build &
-          wework_pid=$!
-
-          status=0
-          wait "$wework_pid" || status=$?
-          wait "$runtimes_pid" || status=$?
-          if [[ "$status" -ne 0 ]]; then
-            exit "$status"
-          fi
+            pnpm --filter wework ai:verify:electron:build
 
           test -x "$PWD/wework/electron/release/WeWork-darwin-arm64/WeWork.app/Contents/MacOS/WeWork"
           test -x "$PWD/wework/electron/release/WeWork-darwin-arm64/WeWork.app/Contents/Resources/bin/wegent-executor"

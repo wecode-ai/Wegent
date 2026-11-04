@@ -1,8 +1,9 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { LocalHarnessModelOption } from '@/features/local-harness/localHarnessModels'
 import {
   coreDshProviderId,
   coreDshProviderProfile,
+  requestCoreDsh,
   resetCoreDshModelSyncForTests,
   scheduleCoreDshModelSync,
   syncCoreDshModels,
@@ -34,6 +35,87 @@ describe('Core DSH model sync', () => {
     resetCoreDshModelSyncForTests()
   })
 
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  test('publishes providers and the default model through the DSH 0.2 Remote gateway', async () => {
+    const writes: Array<Record<string, unknown>> = []
+    const rpcIds = new Set<string>()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        const message = JSON.parse(String(init.body))
+        if (
+          url !== `/api/${message.method}` ||
+          !['settings/describe', 'settings/mutate'].includes(message.method)
+        ) {
+          return new Response('not found', { status: 404 })
+        }
+        expect(init.method).toBe('POST')
+        expect(init.headers).toEqual({ 'content-type': 'application/json' })
+        expect(message.type).toBe('client-request')
+        expect(message.rpcId).toEqual(expect.any(String))
+        expect(rpcIds.has(message.rpcId)).toBe(false)
+        rpcIds.add(message.rpcId)
+        expect(Object.keys(message.payload)).toEqual(['args'])
+        let value: unknown
+        if (message.method === 'settings/describe') {
+          expect(message.payload.args).toEqual({})
+          value = {
+            namespaces: [
+              { ns: 'llm-pi-ai', user: {} },
+              { ns: 'agent-default-model', user: {} },
+            ],
+          }
+        } else {
+          writes.push(message.payload.args)
+          value = {}
+        }
+        return Response.json({
+          type: 'server-response',
+          rpcId: message.rpcId,
+          result: { ok: true, value },
+        })
+      })
+    )
+
+    await syncCoreDshModels(
+      { options: [modelOption('model-a', 'Model A')] },
+      {
+        resolveLaunch: async () => ({
+          modelId: 'wework-selected',
+          proxyToken: 'token-a',
+          baseUrl: 'http://127.0.0.1:1234/v1/harness-router/token-a',
+          env: {},
+        }),
+        unregisterProxy: vi.fn(async () => undefined),
+        request: requestCoreDsh,
+      }
+    )
+
+    expect(writes).toMatchObject([
+      {
+        ns: 'llm-pi-ai',
+        ops: [
+          {
+            op: 'set',
+            path: ['providers', coreDshProviderId('model-a')],
+            value: { displayName: 'Model A' },
+          },
+        ],
+      },
+      {
+        ns: 'agent-default-model',
+        ops: [
+          { op: 'set', path: ['provider'], value: coreDshProviderId('model-a') },
+          { op: 'set', path: ['model'], value: 'wework-selected' },
+        ],
+      },
+    ])
+    expect(rpcIds.size).toBe(3)
+  })
+
   test('publishes Wework models without replacing user-managed DSH providers', async () => {
     const first = modelOption('model-a', 'Model A', {
       contextWindow: 128_000,
@@ -52,7 +134,7 @@ describe('Core DSH model sync', () => {
       })),
       unregisterProxy: vi.fn(async () => undefined),
       request: vi.fn(async (method, payload) => {
-        if (method === 'settings.describe') {
+        if (method === 'settings/describe') {
           return {
             namespaces: [
               {
@@ -68,7 +150,7 @@ describe('Core DSH model sync', () => {
             ],
           }
         }
-        if (method === 'settings.mutate') {
+        if (method === 'settings/mutate') {
           mutations.push(payload as (typeof mutations)[number])
           return {}
         }
@@ -141,7 +223,7 @@ describe('Core DSH model sync', () => {
       }),
       unregisterProxy,
       request: vi.fn(async method => {
-        if (method === 'settings.describe') {
+        if (method === 'settings/describe') {
           return {
             namespaces: [{ ns: 'llm-pi-ai', user: {} }],
           }
@@ -168,7 +250,7 @@ describe('Core DSH model sync', () => {
       resolveLaunch: vi.fn(),
       unregisterProxy: vi.fn(async () => undefined),
       request: vi.fn(async (method, payload) => {
-        if (method === 'settings.describe') {
+        if (method === 'settings/describe') {
           return {
             namespaces: [
               {
@@ -182,7 +264,7 @@ describe('Core DSH model sync', () => {
             ],
           }
         }
-        if (method === 'settings.mutate') {
+        if (method === 'settings/mutate') {
           mutations.push(payload as (typeof mutations)[number])
           return {}
         }
@@ -220,7 +302,7 @@ describe('Core DSH model sync', () => {
       })),
       unregisterProxy: vi.fn(async () => undefined),
       request: vi.fn(async (method, payload) => {
-        if (method === 'settings.describe') {
+        if (method === 'settings/describe') {
           return {
             namespaces: [
               { ns: 'llm-pi-ai', user: {} },
@@ -234,7 +316,7 @@ describe('Core DSH model sync', () => {
             ],
           }
         }
-        if (method === 'settings.mutate') {
+        if (method === 'settings/mutate') {
           mutations.push(payload as (typeof mutations)[number])
           return {}
         }
@@ -276,7 +358,7 @@ describe('Core DSH model sync', () => {
       resolveLaunch,
       unregisterProxy: vi.fn(async () => undefined),
       request: vi.fn(async method => {
-        if (method === 'settings.describe') {
+        if (method === 'settings/describe') {
           return {
             namespaces: [
               { ns: 'llm-pi-ai', user: {} },
@@ -284,7 +366,7 @@ describe('Core DSH model sync', () => {
             ],
           }
         }
-        if (method === 'settings.mutate') return {}
+        if (method === 'settings/mutate') return {}
         throw new Error(`Unexpected method: ${method}`)
       }),
     }
@@ -309,7 +391,7 @@ describe('Core DSH model sync', () => {
       resolveLaunch,
       unregisterProxy: vi.fn(async () => undefined),
       request: vi.fn(async (method, payload) => {
-        if (method === 'settings.describe') {
+        if (method === 'settings/describe') {
           return {
             namespaces: [
               { ns: 'llm-pi-ai', user: {} },
@@ -317,7 +399,7 @@ describe('Core DSH model sync', () => {
             ],
           }
         }
-        if (method === 'settings.mutate') {
+        if (method === 'settings/mutate') {
           mutations.push(payload)
           return {}
         }
@@ -344,12 +426,12 @@ describe('Core DSH model sync', () => {
       })),
       unregisterProxy,
       request: vi.fn(async method => {
-        if (method === 'settings.describe') {
+        if (method === 'settings/describe') {
           return {
             namespaces: [{ ns: 'llm-pi-ai', user: {} }],
           }
         }
-        if (method === 'settings.mutate') return {}
+        if (method === 'settings/mutate') return {}
         throw new Error(`Unexpected method: ${method}`)
       }),
     }

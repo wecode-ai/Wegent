@@ -9,6 +9,23 @@ root = File.expand_path("../..", __dir__)
 workflows = File.join(root, ".github/workflows")
 producer = YAML.safe_load(File.read(File.join(workflows, "e2e-tests.yml")))
   .fetch("jobs").fetch("build-backend-rs-e2e-runtime")
+[[false, false, false, false],
+ [true, false, false, true],
+ [false, true, false, true],
+ [true, true, false, true],
+ [false, true, true, false]].each do |platform, desktop, draft, expected|
+  values = {
+    "github.event_name" => "pull_request",
+    "github.event.pull_request.draft" => draft,
+    "needs.changes.outputs.platform_e2e" => platform.to_s,
+    "needs.changes.outputs.wework_desktop_e2e" => desktop.to_s
+  }
+  expression = producer.fetch("if")
+  values.each { |key, value| expression = expression.gsub(key, value.inspect) }
+  unless eval(expression) == expected
+    raise "Backend runtime producer eligibility differs for platform=#{platform}, desktop=#{desktop}, draft=#{draft}"
+  end
+end
 steps = producer.fetch("steps")
 step = ->(name) { steps.find { |candidate| candidate["name"] == name }.fetch("run") }
 digest = steps.find { |candidate| candidate["id"] == "runtime" }

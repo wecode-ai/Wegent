@@ -1,3 +1,4 @@
+import { verifyCommentAssignmentTargets } from '../modules/comment-assignment-targets.mjs'
 import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -708,6 +709,15 @@ export function createDesktopScenario({
           agent,
           scoped,
         })
+        await verifyCommentAssignmentTargets(control, {
+          request,
+          project,
+          issue,
+          owner,
+          agent,
+          scoped,
+          capture,
+        })
         await capture(control, 'collaboration-shared-core-05-shared-issue-detail.png')
         const activitySelector = scoped(`[data-testid="cloud-task-activity-${issue.id}"]`)
         const activityListSelector = scoped('[data-testid="cloud-task-activity-list"]')
@@ -738,6 +748,13 @@ export function createDesktopScenario({
         await control.command('fill', replyComposerSelector, {
           value: '在动态卡片内回复',
         })
+        await control.command(
+          'waitFor',
+          scoped(
+            '[data-testid="issue-reply-composer"] [data-testid="send-message-button"]:enabled'
+          ),
+          { timeoutMs: uiTimeoutMs }
+        )
         await control.command('press', replyComposerSelector, { key: 'Enter' })
         await control.command('waitFor', scoped('[data-testid^="cloud-task-activity-replies-"]'), {
           text: '在动态卡片内回复',

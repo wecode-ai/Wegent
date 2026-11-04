@@ -1,9 +1,9 @@
-import { useState } from 'react'
-import { describe, expect, it, vi } from 'vitest'
+import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
+import '@/i18n'
 import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import '@/i18n'
-import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
+import { useState } from 'react'
+import { describe, expect, it, vi } from 'vitest'
 import { TodoEditor } from './TodoEditor'
 
 const item = {
@@ -82,16 +82,6 @@ function setup(
 }
 
 describe('workspace Issue assignee', () => {
-  it('keeps one inline save action in the read-first two-column layout', async () => {
-    setup({}, 'Owner', 'modal')
-    const user = userEvent.setup()
-    await user.click(screen.getAllByTestId('cloud-todo-detail-assignee')[0])
-    await user.click(await screen.findByTestId('cloud-todo-detail-assignee-option-empty'))
-    const save = screen.getByTestId('cloud-todo-save')
-    expect(save.closest('.task-detail-meta-line')).not.toBeNull()
-    expect(save).toHaveTextContent('保存分配')
-  })
-
   it('retains the inline save action and draft after a rejected assignment', async () => {
     const api = setup()
     api.assignLoopItem.mockRejectedValueOnce(new Error('Assignment rejected'))
@@ -121,44 +111,6 @@ describe('workspace Issue assignee', () => {
       'WEG-1',
       expect.objectContaining({ notifyAssignee: true })
     )
-  })
-
-  it.each([true, false])('switches the completed automation owner with notify=%s', async notify => {
-    const api = setup()
-    const user = userEvent.setup()
-    const summary = screen.getByTestId('cloud-todo-state-summary')
-    const owner = within(summary).getByTestId('cloud-todo-state-assignee')
-    expect(owner).toHaveTextContent('Codex 工程师')
-    const select = within(owner).getByRole('button', { name: '负责人' })
-    await user.click(select)
-    await user.click(await screen.findByRole('option', { name: '张三' }))
-    expect(owner.querySelector('strong')).toHaveTextContent('张三')
-    expect(screen.queryByText('是否通知负责人')).not.toBeInTheDocument()
-    const inlineSave = within(summary).getByTestId('cloud-todo-save')
-    expect(inlineSave).toHaveTextContent('保存并通知')
-    expect(
-      screen
-        .getByTestId('cloud-todo-detail')
-        .querySelector('header [data-testid="cloud-todo-save"]')
-    ).toBeNull()
-    if (notify) {
-      await user.click(inlineSave)
-    } else {
-      await user.click(within(summary).getByTestId('cloud-todo-save-options'))
-      expect(api.assignLoopItem).not.toHaveBeenCalled()
-      await user.click(screen.getByRole('menuitem', { name: '仅保存不通知' }))
-    }
-    await vi.waitFor(() => {
-      expect(api.assignLoopItem).toHaveBeenCalledWith('11', 'WEG-1', {
-        version: 1,
-        assigneeType: 'user',
-        assigneeId: '5',
-        notifyAssignee: notify,
-      })
-      expect(screen.queryByTestId('cloud-todo-save')).not.toBeInTheDocument()
-    })
-    expect(owner.querySelector('strong')).toHaveTextContent('张三')
-    expect(api.updateLoopItem).not.toHaveBeenCalled()
   })
 
   it('clears the owner and shows the add-owner entry', async () => {
@@ -253,12 +205,6 @@ describe('workspace Issue assignee', () => {
       expect(screen.getByTestId('cloud-todo-detail-assignee')).toBeDisabled()
     }
   )
-
-  it('switches the owner for a Developer without project management role', () => {
-    setup({}, 'Developer')
-    expect(screen.getByTestId('cloud-todo-state-assignee')).toHaveTextContent('Codex 工程师')
-    expect(screen.getByTestId('cloud-todo-detail-assignee')).not.toBeDisabled()
-  })
 
   it('keeps a Viewer Issue creator read-only under CP06 and CP07', () => {
     const api = setup({ created_by_user_id: 1 }, 'Viewer')

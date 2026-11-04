@@ -1,3 +1,4 @@
+import { TelemetryCollectionNotice } from '@/telemetry/TelemetryCollectionNotice'
 import { DefaultRunnerSetting } from './DefaultRunnerSetting'
 import { ReplyPredictionSettings } from './ReplyPredictionSettings'
 import { useContext, useEffect, useState } from 'react'
@@ -19,6 +20,7 @@ import {
 import { KeyboardShortcut } from '@/components/common/KeyboardShortcut'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { useTranslation } from '@/hooks/useTranslation'
+import { INTERACTIONS_PATH } from '@/features/notifications/RuntimeInteractionsContext'
 import {
   SettingsGroup,
   SettingsPage,
@@ -50,7 +52,6 @@ import { WorkbenchContext } from '@/features/workbench/useWorkbench'
 import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
 import { harnessAppsApi, type HarnessAppInstallation } from '@/api/local/harnessApps'
 import { changeWorkbenchMode } from '@/features/workbench-mode/workbenchMode'
-import { getTelemetryConfig } from '@/telemetry/config'
 import { getPlatform } from '@/lib/platform'
 
 type BooleanPreferenceKey = {
@@ -94,7 +95,6 @@ interface TrayDisplayOption {
 }
 
 export function GeneralSettingsPage() {
-  const telemetryDistribution = getTelemetryConfig().distribution
   const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
   const appPreferences = useAppPreferencesState()
@@ -681,7 +681,10 @@ export function GeneralSettingsPage() {
                     tab.kind === 'smart_app'
                       ? (tab.title ?? t('workbench.smart_apps_title', '智能工作台'))
                       : tab.kind === 'auxiliary'
-                        ? (tab.title ?? t('workbench.workspace_tab_auxiliary', '工作区'))
+                        ? (tab.title ??
+                          (tab.contentRoute === INTERACTIONS_PATH
+                            ? t('interactions.title', '待你处理')
+                            : t('workbench.workspace_tab_auxiliary', '工作区')))
                         : (tab.title ??
                           t(`workbench.general_settings_default_workspace_tab_${tab.kind}`))
                   return (
@@ -1033,21 +1036,20 @@ export function GeneralSettingsPage() {
         </SettingsGroup>
       </section>
 
-      {telemetryDistribution === 'public' ? (
-        <section data-testid="general-settings-privacy-section" className="mt-12">
-          <div className="mb-2 px-0.5 text-sm font-semibold text-text-primary">
-            {t('workbench.general_settings_privacy_title')}
-          </div>
-          <SettingsGroup className="rounded-xl !bg-background">
-            {renderSwitchRow({
-              preferenceKey: 'telemetryEnabled',
-              testId: 'general-telemetry-toggle',
-              label: t('workbench.general_settings_telemetry'),
-              description: t('workbench.general_settings_telemetry_description'),
-            })}
-          </SettingsGroup>
-        </section>
-      ) : null}
+      <section data-testid="general-settings-privacy-section" className="mt-12">
+        <div className="mb-2 px-0.5 text-sm font-semibold text-text-primary">
+          {t('workbench.general_settings_privacy_title')}
+        </div>
+        <SettingsGroup className="rounded-xl !bg-background">
+          {renderSwitchRow({
+            preferenceKey: 'telemetryEnabled',
+            testId: 'general-telemetry-toggle',
+            label: t('workbench.general_settings_telemetry'),
+            description: t('workbench.general_settings_telemetry_description'),
+          })}
+        </SettingsGroup>
+        <TelemetryCollectionNotice />
+      </section>
 
       <section data-testid="general-settings-popout-section" className="mt-12">
         <div className="mb-2 px-0.5 text-sm font-semibold text-text-primary">

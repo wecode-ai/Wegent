@@ -16,6 +16,12 @@ Without overrides, production retains a 600-second base period plus a stable per
 pnpm --filter wework e2e:desktop:cloud -- --segment plugin-periodic-reconcile
 ```
 
+## Prepare desktop E2E prerequisites before startup
+
+Write configuration that Codex caches, including model catalog overrides, in the scenario's `prepareApp` before launching the app and shared app-server. `human-interactions` declares `request_user_input_async` at this stage. Updating the configuration or deleting the disk cache in `verify` can leave the running process using the old catalog.
+
+Windows CI runs desktop tests under a standard account. Compile the DingTalk protocol fixture into the workspace before switching accounts and pass it through `WEWORK_E2E_DWS_FIXTURE_BIN` for the stand-in scenarios to reuse, without relying on that account's Rust toolchain. Local runs without a prebuilt fixture still compile it during scenario preparation. This is protocol integration coverage; real DingTalk compatibility remains unverified.
+
 ## Start a session
 
 During builds, `prepare-codex-binary.mjs` downloads the locked version through native Node HTTP/HTTPS streams, follows redirects, and removes failed temporary files. Archives are extracted for use only after integrity verification. The download stream does not depend on the Undici parser used by Node's built-in Fetch, avoiding parser crashes that terminate the build process.
@@ -28,11 +34,21 @@ The command prints a session file path and a local control URL. It creates a sep
 
 ## Shared desktop E2E runtime images
 
+Shallow clones that check out the complete source tree omit `filter: blob:none`: the working tree needs every blob, so filtering only defers their download to a second promisor request during checkout. Only change classification retains full commit history with blob filtering to avoid downloading historical file contents. The shared runtime contract test checks that shallow checkout jobs do not introduce this extra request.
+
+Standalone MinIO uses the shared API port allocator and excludes the pinned version's default console port, `13333`. Even with `MINIO_BROWSER=off`, that version checks port equality and exits; see its pinned [default](https://github.com/minio/minio/blob/9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a/cmd/globals.go#L215) and [startup check](https://github.com/minio/minio/blob/9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a/cmd/common-main.go#L502). The port regression starts allocation at `13333` and verifies that the resulting non-conflicting port can actually bind, rather than masking the conflict by restarting MinIO.
+
+Non-draft PRs that trigger only Wework desktop E2E must also start the Backend Rust runtime producer in `e2e-tests.yml`; platform E2E eligibility alone is insufficient. The producer checks the content-addressed image first, reuses it on a cache hit, and builds and publishes it on a cache miss for the desktop build to consume. `ruby .github/scripts/test-backend-rs-e2e-runtime.rb` covers producer eligibility for platform, desktop, and draft PRs.
+
 Linux desktop E2E builds and cache warmup consume the Rust Backend OCI image produced by `e2e-tests.yml`. Consumers must use the producer's exact `SOURCE_DIGEST` expression, including example sources. Hashing only the main program generates an unpublished image tag and eventually times out with `manifest unknown`. When changing runtime image inputs, run `bash .github/scripts/test-wework-core-e2e-runtimes.sh` to verify that both the desktop and warmup consumers match the producer.
 
 ## Operate and assert
 
+Linux isolated desktops use `Xvfb -noreset` so the display remains connectable throughout the checkpoint. The default reset after the last client disconnects can close the listener between a short-lived `xprop` probe and Openbox connecting; see [Debian's lifecycle analysis](https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=1095028#43). Window-manager restarts or longer waits must not hide startup failures.
+
 Pass the session path returned by `start` to every later command. Prefer stable `data-testid` selectors.
+
+After Issue creation, finding the record in the API list does not prove that its detail UI has rendered. The shared `createAndAssignCloudIssue` flow uses `clickWhenEnabled` to wait for the detail assignee control to appear and become enabled before clicking, within the default step timeout. API persistence cannot substitute for control readiness; delays and reruns must not hide the race.
 
 ```bash
 pnpm --filter wework ai:verify snapshot --session /path/to/session.json

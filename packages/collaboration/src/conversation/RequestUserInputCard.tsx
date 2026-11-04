@@ -19,6 +19,7 @@ export type { RequestUserInputPayload } from "@wegent/chat-core/runtime";
 import {
   hasImplementationPlanText,
   hasRequestUserInputResponse,
+  requestUserInputApprovalDescription,
 } from "@wegent/chat-core/runtime-user-input";
 import { McpUrlAuthorizationCard } from "./McpUrlAuthorizationCard";
 import {
@@ -30,6 +31,9 @@ interface RequestUserInputCardProps {
   payload: RequestUserInputPayload;
   compact?: boolean;
   disabled?: boolean;
+  error?: string;
+  draftAnswers?: Record<string, string>;
+  onDraftAnswersChange?: (answers: Record<string, string>) => void;
   onSubmit?: (
     response: RequestUserInputResponse,
   ) => boolean | void | Promise<boolean | void>;
@@ -67,6 +71,9 @@ function RequestUserInputForm({
   disabled = false,
   onSubmit,
   onIgnore,
+  error,
+  draftAnswers,
+  onDraftAnswersChange,
   remainingTime,
 }: RequestUserInputCardProps & { remainingTime: string | null }) {
   const { t } = useConversationTranslation();
@@ -83,9 +90,20 @@ function RequestUserInputForm({
     questions.length === 1 &&
     questions[0].options.length > 0 &&
     !questions[0].allowCustom;
-  const [selectedAnswers, setSelectedAnswers] = useState<
-    Record<string, string>
-  >(() => initialAnswers(questions));
+  const [localAnswers, setLocalAnswers] = useState<Record<string, string>>(() =>
+    initialAnswers(questions),
+  );
+  const selectedAnswers = draftAnswers ?? localAnswers;
+  const setSelectedAnswers = (
+    update:
+      | Record<string, string>
+      | ((current: Record<string, string>) => Record<string, string>),
+  ) => {
+    const next =
+      typeof update === "function" ? update(selectedAnswers) : update;
+    setLocalAnswers(next);
+    onDraftAnswersChange?.(next);
+  };
   const [activeQuestionId, setActiveQuestionId] = useState<string | null>(() =>
     initialActiveQuestionId(questions),
   );
@@ -250,6 +268,11 @@ function RequestUserInputForm({
           className="mb-2 text-sm text-text-muted"
         >
           {t("request_user_input.expires_in", { time: remainingTime })}
+        </p>
+      )}
+      {error && (
+        <p role="alert" className="mb-2 text-sm text-error">
+          {error}
         </p>
       )}
       <div
@@ -505,20 +528,8 @@ function localizeApprovalQuestions(
   const interactionKind = payload.interactionKind ?? payload.interaction_kind;
   if (interactionKind !== "approval") return payload.questions;
 
-  const approvalKind =
-    payload.approvalKind ?? payload.approval_kind ?? "command";
-  const detail =
-    approvalKind === "command"
-      ? payload.command
-      : approvalKind === "file_change"
-        ? (payload.grantRoot ?? payload.grant_root ?? payload.reason)
-        : (payload.reason ?? payload.cwd);
-  const questionKey =
-    approvalKind === "file_change"
-      ? "request_user_input.approval_file_change"
-      : approvalKind === "permissions"
-        ? "request_user_input.approval_permissions"
-        : "request_user_input.approval_command";
+  const { detail, key: questionKey } =
+    requestUserInputApprovalDescription(payload);
 
   return [
     {

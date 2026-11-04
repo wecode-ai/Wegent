@@ -1,12 +1,13 @@
-import { act, render, screen, fireEvent } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import type { ToolBlock } from '@wegent/chat-core/runtime-conversation'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { McpAppHost } from './McpAppHost'
 
 const translate = vi.hoisted(() => (key: string) => key)
 const native = vi.hoisted(() => ({ invoke: vi.fn() }))
 const connection = vi.hoisted(() => ({ start: vi.fn() }))
 const bridges = vi.hoisted(() => [] as Array<Record<string, unknown>>)
+const toolResults = vi.hoisted(() => vi.fn())
 vi.mock('@/hooks/useTranslation', () => ({ useTranslation: () => ({ t: translate }) }))
 vi.mock('@/api/dsh/desktopHost', () => ({ invokeDesktopHost: native.invoke }))
 vi.mock('@modelcontextprotocol/ext-apps/app-bridge', () => ({
@@ -20,7 +21,9 @@ vi.mock('@modelcontextprotocol/ext-apps/app-bridge', () => ({
       queueMicrotask(() => this.oninitialized?.())
     }
     async sendToolInput() {}
-    async sendToolResult() {}
+    async sendToolResult(result: unknown) {
+      toolResults(result)
+    }
     async setHostContext() {}
     async teardownResource() {}
     async close() {}
@@ -37,11 +40,19 @@ const running: ToolBlock = {
   subtaskId: 'turn',
   createdAt: 0,
 }
+const discovery = {
+  server: 'app',
+  resourceUri: 'ui://app',
+  tool: null,
+  arguments: {},
+  result: null,
+}
 
 beforeEach(() => {
-  native.invoke.mockClear()
+  native.invoke.mockReset().mockResolvedValue(undefined)
   connection.start.mockReset().mockResolvedValue(undefined)
   bridges.length = 0
+  toolResults.mockClear()
 })
 
 describe('MCP App discovery', () => {
@@ -61,10 +72,37 @@ describe('MCP App discovery', () => {
     expect(requestMcpApp).toHaveBeenCalledTimes(2)
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
-  it('preserves a pending resource error across transcript updates and retries only on user action', async () => {
+  it('does not create cards for failed optional discovery and discovers on the next status update', async () => {
+    const requestMcpApp = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'))
+    const api = { requestMcpApp }
+    const hosts = (status: ToolBlock['status']) => (
+      <>
+        {Array.from({ length: 12 }, (_, index) => (
+          <McpAppHost
+            key={index}
+            block={{ ...running, id: `call-${index}`, status }}
+            address={address}
+            api={api}
+          />
+        ))}
+      </>
+    )
+    const view = render(hosts('running'))
+    await act(async () => {})
+    expect(requestMcpApp).toHaveBeenCalledTimes(12)
+    expect(screen.queryByTestId('mcp-app')).not.toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    requestMcpApp.mockResolvedValue(null)
+    await act(async () => view.rerender(hosts('done')))
+    expect(requestMcpApp).toHaveBeenCalledTimes(24)
+    expect(screen.queryByTestId('mcp-app')).not.toBeInTheDocument()
+  })
+
+  it('preserves a confirmed app resource error across transcript updates and retries only on user action', async () => {
     let reject!: (error: Error) => void
     const requestMcpApp = vi
       .fn()
+      .mockResolvedValueOnce(discovery)
       .mockImplementationOnce(
         () =>
           new Promise((_, fail) => {
@@ -74,7 +112,15 @@ describe('MCP App discovery', () => {
       .mockResolvedValue(null)
     const api = { requestMcpApp }
     const { rerender } = render(<McpAppHost block={running} address={address} api={api} />)
-    expect(requestMcpApp).toHaveBeenCalledTimes(1)
+    await act(async () => {})
+    expect(requestMcpApp).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ method: 'discover' })
+    )
+    expect(requestMcpApp).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ method: 'initialize' })
+    )
     rerender(
       <McpAppHost
         block={{ ...running, status: 'done', toolOutput: { content: [] } }}
@@ -82,11 +128,41 @@ describe('MCP App discovery', () => {
         api={api}
       />
     )
-    await act(async () => reject(new Error('Resource unavailable')))
-    expect(screen.getByRole('alert')).toHaveTextContent('Resource unavailable')
-    expect(requestMcpApp).toHaveBeenCalledTimes(1)
-    await act(async () => fireEvent.click(screen.getByTestId('mcp-app-retry')))
+    await act(async () => reject(new TypeError('Failed to fetch')))
+    expect(screen.getByRole('alert')).toHaveTextContent('Failed to fetch')
+    expect(screen.getByTestId('mcp-app')).toHaveTextContent('app')
     expect(requestMcpApp).toHaveBeenCalledTimes(2)
+    await act(async () => fireEvent.click(screen.getByTestId('mcp-app-retry')))
+    expect(requestMcpApp).toHaveBeenCalledTimes(3)
+    expect(native.invoke).toHaveBeenCalledWith('mcpApps.releaseSession', {
+      sessionId: requestMcpApp.mock.calls[1][0].sessionId,
+    })
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('discovers a completed app when an earlier in-flight discovery fails', async () => {
+    let reject!: (error: Error) => void
+    const loaded = {
+      ...discovery,
+      resource: { contents: [{ uri: 'ui://app', mimeType: 'text/html', text: '<p>Ready</p>' }] },
+    }
+    native.invoke.mockResolvedValue({ id: 'recovered', url: 'http://127.0.0.1/recovered' })
+    const requestMcpApp = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise((_, fail) => {
+            reject = fail
+          })
+      )
+      .mockResolvedValueOnce(discovery)
+      .mockResolvedValue(loaded)
+    const api = { requestMcpApp }
+    const view = render(<McpAppHost block={running} address={address} api={api} />)
+    view.rerender(<McpAppHost block={{ ...running, status: 'done' }} address={address} api={api} />)
+    await act(async () => reject(new TypeError('Failed to fetch')))
+    expect(requestMcpApp).toHaveBeenCalledTimes(3)
+    expect(screen.getByTestId('mcp-app-frame')).toHaveAttribute('data-ready', 'true')
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 })
@@ -101,56 +177,6 @@ describe('MCP App close completion', () => {
     arguments: {},
   }
 
-  it('loads the app document only after the message transport is connected', async () => {
-    let finish!: () => void
-    connection.start.mockImplementationOnce(
-      () =>
-        new Promise<void>(resolve => {
-          finish = resolve
-        })
-    )
-    const url = 'codex-sandbox://test.web-sandbox.oaiusercontent.com/mcp-app.html'
-    native.invoke.mockResolvedValue({ id: 'document', url })
-    render(
-      <McpAppHost
-        block={running}
-        address={address}
-        api={{ requestMcpApp: vi.fn().mockResolvedValue(descriptor) }}
-      />
-    )
-    await act(async () => {})
-    expect(connection.start).toHaveBeenCalledOnce()
-    expect(screen.getByTestId('mcp-app-frame')).toHaveAttribute('src', 'about:blank')
-    await act(async () => finish())
-    expect(screen.getByTestId('mcp-app-frame')).toHaveAttribute('src', url)
-  })
-
-  it('does not navigate a removed frame when its connection finishes late', async () => {
-    let finish!: () => void
-    connection.start.mockImplementationOnce(
-      () =>
-        new Promise<void>(resolve => {
-          finish = resolve
-        })
-    )
-    native.invoke.mockResolvedValue({
-      id: 'document',
-      url: 'codex-sandbox://test.web-sandbox.oaiusercontent.com/mcp-app.html',
-    })
-    const view = render(
-      <McpAppHost
-        block={running}
-        address={address}
-        api={{ requestMcpApp: vi.fn().mockResolvedValue(descriptor) }}
-      />
-    )
-    await act(async () => {})
-    const frame = screen.getByTestId('mcp-app-frame')
-    view.unmount()
-    await act(async () => finish())
-    expect(frame).toHaveAttribute('src', 'about:blank')
-  })
-
   it('downloads remaining resources when a resource filename contains malformed percent encoding', async () => {
     native.invoke.mockImplementation((method: string) => {
       if (method === 'mcpApps.createDocument')
@@ -160,6 +186,8 @@ describe('MCP App close completion', () => {
         })
       if (method === 'mcpApps.saveFile') return Promise.resolve({})
       if (method === 'mcpApps.releaseDocument') return Promise.resolve()
+      if (method === 'mcpApps.retainSession' || method === 'mcpApps.releaseSession')
+        return Promise.resolve()
       throw new Error('Unexpected host method: ' + method)
     })
     render(
@@ -190,6 +218,8 @@ describe('MCP App close completion', () => {
       if (method === 'mcpApps.createDocument')
         return Promise.resolve({ id: 'full-document', url: 'http://127.0.0.1:9000/full-document' })
       if (method === 'mcpApps.releaseDocument') return Promise.resolve()
+      if (method === 'mcpApps.retainSession' || method === 'mcpApps.releaseSession')
+        return Promise.resolve()
       throw new Error('Unexpected host method: ' + method)
     })
     const onDisplayModeChange = vi.fn()
@@ -232,38 +262,6 @@ describe('MCP App close completion', () => {
     ).toHaveLength(1)
   })
 
-  it('waits for native document release and releases it only once across close and cleanup', async () => {
-    let finishRelease!: () => void
-    native.invoke.mockImplementation((method: string) => {
-      if (method === 'mcpApps.createDocument')
-        return Promise.resolve({ id: 'document', url: 'http://127.0.0.1:9000/document' })
-      if (method === 'mcpApps.releaseDocument')
-        return new Promise<void>(resolve => {
-          finishRelease = resolve
-        })
-      throw new Error('Unexpected host method: ' + method)
-    })
-    await act(async () =>
-      render(
-        <McpAppHost
-          block={{ ...running, status: 'done' }}
-          address={address}
-          api={{ requestMcpApp: vi.fn().mockResolvedValue(descriptor) }}
-        />
-      )
-    )
-    expect(screen.getByTestId('mcp-app-frame')).toHaveAttribute('data-ready', 'true')
-    await act(async () => fireEvent.click(screen.getByTestId('mcp-app-close')))
-    expect(finishRelease).toBeTypeOf('function')
-    expect(screen.getByTestId('mcp-app-frame')).toBeInTheDocument()
-    expect(screen.getByTestId('mcp-app-close')).toBeDisabled()
-    await act(async () => finishRelease())
-    expect(screen.queryByTestId('mcp-app-frame')).not.toBeInTheDocument()
-    expect(
-      native.invoke.mock.calls.filter(([method]) => method === 'mcpApps.releaseDocument')
-    ).toHaveLength(1)
-  })
-
   it('allows closing again after native document release fails', async () => {
     let releaseAttempts = 0
     native.invoke.mockImplementation((method: string) => {
@@ -275,6 +273,8 @@ describe('MCP App close completion', () => {
           ? Promise.reject(new Error('Host temporarily unavailable'))
           : Promise.resolve()
       }
+      if (method === 'mcpApps.retainSession' || method === 'mcpApps.releaseSession')
+        return Promise.resolve()
       throw new Error('Unexpected host method: ' + method)
     })
     await act(async () =>

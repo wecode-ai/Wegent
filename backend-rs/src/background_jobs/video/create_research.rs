@@ -22,7 +22,7 @@ pub(super) async fn execute(state: &AppState, request: &ExecutionRequest) -> Res
         .map(str::to_owned)
         .unwrap_or_else(|| request.prompt.to_string());
     let create_endpoint = endpoint(model, None)?;
-    let response=http(model,brz_http::Method::POST,create_endpoint,30)?.json(&json!({"background":true,"stream":false,"agent":model["model_id"].as_str().unwrap_or("deep-research-pro-preview-12-2025"),"input":input})).send().await?;
+    let response=http(model,brz_http::Method::POST,create_endpoint,30)?.json(&json!({"background":true,"stream":false,"agent":model["model_id"].as_str().unwrap_or("deep-research-preview-04-2026"),"input":input})).send().await?;
     let created = body(response).await?;
     let id = created["id"]
         .as_str()

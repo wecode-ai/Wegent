@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { fetchLocalRuntime } from '../modules/runtime-request.mjs'
 import { mkdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createDesktopScenario as createOverloadRecovery } from './model-overload-recovery.scenario.mjs'
@@ -83,11 +84,11 @@ export function createDesktopScenario(options) {
       active = true
       const origin = await control.command('getLocationOrigin', 'body')
       const rpc = async (method, params) => {
-        const response = await fetch(`${origin}/wework/executor/v1/rpc`, {
+        const response = await fetchLocalRuntime(control, `${origin}/wework/executor/v1/rpc`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ id: `goal-overload-${method}`, method, params }),
-          signal: AbortSignal.timeout(options.uiTimeoutMs),
+          timeoutMs: options.uiTimeoutMs,
         })
         const payload = await response.json()
         assert.equal(response.ok, true)

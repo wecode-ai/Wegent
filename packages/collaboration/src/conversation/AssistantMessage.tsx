@@ -53,8 +53,6 @@ import {
   hasRunningProcessingBlocks,
   getProcessingPhase,
   splitProcessingBlocks,
-  hasProcessingDisplayBlock,
-  hasTrailingCompletedProcessText,
   shouldShowAssistantThinkingIndicator,
 } from "./assistantMessagePresentation";
 
@@ -65,6 +63,7 @@ export function AssistantMessage({
   runtimeTurn,
   conversationKey,
   isActiveTurn = false,
+  isHistoricalTurn = false,
   forceExpanded = false,
   devices,
   onRetryFailedMessage,
@@ -91,6 +90,7 @@ export function AssistantMessage({
   runtimeTurn?: RuntimeConversationTurn;
   conversationKey?: string | number | null;
   isActiveTurn?: boolean;
+  isHistoricalTurn?: boolean;
   forceExpanded?: boolean;
   devices: Array<{ device_id: string; status: string }>;
   onRetryFailedMessage?: (message: WorkbenchMessage) => void;
@@ -154,13 +154,17 @@ export function AssistantMessage({
   const hasProcessingActivity =
     hasBlocks || message.blocks?.some((block) => block.type === "thinking");
   const hasVisibleContent = Boolean(visibleContent.trim());
-  const isStreaming = !isCancelled && message.status === "streaming";
+  const isStreaming =
+    !isHistoricalTurn && !isCancelled && message.status === "streaming";
   const activeThinkingContent = isStreaming
     ? getRuntimeMessageActiveThinking(message)
     : "";
   const hasRunningBlocks = hasRunningProcessingBlocks(displayBlocks);
   const isAssistantSettled =
-    isCancelled || message.status === "done" || message.status === "failed";
+    isHistoricalTurn ||
+    isCancelled ||
+    message.status === "done" ||
+    message.status === "failed";
   const isAssistantRunning =
     !isAssistantSettled && (isStreaming || hasRunningBlocks);
   const canShowFinalArtifacts = !isAssistantRunning;
@@ -169,6 +173,11 @@ export function AssistantMessage({
     conversationKey,
     message,
   );
+  // Guidance reconciliation can reanchor an assistant view within the same turn.
+  // Tool and group state belongs to stable turn members, not that view's ID.
+  const processingItemScopeKey = message.turnId
+    ? `${conversationKey ?? "default"}:turn:${message.turnId}`
+    : processingStateKey;
   const [finalProcessingExpanded, setFinalProcessingExpanded] =
     usePersistentProcessingExpansion(`${processingStateKey}:final-processing`);
   const isProcessingOnlyBeforeGuidance =
@@ -179,7 +188,7 @@ export function AssistantMessage({
   const orderedRuntimeSegments = renderProjection.segments;
   const hasProcessingAfterContent = renderProjection.interleaved;
   const expandedToolDetailStateKeys = displayBlocks.map((block) =>
-    getProcessingDetailStateKey(processingStateKey, block.id),
+    getProcessingDetailStateKey(processingItemScopeKey, block.id),
   );
   const hasExpandedToolDetail = useAnyPersistentProcessingExpansion(
     expandedToolDetailStateKeys,
@@ -208,10 +217,8 @@ export function AssistantMessage({
   };
   const shouldShowThinking = shouldShowAssistantThinkingIndicator({
     isStreaming,
-    hasProcessingDisplayBlock: hasProcessingDisplayBlock(displayBlocks),
+    blocks: displayBlocks,
     hasVisibleContent,
-    hasTrailingCompletedProcessText:
-      hasTrailingCompletedProcessText(displayBlocks),
   });
   const webSearchSources = isStreaming
     ? []
@@ -244,7 +251,7 @@ export function AssistantMessage({
   const processingTimeline = shouldShowProcessingSummary
     ? processingSegments.map((segment, index) => (
         <ToolBlocksDisplay
-          key={`${segment.kind}:${index}`}
+          key={`${segment.kind}:${segment.blocks[0]?.id}`}
           blocks={segment.blocks}
           fileEditDurationsBySourceBlock={fileEditDurationsBySourceBlock}
           isStreaming={isStreaming}
@@ -275,8 +282,8 @@ export function AssistantMessage({
           }
           thinkingContent={activeThinkingContent}
           showSummary={segment.kind === "tool"}
-          stateKey={`${processingStateKey}:${index}`}
-          detailStateScopeKey={processingStateKey}
+          stateKey={`${processingStateKey}:${segment.blocks[0]?.id}`}
+          detailStateScopeKey={processingItemScopeKey}
           onOpenWorkspaceFile={onOpenWorkspaceFile}
           onRequestUserInputSubmit={onRequestUserInputSubmit}
           onRequestUserInputIgnore={onRequestUserInputIgnore}
@@ -337,7 +344,7 @@ export function AssistantMessage({
                 thinkingContent={activeThinkingContent}
                 showSummary={processingSegment.kind === "tool"}
                 stateKey={`${processingStateKey}:ordered:${processingSegment.blocks[0]?.id}`}
-                detailStateScopeKey={processingStateKey}
+                detailStateScopeKey={processingItemScopeKey}
                 onOpenWorkspaceFile={onOpenWorkspaceFile}
                 onRequestUserInputSubmit={onRequestUserInputSubmit}
                 onRequestUserInputIgnore={onRequestUserInputIgnore}

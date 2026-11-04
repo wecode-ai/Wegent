@@ -24,7 +24,13 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { DESKTOP_CHECKPOINTS, PLUGIN_SEGMENTS } from '../checkpoints.mjs'
 import { reservePort } from '../port-reservation.mjs'
 import { appendProcessOutput } from '../process-output.mjs'
-import { processIsAlive, stopProcess, stopProcessGroup } from '../process-lifecycle.mjs'
+import {
+  crashOwnedProcessTree,
+  logDesktopE2eSignal,
+  processIsAlive,
+  stopProcess,
+  stopProcessGroup,
+} from '../process-lifecycle.mjs'
 import { resolveDesktopE2EResultRoot } from '../result-retention.mjs'
 import { loadDesktopScenario } from '../scenario-loader.mjs'
 import { waitForSnapshot } from './conversation-layout.mjs'
@@ -114,7 +120,7 @@ const REQUEST_USER_INPUT_PROMPT =
 const REQUEST_USER_INPUT_QUESTION = 'Which implementation direction should be used?'
 const REQUEST_USER_INPUT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_REQUEST_INPUT_COMPLETE'
 const REQUEST_USER_INPUT_ASYNC_PROMPT =
-  'WEWORK_DESKTOP_E2E_REQUEST_INPUT_ASYNC: ask which implementation direction to use without blocking the turn.'
+  'WEWORK_DESKTOP_E2E_REQUEST_INPUT_ASYNC: ask which implementation direction to use without blocking the turn. Complete root-cause investigation before changing behavior; this context is not an answer.'
 const REQUEST_USER_INPUT_ASYNC_QUESTION = 'Which async implementation direction should be used?'
 const REQUEST_USER_INPUT_FREE_TEXT_PROMPT =
   'WEWORK_DESKTOP_E2E_REQUEST_INPUT_FREE_TEXT: ask a long question without options.'
@@ -526,6 +532,8 @@ const TELEMETRY_SAFE_PROPERTY_KEYS = new Set([
   'failure_stage',
   'locale',
   'os',
+  'platform',
+  'telemetry_source',
   'release_channel',
   'runtime_mode',
   'startup_id',
@@ -1037,19 +1045,30 @@ async function commandOutputAsync(command, args, options = {}) {
   })
 }
 
-async function stopDesktopAppProcess(app) {
+async function stopDesktopAppProcess(app, { forceSnapshot } = {}) {
   if (!app) return
+  if (forceSnapshot) {
+    await crashOwnedProcessTree(app, forceSnapshot)
+    if (app.launcher) await stopProcess(app.launcher)
+    return
+  }
   if (!app.launcher) {
     await stopProcessGroup(app)
     return
   }
 
-  if (processIsAlive(app.pid)) process.kill(app.pid, 'SIGTERM')
+  if (processIsAlive(app.pid)) {
+    logDesktopE2eSignal({ action: 'stop-app', pid: app.pid, signal: 'SIGTERM' })
+    process.kill(app.pid, 'SIGTERM')
+  }
   const startedAt = Date.now()
   while (processIsAlive(app.pid) && Date.now() - startedAt < 10_000) {
     await new Promise(resolvePromise => setTimeout(resolvePromise, 25))
   }
-  if (processIsAlive(app.pid)) process.kill(app.pid, 'SIGKILL')
+  if (processIsAlive(app.pid)) {
+    logDesktopE2eSignal({ action: 'stop-app', pid: app.pid, signal: 'SIGKILL' })
+    process.kill(app.pid, 'SIGKILL')
+  }
   await stopProcess(app.launcher)
 }
 
@@ -1494,6 +1513,12 @@ async function selectE2EModel(
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     visible: true,
   })
+  if (expectedProviderId) {
+    // The recovery control stays mounted while startup reconciles the local catalog.
+    await control.command('ensureLocalModelCatalogReady', 'body', {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+  }
   const selectedModelLabel = await control.command('getText', modelSelectorButton, {
     visible: true,
   })

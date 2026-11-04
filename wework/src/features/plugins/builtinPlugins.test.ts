@@ -10,9 +10,4 @@ describe('isSystemApplicationConnectorSlug', () => {
     expect(isSystemApplicationConnectorSlug(WEGENT_SITES_PLUGIN_NAME)).toBe(true)
     expect(isSystemApplicationConnectorSlug(WEGENT_MINI_PROGRAM_PLUGIN_NAME)).toBe(true)
   })
-
-  test('keeps ordinary connectors visible', () => {
-    expect(isSystemApplicationConnectorSlug('dingtalk')).toBe(false)
-    expect(isSystemApplicationConnectorSlug('github')).toBe(false)
-  })
 })

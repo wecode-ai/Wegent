@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { waitForWorkbenchDebugState } from './workspace-flows.mjs'
+import { reloadMainWindow, waitForWorkbenchDebugState } from './workspace-flows.mjs'
 import { requestExecutor } from './executor-rpc.mjs'
 import {
   ACTIVE_WORKBENCH_SELECTOR,
@@ -14,6 +14,8 @@ import {
   streamingEvents,
   textDeltaEvents,
   waitForRuntimePaneReadyToSend,
+  SCROLLER_SELECTOR,
+  getSingleElementMetrics,
 } from './streaming-text-fixture.mjs'
 
 const PROMPT = 'WEWORK_NATIVE_ORDER_TASK_SWITCH'
@@ -162,11 +164,113 @@ export function createConversationSwitchingChecks({ uiTimeoutMs }) {
           1,
           'Restoration duplicated a background update'
         )
+        await assertRestoredMessageLayout(control)
+        // A running task's warm cache already contains its entire streamed turn. Reload the
+        // renderer so pagination must fetch records absent from the displayed native page.
+        await reloadMainWindow(control, 'The cold conversation renderer did not reconnect')
+        await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+          text: SUFFIX.trim(),
+          timeoutMs: longResponseTimeoutMs,
+        })
+        await waitForWorkbenchDebugState(
+          control,
+          snapshot =>
+            snapshot.pane?.currentRuntimeTask?.taskId === address.taskId &&
+            snapshot.pane?.transcript?.loading === false &&
+            snapshot.pane?.transcript?.hasMoreBefore === true,
+          'The cold native history page did not expose the earlier records'
+        )
+        const coldMessages = JSON.parse(
+          await control.command('getRuntimeConversationMessages', 'body', {
+            value: JSON.stringify(address),
+          })
+        )
+        const coldPage = coldMessages.find(
+          message => message.role === 'assistant' && message.turnId === turn.id
+        )
+        assert.ok(coldPage?.runtimeDisplayItems.length, 'The cold native page has no items')
+        assert.ok(
+          coldPage.runtimeDisplayItems.length < 521,
+          'The pagination fixture retained the complete warm cache'
+        )
+        // This cursor prepends items inside the same assistant row, not new message rows.
+        const anchorId = coldPage.runtimeDisplayItems[0].id
+        const anchorSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-runtime-item-id="${anchorId}"], ${ACTIVE_WORKBENCH_SELECTOR} [data-processing-block-id="${anchorId}"]`
+        await control.command('scrollIntoViewAsUser', anchorSelector, { value: 'start' })
+        await waitForWorkbenchDebugState(
+          control,
+          snapshot =>
+            snapshot.pane?.currentRuntimeTask?.taskId === address.taskId &&
+            snapshot.pane?.transcript?.loadingMoreBefore === false &&
+            snapshot.pane?.transcript?.hasMoreBefore === false,
+          'Scrolling to the history boundary did not automatically fetch the earlier items'
+        )
+        await control.command('waitFor', anchorSelector, { stableMs: 750 })
+        const anchorMetrics = await getSingleElementMetrics(
+          control,
+          anchorSelector,
+          'The retained history item'
+        )
+        const viewportMetrics = await getSingleElementMetrics(
+          control,
+          SCROLLER_SELECTOR,
+          'The history viewport'
+        )
+        assert.ok(
+          Math.abs(anchorMetrics.top - viewportMetrics.top) <= 8,
+          'Prepending older items moved the reader away from the retained history item'
+        )
+        assert.ok(
+          viewportMetrics.scrollHeight - viewportMetrics.clientHeight - viewportMetrics.scrollTop >
+            8,
+          'Automatic history pagination returned the reader to the bottom'
+        )
+        const hydratedMessages = JSON.parse(
+          await control.command('getRuntimeConversationMessages', 'body', {
+            value: JSON.stringify(address),
+          })
+        )
+        const hydrated = hydratedMessages.find(
+          message => message.role === 'assistant' && message.turnId === turn.id
+        )
+        assert.ok(
+          hydrated.runtimeDisplayItems.length > coldPage.runtimeDisplayItems.length,
+          'Automatic pagination did not prepend any older items'
+        )
+        assert.equal(
+          new Set(hydrated.runtimeDisplayItems.map(item => item.id)).size,
+          hydrated.runtimeDisplayItems.length,
+          'Automatic pagination duplicated an item in the running turn'
+        )
       } finally {
         releaseTail?.()
         releaseDone?.()
       }
       await waitForRuntimePaneReadyToSend(control, uiTimeoutMs)
     },
+  }
+}
+
+async function assertRestoredMessageLayout(control) {
+  const content = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll-content"]`
+  const listSelector = `${content} > div:has(> [data-message-row] > article[data-message-id])`
+  const [list] = JSON.parse(await control.command('getElementMetrics', listSelector))
+  const rows = JSON.parse(
+    await control.command('getElementMetrics', `${listSelector} > [data-message-row]`)
+  )
+  assert.ok(list?.height > 0, 'The restored conversation has no measured container')
+  assert.ok(rows.length >= 2, 'The restored layout must include the prompt and running response')
+  for (const [index, row] of rows.entries()) {
+    assert.ok(row.height > 0, `Restored message row ${index} has no height`)
+    assert.ok(
+      row.top >= list.top - 1 && row.bottom <= list.bottom + 1,
+      `Restored message row ${index} escaped its virtual container: ${JSON.stringify({ row, list })}`
+    )
+    if (index > 0) {
+      assert.ok(
+        row.top >= rows[index - 1].bottom - 1,
+        `Restored message rows ${index - 1} and ${index} overlap: ${JSON.stringify(rows)}`
+      )
+    }
   }
 }

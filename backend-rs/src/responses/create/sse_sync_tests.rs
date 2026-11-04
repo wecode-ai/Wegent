@@ -329,6 +329,16 @@ impl RecordingRedis {
             .count()
     }
 
+    fn cancel_get_after(&self, marker: &str) -> bool {
+        let calls = self.calls();
+        let Some(index) = calls.iter().position(|call| call == marker) else {
+            return false;
+        };
+        calls[index + 1..]
+            .iter()
+            .any(|call| call.starts_with("GET chat:cancel:"))
+    }
+
     fn mark_cancelled(&self) {
         self.cancelled.store(true, Ordering::SeqCst);
     }
@@ -568,6 +578,10 @@ async fn spawn_stream_server_holding(
                 b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n",
             )
             .await;
+        // The drain lives for one second and the cancel poller ticks every
+        // second. Delay the terminal frames so the drain is guaranteed to
+        // overlap a poll tick instead of racing the first sleep.
+        tokio::time::sleep(Duration::from_millis(2_200)).await;
         for frame in frames {
             let _ = stream
                 .write_all(format!("data: {frame}\n\n").as_bytes())
@@ -650,6 +664,23 @@ async fn an_already_set_cancel_resolves_on_the_initial_get() {
         "register and unregister still delete the key: {:?}",
         redis.calls()
     );
+}
+
+/// The client's read timeout bounds inactivity, not total stream lifetime.
+/// Reintroducing `RequestBuilder::timeout(STREAM_TIMEOUT)` would make this
+/// assertion fail and reproduce the 300-second truncation regression.
+#[test]
+fn chat_shell_stream_request_has_no_total_timeout() {
+    let client = HttpClient::builder().build().expect("HTTP client");
+    let request = stream_request(
+        &client,
+        "http://127.0.0.1:1/v1/responses",
+        &json!({"stream": true}),
+        "req-test",
+    )
+    .expect("request builds");
+
+    assert!(request.timeout().is_none());
 }
 
 /// A cross-worker cancel is acted on while `.send()` still awaits the HTTP
@@ -797,8 +828,8 @@ async fn terminal_received_with_delayed_eof_keeps_polling_during_the_drain() {
         "the completed result survives the in-drain cancellation"
     );
     assert!(
-        redis.count("GET chat:cancel:") >= 2,
-        "the same poll keeps issuing GETs through the drain: {:?}",
+        redis.cancel_get_after("GET chat:task_streaming:424242"),
+        "the cancellation poll must issue a GET after terminal persistence starts: {:?}",
         redis.calls()
     );
     let subtask_reads = mysql

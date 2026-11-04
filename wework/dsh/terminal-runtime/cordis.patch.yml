@@ -3,3 +3,4 @@
       name: '@wegent/dsh-terminal-runtime'
       inject:
         - webServer
+        - weworkRequestSecurity

@@ -1,4 +1,8 @@
-import { cloudRunnerModels, resolveRunnerSelection } from '@wegent/collaboration'
+import {
+  cloudRunnerModels,
+  requiresCloudModelCatalog,
+  resolveRunnerSelection,
+} from '@wegent/collaboration'
 import { requestRunnerSelection } from '@/lib/runner-selection'
 import {
   mapAutomationExecutionCatalog,
@@ -365,6 +369,8 @@ export function createLocalWorkspaceApi(
       version: agent.version,
       capability_description: agent.capabilityDescription,
       system_prompt: agent.systemPrompt,
+      systemPrompt: agent.systemPrompt,
+      capabilityDescription: agent.capabilityDescription,
       runtime: agent.runtime,
       owner_type: 'workspace' as const,
       owner_id: LOCAL_WORKSPACE_ID,
@@ -429,7 +435,6 @@ export function createLocalWorkspaceApi(
     const agents = await projectAgentApi.list(projectId, { forceRefresh: true })
     const groups = await projectCollaborationGroups(projectId)
     const environments = await projectAgentApi.listRunnerEnvironments(projectId)
-    const cloudModels = await projectAgentApi.listModels()
     for (const rule of rules) {
       if (!rule.enabled || rule.targetKind === 'human') continue
       const group =
@@ -446,6 +451,13 @@ export function createLocalWorkspaceApi(
         if (!agent) throw new Error(`Automation agent '${id}' is unavailable`)
         return agent
       })
+      const cloudModels = members.some(
+        agent =>
+          agent.executionPolicy &&
+          requiresCloudModelCatalog(agent.modelPolicy, rule.runnerSelection)
+      )
+        ? await projectAgentApi.listModels()
+        : []
       for (const agent of members) {
         if (!agent.executionPolicy || !agent.modelPolicy) continue
         const selection = () => ({
@@ -665,6 +677,22 @@ export function createLocalWorkspaceApi(
       addMember: unavailable,
       updateMember: unavailable,
       removeMember: unavailable,
+      createTemplateAgent: async (_workspaceId, agent, routing) => {
+        if (!projectAgentApi) return unavailable()
+        return toProjectAgent(
+          await projectAgentApi.create(DEFAULT_WORK_ITEM_PROJECT_ID, {
+            ...routing,
+            name: agent.name,
+            runtime: agent.runtime,
+            systemPrompt: agent.systemPrompt,
+            capabilityDescription: agent.capabilityDescription,
+            capabilityMode: 'follow_device',
+            workspacePolicy: agent.workspacePolicy ?? 'project',
+            executionMode: agent.executionMode,
+            maxConcurrentExecutions: agent.maxConcurrentExecutions,
+          })
+        )
+      },
       listAgents: localAgentResources,
       addAgent: unavailable,
       removeAgent: unavailable,

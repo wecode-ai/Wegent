@@ -94,9 +94,16 @@ pub(super) fn validate_update(previous: &Value, next: &Value) -> Result<(), Task
             if !valid_text(&column.id, 128)
                 || !valid_text(&column.value, 80)
                 || (column.r#type == "tag" && validate_tag(&column.value).is_err())
-                || !matches!(column.r#type.as_str(), "status" | "tag")
+                || !matches!(column.r#type.as_str(), "status" | "tag" | "unmatched")
                 || !column_ids.insert(&column.id)
-                || !bindings.insert((&column.r#type, &column.value))
+                || !bindings.insert((
+                    column.r#type.as_str(),
+                    if column.r#type == "unmatched" {
+                        ""
+                    } else {
+                        column.value.as_str()
+                    },
+                ))
             {
                 return Err(invalid());
             }
@@ -128,4 +135,26 @@ pub(super) fn validate_update(previous: &Value, next: &Value) -> Result<(), Task
 
 fn valid_text(value: &str, max: usize) -> bool {
     !value.trim().is_empty() && value.chars().count() <= max
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn backlog_is_unique_independently_of_its_name() {
+        let mut config = json!({"schema_version":1,"views":[{
+            "id":"stages","name":"Stages","columns":[
+                {"id":"backlog","type":"unmatched","value":"Backlog"},
+                {"id":"design","type":"tag","value":"design"}
+            ]
+        }]});
+        assert!(validate_update(&Value::Null, &config).is_ok());
+        config["views"][0]["columns"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id":"other","type":"unmatched","value":"Other"}));
+        assert!(validate_update(&Value::Null, &config).is_err());
+    }
 }

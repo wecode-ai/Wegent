@@ -175,7 +175,7 @@ def _test_llm_connection(
         # Build test payload following the Gemini Interaction API format
         payload = {
             "background": True,
-            "agent": model_id,  # e.g., "deep-research-pro-preview-12-2025"
+            "agent": model_id,  # e.g., "deep-research-preview-04-2026"
             "input": "hello",
         }
 

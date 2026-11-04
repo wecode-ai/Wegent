@@ -1,50 +1,54 @@
-import { fireEvent, render, screen } from '@testing-library/react'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { render, screen, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { AppearanceProvider } from './AppearanceProvider'
 import { WorkbenchBackground } from './WorkbenchBackground'
 
-vi.mock('@/components/chat/assistantMarkdownLinks', () => ({
-  desktopFileUrl: vi.fn((path: string) => `wework-file://${path}`),
+const { readElectronLocalFile } = vi.hoisted(() => ({
+  readElectronLocalFile: vi.fn(),
 }))
+const { isElectronRuntime } = vi.hoisted(() => ({ isElectronRuntime: vi.fn() }))
+
+vi.mock('@/lib/electron-local-file', () => ({ readElectronLocalFile }))
+vi.mock('@/lib/runtime-environment', () => ({ isElectronRuntime }))
+
+const originalCreateObjectUrl = URL.createObjectURL
+const originalRevokeObjectUrl = URL.revokeObjectURL
+
+function renderBackground() {
+  return render(
+    <AppearanceProvider>
+      <WorkbenchBackground />
+    </AppearanceProvider>
+  )
+}
 
 describe('WorkbenchBackground', () => {
-  beforeEach(() => localStorage.clear())
-
-  test('shows the image without a theme overlay at full visibility', () => {
-    localStorage.setItem(
-      'wework.appearance',
-      JSON.stringify({
-        backgroundImagePath: '/app-data/background.png',
-        backgroundVisibility: 100,
-        backgroundBlur: 12,
-      })
-    )
-
-    render(
-      <AppearanceProvider>
-        <WorkbenchBackground />
-      </AppearanceProvider>
-    )
-
-    expect(screen.getByTestId('workbench-background-overlay')).toHaveStyle({ opacity: 0 })
-    expect(screen.getByRole('presentation', { hidden: true })).toHaveStyle({
-      filter: 'blur(12px)',
-    })
+  beforeEach(() => {
+    localStorage.clear()
+    readElectronLocalFile.mockReset()
+    readElectronLocalFile.mockResolvedValue(new Uint8Array([1, 2, 3]))
+    isElectronRuntime.mockReset()
+    isElectronRuntime.mockReturnValue(true)
+    URL.createObjectURL = vi.fn(() => 'blob:workbench-background')
+    URL.revokeObjectURL = vi.fn()
   })
 
-  test('hides a background image that cannot be loaded', () => {
+  afterEach(() => {
+    URL.createObjectURL = originalCreateObjectUrl
+    URL.revokeObjectURL = originalRevokeObjectUrl
+  })
+
+  test('hides the background when the file bridge cannot read the image', async () => {
     localStorage.setItem(
       'wework.appearance',
-      JSON.stringify({ backgroundImagePath: '/app-data/background.png' })
+      JSON.stringify({ backgroundImagePath: '/app-data/missing.png' })
     )
+    readElectronLocalFile.mockRejectedValue(new Error('Local file path is not a regular file'))
 
-    render(
-      <AppearanceProvider>
-        <WorkbenchBackground />
-      </AppearanceProvider>
+    renderBackground()
+
+    await waitFor(() =>
+      expect(screen.queryByTestId('workbench-background')).not.toBeInTheDocument()
     )
-    fireEvent.error(screen.getByRole('presentation', { hidden: true }))
-
-    expect(screen.queryByTestId('workbench-background')).not.toBeInTheDocument()
   })
 })

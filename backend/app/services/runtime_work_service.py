@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.constants import CLIENT_ORIGIN_WEWORK
+from app.db.session import get_db_session
 from app.models.im_session import IMPrivateSession
 from app.models.project import Project
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
@@ -107,6 +108,10 @@ from app.services.im.session_service import (
     im_session_service,
 )
 from app.services.object_storage import object_storage_presign_service
+from app.services.runtime_transcript_reader import (
+    RuntimeTranscriptTransferError,
+    read_complete_transcript,
+)
 from app.services.runtime_work_kind_store import (
     deactivate_device_workspace_kind,
     get_device_workspace_kind_by_id,
@@ -368,11 +373,13 @@ def delete_device_workspace(
     )
 
 
+@trace_async("runtime_work.list", tracer_name="backend")
 async def list_runtime_work(
     *,
     db: Session,
     user_id: int,
     device_id: str | None = None,
+    pending_only: bool = False,
 ) -> RuntimeWorkListResponse:
     """Return runtime-native work grouped by executor workspace."""
 
@@ -383,6 +390,7 @@ async def list_runtime_work(
     runtime_workspaces = await _list_online_runtime_workspaces(
         user_id=user_id,
         devices=devices,
+        pending_only=pending_only,
     )
     device_order = _runtime_device_order(devices)
 
@@ -443,11 +451,72 @@ async def get_runtime_transcript(
     *,
     db: Session,
     user_id: int,
-    address: RuntimeTranscriptRequest,
+    address: RuntimeTranscriptRequest | RuntimeTaskAddress,
 ) -> RuntimeTranscriptResponse | RuntimeTranscriptChunkResponse:
-    """Read a LocalTask transcript from the owning local executor."""
+    """Read a session transcript, assembling device chunks for legacy HTTP callers."""
 
-    user_id, normalized_address = _resolve_runtime_session_read(db, user_id, address)
+    if not isinstance(address, RuntimeTranscriptRequest):
+        address = RuntimeTranscriptRequest.model_validate(address.model_dump())
+
+    async def read(
+        request: RuntimeTranscriptRequest,
+    ) -> RuntimeTranscriptResponse | RuntimeTranscriptChunkResponse:
+        """Reauthorize the original caller before requesting each device packet."""
+        # A reused REPEATABLE READ transaction cannot observe committed revocation.
+        # Close each independent authorization transaction before awaiting the device.
+        with get_db_session() as read_db:
+            packet_user_id, normalized_address = _resolve_runtime_session_read(
+                read_db, user_id, request
+            )
+        return await _get_runtime_transcript_packet(
+            user_id=packet_user_id,
+            address=request,
+            normalized_address=normalized_address,
+        )
+
+    if address.transcript_protocol_version == 2:
+        return await read(address)
+    try:
+        return await asyncio.wait_for(
+            read_complete_transcript(address, read),
+            timeout=RUNTIME_TRANSCRIPT_TIMEOUT_SECONDS,
+        )
+    except (RuntimeTranscriptTransferError, ValidationError) as exc:
+        reason = (
+            str(exc)
+            if isinstance(exc, RuntimeTranscriptTransferError)
+            else "invalid_transcript_response"
+        )
+        logger.warning(
+            "[RuntimeWork] Transcript transfer rejected: user_id=%s device_id=%s "
+            "task_id=%s code=%s",
+            user_id,
+            address.device_id,
+            address.local_task_id,
+            reason,
+        )
+        raise HTTPException(
+            502, "Runtime returned an invalid conversation response"
+        ) from exc
+    except asyncio.TimeoutError as exc:
+        logger.warning(
+            "[RuntimeWork] Transcript transfer timed out: user_id=%s device_id=%s "
+            "task_id=%s timeout_seconds=%s",
+            user_id,
+            address.device_id,
+            address.local_task_id,
+            RUNTIME_TRANSCRIPT_TIMEOUT_SECONDS,
+        )
+        raise HTTPException(502, "Runtime transcript transfer timed out") from exc
+
+
+async def _get_runtime_transcript_packet(
+    *,
+    user_id: int,
+    address: RuntimeTranscriptRequest,
+    normalized_address: RuntimeTaskAddress,
+) -> RuntimeTranscriptResponse | RuntimeTranscriptChunkResponse:
+    """Read one authorized packet without holding its permission transaction open."""
     payload = _runtime_transcript_payload(address, normalized_address)
     started_at = time.perf_counter()
     logger.info(
@@ -487,6 +556,23 @@ async def get_runtime_transcript(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=str(exc),
         ) from exc
+    if result.get("success") is False:
+        code = result.get("code")
+        if not isinstance(code, str) or code not in {
+            "runtime_rpc_response_too_large",
+            "runtime_rpc_response_encoding_failed",
+            "unsupported_transcript_protocol",
+            "transcript_snapshot_expired",
+        }:
+            code = "runtime_rpc_failed"
+        logger.warning(
+            "[RuntimeWork] Runtime transcript device rejected request: user_id=%s "
+            "device_id=%s task_id=%s code=%s",
+            user_id,
+            normalized_address.device_id,
+            normalized_address.local_task_id,
+            code,
+        )
     _raise_runtime_rpc_failure(result)
     elapsed_ms = int((time.perf_counter() - started_at) * 1000)
     logger.info(
@@ -507,7 +593,18 @@ async def get_runtime_transcript(
     )
     try:
         if "transcriptProtocolVersion" in result:
-            return RuntimeTranscriptChunkResponse.model_validate(result)
+            packet = RuntimeTranscriptChunkResponse.model_validate(result)
+            logger.info(
+                "[RuntimeWork] Transcript chunk received: user_id=%s device_id=%s "
+                "task_id=%s offset=%s total_bytes=%s base64_bytes=%s",
+                user_id,
+                normalized_address.device_id,
+                normalized_address.local_task_id,
+                packet.transfer.offset,
+                packet.transfer.total_bytes,
+                len(packet.transfer.payload),
+            )
+            return packet
         if not isinstance(result.get("turns"), list):
             raise HTTPException(
                 502, "Runtime transcript response is missing canonical turns"
@@ -3037,6 +3134,7 @@ async def _list_online_runtime_workspaces(
     *,
     user_id: int,
     devices: list[dict[str, Any]],
+    pending_only: bool = False,
 ) -> dict[tuple[str, str], RuntimeWorkspaceListing]:
     started_at = time.perf_counter()
     online_devices = [
@@ -3047,7 +3145,9 @@ async def _list_online_runtime_workspaces(
     ]
     results = await asyncio.gather(
         *[
-            _list_runtime_workspaces_for_device(user_id=user_id, device=device)
+            _list_runtime_workspaces_for_device(
+                user_id=user_id, device=device, pending_only=pending_only
+            )
             for device in online_devices
         ],
         return_exceptions=True,
@@ -3056,6 +3156,11 @@ async def _list_online_runtime_workspaces(
     grouped: dict[tuple[str, str], RuntimeWorkspaceListing] = {}
     for result in results:
         if isinstance(result, Exception):
+            if pending_only:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail="Failed to read pending runtime work",
+                ) from result
             logger.warning(
                 "[RuntimeWork] Failed to list runtime workspaces from device: user_id=%s error_type=%s",
                 user_id,
@@ -3081,10 +3186,12 @@ async def _list_online_runtime_workspaces(
     return grouped
 
 
+@trace_async("runtime_work.list_device", tracer_name="backend")
 async def _list_runtime_workspaces_for_device(
     *,
     user_id: int,
     device: dict[str, Any],
+    pending_only: bool = False,
 ) -> dict[tuple[str, str], RuntimeWorkspaceListing]:
     started_at = time.perf_counter()
     device_id = str(device.get("device_id") or "")
@@ -3096,10 +3203,12 @@ async def _list_runtime_workspaces_for_device(
             user_id=user_id,
             device_id=device_id,
             method="runtime.tasks.list",
-            payload={},
+            payload={"pendingOnly": True} if pending_only else {},
             timeout_seconds=RUNTIME_LIST_TIMEOUT_SECONDS,
         )
     except RuntimeRpcError as exc:
+        if pending_only:
+            raise
         logger.warning(
             "[RuntimeWork] Runtime workspace list failed: user_id=%s device_id=%s elapsed_ms=%s error=%s",
             user_id,
@@ -3109,6 +3218,8 @@ async def _list_runtime_workspaces_for_device(
         )
         return {}
 
+    if pending_only:
+        _raise_runtime_rpc_failure(result)
     grouped: dict[tuple[str, str], RuntimeWorkspaceListing] = {}
     for order_index, workspace in enumerate(_iter_runtime_workspaces(result)):
         workspace_path = normalize_workspace_path(workspace["workspacePath"])

@@ -12,6 +12,8 @@ const VERSION_COMPONENTS = new Set([
   'executor',
 ])
 
+export const MANAGED_COMPONENT_IDS = [...SHARED_COMPONENTS, ...VERSION_COMPONENTS]
+
 export function componentReleaseScope(id) {
   if (SHARED_COMPONENTS.has(id)) return 'shared'
   if (VERSION_COMPONENTS.has(id)) return 'version'

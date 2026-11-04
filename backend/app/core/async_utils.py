@@ -182,22 +182,22 @@ async def run_in_main_loop(
     if _main_loop is None or current_loop is _main_loop:
         return await func(*args, **kwargs)
 
-    # We're in a different loop, schedule in main loop (fire-and-forget)
+    # We're in a different loop, schedule in main loop and await its completion.
     if _main_loop.is_running():
         try:
             future = asyncio.run_coroutine_threadsafe(func(*args, **kwargs), _main_loop)
-            future.add_done_callback(_make_done_callback("cross-loop"))
             logger.info(
                 "[ASYNC_LOOP] Scheduled %s in main loop from different loop",
                 func.__name__,
             )
+            return await asyncio.wrap_future(future)
         except Exception as e:
             logger.warning(
                 "[ASYNC_LOOP] Failed to schedule %s in main loop: %s",
                 func.__name__,
                 e,
             )
-        return None
+            raise
     else:
         # Main loop not running but we have a valid current loop.
         # This can happen during:

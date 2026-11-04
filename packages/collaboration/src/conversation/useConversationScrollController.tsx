@@ -27,6 +27,7 @@ import {
 } from './conversationScrollGeometry'
 import { useReaderViewportAnchor } from './useReaderViewportAnchor'
 import type { ConversationVirtualizer } from './useConversationVirtualizer'
+import { getMessageLayoutSignature } from './messagePretextLayout'
 import {
   RuntimeTranscriptGapMarker,
   runtimeTranscriptGapBetween,
@@ -107,9 +108,11 @@ export function useConversationScrollController({
   const inputDirectionRef = useRef<'backward' | 'forward' | null>(null)
   const motionRef = useRef<{
     frame: SafeAnimationFrameHandle | null
+    position: number | null
     velocity: number
     at: number | null
-  }>({ frame: null, velocity: 0, at: null })
+  }>({ frame: null, position: null, velocity: 0, at: null })
+  const followBehaviorRef = useRef<'auto' | 'smooth'>('auto')
   const initializedKeyRef = useRef<string | null | undefined>(undefined)
   const commandRef = useRef(false)
   const latestRef = useRef({ autoScrollSuspended, streaming: false })
@@ -135,6 +138,7 @@ export function useConversationScrollController({
     const motion = motionRef.current
     if (motion.frame !== null) cancelSafeAnimationFrame(motion.frame)
     motion.frame = null
+    motion.position = null
     motion.velocity = 0
     motion.at = null
     setMotionActive(false)
@@ -213,12 +217,13 @@ export function useConversationScrollController({
         return
       const viewport = activeScrollRefRef.current.current
       if (!viewport) return
-      if (getDistanceFromBottom(viewport) < 1) {
+      if (motionRef.current.position === null && getDistanceFromBottom(viewport) < 1) {
         cancelMotion()
         save()
         return
       }
-      const animate = smooth || latestRef.current.streaming || motionRef.current.frame !== null
+      const animate =
+        smooth || followBehaviorRef.current === 'smooth' || motionRef.current.frame !== null
       if (!animate || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
         cancelMotion()
         writeOffset(Math.max(0, viewport.scrollHeight - viewport.clientHeight))
@@ -226,6 +231,7 @@ export function useConversationScrollController({
         return
       }
       if (motionRef.current.frame !== null) return
+      motionRef.current.position ??= viewport.scrollTop
       const engine = virtualizerRef.current
       if (engine) {
         engine.cancelScroll()
@@ -251,7 +257,9 @@ export function useConversationScrollController({
           return
         }
         const end = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
-        const lag = Math.max(0, end - viewport.scrollTop)
+        // Keep subpixel progress even when the browser quantizes scrollTop writes.
+        const position = Math.min(end, motion.position ?? viewport.scrollTop)
+        const lag = Math.max(0, end - position)
         if (lag <= STREAM_FOLLOW_SETTLE_PX) {
           writeOffset(end)
           cancelMotion()
@@ -265,7 +273,8 @@ export function useConversationScrollController({
         )
         motion.at = now
         motion.velocity = step.velocityPxPerSecond
-        writeOffset(Math.min(end, viewport.scrollTop + step.advancePx))
+        motion.position = Math.min(end, position + step.advancePx)
+        writeOffset(motion.position)
         setShowScrollButton(false)
         motion.frame = requestSafeAnimationFrame(advance)
       }
@@ -304,6 +313,11 @@ export function useConversationScrollController({
     captureUserViewportAnchor()
   }, [cancelMotion, captureUserViewportAnchor, changeMode])
   const preserveUserMessagePosition = preserveScrollPositionForNextLayout
+  const prepareForHistoryPrepend = useCallback(() => {
+    // Prefetching a short initial page must retain live following. A reader already
+    // browsing history owns a semantic anchor, including growth inside one turn.
+    if (modeRef.current === 'read') preserveScrollPositionForNextLayout()
+  }, [preserveScrollPositionForNextLayout])
   const finishNavigation = useCallback(() => {
     if (navigationLoadingRef.current || navigationTargetRef.current) return
     if (modeRef.current !== 'navigate') return
@@ -352,6 +366,8 @@ export function useConversationScrollController({
     user: string | null
     guidance: string | null
     loading: boolean
+    messages: WorkbenchMessage[]
+    suspended: boolean
   } | null>(null)
   useLayoutEffect(() => {
     const previous = previousRef.current
@@ -359,22 +375,67 @@ export function useConversationScrollController({
     const guidance = findLatestGuidanceMessageId(messages)
     const changed = !previous || previous.key !== currentScrollKey
     const loaded = previous?.count === 0 && messages.length > 0
+    const resumed = previous?.suspended && !autoScrollSuspended
+    const previousTail = previous?.messages.at(-1)
+    const previousTailIndex = messages.findIndex(message => message.id === previousTail?.id)
+    const latestGuidance = messages.find(message => message.id === guidance)
+    // Guidance can split and replace the tail message. In that case its creation
+    // time distinguishes a new instruction from an older hydrated instruction.
+    const newGuidance =
+      guidance !== null &&
+      guidance !== previous?.guidance &&
+      (previousTailIndex >= 0
+        ? messages.findIndex(message => message.id === guidance) > previousTailIndex
+        : previousTail &&
+          latestGuidance &&
+          Date.parse(latestGuidance.createdAt) > Date.parse(previousTail.createdAt))
     const sent =
       !changed &&
       !loading &&
       !previous.loading &&
-      ((previous.user !== null && user !== previous.user) ||
+      // A paged Goal history can contain only assistant replies. Distinguish a
+      // new request after its tail from an older user prompt prepended by paging.
+      ((user !== null &&
+        user !== previous.user &&
+        (previous.user !== null ||
+          (previousTailIndex >= 0 &&
+            messages.findIndex(message => message.id === user) > previousTailIndex))) ||
         (previous.count === 0 && messages.at(-1)?.role === 'user') ||
-        (guidance !== null && guidance !== previous.guidance))
+        newGuidance)
+    // Opening/hydrating history establishes a position; only new content in an
+    // already-loaded conversation requests streaming motion. Keep that intent
+    // through the ResizeObserver measurements caused by the same content commit.
+    if (
+      changed ||
+      loaded ||
+      sent ||
+      resumed ||
+      loading ||
+      previous?.loading ||
+      autoScrollSuspended
+    ) {
+      cancelMotion()
+      followBehaviorRef.current = sent && latestRef.current.streaming ? 'smooth' : 'auto'
+    } else if (!latestRef.current.streaming) followBehaviorRef.current = 'auto'
+    else if (
+      messages !== previous.messages &&
+      messages.some((message, index) => {
+        if (message.status !== 'streaming') return false
+        const before = previous.messages[index]
+        return !before || getMessageLayoutSignature(message) !== getMessageLayoutSignature(before)
+      })
+    )
+      followBehaviorRef.current = 'smooth'
     previousRef.current = {
       key: currentScrollKey,
       count: messages.length,
       user,
       guidance,
       loading: Boolean(loading),
+      messages,
+      suspended: Boolean(autoScrollSuspended),
     }
     if (changed) {
-      cancelMotion()
       clearAnchor()
       restoringRef.current = null
       inputRef.current = false
@@ -403,7 +464,6 @@ export function useConversationScrollController({
       }
     }
     if (sent) {
-      cancelMotion()
       clearAnchor()
       restoringRef.current = null
       changeMode('follow')
@@ -663,12 +723,13 @@ export function useConversationScrollController({
     handleContentLayoutChange,
     handleScrollToBottom,
     preserveScrollPositionForNextLayout,
+    prepareForHistoryPrepend,
     preserveUserMessagePosition,
     renderTranscriptGapAfterMessage,
     onVirtualScrollAdjustment,
     virtualAnchorToEnd:
       mode === 'follow' && !latestRef.current.streaming && !motionActive && !autoScrollSuspended,
     virtualAnchor: mode === 'navigate' || mode === 'drag' ? ('start' as const) : ('end' as const),
-    virtualScrollAdjustmentEnabled: mode === 'read' && !autoScrollSuspended,
+    virtualScrollAdjustmentEnabled: mode === 'read',
   }
 }

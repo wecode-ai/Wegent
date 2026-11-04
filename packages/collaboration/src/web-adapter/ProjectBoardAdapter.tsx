@@ -1,3 +1,4 @@
+import { unmatchedCreateDefaults } from "../project-board/projectBoardViews";
 import {
   projectBoardDnd,
   projectBoardCollisionDetection,
@@ -29,6 +30,7 @@ import {
   isExecutionBoardColumn,
   ProjectBoardGroupPicker,
   useStandardCloudBoardController,
+  useParentIssueBoard,
   useSavedBoardViews,
   savedBoardColumns,
   BoardViewNavigation,
@@ -77,6 +79,7 @@ export interface ProjectBoardAdapterLabels {
 export interface ProjectBoardIssueCardRenderContext {
   column: ProjectBoardColumn;
   defaultCard: ReactNode;
+  childrenAction?: ReactNode;
   display: {
     showAssignee: boolean;
     showDate: boolean;
@@ -97,6 +100,7 @@ export type ProjectBoardIssueCardRenderer = (
 ) => ReactNode;
 
 interface ProjectBoardAdapterProps {
+  parentGroupingEnabled?: boolean;
   emptyState?: ReactNode;
   toolbarAction?: ReactNode;
   runtime?: SharedWorkspaceRuntimeApi;
@@ -112,6 +116,9 @@ interface ProjectBoardAdapterProps {
   statuses: CollaborationStatus[];
   taskBindings: WorkspaceTaskBinding[];
   onCreateIssue(): void;
+  onCreateUnmatchedIssue?(
+    defaults: NonNullable<ReturnType<typeof unmatchedCreateDefaults>>,
+  ): void;
   onArchiveCompleted?(issues: CollaborationIssue[]): void;
   onOpenArchive?(): void;
   onSaveViews?(
@@ -146,6 +153,7 @@ function issueSearchText(
 }
 
 export function ProjectBoardAdapter({
+  parentGroupingEnabled = false,
   emptyState,
   toolbarAction,
   runtime,
@@ -157,6 +165,7 @@ export function ProjectBoardAdapter({
   labels,
   members,
   onCreateIssue,
+  onCreateUnmatchedIssue,
   onArchiveCompleted,
   onOpenArchive,
   onMarkRead,
@@ -305,6 +314,16 @@ export function ProjectBoardAdapter({
   const activeItem = issues.find(
     (issue) => issue.id === controller.activeDragItemId,
   );
+  const parentBoard = useParentIssueBoard({
+    scope: `${project.current_user_id ?? "anonymous"}:${project.project_store}:${project.id}:${savedViews.view?.id ?? "default"}`,
+    enabled: parentGroupingEnabled && supportsOrder,
+    items: issues,
+    columns: controller.columns,
+    currentParentId: controller.currentParentId,
+    state: controller.state,
+    getColumnItems: controller.getColumnItems,
+    translate,
+  });
 
   return (
     <div
@@ -312,6 +331,20 @@ export function ProjectBoardAdapter({
       className="flex min-h-0 min-w-0 flex-1 flex-col"
     >
       <ProjectBoardBody<CollaborationIssue>
+        parentRows={
+          parentBoard.active
+            ? {
+                rows: parentBoard.rows,
+                scopeKey: parentBoard.scopeKey,
+                translate,
+                getParentTitle: (issue) => issue.title,
+                getParentKey: (issue) => issue.id,
+                onOpenParent: onOpen,
+                onEnterParent: (issue) =>
+                  controller.setCurrentParentId(issue.id),
+              }
+            : undefined
+        }
         emptyState={
           issues.length === 0 && !savedViews.view ? emptyState : undefined
         }
@@ -348,7 +381,12 @@ export function ProjectBoardAdapter({
             translate={translate}
           />
         }
-        toolbarAction={toolbarAction}
+        toolbarAction={
+          <>
+            {parentBoard.toggle}
+            {toolbarAction}
+          </>
+        }
         viewNotice={
           <BoardViewNotice
             controller={savedViews}
@@ -421,12 +459,27 @@ export function ProjectBoardAdapter({
         getColumnEmptyState={(column) => ({
           hint: labels.noIssues,
           ...((column.type ?? controller.state.groupBy) === "status" &&
-          column.status === "inbox"
+          column.status === "inbox" &&
+          (!controller.currentParentId ||
+            (controller.currentParent &&
+              controller.currentParent.can_view_detail !== false &&
+              onCreateUnmatchedIssue))
             ? {
                 action: {
                   ariaLabel: `在${column.label}中新建 Issue`,
                   label: "创建第一个 Issue",
-                  onClick: onCreateIssue,
+                  onClick: () => {
+                    if (controller.currentParent && onCreateUnmatchedIssue) {
+                      onCreateUnmatchedIssue({
+                        status: column.status ?? "inbox",
+                        tags: [],
+                        parent: controller.currentParent,
+                        draftScope: `board-column:${column.key}:${controller.currentParent.id}`,
+                      });
+                    } else {
+                      onCreateIssue();
+                    }
+                  },
                 },
               }
             : {}),
@@ -506,6 +559,29 @@ export function ProjectBoardAdapter({
         }
         renderColumnHeaderActions={(column, columnItems, state) => {
           if (
+            column.type === "unmatched" &&
+            savedViews.view &&
+            onCreateUnmatchedIssue
+          ) {
+            if (controller.currentParentId && !controller.currentParent)
+              return null;
+            const defaults = unmatchedCreateDefaults(
+              savedViews.view,
+              statuses,
+              controller.currentParent,
+            );
+            return defaults ? (
+              <button
+                type="button"
+                data-testid={`cloud-todo-column-add-${column.key}`}
+                className="flex min-h-11 items-center rounded-md px-2 text-xs text-text-muted hover:bg-background hover:text-text-primary md:h-6 md:min-h-0"
+                onClick={() => onCreateUnmatchedIssue(defaults)}
+              >
+                {translate("todo.board_view_create_unmatched")}
+              </button>
+            ) : null;
+          }
+          if (
             (column.type ?? state.groupBy) !== "status" ||
             column.status !== "completed" ||
             !onArchiveCompleted
@@ -567,10 +643,13 @@ export function ProjectBoardAdapter({
             <button
               type="button"
               data-testid={`collaboration-issue-children-${issue.id}`}
-              onClick={() => controller.setCurrentParentId(issue.id)}
-              className="mx-3 mb-3 text-xs text-text-secondary hover:text-text-primary"
+              onClick={(event) => {
+                event.stopPropagation();
+                controller.setCurrentParentId(issue.id);
+              }}
+              className="mx-3 mb-3 min-h-11 text-xs text-text-secondary hover:text-text-primary md:min-h-0"
             >
-              查看子任务
+              {translate("todo.view_child_task")}
             </button>
           ) : null;
           const defaultCard = (
@@ -580,6 +659,7 @@ export function ProjectBoardAdapter({
             renderIssueCard({
               column,
               defaultCard,
+              childrenAction,
               display: issueDisplay,
               focused,
               issue,

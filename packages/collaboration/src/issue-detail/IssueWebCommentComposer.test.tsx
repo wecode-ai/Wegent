@@ -103,6 +103,43 @@ describe("Web adapter for the desktop main composer", () => {
     });
   }
 
+  it.each([
+    ["8", "bob"],
+    ["agent:bot", "代码助手"],
+    ["group:squad", "协作小组"],
+  ])("selects and persists comment assignee %s", async (target, name) => {
+    const assign = vi.fn().mockResolvedValue(undefined);
+    await render(vi.fn(), vi.fn(), {
+      options: [
+        { value: "8", label: "bob", group: "成员" },
+        { value: "agent:bot", label: "代码助手", group: "智能体" },
+        { value: "group:squad", label: "协作小组", group: "协作小组" },
+      ],
+      assign,
+    });
+    const selector = container.querySelector<HTMLButtonElement>(
+      '[data-testid="collaboration-issue-comment-form-assignee"]',
+    )!;
+    await act(async () => selector.click());
+    const option = document.querySelector<HTMLButtonElement>(
+      '[data-testid="collaboration-issue-comment-form-assignee-option-' +
+        target +
+        '"]',
+    )!;
+    expect(option).not.toBeNull();
+    await act(async () => option.click());
+    expect(selector.textContent).toContain(name);
+    expect(assign).not.toHaveBeenCalled();
+    await act(async () =>
+      document
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="collaboration-issue-comment-submit"]',
+        )!
+        .click(),
+    );
+    expect(assign).toHaveBeenCalledWith(target);
+  });
+
   it("does not assign when a pending comment fails after leaving the Issue", async () => {
     let rejectSend!: (error: Error) => void;
     const send = vi.fn(
@@ -113,9 +150,7 @@ describe("Web adapter for the desktop main composer", () => {
     );
     const assign = vi.fn().mockResolvedValue(undefined);
     await render(vi.fn(), send, {
-      members: [
-        { user_id: 8, user_name: "bob", role: "Developer" },
-      ] as import("../types").CollaborationMember[],
+      options: [{ value: "8", label: "bob" }],
       assign,
     });
     write("[$@bob](wework-member://8) Please review");

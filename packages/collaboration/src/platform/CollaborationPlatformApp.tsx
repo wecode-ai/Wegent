@@ -2,6 +2,15 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import { templateMessages } from "../templates/messages";
+import { applyWorkspaceTemplate } from "../templates/workspaceConfiguration";
+import {
+  readTemplateAgents,
+  templateRoutingResolver,
+  materializeTemplateAgents,
+  validateTemplateAgentRouting,
+} from "../templates/agents";
+
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
@@ -24,6 +33,13 @@ import {
   X,
 } from "lucide-react";
 
+import { CollaborationTemplateContext } from "../templates/context";
+import { CollaborationTemplatePage } from "../templates/CollaborationTemplatePage";
+import type { CollaborationTemplate } from "../templates/types";
+import {
+  prepareTemplateProject,
+  configureTemplateProject,
+} from "../templates/projectConfiguration";
 import { useDeviceCatalog } from "./useDeviceCatalog";
 import { ensureWorkspaceEnvironmentSharing } from "../execution-environment/ensureWorkspaceEnvironmentSharing";
 
@@ -101,7 +117,10 @@ import {
   WorkspaceCollaborationGroupsConfiguration,
   type WorkspaceResourceCommands,
 } from "./WorkspaceResourceConfiguration";
-import { WorkspaceGroupsPanel, WorkspaceMembersPanel } from './WorkspaceParticipantPanels'
+import {
+  WorkspaceGroupsPanel,
+  WorkspaceMembersPanel,
+} from "./WorkspaceParticipantPanels";
 
 export type CollaborationProjectRendererWorkspaceContext =
   | CollaborationWorkspace
@@ -459,6 +478,36 @@ function CollaborationPlatformNavigation({
               <Monitor aria-hidden="true" />
               <span>{messages.devices}</span>
             </button>
+            {host.templateStore && host.templateNavigation && (
+              <button
+                type="button"
+                className={
+                  !host.location.workspaceId &&
+                  host.location.rootView === "templates"
+                    ? "active"
+                    : undefined
+                }
+                aria-current={
+                  host.location.rootView === "templates" ? "page" : undefined
+                }
+                data-testid="collaboration-primary-templates"
+                onClick={() =>
+                  host.navigate({
+                    ...host.location,
+                    platformView: "spaces",
+                    rootView: "templates",
+                    workspaceId: null,
+                    workspaceView: "home",
+                    projectId: null,
+                    projectView: "board",
+                    issueId: null,
+                  })
+                }
+              >
+                <UsersRound aria-hidden="true" />
+                <span>{messages.templates}</span>
+              </button>
+            )}
           </nav>
         </>
       ) : null}
@@ -1599,6 +1648,7 @@ function RootTeamEditor({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const dialogRef = useRef<HTMLElement>(null);
+  const hasCreatedGroups = useRef(false);
   useEffect(() => {
     if (!groupId || loading || error) return;
     const previous = document.activeElement as HTMLElement | null;
@@ -1648,6 +1698,7 @@ function RootTeamEditor({
               version,
             });
             await onCreated();
+            onClose();
           }
         : undefined,
       searchUsers: (query) => api.members.searchUsers(query),
@@ -1659,12 +1710,38 @@ function RootTeamEditor({
         }),
       removeMember: (userId) =>
         api.workspaces!.removeMember(workspace.id, userId),
+      async loadTemplateAgents(group) {
+        const agents = await api.workspaces!.listAgents(workspace.id, {
+          forceRefresh: true,
+        });
+        return readTemplateAgents(
+          agents,
+          [group],
+          host.projectAgentConfiguration?.readTemplateAgent,
+        );
+      },
+      async createTemplateGroups(document, drafts) {
+        const created = await applyWorkspaceTemplate(
+          api,
+          workspace,
+          document,
+          drafts,
+          host.projectAgentConfiguration,
+          templateMessages[locale].partial,
+          () => {
+            hasCreatedGroups.current = true;
+          },
+          templateMessages[locale].unsupportedPolicy,
+          locale,
+        );
+        return created;
+      },
       async createCollaborationGroup(input) {
         const created = await api.workspaces!.createCollaborationGroup(
           workspace.id,
           input,
         );
-        await onCreated();
+        hasCreatedGroups.current = true;
         return created;
       },
       async updateCollaborationGroup(groupId, input) {
@@ -1674,14 +1751,26 @@ function RootTeamEditor({
           input,
         );
         await onCreated();
+        onClose();
         return updated;
       },
       async removeCollaborationGroup(groupId) {
         await api.workspaces!.removeCollaborationGroup(workspace.id, groupId);
         await onCreated();
+        onClose();
       },
     };
-  }, [api.members, api.workspaces, onCreated, workspace.id]);
+  }, [
+    api.members,
+    api.workspaces,
+    api.agents,
+    host.projectAgentConfiguration,
+    locale,
+    onClose,
+    onCreated,
+    workspace.id,
+    workspace.namespace,
+  ]);
 
   if (loading || error) {
     return (
@@ -1755,7 +1844,13 @@ function RootTeamEditor({
       detailPresentation={groupId ? "dialog" : "page"}
       showGroupCollection={Boolean(groupId)}
       onCreateOpenChange={(open) => {
-        if (!groupId && !open) onClose();
+        if (!groupId && !open) {
+          onClose();
+          if (hasCreatedGroups.current) {
+            hasCreatedGroups.current = false;
+            void onCreated();
+          }
+        }
       }}
     />
   );
@@ -1819,7 +1914,20 @@ function RootTeamEditor({
   );
 }
 
-export function CollaborationPlatformApp({
+export function CollaborationPlatformApp(
+  props: React.ComponentProps<typeof CollaborationPlatformAppContent>,
+) {
+  return (
+    <CollaborationTemplateContext.Provider
+      key={props.host.templateStore?.library.scope ?? "default"}
+      value={props.host.templateStore ?? null}
+    >
+      <CollaborationPlatformAppContent {...props} />
+    </CollaborationTemplateContext.Provider>
+  );
+}
+
+function CollaborationPlatformAppContent({
   api,
   refreshKey,
   navigationApis,
@@ -1860,6 +1968,12 @@ export function CollaborationPlatformApp({
     !host.location.workspaceId &&
     host.location.rootView === "stand-in" &&
     Boolean(host.renderStandInPage);
+  const isTemplatePage =
+    !host.location.projectId &&
+    !host.location.workspaceId &&
+    host.location.rootView === "templates" &&
+    Boolean(host.templateStore);
+  const ownsPageRequests = isDevicePage || isStandInPage || isTemplatePage;
   const deviceCatalog = useDeviceCatalog(
     api,
     isDevicePage,
@@ -1877,6 +1991,8 @@ export function CollaborationPlatformApp({
   const [archiveProject, setArchiveProject] =
     useState<CollaborationProject | null>(null);
   const [projectDialogOpen, setProjectDialogOpen] = useState(false);
+  const [projectTemplate, setProjectTemplate] =
+    useState<CollaborationTemplate | null>(null);
   const [projectImporter, setProjectImporter] = useState<{
     workspaceId: string;
     mode: "folder" | "existing";
@@ -2023,8 +2139,8 @@ export function CollaborationPlatformApp({
     domainProjects[0] ??
     null;
   useEffect(() => {
-    if (!state.loading && !state.error) onReady?.();
-  }, [onReady, state.error, state.loading]);
+    if (ownsPageRequests || (!state.loading && !state.error)) onReady?.();
+  }, [onReady, ownsPageRequests, state.error, state.loading]);
   const navigationProjectsRef = useRef(state.navigationProjects);
   useLayoutEffect(() => {
     navigationProjectsRef.current = state.navigationProjects;
@@ -2383,7 +2499,7 @@ export function CollaborationPlatformApp({
     });
   };
   let content: React.ReactNode;
-  if (state.loading && !isDevicePage && !isStandInPage) {
+  if (state.loading && !ownsPageRequests) {
     content = (
       <ProjectLoadingSkeleton
         label={translate("common.loading", "正在加载…")}
@@ -2394,7 +2510,7 @@ export function CollaborationPlatformApp({
         }
       />
     );
-  } else if (state.error && !isDevicePage && !isStandInPage) {
+  } else if (state.error && !ownsPageRequests) {
     content = (
       <div className="collaboration-alert" role="alert">
         {state.error}
@@ -2472,6 +2588,7 @@ export function CollaborationPlatformApp({
   } else if (
     !state.workspace ||
     isDevicePage ||
+    isTemplatePage ||
     host.location.rootView === "stand-in"
   ) {
     const rootView = host.location.rootView ?? "home";
@@ -2480,7 +2597,17 @@ export function CollaborationPlatformApp({
       return item.is_unread || operation === "failed" || operation === "review";
     });
     content =
-      rootView === "stand-in" && host.renderStandInPage ? (
+      rootView === "templates" && host.templateStore ? (
+        <CollaborationTemplatePage
+          key={host.templateStore.library.scope}
+          store={host.templateStore}
+          locale={locale}
+          onUse={(record) => {
+            setProjectTemplate(record.document);
+            startProjectCreation("blank");
+          }}
+        />
+      ) : rootView === "stand-in" && host.renderStandInPage ? (
         host.renderStandInPage({
           projects: state.navigationProjects,
           onClose: () =>
@@ -2766,6 +2893,7 @@ export function CollaborationPlatformApp({
                 ariaLabel={messages.collaborationParticipants}
                 groupsContent={
                   <WorkspaceGroupsPanel
+                    agentConfiguration={host.projectAgentConfiguration}
                     key={workspace.id}
                     api={api}
                     workspace={workspace}
@@ -2974,7 +3102,9 @@ export function CollaborationPlatformApp({
       workspaces={state.workspaces}
       workspaceNavigationContext={state.workspaceNavigationContext}
       projects={state.navigationProjects}
-      navigationIncomplete={state.navigationIncomplete}
+      navigationIncomplete={
+        state.navigationIncomplete || (ownsPageRequests && Boolean(state.error))
+      }
       onRetryNavigation={commands.reload}
       canCreateWorkspace={canCreateCloudWorkspace}
       onCreateWorkspace={() => {
@@ -3094,6 +3224,7 @@ export function CollaborationPlatformApp({
           onClose={() => {
             setWorkspaceDialogOpen(false);
             setCreateProjectAfterWorkspace(false);
+            setProjectTemplate(null);
           }}
           onCreate={async (input) => {
             const workspace = await commands.createWorkspace(input);
@@ -3119,7 +3250,10 @@ export function CollaborationPlatformApp({
           workspaces={domainWorkspaces}
           cloudAccess={host.cloudAccess}
           canCreateCloudWorkspace={canCreateCloudWorkspace}
-          onClose={() => setWorkspacePickerOpen(false)}
+          onClose={() => {
+            setWorkspacePickerOpen(false);
+            setProjectTemplate(null);
+          }}
           onCreateCloudWorkspace={() => {
             setWorkspacePickerOpen(false);
             setCreateProjectAfterWorkspace(true);
@@ -3148,6 +3282,7 @@ export function CollaborationPlatformApp({
         : null}
       {projectDialogOpen && projectWorkspaceId ? (
         <ProjectCreateDialog
+          initialTemplate={projectTemplate}
           targets={[
             {
               location: projectCreateLocation,
@@ -3185,7 +3320,28 @@ export function CollaborationPlatformApp({
                     host.loadProjectCollaborationGroupGenerationModels,
                   generateCollaborationGroupDraft:
                     host.generateProjectCollaborationGroupDraft,
+                  validate: async (selection) => {
+                    if (!selection.template) return;
+                    await validateTemplateAgentRouting(
+                      selection.template,
+                      selection.collaborationGroupDrafts,
+                      templateRoutingResolver(
+                        host.projectAgentConfiguration,
+                        projectWorkspace.location,
+                        undefined,
+                        locale,
+                      ),
+                    );
+                  },
                   configure: async (project, selection) => {
+                    if (selection.template) {
+                      await prepareTemplateProject(
+                        api,
+                        project.id,
+                        selection.template,
+                        locale,
+                      );
+                    }
                     const existingMembers = await api.members.list(project.id);
                     const existingMemberIds = new Set(
                       existingMembers.map((member) => member.user_id),
@@ -3263,63 +3419,101 @@ export function CollaborationPlatformApp({
                           })),
                       )),
                     ];
-                    const rawGroupDraft = selection.collaborationGroupDraft;
-                    if (!rawGroupDraft) return;
-                    const groupDraft =
-                      normalizeCollaborationGroupDraftForPersistence(
-                        rawGroupDraft,
-                      );
-                    if (!api.projects.createCollaborationGroup) {
-                      throw new Error(
-                        locale === "zh-CN"
-                          ? "当前项目不支持创建协作小组"
-                          : "This project does not support collaboration groups",
-                      );
-                    }
-                    const mapParticipant = (
-                      participant: typeof groupDraft.leader,
-                    ) => {
-                      if (participant.kind === "human") {
-                        return participant;
-                      }
-                      const projectAgent = createdAgents.find(
-                        ({ resourceId }) => resourceId === participant.id,
-                      )?.projectAgent;
-                      if (!projectAgent) {
+                    const resolvedTemplate = selection.template
+                      ? await materializeTemplateAgents(
+                          api,
+                          project.id,
+                          selection.template,
+                          selection.collaborationGroupDrafts,
+                          templateMessages[locale].partial,
+                          undefined,
+                          templateRoutingResolver(
+                            host.projectAgentConfiguration,
+                            projectWorkspace.location,
+                            project.id,
+                            locale,
+                          ),
+                        )
+                      : {
+                          drafts: selection.collaborationGroupDrafts,
+                          agentIds: new Set<string>(),
+                        };
+                    const templateGroups: CollaborationGroup[] = [];
+                    for (const rawGroupDraft of resolvedTemplate.drafts) {
+                      const groupDraft =
+                        normalizeCollaborationGroupDraftForPersistence(
+                          rawGroupDraft,
+                        );
+                      if (!api.projects.createCollaborationGroup) {
                         throw new Error(
                           locale === "zh-CN"
-                            ? "协作小组中的智能体未成功加入项目"
-                            : "An Agent in the group was not added to the project",
+                            ? "当前项目不支持创建协作小组"
+                            : "This project does not support collaboration groups",
                         );
                       }
-                      return {
-                        ...participant,
-                        id: String(projectAgent.id),
+                      const mapParticipant = (
+                        participant: typeof groupDraft.leader,
+                      ) => {
+                        if (participant.kind === "human") {
+                          return participant;
+                        }
+                        const projectAgent = createdAgents.find(
+                          ({ resourceId }) => resourceId === participant.id,
+                        )?.projectAgent;
+                        if (resolvedTemplate.agentIds.has(participant.id))
+                          return participant;
+                        if (!projectAgent) {
+                          throw new Error(
+                            locale === "zh-CN"
+                              ? "协作小组中的智能体未成功加入项目"
+                              : "An Agent in the group was not added to the project",
+                          );
+                        }
+                        return {
+                          ...participant,
+                          id: String(projectAgent.id),
+                        };
                       };
-                    };
-                    const leader = mapParticipant(groupDraft.leader);
-                    if (!leader.id) {
-                      throw new Error(
-                        locale === "zh-CN"
-                          ? "负责人不在当前协作成员中"
-                          : "The owner is not a current collaborator",
-                      );
+                      const leader = mapParticipant(groupDraft.leader);
+                      if (!leader.id) {
+                        throw new Error(
+                          locale === "zh-CN"
+                            ? "负责人不在当前协作成员中"
+                            : "The owner is not a current collaborator",
+                        );
+                      }
+                      const createdGroup =
+                        await api.projects.createCollaborationGroup(
+                          project.id,
+                          {
+                            name: groupDraft.name,
+                            description: groupDraft.description,
+                            instructions: groupDraft.instructions,
+                            leader,
+                            members: groupDraft.members.map(mapParticipant),
+                            coordinationMode: "manager",
+                            stages: groupDraft.stages.map((stage) => ({
+                              ...stage,
+                              assignee: stage.assignee
+                                ? mapParticipant(stage.assignee)
+                                : null,
+                            })),
+                            executionRequirements:
+                              groupDraft.executionRequirements,
+                          },
+                        );
+                      templateGroups.push(createdGroup);
                     }
-                    await api.projects.createCollaborationGroup(project.id, {
-                      name: groupDraft.name,
-                      description: groupDraft.description,
-                      instructions: groupDraft.instructions,
-                      leader,
-                      members: groupDraft.members.map(mapParticipant),
-                      coordinationMode: "manager",
-                      stages: groupDraft.stages.map((stage) => ({
-                        ...stage,
-                        assignee: stage.assignee
-                          ? mapParticipant(stage.assignee)
-                          : null,
-                      })),
-                      executionRequirements: groupDraft.executionRequirements,
-                    });
+                    if (selection.template) {
+                      await configureTemplateProject(
+                        api,
+                        project.id,
+                        selection.template,
+                        templateGroups,
+                        locale,
+                      );
+                      return api.projects.get(project.id);
+                    }
                   },
                 }
               : undefined
@@ -3331,10 +3525,13 @@ export function CollaborationPlatformApp({
           }}
           onClose={() => {
             setProjectDialogOpen(false);
+            setProjectTemplate(null);
             setProjectWorkspaceId(null);
           }}
           onCreated={(project) => {
+            commands.registerProject(project);
             setProjectDialogOpen(false);
+            setProjectTemplate(null);
             setProjectWorkspaceId(null);
             openProject(project);
           }}
@@ -3425,7 +3622,6 @@ export function CollaborationPlatformApp({
                 locale={locale}
                 onClose={() => setRootTeamCreationWorkspaceId(null)}
                 onCreated={async () => {
-                  setRootTeamCreationWorkspaceId(null);
                   await commands.reload();
                   host.notify?.(messages.resourceSaved, "success");
                 }}

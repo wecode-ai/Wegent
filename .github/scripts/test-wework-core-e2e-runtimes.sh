@@ -5,16 +5,28 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 temp_dir="$(mktemp -d)"
 trap 'rm -rf "$temp_dir"' EXIT
 mkdir -p "$temp_dir/bin"
+# shellcheck disable=SC2016 # Ruby evaluates the literal GitHub expressions.
 ruby -ryaml -e '
   action = YAML.safe_load(File.read(ARGV[0]))
   step = action.fetch("runs").fetch("steps").find { |s| s["env"]&.key?("EXECUTOR_IMAGE") }
-  source = step.fetch("env").fetch("BUILD_RUNTIMES_FROM_SOURCE")
-  artifact = step.fetch("env").fetch("EXECUTOR_ARTIFACT")
+  artifact = step.fetch("env").fetch("RUNTIME_ARTIFACTS")
+  raise "Desktop runtime consumers must not compile Rust" if step.fetch("run").match?(/cargo build|apt-get/)
   workflow = YAML.safe_load(File.read(ARGV[1]))
   producer = workflow.fetch("jobs").fetch("build-backend-rs-e2e-runtime")
   raise "Backend Rust binaries must target the Noble consumer GLIBC" unless producer.fetch("runs-on") == "ubuntu-24.04"
   consumer_workflow = YAML.safe_load(File.read(ARGV[2]))
+  consumer_workflow.fetch("jobs").each do |name, job|
+    job.fetch("steps", []).each do |candidate|
+      next unless candidate["uses"]&.start_with?("actions/checkout@")
+      options = candidate.fetch("with", {})
+      next if options["fetch-depth"] == 0 || options.key?("sparse-checkout")
+      raise "#{name} must fetch its complete shallow checkout without a second promisor fetch" if options.key?("filter")
+    end
+  end
   consumer = consumer_workflow.fetch("jobs").fetch("build-wework-desktop-core-e2e")
+  permissions = consumer.fetch("permissions", consumer_workflow.fetch("permissions"))
+  raise "Desktop runtime downloads need read-only Actions access" unless permissions.fetch("actions") == "read"
+  raise "Desktop runtime consumers must not gain write permissions" if permissions.values.include?("write")
   warmup = YAML.safe_load(File.read(ARGV[3]))
   runtime_steps = [
     producer.fetch("steps").find { |s| s["name"] == "Resolve Backend Rust E2E runtime" },
@@ -65,7 +77,7 @@ ruby -ryaml -e '
    ["pull_request", "wecode-ai/Wegent", false, true],
    ["merge_group", "", false, true],
    ["schedule", "", false, true],
-   ["workflow_dispatch", "", false, true]].each do |event, head, expected_source, expected_publish|
+   ["workflow_dispatch", "", false, true]].each do |event, head, expected_artifact, expected_publish|
     expected_sha = event == "pull_request" ? "pr-head-sha" : "workflow-sha"
     values = {"github.event_name" => event, "github.event.pull_request.head.repo.full_name" => head,
               "github.repository" => "wecode-ai/Wegent", "steps.image-check.outputs.exists" => "false",
@@ -76,11 +88,10 @@ ruby -ryaml -e '
       values.each { |key, value| expression = expression.gsub(key, value.inspect) }
       eval(expression)
     end
-    raise "wrong runtime source for #{event}/#{head}" unless evaluate.call(source) == expected_source
-    raise "wrong Executor artifact source for #{event}/#{head}" unless evaluate.call(artifact) == expected_source
+    raise "wrong runtime artifact source for #{event}/#{head}" unless evaluate.call(artifact) == expected_artifact
     raise "wrong package publication for #{event}/#{head}" unless evaluate.call(publish) == expected_publish
-    artifact_sha = step.fetch("env").fetch("EXECUTOR_HEAD_SHA")
-    raise "wrong Executor artifact revision for #{event}" unless evaluate.call(artifact_sha) == expected_sha
+    artifact_sha = step.fetch("env").fetch("RUNTIME_HEAD_SHA")
+    raise "wrong runtime artifact revision for #{event}" unless evaluate.call(artifact_sha) == expected_sha
     [workflow, consumer_workflow].each do |definition|
       definition.fetch("jobs").each do |name, job|
         job.fetch("steps", []).select { |candidate| candidate["uses"]&.start_with?("actions/checkout@") }.each do |checkout|
@@ -105,41 +116,14 @@ ruby -ryaml -e '
   puts step.fetch("run")
 ' "${RUNTIME_ACTION_FILE:-$script_dir/../actions/build-wework-core-e2e/action.yml}" > "$temp_dir/build.sh"
 
-cat > "$temp_dir/bin/apt-get" <<'EOF'
+for command in apt-get cargo; do
+  cat > "$temp_dir/bin/$command" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-test -z "${GITHUB_TOKEN:-}"
-test ! -f "$DOCKER_CONFIG/config.json"
-case "$*" in
-  update) test "$#" -eq 1 ;;
-  'install -y --no-install-recommends cmake nasm') test "$#" -eq 5 ;;
-  *) exit 1 ;;
-esac
-printf 'apt %s\n' "$*" >> "$TEST_LOG"
-if [[ "$1" == install && "${FAIL_APT_INSTALL:-false}" == true ]]; then
-  exit 1
-fi
+echo unexpected-build >> "$TEST_LOG"
+exit 1
 EOF
-cat > "$temp_dir/bin/cargo" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-test -z "${GITHUB_TOKEN:-}"
-test ! -f "$DOCKER_CONFIG/config.json"
-echo cargo >> "$TEST_LOG"
-[[ "${FAIL_CARGO:-false}" != true ]] || exit 1
-manifest=""
-binary=""
-while (($#)); do
-  case "$1" in
-    --manifest-path) manifest="$2"; shift ;;
-    --bin) binary="$2"; shift ;;
-  esac
-  shift
 done
-sleep 0.2
-mkdir -p "${manifest%/*}/target/release"
-printf '#!/bin/sh\nexit 0\n' > "${manifest%/*}/target/release/$binary"
-EOF
 cat > "$temp_dir/bin/oras" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -155,10 +139,12 @@ cat > "$temp_dir/bin/pnpm" <<'EOF'
 set -euo pipefail
 test -z "${GITHUB_TOKEN:-}"
 echo package >> "$TEST_LOG"
-if [[ "$BUILD_RUNTIMES_FROM_SOURCE" == true ]]; then
+if [[ "$RUNTIME_ARTIFACTS" == true ]]; then
   test -x .ci-artifacts/wegent-executor
   test -x .ci-artifacts/wegent-backend-rs
+  test ! -f "$DOCKER_CONFIG/config.json"
 fi
+[[ "$FAIL_PACKAGE" != true ]] || exit 1
 for ((i=0; i<50; i++)); do
   if [[ -x .ci-artifacts/wegent-executor ]]; then
     mkdir -p wework/electron/release/WeWork-linux-x64/resources/bin
@@ -174,10 +160,7 @@ chmod +x "$temp_dir/bin/"*
 
 run_case() {
   local mode="$1" failure="$2" expected="$3"
-  local logout_failure="${4:-false}"
-  local artifact_failure="${5:-false}"
-  local apt_failure="${6:-false}"
-  local repo="$temp_dir/repo-$mode-$failure-$logout_failure-$artifact_failure-$apt_failure"
+  local repo="$temp_dir/repo-$mode-$failure"
   mkdir -p "$repo/.github/scripts" "$repo/docker-config"
   printf '{"auths":{"ghcr.io":{"auth":"synthetic-credential"}}}\n' > "$repo/docker-config/config.json"
   touch "$repo/log"
@@ -186,8 +169,14 @@ run_case() {
 set -euo pipefail
 test "${GITHUB_TOKEN:-}" = synthetic-read-token
 test -f "$DOCKER_CONFIG/config.json"
-echo oci >> "$TEST_LOG"
-[[ "$BUILD_RUNTIMES_FROM_SOURCE" != true ]] || exit 1
+test "$RUNTIME_ARTIFACTS" != true
+case "$1 $2 $3" in
+  'executor /app/executor .ci-artifacts/wegent-executor') ;;
+  'backend /app/wegent-backend-rs .ci-artifacts/wegent-backend-rs') ;;
+  *) exit 1 ;;
+esac
+echo "oci $3" >> "$TEST_LOG"
+[[ "$FAIL_RUNTIME" != "$3" ]] || exit 1
 mkdir -p "$(dirname "$3")"
 printf '#!/bin/sh\nexit 0\n' > "$3"
 chmod +x "$3"
@@ -199,20 +188,28 @@ test "${GITHUB_TOKEN:-}" = synthetic-read-token
 test "$ACTIONS_ARTIFACT_WORKFLOW" = e2e-tests.yml
 test "$ACTIONS_ARTIFACT_HEAD_SHA" = synthetic-head-sha
 test "$ACTIONS_ARTIFACT_WAIT_SECONDS" = 1800
-test "$1" = executor-e2e-binary
-echo artifact >> "$TEST_LOG"
-[[ "${FAIL_ARTIFACT:-false}" != true ]] || exit 1
+test -f "$DOCKER_CONFIG/config.json"
+case "$1" in
+  executor-e2e-binary) binary=wegent-executor ;;
+  backend-rs-e2e-runtime) binary=wegent-backend-rs ;;
+  *) exit 1 ;;
+esac
+echo "artifact $1" >> "$TEST_LOG"
+[[ "$FAIL_RUNTIME" != "$1" ]] || exit 1
 mkdir -p "$2"
-printf '#!/bin/sh\nexit 0\n' > "$2/wegent-executor"
+if [[ "$MISSING_BINARY" != "$binary" ]]; then
+  printf '#!/bin/sh\nexit 0\n' > "$2/$binary"
+fi
 EOF
   chmod +x "$repo/.github/scripts/restore-oci-runtime-binary.sh"
   chmod +x "$repo/.github/scripts/download-actions-artifact.sh"
   local status=0
   (cd "$repo"; PATH="$temp_dir/bin:$PATH" TEST_LOG="$repo/log" \
-    BUILD_RUNTIMES_FROM_SOURCE="$mode" FAIL_CARGO="$failure" \
-    EXECUTOR_ARTIFACT="$mode" EXECUTOR_HEAD_SHA=synthetic-head-sha \
-    FAIL_ARTIFACT="$artifact_failure" FAIL_APT_INSTALL="$apt_failure" \
-    DOCKER_CONFIG="$repo/docker-config" FAIL_LOGOUT="$logout_failure" \
+    RUNTIME_ARTIFACTS="$mode" RUNTIME_HEAD_SHA=synthetic-head-sha \
+    FAIL_RUNTIME="$failure" MISSING_BINARY="${failure#missing:}" \
+    DOCKER_CONFIG="$repo/docker-config" \
+    FAIL_LOGOUT="$([[ "$failure" == logout ]] && echo true || echo false)" \
+    FAIL_PACKAGE="$([[ "$failure" == package ]] && echo true || echo false)" \
     GITHUB_TOKEN=synthetic-read-token EXECUTOR_IMAGE=executor \
     BACKEND_RS_IMAGE=backend bash "$temp_dir/build.sh") || status=$?
   if [[ "$expected" == success ]]; then
@@ -220,34 +217,36 @@ EOF
     test -x "$repo/.ci-artifacts/wegent-backend-rs"
   else
     test "$status" -ne 0
-    if grep -q package "$repo/log"; then return 1; fi
+    if [[ "$mode" == true && "$failure" != package ]] && grep -q package "$repo/log"; then return 1; fi
   fi
+  if grep -q unexpected-build "$repo/log"; then return 1; fi
+  test -z "$(find "$repo/.ci-artifacts" -type d -name '*-download.*' -print)"
   if [[ "$mode" == true ]]; then
     if grep -q oci "$repo/log"; then return 1; fi
-    test "$(grep -c logout "$repo/log")" -eq 1
-    if [[ "$logout_failure" == true ]]; then
-      test -f "$repo/docker-config/config.json"
-      if grep -Eq "^(cargo|apt )" "$repo/log"; then return 1; fi
-    else
-      test ! -f "$repo/docker-config/config.json"
-      local expected_build_log=$'apt update\napt install -y --no-install-recommends cmake nasm'
-      if [[ "$apt_failure" != true ]]; then
-        expected_build_log+=$'\ncargo'
+    test "$(grep -c '^artifact ' "$repo/log")" -eq 2
+    if [[ "$expected" == success || "$failure" == package || "$failure" == logout ]]; then
+      test "$(sed -n '3p' "$repo/log")" = logout
+      if [[ "$failure" != logout ]]; then
+        test ! -f "$repo/docker-config/config.json"
+        test "$(sed -n '4p' "$repo/log")" = package
       fi
-      test "$(grep -E '^(apt |cargo$)' "$repo/log")" = "$expected_build_log"
     fi
-    test "$(grep -c artifact "$repo/log")" -eq 1
   else
     if grep -q logout "$repo/log"; then return 1; fi
-    if grep -Eq "^(cargo|apt )" "$repo/log"; then return 1; fi
-    test "$(grep -c oci "$repo/log")" -eq 2
+    if grep -q '^artifact ' "$repo/log"; then return 1; fi
+    test "$(grep -c '^oci ' "$repo/log")" -eq 2
   fi
 }
 
-run_case true false success
-run_case false false success
-run_case true true failure
-run_case true false failure true
-run_case true false failure false true
-run_case true false failure false false true
-echo 'Wework runtime source/OCI handoff tests passed'
+run_case true none success
+run_case false none success
+run_case true executor-e2e-binary failure
+run_case true backend-rs-e2e-runtime failure
+run_case true missing:wegent-executor failure
+run_case true missing:wegent-backend-rs failure
+run_case true logout failure
+run_case true package failure
+run_case false .ci-artifacts/wegent-executor failure
+run_case false .ci-artifacts/wegent-backend-rs failure
+run_case false package failure
+echo 'Wework runtime artifact/OCI handoff tests passed'

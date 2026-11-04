@@ -1,10 +1,12 @@
 import {
   spawn,
+  type ChildProcess,
   type ChildProcessWithoutNullStreams,
   type SpawnOptionsWithoutStdio,
 } from 'node:child_process'
 import { EventEmitter, once } from 'node:events'
 import { readdir, readFile } from 'node:fs/promises'
+import { toNamespacedPath } from 'node:path'
 import { RotatingLog, type RotatingLogOptions } from './rotating-log.js'
 import { resolveSpawnCommand } from './spawn-command.js'
 
@@ -103,7 +105,8 @@ export class RuntimeSupervisor extends EventEmitter<RuntimeSupervisorEvents> {
     }
     const resolved = resolveSpawnCommand(this.options.command, this.options.args ?? [])
     const child = spawn(resolved.command, resolved.args, {
-      cwd: this.options.cwd,
+      // CreateProcess otherwise rejects valid versioned runtime directories beyond MAX_PATH.
+      cwd: this.options.cwd && toNamespacedPath(this.options.cwd),
       env: this.options.env,
       detached: process.platform !== 'win32',
       stdio,
@@ -113,12 +116,16 @@ export class RuntimeSupervisor extends EventEmitter<RuntimeSupervisorEvents> {
     this.child = child
     this.attach(child)
     this.emit('spawn', child)
-    void this.writeLog('supervisor', `spawned pid=${child.pid ?? 'unknown'}`)
+    void this.writeLog(
+      'supervisor',
+      `spawned pid=${child.pid ?? 'unknown'} executable=${JSON.stringify(resolved.command)}`
+    )
 
     try {
       await spawned
       await this.waitUntilReady(child)
     } catch (error) {
+      void this.writeLog('supervisor', `startup failed: ${String(error)}`)
       if (this.current() === child) await terminateProcessTree(child, 1_000)
       if (!this.stopping && this.currentState !== 'backoff' && this.currentState !== 'failed') {
         this.recordCrash()
@@ -279,10 +286,7 @@ function waitForSpawn(child: ChildProcessWithoutNullStreams): Promise<void> {
   })
 }
 
-export async function terminateProcessTree(
-  child: ChildProcessWithoutNullStreams,
-  timeoutMs: number
-): Promise<void> {
+export async function terminateProcessTree(child: ChildProcess, timeoutMs: number): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return
   const processGroupId = process.platform === 'win32' ? null : child.pid
   const exited = once(child, 'exit').then(() => true)
@@ -368,7 +372,7 @@ async function inspectProcessGroup(processGroupId: number): Promise<'absent' | '
   return 'dead'
 }
 
-function signalProcessTree(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals): void {
+function signalProcessTree(child: ChildProcess, signal: NodeJS.Signals): void {
   try {
     if (process.platform === 'win32') {
       // Console runtimes cannot receive taskkill's non-forced window-close request.

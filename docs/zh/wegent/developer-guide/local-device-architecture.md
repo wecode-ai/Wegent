@@ -36,17 +36,21 @@ flowchart LR
 
 ### 设备产物声明与下载
 
-关联 Backend Task 的 Claude Code 或 Wegent executor 可以声明最终交付文件：
+Claude Code 和 Codex 可以通过 Wegent executor 声明最终交付文件：
 
 ```bash
 $WEGENT_EXECUTOR_BINARY artifact declare --path outputs/report.pdf
 ```
 
-声明仅发送文件名、相对路径、规范化工作区根目录、大小、修改时间和 SHA-256，不上传文件内容。`WEGENT_BACKEND_TASK_ID` 用于 Backend API 路径；`WEGENT_TASK_ID` 保留本地会话身份并用于工作区定位。认证只使用该轮执行的 `AUTH_TOKEN`（Task Token），不能使用独立的 runtime credential。
+声明先校验文件真实路径位于当前任务工作区内，并计算文件名、相对路径、规范化工作区根目录、大小、修改时间和 SHA-256。
+
+本地 Runtime 会话没有 Backend Task。Executor 不为它设置 `WEGENT_BACKEND_TASK_ID`；声明直接返回元数据和 `local_path`，不请求 Backend，也不需要云端凭据。最终回复使用指向 `local_path` 的 Markdown 文件链接，复用桌面的文件卡片和本地预览；链接随会话记录保留，文件仍在原工作区。
+
+关联 Backend Task 时，`WEGENT_BACKEND_TASK_ID` 必须是正整数，用于 Backend API 路径；`WEGENT_TASK_ID` 保留本地会话身份并用于工作区定位。声明仅发送上述元数据，不上传文件内容。认证只使用该轮执行的 `AUTH_TOKEN`（Task Token），不能使用独立的 runtime credential。非法 Backend ID 会在发出请求前明确报错，不能将 `runtime-*` 会话 ID 传给云端 Task 接口。
 
 Executor 工作目录、`WEGENT_TASK_WORKSPACE` 和声明命令复用同一套工作区路径解析。本地设备配置 `LOCAL_WORKSPACE_ROOT` 时，不得把逻辑别名 `/workspace` 当作物理工作区目录。
 
-新版默认 `Ghost/default/wegent-wework` 要求先成功声明最终交付文件，再引导用户使用对话文件卡片，不能用本地路径或 `computer://` 链接代替。初始化 YAML 不覆盖已存在的 Ghost；Claude Code（启用工具时）和 Codex 在执行时注入产物声明规则，因此旧 Ghost 无需数据库改写也能使用这条交付链路。原提示词数据迁移及其空操作 revision 均已删除，不读写业务数据；已记录 `a9c4e7b2d610` 的环境需在部署前单独处理版本兼容，配置不会被自动恢复。版本链处理见[迁移撤回说明](./device-artifact-prompt-migration.md)。
+新版默认 `Ghost/default/wegent-wework` 要求关联 Backend Task 的交付先成功声明，再引导用户使用对话文件卡片；本地 Runtime 会话使用执行时注入的本地声明规则。初始化 YAML 不覆盖已存在的 Ghost；Claude Code（启用工具时）和 Codex 在执行时注入产物声明规则，因此旧 Ghost 无需数据库改写也能使用这条交付链路。原提示词数据迁移及其空操作 revision 均已删除，不读写业务数据；已记录 `a9c4e7b2d610` 的环境需在部署前单独处理版本兼容，配置不会被自动恢复。版本链处理见[迁移撤回说明](./device-artifact-prompt-migration.md)。
 
 Backend 从 Task Token 对应的 assistant subtask 捕获 executor 名称和 namespace，并与工作区根目录一起保存为产物来源。下载始终使用这份来源快照，不选择任务最新的 executor；即使原 subtask 后续发生恢复重绑，也不能把旧卡片改指向新设备。原来源不可用时返回不可用，分享和复制任务不会携带这些设备产物。
 
@@ -117,6 +121,16 @@ Wework 在请求进入跨进程或跨服务边界时生成 request ID，并在�
 调用方没有 request ID 时，协议层不发送空的 `request_id` 字段；各组件日志使用自身的无上下文占位符。请求 ID 必须是有界、可打印的诊断标识，日志不得同时记录请求正文、认证信息、模型密钥或本地凭据。
 
 排查一条请求时，先从用户可见失败附近的 Wework frontend、DSH 或 Backend 日志取得 `request_id`，再在同一诊断目录或集中式日志系统中按精确值搜索。开始和结束日志还会记录方法名、结果与耗时，因此缺失的边界可以直接定位请求停留在哪个组件，而不需要按相近时间或任务名称猜测。
+
+### MCP 应用探测与请求失败诊断
+
+普通 MCP 工具调用不代表存在可视化应用。会话先通过 `runtime.mcp_apps.request` 的 `discover` 方法验证源调用和工具目录中的应用资源标识；无应用时返回 `null`，不创建应用卡片，也不保留应用连接。确认存在应用后，原生宿主显式 `retain` 连接，`initialize` 才读取资源。探测失败仅记录诊断；已确认应用的资源加载失败仍显示错误和重试入口。
+
+Electron 日志目录中的 `executor-transport.log` 保存本地 RPC 的请求 ID、方法、耗时和失败阶段：`fetch_failed`、`body_parse_failed` 或 `rpc_failed`。MCP 探测失败另记录调用 ID、任务 ID 和工具状态。Chromium 本地 RPC 网络错误记录路径、窗口标识和 `net::ERR_*` 错误码，不记录请求正文、Cookie 或认证信息。先按请求 ID 对照 DSH 和 executor 日志，再用窗口标识及时间对照 Chromium 错误；仅凭 `Failed to fetch` 不能认定为服务端业务错误或某一种网络故障。
+
+每个应用实例创建独立的 `sessionId`，由原生宿主显式持有和释放连接。关闭组件、窗口销毁、渲染进程退出或主页面刷新时，宿主先执行清理回调，删除隔离文档，再等待未完成的持有请求结束并释放该实例的连接；旧初始化迟到不能释放替代实例。云端实例拥有独立且绑定账号的 RPC 客户端，释放实例时同时关闭客户端，切换账号不能复用旧实例的认证连接。Backend 按已认证 Socket 记录远端持有关系，连接断开时释放；若断开时持有请求尚未完成，完成后立即释放。退出清理受宿主标准五秒宽限约束，断开连接继续触发 Backend 清理。应用持有和文档生命周期均不使用额外的定时心跳或过期租约。Executor 重启后，下一次应用操作按进程身份恢复持有关系。
+
+桌面 CI 的 `mcp-apps` 检查点覆盖真实应用加载、资源失败重试、普通历史调用、初始化迟到后的实例替换、页面刷新后的持有关系与文档清理，以及通过 Chromium 取消真实探测请求后的无卡片状态和网络恢复。故障注入只在隔离 E2E 环境启用，不替换 Runtime 响应。
 
 ### Executor 启动环境与 Codex Home 初始化
 
@@ -213,6 +227,8 @@ Wework 发起压缩前先解析目标会话保存的模型选择，并用当前�
 Codex 同一回合可以交错产生推理、助手文本和工具调用。executor 必须按 provider item ID 跟踪每一段助手文本的流式偏移和完成快照：同一 item 的 `delta` 与 `completed` 是同一内容的增量和快照，应去重；不同 item 的完成文本即使位于同一回合，也必须作为后续文本继续发送，不能因为前一个 item 已产生 delta 而丢弃。Wework 在把当前助手文本移动到工具或处理块之前会清空该文本流的偏移状态，使工具后的下一段助手文本从 offset 0 开始，并保持 transcript 的事件顺序。
 
 助手文本会按照流式开始事件的 phase 进入 Wework，但 `item/started` 携带的 phase 只是暂定状态：Codex 可能先把 item 标为 `final_answer`，再在继续调用工具前以 `commentary` 完成同一 item。完成事件中的明确 phase 是权威值；若它把当前流式 final 改判为过程文本，executor 会清除该活跃 final，并发送携带同一 provider item ID 和 `replacesItemId` 的过程块，让 Wework 原位替换暂定 final，而不是同时保留两份内容或提前结束回合。只有完成事件没有明确 phase 时，executor 才回退到流式阶段跟踪的 phase。已完成的明确 `final` 或 `final_answer` item 优先；若该回合没有明确 final item，则最后一段已完成的助手文本成为兜底最终结果。
+
+标准云端 executor 的回调链路也必须保留这一 item 身份：正文增量携带 `block_id`（provider item ID）和按 Unicode 码点计数的块内 `block_offset`，全局 `offset` 继续表示正文流的位置。Backend 缓冲只能合并同一块内连续的增量，Redis 按块内偏移原子追加未见过的后缀；同一 ID 的完成块原位更新已存储的文本。这样 phase 从 `final_answer` 变为 `commentary` 时，实时消息、运行中刷新和最终历史都只保留一份内容；不同 ID 的相同文本仍分别保留。
 
 Codex 提供的推理摘要会作为 `thinking` processing block 进入 Wework。流式摘要以单行“正在思考 · 摘要”显示，只用于反馈当前正在生效的思考进度；回合完成、失败或取消后，Wework 会移除该思考块，不在消息历史中保留摘要占位或详情。executor 必须同时映射 reasoning delta 和只携带完整 summary 的 `item/completed`，否则模型长时间推理时界面会退化成没有进展内容的统一等待状态。未包含在 provider 摘要中的内部推理内容不会展示。
 

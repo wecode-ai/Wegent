@@ -16,6 +16,9 @@ use serde_json::{Map, Value, json};
 use super::event::ExecutionEvent;
 use super::py_json::{orjson_dumps, python_dumps, utc_isoformat};
 
+#[path = "identified_text.rs"]
+mod identified_text;
+
 /// Unified TTL for all streaming-related data (1 hour).
 pub(crate) const STREAMING_TTL: u64 = 3600;
 const STREAMING_KEY_PREFIX: &str = "chat:streaming:";
@@ -24,6 +27,14 @@ const CONTEXT_METRICS_KEY_PREFIX: &str = "chat:context_metrics:";
 const CALLBACK_CHANNEL_PREFIX: &str = "callback:channel:";
 /// Internal field stored in block metadata and stripped before returning.
 pub(crate) const BLOCK_CONTENT_KEY_FIELD: &str = "_content_key";
+
+/// Hydrated blocks retain the wire-format string while tracking unavailable
+/// text internally so completion can distinguish it from an explicit empty value.
+#[derive(Default)]
+pub(crate) struct LoadedBlocks {
+    pub(crate) blocks: Vec<Map<String, Value>>,
+    pub(crate) has_missing_text_content: bool,
+}
 
 fn set_ex_options() -> SetOptions {
     SetOptions::default().with_expiration(SetExpiration::Seconds(STREAMING_TTL))
@@ -140,16 +151,14 @@ pub(crate) async fn publish_callback_event<R: Redis>(
 
 /// `_load_blocks_from_client`: read block metadata and hydrate per-block
 /// content from the internal content keys, then strip the internal field.
-async fn load_blocks<R: Redis>(
-    redis: &R,
-    subtask_id: i64,
-    strict: bool,
-) -> Option<Vec<Map<String, Value>>> {
+/// Missing text content is tracked separately from the client-safe block payload.
+async fn load_blocks<R: Redis>(redis: &R, subtask_id: i64, strict: bool) -> Option<LoadedBlocks> {
     let raw = redis
         .lrange::<_, String>(blocks_key(subtask_id), 0, -1)
         .await
         .ok()?;
     let mut blocks = Vec::with_capacity(raw.len());
+    let mut has_missing_text_content = false;
     let mut content_refs: Vec<(usize, String)> = Vec::new();
     for entry in &raw {
         let Ok(Value::Object(block)) = serde_json::from_str::<Value>(entry) else {
@@ -167,23 +176,34 @@ async fn load_blocks<R: Redis>(
         let keys: Vec<String> = content_refs.iter().map(|(_, key)| key.clone()).collect();
         let values = redis.mget::<_, brz_redis::RedisBytes>(keys).await.ok()?;
         for ((index, _), value) in content_refs.iter().zip(values.iter()) {
+            let block = &mut blocks[*index];
             let content = match value {
                 Some(bytes) => std::str::from_utf8(bytes).ok()?.to_string(),
-                None => String::new(),
+                None => {
+                    has_missing_text_content |= matches!(
+                        block.get("type").and_then(Value::as_str),
+                        Some("text" | "output_text")
+                    );
+                    String::new()
+                }
             };
-            blocks[*index].insert("content".into(), Value::String(content));
+            block.insert("content".into(), Value::String(content));
         }
     }
     for block in &mut blocks {
         block.shift_remove(BLOCK_CONTENT_KEY_FIELD);
     }
-    Some(blocks)
+    Some(LoadedBlocks {
+        blocks,
+        has_missing_text_content,
+    })
 }
 
 /// `get_blocks`: load blocks without finalizing pending text/thinking blocks.
 pub(crate) async fn get_blocks<R: Redis>(redis: &R, subtask_id: i64) -> Vec<Map<String, Value>> {
     load_blocks(redis, subtask_id, true)
         .await
+        .map(|loaded| loaded.blocks)
         .unwrap_or_default()
 }
 
@@ -343,6 +363,18 @@ pub(crate) async fn add_block<R: Redis>(
         }
     }
     Ok(())
+}
+
+/// Append unseen text to the provider's block using a Unicode code-point offset.
+/// A missing offset appends at the current end; an offset beyond it is rejected.
+pub(crate) async fn add_identified_text_content<R: Redis>(
+    redis: &R,
+    subtask_id: i64,
+    content: &str,
+    block_id: &str,
+    offset: Option<u64>,
+) -> RedisResult<()> {
+    identified_text::append(redis, subtask_id, content, block_id, offset).await
 }
 
 /// `add_text_content`: append streamed text to the current text block,
@@ -668,13 +700,15 @@ pub(crate) async fn finalize_and_get_blocks<R: Redis>(
     subtask_id: i64,
     termination_reason: Option<&str>,
     terminal_status: Option<&str>,
-) -> Vec<Map<String, Value>> {
+) -> LoadedBlocks {
     finalize_current_text_block(redis, subtask_id).await;
     finalize_current_thinking_block(redis, subtask_id).await;
-    let Some(blocks) = load_blocks(redis, subtask_id, true).await else {
-        return Vec::new();
+    let Some(mut loaded) = load_blocks(redis, subtask_id, true).await else {
+        return LoadedBlocks::default();
     };
-    finalize_unresolved_preview_tool_blocks(blocks, termination_reason, terminal_status)
+    loaded.blocks =
+        finalize_unresolved_preview_tool_blocks(loaded.blocks, termination_reason, terminal_status);
+    loaded
 }
 
 /// `clear_task_streaming_status`: drop the task-level streaming status key.
@@ -718,7 +752,7 @@ pub(crate) async fn cleanup_streaming_state<R: Redis>(
     Ok(())
 }
 
-/// `_extract_block_content_keys`: the internal `_content_key` of each block.
+/// Return each block's internal content key and its replay-offset key for cleanup.
 fn extract_block_content_keys(blocks_raw: &[String]) -> Vec<String> {
     let mut keys = Vec::new();
     for entry in blocks_raw {
@@ -727,6 +761,7 @@ fn extract_block_content_keys(blocks_raw: &[String]) -> Vec<String> {
         };
         if let Some(Value::String(content_key)) = block.get(BLOCK_CONTENT_KEY_FIELD) {
             keys.push(content_key.clone());
+            keys.push(format!("{content_key}:offset"));
         }
     }
     keys

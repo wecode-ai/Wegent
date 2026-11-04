@@ -1176,6 +1176,87 @@ async def test_search_runtime_work_queries_online_devices_concurrently(
 
 
 @pytest.mark.asyncio
+async def test_pending_runtime_work_queries_authorized_devices_without_sidebar_filter(
+    monkeypatch,
+):
+    from app.services import runtime_work_service
+
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_all_devices",
+        AsyncMock(return_value=[{"device_id": "owned-device", "status": "online"}]),
+    )
+    rpc = AsyncMock(return_value={"success": True, "workspaces": []})
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+    response = await runtime_work_service.list_runtime_work(
+        db=MagicMock(), user_id=7, pending_only=True
+    )
+    assert response.total_tasks == 0
+    assert rpc.await_args.kwargs["user_id"] == 7
+    assert rpc.await_args.kwargs["device_id"] == "owned-device"
+    assert rpc.await_args.kwargs["payload"] == {"pendingOnly": True}
+
+
+@pytest.mark.asyncio
+async def test_pending_runtime_work_scopes_discovery_to_the_requested_owned_device(
+    monkeypatch,
+):
+    from app.services import runtime_work_service
+
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_all_devices",
+        AsyncMock(
+            return_value=[
+                {"device_id": "healthy", "status": "online"},
+                {"device_id": "unreachable", "status": "online"},
+            ]
+        ),
+    )
+
+    async def rpc(*, device_id, **_kwargs):
+        if device_id == "unreachable":
+            raise RuntimeError("Device unavailable")
+        return {"success": True, "workspaces": []}
+
+    call = AsyncMock(side_effect=rpc)
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", call)
+    response = await runtime_work_service.list_runtime_work(
+        db=MagicMock(), user_id=7, device_id="healthy", pending_only=True
+    )
+    assert response.total_tasks == 0
+    assert call.await_count == 1
+    assert call.await_args.kwargs["device_id"] == "healthy"
+    assert call.await_args.kwargs["user_id"] == 7
+    call.reset_mock()
+    response = await runtime_work_service.list_runtime_work(
+        db=MagicMock(), user_id=7, device_id="not-owned", pending_only=True
+    )
+    assert response.total_tasks == 0
+    call.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_pending_runtime_work_surfaces_discovery_failure_instead_of_empty_queue(
+    monkeypatch,
+):
+    from app.services import runtime_work_service
+
+    monkeypatch.setattr(
+        runtime_work_service,
+        "_list_runtime_workspaces_for_device",
+        AsyncMock(side_effect=RuntimeError("offline")),
+    )
+    with pytest.raises(HTTPException) as error:
+        await runtime_work_service._list_online_runtime_workspaces(
+            user_id=7,
+            devices=[{"device_id": "owned-device", "status": "online"}],
+            pending_only=True,
+        )
+    assert error.value.status_code == 502
+
+
+@pytest.mark.asyncio
 async def test_list_runtime_work_skips_offline_devices(
     test_db,
     test_user,
@@ -1266,7 +1347,9 @@ async def test_open_runtime_transcript_dispatches_to_owned_mapped_device_without
     test_db,
     test_user,
     monkeypatch,
+    runtime_transcript_sessions,
 ):
+    """Resolve device-owned task history without requiring cloud task records."""
     from app.schemas.runtime_work import DeviceWorkspaceUpsert, RuntimeTaskAddress
     from app.services import runtime_work_service
 
@@ -1323,6 +1406,7 @@ async def test_open_runtime_transcript_dispatches_to_owned_mapped_device_without
         payload={
             "deviceId": "device-1",
             "taskId": "codex-1",
+            "transcriptProtocolVersion": 2,
         },
         timeout_seconds=30,
     )
@@ -1334,7 +1418,9 @@ async def test_runtime_transcript_dispatches_pagination_payload(
     test_db,
     test_user,
     monkeypatch,
+    runtime_transcript_sessions,
 ):
+    """Preserve pagination and file-change data while requesting device protocol v2."""
     from app.schemas.runtime_work import DeviceWorkspaceUpsert, RuntimeTranscriptRequest
     from app.services import runtime_work_service
 
@@ -1417,6 +1503,7 @@ async def test_runtime_transcript_dispatches_pagination_payload(
             "taskId": "codex-1",
             "limit": 25,
             "beforeCursor": "offset:240",
+            "transcriptProtocolVersion": 2,
         },
         timeout_seconds=30,
     )
@@ -1512,7 +1599,9 @@ async def test_runtime_transcript_dispatches_full_content_payload(
     test_db,
     test_user,
     monkeypatch,
+    runtime_transcript_sessions,
 ):
+    """Forward explicit full-content and navigation options to the device read."""
     from app.schemas.runtime_work import RuntimeTranscriptRequest
     from app.services import runtime_work_service
 
@@ -1558,6 +1647,7 @@ async def test_runtime_transcript_dispatches_full_content_payload(
             "afterCursor": "offset:10",
             "includeFullContent": True,
             "conversationContextOnly": True,
+            "transcriptProtocolVersion": 2,
         },
         timeout_seconds=30,
     )

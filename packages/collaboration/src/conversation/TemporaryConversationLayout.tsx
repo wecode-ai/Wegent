@@ -14,6 +14,7 @@ export function TemporaryConversationLayout({
   onRetry,
   expanded = false,
   wideComposer = false,
+  showWorkbenchBackground = false,
   onRestoreConversation,
   translate: t,
   children,
@@ -27,13 +28,18 @@ export function TemporaryConversationLayout({
   onRetry?(): void
   expanded?: boolean
   wideComposer?: boolean
+  showWorkbenchBackground?: boolean
   onRestoreConversation?(): void
   translate: CollaborationTranslate
   children: ReactNode
   composer: ReactNode
 }) {
   return (
-    <section data-testid={testId} className="flex min-h-0 min-w-0 flex-1 flex-col">
+    <section
+      data-testid={testId}
+      aria-busy={loading}
+      className="flex min-h-0 min-w-0 flex-1 flex-col"
+    >
       {messageCount > 0 ? (
         children
       ) : loading ? (
@@ -85,7 +91,9 @@ export function TemporaryConversationLayout({
                   ? 'w-[min(68rem,calc(100%_-_2rem))]'
                   : 'w-[min(46rem,calc(100%_-_2rem))]'
               )
-            : 'bg-background pb-2 pt-3'
+            : showWorkbenchBackground
+              ? 'bg-transparent pb-2 pt-3'
+              : 'bg-background pb-2 pt-3'
         )}
       >
         {expanded && onRestoreConversation ? (

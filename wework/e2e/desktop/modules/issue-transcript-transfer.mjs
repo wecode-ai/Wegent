@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { gunzipSync } from 'node:zlib'
 import { requestExecutor } from './executor-rpc.mjs'
+import { waitForSnapshot } from './conversation-layout.mjs'
 import { reloadMainWindow } from './workspace-flows.mjs'
 
 const RESTORED = 'ISSUE_LARGE_TRANSCRIPT_RESTORED'
@@ -114,8 +115,21 @@ async function verifyCachedInitialRecovery({
   threadId,
 }) {
   const modal = scope('[data-testid="ai-chat-modal"]')
-  const start = proxy.requests.length
+  // Cached messages can appear before the shared initial history read settles.
+  await control.command(
+    'waitFor',
+    `${modal} [data-testid="work-item-task-chat-panel"][aria-busy="false"]`
+  )
   await control.command('click', scope('[data-testid="ai-chat-modal-close"]'))
+  // The closing drawer retains its conversation until the exit animation ends.
+  // Inject the next read failure only after that previous reader is unmounted.
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('ai-chat-modal'),
+    'The previous Issue conversation did not unmount before testing its next history read'
+  )
+  const start = proxy.requests.length
+  console.log('[issue-history-fault] installing rule', { at: new Date().toISOString(), start })
   proxy.rule = entry =>
     entry.method === 'POST' && entry.path === '/api/runtime-work/transcript'
       ? 'drop-response'
@@ -125,6 +139,7 @@ async function verifyCachedInitialRecovery({
       'click',
       scope(`[data-testid="cloud-todo-open-task-conversation-${binding.id}"]`)
     )
+    await control.command('waitFor', modal, { visible: true, timeoutMs: 10_000 })
     await control.command('waitFor', `${modal} [data-testid="runtime-transcript-error"]`)
     assert.match(await control.command('getText', modal), new RegExp(RESTORED))
     assert.ok(
@@ -133,6 +148,20 @@ async function verifyCachedInitialRecovery({
     )
     updateFixtureReply(sqliteHome, threadId)
   } finally {
+    console.log('[issue-history-fault] releasing rule', {
+      at: new Date().toISOString(),
+      requests: proxy.requests
+        .slice(start)
+        .map(({ method, path, receivedAt, completedAt, fault, status, dropped }) => ({
+          method,
+          path,
+          receivedAt,
+          completedAt,
+          fault,
+          status,
+          dropped,
+        })),
+    })
     proxy.rule = () => null
   }
   await control.command('clickWhenEnabled', `${modal} [data-testid="runtime-transcript-retry"]`)
@@ -189,6 +218,19 @@ export async function verifyIssueTranscriptTransfer({
     transcriptProtocolVersion: 2,
     limit: 5,
   }
+  // Older HTTP clients still expect one canonical JSON response. Backend must
+  // use device chunks internally instead of asking Socket.IO to carry the page.
+  const legacy = await request('/api/runtime-work/transcript', {
+    ...address,
+    projectSession: query.projectSession,
+    limit: query.limit,
+  })
+  assert.equal(legacy.transcriptProtocolVersion, undefined)
+  assert.ok(Array.isArray(legacy.turns), 'Legacy HTTP history must retain canonical turns')
+  assert.ok(
+    JSON.stringify(legacy).includes(JSON.stringify(OUTPUT).slice(1, -1)),
+    'Legacy HTTP history must preserve the complete output beyond the device relay limit'
+  )
   const chunks = []
   let offset = 0
   let snapshotId

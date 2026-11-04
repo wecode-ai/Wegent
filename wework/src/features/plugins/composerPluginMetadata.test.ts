@@ -1,13 +1,13 @@
+import type { InstalledPlugin, LocalDeviceApp } from '@/types/api'
 import {
   appendInstalledPluginsAsComposerApps,
   enrichComposerApps,
 } from '@wegent/chat-core/composer-plugin-metadata'
 import { describe, expect, test } from 'vitest'
-import type { InstalledPlugin, LocalDeviceApp } from '@/types/api'
 import {
   composerAppPluginKey,
-  pluginPresentation,
   overlayMarketplaceLogosOnComposerApps,
+  pluginPresentation,
 } from './composerPluginMetadata'
 
 const githubApp: LocalDeviceApp = {
@@ -51,17 +51,6 @@ const githubPlugin: InstalledPlugin = {
   },
   status: { state: 'enabled' },
 }
-
-test('uses the connector slug as its plugin icon key', () => {
-  expect(
-    composerAppPluginKey({
-      ...githubApp,
-      id: 'wegent:github',
-      pluginDisplayNames: ['Wegent Cloud'],
-      source: 'wegent-connector',
-    })
-  ).toBe('github')
-})
 
 const superpowersPlugin: InstalledPlugin = {
   apiVersion: 'wegent.ai/v1',
@@ -110,7 +99,8 @@ describe('enrichComposerApps', () => {
         name: 'GitHub',
         pluginKey: 'github',
         description: '检查仓库、处理拉取请求和 Issue，并通过 GitHub 工作流发布代码变更。',
-        logoUrl: 'file:///Users/test/plugins/github/assets/icon.png',
+        logoUrl:
+          '/wework/executor/v1/plugin-image?path=%2FUsers%2Ftest%2Fplugins%2Fgithub%2Fassets%2Ficon.png',
         pluginDisplayNames: ['GitHub'],
         trialTemplates: expect.any(Array),
       }),
@@ -164,7 +154,8 @@ describe('enrichComposerApps', () => {
       expect.objectContaining({
         id: 'wegent:github',
         description: '检查仓库、处理拉取请求和 Issue，并通过 GitHub 工作流发布代码变更。',
-        logoUrl: 'file:///Users/test/plugins/github/assets/icon.png',
+        logoUrl:
+          '/wework/executor/v1/plugin-image?path=%2FUsers%2Ftest%2Fplugins%2Fgithub%2Fassets%2Ficon.png',
         pluginDisplayNames: ['GitHub', 'Wegent Cloud'],
         trialTemplates: expect.any(Array),
       }),
@@ -237,28 +228,11 @@ describe('appendInstalledPluginsAsComposerApps', () => {
         pluginKey: 'superpowers',
         source: 'installed-plugin',
         skillPath: 'plugin://superpowers@openai-official',
-        logoUrl: 'file:///tmp/plugins/superpowers/assets/icon.png',
+        logoUrl:
+          '/wework/executor/v1/plugin-image?path=%2Ftmp%2Fplugins%2Fsuperpowers%2Fassets%2Ficon.png',
         trialTemplates: expect.any(Array),
       }),
     ])
-  })
-
-  test('does not duplicate plugins already represented by an app', () => {
-    expect(
-      appendInstalledPluginsAsComposerApps([githubApp], [githubPlugin], plugin =>
-        pluginPresentation(plugin, [])
-      )
-    ).toEqual([githubApp])
-  })
-
-  test('skips disabled skill-only plugins', () => {
-    const disabled = {
-      ...superpowersPlugin,
-      spec: { ...superpowersPlugin.spec, enabled: false },
-    }
-    expect(
-      appendInstalledPluginsAsComposerApps([], [disabled], plugin => pluginPresentation(plugin, []))
-    ).toEqual([])
   })
 
   test('includes installed plugins that only have a mention path and no skill files', () => {

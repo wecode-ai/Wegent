@@ -43,7 +43,10 @@ impl RuntimeWorkRpcHandler {
                     &thread,
                     &link,
                 );
-                if link.ephemeral {
+                if link.ephemeral
+                    || (link.runtime_handle["origin"]["type"] == "stand_in_coordinator"
+                        && link.interaction_status.is_none())
+                {
                     continue;
                 }
                 if self.archived_link_is_deleted(&link) {
@@ -131,7 +134,10 @@ impl RuntimeWorkRpcHandler {
             if self.archived_link_is_deleted(&link) {
                 continue;
             }
-            if link.ephemeral {
+            if link.ephemeral
+                || (link.runtime_handle["origin"]["type"] == "stand_in_coordinator"
+                    && link.interaction_status.is_none())
+            {
                 continue;
             }
             let link_archived = link.status == "archived";
@@ -782,6 +788,7 @@ impl RuntimeWorkRpcHandler {
         let execution_id = self.next_execution_id.fetch_add(1, Ordering::Relaxed);
         let control = ActiveLocalExecution {
             execution_id,
+            request: None,
             stop_requested: false,
             stop_acknowledged: false,
             cancel,
@@ -797,6 +804,7 @@ impl RuntimeWorkRpcHandler {
             let _ = previous.cancel.send(());
         }
         self.store.update_task(&local_task_id, |link| {
+            crate::runtime_work::lifecycle::begin_native_request(link);
             apply_local_execution_state(link, true, None);
             let started_at = now_ms().max(link.updated_at.max(link.recency_at).saturating_add(1));
             link.updated_at = started_at;
@@ -892,6 +900,14 @@ impl RuntimeWorkRpcHandler {
             link.completed_at = Some(link.updated_at);
             link.status = status.to_owned();
             link.interaction_status = None;
+            crate::runtime_work::lifecycle::settle_native_execution(
+                link,
+                if status == "failed" {
+                    "failed"
+                } else {
+                    "cancelled"
+                },
+            );
             apply_local_execution_state(link, false, None);
             if link.thread_id.is_some() {
                 clear_runtime_handle_messages(&mut link.runtime_handle);
@@ -936,6 +952,7 @@ impl RuntimeWorkRpcHandler {
             link.completed_at = Some(link.updated_at);
             link.status = "cancelled".to_owned();
             link.interaction_status = None;
+            crate::runtime_work::lifecycle::settle_native_execution(link, "cancelled");
             apply_local_execution_state(link, false, None);
         });
         if let Some(link) = self.local_task_link(local_task_id) {
@@ -1153,6 +1170,22 @@ impl RuntimeWorkRpcHandler {
         self.store.update_task(local_task_id, |link| {
             if thread_id.is_some() {
                 link.thread_id = thread_id;
+            }
+            if let Some(state) = crate::runtime_work::lifecycle::native_execution_state(link) {
+                if status == "done" || state.request_turn_id.is_some() {
+                    crate::runtime_work::lifecycle::project_native_execution(link, &state);
+                    return;
+                }
+            }
+            if status != "running" {
+                crate::runtime_work::lifecycle::settle_native_execution(
+                    link,
+                    match status {
+                        "done" => "succeeded",
+                        "failed" => "failed",
+                        _ => "cancelled",
+                    },
+                );
             }
             link.updated_at = now_ms();
             if status != "running" {

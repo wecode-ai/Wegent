@@ -17,11 +17,13 @@ import {
   mergeRuntimeConversationItem,
   orderRuntimeConversationTurns,
   isTerminalProcessingBlockStatus,
+  isUnsettledTurnStatus,
 } from "./runtime-turn-merge";
 import {
   seedRuntimeConversationTurns,
   appendOptimisticUser,
   updateStartedTurn,
+  bindAssistantTurn,
   updateTurn,
   updateFailedTurn,
   upsertAssistantText,
@@ -29,6 +31,7 @@ import {
   upsertReasoningChunk,
   upsertBlocks,
   upsertRuntimeBlock,
+  replaceAssistantTextWithBlock,
   resolveRuntimeStreamingThinkingContent,
   boundVisibleRuntimeProcessingBlocks,
   settleProcessingBlocks,
@@ -87,10 +90,11 @@ export function hydrateRuntimeConversationTurns(
     }
   }
   const observedByTurn = new Map(observed.map((turn) => [turn.id, turn]));
+  const classifiedSnapshot = preserveLiveClassifications(snapshot, observedByTurn, actions)
   const reconciledSnapshot =
     recoveringTurnIds.size === 0
-      ? snapshot
-      : snapshot.map((turn) =>
+      ? classifiedSnapshot
+      : classifiedSnapshot.map((turn) =>
           preserveLiveRecovery(
             turn,
             observedByTurn.get(turn.id),
@@ -125,6 +129,38 @@ export function hydrateRuntimeConversationTurns(
         }),
       };
     });
+}
+
+function preserveLiveClassifications(
+  snapshot: RuntimeConversationTurn[],
+  observedByTurn: ReadonlyMap<string | null, RuntimeConversationTurn>,
+  actions: RuntimePaneMessageAction[]
+): RuntimeConversationTurn[] {
+  const replacements = actions.filter(
+    (action): action is Extract<RuntimePaneMessageAction, { type: 'block_created' }> =>
+      action.type === 'block_created' && Boolean(action.replaceAssistantTextItemId)
+  )
+  if (replacements.length === 0) return snapshot
+  return snapshot.map(turn => {
+    let items = turn.items
+    for (const action of replacements) {
+      if (action.subtaskId !== turn.id) continue
+      const previousId = action.replaceAssistantTextItemId
+      const live = observedByTurn.get(turn.id)?.items.find(item => item.id === action.block.id)
+      if (
+        live?.type !== 'block' ||
+        !items.some(item => item.type === 'assistant_text' && item.id === previousId)
+      )
+        continue
+      // The explicit native classification arrived during this historical read.
+      // Use its latest observed block, including any subsequent live updates.
+      items =
+        live.id !== previousId && items.some(item => item.id === live.id)
+          ? items.filter(item => item.id !== previousId)
+          : replaceAssistantTextWithBlock(items, previousId, live.block)
+    }
+    return items === turn.items ? turn : { ...turn, items }
+  })
 }
 
 function preserveLiveRecovery(
@@ -267,13 +303,14 @@ export function runtimeConversationTurnClientUserMessageIds(
 export function runtimeConversationTurnAssistantItemIds(
   turn: RuntimeConversationTurn,
 ): string[] {
-  // Interaction request ids are scoped to a turn and may be reused by later turns.
-  // They cannot establish that two native/runtime turn identities are aliases.
+  // Interaction ids are turn-scoped; child agents can be resumed across turns.
+  // Neither identity establishes that two native/runtime turns are aliases.
   return turn.items.flatMap((item) =>
     item.type === "user_message" ||
     (item.type === "block" &&
-      item.block.type === "tool" &&
-      item.block.toolName === "request_user_input")
+      (item.block.type === "subagent" ||
+        (item.block.type === "tool" &&
+          item.block.toolName === "request_user_input")))
       ? []
       : [item.id],
   );
@@ -290,6 +327,8 @@ export function reduceRuntimeConversationTurns(
       return appendOptimisticUser(turns, action.message);
     case "assistant_started":
       return updateStartedTurn(turns, action);
+    case "assistant_bound":
+      return bindAssistantTurn(turns, action);
     case "assistant_chunk":
       return updateTurn(turns, action.subtaskId, (turn) => {
         let items = hasAssistantChunkProgress(action)
@@ -322,7 +361,9 @@ export function reduceRuntimeConversationTurns(
         return {
           ...turn,
           ...boundVisibleRuntimeProcessingBlocks(turn, items),
-          status: "streaming",
+          status: isUnsettledTurnStatus(turn.status)
+            ? "streaming"
+            : turn.status,
           streamingThinkingContent: resolveRuntimeStreamingThinkingContent(
             turn,
             action,

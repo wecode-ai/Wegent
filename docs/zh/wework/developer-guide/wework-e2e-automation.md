@@ -223,6 +223,14 @@ Linux Core/Cloud 测试在开始、结束和每 15 秒输出 `[runner-resources]
 `[desktop-e2e-schedule]` 日志在 checkpoint 启停时记录活动列表和实际并发数，可用于确认
 测试是否真正重叠；不能只凭配置的并发上限推断并行效果。提高并发后需要对比同一分片的
 耗时和这些指标，确认没有把等待转成 CPU、内存或 I/O 争抢。
+运行器向应用进程或进程组发出的每个信号都以单行 `[desktop-e2e-signal]` JSON
+记录落盘，带 ISO 时间戳，覆盖进程停止、进程组终止、崩溃注入的冻结/杀死以及场景内
+强制退出应用。Chromium 在 `app.log` 中的 `Network service crashed` 行使用
+runner 本地时间，把两类记录对齐后，可以把每次崩溃归因为运行器清理，或标记为仍需
+调查的未解释事件。checkpoint 步骤失败时，运行器还会在失败三秒后采集
+`failure-followup.json`，包含重复的 UI 快照和工作台调试状态，用于区分超时后
+自行收敛的慢速异步更新和卡死状态。可通过 `WEWORK_E2E_FAILURE_FOLLOWUP_MS`
+调整观察延迟，设为 `0` 关闭采集。
 抽屉动画逐帧检查从操作前持续采样，观察到位移且轨道动画结束后主动停止；采样上限沿用
 共享单步超时。这样命令传输和渲染延迟不会耗尽固定的 800ms 采样窗口；位移、连续性、
 中间帧和减弱动态效果的断言仍完整执行。
@@ -386,6 +394,12 @@ pnpm --filter wework e2e:desktop:plugins -- --from-segment skill-mention-renderi
 主桌面流程还覆盖从 Finder 粘贴或拖入普通文件和文件夹：输入框必须显示文件与文件夹路径标签，不得创建附件徽标；发送给 Codex 的请求必须包含对应绝对路径，且不得内联文件内容。该判断以桌面原生传输是否解析出文件路径为准，不能仅因输入框当前标记为远程工作区就提前改走附件上传。顶部快捷发送窗口复用相同规则，只读取图片附件的字节。相关场景均使用普通小文件，本地聚焦排查可分别运行 `node wework/e2e/desktop/run-checkpoints.mjs --pasted-workspace-paths-only` 和 `node wework/e2e/desktop/run-checkpoints.mjs --dropped-workspace-paths-only`。
 
 mock 会按 cc-switch 的转换边界严格校验模型侧收到的请求，包括鉴权、模型 ID、stream 参数、消息历史、tool choice、shell 工具，以及 `apply_patch` 的 Lark grammar 或 function wrapper。任何字段错误都会返回非 2xx 并使测试失败。桌面测试同时保存三种接口的追问截图和完整 `model-requests.json`；GitHub Actions 无论成功或失败都会上传桌面诊断产物。
+
+插件边界回归并入既有 checkpoint，Cloud 总分片数保持 8 个。`plugin-write-coordination` 在原写协调检查后验证安装、手动更新和自动更新的失败恢复，复用同次场景中已经启动的真实 MinIO、Backend、Executor 与故障代理。可通过 `pnpm --filter wework e2e:desktop -- --segment plugin-write-coordination` 单独运行，无需为这些边界检查新增独立作业。
+
+安装与更新覆盖请求断连、提交后丢响应、首次安装包发布失败、升级失败保留旧运行版本，以及失败项之后健康项继续完成。传输故障作用于真实服务，不替换业务响应。测试用请求 ID 的 SHA-256 指纹区分逻辑操作与传输尝试，不保存请求头或凭据，并核验界面、数据库、设备版本和实际技能内容。
+
+`plugin-uninstall-lost-response` 在原卸载丢响应检查前执行插件目录边界组，验证来源异常后其他流程继续、迟到响应、账号和设备缓存边界、详情与图片故障，以及不完整库存禁止自动写入、恢复后继续升级。目录边界组必须先于其他插件夹具发布，保留真正的空目录与精确目录成员断言；各组共享同次场景的服务并保留自身清理和证据。使用 `pnpm --filter wework e2e:desktop -- --segment plugin-uninstall-lost-response` 运行；CI 同样覆盖该 checkpoint。各组保存 JSON 证据和截图，任何失败都会使 checkpoint 非零退出。
 
 运行环境需要 Rust、 Electron 构建依赖和真实 Codex 二进制。默认从 `PATH` 查找 `codex`；也可以显式指定已安装或由 `prepare:codex` 准备的真实二进制：
 
