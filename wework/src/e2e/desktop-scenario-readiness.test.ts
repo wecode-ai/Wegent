@@ -53,6 +53,7 @@ test('Stand-in confirmation waits for navigation to mount before opening the own
   const mounted = barrier()
   const reachedOwner = new Error('Owner page is ready')
   const calls: Array<{ action: string; selector: string }> = []
+  let preferencesReady = false
   const scenario = createDesktopScenario({ workspacePath: '/fixture' })
   const verification = scenario
     .verify({
@@ -65,8 +66,10 @@ test('Stand-in confirmation waits for navigation to mount before opening the own
           assert.deepEqual(JSON.parse(options?.value ?? '{}'), {
             experimentalFeaturesEnabled: true,
           })
+          preferencesReady = true
         }
         if (selector === '[data-testid="personal-stand-in-button"]') {
+          assert.equal(preferencesReady, true)
           if (action === 'click') throw new Error('Stand-in navigation is still mounting')
           assert.equal(action, 'clickWhenEnabled')
           waiting.release()
@@ -79,16 +82,22 @@ test('Stand-in confirmation waits for navigation to mount before opening the own
       () => new Error('Expected the owner-page boundary'),
       (error: unknown) => error
     )
-  assert.equal(await Promise.race([waiting.promise.then(() => 'waiting'), verification]), 'waiting')
-  assert.deepEqual(calls.slice(0, 2), [
-    { action: 'getElementCount', selector: '[data-testid="settings-button"]' },
-    { action: 'setAppPreferences', selector: 'body' },
-  ])
-  assert.equal(
-    calls.some(call => call.selector === '[data-testid="stand-in-overview"]'),
-    false
-  )
-  mounted.release()
+  try {
+    assert.equal(
+      await Promise.race([waiting.promise.then(() => 'waiting'), verification]),
+      'waiting'
+    )
+    assert.deepEqual(calls.slice(0, 2), [
+      { action: 'getElementCount', selector: '[data-testid="settings-button"]' },
+      { action: 'setAppPreferences', selector: 'body' },
+    ])
+    assert.equal(
+      calls.some(call => call.selector === '[data-testid="stand-in-overview"]'),
+      false
+    )
+  } finally {
+    mounted.release()
+  }
   assert.equal(await verification, reachedOwner)
 })
 

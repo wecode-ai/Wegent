@@ -22,8 +22,9 @@ fn shared_startup_timeout_preserves_live_turns_and_late_responses() {
                 bot: json!([{"shell_type": "ClaudeCode"}]),
                 ..ExecutionRequest::default()
             };
+            let mut turns = tokio::task::JoinSet::new();
             let turn_client = client.clone();
-            let mut turns = tokio::spawn(async move {
+            turns.spawn(async move {
                 tokio::join!(
                     turn_client.run_turn_with_cancel(
                         request.clone(),
@@ -35,7 +36,7 @@ fn shared_startup_timeout_preserves_live_turns_and_late_responses() {
             wait_for_two_turns(&client).await;
             // Both turns remain pending beyond the one-second startup watchdog.
             assert!(
-                tokio::time::timeout(Duration::from_millis(1500), &mut turns)
+                tokio::time::timeout(Duration::from_millis(1500), turns.join_next())
                     .await
                     .is_err()
             );
@@ -43,8 +44,9 @@ fn shared_startup_timeout_preserves_live_turns_and_late_responses() {
                 client.request("test/release", json!({})).await.unwrap()["turnCount"],
                 2
             );
-            let (first, second) = tokio::time::timeout(Duration::from_secs(5), turns)
+            let (first, second) = tokio::time::timeout(Duration::from_secs(5), turns.join_next())
                 .await
+                .unwrap()
                 .unwrap()
                 .unwrap();
             for result in [first, second] {
@@ -103,7 +105,7 @@ fn shared_startup_timeout_can_cancel_without_a_turn_id() {
             };
             let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
             let other_request = ExecutionRequest {
-                prompt: json!("other-turn"),
+                prompt: json!("live-other-turn"),
                 ..request.clone()
             };
             let options = CodexAppServerTurnOptions {
@@ -112,8 +114,9 @@ fn shared_startup_timeout_can_cancel_without_a_turn_id() {
                     .then(|| json!({"objective": "Goal startup", "status": "active"})),
                 ..CodexAppServerTurnOptions::default()
             };
+            let mut turns = tokio::task::JoinSet::new();
             let turn_client = client.clone();
-            let mut turns = tokio::spawn(async move {
+            turns.spawn(async move {
                 tokio::join!(
                     turn_client
                         .run_turn_with_cancel(other_request, CodexAppServerTurnOptions::default()),
@@ -122,14 +125,16 @@ fn shared_startup_timeout_can_cancel_without_a_turn_id() {
             });
             wait_for_two_turns(&client).await;
             assert!(
-                tokio::time::timeout(Duration::from_millis(1500), &mut turns)
+                tokio::time::timeout(Duration::from_millis(1500), turns.join_next())
                     .await
                     .is_err()
             );
             cancel_tx.send(()).unwrap();
-            assert!(tokio::time::timeout(Duration::from_millis(100), &mut turns)
-                .await
-                .is_err());
+            assert!(
+                tokio::time::timeout(Duration::from_millis(100), turns.join_next())
+                    .await
+                    .is_err()
+            );
             assert_eq!(
                 client
                     .request("test/interrupt-count", json!({}))
@@ -138,10 +143,12 @@ fn shared_startup_timeout_can_cancel_without_a_turn_id() {
                 json!({"count": 1, "emptyCount": 1})
             );
             client.request("test/release", json!({})).await.unwrap();
-            let (other, cancelled) = tokio::time::timeout(Duration::from_secs(5), turns)
-                .await
-                .unwrap()
-                .unwrap();
+            let (other, cancelled) =
+                tokio::time::timeout(Duration::from_secs(5), turns.join_next())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap();
             assert!(other.is_ok());
             assert_eq!(
                 cancelled.unwrap_err(),
@@ -160,32 +167,21 @@ fn shared_startup_timeout_retries_recovery_after_other_turn_finishes() {
             let root = tempfile::tempdir().unwrap();
             let client = client(&root);
             let request = ExecutionRequest {
-                prompt: json!(if delayed_response {
-                    "delay-target"
-                } else {
-                    "delay-progress"
-                }),
+                prompt: json!(if delayed_response { "delay-target" } else { "delay-progress" }),
                 bot: json!([{"shell_type": "ClaudeCode"}]),
                 ..ExecutionRequest::default()
             };
-            let other_request = ExecutionRequest {
-                prompt: json!("other-turn"),
-                ..request.clone()
-            };
+            let other_request = ExecutionRequest { prompt: json!("other-turn"), ..request.clone() };
+            let mut turns = tokio::task::JoinSet::new();
             let turn_client = client.clone();
-            let mut turns = tokio::spawn(async move {
+            turns.spawn(async move {
                 tokio::join!(
-                    turn_client.run_turn_with_cancel(
-                        other_request,
-                        CodexAppServerTurnOptions::default()
-                    ),
+                    turn_client.run_turn_with_cancel(other_request, CodexAppServerTurnOptions::default()),
                     turn_client.run_turn_with_cancel(request, CodexAppServerTurnOptions::default())
                 )
             });
             wait_for_two_turns(&client).await;
-            assert!(tokio::time::timeout(Duration::from_millis(1500), &mut turns)
-                .await
-                .is_err());
+            assert!(tokio::time::timeout(Duration::from_millis(1500), turns.join_next()).await.is_err());
             tokio::time::timeout(
                 Duration::from_secs(5),
                 client.request("test/finish-first", json!({})),
@@ -193,10 +189,7 @@ fn shared_startup_timeout_retries_recovery_after_other_turn_finishes() {
             .await
             .expect("Fake server did not finish its healthy sibling")
             .unwrap();
-            let (first, stalled) = tokio::time::timeout(Duration::from_secs(5), turns)
-                .await
-                .unwrap()
-                .unwrap();
+            let (first, stalled) = tokio::time::timeout(Duration::from_secs(5), turns.join_next()).await.unwrap().unwrap().unwrap();
             assert!(first.is_ok());
             assert_eq!(stalled.unwrap_err(), "codex app-server turn made no model or tool progress for 1s; the shared app-server was restarted");
         }
@@ -230,14 +223,16 @@ while IFS= read -r line; do
       thread_id=$(printf '%s' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
       if printf '%s' "$line" | grep -q other-turn; then
         other_index=${thread_id#thread-}
-        # This sibling is healthy model work, not another stalled startup.
-        printf '{"method":"item/agentMessage/delta","params":{"threadId":"%s","turnId":"turn-%s","delta":"Other turn is running","phase":"commentary"}}\n' "$thread_id" "$thread_id"
       fi
       if printf '%s' "$line" | grep -q delay-target || { [ "$turn_count" -eq 2 ] && printf '%s' "$line" | grep -q delay-response; }; then
         delayed_id=$request_id
         delayed_thread=$thread_id
       else
         printf '{"id":%s,"result":{"turn":{"id":"turn-%s","status":"inProgress"}}}\n' "$request_id" "$thread_id"
+      fi
+      if printf '%s' "$line" | grep -q live-other-turn; then
+        # Keep the other turn live after cancellation removes the stalled target.
+        printf '{"method":"item/started","params":{"threadId":"%s","turnId":"turn-%s","item":{"id":"answer","type":"agentMessage"}}}\n' "$thread_id" "$thread_id"
       fi
       ;;
     *'"method":"thread/settings/update"'*)
