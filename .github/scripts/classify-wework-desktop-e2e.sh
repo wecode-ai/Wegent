@@ -896,7 +896,8 @@ classify_wework_path() {
       return
       ;;
 
-    wework/e2e/desktop/scenarios/native-lifecycle.scenario.mjs)
+    wework/e2e/desktop/scenarios/native-lifecycle.scenario.mjs | \
+      wework/e2e/desktop/scenarios/native-guidance.scenario.mjs)
       select_target "core:native-lifecycle"
       return
       ;;

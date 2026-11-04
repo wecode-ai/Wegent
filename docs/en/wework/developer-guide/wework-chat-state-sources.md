@@ -145,14 +145,26 @@ that identity, but it must not be required before the turn becomes active.
 Guidance and interruption therefore still target the current turn when a live
 notification is delayed or missing.
 
+The UI and guidance must read the same `NativeExecutionState`, rather than
+infer execution from local request controls. A start receipt may only bind the
+current request's `starting` state; native notifications then supply process
+generation and timing. A late receipt cannot reactivate a settled or replaced
+request, and a delayed start notification for the same turn cannot revive a
+stopped state. Native Goal continuations can outlive local request controls and must
+remain guidable through their native running turn. Waiting for the next turn
+is bounded and does not create another guidance state.
+
 When the user sends guidance, Wework optimistically inserts the guidance
 message into the current turn before calling `runtime.tasks.guidance`. If
 Codex `turn/steer` explicitly reports that the expected turn ID differs from
-the actual active turn ID, the executor updates its record with the returned
-ID and retries exactly once. The successful response turn ID may rebind the
-optimistic message to the correct turn. On failure, Wework removes the
+the actual active turn ID, the executor corrects this guidance request's target
+and retries exactly once without rewriting execution state. The successful
+response turn ID may rebind the optimistic message to the correct turn. On failure, Wework removes the
 optimistic message and keeps a retryable queue item so the transcript never
 shows guidance that Codex did not accept.
+
+Queue items display the specific failure reason; an absent active turn asks
+the user to edit and resend.
 
 **Interrupt and send now** optimistically marks the running turn as cancelled
 and removes in-flight optimistic guidance before requesting interruption. The
