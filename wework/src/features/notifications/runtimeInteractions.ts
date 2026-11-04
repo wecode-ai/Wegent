@@ -41,6 +41,12 @@ export function interactionSource(
     return 'stand_in'
   if (
     item.project ||
+    (origin &&
+      typeof origin === 'object' &&
+      'type' in origin &&
+      ['board_comment', 'board_task', 'issue_dispatch', 'project_automation'].includes(
+        String(origin.type)
+      )) ||
     item.task?.address.issueExecution ||
     item.task?.address.projectSession ||
     (item.originalUrl && parseWeworkScheme(item.originalUrl)?.kind === 'board')
