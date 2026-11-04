@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
+import { createSecureContext, TLSSocket } from 'node:tls'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 
@@ -17,10 +18,11 @@ const quote = value => `'${value.replaceAll("'", "'\\''")}'`
 export async function createGithubAuthProtocol({ resultDir }) {
   const directory = join(resultDir, 'github-protocol')
   await mkdir(directory, { recursive: true })
-  // gh's documented Unix transport avoids system trust-store changes on macOS.
-  // Keep the socket path short enough for sockaddr_un on both CI and macOS.
+  // macOS uses gh's Unix transport; Linux also covers the older distro gh
+  // through a process-scoped TLS proxy. Neither changes the system trust store.
   const socketDirectory = await mkdtemp(join(tmpdir(), 'gh-auth-'))
   const socketPath = join(socketDirectory, 'http.sock')
+  const transportEnvironment = {}
   const state = {
     deviceMode: 'normal',
     approved: false,
@@ -94,10 +96,54 @@ export async function createGithubAuthProtocol({ resultDir }) {
     sockets.add(socket)
     socket.once('close', () => sockets.delete(socket))
   })
+  if (process.platform === 'linux') {
+    const cert = join(socketDirectory, 'github.crt')
+    const key = join(socketDirectory, 'github.key')
+    await run('openssl', [
+      'req',
+      '-x509',
+      '-newkey',
+      'rsa:2048',
+      '-nodes',
+      '-days',
+      '1',
+      '-subj',
+      '/CN=github.com',
+      '-addext',
+      'subjectAltName=DNS:github.com,DNS:api.github.com',
+      '-keyout',
+      key,
+      '-out',
+      cert,
+    ])
+    const secureContext = createSecureContext({
+      key: await readFile(key),
+      cert: await readFile(cert),
+    })
+    server.on('connect', (request, socket, head) => {
+      socket.on('error', () => socket.destroy())
+      if (!['github.com:443', 'api.github.com:443'].includes(request.url)) {
+        state.requests.push({ method: 'CONNECT', path: request.url, account: null })
+        socket.end('HTTP/1.1 502 Bad Gateway\r\n\r\n')
+        return
+      }
+      socket.write('HTTP/1.1 200 Connection Established\r\n\r\n')
+      if (head.length) socket.unshift(head)
+      const secured = new TLSSocket(socket, { isServer: true, secureContext })
+      secured.on('error', () => secured.destroy())
+      server.emit('connection', secured)
+    })
+    transportEnvironment.WEWORK_E2E_GITHUB_CA = cert
+  } else {
+    transportEnvironment.WEWORK_E2E_GITHUB_SOCKET = socketPath
+  }
   await new Promise((resolve, reject) => {
     server.once('error', reject)
-    server.listen(socketPath, resolve)
+    if (process.platform === 'linux') server.listen(0, '127.0.0.1', resolve)
+    else server.listen(socketPath, resolve)
   })
+  if (process.platform === 'linux')
+    transportEnvironment.WEWORK_E2E_GITHUB_PROXY = `http://127.0.0.1:${server.address().port}`
   const log = join(directory, 'processes.jsonl')
   await writeFile(log, '')
   const { stdout } = await run('which', ['gh'])
@@ -115,6 +161,7 @@ export async function createGithubAuthProtocol({ resultDir }) {
     directory,
     log,
     socketPath,
+    transportEnvironment,
     gatePath: join(directory, 'command-gate.json'),
     holdNextUser(account) {
       const gate = { account, entered: false }
@@ -123,11 +170,12 @@ export async function createGithubAuthProtocol({ resultDir }) {
     },
     async prepareApp({ appEnvironment }) {
       const native = appEnvironment.GH_CONFIG_DIR
-      await writeFile(
-        join(native, 'config.yml'),
-        `http_unix_socket: ${JSON.stringify(socketPath)}\n`
-      )
-      appEnvironment.WEWORK_E2E_GITHUB_SOCKET = socketPath
+      if (transportEnvironment.WEWORK_E2E_GITHUB_SOCKET)
+        await writeFile(
+          join(native, 'config.yml'),
+          `http_unix_socket: ${JSON.stringify(socketPath)}\n`
+        )
+      Object.assign(appEnvironment, transportEnvironment)
       appEnvironment.WEWORK_E2E_GITHUB_GATE = this.gatePath
       appEnvironment.WEWORK_RUNTIME_BIN = [directory, appEnvironment.WEWORK_RUNTIME_BIN]
         .filter(Boolean)
@@ -138,6 +186,14 @@ export async function createGithubAuthProtocol({ resultDir }) {
       const codex = await wrap('codex-observed', 'codex', appEnvironment.CODEX_BINARY_PATH)
       appEnvironment.CODEX_BINARY_PATH = codex
       appEnvironment.CODEX_BIN = codex
+      // Fail before launching desktop if the installed gh bypasses the fixture.
+      // This token is process-only: the scenario's credential profile stays empty.
+      const probe = await run(
+        join(directory, 'gh'),
+        ['api', 'user', '--hostname', 'github.com', '--jq', '.login'],
+        { env: { ...appEnvironment, GH_TOKEN: NATIVE_TOKEN }, timeout: 10_000 }
+      )
+      assert.equal(probe.stdout.trim(), 'wegent-e2e-native')
     },
     async processes() {
       return (await readFile(log, 'utf8')).split('\n').filter(Boolean).map(JSON.parse)

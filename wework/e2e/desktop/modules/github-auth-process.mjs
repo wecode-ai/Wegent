@@ -9,9 +9,15 @@ appendFileSync(
 )
 const environment = { ...process.env }
 if (kind === 'gh') {
+  if (environment.WEWORK_E2E_GITHUB_PROXY) {
+    environment.HTTPS_PROXY = environment.WEWORK_E2E_GITHUB_PROXY
+    environment.SSL_CERT_FILE = environment.WEWORK_E2E_GITHUB_CA
+    environment.NO_PROXY = ''
+    environment.no_proxy = ''
+  }
   // Only the real sync writer's token-login prepares a new revision's transport.
   // Read-only probes and interactive login/logout never prepare a synced store.
-  if (args.includes('--with-token')) {
+  if (args.includes('--with-token') && environment.WEWORK_E2E_GITHUB_SOCKET) {
     mkdirSync(environment.GH_CONFIG_DIR, { recursive: true })
     writeFileSync(
       join(environment.GH_CONFIG_DIR, 'config.yml'),

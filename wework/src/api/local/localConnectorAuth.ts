@@ -110,7 +110,7 @@ async function callLocalConnectorAuth(
       sessionId: sessionId ?? undefined,
     }
   )
-  if (result.status === 'ok' && ['start', 'poll', 'logout'].includes(method)) {
+  if (result?.status === 'ok' && ['start', 'poll', 'logout'].includes(method)) {
     notifyLocalConnectorAuthChanged()
   }
   return result

@@ -174,7 +174,7 @@ export function createGithubAuthBoundaries({
       Object.assign(cloud.remoteExecutorEnv, {
         WEGENT_WORKBENCH_HOME: join(homePath, '.wegent/workbench'),
         WEWORK_RUNTIME_BIN: protocol.directory,
-        WEWORK_E2E_GITHUB_SOCKET: protocol.socketPath,
+        ...protocol.transportEnvironment,
       })
       await cloud.restartCloudExecutor()
       const user = await api('/users/me')

@@ -119,6 +119,25 @@ describe('localConnectorAuthHealth cache', () => {
     }
   })
 
+  test.each([undefined, null])(
+    'rejects an empty logout result (%s) without notifying views',
+    async result => {
+      const listener = vi.fn()
+      window.addEventListener(LOCAL_CONNECTOR_AUTH_CHANGED_EVENT, listener)
+      mocks.requestLocalExecutor.mockResolvedValueOnce(result)
+      try {
+        await expect(localConnectorAuthLogout(GITHUB_CLI_TARGET)).rejects.toMatchObject({
+          name: 'LocalConnectorAuthLogoutError',
+          message: 'local_auth_logout_failed',
+          accountRevoked: false,
+        })
+        expect(listener).not.toHaveBeenCalled()
+      } finally {
+        window.removeEventListener(LOCAL_CONNECTOR_AUTH_CHANGED_EVENT, listener)
+      }
+    }
+  )
+
   test('rejects an unsuccessful logout rather than reporting a disconnected session', async () => {
     mocks.requestLocalExecutor.mockResolvedValue({ status: 'error', hint: 'synthetic-secret' })
     await expect(
