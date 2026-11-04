@@ -697,12 +697,15 @@ impl RuntimeWorkRpcHandler {
             );
             return Ok(());
         }
-        // Only a validated intake action may start work reserved before Runtime creation.
+        let reserved = bound.is_some()
+            && config["manual"] == true
+            && self.has_pending_stand_in_assignment(config, issue, binding)?;
+        // A validated intake action or explicit delegation may start queued work.
         self.execute_stand_in_task(
             config,
             issue,
             binding,
-            bound.is_some() && config["intakeRouted"] != true,
+            bound.is_some() && config["intakeRouted"] != true && !reserved,
         )
         .await
     }

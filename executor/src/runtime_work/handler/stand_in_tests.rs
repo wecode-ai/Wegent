@@ -556,6 +556,28 @@ async fn only_validated_intake_can_start_a_same_device_reserved_binding() {
         "Routed work must revalidate cloud authority before preparing execution"
     );
     assert!(handler.local_task_links(true).is_empty());
+    config["intakeRouted"] = json!(false);
+    config["manual"] = json!(true);
+    handler
+        .dispatch_cloud_stand_in_role(&config, &issue, &binding, &existing)
+        .await
+        .unwrap();
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    store
+        .enqueue_stand_in_event(
+            7,
+            json!("queued-assignment"),
+            json!({
+                "kind":"assignment","projectId":"project","projectStore":"cloud",
+                "issueId":"issue","assignmentId":"event","roleIds":["default"]
+            }),
+        )
+        .unwrap();
+    let error = handler
+        .dispatch_cloud_stand_in_role(&config, &issue, &binding, &existing)
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "cloud_unavailable", "Explicit delegation of pending intake must revalidate authority instead of being discarded as duplicate work");
 }
 
 #[tokio::test]
