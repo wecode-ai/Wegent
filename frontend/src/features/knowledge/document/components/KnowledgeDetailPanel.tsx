@@ -431,7 +431,7 @@ export function KnowledgeDetailPanel({
           ) : (
             <>
               {/* Show header with tabs when on permissions tab */}
-              <div className="flex items-center gap-3 mb-4">
+              <div className="mb-4 flex flex-col items-stretch gap-3 md:flex-row md:items-center">
                 <div className="flex-1 min-w-0">
                   <h2 className="text-base font-medium text-text-primary truncate">
                     {selectedKb.name}

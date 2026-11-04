@@ -457,7 +457,11 @@ export function CreateKnowledgeBaseDialog({
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
-        className="max-w-3xl max-h-[90vh] overflow-hidden flex flex-col"
+        className="w-[calc(100%_-_1rem)] max-w-3xl max-h-[90dvh] overflow-hidden flex flex-col"
+        closeButtonProps={{
+          className: 'right-2 top-2 flex h-11 w-11 items-center justify-center',
+          'data-testid': 'close-create-kb',
+        }}
         data-testid="create-kb-dialog"
       >
         <DialogHeader>

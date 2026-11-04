@@ -140,7 +140,7 @@ export function KnowledgeBaseAuthSection({
               )}
               {/* Search box + Role selector inline */}
               <div className="flex items-center gap-2">
-                <div className="flex-1">
+                <div className="min-w-0 flex-1">
                   {section.renderSearch({
                     role,
                     onSelect: (entry: AuthEntry) => {

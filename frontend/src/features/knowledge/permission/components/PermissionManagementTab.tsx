@@ -279,7 +279,7 @@ function PermissionManagementSession({
   }
 
   return (
-    <div className="space-y-6 p-4">
+    <div className="min-w-0 space-y-6 p-4 max-md:px-0">
       {/* Error Message */}
       {error && (
         <div className="bg-error/10 text-error px-4 py-2 rounded-lg text-sm flex justify-between items-center">
@@ -870,9 +870,9 @@ export function PermissionGroup({
         {users.map(user => (
           <div
             key={user.id}
-            className="group flex items-center justify-between p-2 rounded-lg hover:bg-muted transition-colors"
+            className="group flex min-w-0 flex-wrap items-center justify-between gap-2 p-2 rounded-lg hover:bg-muted transition-colors"
           >
-            <div className="flex-1 min-w-0">
+            <div className="min-w-0 flex-1 basis-32">
               <div className="font-medium text-sm truncate">{user.display_name}</div>
               {user.email && <div className="text-xs text-text-muted truncate">{user.email}</div>}
             </div>

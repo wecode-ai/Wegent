@@ -113,13 +113,13 @@ function KnowledgeAccessSession(props: KnowledgeAccessDialogProps) {
           const target = returnFocus.current
           if (target?.isConnected && !target.closest('[role="dialog"]')) target.focus()
         }}
-        className="max-h-[90dvh] w-[calc(100%_-_1rem)] max-w-3xl overflow-y-auto"
+        className="max-h-[90dvh] min-w-0 w-[calc(100%_-_1rem)] max-w-3xl grid-cols-[minmax(0,1fr)] overflow-y-auto max-md:p-4"
         closeButtonProps={{
           className: 'min-h-11 min-w-11 flex items-center justify-center',
           'data-testid': 'close-knowledge-access',
         }}
       >
-        <DialogHeader>
+        <DialogHeader className="pr-10 text-left">
           <DialogTitle>
             {t(
               props.resourceCreated
@@ -169,7 +169,7 @@ function KnowledgeAccessSession(props: KnowledgeAccessDialogProps) {
             </Button>
           </div>
         )}
-        {!sources && !failed && <p role="status">{t('document.permission.loading')}</p>}
+        {!sources && !failed && <p role="status">{t('loading')}</p>}
         {sources && (
           <div>
             <p>

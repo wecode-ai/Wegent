@@ -500,7 +500,7 @@ export function KnowledgeGroupListPage({
             <span className="ml-2 text-text-muted">({sortedCreatedByMe.length})</span>
           </h3>
           {hasCreated ? (
-            <Table className="w-full table-fixed min-w-0">
+            <Table className="w-full min-w-[720px] table-fixed">
               {renderTableHeader(false, false)}
               {renderTableRows(sortedCreatedByMe, false, false)}
             </Table>
@@ -521,7 +521,7 @@ export function KnowledgeGroupListPage({
             <span className="ml-2 text-text-muted">({sortedSharedWithMe.length})</span>
           </h3>
           {hasShared ? (
-            <Table className="w-full table-fixed min-w-0">
+            <Table className="w-full min-w-[720px] table-fixed">
               {renderTableHeader(true, true, t('document.table.belongsTo', '归属'))}
               {renderTableRows(sortedSharedWithMe, true, true)}
             </Table>
@@ -559,7 +559,7 @@ export function KnowledgeGroupListPage({
             <span className="ml-2 text-text-muted">({sortedNative.length})</span>
           </h3>
           {hasNative ? (
-            <Table className="w-full table-fixed min-w-0">
+            <Table className="w-full min-w-[720px] table-fixed">
               {renderTableHeader(false, false)}
               {renderTableRows(sortedNative, false, false)}
             </Table>
@@ -577,7 +577,7 @@ export function KnowledgeGroupListPage({
             <span className="ml-2 text-text-muted">({sortedShared.length})</span>
           </h3>
           {hasShared ? (
-            <Table className="w-full table-fixed min-w-0">
+            <Table className="w-full min-w-[720px] table-fixed">
               {renderTableHeader(false, true)}
               {renderTableRows(sortedShared, false, true)}
             </Table>
@@ -598,122 +598,130 @@ export function KnowledgeGroupListPage({
     >
       {/* Header */}
       <div
-        className={`flex flex-wrap items-center gap-3 py-4 border-b border-border ${mobile ? 'px-4' : 'px-6 ml-2'}`}
+        className={`flex flex-col gap-3 py-4 border-b border-border ${mobile ? 'px-4' : 'px-6 ml-2'}`}
       >
-        {/* Back button - only show in group mode */}
-        {!isAllMode && onBack && (
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onBack}
-            className="flex-shrink-0"
-            data-testid="back-button"
-          >
-            <ArrowLeft className="w-4 h-4" />
-          </Button>
-        )}
-        <div className="flex min-w-0 flex-1 items-center gap-2">
-          <h2 className="truncate text-lg font-semibold">{groupName}</h2>
-          <span
-            className="shrink-0 text-sm tabular-nums text-text-muted"
-            data-testid="knowledge-result-count"
-          >
-            {filteredKbs.length}
-          </span>
+        <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
+          <div className="flex min-w-40 flex-1 items-center gap-2">
+            {/* Back button - only show in group mode */}
+            {!isAllMode && onBack && (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={onBack}
+                className="flex-shrink-0"
+                data-testid="back-button"
+              >
+                <ArrowLeft className="w-4 h-4" />
+              </Button>
+            )}
+            <div className="flex min-w-0 flex-1 items-center gap-2">
+              <h2 className="truncate text-lg font-semibold">{groupName}</h2>
+              <span
+                className="shrink-0 text-sm tabular-nums text-text-muted"
+                data-testid="knowledge-result-count"
+              >
+                {filteredKbs.length}
+              </span>
+            </div>
+          </div>
+          <div className="flex max-w-full shrink-0 flex-wrap items-center gap-2">
+            {onCreateKbInSpace && (
+              <Button
+                variant="primary"
+                className={mobile ? 'min-h-11 min-w-11' : ''}
+                data-testid="create-space-kb-button"
+                onClick={() => onCreateKbInSpace('notebook')}
+              >
+                {t('document.navigation.createInSpace')}
+              </Button>
+            )}
+            {onCreateKb && (
+              <Button
+                variant="primary"
+                size="sm"
+                className={mobile ? 'min-h-11 min-w-11' : ''}
+                onClick={() => onCreateKb('notebook')}
+                data-testid="create-kb-button"
+              >
+                <Plus className="w-4 h-4 mr-1" />
+                {t('document.knowledgeBase.create', '新建知识库')}
+              </Button>
+            )}
+          </div>
         </div>
-        <Input
-          data-testid="knowledge-search"
-          aria-label={t('document.navigation.search')}
-          placeholder={t('document.navigation.search')}
-          value={search}
-          onChange={event => setSearch(event.target.value)}
-          className={mobile ? 'min-h-11 w-full' : 'h-9 w-48'}
-        />
-        {onFilterGroupChange && (
-          <select
-            data-testid="knowledge-team-filter"
-            aria-label={t('document.navigation.teamFilter')}
-            className={`${mobile ? 'min-h-11 min-w-11' : 'h-9'} max-w-64 bg-base border border-border rounded px-3 text-sm`}
-            value={filterGroupId ?? ''}
-            onChange={event => onFilterGroupChange(event.target.value || null)}
-          >
-            <option value="">{t('document.navigation.allTeams')}</option>
-            {availableGroups?.map(group => (
-              <option key={group.id} value={group.id}>
-                {group.displayName} ({group.name})
-              </option>
-            ))}
-          </select>
-        )}
-        <KnowledgeBaseCategoryFilter
-          value={category}
-          onValueChange={setCategory}
-          showCode={showCodeCategory}
-        />
-        {hasAdvancedKnowledge && onShowAdvancedKnowledgeChange && (
-          <AdvancedKnowledgeToggle
-            id="show-advanced-knowledge"
-            testId="show-advanced-knowledge-toggle"
-            checked={showAdvancedKnowledge}
-            onCheckedChange={onShowAdvancedKnowledgeChange}
+        <div className="flex min-w-0 flex-wrap items-center gap-3">
+          <Input
+            data-testid="knowledge-search"
+            aria-label={t('document.navigation.search')}
+            placeholder={t('document.navigation.search')}
+            value={search}
+            onChange={event => setSearch(event.target.value)}
+            className={mobile ? 'min-h-11 w-full' : 'h-9 w-48'}
           />
-        )}
-        {mobile && (
-          <>
+          {onFilterGroupChange && (
             <select
-              className="min-h-11 min-w-11 max-w-full rounded border border-border bg-base px-3"
-              data-testid="knowledge-sort"
-              aria-label={t('document.navigation.sortLabel')}
-              value={sortBy}
-              onChange={event => setSortBy(event.target.value as SortBy)}
+              data-testid="knowledge-team-filter"
+              aria-label={t('document.navigation.teamFilter')}
+              className={`${mobile ? 'min-h-11 min-w-11' : 'h-9'} max-w-64 bg-base border border-border rounded px-3 text-sm`}
+              value={filterGroupId ?? ''}
+              onChange={event => onFilterGroupChange(event.target.value || null)}
             >
-              {(['name', 'group', 'permission', 'created', 'updated'] as SortBy[]).map(value => (
-                <option key={value} value={value}>
-                  {t('document.navigation.sort.' + value)}
+              <option value="">{t('document.navigation.allTeams')}</option>
+              {availableGroups?.map(group => (
+                <option key={group.id} value={group.id}>
+                  {group.displayName} ({group.name})
                 </option>
               ))}
             </select>
-            <Button
-              variant="outline"
-              className="min-h-11 min-w-11"
-              data-testid="knowledge-sort-direction"
-              aria-label={t(
-                sortOrder === 'asc'
-                  ? 'document.navigation.ascending'
-                  : 'document.navigation.descending'
-              )}
-              onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
-            >
-              {sortOrder === 'asc' ? <ChevronUp /> : <ChevronDown />}
-            </Button>
-          </>
-        )}
-        {onCreateKbInSpace && (
-          <Button
-            variant="primary"
-            className={mobile ? 'min-h-11 min-w-11' : ''}
-            data-testid="create-space-kb-button"
-            onClick={() => onCreateKbInSpace('notebook')}
-          >
-            {t('document.navigation.createInSpace')}
-          </Button>
-        )}
-        {onCreateKb && (
-          <Button
-            variant="primary"
-            size="sm"
-            className={mobile ? 'min-h-11 min-w-11' : ''}
-            onClick={() => onCreateKb('notebook')}
-            data-testid="create-kb-button"
-          >
-            <Plus className="w-4 h-4 mr-1" />
-            {t('document.knowledgeBase.create', '新建知识库')}
-          </Button>
-        )}
+          )}
+          <KnowledgeBaseCategoryFilter
+            value={category}
+            onValueChange={setCategory}
+            showCode={showCodeCategory}
+          />
+          {hasAdvancedKnowledge && onShowAdvancedKnowledgeChange && (
+            <AdvancedKnowledgeToggle
+              id="show-advanced-knowledge"
+              testId="show-advanced-knowledge-toggle"
+              checked={showAdvancedKnowledge}
+              onCheckedChange={onShowAdvancedKnowledgeChange}
+            />
+          )}
+          {mobile && (
+            <div className="flex max-w-full items-center gap-2">
+              <select
+                className="min-h-11 min-w-11 max-w-full rounded border border-border bg-base px-3"
+                data-testid="knowledge-sort"
+                aria-label={t('document.navigation.sortLabel')}
+                value={sortBy}
+                onChange={event => setSortBy(event.target.value as SortBy)}
+              >
+                {(['name', 'group', 'permission', 'created', 'updated'] as SortBy[]).map(value => (
+                  <option key={value} value={value}>
+                    {t('document.navigation.sort.' + value)}
+                  </option>
+                ))}
+              </select>
+              <Button
+                variant="outline"
+                className="min-h-11 min-w-11"
+                data-testid="knowledge-sort-direction"
+                aria-label={t(
+                  sortOrder === 'asc'
+                    ? 'document.navigation.ascending'
+                    : 'document.navigation.descending'
+                )}
+                onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
+              >
+                {sortOrder === 'asc' ? <ChevronUp /> : <ChevronDown />}
+              </Button>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto overflow-x-hidden min-w-0">
+      <div className="flex-1 overflow-auto min-w-0">
         {isLoading ? (
           <div className="flex items-center justify-center py-12">
             <Spinner />
@@ -742,7 +750,7 @@ export function KnowledgeGroupListPage({
             )}
           />
         ) : (
-          <Table className="w-full table-fixed min-w-0">
+          <Table className="w-full min-w-[720px] table-fixed">
             {renderTableHeader(isAllMode, showFromColumn)}
             {renderTableRows(filteredKbs, isAllMode, showFromColumn)}
           </Table>
