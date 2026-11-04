@@ -1,0 +1,12 @@
+{
+  "order": 154000,
+  "scenario": "./scenarios/latest-conversation-history.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 100000,
+      "shard": 3,
+      "position": 18000
+    }
+  }
+}

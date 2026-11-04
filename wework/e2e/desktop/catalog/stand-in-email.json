@@ -1,0 +1,12 @@
+{
+  "order": 31000,
+  "scenario": "./scenarios/stand-in-email.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 38000,
+      "shard": 3,
+      "position": 9000
+    }
+  }
+}

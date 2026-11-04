@@ -1,0 +1,12 @@
+{
+  "order": 153000,
+  "scenario": "./scenarios/running-conversation-history.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 99000,
+      "shard": 6,
+      "position": 17000
+    }
+  }
+}

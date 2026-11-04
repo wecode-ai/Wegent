@@ -1,0 +1,5 @@
+{
+  "order": 35000,
+  "scenario": "./scenarios/stand-in-profile.scenario.mjs",
+  "scenarioOnly": true
+}
