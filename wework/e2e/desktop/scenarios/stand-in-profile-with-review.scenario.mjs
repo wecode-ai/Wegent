@@ -94,7 +94,7 @@ export function createDesktopScenario(options) {
       )
       await options.captureScreenshot(control, 'review-02-onboarding-narrow.png')
       await control.command('setMainWindowSize', 'body', {
-        value: JSON.stringify({ width: 1728, height: 1080 }),
+        value: JSON.stringify({ width: 1280, height: 720 }),
       })
       await control.command('navigate', 'body', { value: '/settings/appearance' })
       await control.command('clickWhenEnabled', '[data-testid="appearance-mode-dark"]')
@@ -144,6 +144,9 @@ export function createDesktopScenario(options) {
 
       // The original checkpoint retains every assertion and establishes its own model/calendar prerequisites.
       await original.verify(control)
+      await control.command('setMainWindowSize', 'body', {
+        value: JSON.stringify({ width: 1280, height: 720 }),
+      })
       await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
       await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
