@@ -115,7 +115,7 @@ export function RuntimeConcurrencySettings() {
               onChange={event => {
                 void saveConcurrency(setting.key, Number(event.target.value))
               }}
-              className="h-8 w-24 rounded-md border border-border bg-background px-2 text-sm text-text-primary"
+              className="h-8 w-24 rounded-md border border-border bg-background px-2 text-sm text-text-primary max-md:h-11"
             >
               {Array.from({ length: MAX_CONCURRENT_TASKS_LIMIT }, (_, index) => index + 1).map(
                 value => (

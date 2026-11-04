@@ -142,41 +142,51 @@ fn legacy_settings_seed_all_categories_once() {
     assert_eq!(settings.total_limit(), 16);
 }
 
-#[tokio::test]
-async fn settings_rpc_persists_independent_partial_updates_and_rejects_invalid_limits() {
+#[test]
+fn settings_rpc_persists_independent_partial_updates_and_rejects_invalid_limits() {
     let _lock = crate::test_env::lock();
     let root = tempfile::tempdir().unwrap();
     let _home =
         super::super::tests::ScalarEnv::set("WEGENT_EXECUTOR_HOME", root.path().to_str().unwrap());
-    let handler = RuntimeWorkRpcHandler::new("concurrency-test", "/bin/false");
-    let initial = handler.update_runtime_settings(json!({"maxConcurrentTasks":2,"maxConcurrentStandInTasks":4,"maxConcurrentAgentTasks":6})).await.unwrap();
-    assert_eq!(initial["maxConcurrentStandInTasks"], 4);
-    let updated = handler
-        .update_runtime_settings(json!({"maxConcurrentTasks":3}))
-        .await
-        .unwrap();
-    assert_eq!(
-        updated,
-        json!({"maxConcurrentTasks":3,"maxConcurrentStandInTasks":4,"maxConcurrentAgentTasks":6})
-    );
-    let stored = super::super::system::read_runtime_settings();
-    assert_eq!(serde_json::to_value(stored).unwrap(), updated);
-    for invalid in [
-        json!({}),
-        json!({"maxConcurrentAgentTasks":0}),
-        json!({"maxConcurrentStandInTasks":21}),
-        json!({"maxConcurrentTasks":null}),
-        json!({"maxConcurrentTasks":1.5}),
-        json!({"maxConcurrentTasks":true}),
-    ] {
-        assert!(handler.update_runtime_settings(invalid).await.is_err());
-        assert_eq!(handler.get_runtime_settings().await.unwrap(), updated);
-    }
-    let capacity = handler.get_runtime_capacity().await.unwrap();
-    assert_eq!(capacity["limit"], 13);
-    assert_eq!(capacity["categories"]["personal"]["limit"], 3);
-    assert_eq!(capacity["categories"]["standIn"]["limit"], 4);
-    assert_eq!(capacity["categories"]["agent"]["limit"], 6);
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let handler = RuntimeWorkRpcHandler::new("concurrency-test", "/bin/false");
+            let initial = handler.update_runtime_settings(json!({
+                "maxConcurrentTasks": 2,
+                "maxConcurrentStandInTasks": 4,
+                "maxConcurrentAgentTasks": 6,
+            })).await.unwrap();
+            assert_eq!(initial["maxConcurrentStandInTasks"], 4);
+            let updated = handler
+                .update_runtime_settings(json!({"maxConcurrentTasks":3}))
+                .await
+                .unwrap();
+            assert_eq!(
+                updated,
+                json!({"maxConcurrentTasks":3,"maxConcurrentStandInTasks":4,"maxConcurrentAgentTasks":6})
+            );
+            let stored = super::super::system::read_runtime_settings();
+            assert_eq!(serde_json::to_value(stored).unwrap(), updated);
+            for invalid in [
+                json!({}),
+                json!({"maxConcurrentAgentTasks":0}),
+                json!({"maxConcurrentStandInTasks":21}),
+                json!({"maxConcurrentTasks":null}),
+                json!({"maxConcurrentTasks":1.5}),
+                json!({"maxConcurrentTasks":true}),
+            ] {
+                assert!(handler.update_runtime_settings(invalid).await.is_err());
+                assert_eq!(handler.get_runtime_settings().await.unwrap(), updated);
+            }
+            let capacity = handler.get_runtime_capacity().await.unwrap();
+            assert_eq!(capacity["limit"], 13);
+            assert_eq!(capacity["categories"]["personal"]["limit"], 3);
+            assert_eq!(capacity["categories"]["standIn"]["limit"], 4);
+            assert_eq!(capacity["categories"]["agent"]["limit"], 6);
+        });
 }
 
 #[test]
@@ -200,53 +210,67 @@ fn follow_up_owner_is_bound_to_original_task_and_persisted_with_the_queued_turn(
     assert_eq!(restored.task_kind(), RuntimeTaskKind::Agent);
 }
 
-#[tokio::test]
-async fn creation_persists_the_resolved_origin_for_follow_up_ownership() {
+#[test]
+fn creation_persists_the_resolved_origin_for_follow_up_ownership() {
     let _lock = crate::test_env::lock();
     let root = tempfile::tempdir().unwrap();
     let _home =
         super::super::tests::ScalarEnv::set("WEGENT_EXECUTOR_HOME", root.path().to_str().unwrap());
-    let handler = RuntimeWorkRpcHandler::new("origin-concurrency", "/bin/false");
-    for (id, nested_origin, top_origin, expected) in [
-        (
-            "agent",
-            json!({"type":"project_automation"}),
-            None,
-            RuntimeTaskKind::Agent,
-        ),
-        (
-            "stand-in",
-            json!({"type":"stand_in_identity","userId":9001}),
-            None,
-            RuntimeTaskKind::StandIn,
-        ),
-        (
-            "top-level",
-            json!({"type":"stand_in_identity","userId":9001}),
-            Some(json!({"type":"project_automation"})),
-            RuntimeTaskKind::Agent,
-        ),
-    ] {
-        let resolved_origin = top_origin.as_ref().unwrap_or(&nested_origin).clone();
-        let mut payload = json!({
-            "taskId":id, "workspacePath":root.path(), "message":"queued origin fixture", "queueIfBusy":true,
-            "executionRequest": {"task_id":id,"subtask_id":format!("{id}-initial"),"prompt":"queued origin fixture","origin":nested_origin}
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let handler = RuntimeWorkRpcHandler::new("origin-concurrency", "/bin/false");
+            for (id, nested_origin, top_origin, expected) in [
+                (
+                    "agent",
+                    json!({"type":"project_automation"}),
+                    None,
+                    RuntimeTaskKind::Agent,
+                ),
+                (
+                    "stand-in",
+                    json!({"type":"stand_in_identity","userId":9001}),
+                    None,
+                    RuntimeTaskKind::StandIn,
+                ),
+                (
+                    "top-level",
+                    json!({"type":"stand_in_identity","userId":9001}),
+                    Some(json!({"type":"project_automation"})),
+                    RuntimeTaskKind::Agent,
+                ),
+            ] {
+                let resolved_origin = top_origin.as_ref().unwrap_or(&nested_origin).clone();
+                let mut payload = json!({
+                    "taskId": id,
+                    "workspacePath": root.path(),
+                    "message": "queued origin fixture",
+                    "queueIfBusy": true,
+                    "executionRequest": {
+                        "task_id": id,
+                        "subtask_id": format!("{id}-initial"),
+                        "prompt": "queued origin fixture",
+                        "origin": nested_origin,
+                    },
+                });
+                if let Some(origin) = top_origin {
+                    payload["origin"] = origin;
+                }
+                assert_eq!(
+                    handler.create_task(payload).await.unwrap()["accepted"],
+                    true
+                );
+                let link = handler.local_task_link(id).unwrap();
+                assert_eq!(link.runtime_handle["origin"], resolved_origin);
+                let mut follow_up = turn(id, Value::Null);
+                follow_up.request.extra.clear();
+                follow_up.bind_task_kind(&handler.store);
+                assert_eq!(follow_up.task_kind(), expected);
+                assert_eq!(follow_up.request.extra["origin"], resolved_origin);
+            }
         });
-        if let Some(origin) = top_origin {
-            payload["origin"] = origin;
-        }
-        assert_eq!(
-            handler.create_task(payload).await.unwrap()["accepted"],
-            true
-        );
-        let link = handler.local_task_link(id).unwrap();
-        assert_eq!(link.runtime_handle["origin"], resolved_origin);
-        let mut follow_up = turn(id, Value::Null);
-        follow_up.request.extra.clear();
-        follow_up.bind_task_kind(&handler.store);
-        assert_eq!(follow_up.task_kind(), expected);
-        assert_eq!(follow_up.request.extra["origin"], resolved_origin);
-    }
 }
 
 #[test]
