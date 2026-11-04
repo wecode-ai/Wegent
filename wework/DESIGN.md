@@ -2005,6 +2005,11 @@ implementation and WCAG conflict.
 - Native title-bar drag regions must not geometrically overlap visible
   interactive controls. Explicitly carve controls out of the drag region even
   when they declare `no-drag`.
+- 标题栏内绝对定位的拖拽区必须以标题栏为定位边界；调试面板展开时停用
+  底下的原生拖拽区，收起或关闭后恢复。
+- Anchor absolutely positioned title-bar drag regions to the title bar. Disable
+  underlying native drag regions while the debug panel is expanded, and restore
+  them when it collapses or closes.
 - Respect macOS traffic-light safe areas, Windows controls, system scaling, and
   actual platform shortcuts.
 - Use the platform modifier in both behavior and visible shortcut labels.
