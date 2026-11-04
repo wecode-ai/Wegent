@@ -250,10 +250,10 @@ function createStatusAutomation({ uiTimeoutMs, workbenchReadyTimeoutMs, modelRes
   }
 }
 
-export function createDesktopScenario(options) {
+export async function createDesktopScenario(options) {
   const status = createStatusAutomation(options)
   if (options.checkpoint === CHECKPOINT) return status
-  const existing = createAgentDispatch(options)
+  const existing = await createAgentDispatch(options)
   let active = existing
   return {
     ...existing,
