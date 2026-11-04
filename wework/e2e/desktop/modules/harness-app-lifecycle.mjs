@@ -817,7 +817,8 @@ async function verifySmartAppAssetInheritance(
     timeoutMs: uiTimeoutMs,
   })
   await waitForMissing(control, '[data-testid="smart-app-publish-dialog"]', 120_000)
-  const uiPublished = await waitForSmartAppVersion(ownerRequest, smartAppId, '0.2.0-rc.2', 120_000)
+  // The imported installation fixture publishes its manifest version, 0.1.0.
+  const uiPublished = await waitForSmartAppVersion(ownerRequest, smartAppId, '0.1.0', 120_000)
   await assertSmartAppAssetDigests(uiPublished, {
     iconDataUrl: inheritedIcon,
     screenshotDataUrls: inheritedScreenshots,
