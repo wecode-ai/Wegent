@@ -262,7 +262,7 @@ impl LocalTaskStore {
         if busy {
             return Err(TaskRuntimeError::VersionConflict);
         }
-        assign_on(&transaction, &project, &group, &issue, actor, &digest)?;
+        let assigned_status = assign_on(&transaction, &project, &group, &issue, actor, &digest)?;
         let id = dispatch_collaboration_group_assignment(
             &transaction,
             CollaborationGroupExecutionInput {
@@ -271,12 +271,18 @@ impl LocalTaskStore {
                 group: &group,
                 issue_title: issue.title.as_deref().unwrap_or(&issue.id),
                 issue_description: &issue.description,
-                issue_status: Some("in_progress"),
+                issue_status: assigned_status.as_deref(),
                 priority: issue.priority.as_deref().unwrap_or("none"),
                 payload: json!({"project_coordination":scope}),
             },
         )?
         .ok_or_else(|| invalid("Project coordination requires an AI leader"))?;
+        local_automation::on_status_changed(
+            &transaction,
+            &issue.id,
+            issue.status.as_deref(),
+            None,
+        )?;
         let response = result(&execution_row(&transaction, id)?, actor, Some(&digest))?;
         transaction.commit()?;
         Ok(response)
@@ -369,7 +375,7 @@ fn assign_on(
     issue: &LoopItem,
     actor: i64,
     assignment: &str,
-) -> Result<(), TaskRuntimeError> {
+) -> Result<Option<String>, TaskRuntimeError> {
     let mut metadata = issue.metadata.clone();
     metadata["collaboration_group"] = group.clone();
     metadata["collaboration_group_assignment_key"] = json!(assignment);
@@ -380,11 +386,14 @@ fn assign_on(
         group["id"].as_str(),
         group["name"].as_str(),
     );
-    let changed = connection.execute("UPDATE loop_items SET metadata=?1,status='in_progress',version=version+1,updated_at=?2 WHERE id=?3 AND cloud_project_id=?4 AND version=?5",params![metadata.to_string(),now(),issue.id,project.id,issue.version])?;
+    let status = issue.status.as_deref().map(|status| {
+        project_status::robot_assignment_status(&project.metadata, status).to_owned()
+    });
+    let changed = connection.execute("UPDATE loop_items SET metadata=?1,status=?6,version=version+1,updated_at=?2 WHERE id=?3 AND cloud_project_id=?4 AND version=?5",params![metadata.to_string(),now(),issue.id,project.id,issue.version,status])?;
     if changed != 1 {
         return Err(TaskRuntimeError::VersionConflict);
     }
     assignment_receipts::sync_assignment_receipt(connection, &project.id, &issue.id, &metadata)?;
     refresh_runtime_projection_additional_context(connection, &issue.id)?;
-    Ok(())
+    Ok(status)
 }

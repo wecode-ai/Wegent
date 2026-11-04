@@ -16,6 +16,8 @@ Ordinary automation rules and manager triggers appear together under Automatic p
 
 For ordinary automation rules, choose **Status reached** and select one of the project's default or custom statuses. It runs only when an Issue actually changes into the selected status: saving the same status does not trigger it, while leaving and re-entering can trigger it again. Automatic status advances caused by a rule do not immediately trigger that same originating rule, preventing a self-triggering loop.
 
+Automatic execution moves Issues only into statuses configured on the board. If a target column such as In progress or In review is absent, the Issue keeps its current status.
+
 Manual conversations and event triggers both create ordinary task executions. Cloud runs are scheduled in the background while Wework is closed; local projects run on the local executor. Manager runs are serialized per project and show distinct waiting, running, completed, and failed states.
 
 ## Issue boundaries

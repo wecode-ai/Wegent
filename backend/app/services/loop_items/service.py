@@ -76,6 +76,7 @@ from app.services.loop_item_executions.service import (
 from app.services.loop_item_executions.wake import wake_robot_creator
 from app.services.loop_item_status_history import (
     STATUS_HISTORY_KEY,
+    automatic_project_status,
     project_board_statuses,
     write_status_change,
 )
@@ -755,7 +756,6 @@ class LoopItemService:
                 str(collaboration_group["id"]),
                 str(collaboration_group["name"]),
             )
-            payload["status"] = "in_progress"
         elif payload.get("assignee_user_id") is None and assign_creator_if_unassigned:
             payload["assignee_user_id"] = user_id
             self.record_assignment_change(
@@ -781,10 +781,12 @@ class LoopItemService:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown board status"
             )
-        if (agent_id or team_id) and requested_status is None:
-            started = self._robot_start_status(project, payload["status"])
-            if started is not None:
-                payload["status"] = started
+        if (agent_id or team_id or collaboration_group) and requested_status is None:
+            payload["status"] = automatic_project_status(
+                project,
+                current_status=payload["status"],
+                candidate_status="in_progress",
+            )
         if payload["status"]:
             write_status_change(
                 task_metadata,
@@ -1528,6 +1530,7 @@ class LoopItemService:
         *,
         commit: bool = True,
         emit_status_event: bool = True,
+        automation_context: dict[str, Any] | None = None,
     ) -> LoopItem:
         item = self.get(db, item_id, user_id)
         position_order = None
@@ -1748,26 +1751,20 @@ class LoopItemService:
                     assignee_user_id=None,
                     assignee_agent_id="",
                     assignee_team_id=None,
-                    status="in_progress",
-                    completed_at=None,
-                    sort_order=0,
                 )
-                if (
-                    item.status != "in_progress"
-                    and "status" not in values.model_fields_set
-                ):
+                if "status" not in values.model_fields_set:
                     project = db.get(CloudProject, item.cloud_project_id)
                     if project is None:
                         raise HTTPException(
                             status.HTTP_404_NOT_FOUND, "Cloud project not found"
                         )
-                    write_status_change(
-                        metadata,
+                    self._start_robot_assignment(
                         project=project,
-                        from_status=item.status,
-                        to_status="in_progress",
+                        item=item,
+                        user_id=user_id,
+                        metadata=metadata,
+                        updates=updates,
                         trigger="collaboration_group_assignment",
-                        by_user_id=user_id,
                     )
         if assignee_changed:
             # Legacy assignment path: record the chain and derive the queue
@@ -1985,6 +1982,13 @@ class LoopItemService:
                 item=item,
                 user_id=user_id,
                 group=collaboration_group,
+                runner_selection=(
+                    values.runner_selection.model_dump(exclude_none=True)
+                    if values.runner_selection is not None
+                    else (automation_context or {}).get("runner_selection")
+                ),
+                automatic=bool((automation_context or {}).get("run_id")),
+                automation_context=automation_context,
             )
         if position_order is not None:
             persist_sibling_order(position_order, updated_item_id=item.id)
@@ -1993,7 +1997,11 @@ class LoopItemService:
 
             db.refresh(item)
             queue_issue_status_changed(
-                db, item=item, previous_status=previous_status, actor_user_id=user_id
+                db,
+                item=item,
+                previous_status=previous_status,
+                actor_user_id=user_id,
+                automation_run_id=(automation_context or {}).get("run_id"),
             )
         if commit:
             db.commit()
@@ -2361,6 +2369,7 @@ class LoopItemService:
                     notify_assignee=values.notify_assignee,
                 ),
                 commit=commit,
+                automation_context=automation_context,
             )
         else:  # pragma: no cover - pydantic constrains assignee_type
             raise HTTPException(
@@ -3319,22 +3328,6 @@ class LoopItemService:
         )
         metadata[ASSIGNMENT_HISTORY_KEY] = history
 
-    def _robot_start_status(
-        self, project: CloudProject, current_status: str
-    ) -> str | None:
-        """Board status a robot-owned Issue advances into when work starts.
-
-        Assigning a robot starts its work immediately, so the Issue enters the
-        in-progress column unless it is already there, already completed, or
-        the board has no such column -- mirroring the executor's local project
-        space. Returns the status to move to, or ``None`` for no change.
-        """
-        if current_status in {"in_progress", "completed"}:
-            return None
-        if "in_progress" not in self._project_status_ids(project):
-            return None
-        return "in_progress"
-
     def _start_robot_assignment(
         self,
         *,
@@ -3343,22 +3336,24 @@ class LoopItemService:
         user_id: int,
         metadata: dict[str, Any],
         updates: dict[str, Any],
+        trigger: str = "robot_assignment",
     ) -> None:
         """Advance a robot-owned Issue into the in-progress column.
 
-        Assigning a robot starts its work immediately, so an Issue parked
-        before the in-progress column is moved there, the transition is
-        recorded, and ``updates`` receives the resulting column values.
+        When the board has the standard column and the Issue is not completed,
+        record the actual transition in ``metadata`` and ``updates``.
         """
-        started = self._robot_start_status(project, item.status)
-        if started is None:
+        started = automatic_project_status(
+            project, current_status=item.status, candidate_status="in_progress"
+        )
+        if started == item.status:
             return
         write_status_change(
             metadata,
             project=project,
             from_status=item.status,
             to_status=started,
-            trigger="robot_assignment",
+            trigger=trigger,
             by_user_id=user_id,
         )
         updates.update(status=started, completed_at=None, sort_order=0)

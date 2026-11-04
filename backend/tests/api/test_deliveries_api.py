@@ -1593,12 +1593,14 @@ def test_runner_rejection_does_not_commit_issue_changes(
 
 def test_non_ai_issue_created_in_inbox_emits_task_created_automation(
     test_client: TestClient,
+    test_db: Session,
     test_token: str,
     delivery_project: CloudProject,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     rule = SimpleNamespace(id="rule-1")
     ingest = AsyncMock(return_value=1)
+    process = AsyncMock(return_value=1)
     monkeypatch.setattr(
         "app.services.project_automations.project_automation_processor.matching_rules",
         MagicMock(return_value=[rule]),
@@ -1607,6 +1609,9 @@ def test_non_ai_issue_created_in_inbox_emits_task_created_automation(
         deliveries_endpoint.project_incoming_hook_service,
         "ingest_internal",
         ingest,
+    )
+    monkeypatch.setattr(
+        deliveries_endpoint.project_incoming_hook_service, "process_event", process
     )
 
     response = test_client.post(
@@ -1632,10 +1637,18 @@ def test_non_ai_issue_created_in_inbox_emits_task_created_automation(
     )
 
     assert updated.status_code == 200
-    assert ingest.await_count == 2
-    status_event = ingest.await_args_list[1].args[1]
-    assert status_event.event_type == "task.status_changed"
-    assert status_event.subject_id == created["id"]
+    ingest.assert_awaited_once()
+    status_event = (
+        test_db.query(ProjectIncomingEvent).filter_by(title="task.status_changed").one()
+    )
+    assert (
+        status_event.metadata_json["normalized_events"][0]["subject"]["id"]
+        == created["id"]
+    )
+    assert status_event.metadata_json["automation_id"] == "rule-1"
+    assert status_event.metadata_json["payload"]["previous_status"] == "inbox"
+    assert status_event.metadata_json["payload"]["status"] == "in_progress"
+    process.assert_awaited_once_with(test_db, str(status_event.id))
 
 
 def test_issue_creation_requires_one_automation_when_multiple_rules_match(
@@ -1703,9 +1716,9 @@ def test_later_status_change_selects_one_automation_before_updating_issue(
     monkeypatch.setattr(
         deliveries_endpoint.project_automation_processor, "matching_rules", matching
     )
-    ingest = AsyncMock(return_value=1)
+    process = AsyncMock(return_value=1)
     monkeypatch.setattr(
-        deliveries_endpoint.project_incoming_hook_service, "ingest_internal", ingest
+        deliveries_endpoint.project_incoming_hook_service, "process_event", process
     )
     patch = {"version": created["version"], "status": "in_review"}
 
@@ -1719,7 +1732,7 @@ def test_later_status_change_selects_one_automation_before_updating_issue(
     )
     test_db.expire_all()
     assert test_db.get(LoopItem, created["id"]).status == "in_progress"
-    ingest.assert_not_awaited()
+    process.assert_not_awaited()
 
     selected = test_client.patch(
         f"/api/v1/loop-items/{created['id']}",
@@ -1729,11 +1742,14 @@ def test_later_status_change_selects_one_automation_before_updating_issue(
 
     assert selected.status_code == 200, selected.text
     assert selected.json()["status"] == "in_review"
-    ingest.assert_awaited_once()
-    event = ingest.await_args.args[1]
-    assert event.payload["previous_status"] == "in_progress"
-    assert event.payload["status"] == "in_review"
-    assert ingest.await_args.kwargs["automation_id"] == "review-2"
+    event = (
+        test_db.query(ProjectIncomingEvent).filter_by(title="task.status_changed").one()
+    )
+    assert event.status == "received"
+    assert event.metadata_json["payload"]["previous_status"] == "in_progress"
+    assert event.metadata_json["payload"]["status"] == "in_review"
+    assert event.metadata_json["automation_id"] == "review-2"
+    process.assert_awaited_once_with(test_db, str(event.id))
 
     unchanged = test_client.patch(
         f"/api/v1/loop-items/{created['id']}",
@@ -1743,7 +1759,7 @@ def test_later_status_change_selects_one_automation_before_updating_issue(
 
     assert unchanged.status_code == 200
     assert matching.call_count == 2
-    ingest.assert_awaited_once()
+    process.assert_awaited_once_with(test_db, str(event.id))
 
 
 def test_issue_creation_dispatches_only_the_selected_matching_automation(

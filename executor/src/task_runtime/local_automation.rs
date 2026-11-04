@@ -229,7 +229,7 @@ fn matches_status(metadata: &Value, config: &Value, previous: &str, current: &st
     }
 }
 
-pub(super) fn on_status_changed(
+pub(in crate::task_runtime) fn on_status_changed(
     connection: &Connection,
     task_id: &str,
     previous: Option<&str>,

@@ -31,6 +31,13 @@ fn status_ids(metadata: &Value) -> Vec<String> {
         .collect()
 }
 
+pub(super) fn initial_status(metadata: &Value) -> Result<String, TaskRuntimeError> {
+    status_ids(metadata)
+        .into_iter()
+        .next()
+        .ok_or_else(|| TaskRuntimeError::Invalid("project board has no statuses".into()))
+}
+
 pub(super) fn validate(metadata: &Value, value: &str) -> Result<(), TaskRuntimeError> {
     status_ids(metadata)
         .iter()
@@ -40,10 +47,22 @@ pub(super) fn validate(metadata: &Value, value: &str) -> Result<(), TaskRuntimeE
 }
 
 pub(super) fn robot_assignment_status<'a>(metadata: &Value, current: &'a str) -> &'a str {
-    if current == "completed" || validate(metadata, "in_progress").is_err() {
+    if current == "completed" {
         current
     } else {
-        "in_progress"
+        runtime_transition_status(metadata, current, "in_progress")
+    }
+}
+
+pub(in crate::task_runtime) fn runtime_transition_status<'a>(
+    metadata: &Value,
+    current: &'a str,
+    target: &'a str,
+) -> &'a str {
+    if validate(metadata, target).is_ok() {
+        target
+    } else {
+        current
     }
 }
 

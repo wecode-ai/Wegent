@@ -64,6 +64,18 @@ function createStatusAutomation({ uiTimeoutMs, workbenchReadyTimeoutMs, modelRes
     await click('collaboration-project-settings-automatic-processing')
     await wait('automatic-processing')
   }
+  const reopenProject = async message => {
+    await reloadMainWindow(control, message)
+    await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+    await enterLocalCollaborationWorkspace(control, CONTENT)
+    await control.command(
+      'click',
+      inCollaborationSidebar(
+        `[data-testid="collaboration-workspace-project-${projectId}"]`,
+        CONTENT
+      )
+    )
+  }
   const saveRule = async () => {
     await control.command('clickWhenEnabled', scoped('automatic-processing-save'))
     await wait('automatic-processing-form', { visible: false })
@@ -76,7 +88,7 @@ function createStatusAutomation({ uiTimeoutMs, workbenchReadyTimeoutMs, modelRes
       await new Promise(resolve => setTimeout(resolve, 100))
     } while (Date.now() < deadline)
   }
-  const finishedRuns = async count => {
+  const finishedRuns = async (count, expectedStatus) => {
     await waitForBoardValue(
       async () => (await runs()).map(run => run.status),
       Array(count).fill('succeeded'),
@@ -86,7 +98,7 @@ function createStatusAutomation({ uiTimeoutMs, workbenchReadyTimeoutMs, modelRes
     const actual = await executions()
     assert.equal(actual.length, count)
     assert.ok(actual.every(execution => execution.status === 'completed'))
-    assert.equal((await issue()).status, 'completed')
+    assert.equal((await issue()).status, expectedStatus)
     return runs()
   }
 
@@ -145,6 +157,26 @@ function createStatusAutomation({ uiTimeoutMs, workbenchReadyTimeoutMs, modelRes
       const agents = await rpc('chat_agents.list', { project_id: projectId })
       const agent = agents.find(candidate => candidate.display_name === AGENT)
       assert.ok(agent, 'The scenario must create its own available Agent')
+      await rpc('projects.update', {
+        project_id: projectId,
+        project: {
+          version: (await project()).version,
+          board_config: {
+            group_by: 'status',
+            processing_start_status_id: 'acceptance',
+            statuses: [
+              { id: 'inbox', name: '收集箱', color: 'gray' },
+              { id: 'acceptance', name: '验收', color: 'purple' },
+              { id: 'completed', name: '已完成', color: 'green' },
+            ],
+          },
+        },
+      })
+      assert.deepEqual(
+        (await project()).metadata.board_config.statuses.map(status => status.id),
+        ['inbox', 'acceptance', 'completed']
+      )
+      await reopenProject('The custom status board did not reopen after reload')
       const created = await rpc('todos.create', {
         project_id: projectId,
         todo: { title: MARKER, description: MARKER, status: 'inbox', priority: 'none', tags: [] },
@@ -159,7 +191,7 @@ function createStatusAutomation({ uiTimeoutMs, workbenchReadyTimeoutMs, modelRes
         `${CONTENT} label:has(> [data-testid="automatic-processing-trigger-status_changed"])`
       )
       await control.command('select', scoped('automatic-processing-status'), {
-        value: 'in_review',
+        value: 'acceptance',
       })
       await control.command('clickWhenEnabled', scoped('automatic-processing-target-kind-agent'))
       await click('automatic-processing-target')
@@ -172,49 +204,31 @@ function createStatusAutomation({ uiTimeoutMs, workbenchReadyTimeoutMs, modelRes
       assert.equal(saved.eventType, 'task.status_changed')
       assert.equal(saved.targetKind, 'agent')
       assert.equal(saved.targetId, agent.id)
-      assert.deepEqual(saved.eventConfig.statuses, ['in_review'])
+      assert.deepEqual(saved.eventConfig.statuses, ['acceptance'])
       assert.equal(saved.eventConfig.transition, 'any')
       assert.equal(saved.eventConfig.executionTarget, 'existing_issue')
-      await click(`automatic-processing-edit-${ruleId}`)
-      assert.equal(
-        await control.command('getValue', scoped('automatic-processing-status')),
-        'in_review'
-      )
-      await control.command('select', scoped('automatic-processing-status'), { value: 'completed' })
-      await saveRule()
-
-      await reloadMainWindow(control, 'The local status rule did not reopen after reload')
-      await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-      await enterLocalCollaborationWorkspace(control, CONTENT)
-      await control.command(
-        'click',
-        inCollaborationSidebar(
-          `[data-testid="collaboration-workspace-project-${projectId}"]`,
-          CONTENT
-        )
-      )
+      await reopenProject('The local status rule did not reopen after reload')
       await openRules()
       await click(`automatic-processing-edit-${ruleId}`)
       assert.equal(
         await control.command('getValue', scoped('automatic-processing-status')),
-        'completed'
+        'acceptance'
       )
-      assert.deepEqual((await rule()).eventConfig.statuses, ['completed'])
+      assert.deepEqual((await rule()).eventConfig.statuses, ['acceptance'])
       await click('automatic-processing-cancel')
-      await patchIssue({ status: 'in_review' })
-      await noNewRun([])
 
       await click('collaboration-tab-board')
       await click(`cloud-todo-card-${issueId}`)
       await wait('collaboration-issue-detail', { text: MARKER })
-      await control.command('select', scoped('cloud-todo-detail-status'), { value: 'completed' })
+      await control.command('select', scoped('cloud-todo-detail-status'), { value: 'acceptance' })
       await control.command('clickWhenEnabled', scoped('cloud-todo-save'))
-      const initial = await finishedRuns(1)
+      const initial = await finishedRuns(1, 'acceptance')
       assert.equal((await issue()).assignee_agent_id, agent.id)
       await wait('cloud-task-activity-list', { text: `${MARKER}_DONE` })
-      await patchIssue({ status: 'completed' })
+      await patchIssue({ status: 'acceptance' })
       await noNewRun(initial.map(run => run.id))
       await click('cloud-todo-detail-close')
+      await wait(`cloud-todo-card-${issueId}`)
       await openRules()
       await click(`automatic-processing-enabled-${ruleId}`)
       await waitForBoardValue(
@@ -224,8 +238,14 @@ function createStatusAutomation({ uiTimeoutMs, workbenchReadyTimeoutMs, modelRes
         uiTimeoutMs
       )
       await patchIssue({ status: 'inbox' })
-      await patchIssue({ status: 'completed' })
+      await patchIssue({ status: 'acceptance' })
       await noNewRun(initial.map(run => run.id))
+      await patchIssue({ status: 'completed' })
+      await click(`automatic-processing-edit-${ruleId}`)
+      await control.command('select', scoped('automatic-processing-status'), { value: 'completed' })
+      await saveRule()
+      assert.deepEqual((await rule()).eventConfig.statuses, ['completed'])
+      assert.equal((await rule()).enabled, false)
       await click(`automatic-processing-enabled-${ruleId}`)
       await waitForBoardValue(
         async () => (await rule()).enabled,
@@ -238,7 +258,7 @@ function createStatusAutomation({ uiTimeoutMs, workbenchReadyTimeoutMs, modelRes
       await noNewRun(initial.map(run => run.id))
       await patchIssue({ status: 'inbox' })
       await patchIssue({ status: 'completed' })
-      const repeated = await finishedRuns(2)
+      const repeated = await finishedRuns(2, 'completed')
       assert.equal(new Set(repeated.map(run => run.id)).size, 2)
       assert.equal((await issue()).assignee_agent_id, agent.id)
       assert.ok(modelRequests >= 2, 'Both persisted executions must reach the model service')

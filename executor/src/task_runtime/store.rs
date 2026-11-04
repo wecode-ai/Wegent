@@ -41,6 +41,8 @@ use super::model::{
 
 #[path = "local_automation.rs"]
 mod local_automation;
+pub(super) use local_automation::on_status_changed;
+pub(super) use project_status::runtime_transition_status;
 
 #[path = "runner_dispatch.rs"]
 mod runner_dispatch;
@@ -52,6 +54,10 @@ mod runner_routing_tests;
 #[cfg(test)]
 #[path = "local_automation_tests.rs"]
 mod local_automation_tests;
+
+#[cfg(test)]
+#[path = "local_assignment_status_tests.rs"]
+mod local_assignment_status_tests;
 
 #[path = "local_execution_activity.rs"]
 mod local_execution_activity;
@@ -601,10 +607,8 @@ impl LocalTaskStore {
         let id = format!("{project_key}-{sequence}");
         let now = now();
         let parent_id = input.parent_id.clone();
-        let status = if (assigned_agent.is_some() || assigned_group.is_some())
-            && input.status != "completed"
-        {
-            "in_progress".to_owned()
+        let status = if assigned_agent.is_some() || assigned_group.is_some() {
+            project_status::robot_assignment_status(&project.metadata, &input.status).to_owned()
         } else {
             input.status
         };
@@ -948,8 +952,12 @@ impl LocalTaskStore {
         let starts_runtime_dispatch = (collaboration_group_changed
             && selected_collaboration_group.is_some())
             || (assignee_changed && assignee_agent_id.is_some());
-        if starts_runtime_dispatch && status.as_deref() != Some("completed") {
-            status = Some("in_progress".to_owned());
+        if starts_runtime_dispatch {
+            let project = get_item_from(&transaction, project_id, "project")?
+                .ok_or(TaskRuntimeError::ProjectNotFound)?;
+            status = status.map(|status| {
+                project_status::robot_assignment_status(&project.metadata, &status).to_owned()
+            });
         }
         let status_changed = current.status.as_ref() != status.as_ref();
         let now = now();
@@ -1406,7 +1414,7 @@ impl LocalTaskStore {
             .optional()?
         {
             if matches!(status.as_str(), "pending" | "streaming") {
-                move_runtime_comment_task_to_in_progress(&transaction, task_id)?;
+                move_runtime_comment_task_to_in_progress(&transaction, task_id, None)?;
             }
             let comment = comment_row(&transaction, &message_id)?;
             transaction.commit()?;
@@ -1440,7 +1448,7 @@ impl LocalTaskStore {
             },
             "streaming",
         )?;
-        move_runtime_comment_task_to_in_progress(&transaction, task_id)?;
+        move_runtime_comment_task_to_in_progress(&transaction, task_id, None)?;
         transaction.commit()?;
         Ok(comment)
     }
@@ -2107,7 +2115,14 @@ impl LocalTaskStore {
             .and_then(|payload| payload.get("dispatch_role"))
             .and_then(Value::as_str);
         if !matches!(dispatch_role, Some("manager" | "member")) {
-            move_runtime_comment_task_to_in_progress(&connection, &execution.loop_item_id)?;
+            move_runtime_comment_task_to_in_progress(
+                &connection,
+                &execution.loop_item_id,
+                execution
+                    .execution_payload
+                    .as_ref()
+                    .and_then(|payload| payload["automation_run_id"].as_str()),
+            )?;
         }
         connection.commit()?;
         Ok(Some(execution))
@@ -2262,9 +2277,14 @@ impl LocalTaskStore {
             .and_then(|payload| payload.get("dispatch_role"))
             .and_then(Value::as_str);
         if !matches!(dispatch_role, Some("manager" | "member")) {
+            let project = get_item_from(&transaction, &current.cloud_project_id, "project")?
+                .ok_or(TaskRuntimeError::ProjectNotFound)?;
+            let next_status = current.task_status.as_deref().map(|status| {
+                project_status::runtime_transition_status(&project.metadata, status, "in_review")
+            });
             transaction.execute(
                 "UPDATE loop_items
-                 SET status = 'in_review',
+                 SET status = ?3,
                      metadata = json_set(metadata, '$.is_unread', json('true')),
                      version = version + 1, updated_at = ?1
                  WHERE id = ?2 AND status != 'completed'
@@ -2282,7 +2302,7 @@ impl LocalTaskStore {
                              'cancel_requested'
                          )
                    )",
-                params![timestamp, current.loop_item_id],
+                params![timestamp, current.loop_item_id, next_status],
             )?;
             local_automation::on_status_changed(
                 &transaction,
@@ -3097,23 +3117,15 @@ impl LocalTaskStore {
                 | "interrupted"
                 | "error"
         );
-        let changed_tasks = {
+        let candidate_tasks = {
             let mut statement = transaction.prepare(
-                "UPDATE loop_items
-             SET status = ?1,
-                 completed_at = CASE WHEN ?1 = 'completed' THEN ?2 ELSE NULL END,
-                 metadata = CASE
-                     WHEN ?5 AND cloud_project_id != ?7
-                         THEN json_set(metadata, '$.is_unread', json('true'))
-                     ELSE metadata
-                 END,
-                 sort_order = 0, version = version + 1, updated_at = ?2
+                "SELECT id FROM loop_items
              WHERE resource_type = 'task'
                AND id IN (
                    SELECT loop_item_id
                    FROM loop_items
                    WHERE resource_type = 'execution'
-                     AND device_id = ?3 AND task_id = ?4
+                     AND device_id = ?2 AND task_id = ?3
                      AND unlinked_at IS NULL AND loop_item_id IS NOT NULL
                      AND json_extract(metadata, '$.workflow_node_id') IS NULL
                      AND NOT EXISTS (
@@ -3126,26 +3138,62 @@ impl LocalTaskStore {
                      AND CAST(COALESCE(
                          json_extract(metadata, '$.runtime_status_observed_at_ms'),
                          0
-                     ) AS INTEGER) < ?6
+                     ) AS INTEGER) < ?5
                )
                AND status != ?1
-               AND (NOT ?5 OR status NOT IN ('completed', 'in_review'))
-             RETURNING id",
+               AND (NOT ?4 OR status NOT IN ('completed', 'in_review'))",
             )?;
             let rows = statement.query_map(
                 params![
                     next_status,
-                    timestamp,
                     device_id,
                     task_id,
                     preserve_reviewed,
                     observed_at_ms,
-                    DEFAULT_WORK_ITEM_PROJECT_ID
                 ],
                 |row| row.get::<_, String>(0),
             )?;
             rows.collect::<Result<Vec<_>, _>>()?
         };
+        let mut changed_tasks = Vec::new();
+        for item_id in candidate_tasks {
+            let task = get_item_from(&transaction, &item_id, "task")?
+                .ok_or(TaskRuntimeError::TaskNotFound)?;
+            let project = get_item_from(
+                &transaction,
+                task.cloud_project_id
+                    .as_deref()
+                    .ok_or(TaskRuntimeError::ProjectNotFound)?,
+                "project",
+            )?
+            .ok_or(TaskRuntimeError::ProjectNotFound)?;
+            let status = task.status.as_deref().map(|current| {
+                project_status::runtime_transition_status(&project.metadata, current, next_status)
+            });
+            if status == task.status.as_deref() {
+                continue;
+            }
+            transaction.execute(
+                "UPDATE loop_items
+                 SET status = ?1,
+                     completed_at = CASE WHEN ?1 = 'completed' THEN ?2 ELSE NULL END,
+                     metadata = CASE
+                         WHEN ?4 AND cloud_project_id != ?5
+                             THEN json_set(metadata, '$.is_unread', json('true'))
+                         ELSE metadata
+                     END,
+                     sort_order = 0, version = version + 1, updated_at = ?2
+                 WHERE id = ?3",
+                params![
+                    status,
+                    timestamp,
+                    item_id,
+                    preserve_reviewed,
+                    DEFAULT_WORK_ITEM_PROJECT_ID
+                ],
+            )?;
+            changed_tasks.push((item_id, task.status));
+        }
         transaction.execute(
             "UPDATE loop_items
              SET metadata = json_set(
@@ -3172,13 +3220,7 @@ impl LocalTaskStore {
                ) AS INTEGER) < ?1",
             params![observed_at_ms, timestamp, device_id, task_id],
         )?;
-        for item_id in &changed_tasks {
-            let previous: Option<String> = transaction.query_row(
-                "SELECT json_extract(metadata, '$.status_history[#-1].from_status')
-                 FROM loop_items WHERE id=?1",
-                [item_id],
-                |row| row.get(0),
-            )?;
+        for (item_id, previous) in &changed_tasks {
             local_automation::on_status_changed(&transaction, item_id, previous.as_deref(), None)?;
         }
         transaction.commit()?;
@@ -4188,7 +4230,7 @@ pub(super) fn refresh_runtime_projection_additional_context(
     Ok(())
 }
 
-fn get_item_from(
+pub(super) fn get_item_from(
     connection: &Connection,
     id: &str,
     resource_type: &str,
@@ -4843,17 +4885,35 @@ fn insert_comment(
 fn move_runtime_comment_task_to_in_progress(
     connection: &Connection,
     task_id: &str,
+    origin_run_id: Option<&str>,
 ) -> Result<(), TaskRuntimeError> {
     let task = get_item_from(connection, task_id, "task")?.ok_or(TaskRuntimeError::TaskNotFound)?;
+    let project = get_item_from(
+        connection,
+        task.cloud_project_id
+            .as_deref()
+            .ok_or(TaskRuntimeError::ProjectNotFound)?,
+        "project",
+    )?
+    .ok_or(TaskRuntimeError::ProjectNotFound)?;
+    let next_status = task
+        .status
+        .as_deref()
+        .map(|status| project_status::robot_assignment_status(&project.metadata, status));
     connection.execute(
         "UPDATE loop_items
-         SET status='in_progress', completed_at=NULL,
+         SET status=?3, completed_at=NULL,
              version=version+1, updated_at=?1
          WHERE id=?2 AND resource_type='task'
-           AND status IN ('inbox', 'pending', 'in_review')",
-        params![now(), task_id],
+           AND status != ?3",
+        params![now(), task_id, next_status],
     )?;
-    local_automation::on_status_changed(connection, task_id, task.status.as_deref(), None)?;
+    local_automation::on_status_changed(
+        connection,
+        task_id,
+        task.status.as_deref(),
+        origin_run_id,
+    )?;
     Ok(())
 }
 

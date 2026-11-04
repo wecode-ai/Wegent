@@ -270,7 +270,7 @@ class ProjectAutomationExecution:
             )
         else:
             raise RuntimeError("Automation task carrier is unavailable")
-        execution = self._project_robot_execution_for_run(db, str(run.id))
+        execution = self._execution_for_run(db, str(run.id))
         if execution is None:
             raise RuntimeError("Project robot execution was not created")
         run.assignee_agent_id = agent.id
@@ -328,7 +328,7 @@ class ProjectAutomationExecution:
                 workflow_step=None,
                 context=context,
             )
-            execution = self._project_robot_execution_for_run(db, str(run.id))
+            execution = self._execution_for_run(db, str(run.id))
             run.status = "queued" if execution else "succeeded"
             if execution is None:
                 run.completed_at = utcnow()
@@ -442,7 +442,7 @@ class ProjectAutomationExecution:
             workflow_step=workflow_step,
             context=context,
         )
-        execution = self._project_robot_execution_for_run(db, str(run.id))
+        execution = self._execution_for_run(db, str(run.id))
         if execution is None:
             raise RuntimeError("The collaboration-group Agent Run was not created")
         run.status = "queued"
@@ -780,9 +780,7 @@ class ProjectAutomationExecution:
         return run.created_at or utcnow()
 
     @staticmethod
-    def _project_robot_execution_for_run(
-        db: Session, run_id: str
-    ) -> LoopItemExecution | None:
+    def _execution_for_run(db: Session, run_id: str) -> LoopItemExecution | None:
         run = db.get(ProjectAutomationRun, run_id)
         run_metadata = metadata(run) if run is not None else {}
         execution_floor_id = integer(run_metadata.get("retry_execution_floor_id")) or 0
@@ -790,8 +788,8 @@ class ProjectAutomationExecution:
             db.query(LoopItemExecution)
             .filter(
                 LoopItemExecution.automation_run_id == run_id,
-                LoopItemExecution.agent_id != "",
                 LoopItemExecution.id > execution_floor_id,
+                LoopItemExecution.owns_automation_run,
             )
             .order_by(LoopItemExecution.id.desc())
             .first()

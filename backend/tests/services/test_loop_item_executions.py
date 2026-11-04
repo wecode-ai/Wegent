@@ -1936,9 +1936,7 @@ async def test_retry_processor_uses_only_executions_from_the_current_attempt(
 
     assert failed_run.metadata_json["retry_execution_floor_id"] == previous_execution.id
     assert (
-        project_automation_execution._project_robot_execution_for_run(
-            test_db, str(failed_run.id)
-        )
+        project_automation_execution._execution_for_run(test_db, str(failed_run.id))
         is None
     )
 
@@ -1951,9 +1949,7 @@ async def test_retry_processor_uses_only_executions_from_the_current_attempt(
     )
 
     assert (
-        project_automation_execution._project_robot_execution_for_run(
-            test_db, str(failed_run.id)
-        )
+        project_automation_execution._execution_for_run(test_db, str(failed_run.id))
         == current_execution
     )
 

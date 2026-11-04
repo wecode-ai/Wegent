@@ -558,6 +558,8 @@ pub struct DeliveryCreate {
 pub struct DeliveryFinalize {
     #[serde(default)]
     pub fulfillments: Vec<Value>,
+    #[serde(skip)]
+    pub(crate) runtime_origin: Option<RuntimeTaskAddress>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

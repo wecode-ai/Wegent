@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+use crate::task_runtime::store::{get_item_from, on_status_changed, runtime_transition_status};
 
 #[cfg(test)]
 #[path = "delivery_tests.rs"]
@@ -678,18 +679,69 @@ impl LocalTaskStore {
         }
         let settled_assignment =
             if let Some(human_assignment_item) = human_assignment_item.as_deref() {
+                let task = get_item_from(&transaction, human_assignment_item, "task")?
+                    .ok_or(TaskRuntimeError::TaskNotFound)?;
+                let project = get_item_from(
+                    &transaction,
+                    task.cloud_project_id
+                        .as_deref()
+                        .ok_or(TaskRuntimeError::ProjectNotFound)?,
+                    "project",
+                )?
+                .ok_or(TaskRuntimeError::ProjectNotFound)?;
+                let next_status = task.status.as_deref().map(|status| {
+                    runtime_transition_status(&project.metadata, status, "completed")
+                });
                 let changed = transaction.execute(
                     "UPDATE loop_items
-                 SET current_delivery_id = ?1, status = 'completed',
-                     completed_at = ?2,
+                 SET current_delivery_id = ?1, status = ?5,
+                     completed_at = CASE WHEN ?5 = 'completed' THEN ?2 ELSE NULL END,
                      metadata = json_set(metadata, '$.is_unread', json('true')),
                      version = version + 1, updated_at = ?2
                  WHERE id = ?3 AND resource_type = 'task' AND deleted_at IS NULL
                    AND json_extract(metadata, '$.collaboration_assignment.assignee_type') = 'human'
                    AND COALESCE(status, '') != 'completed'
                    AND (id = ?4 OR parent_id = ?4)",
-                    params![delivery_id, timestamp, human_assignment_item, item_id],
+                    params![
+                        delivery_id,
+                        timestamp,
+                        human_assignment_item,
+                        item_id,
+                        next_status
+                    ],
                 )?;
+                if changed > 0 {
+                    let origin_run_id = input
+                        .runtime_origin
+                        .as_ref()
+                        .map(|origin| {
+                            transaction
+                                .query_row(
+                                    "SELECT json_extract(execution_payload, '$.automation_run_id')
+                             FROM loop_item_executions
+                             WHERE runtime_device_id=?1 AND runtime_task_id=?2
+                               AND loop_item_id=?3 AND cloud_project_id=?4
+                             ORDER BY id DESC LIMIT 1",
+                                    params![
+                                        origin.device_id,
+                                        origin.task_id,
+                                        human_assignment_item,
+                                        project.id
+                                    ],
+                                    |row| row.get::<_, Option<String>>(0),
+                                )
+                                .optional()
+                        })
+                        .transpose()?
+                        .flatten()
+                        .flatten();
+                    on_status_changed(
+                        &transaction,
+                        human_assignment_item,
+                        task.status.as_deref(),
+                        origin_run_id.as_deref(),
+                    )?;
+                }
                 (changed > 0).then_some(human_assignment_item.to_owned())
             } else {
                 None

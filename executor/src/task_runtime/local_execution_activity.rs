@@ -391,9 +391,24 @@ impl LocalTaskStore {
                 if !matches!(dispatch_role.as_deref(), Some("manager" | "member")) {
                     let task = get_item_from(&transaction, &task_id, "task")?
                         .ok_or(TaskRuntimeError::TaskNotFound)?;
+                    let project = get_item_from(
+                        &transaction,
+                        task.cloud_project_id
+                            .as_deref()
+                            .ok_or(TaskRuntimeError::ProjectNotFound)?,
+                        "project",
+                    )?
+                    .ok_or(TaskRuntimeError::ProjectNotFound)?;
+                    let next_status = task.status.as_deref().map(|status| {
+                        project_status::runtime_transition_status(
+                            &project.metadata,
+                            status,
+                            "in_review",
+                        )
+                    });
                     transaction.execute(
                         "UPDATE loop_items
-                         SET status='in_review', completed_at=NULL,
+                         SET status=?3, completed_at=NULL,
                              version=version+1, updated_at=?1
                          WHERE id=?2 AND resource_type='task' AND status='in_progress'
                            AND NOT EXISTS (
@@ -410,7 +425,7 @@ impl LocalTaskStore {
                                      'cancel_requested'
                                  )
                            )",
-                        params![now(), task_id],
+                        params![now(), task_id, next_status],
                     )?;
                     local_automation::on_status_changed(
                         &transaction,

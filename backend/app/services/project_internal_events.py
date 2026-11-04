@@ -25,13 +25,16 @@ def queue_issue_status_changed(
     previous_status: str,
     actor_user_id: int | None = None,
     automation_run_id: str | None = None,
-) -> None:
+    automation_id: str | None = None,
+    payload: dict[str, Any] | None = None,
+) -> ProjectIncomingEvent | None:
     """Queue an actual transition atomically with the Issue's state update."""
     if item.status == previous_status:
         return
     from app.services.project_incoming_hooks import project_incoming_hook_service
 
-    payload: dict[str, Any] = {
+    event_payload: dict[str, Any] = {
+        **(payload or {}),
         "id": str(item.id),
         "title": item.title,
         "version": item.version,
@@ -43,10 +46,11 @@ def queue_issue_status_changed(
             (item.metadata_json or {}).get("status_history", [])
         ),
     }
+    event_payload.pop("caused_by_automation_rule_id", None)
     run = db.get(ProjectAutomationRun, automation_run_id) if automation_run_id else None
     if run is not None:
-        payload["caused_by_automation_rule_id"] = str(run.parent_id)
-    project_incoming_hook_service.queue_internal(
+        event_payload["caused_by_automation_rule_id"] = str(run.parent_id)
+    return project_incoming_hook_service.queue_internal(
         db,
         ProjectAutomationEvent(
             event_type="task.status_changed",
@@ -54,12 +58,13 @@ def queue_issue_status_changed(
             subject_id=str(item.id),
             source="wework",
             actor_user_id=actor_user_id,
-            payload=payload,
+            payload=event_payload,
             event_id=(
                 f"issue-status:{item.id}:{item.version}:"
                 f"{previous_status}:{item.status}"
             ),
         ),
+        automation_id=automation_id,
     )
 
 

@@ -1,5 +1,102 @@
 use super::*;
 
+#[test]
+fn coordination_assignment_emits_its_actual_status_transition_once() {
+    let mut fixture = Fixture::new();
+    fixture.project = fixture.store.update_project(&fixture.project.id, ProjectUpdate {
+        version: fixture.project.version,
+        automatic_processing_rules: Some(json!([{
+            "id": "running", "name": "Running", "triggerType": "event", "eventType": "task.status_changed",
+            "eventConfig": {"statuses": ["in_progress"], "transition": "any"},
+            "targetKind": "human", "targetId": "7", "enabled": true,
+        }])),
+        ..Default::default()
+    }).unwrap();
+    fixture.body["projectVersion"] = json!(fixture.project.version);
+    let receipt = fixture.dispatch("status-event").unwrap();
+    assert_eq!(fixture.row(&receipt).status, "queued");
+    let runs = fixture
+        .store
+        .list_project_automation_runs(&fixture.project.id, "running")
+        .unwrap();
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0]["status"], "failed");
+    assert!(runs[0]["error"]
+        .as_str()
+        .unwrap()
+        .contains("active execution"));
+    assert_eq!(fixture.dispatch("status-event").unwrap(), receipt);
+    assert_eq!(
+        fixture
+            .store
+            .list_project_automation_runs(&fixture.project.id, "running")
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn coordination_assignment_preserves_a_custom_board_column_through_completion() {
+    let mut fixture = Fixture::new();
+    fixture.project = fixture
+        .store
+        .update_project(
+            &fixture.project.id,
+            ProjectUpdate {
+                version: fixture.project.version,
+                board_config: Some(
+                    json!({"statuses": [{"id":"inbox"},{"id":"acceptance"},{"id":"completed"}]}),
+                ),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    fixture.issue = fixture
+        .store
+        .update_task(
+            &fixture.project.id,
+            &fixture.issue.id,
+            TaskUpdate {
+                version: fixture.issue.version,
+                status: Some("acceptance".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    fixture.body["projectVersion"] = json!(fixture.project.version);
+    fixture.body["issueVersion"] = json!(fixture.issue.version);
+    let receipt = fixture.dispatch("custom-status").unwrap();
+    let execution = fixture.row(&receipt);
+    assert!(execution.execution_payload.as_ref().unwrap()["message"]
+        .as_str()
+        .unwrap()
+        .contains("Issue 状态：acceptance"));
+    let claimed = fixture.claim();
+    fixture.start(&claimed);
+    fixture
+        .store
+        .complete_execution(claimed.id, Some("Done"))
+        .unwrap();
+    let task = fixture
+        .store
+        .get_task(&fixture.project.id, &fixture.issue.id)
+        .unwrap();
+    assert_eq!(task.status.as_deref(), Some("acceptance"));
+    fixture
+        .store
+        .update_task(
+            &fixture.project.id,
+            &task.id,
+            TaskUpdate {
+                version: task.version,
+                status: task.status,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+}
+
 struct Fixture {
     _directory: tempfile::TempDir,
     store: LocalTaskStore,
