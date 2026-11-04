@@ -322,9 +322,11 @@ export function createDesktopScenario({
         try {
           database.exec('PRAGMA busy_timeout = 10000')
           // Completion precedes the coordinator's observation tick. Other intake
-          // can already satisfy pendingCount, so wait for this task's durable row.
+          // can satisfy pendingCount, so wait for this task's durable completion.
+          const feedbackWhere =
+            "resource_type='stand_in_event' AND json_extract(metadata,'$.userId')=? AND json_extract(metadata,'$.taskId')=? AND json_extract(metadata,'$.kind')='work_state' AND json_extract(metadata,'$.status')='pending' AND json_extract(metadata,'$.state[3]')='done'"
           const feedback = database.prepare(
-            "SELECT COUNT(*) AS count FROM loop_items WHERE resource_type='stand_in_event' AND json_extract(metadata,'$.userId')=? AND json_extract(metadata,'$.taskId')=? AND json_extract(metadata,'$.kind')='work_state' AND json_extract(metadata,'$.status')='pending'"
+            `SELECT COUNT(*) AS count FROM loop_items WHERE ${feedbackWhere}`
           )
           await waitFor(
             () => feedback.get(USER, taskId).count,
@@ -334,9 +336,9 @@ export function createDesktopScenario({
           dueAt = Date.now() + 1000
           const changed = database
             .prepare(
-              "UPDATE loop_items SET metadata=json_set(metadata,'$.createdAt',?) WHERE resource_type='stand_in_event' AND json_extract(metadata,'$.userId')=? AND json_extract(metadata,'$.kind')='work_state' AND json_extract(metadata,'$.status')='pending'"
+              `UPDATE loop_items SET metadata=json_set(metadata,'$.createdAt',?) WHERE ${feedbackWhere}`
             )
-            .run(new Date(dueAt - 5 * 60000).toISOString(), USER)
+            .run(new Date(dueAt - 5 * 60000).toISOString(), USER, taskId)
           assert.ok(changed.changes > 0, 'The real completed work must produce durable feedback')
         } finally {
           database.close()
