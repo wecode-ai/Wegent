@@ -734,7 +734,10 @@ impl CodexAppServerClient {
             Some(process) => process.pending.lock().await.len(),
             None => 0,
         };
-        if state.process.is_some()
+        // Control and live-reload requests belong to the existing process.
+        // Apply launch-environment changes only when a request may start a process.
+        if start_if_missing
+            && state.process.is_some()
             && codex_process_environment_requires_restart(
                 "rpc_request",
                 &state.process_environment,
