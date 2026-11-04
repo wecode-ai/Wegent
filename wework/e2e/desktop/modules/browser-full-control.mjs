@@ -56,7 +56,11 @@ export async function verifyBrowserFullControl(control, bridgeCall, fill, timeou
   } finally {
     await setEnabled(false)
   }
-  const pending = fill({ selector: '#script-editor', text: 'requires confirmation again' })
+  const pending = bridgeCall({
+    action: 'fill',
+    selector: '#script-editor',
+    text: 'requires confirmation again',
+  })
   await control.command('waitFor', REJECT, { timeoutMs })
   await control.command('click', REJECT)
   const rejected = await pending
