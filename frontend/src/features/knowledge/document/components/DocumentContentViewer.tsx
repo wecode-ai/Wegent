@@ -4,7 +4,7 @@
 
 'use client'
 
-import { createContext, useContext, useMemo, useCallback, useState } from 'react'
+import { createContext, useContext, useEffect, useMemo, useCallback, useState } from 'react'
 import type { ExtraProps } from 'react-markdown'
 import dynamic from 'next/dynamic'
 import { Spinner } from '@/components/ui/spinner'
@@ -48,6 +48,11 @@ const EnhancedMarkdown = dynamic(() => import('@/components/common/EnhancedMarkd
 
 type ViewMode = 'preview' | 'raw'
 const StandaloneResourceContext = createContext(false)
+const DocumentPreviewProtectionContext = createContext({
+  knowledgeBaseId: 0,
+  coveredByDocumentWatermark: false,
+  watermarkText: '',
+})
 const documentResourcePlugins = [rehypeDocumentResources]
 
 interface DocumentContentViewerProps {
@@ -57,6 +62,8 @@ interface DocumentContentViewerProps {
   knowledgeBaseName: string
   knowledgeBaseNamespace: string
   isOrganization: boolean
+  protectedPreview: boolean
+  watermarkText: string
   viewMode: ViewMode
   hasMoreContent: boolean
   loadingMore: boolean
@@ -72,6 +79,8 @@ export function DocumentContentViewer({
   knowledgeBaseName,
   knowledgeBaseNamespace,
   isOrganization,
+  protectedPreview,
+  watermarkText,
   viewMode,
   hasMoreContent,
   loadingMore,
@@ -84,6 +93,16 @@ export function DocumentContentViewer({
   const router = useRouter()
   const [selectedLinkResource, setSelectedLinkResource] = useState<LinkResource | null>(null)
   const linkPolicy = useMemo(() => resolveDocumentLinkPolicy(document), [document])
+  const linkPreviewProtection = useMemo(
+    () => ({
+      knowledgeBaseId,
+      coveredByDocumentWatermark: protectedPreview,
+      watermarkText,
+    }),
+    [knowledgeBaseId, protectedPreview, watermarkText]
+  )
+
+  useEffect(() => setSelectedLinkResource(null), [document.id])
 
   // Check if content is JSON
   const isJsonContent = useMemo(() => {
@@ -177,6 +196,7 @@ export function DocumentContentViewer({
         children?: React.ReactNode
       } & ExtraProps) {
         const standalone = useContext(StandaloneResourceContext)
+        const protection = useContext(DocumentPreviewProtectionContext)
         if (!href) {
           return <a {...props}>{children}</a>
         }
@@ -203,6 +223,7 @@ export function DocumentContentViewer({
               resource={resource}
               onOpen={setSelectedLinkResource}
               inline={!standalone}
+              {...protection}
             >
               {children}
             </DocumentLinkResource>
@@ -245,6 +266,7 @@ export function DocumentContentViewer({
         ...props
       }: React.ImgHTMLAttributes<HTMLImageElement> & ExtraProps) {
         const standalone = useContext(StandaloneResourceContext)
+        const protection = useContext(DocumentPreviewProtectionContext)
         if (linkPolicy.policy === 'legacy' || typeof src !== 'string') {
           // eslint-disable-next-line @next/next/no-img-element
           return <img {...props} src={src} alt={alt || ''} />
@@ -265,6 +287,7 @@ export function DocumentContentViewer({
             resource={resource}
             onOpen={setSelectedLinkResource}
             inline={!standalone}
+            {...protection}
           />
         )
       },
@@ -283,12 +306,14 @@ export function DocumentContentViewer({
   }, [document.id, linkPolicy.policy, handleWikiLinkClick, t])
 
   const renderMarkdown = () => (
-    <EnhancedMarkdown
-      source={content}
-      theme={theme}
-      components={markdownComponents}
-      rehypePlugins={linkPolicy.policy === 'preview-only' ? documentResourcePlugins : undefined}
-    />
+    <DocumentPreviewProtectionContext.Provider value={linkPreviewProtection}>
+      <EnhancedMarkdown
+        source={content}
+        theme={theme}
+        components={markdownComponents}
+        rehypePlugins={linkPolicy.policy === 'preview-only' ? documentResourcePlugins : undefined}
+      />
+    </DocumentPreviewProtectionContext.Provider>
   )
 
   // Render raw/plain content
@@ -371,6 +396,10 @@ export function DocumentContentViewer({
       {linkPolicy.policy === 'preview-only' && (
         <DocumentLinkPreview
           resource={selectedLinkResource}
+          knowledgeBaseId={knowledgeBaseId}
+          protectedPreview={protectedPreview}
+          isOrganization={isOrganization}
+          watermarkText={watermarkText}
           onOpenChange={open => {
             if (!open) setSelectedLinkResource(null)
           }}
