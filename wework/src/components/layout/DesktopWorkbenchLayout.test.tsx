@@ -5154,7 +5154,7 @@ describe('DesktopWorkbenchLayout', () => {
   }, 30_000)
 
   test('temporary chat marks a rejected queued send as failed', async () => {
-    // Queue semantics do not require timer-paced typing, which can outlive a timed-out test.
+    // Seed complete drafts so the queue test does not render once per keystroke.
     const user = userEvent.setup({ delay: null })
     const address: RuntimeTaskAddress = {
       deviceId: 'workspace-cloud-device',
@@ -5174,11 +5174,13 @@ describe('DesktopWorkbenchLayout', () => {
 
     const sideChat = await screen.findByTestId('right-workspace-chat-panel')
     const sideChatInput = within(sideChat).getByTestId('chat-message-input')
-    await user.type(sideChatInput, 'first message')
+    await user.click(sideChatInput)
+    await user.paste('first message')
     await user.click(within(sideChat).getByTestId('send-message-button'))
     await waitFor(() => expect(subscribeRuntimeTaskStreamMock).toHaveBeenCalled())
 
-    await user.type(sideChatInput, 'queued follow-up')
+    await user.click(sideChatInput)
+    await user.paste('queued follow-up')
     await user.click(within(sideChat).getByTestId('send-message-button'))
     expect(within(sideChat).getByTestId('conversation-queue-panel')).toHaveTextContent(
       'queued follow-up'
