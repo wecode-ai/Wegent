@@ -2078,6 +2078,16 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/modules/local-issue-assignee-recovery.mjs"
 
+assert_desktop_case "local status automation reuses the existing dispatch CI checkpoint" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-5","name":"Core / shard 5","segments":"collaboration-local-agent-dispatch"}]}
+wework_desktop_cloud_e2e=false
+wework_desktop_cloud_e2e_matrix={"include":[]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/scenarios/collaboration-local-status-automation.scenario.mjs"
+
 assert_desktop_case "MCP result parsing selects discovery and both real permission scenarios" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true

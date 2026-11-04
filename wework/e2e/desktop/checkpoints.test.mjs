@@ -24,6 +24,16 @@ test('Responses retains standalone selection and shares an existing CI Cloud lif
   }
 })
 
+test('local status automation retains standalone selection within its existing Agent CI lifecycle', () => {
+  assert.deepEqual(expandDesktopCheckpoints(['collaboration-local-status-automation']), [
+    'collaboration-local-status-automation',
+  ])
+  assert.equal(
+    DESKTOP_CHECKPOINT_CI_HOSTS.get('collaboration-local-status-automation'),
+    'collaboration-local-agent-dispatch'
+  )
+})
+
 test('Windows certifies the core round trip while macOS retains complete recovery coverage', () => {
   assert.deepEqual(expandDesktopCheckpoints([UPGRADE_CHECKPOINT_GROUP]), UPGRADE_CHECKPOINTS)
   assert.deepEqual(expandDesktopCheckpoints([upgradeVerificationCheckpoint('windows')]), [
