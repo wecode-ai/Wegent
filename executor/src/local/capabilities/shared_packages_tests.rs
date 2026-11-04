@@ -723,3 +723,23 @@ async fn cached_package_noop_still_persists_ordering_fence() {
     assert!(store.manifest.load().unwrap()["plugins"]["demo@wegent"].is_object());
     assert_eq!(packages.downloads.load(Ordering::SeqCst), 1);
 }
+
+#[tokio::test]
+async fn skill_shell_bindings_survive_capability_sync() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = store(temp.path());
+    let handler =
+        CapabilitySyncHandler::with_package_provider("", store.clone(), packages("native"));
+    let response = handler
+        .apply_sync(json!({"scope":"skills","skills":[{
+            "name":"document","skill_id":1279,"namespace":"default",
+            "bind_shells":["Chat","ClaudeCode","Codex"]
+        }]}))
+        .await
+        .unwrap();
+    assert_eq!(response["success"], true, "{response}");
+    assert_eq!(
+        store.manifest.load().unwrap()["skills"]["document"]["bind_shells"],
+        json!(["Chat", "ClaudeCode", "Codex"])
+    );
+}
