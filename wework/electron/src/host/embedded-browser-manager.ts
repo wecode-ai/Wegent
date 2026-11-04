@@ -219,6 +219,7 @@ export class EmbeddedBrowserManager {
       _isInPlace?: boolean,
       isMainFrame?: boolean
     ) => {
+      // Directory previews are generated local HTML pages; only their file links need re-routing.
       if (
         isMainFrame === false ||
         !url.startsWith('file:') ||
