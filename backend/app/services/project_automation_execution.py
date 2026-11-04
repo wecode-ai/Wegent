@@ -471,6 +471,7 @@ class ProjectAutomationExecution:
             version=1,
             trigger="automation",
         )
+        instruction = ProjectAutomationExecution._run_instruction(rule, run)
         item = db.get(LoopItem, run.task_id)
         if item is not None:
             loop_item_service.assign(
@@ -480,7 +481,7 @@ class ProjectAutomationExecution:
                 user_id=owner.id,
                 values=values.model_copy(update={"version": item.version}),
                 automation_context=context,
-                instruction=rule.description or "",
+                instruction=instruction,
             )
             return
         if external_loop_item_provider.is_external_item(db, run.task_id):
@@ -491,7 +492,7 @@ class ProjectAutomationExecution:
                 owner.id,
                 values.model_copy(update={"version": int(current.get("version") or 1)}),
                 automation_context=context,
-                instruction=rule.description or "",
+                instruction=instruction,
             )
             return
         raise RuntimeError("Automatic processing Issue is unavailable")
@@ -732,6 +733,7 @@ class ProjectAutomationExecution:
         context = {
             "rule_id": str(rule.id),
             "run_id": str(run.id),
+            "execution_prompt": self._run_instruction(rule, run),
             "trigger": run_metadata.get("trigger") or run.source,
             "scheduled_for": run_metadata.get("scheduled_for"),
             "event": run_metadata.get("event") or {},

@@ -4019,10 +4019,8 @@ class LoopItemExecutionService:
                     "Selected Runtime owner no longer matches the queued execution"
                 )
             if run is not None and rule is not None:
-                # Automation only decides who receives the task. Once a
-                # project robot is assigned it must execute through the same
-                # role + live task-context contract as an ordinary assignment;
-                # the manager's scheduling prompt is not an execution prompt.
+                # Restore automation provenance while the persisted assignment
+                # intent supplies the execution prompt and runtime selection.
                 origin_context = self._automation_runtime_context(run, rule)
             else:
                 origin_context = dict(execution.runtime_origin_context)

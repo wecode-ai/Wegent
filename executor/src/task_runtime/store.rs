@@ -698,6 +698,7 @@ impl LocalTaskStore {
                     issue_title: &input.title,
                     issue_description: &input.description,
                     issue_status: Some(&status),
+                    prompt: None,
                     priority: &input.priority,
                     payload: Value::Null,
                 },
@@ -1022,6 +1023,7 @@ impl LocalTaskStore {
                         issue_title: title.as_deref().unwrap_or(task_id),
                         issue_description: &description,
                         issue_status: status.as_deref(),
+                        prompt: None,
                         priority: priority.as_deref().unwrap_or("none"),
                         payload: input.execution_payload.unwrap_or(Value::Null),
                     },
@@ -5117,6 +5119,7 @@ struct CollaborationGroupExecutionInput<'a> {
     issue_title: &'a str,
     issue_description: &'a str,
     issue_status: Option<&'a str>,
+    prompt: Option<&'a str>,
     priority: &'a str,
     payload: Value,
 }
@@ -5175,6 +5178,7 @@ fn dispatch_collaboration_group_assignment(
         input.issue_title,
         input.issue_description,
         input.issue_status,
+        input.prompt,
     );
     execution_payload.insert("message".to_owned(), Value::String(manager_context.clone()));
     execution_payload.insert(
@@ -5318,6 +5322,7 @@ fn collaboration_manager_message(
     issue_title: &str,
     issue_description: &str,
     issue_status: Option<&str>,
+    prompt: Option<&str>,
 ) -> String {
     let group_name = group
         .get("name")
@@ -5348,7 +5353,7 @@ fn collaboration_manager_message(
             .unwrap_or_else(|| json!([])),
         "project_workflow": project_workflow,
     });
-    format!(
+    let context = format!(
         "Issue 标题：{issue_title}\nIssue 状态：{}\nIssue 描述：{}\n\n“{group_name}”的项目协作规则、成员与流程：{}",
         issue_status.unwrap_or("inbox"),
         if issue_description.trim().is_empty() {
@@ -5358,7 +5363,11 @@ fn collaboration_manager_message(
         },
         serde_json::to_string_pretty(&collaboration_context)
             .unwrap_or_else(|_| "{}".to_owned()),
-    )
+    );
+    match prompt.filter(|prompt| !prompt.trim().is_empty()) {
+        Some(prompt) => format!("{prompt}\n\n{context}"),
+        None => context,
+    }
 }
 
 fn cancel_active_executions(

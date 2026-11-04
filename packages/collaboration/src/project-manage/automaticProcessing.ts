@@ -72,6 +72,7 @@ export interface AutomaticProcessingDraft {
   id: string | null
   version: number | null
   name: string
+  prompt: string
   trigger: TriggerKind
   tag: string
   statuses: string[]
@@ -89,6 +90,7 @@ export const EMPTY_DRAFT: AutomaticProcessingDraft = {
   id: null,
   version: null,
   name: '',
+  prompt: '',
   trigger: 'created',
   tag: '',
   statuses: [],
@@ -221,6 +223,7 @@ export function draftFromRule(rule: WorkspaceAutomationRule): AutomaticProcessin
     id: rule.id,
     version: rule.version,
     name: rule.name,
+    prompt: rule.prompt ?? '',
     trigger,
     tag: typeof tags[0] === 'string' ? tags[0] : '',
     statuses: statuses.filter((status): status is string => typeof status === 'string'),

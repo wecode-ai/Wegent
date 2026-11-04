@@ -272,6 +272,7 @@ impl LocalTaskStore {
                 issue_title: issue.title.as_deref().unwrap_or(&issue.id),
                 issue_description: &issue.description,
                 issue_status: assigned_status.as_deref(),
+                prompt: None,
                 priority: issue.priority.as_deref().unwrap_or("none"),
                 payload: json!({"project_coordination":scope}),
             },

@@ -30,6 +30,8 @@ const CHECKPOINT = 'collaboration-local-status-automation'
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const scoped = name => `${CONTENT} [data-testid="${name}"]`
 const MARKER = `LOCAL_STATUS_AUTOMATION_${process.pid}`
+const PROMPT = `LOCAL_AUTOMATION_PROMPT_${process.pid}\n进入验收状态后检查交付物，保留中文与 \`code\` 格式。`
+const UPDATED_PROMPT = `LOCAL_AUTOMATION_UPDATED_PROMPT_${process.pid}\n复核完成后整理结论，并说明验证结果。`
 const PROJECT = `本地状态触发-${process.pid}`
 const AGENT = `状态处理智能体-${process.pid}`
 
@@ -39,6 +41,8 @@ function createStatusAutomation({ uiTimeoutMs, workbenchReadyTimeoutMs, modelRes
   let issueId
   let ruleId
   let modelRequests = 0
+  let expectedPrompt = PROMPT
+  const observedPrompts = new Set()
   const rpc = (method, params = {}) => requestExecutor(control, method, params, uiTimeoutMs)
   const project = async () => {
     const current = (await rpc('projects.list')).find(candidate => candidate.id === projectId)
@@ -119,6 +123,11 @@ function createStatusAutomation({ uiTimeoutMs, workbenchReadyTimeoutMs, modelRes
       const auxiliary = ['prewarm', 'compaction'].includes(codexRequestKind(body))
       if (!auxiliary) {
         assert.ok(JSON.stringify(body).includes(MARKER), 'The Agent must receive the source Issue')
+        assert.ok(
+          JSON.stringify(body).includes(JSON.stringify(expectedPrompt).slice(1, -1)),
+          'The real model request must receive the saved multiline automation prompt'
+        )
+        observedPrompts.add(expectedPrompt)
         modelRequests += 1
       }
       const id = `${MARKER}-${Date.now()}`
@@ -196,6 +205,7 @@ function createStatusAutomation({ uiTimeoutMs, workbenchReadyTimeoutMs, modelRes
       await control.command('clickWhenEnabled', scoped('automatic-processing-target-kind-agent'))
       await click('automatic-processing-target')
       await click(`automatic-processing-target-option-agent-${agent.id}`)
+      await control.command('fill', scoped('automatic-processing-prompt'), { value: PROMPT })
       await saveRule()
       const persisted = (await project()).metadata.automatic_processing_rules
       assert.equal(persisted.length, 1)
@@ -204,6 +214,7 @@ function createStatusAutomation({ uiTimeoutMs, workbenchReadyTimeoutMs, modelRes
       assert.equal(saved.eventType, 'task.status_changed')
       assert.equal(saved.targetKind, 'agent')
       assert.equal(saved.targetId, agent.id)
+      assert.equal(saved.prompt, PROMPT)
       assert.deepEqual(saved.eventConfig.statuses, ['acceptance'])
       assert.equal(saved.eventConfig.transition, 'any')
       assert.equal(saved.eventConfig.executionTarget, 'existing_issue')
@@ -215,6 +226,7 @@ function createStatusAutomation({ uiTimeoutMs, workbenchReadyTimeoutMs, modelRes
         'acceptance'
       )
       assert.deepEqual((await rule()).eventConfig.statuses, ['acceptance'])
+      assert.equal(await control.command('getValue', scoped('automatic-processing-prompt')), PROMPT)
       await click('automatic-processing-cancel')
 
       await click('collaboration-tab-board')
@@ -237,15 +249,21 @@ function createStatusAutomation({ uiTimeoutMs, workbenchReadyTimeoutMs, modelRes
         'The rule must disable',
         uiTimeoutMs
       )
+      assert.equal((await rule()).prompt, PROMPT)
       await patchIssue({ status: 'inbox' })
       await patchIssue({ status: 'acceptance' })
       await noNewRun(initial.map(run => run.id))
       await patchIssue({ status: 'completed' })
       await click(`automatic-processing-edit-${ruleId}`)
       await control.command('select', scoped('automatic-processing-status'), { value: 'completed' })
+      await control.command('fill', scoped('automatic-processing-prompt'), {
+        value: UPDATED_PROMPT,
+      })
       await saveRule()
       assert.deepEqual((await rule()).eventConfig.statuses, ['completed'])
       assert.equal((await rule()).enabled, false)
+      assert.equal((await rule()).prompt, UPDATED_PROMPT)
+      expectedPrompt = UPDATED_PROMPT
       await click(`automatic-processing-enabled-${ruleId}`)
       await waitForBoardValue(
         async () => (await rule()).enabled,
@@ -261,11 +279,13 @@ function createStatusAutomation({ uiTimeoutMs, workbenchReadyTimeoutMs, modelRes
       const repeated = await finishedRuns(2, 'completed')
       assert.equal(new Set(repeated.map(run => run.id)).size, 2)
       assert.equal((await issue()).assignee_agent_id, agent.id)
+      assert.equal((await issue()).description, MARKER)
       assert.ok(modelRequests >= 2, 'Both persisted executions must reach the model service')
+      assert.deepEqual([...observedPrompts].sort(), [PROMPT, UPDATED_PROMPT].sort())
       await rpc('projects.archive', { project_id: projectId, version: (await project()).version })
     },
     diagnostics() {
-      return { projectId, issueId, ruleId, modelRequests }
+      return { projectId, issueId, ruleId, modelRequests, observedPrompts: [...observedPrompts] }
     },
   }
 }

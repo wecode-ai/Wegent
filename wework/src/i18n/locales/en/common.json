@@ -4273,6 +4273,8 @@
     "matching_status": "Status",
     "select_matching_status": "Select a status",
     "trigger_entered_processing": "Processing phase entered",
+    "automatic_processing_prompt": "Prompt (optional)",
+    "automatic_processing_prompt_hint": "Sent to AI when triggered to work on the current Issue. Leave blank to use the target's responsibilities.",
     "status_action_reassignment": "Reassigned",
     "status_action_unassigned": "Unassigned",
     "navigation": "Tasks",

@@ -413,6 +413,7 @@ fn dispatch(
                     issue_title: task.title.as_deref().unwrap_or_default(),
                     issue_description: &task.description,
                     issue_status: task.status.as_deref(),
+                    prompt: Some(text(rule, "prompt")),
                     priority: task.priority.as_deref().unwrap_or("none"),
                     payload: json!({"automation_run_id":run_id,"runnerSelection":rule["runnerSelection"]}),
                 },

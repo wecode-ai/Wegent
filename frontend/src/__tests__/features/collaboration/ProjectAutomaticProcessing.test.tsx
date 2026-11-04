@@ -8,6 +8,7 @@ import { createCollaborationTranslator, ProjectAutomaticProcessing } from '@wege
 import type {
   CollaborationProject,
   SharedWorkspaceApi,
+  WorkspaceAutomationInput,
   WorkspaceAutomationRule,
 } from '@wegent/collaboration'
 
@@ -439,5 +440,172 @@ describe('ProjectAutomaticProcessing status triggers', () => {
     expect(screen.getByText('Status reached')).toBeInTheDocument()
     expect(screen.getByLabelText('Status')).toHaveValue('')
     expect(screen.getByRole('option', { name: 'Select a status' })).toBeInTheDocument()
+  })
+})
+
+describe('ProjectAutomaticProcessing prompts', () => {
+  const prompt = '  请先分析 Issue 的需求。\n再用日本語、English 输出结果 ✅\n保留原文空白。  '
+  const defaultPrompt = '按照目标职责和 Issue 内容完成处理，并记录清晰的执行结果。'
+
+  it.each(['created', 'tag_added', 'status_changed', 'external', 'schedule'])(
+    'saves the same multiline prompt for the %s trigger',
+    async trigger => {
+      const { api, view } = fixture()
+      api.incomingHooks.list.mockResolvedValue([
+        { id: 'hook-1', name: 'GitHub', sourceType: 'github' },
+      ])
+      render(view())
+      await screen.findByText('自动分配')
+      fireEvent.click(screen.getByTestId('automatic-processing-create'))
+      const field = screen.getByLabelText('提示词（可选）')
+      expect(field).toHaveValue('')
+      expect(field).toHaveAccessibleDescription(
+        '触发时发送给 AI，用于处理当前 Issue；留空按目标职责处理。'
+      )
+      fireEvent.change(field, { target: { value: prompt } })
+      fireEvent.click(screen.getByTestId(`automatic-processing-trigger-${trigger}`))
+      if (trigger === 'tag_added') {
+        fireEvent.change(screen.getByTestId('automatic-processing-tag'), {
+          target: { value: 'review' },
+        })
+      } else if (trigger === 'status_changed') {
+        fireEvent.change(screen.getByTestId('automatic-processing-status'), {
+          target: { value: 'custom-review' },
+        })
+      } else if (trigger === 'external') {
+        await waitFor(() =>
+          expect(screen.getByTestId('automatic-processing-hook')).toHaveValue('hook-1')
+        )
+      }
+      expect(field).toHaveValue(prompt)
+      expect(screen.getByTestId('automatic-processing-save')).toBeEnabled()
+      fireEvent.click(screen.getByTestId('automatic-processing-save'))
+      await waitFor(() =>
+        expect(api.automations.create).toHaveBeenCalledWith(
+          project.id,
+          expect.objectContaining({ prompt })
+        )
+      )
+    }
+  )
+
+  it('preserves the prompt through editing, API reloads and both switch directions', async () => {
+    const { api, view } = fixture()
+    let saved: WorkspaceAutomationRule = {
+      ...rule,
+      prompt: defaultPrompt,
+      enabled: true,
+      triggerType: 'event',
+      eventType: 'task.created',
+      eventConfig: { executionTarget: 'existing_issue' },
+    }
+    api.automations.list.mockImplementation(async () => [saved])
+    api.automations.update.mockImplementation(
+      async (_projectId: string, _ruleId: string, input: WorkspaceAutomationInput) => {
+        saved = { ...saved, ...input, version: saved.version + 1 }
+        return saved
+      }
+    )
+    const mounted = render(view())
+    await screen.findByText('自动分配')
+    fireEvent.click(screen.getByTestId('automatic-processing-edit-rule-1'))
+    expect(screen.getByTestId('automatic-processing-prompt')).toHaveValue(defaultPrompt)
+    fireEvent.change(screen.getByTestId('automatic-processing-prompt'), {
+      target: { value: prompt },
+    })
+    fireEvent.click(screen.getByTestId('automatic-processing-save'))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(api.automations.update).toHaveBeenLastCalledWith(
+      project.id,
+      rule.id,
+      expect.objectContaining({ prompt })
+    )
+    mounted.unmount()
+    render(view())
+    await waitFor(() => expect(api.automations.list).toHaveBeenCalledTimes(3))
+    fireEvent.click(screen.getByTestId('automatic-processing-edit-rule-1'))
+    expect(screen.getByTestId('automatic-processing-prompt')).toHaveValue(prompt)
+    fireEvent.click(screen.getByTestId('automatic-processing-cancel'))
+    for (const enabled of [false, true]) {
+      const toggle = screen.getByTestId('automatic-processing-enabled-rule-1')
+      fireEvent.click(toggle)
+      await waitFor(() => {
+        expect(toggle).toHaveAttribute('aria-checked', String(enabled))
+        expect(toggle).toBeEnabled()
+      })
+      expect(api.automations.update).toHaveBeenLastCalledWith(
+        project.id,
+        rule.id,
+        expect.objectContaining({ prompt, enabled })
+      )
+    }
+    fireEvent.click(screen.getByTestId('automatic-processing-edit-rule-1'))
+    expect(screen.getByTestId('automatic-processing-prompt')).toHaveValue(prompt)
+  })
+
+  it.each(['', ' \n\t '])('resets a cleared prompt %j to the default instruction', async empty => {
+    const { api, view } = fixture()
+    api.automations.list.mockResolvedValue([
+      { ...rule, prompt, triggerType: 'event', eventType: 'task.created' },
+    ])
+    render(view())
+    await screen.findByText('自动分配')
+    fireEvent.click(screen.getByTestId('automatic-processing-edit-rule-1'))
+    expect(screen.getByTestId('automatic-processing-prompt')).toHaveValue(prompt)
+    fireEvent.change(screen.getByTestId('automatic-processing-prompt'), {
+      target: { value: empty },
+    })
+    fireEvent.click(screen.getByTestId('automatic-processing-save'))
+    await waitFor(() =>
+      expect(api.automations.update).toHaveBeenCalledWith(
+        project.id,
+        rule.id,
+        expect.objectContaining({ prompt: defaultPrompt })
+      )
+    )
+  })
+
+  it('uses the existing default instruction when a new prompt is left empty', async () => {
+    const { api, view } = fixture()
+    render(view())
+    await screen.findByText('自动分配')
+    fireEvent.click(screen.getByTestId('automatic-processing-create'))
+    fireEvent.click(screen.getByTestId('automatic-processing-save'))
+    await waitFor(() =>
+      expect(api.automations.create).toHaveBeenCalledWith(
+        project.id,
+        expect.objectContaining({ prompt: defaultPrompt })
+      )
+    )
+  })
+
+  it('retains the prompt when changing to a human target', async () => {
+    const { api, view } = fixture()
+    api.members.list.mockResolvedValue([{ user_id: 7, user_name: '项目成员' }])
+    render(view())
+    await screen.findByText('自动分配')
+    fireEvent.click(screen.getByTestId('automatic-processing-create'))
+    fireEvent.change(screen.getByTestId('automatic-processing-prompt'), {
+      target: { value: prompt },
+    })
+    fireEvent.click(screen.getByTestId('automatic-processing-target-kind-human'))
+    expect(screen.getByTestId('automatic-processing-prompt')).toHaveValue(prompt)
+    fireEvent.click(screen.getByTestId('automatic-processing-save'))
+    await waitFor(() =>
+      expect(api.automations.create).toHaveBeenCalledWith(
+        project.id,
+        expect.objectContaining({ prompt, targetKind: 'human', targetId: '7' })
+      )
+    )
+  })
+
+  it('localizes the prompt label and description in English', async () => {
+    const { view } = fixture()
+    render(view(project.id, 'en'))
+    await screen.findByText('自动分配')
+    fireEvent.click(screen.getByTestId('automatic-processing-create'))
+    expect(screen.getByLabelText('Prompt (optional)')).toHaveAccessibleDescription(
+      "Sent to AI when triggered to work on the current Issue. Leave blank to use the target's responsibilities."
+    )
   })
 })

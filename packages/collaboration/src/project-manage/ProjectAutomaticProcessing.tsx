@@ -18,6 +18,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { collaborationMessages, type CollaborationTranslate } from '../i18n'
 import { projectStatuses } from '../board'
+import { Textarea } from '../controls/Textarea'
 import type {
   SharedWorkspaceApi,
   WorkspaceAutomationInput,
@@ -398,10 +399,12 @@ export function ProjectAutomaticProcessing({
               : eventLabel(value.eventType, locale)
     return {
       name: value.name.trim() || `${triggerName} → ${targetName}`,
-      prompt: translate(
-        'todo.automatic_processing_default_instruction',
-        '按照目标职责和 Issue 内容完成处理，并记录清晰的执行结果。'
-      ),
+      prompt: value.prompt.trim()
+        ? value.prompt
+        : translate(
+            'todo.automatic_processing_default_instruction',
+            '按照目标职责和 Issue 内容完成处理，并记录清晰的执行结果。'
+          ),
       triggerType: isSchedule ? 'schedule' : 'event',
       eventType,
       eventConfig,
@@ -856,6 +859,34 @@ export function ProjectAutomaticProcessing({
                   ) : null}
                 </div>
               </section>
+
+              <div className="space-y-2">
+                <label
+                  className="block text-sm font-medium text-text-primary"
+                  htmlFor="automatic-processing-prompt"
+                >
+                  {translate('todo.automatic_processing_prompt', '提示词（可选）')}
+                </label>
+                <Textarea
+                  aria-describedby="automatic-processing-prompt-hint"
+                  data-testid="automatic-processing-prompt"
+                  disabled={saving}
+                  id="automatic-processing-prompt"
+                  maxLength={100000}
+                  onChange={event => updateDraft({ prompt: event.target.value })}
+                  rows={4}
+                  value={draft.prompt}
+                />
+                <p
+                  className="text-xs leading-5 text-text-secondary"
+                  id="automatic-processing-prompt-hint"
+                >
+                  {translate(
+                    'todo.automatic_processing_prompt_hint',
+                    '触发时发送给 AI，用于处理当前 Issue；留空按目标职责处理。'
+                  )}
+                </p>
+              </div>
 
               <p className="text-xs leading-5 text-text-secondary">
                 {translate(
