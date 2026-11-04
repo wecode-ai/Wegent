@@ -363,6 +363,18 @@ fn copy_codex_config_for_wework(source: &Path, destination: &Path) -> Result<(),
     }
     let content = fs::read_to_string(source)
         .map_err(|error| format!("Failed to read {}: {error}", source.display()))?;
+    let target = destination.join("config.toml");
+    match fs::canonicalize(&target) {
+        Ok(target_path) => {
+            let source_path = fs::canonicalize(source)
+                .map_err(|error| format!("Failed to resolve {}: {error}", source.display()))?;
+            if source_path == target_path {
+                return Err("Cannot import Codex configuration into its source file".to_owned());
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("Failed to resolve {}: {error}", target.display())),
+    }
     let sanitized = sanitize_imported_codex_config(&content).map_err(|error| {
         format!(
             "Failed to parse Codex config {} before importing it: {error}",
@@ -693,6 +705,50 @@ mod tests {
             "example"
         );
         assert_eq!(result.imported_entries, vec!["config.toml", "skills"]);
+    }
+
+    #[test]
+    fn rejects_importing_codex_config_into_its_source() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join(".codex");
+        fs::create_dir_all(&source).unwrap();
+        let config = "model = \"native\"\n";
+        fs::write(source.join("config.toml"), config).unwrap();
+
+        let error = import_external_content_from_paths("codex", root.path(), &source).unwrap_err();
+
+        assert!(error.contains("Cannot import Codex configuration into its source file"));
+        assert_eq!(
+            fs::read_to_string(source.join("config.toml")).unwrap(),
+            config
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_importing_codex_config_through_a_source_symlink() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join(".codex");
+        let destination = root.path().join("destination");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&destination).unwrap();
+        let config = "model = \"native\"\n";
+        fs::write(source.join("config.toml"), config).unwrap();
+        std::os::unix::fs::symlink(source.join("config.toml"), destination.join("config.toml"))
+            .unwrap();
+
+        let error =
+            import_external_content_from_paths("codex", root.path(), &destination).unwrap_err();
+
+        assert!(error.contains("Cannot import Codex configuration into its source file"));
+        assert_eq!(
+            fs::read_to_string(source.join("config.toml")).unwrap(),
+            config
+        );
+        assert!(fs::symlink_metadata(destination.join("config.toml"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
     }
 
     #[test]
