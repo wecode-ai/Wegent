@@ -12,6 +12,13 @@ import type {
 } from '@wegent/collaboration'
 import type { RuntimeTaskSummary } from '@/types/api'
 import type { ConnectionRulesApi } from '@wegent/collaboration/automation'
+import type { Automation } from '@/types/automation'
+
+export interface StandInOnboardingResult {
+  settings?: PersonalStandInSettings | null
+  state: { version: number; completed: boolean; weeklyReview?: boolean }
+  reviewTemplate: Omit<Automation, 'source'>
+}
 
 export interface ConnectionProviderDescriptor {
   id: string
@@ -176,6 +183,14 @@ export type StandInTelemetryFact = {
 
 export interface StandInExecutorApi {
   connectionRules?(userId: number, deviceId?: string): ConnectionRulesApi
+  onboarding(userId: number, deviceId: string, language: string): Promise<StandInOnboardingResult>
+  completeOnboarding(
+    userId: number,
+    deviceId: string,
+    weeklyReview: boolean,
+    time: string,
+    language: string
+  ): Promise<StandInOnboardingResult>
   projectProcessing(
     userId: number,
     deviceId: string,
@@ -405,6 +420,17 @@ export function createStandInExecutorApi(
           return result.items
         },
       }
+    },
+    onboarding: (userId, deviceId, language) =>
+      request('runtime.stand_in.onboarding.get', { userId, language }, deviceId),
+    completeOnboarding: async (userId, deviceId, weeklyReview, time, language) => {
+      const result = await request<StandInOnboardingResult>(
+        'runtime.stand_in.onboarding.complete',
+        { userId, weeklyReview, time, language },
+        deviceId
+      )
+      if (result.settings) publishPersonalStandIn(result.settings)
+      return result
     },
     processingStatus: (userId, deviceId) =>
       request('runtime.stand_in.processing.status', { userId }, deviceId),

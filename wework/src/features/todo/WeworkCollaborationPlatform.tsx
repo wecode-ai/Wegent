@@ -57,6 +57,7 @@ import {
 } from '@/api/deliveries'
 import { loopItemLocalProject } from '@/api/localProjectAssociation'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useStableEvent } from '@/features/workbench/useStableEvent'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { getChangeRequestMonitor } from '@/features/workbench/changeRequestMonitor'
@@ -692,8 +693,8 @@ export function WeworkSharedProject({
     }
     return running
   }, [runtimeTaskLifecycle, runtimeWork])
-  // Stop any in-flight run bound to the Issue before it leaves the board, so an
-  // archived Issue never keeps an orphaned execution running on a device.
+  // Local archives require the Runtime to stop first. Cloud archives own the
+  // tombstone and cancellation transaction in the Backend before stopping work.
   const prepareIssueArchive = useCallback(
     async (issue: CollaborationIssue) => {
       if (!onCancelRuntimeTask) return
@@ -1136,7 +1137,9 @@ export function WeworkSharedProject({
           showProjectBack={false}
           refreshProjectRequestKey={refreshProjectRequestKey}
           issueArchiveEnabled
-          onPrepareIssueArchive={prepareIssueArchive}
+          onPrepareIssueArchive={
+            project.project_store === 'local' ? prepareIssueArchive : undefined
+          }
           onCreateTask={
             runtimePort ? async (_taskProject, issue) => openNewTaskConversation(issue) : undefined
           }
@@ -1510,8 +1513,12 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
   const pendingNavigationProjectIdRef = useRef<string | null | undefined>(undefined)
   const navigationRequestRevisionRef = useRef(0)
   const resolvedWorkspaceProjectRef = useRef<string | null>(null)
+  const publishActiveProject = useStableEvent((project: LocatedProjectSpace | null) =>
+    props.onActiveProjectChange?.(project)
+  )
   // An external route supersedes an internal project's pending lookup, even
   // when it only selects another Issue or comment in the same project.
+  // API refreshes in the same account do not revoke the user's navigation intent.
   useLayoutEffect(() => {
     navigationRequestRevisionRef.current += 1
     pendingNavigationProjectIdRef.current = undefined
@@ -1521,7 +1528,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
   }, [
     activeProject?.projectId,
     activeProject?.projectStore,
-    platformApi,
+    templateScope,
     props.focusedCommentId,
     props.focusedCommentRequestKey,
     props.focusedItemId,
@@ -1727,7 +1734,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
                   : null,
             })
             if (!nextLocation.projectId) {
-              props.onActiveProjectChange?.(null)
+              publishActiveProject(null)
               return
             }
             const requestedProjectId = String(nextLocation.projectId)
@@ -1735,7 +1742,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
               .get(requestedProjectId)
               .then(project => {
                 if (navigationRequestRevisionRef.current !== navigationRevision) return
-                props.onActiveProjectChange?.({
+                publishActiveProject({
                   ...project,
                   location: project.project_store === 'local' ? 'local' : 'cloud',
                 })

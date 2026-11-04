@@ -4,26 +4,19 @@
 
 import {
   Bot,
-  CalendarClock,
   Check,
   ChevronDown,
   Pencil,
   Plus,
   Search,
-  Sparkles,
-  Tag,
   Trash2,
   UserRound,
   UsersRound,
-  Webhook,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import {
-  AUTOMATION_EVENT_TYPES,
-  type AutomationEventType,
-} from "../automation/types";
+import { type AutomationEventType } from "../automation/types";
 import { ConnectionRulesPanel } from "../automation/ConnectionRulesPanel";
 import { AutomationInstructionField } from "../automation/AutomationInstructionField";
 import type {
@@ -31,7 +24,8 @@ import type {
   ConnectionProjectTarget,
   ConnectionAutomationRule,
 } from "../automation/connectionRules";
-import type { CollaborationTranslate } from "../i18n";
+import { collaborationMessages, type CollaborationTranslate } from "../i18n";
+import { projectStatuses } from "../board";
 import type {
   SharedWorkspaceApi,
   WorkspaceAutomationInput,
@@ -46,89 +40,17 @@ import type {
 } from "../types";
 import { useAutomaticProcessingRules } from "./useAutomaticProcessingRules";
 import { ProjectSettingsPage } from "./ProjectSettingsPage";
-
-type TriggerKind = "created" | "tag_added" | "external" | "schedule";
-type TargetKind = "human" | "agent" | "collaboration_group";
-type ScheduleFrequency = "daily" | "weekdays" | "weekly" | "custom";
-
-interface ScheduleValue {
-  frequency: ScheduleFrequency;
-  time: string;
-  weekday: string;
-}
-
-const WEEKDAY_OPTIONS = [
-  ["1", "周一", "Monday"],
-  ["2", "周二", "Tuesday"],
-  ["3", "周三", "Wednesday"],
-  ["4", "周四", "Thursday"],
-  ["5", "周五", "Friday"],
-  ["6", "周六", "Saturday"],
-  ["0", "周日", "Sunday"],
-] as const;
-
-const TRIGGER_OPTIONS = [
-  {
-    kind: "created",
-    icon: Sparkles,
-    title: ["Issue 创建后", "Issue created"],
-    description: ["新 Issue 进入项目时", "When a new issue enters the project"],
-  },
-  {
-    kind: "tag_added",
-    icon: Tag,
-    title: ["添加 Tag 后", "Tag added"],
-    description: ["Issue 添加指定 Tag 时", "When a matching tag is added"],
-  },
-  {
-    kind: "external",
-    icon: Webhook,
-    title: ["外部事件发生后", "External event"],
-    description: ["收到已接入系统的事件时", "When a connected system fires"],
-  },
-  {
-    kind: "schedule",
-    icon: CalendarClock,
-    title: ["定时处理", "Scheduled"],
-    description: ["按指定时间周期触发", "Run on a configured schedule"],
-  },
-] as const satisfies ReadonlyArray<{
-  kind: TriggerKind;
-  icon: typeof Sparkles;
-  title: readonly [string, string];
-  description: readonly [string, string];
-}>;
-
-interface AutomaticProcessingDraft {
-  id: string | null;
-  version: number | null;
-  name: string;
-  prompt: string;
-  trigger: TriggerKind;
-  tag: string;
-  cronExpression: string;
-  hookId: string;
-  eventType: AutomationEventType | "";
-  targetKind: TargetKind;
-  targetId: string;
-  enabled: boolean;
-  runnerSelection?: WorkspaceAutomationInput["runnerSelection"];
-}
-
-const EMPTY_DRAFT: AutomaticProcessingDraft = {
-  id: null,
-  version: null,
-  name: "",
-  prompt: "",
-  trigger: "created",
-  tag: "",
-  cronExpression: "0 9 * * 1-5",
-  hookId: "",
-  eventType: "",
-  targetKind: "agent",
-  targetId: "",
-  enabled: true,
-};
+import { AutomaticProcessingTriggerFields } from "./AutomaticProcessingTriggerFields";
+import {
+  EMPTY_DRAFT,
+  draftFromRule,
+  eventLabel,
+  eventTypesForHook,
+  scheduleLabel,
+  type AutomaticProcessingDraft,
+  type TargetKind,
+  type TriggerKind,
+} from "./automaticProcessing";
 
 function AutomaticProcessingSwitch({
   checked,
@@ -167,151 +89,6 @@ function AutomaticProcessingSwitch({
       </span>
     </button>
   );
-}
-
-function text(rule: Record<string, unknown>, camel: string, snake: string) {
-  const value = rule[camel] ?? rule[snake];
-  return typeof value === "string" ? value : "";
-}
-
-function record(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
-function sourceType(hook: WorkspaceIncomingHook) {
-  return text(
-    hook as unknown as Record<string, unknown>,
-    "sourceType",
-    "source_type",
-  );
-}
-
-function eventTypesForHook(
-  hook: WorkspaceIncomingHook,
-  catalog: Record<string, unknown>[],
-): AutomationEventType[] {
-  const entry = catalog.find(
-    (item) => text(item, "sourceType", "source_type") === sourceType(hook),
-  );
-  const events = entry?.eventTypes ?? entry?.event_types;
-  return Array.isArray(events)
-    ? AUTOMATION_EVENT_TYPES.filter((event) => events.includes(event))
-    : [];
-}
-
-function eventLabel(value: string, locale: "zh-CN" | "en") {
-  const labels: Record<string, [string, string]> = {
-    "change_request.checks_failed": ["代码检查失败", "Checks failed"],
-    "change_request.merge_conflict": ["发生合并冲突", "Merge conflict"],
-    "change_request.review_submitted": ["提交代码评审", "Review submitted"],
-    "change_request.comment_created": ["新增代码评论", "Comment created"],
-    "document.changed": ["外部文档变化", "External document changed"],
-    "connection.result_published": [
-      "外部来源发布结果",
-      "Source result published",
-    ],
-  };
-  const label = labels[value];
-  return label ? label[locale === "zh-CN" ? 0 : 1] : value;
-}
-
-function parseSchedule(cronExpression: string): ScheduleValue {
-  const [minute, hour, dayOfMonth, month, dayOfWeek, ...rest] = cronExpression
-    .trim()
-    .split(/\s+/);
-  const minuteNumber = Number(minute);
-  const hourNumber = Number(hour);
-  const validTime =
-    Number.isInteger(minuteNumber) &&
-    minuteNumber >= 0 &&
-    minuteNumber <= 59 &&
-    Number.isInteger(hourNumber) &&
-    hourNumber >= 0 &&
-    hourNumber <= 23;
-  const time = validTime
-    ? `${String(hourNumber).padStart(2, "0")}:${String(minuteNumber).padStart(2, "0")}`
-    : "09:00";
-
-  if (rest.length || !validTime || dayOfMonth !== "*" || month !== "*") {
-    return { frequency: "custom", time, weekday: "1" };
-  }
-  if (dayOfWeek === "*") {
-    return { frequency: "daily", time, weekday: "1" };
-  }
-  if (dayOfWeek === "1-5") {
-    return { frequency: "weekdays", time, weekday: "1" };
-  }
-  if (WEEKDAY_OPTIONS.some(([value]) => value === dayOfWeek)) {
-    return { frequency: "weekly", time, weekday: dayOfWeek };
-  }
-  return { frequency: "custom", time, weekday: "1" };
-}
-
-function buildScheduleCron({
-  frequency,
-  time,
-  weekday,
-}: ScheduleValue): string {
-  const [hour = "09", minute = "00"] = time.split(":");
-  const dayOfWeek =
-    frequency === "daily" ? "*" : frequency === "weekdays" ? "1-5" : weekday;
-  return `${Number(minute)} ${Number(hour)} * * ${dayOfWeek}`;
-}
-
-function scheduleLabel(cronExpression: string, locale: "zh-CN" | "en"): string {
-  const schedule = parseSchedule(cronExpression);
-  if (schedule.frequency === "custom") {
-    return locale === "zh-CN"
-      ? `自定义时间 · ${cronExpression.trim()}`
-      : `Custom schedule · ${cronExpression.trim()}`;
-  }
-  const time = schedule.time;
-  if (schedule.frequency === "daily") {
-    return locale === "zh-CN" ? `每天 ${time}` : `Every day at ${time}`;
-  }
-  if (schedule.frequency === "weekdays") {
-    return locale === "zh-CN" ? `工作日 ${time}` : `Weekdays at ${time}`;
-  }
-  const weekday =
-    WEEKDAY_OPTIONS.find(([value]) => value === schedule.weekday) ??
-    WEEKDAY_OPTIONS[0];
-  return locale === "zh-CN"
-    ? `每${weekday[1]} ${time}`
-    : `Every ${weekday[2]} at ${time}`;
-}
-
-function draftFromRule(
-  rule: WorkspaceAutomationRule,
-): AutomaticProcessingDraft {
-  const eventConfig = record(rule.eventConfig);
-  const tags = Array.isArray(eventConfig.tags) ? eventConfig.tags : [];
-  const trigger: TriggerKind =
-    rule.triggerType === "schedule"
-      ? "schedule"
-      : rule.eventType === "task.tag_added"
-        ? "tag_added"
-        : rule.eventType === "task.created"
-          ? "created"
-          : "external";
-  return {
-    id: rule.id,
-    version: rule.version,
-    name: rule.name,
-    prompt: rule.prompt ?? "",
-    trigger,
-    tag: typeof tags[0] === "string" ? tags[0] : "",
-    cronExpression: rule.cronExpression ?? "",
-    hookId: String(
-      eventConfig.subscriptionId ?? eventConfig.subscription_id ?? "",
-    ),
-    eventType: trigger === "external" ? (rule.eventType ?? "") : "",
-    targetKind: rule.targetKind,
-    targetId: rule.targetId,
-    enabled: rule.enabled,
-    runnerSelection: rule.runnerSelection,
-  };
 }
 
 export function ProjectAutomaticProcessing({
@@ -518,10 +295,6 @@ export function ProjectAutomaticProcessing({
     }),
     [availableAgents, groups, availableMembers],
   );
-  const selectedHook = hooks.find((hook) => hook.id === draft.hookId) ?? null;
-  const externalEventTypes = selectedHook
-    ? eventTypesForHook(selectedHook, sourceCatalog)
-    : [];
   const targetAvailable = targetOptions[draft.targetKind].some(
     (option) => option.id === draft.targetId,
   );
@@ -567,7 +340,23 @@ export function ProjectAutomaticProcessing({
       : draft.targetKind === "human"
         ? UserRound
         : UsersRound;
-  const schedule = parseSchedule(draft.cronExpression);
+  const statuses = projectStatuses(
+    project,
+    collaborationMessages[locale],
+    translate,
+  );
+  function statusTriggerLabel(value: AutomaticProcessingDraft): string {
+    const label =
+      value.statusTransition === "entered_processing"
+        ? translate("todo.trigger_entered_processing", "进入处理阶段后")
+        : translate("todo.trigger_status_changed", "进入指定状态后");
+    const names = value.statuses.map(
+      (id) => statuses.find((status) => status.id === id)?.name ?? id,
+    );
+    return names.length
+      ? `${label} · ${names.join(locale === "zh-CN" ? "、" : ", ")}`
+      : label;
+  }
   const triggerPreview =
     draft.trigger === "created"
       ? translate("todo.trigger_issue_created", "Issue 创建后")
@@ -575,17 +364,25 @@ export function ProjectAutomaticProcessing({
         ? draft.tag.trim()
           ? `${translate("todo.trigger_tag_added", "添加 Tag 后")} · ${draft.tag.trim()}`
           : translate("todo.trigger_tag_added", "添加指定 Tag 后")
-        : draft.trigger === "schedule"
-          ? draft.cronExpression.trim()
-            ? `${translate("todo.trigger_schedule", "按时间定期处理")} · ${scheduleLabel(draft.cronExpression, locale)}`
-            : translate("todo.trigger_schedule", "按时间定期处理")
-          : draft.eventType
-            ? eventLabel(draft.eventType, locale)
-            : translate("todo.trigger_external_event", "外部事件发生后");
+        : draft.trigger === "status_changed"
+          ? statusTriggerLabel(draft)
+          : draft.trigger === "schedule"
+            ? draft.cronExpression.trim()
+              ? `${translate("todo.trigger_schedule", "按时间定期处理")} · ${scheduleLabel(draft.cronExpression, locale)}`
+              : translate("todo.trigger_schedule", "按时间定期处理")
+            : draft.eventType
+              ? eventLabel(draft.eventType, locale)
+              : translate("todo.trigger_external_event", "外部事件发生后");
   const valid = Boolean(
     targetAvailable &&
     (draft.trigger !== "external" || (!hooksLoading && !hooksError)) &&
     (draft.trigger !== "tag_added" || draft.tag.trim()) &&
+    (draft.trigger !== "status_changed" ||
+      ((draft.statuses.length > 0 ||
+        draft.statusTransition === "entered_processing") &&
+        draft.statuses.every((id) =>
+          statuses.some((status) => status.id === id),
+        ))) &&
     (draft.trigger !== "schedule" || draft.cronExpression.trim()) &&
     (draft.trigger !== "external" || (draft.hookId && draft.eventType)),
   );
@@ -649,18 +446,26 @@ export function ProjectAutomaticProcessing({
         ? "task.created"
         : value.trigger === "tag_added"
           ? "task.tag_added"
-          : value.trigger === "external"
-            ? value.eventType || null
-            : null;
+          : value.trigger === "status_changed"
+            ? "task.status_changed"
+            : value.trigger === "external"
+              ? value.eventType || null
+              : null;
     const eventConfig =
       value.trigger === "tag_added"
         ? { executionTarget: "existing_issue", tags: [value.tag.trim()] }
-        : value.trigger === "external"
+        : value.trigger === "status_changed"
           ? {
-              executionTarget: "create_issue",
-              subscriptionId: value.hookId,
+              executionTarget: "existing_issue",
+              transition: value.statusTransition,
+              ...(value.statuses.length ? { statuses: value.statuses } : {}),
             }
-          : { executionTarget: "existing_issue" };
+          : value.trigger === "external"
+            ? {
+                executionTarget: "create_issue",
+                subscriptionId: value.hookId,
+              }
+            : { executionTarget: "existing_issue" };
     const targetName =
       targetOptions[value.targetKind].find(
         (option) => option.id === value.targetId,
@@ -670,17 +475,19 @@ export function ProjectAutomaticProcessing({
         ? translate("todo.trigger_issue_created", "Issue 创建后")
         : value.trigger === "tag_added"
           ? `${translate("todo.trigger_tag_added", "添加 Tag 后")} · ${value.tag}`
-          : value.trigger === "schedule"
-            ? translate("todo.trigger_schedule", "按时间定期处理")
-            : eventLabel(value.eventType, locale);
+          : value.trigger === "status_changed"
+            ? statusTriggerLabel(value)
+            : value.trigger === "schedule"
+              ? translate("todo.trigger_schedule", "按时间定期处理")
+              : eventLabel(value.eventType, locale);
     return {
       name: value.name.trim() || `${triggerName} → ${targetName}`,
-      prompt:
-        value.prompt.trim() ||
-        translate(
-          "todo.automatic_processing_default_instruction",
-          "按照目标职责和 Issue 内容完成处理，并记录清晰的执行结果。",
-        ),
+      prompt: value.prompt.trim()
+        ? value.prompt
+        : translate(
+            "todo.automatic_processing_default_instruction",
+            "按照目标职责和 Issue 内容完成处理，并记录清晰的执行结果。",
+          ),
       triggerType: isSchedule ? "schedule" : "event",
       eventType,
       eventConfig,
@@ -825,9 +632,11 @@ export function ProjectAutomaticProcessing({
                       ? translate("todo.trigger_issue_created", "Issue 创建后")
                       : ruleDraft.trigger === "tag_added"
                         ? `${translate("todo.trigger_tag_added", "添加 Tag 后")} · ${ruleDraft.tag}`
-                        : ruleDraft.trigger === "schedule"
-                          ? `${translate("todo.trigger_schedule", "按时间定期处理")} · ${scheduleLabel(ruleDraft.cronExpression, locale)}`
-                          : eventLabel(ruleDraft.eventType, locale);
+                        : ruleDraft.trigger === "status_changed"
+                          ? statusTriggerLabel(ruleDraft)
+                          : ruleDraft.trigger === "schedule"
+                            ? `${translate("todo.trigger_schedule", "按时间定期处理")} · ${scheduleLabel(ruleDraft.cronExpression, locale)}`
+                            : eventLabel(ruleDraft.eventType, locale);
                   const targetName = rule.targetName;
                   return (
                     <article
@@ -992,339 +801,18 @@ export function ProjectAutomaticProcessing({
                 </p>
               </div>
 
-              <label className="block space-y-2 text-sm">
-                <span>
-                  {translate("automation_rules.instruction", "处理指令")}
-                </span>
-                <AutomationInstructionField
-                  className="min-h-24 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
-                  data-testid="automatic-processing-instruction"
-                  value={draft.prompt}
-                  onChange={(event) =>
-                    updateDraft({ prompt: event.target.value })
-                  }
-                />
-              </label>
-
-              <fieldset
-                className="grid grid-cols-2 gap-2"
-                data-testid="automatic-processing-trigger"
-              >
-                <legend className="mb-2 text-sm font-medium text-text-primary">
-                  {translate("todo.when", "当发生")}
-                </legend>
-                {TRIGGER_OPTIONS.filter(
-                  (option) => option.kind !== "external" || api.incomingHooks,
-                ).map((option, index) => {
-                  const selected = draft.trigger === option.kind;
-                  const Icon = option.icon;
-                  const localeIndex = locale === "zh-CN" ? 0 : 1;
-                  return (
-                    <label
-                      className={`!flex min-h-[68px] cursor-pointer items-start gap-3 rounded-xl border px-3 py-3 transition-colors ${
-                        selected
-                          ? "automatic-processing-selected"
-                          : "border-border hover:bg-muted/60"
-                      }`}
-                      key={option.kind}
-                    >
-                      <input
-                        autoFocus={index === 0}
-                        checked={selected}
-                        className="sr-only"
-                        data-testid={`automatic-processing-trigger-${option.kind}`}
-                        name="automatic-processing-trigger"
-                        onChange={() => selectTrigger(option.kind)}
-                        type="radio"
-                        value={option.kind}
-                      />
-                      <Icon
-                        aria-hidden="true"
-                        className={`mt-0.5 h-4 w-4 shrink-0 ${
-                          selected
-                            ? "automatic-processing-selected-icon"
-                            : "text-text-secondary"
-                        }`}
-                      />
-                      <span className="min-w-0">
-                        <strong className="block text-sm font-medium text-text-primary">
-                          {option.title[localeIndex]}
-                        </strong>
-                        <span className="mt-0.5 block text-xs leading-5 text-text-secondary">
-                          {option.description[localeIndex]}
-                        </span>
-                      </span>
-                    </label>
-                  );
-                })}
-              </fieldset>
-
-              {draft.trigger !== "created" ? (
-                <div className="divide-y divide-border overflow-hidden rounded-xl border border-border px-4">
-                  {draft.trigger === "tag_added" ? (
-                    <div className="flex min-h-12 items-center gap-4 py-2 text-sm">
-                      <label
-                        className="w-14 shrink-0 font-medium text-text-primary"
-                        htmlFor="automatic-processing-tag"
-                      >
-                        {translate("todo.matching_tag", "Tag")}
-                      </label>
-                      <input
-                        className="h-8 min-w-0 flex-1 rounded-lg border border-border bg-background px-3 outline-none keyboard:focus:border-focus"
-                        data-testid="automatic-processing-tag"
-                        id="automatic-processing-tag"
-                        placeholder={translate(
-                          "todo.matching_tag_placeholder",
-                          "输入需要匹配的 Tag",
-                        )}
-                        value={draft.tag}
-                        onChange={(event) =>
-                          updateDraft({ tag: event.target.value })
-                        }
-                      />
-                    </div>
-                  ) : null}
-
-                  {draft.trigger === "schedule" ? (
-                    <div className="space-y-4 py-4">
-                      <div className="grid gap-3 sm:grid-cols-2">
-                        <label className="space-y-1.5 text-sm">
-                          <span className="block font-medium text-text-primary">
-                            {translate("todo.schedule_frequency", "重复")}
-                          </span>
-                          <select
-                            className="h-10 w-full rounded-lg border border-border bg-background px-3 outline-none keyboard:focus:border-focus"
-                            data-testid="automatic-processing-schedule-frequency"
-                            value={schedule.frequency}
-                            onChange={(event) => {
-                              const frequency = event.target
-                                .value as ScheduleFrequency;
-                              if (frequency === "custom") {
-                                return;
-                              }
-                              updateDraft({
-                                cronExpression: buildScheduleCron({
-                                  ...schedule,
-                                  frequency,
-                                }),
-                              });
-                            }}
-                          >
-                            <option value="daily">
-                              {translate("todo.schedule_daily", "每天")}
-                            </option>
-                            <option value="weekdays">
-                              {translate(
-                                "todo.schedule_weekdays",
-                                "每个工作日",
-                              )}
-                            </option>
-                            <option value="weekly">
-                              {translate("todo.schedule_weekly", "每周")}
-                            </option>
-                            {schedule.frequency === "custom" ? (
-                              <option value="custom">
-                                {translate(
-                                  "todo.schedule_custom",
-                                  "自定义 Cron",
-                                )}
-                              </option>
-                            ) : null}
-                          </select>
-                        </label>
-
-                        <label className="space-y-1.5 text-sm">
-                          <span className="block font-medium text-text-primary">
-                            {translate("todo.schedule_time", "执行时间")}
-                          </span>
-                          <input
-                            className="h-10 w-full rounded-lg border border-border bg-background px-3 tabular-nums outline-none keyboard:focus:border-focus"
-                            data-testid="automatic-processing-schedule-time"
-                            onChange={(event) =>
-                              updateDraft({
-                                cronExpression: buildScheduleCron({
-                                  ...schedule,
-                                  frequency:
-                                    schedule.frequency === "custom"
-                                      ? "weekdays"
-                                      : schedule.frequency,
-                                  time: event.target.value,
-                                }),
-                              })
-                            }
-                            type="time"
-                            value={schedule.time}
-                          />
-                        </label>
-                      </div>
-
-                      {schedule.frequency === "weekly" ? (
-                        <label className="block space-y-1.5 text-sm">
-                          <span className="block font-medium text-text-primary">
-                            {translate("todo.schedule_weekday", "星期")}
-                          </span>
-                          <select
-                            className="h-10 w-full rounded-lg border border-border bg-background px-3 outline-none keyboard:focus:border-focus"
-                            data-testid="automatic-processing-schedule-weekday"
-                            value={schedule.weekday}
-                            onChange={(event) =>
-                              updateDraft({
-                                cronExpression: buildScheduleCron({
-                                  ...schedule,
-                                  weekday: event.target.value,
-                                }),
-                              })
-                            }
-                          >
-                            {WEEKDAY_OPTIONS.map(
-                              ([value, zhLabel, enLabel]) => (
-                                <option key={value} value={value}>
-                                  {locale === "zh-CN" ? zhLabel : enLabel}
-                                </option>
-                              ),
-                            )}
-                          </select>
-                        </label>
-                      ) : null}
-
-                      <div className="flex items-center gap-2 rounded-lg bg-muted/50 px-3 py-2.5 text-sm text-text-secondary">
-                        <CalendarClock
-                          aria-hidden="true"
-                          className="h-4 w-4 shrink-0"
-                        />
-                        <span>
-                          {scheduleLabel(draft.cronExpression, locale)}
-                        </span>
-                        <span className="ml-auto text-xs text-text-muted">
-                          Asia/Shanghai
-                        </span>
-                      </div>
-
-                      <details
-                        className="group rounded-lg border border-border bg-background"
-                        data-testid="automatic-processing-cron-advanced"
-                      >
-                        <summary
-                          className="flex cursor-pointer list-none items-center justify-between px-3 py-2.5 text-sm font-medium text-text-secondary"
-                          data-testid="automatic-processing-cron-advanced-toggle"
-                        >
-                          {translate(
-                            "todo.schedule_advanced",
-                            "高级设置（Cron）",
-                          )}
-                          <ChevronDown
-                            aria-hidden="true"
-                            className="h-4 w-4 transition-transform group-open:rotate-180"
-                          />
-                        </summary>
-                        <div className="space-y-2 border-t border-border px-3 py-3">
-                          <label
-                            className="sr-only"
-                            htmlFor="automatic-processing-cron"
-                          >
-                            {translate(
-                              "todo.schedule_expression",
-                              "Cron 表达式",
-                            )}
-                          </label>
-                          <input
-                            className="h-9 w-full rounded-lg border border-border bg-surface px-3 font-mono text-sm outline-none keyboard:focus:border-focus"
-                            data-testid="automatic-processing-cron"
-                            id="automatic-processing-cron"
-                            placeholder="0 9 * * 1-5"
-                            value={draft.cronExpression}
-                            onChange={(event) =>
-                              updateDraft({
-                                cronExpression: event.target.value,
-                              })
-                            }
-                          />
-                          <p className="text-xs text-text-muted">
-                            {translate(
-                              "todo.schedule_cron_help",
-                              "格式：分钟 小时 日 月 星期，例如 0 9 * * 1-5。",
-                            )}
-                          </p>
-                        </div>
-                      </details>
-                    </div>
-                  ) : null}
-
-                  {draft.trigger === "external" ? (
-                    <>
-                      <div className="flex min-h-12 items-center gap-4 py-2 text-sm">
-                        <label
-                          className="w-14 shrink-0 font-medium text-text-primary"
-                          htmlFor="automatic-processing-hook"
-                        >
-                          {translate("todo.event_source", "来源")}
-                        </label>
-                        <select
-                          className="h-8 min-w-0 flex-1 rounded-lg border border-border bg-background px-3"
-                          data-testid="automatic-processing-hook"
-                          id="automatic-processing-hook"
-                          disabled={hooksLoading}
-                          value={draft.hookId}
-                          onChange={(event) => {
-                            const hook = hooks.find(
-                              (candidate) =>
-                                candidate.id === event.target.value,
-                            );
-                            updateDraft({
-                              hookId: event.target.value,
-                              eventType: hook
-                                ? (eventTypesForHook(hook, sourceCatalog)[0] ??
-                                  "")
-                                : "",
-                            });
-                          }}
-                        >
-                          <option value="">
-                            {hooksLoading
-                              ? translate("common.loading", "加载中…")
-                              : translate("common.select", "请选择")}
-                          </option>
-                          {hooks.map((hook) => (
-                            <option key={hook.id} value={hook.id}>
-                              {hook.name}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      <div className="flex min-h-12 items-center gap-4 py-2 text-sm">
-                        <label
-                          className="w-14 shrink-0 font-medium text-text-primary"
-                          htmlFor="automatic-processing-event"
-                        >
-                          {translate("todo.event_type", "事件")}
-                        </label>
-                        <select
-                          className="h-8 min-w-0 flex-1 rounded-lg border border-border bg-background px-3"
-                          data-testid="automatic-processing-event"
-                          id="automatic-processing-event"
-                          disabled={hooksLoading}
-                          value={draft.eventType}
-                          onChange={(event) =>
-                            updateDraft({
-                              eventType: event.target
-                                .value as AutomationEventType,
-                            })
-                          }
-                        >
-                          <option value="">
-                            {translate("common.select", "请选择")}
-                          </option>
-                          {externalEventTypes.map((eventType) => (
-                            <option key={eventType} value={eventType}>
-                              {eventLabel(eventType, locale)}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    </>
-                  ) : null}
-                </div>
-              ) : null}
+              <AutomaticProcessingTriggerFields
+                sourceCatalog={sourceCatalog}
+                draft={draft}
+                updateDraft={updateDraft}
+                selectTrigger={selectTrigger}
+                locale={locale}
+                translate={translate}
+                hooks={hooks}
+                hooksLoading={hooksLoading}
+                hasIncomingHooks={Boolean(api.incomingHooks)}
+                statuses={statuses}
+              />
 
               <section className="space-y-2">
                 <h3 className="text-sm font-medium text-text-primary">
@@ -1513,6 +1001,39 @@ export function ProjectAutomaticProcessing({
                   ) : null}
                 </div>
               </section>
+
+              <div className="space-y-2">
+                <label
+                  className="block text-sm font-medium text-text-primary"
+                  htmlFor="automatic-processing-prompt"
+                >
+                  {translate(
+                    "todo.automatic_processing_prompt",
+                    "提示词（可选）",
+                  )}
+                </label>
+                <AutomationInstructionField
+                  aria-describedby="automatic-processing-prompt-hint"
+                  data-testid="automatic-processing-prompt"
+                  disabled={saving}
+                  id="automatic-processing-prompt"
+                  maxLength={100000}
+                  onChange={(event) =>
+                    updateDraft({ prompt: event.target.value })
+                  }
+                  rows={4}
+                  value={draft.prompt}
+                />
+                <p
+                  className="text-xs leading-5 text-text-secondary"
+                  id="automatic-processing-prompt-hint"
+                >
+                  {translate(
+                    "todo.automatic_processing_prompt_hint",
+                    "触发时发送给 AI，用于处理当前 Issue；留空按目标职责处理。",
+                  )}
+                </p>
+              </div>
 
               <p className="text-xs leading-5 text-text-secondary">
                 {translate(

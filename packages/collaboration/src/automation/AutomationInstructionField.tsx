@@ -1,4 +1,5 @@
 import type { ComponentProps } from "react";
+import { Textarea } from "../controls/Textarea";
 
 /** Keep instruction editing consistent across scheduled, project and personal rules. */
 export function AutomationInstructionField({
@@ -7,7 +8,7 @@ export function AutomationInstructionField({
   ...props
 }: ComponentProps<"textarea">) {
   return (
-    <textarea
+    <Textarea
       rows={rows}
       className={
         className ??

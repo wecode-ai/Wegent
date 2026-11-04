@@ -36,6 +36,7 @@ from app.services.loop_item_executions.service import (
     ACTIVE_STATUSES,
     loop_item_execution_service,
 )
+from app.services.loop_item_status_history import project_board_statuses
 from app.services.project_automation_domain import (
     ACTIVE_RUN_STATUSES,
     ProjectAutomationEvent,
@@ -67,10 +68,12 @@ def _canonical_event_config(
     event_config: object,
 ) -> dict:
     config = dict(event_config) if isinstance(event_config, dict) else {}
-    config.pop("statuses", None)
     if event_type == "task.status_changed":
-        config["transition"] = "entered_processing"
+        config.setdefault(
+            "transition", "any" if "statuses" in config else "entered_processing"
+        )
     else:
+        config.pop("statuses", None)
         config.pop("transition", None)
     if event_type in {"task.created", "task.tag_added", "task.status_changed"}:
         config["execution_target"] = "existing_issue"
@@ -217,6 +220,7 @@ class ProjectAutomationService:
             trigger_type=values.trigger_type,
             event_type=values.event_type,
             event_config=event_config,
+            enabled=values.enabled,
         )
         now = utcnow()
         next_run_at = (
@@ -319,6 +323,7 @@ class ProjectAutomationService:
         trigger_type: str,
         event_type: str | None,
         event_config: dict,
+        enabled: bool = True,
     ) -> None:
         if trigger_type != "event":
             return
@@ -333,6 +338,13 @@ class ProjectAutomationService:
                 raise HTTPException(
                     status.HTTP_422_UNPROCESSABLE_CONTENT,
                     "Wework task events run on the existing Issue",
+                )
+            if event_type == "task.status_changed":
+                ProjectAutomationService._validate_status_event_config(
+                    db,
+                    project_id=project_id,
+                    event_config=event_config,
+                    enabled=enabled,
                 )
             return
         subscription_id = str(event_config.get("subscription_id") or "")
@@ -365,6 +377,45 @@ class ProjectAutomationService:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
                 f"{source_type} does not support execution target {target}",
+            )
+
+    @staticmethod
+    def _validate_status_event_config(
+        db: Session, *, project_id: str, event_config: dict, enabled: bool
+    ) -> None:
+        transition = event_config.get("transition")
+        if not isinstance(transition, str) or transition not in {
+            "entered_processing",
+            "any",
+        }:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "Unsupported status automation transition",
+            )
+        if "statuses" not in event_config:
+            return
+        statuses = event_config["statuses"]
+        if (
+            not isinstance(statuses, list)
+            or not statuses
+            or any(not isinstance(value, str) or not value for value in statuses)
+        ):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "Status automation requires a non-empty list of board status IDs",
+            )
+        if not enabled:
+            return
+        project = db.get(CloudProject, project_id)
+        available = (
+            {status_id for status_id, _ in project_board_statuses(project)}
+            if project is not None
+            else set()
+        )
+        if any(value not in available for value in statuses):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "Status automation references an unknown board status",
             )
 
     def update(
@@ -470,6 +521,7 @@ class ProjectAutomationService:
             trigger_type=trigger_type,
             event_type=str(event_type) if event_type else None,
             event_config=event_config,
+            enabled=row.status == "enabled",
         )
         rule_metadata.update(
             {

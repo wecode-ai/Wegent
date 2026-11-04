@@ -8,6 +8,7 @@ import {
   type Ref,
 } from 'react'
 import { Menu } from 'lucide-react'
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { DesktopSidebar } from '@/components/layout/DesktopSidebar'
 import { DesktopCollapsedSidebarToggle } from '@/components/layout/DesktopCollapsedSidebarToggle'
@@ -284,9 +285,7 @@ export function AutomationsPage({
     ]
   )
 
-  const openCreate = (
-    template?: Pick<AutomationDraft, 'name' | 'prompt' | 'cronExpression' | 'cronTime'>
-  ) =>
+  const openCreate = (template?: Partial<AutomationDraft>) =>
     requestLeave(() => {
       const device = standInDeviceId
         ? state.devices.find(item => item.device_id === standInDeviceId)
@@ -306,6 +305,37 @@ export function AutomationsPage({
       setDraft(nextDraft)
       setDirty(true)
     })
+
+  const openReviewTemplate = async () => {
+    if (!standInOwner || !standInDeviceId || !services.standInApi) return
+    const existing = automations.find(
+      item => item.taskRequest?.standInCalendar?.template === 'weekly_review'
+    )
+    if (existing) {
+      selectAutomation(existing)
+      return
+    }
+    try {
+      const { reviewTemplate } = await services.standInApi.onboarding(
+        standInOwner.userId,
+        standInDeviceId,
+        locale
+      )
+      const template = automationDraftFromAutomation({ ...reviewTemplate, source: 'local' })
+      openCreate({
+        name: template.name,
+        prompt: template.prompt,
+        cronPreset: template.cronPreset,
+        weeklyDay: template.weeklyDay,
+        cronExpression: template.cronExpression,
+        cronTime: template.cronTime,
+        timezone: template.timezone,
+        calendarTemplate: template.calendarTemplate,
+      })
+    } catch (cause) {
+      setError(getStandInErrorMessage(cause))
+    }
+  }
 
   const selectAutomation = (automation: Automation) =>
     requestLeave(() => {
@@ -367,7 +397,7 @@ export function AutomationsPage({
         taskRequest: {
           schemaVersion: 2,
           standInOwner: owner,
-          standInCalendar: {},
+          standInCalendar: draft.calendarTemplate ? { template: draft.calendarTemplate } : {},
           deviceId: draft.deviceId,
           runtime: 'codex',
           message: draft.prompt.trim(),
@@ -703,6 +733,11 @@ export function AutomationsPage({
                 onFilterChange={setStatusFilter}
                 onSelect={selectAutomation}
                 onCreate={openCreate}
+                onReviewTemplate={
+                  standInOwner?.roleId === '@primary' && services.standInApi && !loading && !error
+                    ? () => void openReviewTemplate()
+                    : undefined
+                }
                 onClearError={() => setError(null)}
               />
             )}
@@ -746,6 +781,11 @@ export function AutomationsPage({
             query={query}
             onQueryChange={setQuery}
             onCreate={openCreate}
+            onReviewTemplate={
+              standInOwner?.roleId === '@primary' && services.standInApi && !loading && !error
+                ? () => void openReviewTemplate()
+                : undefined
+            }
             onClearError={() => setError(null)}
           />
         )}

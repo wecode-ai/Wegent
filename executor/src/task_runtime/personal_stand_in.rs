@@ -4,6 +4,10 @@ use super::*;
 pub const DINGTALK_PROVIDER: &str = "@wegent/dsh-connection-dingtalk/dingtalk";
 pub const EMAIL_PROVIDER: &str = "@wegent/dsh-connection-runtime/email";
 
+fn implicit_primary() -> Value {
+    json!({"enabled":true,"prompt":"","preferences":""})
+}
+
 pub(super) fn migrate_connections(value: &mut Value) -> Result<bool, TaskRuntimeError> {
     let mut changed = false;
     let immediate = value["processing"]["mode"] != "silent";
@@ -419,6 +423,46 @@ pub fn project_policy(role: &Value, project: &str, store: &str) -> Value {
 }
 
 impl LocalTaskStore {
+    pub(crate) fn materialize_implicit_primary(
+        &self,
+        user: i64,
+        device: &str,
+    ) -> Result<Option<Value>, TaskRuntimeError> {
+        let mut guard = self.connection()?;
+        let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut previous = read_personal(&connection, user, device)?;
+        bind_personal_device(&mut previous, device);
+        if previous["primary"].is_object() {
+            return Ok(None);
+        }
+        // Persist the UI's implicit default without editing any identity or its version.
+        let mut initialized = previous.clone();
+        initialized["primary"] = implicit_primary();
+        write_personal(&connection, &initialized)?;
+        connection.commit()?;
+        Ok(Some(previous))
+    }
+
+    pub(crate) fn restore_implicit_primary(
+        &self,
+        user: i64,
+        device: &str,
+        previous: &Value,
+    ) -> Result<(), TaskRuntimeError> {
+        let mut guard = self.connection()?;
+        let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let current = read_personal(&connection, user, device)?;
+        let mut expected = previous.clone();
+        expected["primary"] = implicit_primary();
+        if current != expected {
+            return Err(TaskRuntimeError::VersionConflict);
+        }
+        // Compare the entire snapshot so compensation never overwrites a concurrent edit.
+        write_personal(&connection, previous)?;
+        connection.commit()?;
+        Ok(())
+    }
+
     pub fn personal_stand_in(&self, user: i64, device: &str) -> Result<Value, TaskRuntimeError> {
         let mut guard = self.connection()?;
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;

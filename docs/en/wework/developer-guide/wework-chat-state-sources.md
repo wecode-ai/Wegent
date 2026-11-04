@@ -713,6 +713,16 @@ After changing this path, run `pnpm --filter wework e2e:desktop -- --segment tas
 
 ## Maintenance Rules
 
+### Display Clock Update Boundaries
+
+Tool duration is presentation state: `ToolDurationText` owns the 0.1-second clock in a leaf component. Clock ticks must not rerender labels, command parsing, expanded output, or the tool list. Non-tool blocks and branches that do not display a duration must not create timers.
+
+The summary header owns the thinking-only duration and updates once per displayed second. When tool activity hides the summary duration, it neither formats that duration nor starts a timer. The list computes tool classification statistics once and shares them with the header; unchanged rows do not need reclassification.
+
+`packages/collaboration/src/conversation/ToolBlocks.performance.test.tsx` advances individual clock ticks without new business data and asserts that classification, labels, and expanded details are not recomputed. It also covers input/output updates, completion, resumption, and unmount cleanup. Real Electron regression coverage reuses the `streaming-tools` and `streaming-timers` checkpoints. These local optimizations do not establish a process-wide CPU reduction; measure that with the same task and recording conditions.
+
+### Lifecycle State
+
 - Define native lifecycle transitions in the executor owner first, then expose versioned snapshots through the Store and derive UI fields in `RuntimeTaskMachine`.
 - Do not recompute task running, turn activity, busy, or unread state in layouts, pane hooks, or components.
 - Do not add independent `isSending`, `isRunning`, or `isStreaming` React state. New external facts must enter through Store event routing.

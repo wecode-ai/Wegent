@@ -4,6 +4,24 @@
 """Route Issue execution cancellation to the Runtime that owns the work."""
 
 from app.models.loop_item_execution import LoopItemExecution
+from app.services.runtime_cancellation import RuntimeCancellationTarget
+
+
+def execution_cancellation_target(
+    execution: LoopItemExecution,
+) -> RuntimeCancellationTarget | None:
+    """Preserve the queue's transport route and Runtime payload identities."""
+
+    device_id = execution.execution_device_id or execution.runtime_device_id or ""
+    owner_user_id = execution.executor_owner_user_id
+    if not execution.runtime_task_id or not device_id or not owner_user_id:
+        return None
+    return RuntimeCancellationTarget(
+        owner_user_id=owner_user_id,
+        device_id=device_id,
+        task_id=execution.runtime_task_id,
+        runtime_device_id=execution.runtime_device_id or "",
+    )
 
 
 def request_execution_cancellations(

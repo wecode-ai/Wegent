@@ -2,6 +2,27 @@
 use super::*;
 use crate::runtime_work::automations::{next_run_after, AutomationSchedule};
 
+#[derive(Clone, Copy)]
+pub(super) enum AutomationEvent<'a> {
+    Created,
+    TagsAdded(&'a [String]),
+    StatusChanged {
+        previous: &'a str,
+        current: &'a str,
+        origin_rule_id: Option<&'a str>,
+    },
+}
+
+impl AutomationEvent<'_> {
+    fn event_type(&self) -> &'static str {
+        match self {
+            Self::Created => "task.created",
+            Self::TagsAdded(_) => "task.tag_added",
+            Self::StatusChanged { .. } => "task.status_changed",
+        }
+    }
+}
+
 fn text<'a>(value: &'a Value, key: &str) -> &'a str {
     value.get(key).and_then(Value::as_str).unwrap_or_default()
 }
@@ -80,6 +101,43 @@ pub(super) fn validate_rules(
                 ))
             }
         }
+        if text(rule, "eventType") == "task.status_changed" {
+            validate_status_rule(metadata, &rule["eventConfig"], rule["enabled"] != false)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_status_rule(
+    metadata: &Value,
+    config: &Value,
+    enabled: bool,
+) -> Result<(), TaskRuntimeError> {
+    if let Some(statuses) = config.get("statuses") {
+        let statuses = statuses
+            .as_array()
+            .filter(|statuses| !statuses.is_empty())
+            .ok_or_else(|| {
+                TaskRuntimeError::Invalid("automation statuses must be nonempty".into())
+            })?;
+        for status in statuses {
+            let status = status
+                .as_str()
+                .filter(|status| !status.is_empty())
+                .ok_or_else(|| {
+                    TaskRuntimeError::Invalid("automation status must be a string".into())
+                })?;
+            if enabled {
+                project_status::validate(metadata, status)?;
+            }
+        }
+    }
+    if config.get("transition").is_some()
+        && !matches!(text(config, "transition"), "any" | "entered_processing")
+    {
+        return Err(TaskRuntimeError::Invalid(
+            "unsupported status transition".into(),
+        ));
     }
     Ok(())
 }
@@ -98,39 +156,122 @@ fn next_schedule(
     .ok_or_else(|| TaskRuntimeError::Invalid("invalid automation schedule or timezone".into()))
 }
 
-pub(super) fn on_event_with_origin(
+pub(super) fn on_event(
     connection: &Connection,
     project_id: &str,
     task_id: &str,
-    event: &str,
-    added_tags: &[String],
+    event: AutomationEvent<'_>,
 ) -> Result<(), TaskRuntimeError> {
     let project = get_item_from(connection, project_id, "project")?
         .ok_or(TaskRuntimeError::ProjectNotFound)?;
-    if event == "task.created"
+    if matches!(event, AutomationEvent::Created)
         && get_item_from(connection, task_id, "task")?
             .is_some_and(|task| task.assignee_user_id.is_some())
     {
         return Ok(());
     }
+    let origin_rule_id = match event {
+        AutomationEvent::StatusChanged { origin_rule_id, .. } => origin_rule_id,
+        _ => None,
+    };
     for rule in rules(&project) {
         if rule["enabled"] == false
             || text(&rule, "triggerType") != "event"
-            || text(&rule, "eventType") != event
+            || text(&rule, "eventType") != event.event_type()
+            || origin_rule_id == Some(text(&rule, "id"))
         {
             continue;
         }
-        if event == "task.tag_added"
-            && !rule["eventConfig"]["tags"]
+        if let AutomationEvent::TagsAdded(added_tags) = &event {
+            if !rule["eventConfig"]["tags"]
                 .as_array()
                 .into_iter()
                 .flatten()
                 .filter_map(Value::as_str)
                 .any(|tag| added_tags.iter().any(|added| added == tag))
+            {
+                continue;
+            }
+        }
+        if let AutomationEvent::StatusChanged {
+            previous, current, ..
+        } = &event
         {
-            continue;
+            if !matches_status(&project.metadata, &rule["eventConfig"], previous, current) {
+                continue;
+            }
         }
         run_for_issue(connection, &project, task_id, &rule, "event")?;
+    }
+    Ok(())
+}
+
+fn matches_status(metadata: &Value, config: &Value, previous: &str, current: &str) -> bool {
+    if previous == current {
+        return false;
+    }
+    if let Some(statuses) = config.get("statuses") {
+        if !statuses.as_array().is_some_and(|statuses| {
+            statuses
+                .iter()
+                .any(|status| status.as_str() == Some(current))
+        }) {
+            return false;
+        }
+    }
+    match config["transition"].as_str().unwrap_or_else(|| {
+        if config.get("statuses").is_some() {
+            "any"
+        } else {
+            "entered_processing"
+        }
+    }) {
+        "any" => true,
+        "entered_processing" => project_status::entered_processing(metadata, previous, current),
+        _ => false,
+    }
+}
+
+pub(in crate::task_runtime) fn on_status_changed(
+    connection: &Connection,
+    task_id: &str,
+    previous: Option<&str>,
+    origin_run_id: Option<&str>,
+) -> Result<(), TaskRuntimeError> {
+    let task = get_item_from(connection, task_id, "task")?.ok_or(TaskRuntimeError::TaskNotFound)?;
+    let origin_rule_id = origin_run_id
+        .map(|run_id| get_item_from(connection, run_id, "automation_run"))
+        .transpose()?
+        .flatten()
+        .filter(|run| run.cloud_project_id == task.cloud_project_id)
+        .map(|run| text(&run.metadata, "automationId").to_owned());
+    on_task_status_changed(connection, &task, previous, origin_rule_id.as_deref())
+}
+
+fn on_task_status_changed(
+    connection: &Connection,
+    task: &LoopItem,
+    previous: Option<&str>,
+    origin_rule_id: Option<&str>,
+) -> Result<(), TaskRuntimeError> {
+    let (Some(previous), Some(current), Some(project_id)) = (
+        previous,
+        task.status.as_deref(),
+        task.cloud_project_id.as_deref(),
+    ) else {
+        return Ok(());
+    };
+    if previous != current {
+        on_event(
+            connection,
+            project_id,
+            &task.id,
+            AutomationEvent::StatusChanged {
+                previous,
+                current,
+                origin_rule_id,
+            },
+        )?;
     }
     Ok(())
 }
@@ -151,8 +292,8 @@ pub(super) fn run_for_issue(
     // A bad rule must be visible as a failed run without losing the user's Issue.
     connection.execute_batch("SAVEPOINT local_automation_dispatch")?;
     match dispatch(connection, project, task_id, rule, &run_id) {
-        Ok(()) => {
-            if text(rule, "targetKind") == "human" {
+        Ok(has_execution) => {
+            if !has_execution {
                 run["status"] = json!("succeeded");
                 run["completedAt"] = json!(stamp);
             }
@@ -183,7 +324,7 @@ fn dispatch(
     task_id: &str,
     rule: &Value,
     run_id: &str,
-) -> Result<(), TaskRuntimeError> {
+) -> Result<bool, TaskRuntimeError> {
     let task = get_item_from(connection, task_id, "task")?.ok_or(TaskRuntimeError::TaskNotFound)?;
     if task.cloud_project_id.as_deref() != Some(&project.id) {
         return Err(TaskRuntimeError::TaskNotFound);
@@ -213,12 +354,13 @@ fn dispatch(
         ));
     }
     let target_id = text(rule, "targetId");
-    match text(rule, "targetKind") {
+    let has_execution = match text(rule, "targetKind") {
         "human" => {
             let user_id: i64 = target_id
                 .parse()
                 .map_err(|_| TaskRuntimeError::Invalid("invalid local assignee".into()))?;
             connection.execute("UPDATE loop_items SET assignee_user_id=?1, assignee_agent_id=NULL, version=version+1, updated_at=?2 WHERE id=?3", params![user_id, now(), task_id])?;
+            false
         }
         "agent" => {
             let agent = get_item_from(connection, target_id, "chat_agent")?.ok_or_else(|| {
@@ -249,10 +391,19 @@ fn dispatch(
             connection.execute(
                 "UPDATE loop_items
                  SET assignee_agent_id=?1, assignee_user_id=NULL,
-                     status='in_progress', version=version+1, updated_at=?2
+                     status=?4, version=version+1, updated_at=?2
                  WHERE id=?3",
-                params![target_id, now(), task_id],
+                params![
+                    target_id,
+                    now(),
+                    task_id,
+                    project_status::robot_assignment_status(
+                        &project.metadata,
+                        task.status.as_deref().unwrap_or_default(),
+                    )
+                ],
             )?;
+            true
         }
         "collaboration_group" => {
             let group = collaboration_group(project, target_id)?;
@@ -266,22 +417,40 @@ fn dispatch(
                     issue_title: task.title.as_deref().unwrap_or_default(),
                     issue_description: &description,
                     issue_status: task.status.as_deref(),
+                    prompt: Some(text(rule, "prompt")),
                     priority: task.priority.as_deref().unwrap_or("none"),
                     payload: json!({"automation_run_id":run_id,"runnerSelection":rule["runnerSelection"]}),
                 },
             )?;
             let mut metadata = task.metadata.clone();
             metadata["collaboration_group"] = group;
+            let current_status = task.status.as_deref().unwrap_or_default();
+            let status = if execution.is_some() {
+                project_status::robot_assignment_status(&project.metadata, current_status)
+            } else {
+                current_status
+            };
             connection.execute("UPDATE loop_items SET metadata=?1, assignee_agent_id=NULL, assignee_user_id=NULL, status=?2, version=version+1, updated_at=?3 WHERE id=?4",
-                params![metadata.to_string(), if execution.is_some() {"in_progress"} else {"todo"}, now(), task_id])?;
+                params![metadata.to_string(), status, now(), task_id])?;
+            execution.is_some()
         }
         _ => {
             return Err(TaskRuntimeError::Invalid(
                 "unsupported local automation target".into(),
             ))
         }
+    };
+    if has_execution {
+        let updated =
+            get_item_from(connection, task_id, "task")?.ok_or(TaskRuntimeError::TaskNotFound)?;
+        on_task_status_changed(
+            connection,
+            &updated,
+            task.status.as_deref(),
+            Some(text(rule, "id")),
+        )?;
     }
-    Ok(())
+    Ok(has_execution)
 }
 
 impl LocalTaskStore {
