@@ -121,7 +121,28 @@ mod capture_tests {
     use super::*;
     use std::{fs, os::unix::fs::PermissionsExt, process::Command};
 
-    #[tokio::test]
+    async fn wait_for_child_pid(path: &Path) -> i32 {
+        let started = std::time::Instant::now();
+        loop {
+            match fs::read_to_string(path) {
+                Ok(contents) => {
+                    if let Some(pid) = contents.strip_suffix('\n') {
+                        return pid.parse().expect("valid child PID");
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => panic!("failed to read child PID: {error}"),
+            }
+            assert!(
+                started.elapsed() < Duration::from_secs(5),
+                "Git test process did not report its PID"
+            );
+            // Keep work runnable so paused time cannot advance before the OS child is ready.
+            tokio::task::yield_now().await;
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn capture_timeout_kills_and_reaps_blocked_git_process() {
         let root = tempfile::tempdir().unwrap();
         let fifo = root.path().join("blocked");
@@ -131,7 +152,7 @@ mod capture_tests {
             .unwrap()
             .success());
         let git = root.path().join("git");
-        fs::write(&git, "#!/bin/sh\nprintf '%s' \"$$\" > \"$CAPTURE_TEST_PID\"\nexec /bin/cat \"$CAPTURE_TEST_FIFO\"\n").unwrap();
+        fs::write(&git, "#!/bin/sh\nprintf '%s\\n' \"$$\" > \"$CAPTURE_TEST_PID\"\nexec /bin/cat \"$CAPTURE_TEST_FIFO\"\n").unwrap();
         fs::set_permissions(&git, fs::Permissions::from_mode(0o700)).unwrap();
         let pid_path = root.path().join("pid");
         let environment = BTreeMap::from([
@@ -142,18 +163,28 @@ mod capture_tests {
             ("CAPTURE_TEST_FIFO".to_owned(), fifo.display().to_string()),
         ]);
 
-        let result = git_output_async(
+        let deadline = Duration::from_millis(250);
+        let capture = git_output_async(
             &git,
             root.path(),
             vec![],
             Some(&environment),
             None,
-            Duration::from_millis(250),
-        )
-        .await;
+            deadline,
+        );
+        tokio::pin!(capture);
+        let pid = tokio::select! {
+            pid = wait_for_child_pid(&pid_path) => pid,
+            result = &mut capture => panic!("capture ended before the child was ready: {result:?}"),
+        };
 
-        assert_eq!(result.unwrap_err(), "Git capture timed out");
-        let pid: i32 = fs::read_to_string(pid_path).unwrap().parse().unwrap();
+        assert_eq!(unsafe { libc::kill(pid, 0) }, 0);
+        tokio::time::advance(deadline).await;
+        assert_eq!(capture.await.unwrap_err(), "Git capture timed out");
         assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
+        );
     }
 }
