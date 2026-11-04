@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { once } from 'node:events'
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readFile, readlink, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { join } from 'node:path'
 import { rejectModelWebSocketUpgrade } from './reject-model-upgrade.mjs'
@@ -16,11 +16,28 @@ import {
 const ACCOUNT = 'cloud-config-recovery-enterprise'
 const ACCESS = 'synthetic-cloud-config-recovery-access'
 
+async function authFileMetadata(path) {
+  try {
+    const metadata = await lstat(path)
+    const symlink = metadata.isSymbolicLink()
+    return {
+      path,
+      exists: true,
+      type: symlink ? 'symlink' : metadata.isFile() ? 'file' : 'other',
+      ...(symlink ? { target: await readlink(path) } : {}),
+    }
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error
+    return { path, exists: false }
+  }
+}
+
 // The failure belongs to the model subscription service. Executor IPC, native
 // Codex requests, notifications, persistence and restart are never substituted.
 export function createCloudConfigModelService() {
   let server
   let codexHome
+  let nativeHome
   let unavailable = false
   let bootstrapBundles = 0
   let bundleFailures = 0
@@ -28,6 +45,7 @@ export function createCloudConfigModelService() {
   let accountChecks = 0
   const plans = new Map()
   const requests = []
+  const authSnapshots = []
   const releases = new Set()
 
   return {
@@ -84,7 +102,7 @@ export function createCloudConfigModelService() {
       server.listen(0, '127.0.0.1')
       await once(server, 'listening')
 
-      const nativeHome = join(appEnvironment.HOME, '.codex')
+      nativeHome = join(appEnvironment.HOME, '.codex')
       await mkdir(nativeHome, { recursive: true })
       const claims = Buffer.from(
         JSON.stringify({
@@ -162,6 +180,21 @@ export function createCloudConfigModelService() {
       assert.ok(round, `Unexpected model continuation for ${plan.marker}: ${plan.count}`)
       const subscription = url.pathname === '/backend-api/codex/responses'
       if (subscription) {
+        const [nativeAuth, managedAuth, nativeMarker, managedMarker] = await Promise.all([
+          authFileMetadata(join(nativeHome, 'auth.json')),
+          authFileMetadata(join(codexHome, 'auth.json')),
+          authFileMetadata(join(nativeHome, '.wework-managed-auth')),
+          authFileMetadata(join(codexHome, '.wework-managed-auth')),
+        ])
+        const snapshot = {
+          marker: plan.marker,
+          nativeAuth,
+          managedAuth,
+          nativeMarker,
+          managedMarker,
+        }
+        authSnapshots.push(snapshot)
+        console.info('[desktop-e2e] subscription auth file metadata', JSON.stringify(snapshot))
         assert.equal(request.headers.authorization, `Bearer ${ACCESS}`)
         assert.equal(request.headers['chatgpt-account-id'], ACCOUNT)
       }
@@ -183,7 +216,14 @@ export function createCloudConfigModelService() {
       return true
     },
     diagnostics() {
-      return { unavailable, bundleFailures, bundleSuccesses, accountChecks, requests }
+      return {
+        unavailable,
+        bundleFailures,
+        bundleSuccesses,
+        accountChecks,
+        requests,
+        authSnapshots,
+      }
     },
     async close() {
       for (const release of releases) release()

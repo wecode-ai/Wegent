@@ -211,10 +211,28 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
       )
       const officialBefore = model.diagnostics().requests.filter(value => value.subscription).length
       model.recoverBundle()
+      const rejectionOffset = (await readFile(logPath, 'utf8')).length
       const protectedTask = await create('OFFICIAL_BUSY', { official: true })
       await waitTask(protectedTask, 'failed')
       const rejected = await transcript(protectedTask)
-      assert.match(JSON.stringify(rejected), /authentication mode is busy/i)
+      assert.equal(rejected.running, false)
+      assert.equal(rejected.threadId, null)
+      assert.deepEqual(rejected.turns, [])
+      // Prelaunch failures are published by the Runtime and have no native history.
+      await waitForLogPattern(
+        logPath,
+        new RegExp(
+          `runtime work turn failed[^\\n]*local_task_id=${protectedTask} error="Codex authentication mode is busy \\(current=WeworkRouter, requested=LocalSubscription, active_turns=1, pending_requests=\\d+\\); retry after active turns and requests finish"`
+        ),
+        { fromOffset: rejectionOffset, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+      )
+      await waitForLogPattern(
+        logPath,
+        new RegExp(
+          `runtime terminal response event emitted event=response\\.failed local_task_id=${protectedTask} [^\\n]*delivered_receivers=[1-9]\\d* delivery=broadcast`
+        ),
+        { fromOffset: rejectionOffset, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+      )
       assert.equal(
         model.diagnostics().requests.filter(value => value.subscription).length,
         officialBefore

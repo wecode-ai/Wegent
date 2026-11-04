@@ -80,6 +80,44 @@ fn shared_auth_rejects_incompatible_mode_until_the_last_owner_releases() {
 }
 
 #[test]
+fn desktop_subscription_auth_recovers_after_router_degradation() {
+    let _lock = crate::test_env::lock();
+    let root = tempfile::tempdir().unwrap();
+    let _codex_home = EnvRestore::capture(CODEX_HOME_ENV);
+    let _native_home = EnvRestore::capture(WEGENT_NATIVE_CODEX_HOME_ENV);
+    let native_home = root.path().join("native");
+    let shared_home = root.path().join("shared");
+    let native_auth = native_home.join("auth.json");
+    let managed_auth = shared_home.join("auth.json");
+    let marker = shared_home.join(MANAGED_AUTH_MARKER);
+    fs::create_dir_all(&native_home).unwrap();
+    fs::write(&native_auth, br#"{"auth_mode":"chatgpt"}"#).unwrap();
+    env::set_var(CODEX_HOME_ENV, &native_home);
+    env::set_var(WEGENT_NATIVE_CODEX_HOME_ENV, &native_home);
+    let subscription = Some(CodexAuthMode::LocalSubscription);
+    drop(acquire_shared_auth(&shared_home, subscription).unwrap());
+    assert!(managed_auth.is_file());
+    assert!(marker.is_file());
+
+    // Electron imports native authentication before isolating the executor Home.
+    env::set_var(CODEX_HOME_ENV, &shared_home);
+    drop(acquire_shared_auth(&shared_home, Some(CodexAuthMode::WeworkRouter)).unwrap());
+    assert!(!managed_auth.exists());
+    assert!(!marker.exists());
+    assert!(native_auth.is_file());
+
+    let _official = acquire_shared_auth(&shared_home, subscription).unwrap();
+    assert!(
+        managed_auth.is_file(),
+        "official authentication must be restored from the native Home after degradation"
+    );
+    assert!(marker.is_file());
+    assert!(native_auth.is_file());
+    #[cfg(unix)]
+    assert_eq!(fs::read_link(&managed_auth).unwrap(), native_auth);
+}
+
+#[test]
 fn unscoped_standalone_reuses_router_mode_and_official_auth_recovers_when_idle() {
     let _lock = crate::test_env::lock();
     let root = tempfile::tempdir().unwrap();

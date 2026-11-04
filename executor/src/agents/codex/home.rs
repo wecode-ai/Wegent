@@ -12,6 +12,7 @@ use super::strip_wework_browser_instructions;
 
 pub(super) const CODEX_HOME_ENV: &str = "CODEX_HOME";
 pub(super) const WEGENT_CODEX_HOME_ENV: &str = "WEGENT_CODEX_HOME";
+pub(super) const WEGENT_NATIVE_CODEX_HOME_ENV: &str = "WEGENT_NATIVE_CODEX_HOME";
 pub(super) const WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV: &str = "WEWORK_CODEX_SUBSCRIPTION_ENABLED";
 
 #[path = "home_auth.rs"]
@@ -340,8 +341,9 @@ pub(super) fn remove_managed_codex_auth(codex_home: &Path) -> Result<(), String>
 }
 
 fn user_codex_auth_path() -> Option<PathBuf> {
-    env::var_os(CODEX_HOME_ENV)
+    env::var_os(WEGENT_NATIVE_CODEX_HOME_ENV)
         .filter(|value| !value.is_empty())
+        .or_else(|| env::var_os(CODEX_HOME_ENV).filter(|value| !value.is_empty()))
         .map(PathBuf::from)
         .map(|home| home.join("auth.json"))
         .or_else(|| dirs::home_dir().map(|home| home.join(".codex").join("auth.json")))

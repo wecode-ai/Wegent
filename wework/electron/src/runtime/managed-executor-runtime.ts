@@ -222,6 +222,7 @@ export function prepareManagedExecutorEnvironment(
     ...options.environment,
     CODEX_HOME: codexHome,
     WEGENT_CODEX_HOME: codexHome,
+    WEGENT_NATIVE_CODEX_HOME: nativeCodexHome ?? undefined,
     WEGENT_EXECUTOR_HOME: executorHome,
     WEGENT_PLUGIN_RUNTIME_TARGET: 'codex',
     WEGENT_EXECUTOR_DISABLE_FILE_LOG: 'true',
@@ -249,7 +250,7 @@ function resolveNativeCodexHome(
   if (environment.VITE_WEWORK_E2E === 'true') {
     return environment.WEWORK_E2E_NATIVE_CODEX_HOME?.trim() || null
   }
-  const configured = environment.CODEX_HOME?.trim()
+  const configured = environment.WEGENT_NATIVE_CODEX_HOME?.trim() || environment.CODEX_HOME?.trim()
   if (configured && resolve(configured) !== resolve(managedCodexHome)) return configured
   const home = environment.HOME?.trim() || homedir()
   return join(home, '.codex')
