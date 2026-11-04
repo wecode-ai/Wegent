@@ -221,17 +221,10 @@ impl RuntimeWorkRpcHandler {
             {
                 let store = LocalTaskStore::open(self.task_store_path.as_ref())
                     .map_err(super::stand_in::settings_error)?;
-                let mut settings = store
-                    .personal_stand_in(user, &self.device_id)
-                    .map_err(super::stand_in::settings_error)?;
-                // Materialize the same implicit default shown by the profile UI, without re-enabling saved identities.
-                if !settings["primary"].is_object() {
-                    let mut previous = settings.clone();
-                    settings["primary"] = json!({"enabled":true,"prompt":"","preferences":""});
-                    let saved = store
-                        .save_personal_stand_in(user, &self.device_id, settings)
-                        .map_err(super::stand_in::settings_error)?;
-                    previous["version"] = saved["version"].clone();
+                if let Some(previous) = store
+                    .materialize_implicit_primary(user, &self.device_id)
+                    .map_err(super::stand_in::settings_error)?
+                {
                     initialized = Some((store, previous));
                 }
             }
@@ -243,7 +236,7 @@ impl RuntimeWorkRpcHandler {
                 Err(error) => {
                     if let Some((store, previous)) = initialized {
                         store
-                            .save_personal_stand_in(user, &self.device_id, previous)
+                            .restore_implicit_primary(user, &self.device_id, &previous)
                             .map_err(|rollback| {
                                 AppIpcError::new(
                                     "automation_store_error",
