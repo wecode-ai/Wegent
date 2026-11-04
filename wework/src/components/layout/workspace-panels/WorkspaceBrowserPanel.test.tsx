@@ -69,9 +69,11 @@ const embeddedBrowserMocks = vi.hoisted(() => ({
 
 vi.mock('@/lib/embedded-browser', () => embeddedBrowserMocks)
 
-vi.mock('@/lib/external-links', () => ({
+const externalLinksMocks = vi.hoisted(() => ({
   openExternalUrl: vi.fn(),
 }))
+
+vi.mock('@/lib/external-links', () => externalLinksMocks)
 
 const navigationMocks = vi.hoisted(() => ({
   navigateTo: vi.fn(),
@@ -80,6 +82,7 @@ const navigationMocks = vi.hoisted(() => ({
 vi.mock('@/lib/navigation', () => navigationMocks)
 
 const localTerminalMocks = vi.hoisted(() => ({
+  openLocalFileUrl: vi.fn(),
   revealLocalFile: vi.fn(),
 }))
 
@@ -207,6 +210,8 @@ describe('WorkspaceBrowserPanel', () => {
     embeddedBrowserMocks.listenEmbeddedBrowserInvalidTlsCertificates.mockReturnValue(null)
     embeddedBrowserMocks.listenEmbeddedBrowserLocalFilePreview.mockReturnValue(null)
     embeddedBrowserMocks.listenEmbeddedBrowserPageStateChanges.mockReturnValue(null)
+    externalLinksMocks.openExternalUrl.mockResolvedValue(true)
+    localTerminalMocks.openLocalFileUrl.mockResolvedValue(undefined)
     localTerminalMocks.revealLocalFile.mockResolvedValue(undefined)
     embeddedBrowserMocks.openEmbeddedBrowser.mockResolvedValue({
       nativeLabel: 'workspace-browser-native-1',
@@ -283,6 +288,55 @@ describe('WorkspaceBrowserPanel', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  test('opens a local file page through the system file handler', async () => {
+    embeddedBrowserMocks.openEmbeddedBrowser.mockResolvedValue({
+      nativeLabel: 'workspace-browser-native-1',
+      title: 'Index of /Users/mowei',
+      url: 'file:///Users/mowei/',
+      isLoading: false,
+    })
+    embeddedBrowserMocks.readEmbeddedBrowserPageState.mockResolvedValue({
+      nativeLabel: 'workspace-browser-native-1',
+      title: 'Index of /Users/mowei',
+      url: 'file:///Users/mowei/',
+      isLoading: false,
+    })
+    let handlePageStateChange!: (pageState: {
+      label: string
+      nativeLabel: string
+      title: string | null
+      url: string | null
+      isLoading: boolean
+    }) => void
+    embeddedBrowserMocks.listenEmbeddedBrowserPageStateChanges.mockImplementation(handler => {
+      handlePageStateChange = handler
+      return Promise.resolve(() => undefined)
+    })
+    render(<WorkspaceBrowserPanel active />)
+
+    act(() => {
+      handlePageStateChange({
+        label: 'workspace-browser',
+        nativeLabel: 'workspace-browser-native-1',
+        title: 'Index of /Users/mowei',
+        url: 'file:///Users/mowei/',
+        isLoading: false,
+      })
+    })
+
+    const openExternal = screen.getByTestId('workspace-browser-open-external-button')
+    await waitFor(() => {
+      expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('file:///Users/mowei/')
+      expect(openExternal).toBeEnabled()
+    })
+    fireEvent.click(openExternal)
+
+    await waitFor(() =>
+      expect(localTerminalMocks.openLocalFileUrl).toHaveBeenCalledWith('file:///Users/mowei/')
+    )
+    expect(externalLinksMocks.openExternalUrl).not.toHaveBeenCalled()
   })
 
   test('reports a failed browser data clear', async () => {

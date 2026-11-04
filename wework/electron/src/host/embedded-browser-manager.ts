@@ -20,7 +20,7 @@ import {
   type BrowserHistorySearch,
 } from './browser-history-store.js'
 import { BrowserAgentApprovals, type BrowserApprovalDecision } from './browser-agent-approvals.js'
-import { prepareLocalFileNavigation } from './local-file-preview.js'
+import { isGeneratedLocalFilePreview, prepareLocalFileNavigation } from './local-file-preview.js'
 import {
   captureWebContentsDataUrl,
   type WebContentsCaptureOptions,
@@ -210,6 +210,35 @@ export class EmbeddedBrowserManager {
     }
     contents.on('will-navigate', handleNavigation)
     contents.on('will-redirect', handleNavigation)
+  }
+
+  private interceptLocalFileNavigation(entry: BrowserEntry): void {
+    const handleNavigation = (
+      event: Electron.Event,
+      url: string,
+      _isInPlace?: boolean,
+      isMainFrame?: boolean
+    ) => {
+      if (
+        isMainFrame === false ||
+        !url.startsWith('file:') ||
+        url === entry.previewDisplayUrl ||
+        isGeneratedLocalFilePreview(url)
+      ) {
+        return
+      }
+      event.preventDefault()
+      void this.navigate(entry.label, url).catch(error => {
+        this.recordNavigationFailure(
+          entry,
+          -2,
+          error instanceof Error ? error.message : String(error),
+          url
+        )
+      })
+    }
+    entry.contents.on('will-navigate', handleNavigation)
+    entry.contents.on('will-redirect', handleNavigation)
   }
 
   setRequestHeaderRule(rule: BrowserRequestHeaderRule): void {
@@ -464,6 +493,7 @@ export class EmbeddedBrowserManager {
       return { action: 'deny' }
     })
     this.interceptWeworkNavigation(contents)
+    this.interceptLocalFileNavigation(entry)
     const emitPageState = () => this.emitPageState(entry)
     contents.on('did-start-loading', emitPageState)
     contents.on('did-stop-loading', emitPageState)

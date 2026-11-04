@@ -8,6 +8,7 @@ import {
   localPathExists,
   openLocalFile,
   openLocalFileInWorkspaceApp,
+  openLocalFileUrl,
   openLocalWorkspace,
   pickLocalWorkspaceOpenerExe,
   resizeLocalTerminal,
@@ -167,6 +168,7 @@ describe('Electron local terminal', () => {
     mocks.desktopHost
       .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce([
         { id: 'vscode', category: 'general', available: true, label: 'VS Code' },
         { id: 'file-manager', category: 'fileManager', available: true },
@@ -175,6 +177,7 @@ describe('Electron local terminal', () => {
 
     await openLocalWorkspace({ opener: 'vscode', path: ' /Users/me/project ' })
     await openLocalFile(' /Users/me/project/readme.md ')
+    await openLocalFileUrl(' file:///Users/me/project/readme.md ')
     await expect(listLocalWorkspaceOpeners()).resolves.toEqual([
       { id: 'vscode', category: 'general', available: true, label: 'VS Code' },
       { id: 'file-manager', category: 'fileManager', available: true },
@@ -184,9 +187,18 @@ describe('Electron local terminal', () => {
     expect(mocks.desktopHost.mock.calls).toEqual([
       ['workspace.open', { opener: 'vscode', path: '/Users/me/project' }],
       ['shell.openPath', { path: '/Users/me/project/readme.md' }],
+      ['shell.openLocalFileUrl', { url: 'file:///Users/me/project/readme.md' }],
       ['workspace.listOpeners'],
       ['workspace.pickOpener'],
     ])
+  })
+
+  test('rejects empty and non-file URLs before opening a local file', async () => {
+    await expect(openLocalFileUrl('  ')).rejects.toThrow('Local file URL is empty or invalid')
+    await expect(openLocalFileUrl('https://example.com/readme.md')).rejects.toThrow(
+      'Local file URL is empty or invalid'
+    )
+    expect(mocks.desktopHost).not.toHaveBeenCalled()
   })
 
   test('shares discovery failure and permits a fresh request afterward', async () => {

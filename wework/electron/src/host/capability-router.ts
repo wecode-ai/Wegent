@@ -164,6 +164,7 @@ export const HOST_CAPABILITIES = [
   'runtime.uninstallCoreDshPlugin',
   'runtime.updateCoreDshPlugin',
   'shell.openExternal',
+  'shell.openLocalFileUrl',
   'shell.openPath',
   'shell.showItemInFolder',
   'smartApps.addPlugin',

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { clipboard, type WebContents } from 'electron'
 import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { EventEmitter } from 'node:events'
 import { acquireDebuggerSession } from './debugger-session.js'
 import type { EmbeddedBrowserManager } from './embedded-browser-manager.js'
@@ -486,6 +487,32 @@ function createIsolatedClipboardRouter(
 describe('Process explorer capabilities', () => {
   test('stays read-only', () => {
     expect(HOST_CAPABILITIES).not.toContain('diagnostics.endProcess')
+  })
+})
+
+describe('Local file URL capabilities', () => {
+  test('opens a file URL through the system file handler', async () => {
+    electronMocks.shellOpenPath.mockClear()
+    const { router } = createIsolatedClipboardRouter()
+    const url = pathToFileURL('/tmp/readme with space.md').href
+
+    await expect(
+      router.invoke(WEWORK_APP_PRINCIPAL, 'shell.openLocalFileUrl', { url })
+    ).resolves.toBeUndefined()
+
+    expect(electronMocks.shellOpenPath).toHaveBeenCalledWith('/tmp/readme with space.md')
+  })
+
+  test('rejects non-file URLs', async () => {
+    electronMocks.shellOpenPath.mockClear()
+    const { router } = createIsolatedClipboardRouter()
+
+    await expect(
+      router.invoke(WEWORK_APP_PRINCIPAL, 'shell.openLocalFileUrl', {
+        url: 'https://example.com/readme.md',
+      })
+    ).rejects.toThrow('Local file URL protocol is not allowed: https:')
+    expect(electronMocks.shellOpenPath).not.toHaveBeenCalled()
   })
 })
 
