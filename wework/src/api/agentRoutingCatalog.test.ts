@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, it, vi } from 'vitest'
 import { createAgentRoutingCatalog } from './agentRoutingCatalog'
 import type { HttpClient } from './http'

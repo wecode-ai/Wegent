@@ -3,17 +3,22 @@ import { access, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   assistantMessage,
+  codexRequestMetadata,
   createSse,
+  customToolCall,
   functionCall,
   isReplyPredictionRequest,
   readRequestBody,
   requestContainsToolOutput,
+  requestAdvertisesProgrammaticExec,
   responseCompleted,
   responseCreated,
   selectShellToolCommand,
+  selectProgrammaticExec,
 } from '../modules/response-protocol.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
+import { waitForSnapshot } from '../modules/conversation-layout.mjs'
 
 const PROMPT = 'STAND_IN_VERIFY_EXPLICIT_WRITE_CONFIRMATION'
 const DISPLAY_MESSAGE = '请在隔离工作区创建验证文件，执行前先让我确认。'
@@ -23,6 +28,7 @@ const CARD = '[data-testid="request-user-input-card"]'
 export function createDesktopScenario(options) {
   const { uiTimeoutMs, modelResponseTimeoutMs, workspacePath, captureScreenshot } = options
   const file = join(workspacePath, 'stand-in-approved.txt')
+  let failedShellRequest = null
   async function createWork(control, taskId) {
     const settings = await requestExecutor(
       control,
@@ -79,6 +85,7 @@ export function createDesktopScenario(options) {
     await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
     await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
     await control.command('waitFor', ROOT)
+    await control.command('waitFor', `[data-testid="stand-in-overview-role-${roleId}"]`)
     await control.command('click', `[data-testid="stand-in-overview-role-${roleId}"]`)
     await control.command('waitFor', `[data-testid="stand-in-activity-task-${taskId}"]`, {
       timeoutMs: modelResponseTimeoutMs,
@@ -91,6 +98,9 @@ export function createDesktopScenario(options) {
   }
   return {
     requiresCloudEnvironment: true,
+    diagnostics() {
+      return { failedShellRequest }
+    },
     async handleHttp(req, response, url) {
       if (req.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
@@ -109,14 +119,43 @@ export function createDesktopScenario(options) {
           ),
         ]
       } else {
-        const tool = selectShellToolCommand(
-          body,
-          `touch '${file.replaceAll("'", "'\\''")}'`,
-          workspacePath
-        )
-        tool.arguments.sandbox_permissions = 'require_escalated'
-        tool.arguments.justification = '确认后创建隔离测试工作区中的验证文件。'
-        events = functionCall('stand-in-file-write', tool.name, tool.arguments)
+        try {
+          const command = `touch '${file.replaceAll("'", "'\\''")}'`
+          const approval = {
+            sandbox_permissions: 'require_escalated',
+            justification: '确认后创建隔离测试工作区中的验证文件。',
+          }
+          if (requestAdvertisesProgrammaticExec(body)) {
+            const tool = selectProgrammaticExec(
+              body,
+              `text(await tools.exec_command(${JSON.stringify({ cmd: command, workdir: workspacePath, yield_time_ms: 1000, ...approval })}))`
+            )
+            const event = customToolCall('stand-in-file-write', tool.name, tool.input)
+            event.item.namespace = 'functions'
+            events = [event]
+          } else {
+            const tool = selectShellToolCommand(body, command, workspacePath)
+            Object.assign(tool.arguments, approval)
+            events = functionCall('stand-in-file-write', tool.name, tool.arguments)
+          }
+        } catch (error) {
+          const metadata = codexRequestMetadata(body)
+          failedShellRequest = {
+            model: body.model ?? null,
+            requestKind: metadata?.request_kind ?? null,
+            threadSource: metadata?.thread_source ?? null,
+            toolChoice: body.tool_choice ?? null,
+            tools: body.tools ?? null,
+            input: Array.isArray(body.input)
+              ? body.input.map(item => ({
+                  type: item?.type ?? null,
+                  role: item?.role ?? null,
+                  ...(item?.type === 'additional_tools' ? { tools: item.tools } : {}),
+                }))
+              : { type: typeof body.input },
+          }
+          throw error
+        }
       }
       response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
       response.end(createSse([responseCreated(id), ...events, responseCompleted(id)]))
@@ -135,7 +174,7 @@ export function createDesktopScenario(options) {
       await captureScreenshot(control, '01-list-awaiting-confirmation.png', ROOT)
       await control.command('click', '[data-testid="stand-in-work-open-pending"]')
       await control.command('waitFor', '[data-testid="runtime-interactions-page"]')
-      await control.command('waitFor', '[data-testid="interaction-open-original-action"]')
+      await control.command('waitFor', '[data-testid="interaction-open-original"]')
       assert.equal(
         Number(await control.command('getElementCount', '[data-testid="interaction-answer-0"]')),
         0
@@ -153,8 +192,16 @@ export function createDesktopScenario(options) {
         'Approval list summary must stay within two lines'
       )
       await captureScreenshot(control, '02-pending-links-to-native-approval.png')
-      await control.command('click', '[data-testid="interaction-open-original-action"]')
+      await control.command('click', '[data-testid="interaction-open-original"]')
+      await waitForSnapshot(
+        control,
+        snapshot => new URL(snapshot.location).searchParams.get('taskId') === taskId,
+        'Opening the original approval must navigate to its exact task',
+        uiTimeoutMs
+      )
       await control.command('waitFor', CARD, { timeoutMs: modelResponseTimeoutMs })
+      const destination = new URL(JSON.parse(await control.command('snapshot', 'body')).location)
+      assert.equal(destination.searchParams.get('taskId'), taskId)
       await assert.rejects(access(file), { code: 'ENOENT' })
       await control.command('click', '[data-testid="request-user-input-option-__codex_approval-0"]')
       await control.command('waitFor', '[data-testid="message-assistant"]', {

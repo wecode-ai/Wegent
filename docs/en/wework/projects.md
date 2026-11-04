@@ -28,6 +28,16 @@ If a connected cloud device and the current local Wework executor refer to the s
 
 To create a Git project, select a device, repository, default branch, and destination. If repositories are unavailable, check the Git connection and token permissions in Settings.
 
+## Select and create branches
+
+Use the branch menu in the composer to search and switch local branches, or create and check out a new branch. The list excludes tags and remote-tracking refs and places the current local branch first. Branch listing and current-branch queries use commands compatible with older Git versions, without depending on `git branch --format` or `--show-current`. A detached HEAD has an empty current branch name; local branches remain selectable.
+
+Selecting a branch performs checkout on the execution device even when its name matches the last displayed branch, so cached UI state cannot prevent recovery from detached HEAD.
+
+Pushing also uses a current-branch query compatible with older Git versions. Check out a branch before pushing from a detached HEAD.
+
+If another device still reports `unknown option`, confirm that its Wework executor has been updated. Cloud connections to cloud or remote devices also require an updated Wegent Backend. Git queries run on the device that owns the workspace; updating Git on another machine does not change that device's queries.
+
 ## View pull request and merge request status
 
 When a task is opened or selected, Wework reads the branch, remote URL, PR/MR status, and change counts concurrently. It displays the PR/MR status as soon as that lookup finishes instead of waiting for a slower diff count; changed-file and line counts update independently afterward. These Git queries do not start the user's login shell, so shell startup scripts, SDK initialization, and other personal environment configuration cannot block the environment panel.

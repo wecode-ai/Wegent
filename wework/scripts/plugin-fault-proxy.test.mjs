@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import assert from 'node:assert/strict'
 import { once } from 'node:events'
 import { createServer, request } from 'node:http'
@@ -902,3 +904,47 @@ test('ordinary fault proxy connections preserve WebSocket extension negotiation'
     'The ordinary proxy changed the real upstream frame'
   )
 })
+
+test(
+  'does not inject an idle disconnect between healthy package requests',
+  { timeout: 15_000 },
+  async t => {
+    const { proxy, received } = await fixture(t)
+    const socket = connect(new URL(proxy.url).port, '127.0.0.1')
+    t.onTestFinished(() => socket.destroy())
+    await once(socket, 'connect')
+    let bytes = ''
+    socket.setEncoding('utf8')
+    socket.on('data', chunk => {
+      bytes += chunk
+    })
+    socket.write('GET /package.zip HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n')
+    await until(
+      () => bytes,
+      text => text.includes('real-upstream-body'),
+      'First package response missing'
+    )
+
+    // Observe beyond Node 24's default 5-second idle timeout and 1-second buffer.
+    const idleOutcome = await new Promise(resolve => {
+      const timer = setTimeout(() => resolve('open'), 6500)
+      socket.once('close', () => {
+        clearTimeout(timer)
+        resolve('closed')
+      })
+    })
+    assert.equal(
+      idleOutcome,
+      'open',
+      'An unconfigured proxy idle timeout closed a healthy package connection'
+    )
+    socket.write('GET /package.zip HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n')
+    await until(
+      () => bytes.match(/real-upstream-body/g)?.length ?? 0,
+      count => count === 2,
+      'Second package response missing'
+    )
+    assert.equal(received.length, 2)
+    assert.ok(proxy.requests.every(entry => entry.fault === null && entry.delivered))
+  }
+)

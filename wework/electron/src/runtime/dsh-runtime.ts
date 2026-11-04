@@ -32,7 +32,9 @@ export class DshRuntime {
   constructor(private readonly options: DshRuntimeOptions) {
     this.listeningUrl = options.url
     const args = options.args ? [...options.args] : undefined
-    const browserAuthentication = options.env?.WEWORK_DSH_BROWSER_AUTH === '1'
+    const browserAuthentication = ['1', 'legacy'].includes(
+      options.env?.WEWORK_DSH_BROWSER_AUTH ?? ''
+    )
     this.process = options.command
       ? new RuntimeSupervisor({
           command: options.command,

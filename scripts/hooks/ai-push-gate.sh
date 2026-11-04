@@ -20,7 +20,8 @@ set +e
 
 # Create temp directory for storing check outputs (reduces memory usage)
 TEMP_DIR=$(mktemp -d)
-trap "rm -rf $TEMP_DIR" EXIT
+# Background shells may receive a signal before replacing their inherited traps.
+trap 'if [ "$BASH_SUBSHELL" -eq 0 ]; then rm -rf "$TEMP_DIR"; fi' EXIT
 
 # Colors for output
 RED='\033[0;31m'
@@ -76,7 +77,8 @@ collect_wework_check_scope() {
             wework/src/*.[cm][jt]s|wework/src/*.[cm][jt]sx|wework/src/*.js|wework/src/*.jsx|wework/src/*.ts|wework/src/*.tsx)
                 WEWORK_RENDERER_CHANGED=1
                 if [ ! -e "$changed_file" ] ||
-                    [ "$changed_file" = "wework/src/test/setup.ts" ]; then
+                    [ "$changed_file" = "wework/src/test/setup.ts" ] ||
+                    [ "$changed_file" = "wework/src/test/setup.dom.ts" ]; then
                     WEWORK_RENDERER_FULL_TESTS=1
                 else
                     WEWORK_RELATED_FILES+=("${changed_file#wework/}")
@@ -146,8 +148,32 @@ format_worker_count() {
 }
 
 wait_wework_renderer_shard() {
+    local shard_pid="$1"
+    local shard_log="$2"
+    local shard_name="${shard_log##*/}"
+    (
+        local sleep_pid=""
+        trap 'exit 0' TERM
+        trap 'if [ -n "$sleep_pid" ]; then kill "$sleep_pid" 2>/dev/null; fi' EXIT
+        while kill -0 "$shard_pid" 2>/dev/null; do
+            sleep 15 &
+            sleep_pid=$!
+            wait "$sleep_pid"
+            if kill -0 "$shard_pid" 2>/dev/null; then
+                completed=$(
+                    sed $'s/\033\\[[0-9;]*m//g' "$shard_log" |
+                        grep -cE '^[[:space:]]*✓[[:space:]]+[^[:space:]]+\.(test|spec)\.[cm]?[jt]sx?[[:space:]]+\(' || true
+                )
+                echo "   Renderer ${shard_name%.log}: ${completed:-0} files passed (${SECONDS}s elapsed)"
+            fi
+        done
+    ) &
+    local progress_pid=$!
     wait "$1"
     local shard_exit=$?
+    kill "$progress_pid" 2>/dev/null
+    wait "$progress_pid" 2>/dev/null
+    echo "   Renderer ${shard_name%.log}: finished (exit $shard_exit)"
     cat "$2" >> "$TEMP_DIR/wework_test.log"
     return "$shard_exit"
 }
@@ -175,6 +201,7 @@ run_wework_full_renderer_tests() {
         pnpm --filter wework exec vitest run --dir src --pool=threads \
             --maxWorkers "$test_workers" \
             --testTimeout "$test_timeout_ms" \
+            --reporter=default \
             --shard="$shard/$shard_count" \
             > "${shard_logs[$((shard - 1))]}" 2>&1 &
         shard_pids+=("$!")

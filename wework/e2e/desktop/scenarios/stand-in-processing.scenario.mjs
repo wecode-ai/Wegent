@@ -203,7 +203,12 @@ export function createDesktopScenario({
         )
         const timing = `[data-testid="stand-in-project-policy-${project.id}"]`
         await control.command('waitFor', timing)
-        assert.equal(await control.command('getAttribute', timing, { value: 'type' }), 'checkbox')
+        assert.equal(await control.command('getAttribute', timing, { value: 'type' }), 'button')
+        assert.equal(await control.command('getAttribute', timing, { value: 'role' }), 'switch')
+        assert.equal(
+          await control.command('getAttribute', timing, { value: 'aria-checked' }),
+          'false'
+        )
         await control.command('click', timing)
         await control.command('click', timing)
         assert.equal(
@@ -219,6 +224,22 @@ export function createDesktopScenario({
         assert.equal(configured.roles[0].collaboration.projectPolicies[0].policy.immediate, false)
         assert.equal(configured.roles[0].collaboration.projectPolicies[0].policy.askBeforeAct, true)
         assert.equal(configured.processing, undefined)
+        // Direct source routing is explicit; completion feedback still uses the silent window.
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+        await control.command('click', '[data-testid="stand-in-connections-open"]')
+        await control.command(
+          'click',
+          `[data-testid="stand-in-connection-project-local-${project.id}"]`
+        )
+        await control.command('click', timing)
+        assert.equal(
+          await control.command('getAttribute', timing, { value: 'aria-checked' }),
+          'true'
+        )
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
+        await control.command('waitFor', '[data-testid="stand-in-saved"]')
+        await control.command('click', '[data-testid="stand-in-cancel"]')
+        await control.command('waitFor', '[data-testid="stand-in-save"]', { visible: false })
         const issue = await rpc(control, 'todos.create', {
           project_id: project.id,
           todo: { title: MARKER, assignee_user_id: USER },
@@ -265,6 +286,7 @@ export function createDesktopScenario({
         const dueAt = Date.now() + 1000
         const database = new DatabaseSync(join(executorHome, 'data', 'tasks.sqlite'))
         try {
+          database.exec('PRAGMA busy_timeout = 10000')
           const changed = database
             .prepare(
               "UPDATE loop_items SET metadata=json_set(metadata,'$.createdAt',?) WHERE resource_type='stand_in_event' AND json_extract(metadata,'$.userId')=? AND json_extract(metadata,'$.kind')='work_state' AND json_extract(metadata,'$.status')='pending'"

@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, it } from 'vitest'
 import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
 import type { RuntimeTaskSummary, RuntimeWorkListResponse } from '@/types/api'

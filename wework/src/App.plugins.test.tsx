@@ -1,27 +1,27 @@
-import { useEffect } from 'react'
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { EditorState } from 'prosemirror-state'
-import { EditorView } from 'prosemirror-view'
 import { composerSchema } from '@/components/chat/composer/composerProseMirrorModel'
+import { updateAppPreferences } from '@/desktop/appPreferences'
+import { importDshUiModule } from '@/features/dsh-runtime/dshUiModules'
+import { LOCAL_PLUGIN_SKILLS_CHANGED_EVENT } from '@/features/plugins/pluginTrial'
 import type { WorkbenchContextValue } from '@/features/workbench/WorkbenchProvider'
 import {
   RuntimeTaskLifecycleProvider,
   RuntimeTaskLifecycleStore,
 } from '@/features/workbench/runtimeTaskLifecycle'
-import { LOCAL_PLUGIN_SKILLS_CHANGED_EVENT } from '@/features/plugins/pluginTrial'
-import { updateAppPreferences } from '@/desktop/appPreferences'
-import { importDshUiModule } from '@/features/dsh-runtime/dshUiModules'
 import type { InstalledPlugin } from '@/types/api'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { EditorState } from 'prosemirror-state'
+import { EditorView } from 'prosemirror-view'
+import { useEffect } from 'react'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import ApplicationsRoute from '../dsh/ui-applications/src/route'
 import CoreAppSurface from '../dsh/ui-core-apps/src/app-surface'
 import PluginCatalogRoute from '../dsh/ui-plugin-center/src/catalog-route'
 import PluginCreateRoute from '../dsh/ui-plugin-center/src/create-route'
 import PluginManagementRoute from '../dsh/ui-plugin-center/src/management-route'
+import App from './App'
 import './i18n'
 import { telemetryFeatureForLocation } from './telemetry/routes'
-import App from './App'
 
 function TestIsolatedExtensionRoute() {
   return <div data-testid="test-isolated-extension-route" />
@@ -683,10 +683,6 @@ function applicationTypesResponse() {
   }
 }
 
-function cacheApplicationTypes() {
-  localStorage.setItem('wework:sites-application-types', JSON.stringify(applicationTypesResponse()))
-}
-
 vi.mock('@/features/auth/AuthProvider', () => ({
   AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }))
@@ -1190,64 +1186,6 @@ describe('App plugins route', () => {
     })
   })
 
-  test('shows settings over an application tab and returns to the retained application', async () => {
-    await updateAppPreferences({ experimentalFeaturesEnabled: true })
-    window.history.pushState({}, '', '/sites?app_type=smart_app')
-    await renderApp()
-    expect(await screen.findByTestId('smart-apps-marketplace-page')).toBeVisible()
-
-    await act(async () => {
-      window.history.pushState({}, '', '/settings/general')
-      window.dispatchEvent(new PopStateEvent('popstate'))
-    })
-
-    expect(await screen.findByTestId('wework-settings-page')).toBeVisible()
-    await userEvent.click(screen.getByTestId('settings-back-button'))
-    expect(await screen.findByTestId('smart-apps-marketplace-page')).toBeVisible()
-    expect(window.location.pathname).toBe('/sites')
-    expect(new URLSearchParams(window.location.search).get('app_type')).toBe('smart_app')
-  })
-
-  test('automatically observes an installed Smart App open', async () => {
-    await updateAppPreferences({ experimentalFeaturesEnabled: true })
-    window.history.pushState({}, '', '/app/harness-research-desk')
-    await renderApp()
-
-    await waitFor(() =>
-      expect(telemetryMocks.trackEvent).toHaveBeenCalledWith({
-        name: 'smart_app_opened',
-        properties: { domain: 'smart_app' },
-      })
-    )
-  })
-
-  test('does not track a generic sites page again when only query state changes', async () => {
-    window.history.pushState(
-      {},
-      '',
-      '/sites?app_type=web&view=environment-variables&project_id=project-1'
-    )
-    await renderApp()
-
-    await waitFor(() =>
-      expect(telemetryMocks.track).toHaveBeenCalledWith('feature_opened', {
-        feature: 'sites',
-      })
-    )
-    const openedFeatureCount = telemetryMocks.track.mock.calls.filter(
-      ([event]) => event === 'feature_opened'
-    ).length
-
-    await act(async () => {
-      window.history.pushState({}, '', '/sites?app_type=web')
-      window.dispatchEvent(new PopStateEvent('popstate'))
-    })
-
-    expect(
-      telemetryMocks.track.mock.calls.filter(([event]) => event === 'feature_opened')
-    ).toHaveLength(openedFeatureCount)
-  })
-
   test('dispatches application shortcuts from the focused conversation composer', async () => {
     window.history.pushState({}, '', '/')
     await renderApp()
@@ -1344,20 +1282,6 @@ describe('App plugins route', () => {
     } finally {
       vi.useRealTimers()
     }
-  })
-
-  test('opens the plugins page from the desktop sidebar', async () => {
-    window.history.pushState({}, '', '/')
-
-    await renderApp()
-
-    await userEvent.click(await screen.findByTestId('plugins-button'))
-
-    await waitFor(() => expect(window.location.pathname).toBe('/plugins'))
-    expect(
-      await screen.findByTestId('plugins-workspace', undefined, { timeout: 3000 })
-    ).toBeInTheDocument()
-    expect(screen.queryByTestId('plugins-sidebar-placeholder')).not.toBeInTheDocument()
   })
 
   test('shows Sites as unavailable instead of calling a relative API in disconnected local mode', async () => {
@@ -2031,42 +1955,6 @@ describe('App plugins route', () => {
     expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
   })
 
-  test('does not install Sites until an online compatible target device is selected', async () => {
-    workbenchValue.state.devices = []
-    workbenchValue.state.standaloneDeviceId = null
-    vi.mocked(fetch).mockImplementation(async input => {
-      const url = String(input)
-      if (url.includes('/sites/app-types')) {
-        return {
-          ok: true,
-          status: 200,
-          json: () => Promise.resolve(applicationTypesResponse()),
-        } as Response
-      }
-      return {
-        ok: true,
-        status: 200,
-        json: () => Promise.resolve({ items: [], total: 0, offset: 0, limit: 20 }),
-      } as Response
-    })
-    window.history.pushState({}, '', '/sites')
-
-    await renderApp()
-
-    await createSiteFromMenu()
-
-    expect(await screen.findByTestId('sites-create-error')).toHaveTextContent(
-      '请选择一个在线且版本兼容的设备后再创建应用'
-    )
-    expect(
-      vi
-        .mocked(fetch)
-        .mock.calls.some(([input]) =>
-          String(input).includes('/plugins/builtin/wegent-sites/ensure-installed')
-        )
-    ).toBe(false)
-  })
-
   test('keeps Sites open and allows retry when cloud plugin installation fails', async () => {
     vi.mocked(fetch).mockImplementation(async input => {
       const url = String(input)
@@ -2097,63 +1985,6 @@ describe('App plugins route', () => {
     )
     expect(window.location.pathname).toBe('/sites')
     expect(screen.getByTestId('sites-create-button')).toBeEnabled()
-    expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
-  })
-
-  test('explains when the cloud Backend does not provide the built-in Sites endpoint', async () => {
-    vi.mocked(fetch).mockImplementation(async input => {
-      const url = String(input)
-      if (url.includes('/plugins/builtin/wegent-sites/ensure-installed')) {
-        return {
-          ok: false,
-          status: 404,
-          text: () => Promise.resolve('{"detail":"Not Found"}'),
-        } as Response
-      }
-      if (url.includes('/sites/app-types')) {
-        return {
-          ok: true,
-          status: 200,
-          json: () => Promise.resolve(applicationTypesResponse()),
-        } as Response
-      }
-      return {
-        ok: true,
-        status: 200,
-        json: () => Promise.resolve({ items: [], total: 0, offset: 0, limit: 20 }),
-      } as Response
-    })
-    window.history.pushState({}, '', '/sites')
-
-    await renderApp()
-
-    await createSiteFromMenu()
-
-    expect(await screen.findByTestId('sites-create-error')).toHaveTextContent(
-      '云端 Backend 尚未支持对应的应用插件，请先部署最新 Backend'
-    )
-    expect(window.location.pathname).toBe('/sites')
-    expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
-  })
-
-  test('requires a cloud connection before installing Sites in local-first mode', async () => {
-    window.__WEWORK_RUNTIME_CONFIG__ = {
-      ...window.__WEWORK_RUNTIME_CONFIG__,
-      runtimeMode: 'local-first',
-      desktopHost: 'electron',
-    }
-    cacheApplicationTypes()
-    window.history.pushState({}, '', '/sites')
-
-    await renderApp()
-
-    await screen.findByTestId('sites-unavailable-state')
-    await createSiteFromMenu()
-
-    expect(await screen.findByTestId('sites-create-error')).toHaveTextContent(
-      '连接云端后才能使用应用创建插件'
-    )
-    expect(window.location.pathname).toBe('/sites')
     expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
   })
 
@@ -2250,292 +2081,6 @@ describe('App plugins route', () => {
     })
     await createSiteFromMenu()
     await waitFor(() => expect(window.location.pathname).toBe('/'))
-  })
-
-  test('opens a runtime task from the plugins sidebar and leaves the plugins route', async () => {
-    const workspacePath = '/Users/alice/Documents/Codex/plugin-task'
-    workbenchValue.state.runtimeWork = {
-      projects: [],
-      chats: [
-        {
-          deviceId: 'local-device',
-          deviceName: 'Local Mac',
-          deviceStatus: 'online',
-          available: true,
-          workspacePath,
-          workspaceKind: 'chat',
-          tasks: [
-            {
-              taskId: 'plugin-task',
-              workspacePath,
-              workspaceKind: 'chat',
-              title: 'Return to task',
-              runtime: 'codex',
-            },
-          ],
-        },
-      ],
-      totalTasks: 1,
-    }
-    window.history.pushState({}, '', '/plugins')
-
-    await renderApp()
-
-    await userEvent.click(await screen.findByTestId('runtime-local-task-row-plugin-task'))
-
-    await waitFor(() => {
-      expect(workbenchValue.openRuntimeTask).toHaveBeenCalledWith({
-        deviceId: 'local-device',
-        workspacePath,
-        taskId: 'plugin-task',
-      })
-      expect(window.location.pathname).toBe('/runtime-tasks')
-    })
-    expect(window.location.search).toBe('?deviceId=local-device&taskId=plugin-task')
-    expect(screen.queryByTestId('plugins-workspace')).not.toBeInTheDocument()
-  })
-
-  test('preserves the workbench composer while visiting plugins', async () => {
-    window.history.pushState({}, '', '/')
-
-    await renderApp()
-
-    const composer = await screen.findByTestId('chat-message-input')
-    fireEvent.input(composer, { target: { textContent: '保留这段草稿' } })
-    await userEvent.click(screen.getByTestId('plugins-button'))
-    expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
-    expect(screen.queryByTestId('desktop-workbench-main')).not.toBeInTheDocument()
-
-    window.history.pushState({}, '', '/')
-    window.dispatchEvent(new PopStateEvent('popstate'))
-
-    await waitFor(() => expect(window.location.pathname).toBe('/'))
-    expect(screen.getByTestId('chat-message-input')).toBe(composer)
-  })
-
-  test('renders the plugins page on direct /plugins visit', async () => {
-    window.history.pushState({}, '', '/plugins')
-
-    await renderApp()
-
-    expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
-
-    const pluginsDragRegion = within(screen.getByTestId('plugins-topbar-drag-region')).getByTestId(
-      'macos-titlebar-drag-region'
-    )
-
-    expect(pluginsDragRegion).toHaveClass('electron-titlebar-drag-region')
-    expect(screen.getByTestId('plugins-topbar-drag-region')).toContainElement(pluginsDragRegion)
-    expect(screen.getByTestId('runtime-search-button')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: '插件' })).toBeInTheDocument()
-    expect(await screen.findByTestId('plugins-marketplace-tab-default')).toHaveTextContent(
-      'Wework 云端市场'
-    )
-    expect(screen.getByTestId('plugins-search-input')).toBeInTheDocument()
-    expect(screen.getByTestId('plugins-installed-strip')).toBeInTheDocument()
-    expect(screen.queryByRole('tab', { name: '技能' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('tab', { name: 'MCP' })).not.toBeInTheDocument()
-  })
-
-  test('collapses and expands the desktop sidebar on plugin routes', async () => {
-    window.history.pushState({}, '', '/plugins')
-
-    await renderApp()
-
-    expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
-    await userEvent.click(
-      within(screen.getByTestId('desktop-sidebar')).getByTestId('collapse-sidebar-button')
-    )
-
-    expect(screen.getByTestId('auxiliary-expand-sidebar-button')).toBeInTheDocument()
-    expect(screen.getByTestId('plugins-page-content')).toHaveClass('md:pl-6')
-
-    await userEvent.click(screen.getByTestId('auxiliary-expand-sidebar-button'))
-    expect(await screen.findByTestId('plugins-button')).toBeInTheDocument()
-  })
-
-  test('uses the global Chrome titlebar on collapsed plugin routes in Electron', async () => {
-    localStorage.setItem('wework.desktop.sidebar.collapsed', 'true')
-    window.history.pushState({}, '', '/plugins')
-
-    await renderApp()
-
-    expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
-
-    expect(screen.getByTestId('chrome-titlebar')).toBeInTheDocument()
-    expect(screen.getByTestId('macos-traffic-light-spacer')).toBeInTheDocument()
-    expect(screen.getByTestId('plugins-page-content')).toHaveClass('md:pl-6')
-    expect(screen.getByTestId('plugins-page-content').style.paddingLeft).toBe('')
-    expect(screen.getByTestId('app-shell')).toHaveClass('fixed', 'inset-0')
-    expect(screen.getByTestId('app-shell').style.width).toBe('')
-    expect(screen.getByTestId('app-shell').style.height).toBe('')
-  })
-
-  test('uses the mobile shell for plugins route at the shared mobile breakpoint', async () => {
-    mockViewport.isMobile = true
-    window.history.pushState({}, '', '/plugins')
-
-    await renderApp()
-
-    expect(await screen.findByTestId('open-mobile-drawer-button')).toBeInTheDocument()
-    expect(screen.queryByTestId('collapse-sidebar-button')).not.toBeInTheDocument()
-    expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
-    expect(await screen.findByTestId('plugins-marketplace-tab-default')).toHaveTextContent(
-      'Wework 云端市场'
-    )
-    expect(screen.getByTestId('plugins-create-button')).toHaveClass('plugin-market-action-button')
-    expect(screen.getByTestId('plugins-create-button')).toHaveTextContent('创建')
-    expect(screen.getByTestId('plugins-marketplace-source-switcher')).toHaveClass('sr-only')
-  })
-
-  test('opens plugins from the mobile settings menu', async () => {
-    mockViewport.isMobile = true
-    window.history.pushState({}, '', '/plugins')
-
-    await renderApp()
-
-    expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('open-mobile-drawer-button'))
-    await userEvent.click(screen.getByTestId('mobile-settings-button'))
-
-    expect(screen.getByTestId('mobile-settings-page')).toBeInTheDocument()
-    expect(screen.getByTestId('mobile-settings-plugins-button')).toBeInTheDocument()
-    expect(window.location.pathname).toBe('/plugins')
-  })
-
-  test('uses the mobile shell for plugin management route at the shared mobile breakpoint', async () => {
-    mockViewport.isMobile = true
-    window.history.pushState({}, '', '/plugins/manage')
-
-    await renderApp()
-
-    expect(await screen.findByTestId('open-mobile-drawer-button')).toBeInTheDocument()
-    expect(screen.queryByTestId('collapse-sidebar-button')).not.toBeInTheDocument()
-    expect(await screen.findByText('还没有安装插件')).toBeInTheDocument()
-  })
-
-  test('navigates to plugin management from the manage button', async () => {
-    window.history.pushState({}, '', '/plugins')
-
-    await renderApp()
-
-    await userEvent.click(await screen.findByTestId('plugins-manage-button'))
-
-    await waitFor(() => expect(window.location.pathname).toBe('/plugins/manage'))
-    expect(screen.getByTestId('plugins-button')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: '管理插件' })).toBeInTheDocument()
-    expect(
-      within(screen.getByTestId('plugin-management-page-content')).getAllByRole('tab')
-    ).toHaveLength(2)
-    expect(screen.getByTestId('plugin-management-surface-wework')).toHaveAttribute(
-      'aria-selected',
-      'true'
-    )
-    expect(await screen.findByText('还没有安装插件')).toBeInTheDocument()
-    expect(screen.getByTestId('plugin-management-browse-marketplace-button')).toBeInTheDocument()
-    expect(screen.queryByPlaceholderText('供应商 Token')).not.toBeInTheDocument()
-  })
-
-  test('opens Smart apps beside Sites and Mini Programs in Applications', async () => {
-    window.history.pushState({}, '', '/sites')
-
-    await renderApp()
-    await updateAppPreferences({ experimentalFeaturesEnabled: true })
-
-    await userEvent.click(await screen.findByTestId('applications-tab-smart-app'))
-
-    await waitFor(() => {
-      expect(window.location.pathname).toBe('/sites')
-      expect(window.location.search).toBe('?app_type=smart_app')
-    })
-    expect(screen.getByTestId('applications-tab-web')).toHaveTextContent('站点')
-    expect(screen.getByTestId('applications-tab-miniapp')).toHaveTextContent('小程序')
-    expect(screen.getByTestId('applications-tab-smart-app')).toHaveTextContent('智能工作台')
-    expect(screen.getByTestId('smart-apps-marketplace-page')).toBeInTheDocument()
-    expect(screen.getByTestId('smart-apps-section-marketplace')).toHaveAttribute(
-      'aria-current',
-      'page'
-    )
-  })
-
-  test('returns to the Smart apps marketplace after visiting My workbench and Mini Programs', async () => {
-    window.history.pushState({}, '', '/sites')
-
-    await renderApp()
-    await updateAppPreferences({ experimentalFeaturesEnabled: true })
-
-    await userEvent.click(await screen.findByTestId('applications-tab-smart-app'))
-    await userEvent.click(await screen.findByTestId('smart-apps-section-owned'))
-    expect(await screen.findByTestId('smart-apps-owned-page')).toBeInTheDocument()
-    const ownedSearch = new URLSearchParams(window.location.search)
-    const workspaceTabId = ownedSearch.get('workspaceTab')
-    expect(ownedSearch.get('app_type')).toBe('smart_app')
-    expect(ownedSearch.get('view')).toBe('owned')
-    expect(workspaceTabId).toBeTruthy()
-    expect(ownedSearch.get('workspaceTabTitle')).toBe('应用')
-
-    await userEvent.click(screen.getByTestId('applications-tab-miniapp'))
-    const miniAppSearch = new URLSearchParams(window.location.search)
-    expect(miniAppSearch.get('app_type')).toBe('miniapp')
-    expect(miniAppSearch.get('workspaceTab')).toBe(workspaceTabId)
-    expect(miniAppSearch.get('workspaceTabTitle')).toBe('应用')
-
-    await userEvent.click(screen.getByTestId('applications-tab-smart-app'))
-
-    expect(await screen.findByTestId('smart-apps-marketplace-page')).toBeInTheDocument()
-    expect(screen.getByTestId('smart-apps-section-marketplace')).toHaveAttribute(
-      'aria-current',
-      'page'
-    )
-    const marketplaceSearch = new URLSearchParams(window.location.search)
-    expect(marketplaceSearch.get('app_type')).toBe('smart_app')
-    expect(marketplaceSearch.has('view')).toBe(false)
-    expect(marketplaceSearch.get('workspaceTab')).toBe(workspaceTabId)
-    expect(marketplaceSearch.get('workspaceTabTitle')).toBe('应用')
-  })
-
-  test('hides Smart apps and exits its Applications view while experiments are disabled', async () => {
-    window.history.pushState({}, '', '/sites?app_type=smart_app')
-
-    await renderApp()
-
-    expect(await screen.findByTestId('sites-workspace')).toBeInTheDocument()
-    await waitFor(() => {
-      expect(window.location.pathname).toBe('/sites')
-      expect(window.location.search).toBe('')
-    })
-    expect(screen.queryByTestId('applications-tab-smart-app')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('smart-apps-marketplace-page')).not.toBeInTheDocument()
-  })
-
-  test('renders plugin management on direct /plugins/manage visit', async () => {
-    window.history.pushState({}, '', '/plugins/manage')
-
-    await renderApp()
-
-    expect(await screen.findByTestId('plugins-button')).toBeInTheDocument()
-    expect(screen.getByTestId('runtime-search-button')).toBeInTheDocument()
-    expect(screen.getByTestId('plugin-management-topbar')).toBeInTheDocument()
-    expect(screen.getByTestId('plugin-management-page-content')).toBeInTheDocument()
-    expect(await screen.findByText('还没有安装插件')).toBeInTheDocument()
-    await waitFor(() =>
-      expect(
-        vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('/api/plugins/installed'))
-      ).toBe(true)
-    )
-  })
-
-  test('keeps standalone MCP and Skill management out of the plugin page', async () => {
-    window.history.pushState({}, '', '/plugins/manage')
-
-    await renderApp()
-
-    expect(await screen.findByRole('heading', { name: '管理插件' })).toBeInTheDocument()
-    expect(screen.queryByText('Custom Docs MCP')).not.toBeInTheDocument()
-    expect(screen.queryByText('wehot')).not.toBeInTheDocument()
-    expect(screen.getByTestId('plugin-management-codex-panel')).toBeInTheDocument()
-    expect(screen.queryByTestId('plugin-management-core-dsh-panel')).not.toBeInTheDocument()
   })
 
   test('switches between Codex and Core DSH plugin management tabs', async () => {

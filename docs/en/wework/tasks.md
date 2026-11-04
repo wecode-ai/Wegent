@@ -30,6 +30,10 @@ Pasted Markdown appears as editable content in the composer. Sent messages also 
 
 Hover over a message table to copy its Markdown or expand it; press `Esc` to close the expanded view. Click an HTTP/HTTPS link in the composer to open its actions. Sent links open using your browser preference. Text appended after a pasted link stays separate and does not change its destination.
 
+## Repair a PR from the task sidebar
+
+Click the PR/MR status beside a task and choose **Continue fixing with AI** when an abnormal status is shown. For a running task, the repair request guides the current response. For an idle task, it starts the next turn in the same conversation. If the current response finishes just after you click, the request is sent as the next turn. Delivery failures show an error so you can try sending again.
+
 ## Add a conversation to a project-space board
 
 Runtime task and private conversation titles are independent of the bound Issue title. Runs started from tasks, Issue details, or Collaboration never overwrite an existing Issue title when the conversation title changes. Edit the title in Issue details to rename the Issue.

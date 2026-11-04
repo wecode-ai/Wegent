@@ -1,6 +1,6 @@
 import { stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { basename, isAbsolute, join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 
 export function desktopApplicationDataDirectory() {
   if (process.platform === 'darwin') return join(homedir(), 'Library/Application Support')
@@ -23,7 +23,12 @@ export async function resolveUpgradeUserHome(
     applicationData,
     external,
     homePath: external
-      ? join(applicationData, 'wework-upgrade-test-homes', basename(resultDirectory))
+      ? join(
+          applicationData,
+          'wu',
+          createHash('sha256').update(resultDirectory).digest('hex').slice(0, 16)
+        )
       : join(resultDirectory, 'home'),
   }
 }
+import { createHash } from 'node:crypto'

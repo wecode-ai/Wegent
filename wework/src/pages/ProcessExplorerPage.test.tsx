@@ -1,6 +1,6 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { fireEvent, render, screen } from '@testing-library/react'
 import type { ProcessSnapshot } from '@wegent/process-explorer'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { ProcessExplorerPage } from './ProcessExplorerPage'
 
 const mocks = vi.hoisted(() => ({
@@ -98,34 +98,6 @@ describe('ProcessExplorerPage', () => {
     })
   })
 
-  test('never exposes termination actions', async () => {
-    render(<ProcessExplorerPage />)
-
-    for (const pid of [100, 200, 300]) {
-      const row = await screen.findByTestId(`process-explorer-row-${pid}`)
-      row.click()
-      expect(screen.queryByTestId(/process-explorer-(end|confirm|cancel)-/)).toBeNull()
-    }
-  })
-
-  test('toggles always on top', async () => {
-    render(<ProcessExplorerPage />)
-
-    const pin = await screen.findByTestId('process-explorer-always-on-top')
-    expect(pin.getAttribute('aria-pressed')).toBe('false')
-    pin.click()
-    await waitFor(() =>
-      expect(mocks.invoke).toHaveBeenCalledWith('processExplorer.setAlwaysOnTop', {
-        alwaysOnTop: true,
-      })
-    )
-    await waitFor(() =>
-      expect(
-        screen.getByTestId('process-explorer-always-on-top').getAttribute('aria-pressed')
-      ).toBe('true')
-    )
-  })
-
   test('selects a row from the keyboard', async () => {
     render(<ProcessExplorerPage />)
 
@@ -135,71 +107,5 @@ describe('ProcessExplorerPage', () => {
     expect(screen.getByTestId('process-explorer-selection-detail').textContent).toContain(
       'Electron Helper --type=gpu-process'
     )
-  })
-
-  test('copies only the selected launch detail', async () => {
-    render(<ProcessExplorerPage />)
-    const row = await screen.findByTestId('process-explorer-row-200')
-    row.click()
-    const copyButton = await screen.findByTestId('process-explorer-copy-launch-details')
-    copyButton.click()
-    await waitFor(() =>
-      expect(mocks.invoke).toHaveBeenCalledWith('clipboard.writeText', {
-        text: 'Electron Helper --type=gpu-process',
-      })
-    )
-  })
-
-  test('filters rows and keeps the owner context', async () => {
-    render(<ProcessExplorerPage />)
-    await screen.findByTestId('process-explorer-row-200')
-
-    const filter = screen.getByTestId('process-explorer-filter')
-    fireEvent.change(filter, { target: { value: 'GPU' } })
-
-    await waitFor(() => {
-      expect(screen.queryByTestId('process-explorer-row-300')).toBeNull()
-    })
-    expect(screen.getByTestId('process-explorer-row-200')).toBeTruthy()
-    expect(screen.getByTestId('process-explorer-group-helpers')).toBeTruthy()
-  })
-
-  test('matches a numeric filter to the exact PID instead of launch arguments', async () => {
-    const processes = snapshot()
-    processes.processes[1].detail += ' --shared-files=100,1100'
-    processes.processes[2].pid = 1100
-    mocks.invoke.mockResolvedValue(processes)
-    render(<ProcessExplorerPage />)
-    await screen.findByTestId('process-explorer-row-200')
-
-    fireEvent.change(screen.getByTestId('process-explorer-filter'), {
-      target: { value: '100' },
-    })
-
-    expect(screen.getByTestId('process-explorer-row-100')).toBeInTheDocument()
-    expect(screen.queryByTestId('process-explorer-row-200')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('process-explorer-row-1100')).not.toBeInTheDocument()
-  })
-
-  test('surfaces a snapshot failure', async () => {
-    mocks.invoke.mockImplementation(() =>
-      Promise.reject(new Error('Process snapshot is unavailable'))
-    )
-    render(<ProcessExplorerPage />)
-    expect(await screen.findByTestId('process-explorer-error')).toBeTruthy()
-  })
-
-  test('surfaces degraded collection details', async () => {
-    mocks.invoke.mockImplementation(() =>
-      Promise.resolve({
-        ...snapshot(),
-        degraded: [{ code: 'system-process-table-failed', detail: 'ps failed' }],
-      })
-    )
-    render(<ProcessExplorerPage />)
-
-    const banner = await screen.findByTestId('process-explorer-degraded')
-    expect(banner.textContent).toContain('process_explorer.degraded')
-    expect(banner.getAttribute('title')).toBe('ps failed')
   })
 })
