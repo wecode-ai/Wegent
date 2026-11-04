@@ -490,6 +490,10 @@ const conversationSearchDiagnosticsLog = new RuntimeDiagnosticsLog(
   join(app.getPath('logs'), 'conversation-search.log'),
   '[Wework] Conversation search diagnostic '
 )
+const localWorkspaceCatalogLog = new RuntimeDiagnosticsLog(
+  join(app.getPath('logs'), 'local-workspace-catalog.log'),
+  '[Wework] Local workspace catalog '
+)
 app.on('web-contents-created', (_event, contents) => {
   const logLoadEvent = (event: string) => () => {
     console.info('[renderer-load]', { event, webContentsId: contents.id })
@@ -562,6 +566,9 @@ app.on('web-contents-created', (_event, contents) => {
     })
     void conversationSearchDiagnosticsLog.record(contents.id, message).catch(error => {
       console.warn('[Wework] Failed to write conversation search diagnostics', error)
+    })
+    void localWorkspaceCatalogLog.record(contents.id, message).catch(() => {
+      console.warn('[Wework] Failed to write local workspace catalog diagnostics')
     })
   })
 })
@@ -1791,6 +1798,7 @@ async function startupDiagnosticsText(): Promise<string> {
     mainProcessLog.flush(),
     startupRendererLog.flush(),
     runtimeDiagnosticsLog.flush(),
+    localWorkspaceCatalogLog.flush(),
   ])
   return buildStartupDiagnostics({
     appName: app.getName(),
@@ -2020,6 +2028,9 @@ async function shutdown(): Promise<void> {
     traceShutdownStep('plugin-development', () => development?.stop()),
     traceShutdownStep('desktop-runtime', () => desktopRuntime?.stop()),
   ])
+  await localWorkspaceCatalogLog.flush().catch(() => {
+    console.warn('[Wework] Failed to flush local workspace catalog diagnostics')
+  })
   const stopFailures = stoppedServices.filter(result => result.status === 'rejected')
   if (stopFailures.length)
     throw new AggregateError(

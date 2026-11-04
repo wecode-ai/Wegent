@@ -2,6 +2,8 @@ type LocalWorkspaceCatalog =
   | 'projects'
   | 'execution-environments'
   | 'agents'
+  | 'default-agent'
+  | 'agents-summary'
   | 'workspace-settings'
   | 'navigation-projects'
   | 'navigation-workspaces'
@@ -26,10 +28,10 @@ export async function loadWorkspaceCatalog<T>(
     status,
     elapsedMs: Math.round(performance.now() - startedAt),
   })
-  console.debug('[Wework] Local workspace catalog', diagnostic('started'))
+  console.debug('[Wework] Local workspace catalog', JSON.stringify(diagnostic('started')))
   try {
     const result = await load()
-    console.debug('[Wework] Local workspace catalog', diagnostic('fulfilled'))
+    console.debug('[Wework] Local workspace catalog', JSON.stringify(diagnostic('fulfilled')))
     return result
   } catch (error) {
     const name = error instanceof Error ? error.name : 'Error'

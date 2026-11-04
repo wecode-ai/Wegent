@@ -258,7 +258,7 @@ export function createLocalWorkspaceApi(
     const [items, environments, agents, backingProject] = await Promise.all([
       loadWorkspaceCatalog('projects', projects),
       loadWorkspaceCatalog('execution-environments', executionEnvironments),
-      loadWorkspaceCatalog('agents', localAgentResources),
+      loadWorkspaceCatalog('agents-summary', localAgentResources),
       loadWorkspaceCatalog('workspace-settings', () =>
         delivery.projects.get(DEFAULT_WORK_ITEM_PROJECT_ID)
       ),
@@ -321,25 +321,21 @@ export function createLocalWorkspaceApi(
     options?: { forceRefresh?: boolean }
   ) => {
     const listedAgents = projectAgentApi
-      ? await (
+      ? await loadWorkspaceCatalog('agents', () =>
           options?.forceRefresh
             ? projectAgentApi.list(DEFAULT_WORK_ITEM_PROJECT_ID, { forceRefresh: true })
             : projectAgentApi.list(DEFAULT_WORK_ITEM_PROJECT_ID)
-        ).catch(error => {
-          console.warn('[Wework] Failed to list local Agents', error)
-          return []
-        })
+        ).catch(() => [])
       : []
     const defaultAgent = projectAgentApi
-      ? await ensureDefaultLocalAgent(
-          projectAgentApi,
-          DEFAULT_WORK_ITEM_PROJECT_ID,
-          locale,
-          listedAgents
-        ).catch(error => {
-          console.warn('[Wework] Failed to ensure the default local Agent', error)
-          return null
-        })
+      ? await loadWorkspaceCatalog('default-agent', () =>
+          ensureDefaultLocalAgent(
+            projectAgentApi,
+            DEFAULT_WORK_ITEM_PROJECT_ID,
+            locale,
+            listedAgents
+          )
+        ).catch(() => null)
       : null
     const agents =
       defaultAgent && !listedAgents.some(agent => agent.id === defaultAgent.id)
