@@ -286,6 +286,44 @@ describe('WorkItemComposerGuide', () => {
     expect(screen.queryByTestId('work-item-context-menu')).not.toBeInTheDocument()
   })
 
+  test.each(['work-item-open-details', 'work-item-open-board-menu'])(
+    'dismisses the project picker through %s and allows reopening it',
+    async actionTestId => {
+      const user = userEvent.setup()
+      const onOpen = vi.fn()
+      const onOpenBoard = vi.fn()
+      const onSelectProject = vi.fn()
+      render(
+        <WorkItemComposerGuide
+          project={project}
+          item={item}
+          projects={[teamProject]}
+          onSelectProject={onSelectProject}
+          onOpen={onOpen}
+          onOpenBoard={onOpenBoard}
+        />
+      )
+      const trigger = screen.getByTestId('work-item-change-board')
+      await user.click(trigger)
+      expect(screen.getByTestId('work-item-context-menu')).toBeVisible()
+
+      await user.click(screen.getByTestId(actionTestId))
+
+      const navigatesToDetails = actionTestId === 'work-item-open-details'
+      expect(onOpen).toHaveBeenCalledTimes(navigatesToDetails ? 1 : 0)
+      expect(onOpenBoard).toHaveBeenCalledTimes(navigatesToDetails ? 0 : 1)
+      expect(onSelectProject).not.toHaveBeenCalled()
+      expect(screen.queryByTestId('work-item-context-menu')).not.toBeInTheDocument()
+      expect(trigger).toHaveAttribute('aria-expanded', 'false')
+
+      await user.click(trigger)
+      await user.click(screen.getByTestId('work-item-workspace-option-team-work'))
+
+      expect(onSelectProject).toHaveBeenCalledExactlyOnceWith(teamProject)
+      expect(screen.queryByTestId('work-item-context-menu')).not.toBeInTheDocument()
+    }
+  )
+
   test('allows an already linked task to choose another board', async () => {
     const user = userEvent.setup()
     const onSelectProject = vi.fn()
