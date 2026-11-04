@@ -166,13 +166,25 @@ function runUninstaller() {
 
 async function assertUninstallEntry(expectedDirectory) {
   const entry = await waitForUninstallEntry(expectedDirectory)
+  assert.equal(
+    (await readUninstallEntries()).length,
+    1,
+    'Install must register exactly one product'
+  )
+  assert.match(entry.InstallRegistryPath, /^HKCU:\\/i, 'Install must use the current user hive')
   assert.ok(entry.UninstallString, 'The installer must register an uninstall command')
   assert.ok(entry.QuietUninstallString, 'The installer must register a quiet uninstall command')
-  assert.match(
-    entry.UninstallString,
-    /Uninstall WeWork\.exe/i,
-    'The registered uninstall command must target the application uninstaller'
-  )
+  const expectedUninstaller = join(expectedDirectory, `Uninstall ${PRODUCT_NAME}.exe`)
+  for (const command of [entry.UninstallString, entry.QuietUninstallString]) {
+    const executable = command.match(/^"([^"]+)"(?:\s|$)/)?.[1]
+    assert.equal(
+      normalizeWindowsPath(executable),
+      normalizeWindowsPath(expectedUninstaller),
+      'Both uninstall commands must target the installed uninstaller'
+    )
+    assert.match(command, /\/currentuser\b/i, 'The installation must belong to the standard user')
+  }
+  assert.match(entry.QuietUninstallString, /\/S\b/)
   return entry
 }
 
@@ -194,12 +206,7 @@ async function waitForUninstallEntryRemoval(expectedDirectory) {
   await waitFor(
     async () => {
       const entries = await readUninstallEntries()
-      return entries.every(
-        entry =>
-          normalizeWindowsPath(entry.InstallLocation) !== normalizeWindowsPath(expectedDirectory)
-      )
-        ? true
-        : null
+      return entries.length === 0 ? true : null
     },
     `remove the uninstall entry for ${expectedDirectory}`,
     30_000
@@ -223,20 +230,33 @@ async function readUninstallEntries() {
         "  'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall',",
         "  'HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall'",
         ')',
-        '$entries = $roots | ForEach-Object {',
-        '  Get-ChildItem $_ -ErrorAction SilentlyContinue',
-        '} |',
-        '  ForEach-Object { Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue } |',
-        "  Where-Object { $_.DisplayName -like 'WeWork*' }",
-        '$entries | Select-Object DisplayName, InstallLocation, UninstallString, QuietUninstallString |',
-        '  ConvertTo-Json -Compress',
+        '$entries = foreach ($root in $roots) {',
+        "  $software = $root.Split('\\')[0] + '\\Software'",
+        '  foreach ($key in (Get-ChildItem $root -ErrorAction SilentlyContinue)) {',
+        '    $entry = Get-ItemProperty $key.PSPath -ErrorAction SilentlyContinue',
+        "    if ($entry.DisplayName -notlike 'WeWork*') { continue }",
+        // electron-builder stores InstallLocation separately from its uninstall commands.
+        '    $installKey = Join-Path $software $key.PSChildName',
+        '    $install = Get-ItemProperty $installKey -ErrorAction SilentlyContinue',
+        '    [PSCustomObject]@{',
+        '      DisplayName = $entry.DisplayName',
+        '      InstallLocation = $install.InstallLocation',
+        '      InstallRegistryPath = $installKey',
+        '      UninstallRegistryPath = $key.PSPath',
+        '      UninstallString = $entry.UninstallString',
+        '      QuietUninstallString = $entry.QuietUninstallString',
+        '    }',
+        '  }',
+        '}',
+        '$entries | ConvertTo-Json -Compress',
       ].join('\n'),
     ],
     { encoding: 'utf8', windowsHide: true }
   ).trim()
-  if (!output) return []
-  const parsed = JSON.parse(output)
-  return Array.isArray(parsed) ? parsed : [parsed]
+  const parsed = output ? JSON.parse(output) : []
+  const entries = Array.isArray(parsed) ? parsed : [parsed]
+  evidence.lastUninstallEntries = entries
+  return entries
 }
 
 async function waitForPath(path, action) {
@@ -362,6 +382,20 @@ async function assertNoInstallation(directory) {
   await waitForUninstallEntryRemoval(directory)
   assert.deepEqual(await readUninstallEntries(), [], 'No WeWork uninstall registration may remain')
   assert.deepEqual(readShortcuts(), [], 'No desktop or Start menu shortcut may remain')
+  const installKey = evidence.install?.uninstallEntry?.InstallRegistryPath
+  if (installKey) {
+    await waitFor(
+      async () => {
+        const exists = runPowerShell([
+          `$path = '${installKey.replaceAll("'", "''")}'`,
+          'ConvertTo-Json -InputObject (Test-Path -LiteralPath $path) -Compress',
+        ])
+        return exists ? null : true
+      },
+      'remove the application installation registry key',
+      30_000
+    )
+  }
 }
 
 function installedAppEnvironment(home, control) {
