@@ -92,6 +92,41 @@ mod tests {
         }
     }
 
+    /// A declared literal wins dispatch for the methods it declares, and a
+    /// template sibling keeps serving the methods the literal does not
+    /// declare. This mirrors Starlette: the static route matches first for its
+    /// own methods, and a request whose method it does not allow falls through
+    /// to an earlier or later dynamic route that declares it.
+    #[test]
+    fn literal_routes_win_their_methods_and_templates_keep_the_rest() {
+        let config = RoutesConfig {
+            routes: vec![
+                RouteRule {
+                    methods: vec!["GET".to_owned()],
+                    path: "/api/tasks/search".to_owned(),
+                    admission: None,
+                },
+                RouteRule {
+                    methods: vec!["GET".to_owned()],
+                    path: "/api/tasks/:task_id".to_owned(),
+                    admission: None,
+                },
+                RouteRule {
+                    methods: vec!["PUT".to_owned()],
+                    path: "/api/tasks/:task_id".to_owned(),
+                    admission: None,
+                },
+            ],
+            exclude: Vec::new(),
+        };
+        let table = RouteTable::compile(config).unwrap();
+        assert!(table.matches(&Method::GET, "/api/tasks/search"));
+        assert!(table.matches(&Method::GET, "/api/tasks/42"));
+        // The literal does not declare PUT, so the dynamic sibling serves it.
+        assert!(table.matches(&Method::PUT, "/api/tasks/search"));
+        assert!(table.matches(&Method::PUT, "/api/tasks/42"));
+    }
+
     #[test]
     fn includes_preserve_exclusions_from_both_parent_and_child_files() {
         let fixture = Fixture::new();
@@ -131,6 +166,27 @@ mod tests {
         ] {
             std::fs::write(fixture.0.join("child.toml"), source).unwrap();
             assert!(load(&root).is_err());
+        }
+    }
+
+    /// Python declares these as `{group_name:path}`, so the group name may
+    /// contain slashes. Expressing the member routes needs a nonterminal
+    /// catch-all, which the gateway rejects during compilation. They must stay
+    /// inactive: enabling one aborts target startup with `InvalidCatchAll`
+    /// before the listener binds.
+    #[test]
+    fn nonterminal_catch_all_candidates_stay_on_python_fallback() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml");
+        let table = load(&path).expect("route file compiles");
+        for (method, path) in [
+            (Method::GET, "/api/groups/engineering/members"),
+            (Method::PUT, "/api/groups/engineering/members/batch/roles"),
+            (Method::GET, "/api/groups/engineering"),
+        ] {
+            assert!(
+                !table.matches(&method, path),
+                "{method} {path} must stay on the Python fallback"
+            );
         }
     }
 
@@ -186,7 +242,22 @@ mod tests {
         // headers through a hand-written handler merged into the router, so it
         // is not discoverable through the macro inventory.
         registered.insert(("POST".to_owned(), crate::llm_proxy::ROUTE_PATH.to_owned()));
-        assert!(selected.is_subset(&registered));
+        // Socket.IO is one protocol service mounted on the loopback listener
+        // instead of a macro-registered HTTP route, so the inventory cannot
+        // discover it. `serve_hybrid_application_with_services` mounts the
+        // server's configured path, and that mount serves the trailing-slash
+        // alias plus both Engine.IO transports.
+        let socketio = brz_socket_io::Config::default().path;
+        for path in [socketio.clone(), format!("{socketio}/")] {
+            for method in ["GET", "POST"] {
+                registered.insert((method.to_owned(), path.clone()));
+            }
+        }
+        assert!(
+            selected.is_subset(&registered),
+            "selected routes without a registered handler: {:?}",
+            selected.difference(&registered).collect::<Vec<_>>()
+        );
         let custom = Method::from_bytes(b"CUSTOM").unwrap();
         for (method, path) in &selected {
             let concrete = path
@@ -222,6 +293,23 @@ mod tests {
         assert!(!table.matches(&Method::GET, "/api/groups/engineering/members"));
         assert!(!table.matches(&Method::PUT, "/api/groups/engineering/members/batch/roles"));
         assert!(!table.matches(&Method::GET, "/api/tasks/123/unmigrated"));
+    }
+
+    #[test]
+    fn responses_creation_uses_rust_without_changing_siblings() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml");
+        let table = load(&path).unwrap();
+
+        assert!(table.matches(&Method::POST, "/api/v1/responses"));
+        assert!(!table.matches(&Method::POST, "/api/v1/responses/"));
+        for path in ["/socket.io", "/socket.io/"] {
+            assert!(!table.matches(&Method::GET, path));
+            assert!(!table.matches(&Method::POST, path));
+        }
+        assert!(!table.matches(&Method::POST, "/api/v1/responses/resp_123/cancel"));
+        assert!(table.matches(&Method::GET, "/api/v1/responses/resp_123"));
+        assert!(table.matches(&Method::DELETE, "/api/v1/responses/resp_123"));
+        assert!(table.matches(&Method::POST, "/api/internal/callback"));
     }
 
     /// The doubled-prefix skills download cutover must keep its Rust handler

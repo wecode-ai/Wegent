@@ -1,3 +1,9 @@
+import { visibleRuntimeUserMessage } from '../../../../packages/chat-core/src/runtime-user-message.js'
+
+import {
+  DIAGRAM_REGRESSION_MARKER,
+  DIAGRAM_REGRESSION_RESPONSE,
+} from './conversation-diagram-fixture.mjs'
 import { nativeApprovalModelResponse } from './native-approval-model.mjs'
 import {
   installedMiniProgramPlugin,
@@ -308,7 +314,15 @@ const ELECTRON_OBSERVATION_ACTIONS = new Set([
   'activeElement',
   'decodeImage',
   'getAttribute',
+  'getBundledPluginUpdates',
+  'getComposerPluginInventoryDiagnostics',
+  'getConversationDiagnosticsSnapshot',
   'getElementCount',
+  'getLocalExecutorStatus',
+  'getLocalStorageItem',
+  'waitForDesktopHostEvents',
+  'getLocationOrigin',
+  'getPluginSyncDiagnostics',
   'getTerminalText',
   'getText',
   'metrics',
@@ -372,26 +386,28 @@ function requestContainsSkillLocator(body, skillPath) {
   )
 }
 
-/** Text of the user-authored turns codex forwarded to the model, in order. */
+/** Text of top-level user messages, excluding quoted messages inside tool output. */
 function inputUserMessageTexts(request) {
-  const texts = []
-  const visit = value => {
-    if (Array.isArray(value)) {
-      value.forEach(visit)
-      return
-    }
-    if (!value || typeof value !== 'object') return
-    if (value.type === 'message' && value.role === 'user') {
-      const content = Array.isArray(value.content) ? value.content : [value.content]
-      for (const part of content) {
-        const text = typeof part === 'string' ? part : part?.text
-        if (typeof text === 'string' && text.trim()) texts.push(text)
-      }
-    }
-    Object.values(value).forEach(visit)
-  }
-  visit(request.input)
-  return texts
+  const input = Array.isArray(request.input) ? request.input : []
+  return input
+    .filter(item => item.type === 'message' && item.role === 'user')
+    .map(item => {
+      const content = Array.isArray(item.content) ? item.content : [item.content]
+      return content.map(part => (typeof part === 'string' ? part : part?.text) ?? '').join('')
+    })
+    .filter(text => text.trim())
+}
+
+/** Match the actual reply after this question's acknowledgement, not injected context. */
+function hasUserReplyAfterToolOutput(request, callId, answer) {
+  const input = Array.isArray(request.input) ? request.input : []
+  const outputIndex = input.findIndex(
+    item => item.type === 'function_call_output' && item.call_id === callId
+  )
+  if (outputIndex === -1) return false
+  return inputUserMessageTexts({ input: input.slice(outputIndex + 1) }).some(
+    text => visibleRuntimeUserMessage(text) === answer
+  )
 }
 
 function pluginWorkspacePublishCommand(body) {
@@ -1232,6 +1248,7 @@ class DesktopE2EServer {
       this.commandResults.set(id, {
         clientId,
         queuedAt: new Date().toISOString(),
+        action,
         resolve: resolvePromise,
         reject,
         resolveDelivery,
@@ -1279,6 +1296,7 @@ class DesktopE2EServer {
     const { command } = this.commandQueue[commandIndex]
     const diagnostic = {
       ...command,
+      ...(command.action === 'setCloudSessionToken' ? { value: '[redacted]' } : {}),
       clientId,
       queuedAt: this.commandResults.get(command.id)?.queuedAt,
       deliveredAt: new Date().toISOString(),
@@ -2037,7 +2055,8 @@ class DesktopE2EServer {
         const previousLongPoll = this.controlLongPolls.get(previousClientId)
         if (previousLongPoll) {
           clearTimeout(previousLongPoll.timeout)
-          previousLongPoll.response.destroy()
+          previousLongPoll.response.writeHead(410)
+          previousLongPoll.response.end()
           this.controlLongPolls.delete(previousClientId)
         }
         this.controlWindowsByClient.delete(previousClientId)
@@ -2077,7 +2096,7 @@ class DesktopE2EServer {
       const clientId = url.searchParams.get('clientId')
       this.recordControlTransport('poll', clientId)
       if (!clientId || !this.controlWindowsByClient.has(clientId)) {
-        response.writeHead(204)
+        response.writeHead(410)
         response.end()
         return true
       }
@@ -2167,10 +2186,14 @@ class DesktopE2EServer {
         diagnostic.actionSucceeded = result.ok === true
       }
       this.commandResults.delete(result.id)
-      this.controlCommandAvailableAt.set(
-        result.clientId,
-        Date.now() + DESKTOP_CONTROL_COMMAND_INTERVAL_MS
-      )
+      // Observations may check readiness during an input cooldown, but must
+      // neither extend nor shorten the interval between state-changing actions.
+      if (!ELECTRON_OBSERVATION_ACTIONS.has(pending.action)) {
+        this.controlCommandAvailableAt.set(
+          result.clientId,
+          Date.now() + DESKTOP_CONTROL_COMMAND_INTERVAL_MS
+        )
+      }
       if (result.ok) {
         pending.resolve(result.value ?? '')
       } else {
@@ -3994,8 +4017,10 @@ class DesktopE2EServer {
         const toolOutput = toolOutputText(body, callId)
         if (toolOutput !== null) {
           assert.deepEqual(JSON.parse(toolOutput), { accepted: true })
-          const answered = inputUserMessageTexts(body).some(text =>
-            text.includes(REQUEST_USER_INPUT_FREE_TEXT_ANSWER)
+          const answered = hasUserReplyAfterToolOutput(
+            body,
+            callId,
+            REQUEST_USER_INPUT_FREE_TEXT_ANSWER
           )
           this.writeSse(response, [
             responseCreated(responseId),
@@ -4044,9 +4069,7 @@ class DesktopE2EServer {
           ])
           return
         }
-        const answered = inputUserMessageTexts(body).some(text =>
-          text.includes(REQUEST_USER_INPUT_ASYNC_ANSWER)
-        )
+        const answered = hasUserReplyAfterToolOutput(body, callId, REQUEST_USER_INPUT_ASYNC_ANSWER)
         this.writeSse(response, [
           responseCreated(responseId),
           assistantMessage(
@@ -4505,7 +4528,11 @@ class DesktopE2EServer {
       )
       this.writeSse(response, [
         responseCreated(responseId),
-        assistantMessage(FRESH_CHAT_COMPLETION_TEXT),
+        assistantMessage(
+          JSON.stringify(body).includes(DIAGRAM_REGRESSION_MARKER)
+            ? DIAGRAM_REGRESSION_RESPONSE
+            : FRESH_CHAT_COMPLETION_TEXT
+        ),
         responseCompleted(responseId),
       ])
       return

@@ -11,7 +11,9 @@ app_binary="$electron_package/WeWork"
 executor_binary="$electron_package/resources/bin/wegent-executor"
 backend_rs_binary="${WEWORK_E2E_BACKEND_RS_BUILD_BIN:-.ci-artifacts/wegent-backend-rs}"
 component_manifest="$electron_package/resources/components.json"
-core_plugins="$electron_package/resources/wework-core-plugins"
+core_plugins="$electron_package/resources/wework-core-plugins.tar.gz"
+app_static="$electron_package/resources/wework-app-static.tar.gz"
+bundled_plugins="$electron_package/resources/bundled-plugins.tar.gz"
 core_dsh="$electron_package/resources/harness-runtime"
 packaged_codex="$electron_package/resources/codex"
 codex_root="wework/resources/binaries/codex/$codex_target"
@@ -21,7 +23,9 @@ test -x "$app_binary"
 test -x "$executor_binary"
 test -x "$backend_rs_binary"
 test -f "$component_manifest"
-test -d "$core_plugins"
+test -s "$core_plugins"
+test -s "$app_static"
+test -s "$bundled_plugins"
 test -d "$core_dsh"
 test -d "$packaged_codex"
 test -d "$codex_root"
@@ -34,6 +38,7 @@ cp -R "$codex_root" "$staging_dir/codex/$codex_target"
 mkdir -p "$staging_dir/backend-rs"
 cp "$backend_rs_binary" "$staging_dir/backend-rs/wegent-backend-rs"
 node wework/scripts/build-desktop-e2e-client.mjs "$staging_dir/e2e-client"
+test -s "$staging_dir/e2e-client/lz-string.cjs"
 chmod 0755 \
   "$staging_dir/electron-app/WeWork" \
   "$staging_dir/electron-app/resources/bin/wegent-executor" \
@@ -46,5 +51,6 @@ if [[ "$(uname -s)" == "Linux" ]]; then
     "$staging_dir/backend-rs/wegent-backend-rs"
 fi
 
-tar -I 'zstd -T0 -3' -cf "$archive" -C "$artifact_dir" wework-core-e2e-build
+node .github/scripts/wework-core-e2e-transport.mjs deduplicate "$staging_dir"
+tar -cf - -C "$artifact_dir" wework-core-e2e-build | zstd -T0 -3 -f -o "$archive"
 test -s "$archive"

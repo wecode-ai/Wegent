@@ -61,8 +61,8 @@ import {
 import { filterSubscriptionTeamsByExecutionTarget } from './subscription-form/team-selection'
 import {
   getPreferredDevice,
-  isSubscriptionDevice,
   sortDevicesForSelection,
+  subscriptionDeviceType,
 } from './subscription-form/device-selection'
 
 const resolveGitType = (gitDomain?: string): GitRepoInfo['type'] => {
@@ -521,10 +521,10 @@ export function SubscriptionForm({
       return
     }
 
-    const matchedDevice = availableDevices.find(
+    const matchedDevice = sortDevicesForSelection(availableDevices).find(
       device => device.device_id === executionTarget.device_id
     )
-    if (matchedDevice && isSubscriptionDevice(matchedDevice)) {
+    if (matchedDevice && subscriptionDeviceType(matchedDevice)) {
       if (matchedDevice.device_type !== executionTarget.type) {
         setExecutionTarget({
           type: matchedDevice.device_type,

@@ -1,5 +1,6 @@
-import { useContext, useSyncExternalStore } from 'react'
-import type { RuntimeTaskAddress } from '@/types/api'
+import { useCallback, useContext, useSyncExternalStore } from 'react'
+import type { RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
+import { findRuntimeTask } from '@wegent/chat-core/runtime-task-lookup'
 import { RuntimeTaskLifecycleContext, RuntimeTaskLifecycleWriterContext } from './internalContext'
 import { RuntimeTaskLifecycleStore } from './RuntimeTaskLifecycleStore'
 import type { RuntimeTaskLifecycleSnapshot, RuntimeTaskLifecycleStoreSnapshot } from './types'
@@ -32,4 +33,19 @@ export function useRuntimeTaskLifecycle(
   }
   const snapshot = useRuntimeTaskLifecycleStoreSnapshot(store)
   return store.selectTask(snapshot, address)
+}
+
+export function useRuntimeTaskSummaryResolver(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  explicitStore?: RuntimeTaskLifecycleStore
+) {
+  const contextualStore = useContext(RuntimeTaskLifecycleContext)
+  const store = explicitStore ?? contextualStore
+  if (!store) throw new Error('RuntimeTaskLifecycleProvider is required')
+  const snapshot = useRuntimeTaskLifecycleStoreSnapshot(store)
+  return useCallback(
+    (address: RuntimeTaskAddress | null | undefined) =>
+      findRuntimeTask(runtimeWork, address) ?? store.selectTask(snapshot, address)?.task ?? null,
+    [runtimeWork, snapshot, store]
+  )
 }

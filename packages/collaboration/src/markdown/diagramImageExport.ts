@@ -1,129 +1,128 @@
-const MAX_EXPORT_EDGE = 4096;
-const EXPORT_SCALE = 2;
+import type { DiagramArtifact } from './diagramArtifact'
 
-function svgDimensions(svg: SVGSVGElement): { height: number; width: number } {
-  const viewBox = svg.viewBox.baseVal;
-  const bounds = svg.getBoundingClientRect();
+const MAX_EXPORT_EDGE = 4096
+const EXPORT_SCALE = 2
+
+/** Attachment viewers supply their rendered SVG only when an export is requested. */
+export function captureDiagramArtifact(container: HTMLElement | null): DiagramArtifact {
+  const svg = container?.querySelector<SVGSVGElement>('.drawing-diagram-svg')
+  if (!svg) throw new Error('The diagram is not ready')
+  const bounds = svg.getBoundingClientRect()
+  const width = svg.viewBox.baseVal.width || bounds.width
+  const height = svg.viewBox.baseVal.height || bounds.height
+  if (width <= 0 || height <= 0) throw new Error('The diagram has no size')
+  const source = new XMLSerializer().serializeToString(svg)
   return {
-    width: Math.max(1, viewBox.width || bounds.width || 800),
-    height: Math.max(1, viewBox.height || bounds.height || 600),
-  };
+    svg: source,
+    src: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(source)}`,
+    width,
+    height,
+  }
 }
 
 function loadImage(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
-    const image = new Image();
-    image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error("Failed to load the diagram SVG"));
-    image.src = url;
-  });
+    const image = new Image()
+    image.onload = () => resolve(image)
+    image.onerror = () => reject(new Error('Failed to load the diagram SVG'))
+    image.src = url
+  })
 }
 
 function canvasToPng(canvas: HTMLCanvasElement): Promise<Blob> {
   return new Promise((resolve, reject) => {
-    canvas.toBlob((blob) => {
+    canvas.toBlob(blob => {
       if (blob) {
-        resolve(blob);
-        return;
+        resolve(blob)
+        return
       }
-      reject(new Error("Failed to encode the diagram PNG"));
-    }, "image/png");
-  });
+      reject(new Error('Failed to encode the diagram PNG'))
+    }, 'image/png')
+  })
 }
 
 export function serializeDiagramSvg(
   svg: SVGSVGElement,
-  theme: "dark" | "light" | "system",
+  theme: 'dark' | 'light' | 'system',
   width: number,
-  height: number,
+  height: number
 ): string {
-  const clone = svg.cloneNode(true) as SVGSVGElement;
-  clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
-  clone.setAttribute("width", String(width));
-  clone.setAttribute("height", String(height));
-  replaceForeignObjects(clone, theme);
-  return new XMLSerializer().serializeToString(clone);
+  const clone = svg.cloneNode(true) as SVGSVGElement
+  clone.setAttributeNS('http://www.w3.org/2000/xmlns/', 'xmlns', 'http://www.w3.org/2000/svg')
+  clone.setAttribute('width', String(width))
+  clone.setAttribute('height', String(height))
+  replaceForeignObjects(clone, theme)
+  return new XMLSerializer().serializeToString(clone)
 }
 
-function replaceForeignObjects(
-  svg: SVGSVGElement,
-  theme: "dark" | "light" | "system",
-): void {
-  svg.querySelectorAll("foreignObject").forEach((foreignObject) => {
-    const textContent = foreignObject.textContent?.replace(/\s+/g, " ").trim();
-    if (!textContent) {
-      foreignObject.remove();
-      return;
-    }
+function replaceForeignObjects(svg: SVGSVGElement, theme: 'dark' | 'light' | 'system'): void {
+  Array.from(svg.getElementsByTagNameNS('http://www.w3.org/2000/svg', 'foreignObject')).forEach(
+    foreignObject => {
+      const textContent = foreignObject.textContent?.replace(/\s+/g, ' ').trim()
+      if (!textContent) {
+        foreignObject.remove()
+        return
+      }
 
-    const x = Number.parseFloat(foreignObject.getAttribute("x") ?? "0");
-    const y = Number.parseFloat(foreignObject.getAttribute("y") ?? "0");
-    const width = Number.parseFloat(foreignObject.getAttribute("width") ?? "0");
-    const height = Number.parseFloat(
-      foreignObject.getAttribute("height") ?? "0",
-    );
-    const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
-    text.setAttribute("x", String(x + width / 2));
-    text.setAttribute("y", String(y + height / 2));
-    text.setAttribute("text-anchor", "middle");
-    text.setAttribute("dominant-baseline", "central");
-    text.setAttribute("font-family", "Arial, sans-serif");
-    text.setAttribute("font-size", "16");
-    text.setAttribute("fill", theme === "dark" ? "#f3f4f6" : "#111827");
-    const transform = foreignObject.getAttribute("transform");
-    if (transform) text.setAttribute("transform", transform);
-    text.textContent = textContent;
-    foreignObject.replaceWith(text);
-  });
+      const x = Number.parseFloat(foreignObject.getAttribute('x') ?? '0')
+      const y = Number.parseFloat(foreignObject.getAttribute('y') ?? '0')
+      const width = Number.parseFloat(foreignObject.getAttribute('width') ?? '0')
+      const height = Number.parseFloat(foreignObject.getAttribute('height') ?? '0')
+      const text = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+      text.setAttribute('x', String(x + width / 2))
+      text.setAttribute('y', String(y + height / 2))
+      text.setAttribute('text-anchor', 'middle')
+      text.setAttribute('dominant-baseline', 'central')
+      text.setAttribute('font-family', 'Arial, sans-serif')
+      text.setAttribute('font-size', '16')
+      text.setAttribute('fill', theme === 'dark' ? '#f3f4f6' : '#111827')
+      const transform = foreignObject.getAttribute('transform')
+      if (transform) text.setAttribute('transform', transform)
+      text.textContent = textContent
+      foreignObject.replaceWith(text)
+    }
+  )
 }
 
 export async function renderDiagramPng(
-  container: HTMLElement,
-  theme: "dark" | "light" | "system",
+  artifact: DiagramArtifact,
+  theme: 'dark' | 'light' | 'system'
 ): Promise<Blob> {
-  const svg = container.querySelector<SVGSVGElement>(".drawing-diagram-svg");
-  if (!svg) throw new Error("The diagram is not ready");
+  const svg = new DOMParser().parseFromString(artifact.svg, 'image/svg+xml').querySelector('svg')
+  if (!svg) throw new Error('The diagram is not ready')
 
-  const { width, height } = svgDimensions(svg);
-  const scale = Math.min(
-    EXPORT_SCALE,
-    MAX_EXPORT_EDGE / Math.max(width, height),
-  );
-  const source = serializeDiagramSvg(svg, theme, width, height);
-  const image = await loadImage(
-    `data:image/svg+xml;charset=utf-8,${encodeURIComponent(source)}`,
-  );
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.ceil(width * scale);
-  canvas.height = Math.ceil(height * scale);
-  const context = canvas.getContext("2d");
-  if (!context) throw new Error("Canvas is unavailable");
+  const { width, height } = artifact
+  const scale = Math.min(EXPORT_SCALE, MAX_EXPORT_EDGE / Math.max(width, height))
+  const source = serializeDiagramSvg(svg, theme, width, height)
+  const image = await loadImage(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(source)}`)
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.ceil(width * scale)
+  canvas.height = Math.ceil(height * scale)
+  const context = canvas.getContext('2d')
+  if (!context) throw new Error('Canvas is unavailable')
 
-  context.scale(scale, scale);
-  context.fillStyle = theme === "dark" ? "#181818" : "#ffffff";
-  context.fillRect(0, 0, width, height);
-  context.drawImage(image, 0, 0, width, height);
-  return await canvasToPng(canvas);
+  context.scale(scale, scale)
+  context.fillStyle = theme === 'dark' ? '#181818' : '#ffffff'
+  context.fillRect(0, 0, width, height)
+  context.drawImage(image, 0, 0, width, height)
+  return await canvasToPng(canvas)
 }
 
 export async function copyDiagramPng(blob: Blob): Promise<void> {
-  if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") {
-    throw new Error("Image clipboard is unavailable");
+  if (!navigator.clipboard?.write || typeof ClipboardItem === 'undefined') {
+    throw new Error('Image clipboard is unavailable')
   }
-  await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+  await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
 }
 
-export async function saveDiagramPng(
-  blob: Blob,
-  filename: string,
-): Promise<boolean> {
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  window.setTimeout(() => URL.revokeObjectURL(url), 0);
-  return true;
+export async function saveDiagramPng(blob: Blob, filename: string): Promise<boolean> {
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  window.setTimeout(() => URL.revokeObjectURL(url), 0)
+  return true
 }

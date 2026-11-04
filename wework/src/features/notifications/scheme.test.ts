@@ -1,12 +1,30 @@
+// @vitest-environment node
+
 import { describe, expect, it } from 'vitest'
 import {
   parseWeworkScheme,
+  weworkAppScheme,
   weworkDestinationRoute,
   weworkIssueScheme,
+  weworkSmartAppScheme,
   weworkTaskScheme,
+  weworkInteractionScheme,
 } from './scheme'
 
 describe('Wework scheme routing', () => {
+  it('round trips the exact question identity, including turn scope and reserved characters', () => {
+    const requestKey = 'scope:turn/1#item:question?keep'
+    const address = { deviceId: 'device:1', taskId: 'review/#1' }
+    const destination = parseWeworkScheme(weworkInteractionScheme(address, requestKey))!
+    expect(destination).toEqual({ kind: 'interaction', ...address, requestKey })
+    const route = new URL(weworkDestinationRoute(destination), 'https://local')
+    expect(route.pathname).toBe('/pending-interactions')
+    expect(JSON.parse(route.searchParams.get('interaction')!)).toEqual([
+      address.deviceId,
+      address.taskId,
+      requestKey,
+    ])
+  })
   it('keeps local project storage in the destination and navigation route', () => {
     const url = weworkIssueScheme('local-project-1', 'OFF-1', 'local')
     const destination = parseWeworkScheme(url)!
@@ -49,6 +67,35 @@ describe('Wework scheme routing', () => {
       '/runtime-tasks?deviceId=local-device&taskId=task-1'
     )
   })
+  it('round trips DSH app and Smart app destinations', () => {
+    expect(parseWeworkScheme(weworkAppScheme('wegent/app'))).toEqual({
+      kind: 'app',
+      appId: 'wegent/app',
+    })
+    expect(weworkDestinationRoute(parseWeworkScheme(weworkAppScheme('wegent'))!)).toBe(
+      '/app/wegent'
+    )
+
+    const smartApp = parseWeworkScheme(weworkSmartAppScheme(42))!
+    expect(smartApp).toEqual({ kind: 'smart-app', smartAppId: 42 })
+    expect(parseWeworkScheme('wework://smart-apps/%34%32')).toEqual({
+      kind: 'smart-app',
+      smartAppId: 42,
+    })
+    const route = new URL(weworkDestinationRoute(smartApp), 'https://local')
+    expect(route.pathname).toBe('/sites')
+    expect(route.searchParams.get('app_type')).toBe('smart_app')
+    expect(route.searchParams.get('smartAppId')).toBe('42')
+  })
+  it('rejects invalid DSH app and Smart app destinations', () => {
+    expect(parseWeworkScheme('wework://apps')).toBeNull()
+    expect(parseWeworkScheme('wework://apps/')).toBeNull()
+    expect(parseWeworkScheme('wework://apps/a/b')).toBeNull()
+    expect(parseWeworkScheme('wework://smart-apps/0')).toBeNull()
+    expect(parseWeworkScheme('wework://smart-apps/-1')).toBeNull()
+    expect(parseWeworkScheme('wework://smart-apps/1.5')).toBeNull()
+    expect(() => weworkSmartAppScheme(0)).toThrow()
+  })
   it('carries the comment a notification points at into the board route', () => {
     const destination = parseWeworkScheme('wework://boards/12/issues/WEG-12/comments/c-1')!
     expect(destination).toEqual({
@@ -71,6 +118,7 @@ describe('Wework scheme routing', () => {
   })
   it.each([
     'https://boards/12',
+    'WEWORK://apps/wegent',
     'wework://boards/0',
     'wework://boards/12/issues/',
     'wework://boards/12/issues/WEG-12/comments',

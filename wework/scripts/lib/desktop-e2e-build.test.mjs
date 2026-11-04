@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { constants } from 'node:fs'
 import { basename, normalize, resolve } from 'node:path'
 import { describe, expect, test, vi } from 'vitest'

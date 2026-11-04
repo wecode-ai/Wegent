@@ -52,6 +52,9 @@ impl RuntimeWorkRpcHandler {
             ));
         }
         let manager_task_id = format!("{dispatch_task_id}-manager-initial");
+        let coordinator_identity = execution_request(&manager_request)
+            .as_ref()
+            .and_then(super::project_coordination_execution::capture_identity);
         let member_profiles = payload
             .get("memberRuntimeProfiles")
             .and_then(Value::as_array)
@@ -83,6 +86,9 @@ impl RuntimeWorkRpcHandler {
                 .or_insert_with(|| json!({}));
             if !runtime_handle.is_object() {
                 *runtime_handle = json!({});
+            }
+            if let Some(identity) = coordinator_identity {
+                runtime_handle[super::project_coordination_execution::IDENTITY_KEY] = identity;
             }
             runtime_handle
                 .as_object_mut()
@@ -399,6 +405,14 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn create_task(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let command_gate = payload
+            .get("commandId")
+            .and_then(|_| runtime_task_id(&payload))
+            .map(|id| self.task_send_gate(&id));
+        let _command_guard = match command_gate.as_ref() {
+            Some(gate) => Some(gate.lock().await),
+            None => None,
+        };
         let schema_version = payload
             .get("schemaVersion")
             .or_else(|| payload.get("schema_version"))
@@ -417,6 +431,9 @@ impl RuntimeWorkRpcHandler {
                 "unsupported_schema_version",
                 format!("runtime task create schemaVersion {schema_version} is unsupported"),
             ));
+        }
+        if let Some(receipt) = self.existing_payload_command(&payload).await? {
+            return Ok(receipt);
         }
         if schema_version == 2 {
             crate::runtime_work::task_create_contract::validate_runtime_task_create_v2(&payload)
@@ -892,7 +909,7 @@ impl RuntimeWorkRpcHandler {
         }))
     }
 
-    fn retain_failed_runtime_task(&self, local_task_id: &str, error: &AppIpcError) {
+    pub(super) fn retain_failed_runtime_task(&self, local_task_id: &str, error: &AppIpcError) {
         self.store.update_task(local_task_id, |link| {
             apply_runtime_task_start_failure(link, error);
         });
@@ -934,9 +951,10 @@ impl RuntimeWorkRpcHandler {
         turn_id: &str,
     ) {
         self.store.update_task(local_task_id, |link| {
+            let identities = superseded_turn_identities(link, turn_id);
             let Some(runtime_handle) = link.runtime_handle.as_object_mut() else {
                 link.runtime_handle = json!({
-                    "supersededTranscriptTurnIds": [turn_id],
+                    "supersededTranscriptTurnIds": identities,
                 });
                 return;
             };
@@ -944,14 +962,16 @@ impl RuntimeWorkRpcHandler {
                 .entry("supersededTranscriptTurnIds")
                 .or_insert_with(|| json!([]));
             let Some(turn_ids) = turn_ids.as_array_mut() else {
-                *turn_ids = json!([turn_id]);
+                *turn_ids = json!(identities);
                 return;
             };
-            if !turn_ids
-                .iter()
-                .any(|existing| existing.as_str() == Some(turn_id))
-            {
-                turn_ids.push(Value::String(turn_id.to_owned()));
+            for identity in identities {
+                if !turn_ids
+                    .iter()
+                    .any(|existing| existing.as_str() == Some(&identity))
+                {
+                    turn_ids.push(Value::String(identity));
+                }
             }
         });
     }
@@ -980,10 +1000,78 @@ impl RuntimeWorkRpcHandler {
         self.send_message_after_local_checks(payload).await
     }
 
+    pub(super) async fn send_coordination_assessment(
+        &self,
+        payload: Value,
+    ) -> Result<Option<Value>, AppIpcError> {
+        let id = runtime_task_id(&payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let gate = self.task_send_gate(&id);
+        let _guard = gate.lock().await;
+        let Some(mut link) = self.local_task_link(&id) else {
+            return Err(AppIpcError::new(
+                "not_found",
+                "Coordinator task no longer exists",
+            ));
+        };
+        if self.is_busy_local_task(&id)
+            || link
+                .interaction_status
+                .as_deref()
+                .is_some_and(|status| !status.is_empty())
+            || link.status == "archived"
+        {
+            return Ok(None);
+        }
+        let origin = &payload["executionRequest"]["origin"];
+        let user = super::stand_in_work::stand_in_user(origin)?;
+        let store = LocalTaskStore::open(self.task_store_path.as_ref())
+            .map_err(super::stand_in::settings_error)?;
+        let state = store
+            .stand_in_processing_state(user)
+            .map_err(super::stand_in::settings_error)?;
+        if id != format!("stand-in-coordinator-{user}")
+            || origin["type"] != "stand_in_coordinator"
+            || origin["deviceId"] != self.device_id
+            || link.runtime_handle["origin"]["type"] != "stand_in_coordinator"
+            || link.runtime_handle["origin"]["userId"] != user
+            || state["batchId"].is_null()
+            || state["batchId"] != origin["batchId"]
+        {
+            return Err(AppIpcError::new(
+                "stale_context",
+                "Coordinator batch is no longer current",
+            ));
+        }
+        link.runtime_handle["origin"] = origin.clone();
+        self.upsert_local_task(link);
+        self.send_message_after_local_checks(payload)
+            .await
+            .map(Some)
+    }
+
     async fn send_message_after_local_checks(&self, payload: Value) -> Result<Value, AppIpcError> {
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let existing_link = self.local_task_link(&local_task_id);
+        let payload = if let Some(link) = &existing_link {
+            self.refresh_project_coordinator_payload(payload, link)
+                .await?
+        } else {
+            payload
+        };
+        if let Some(receipt) = self.existing_payload_command(&payload).await? {
+            return Ok(receipt);
+        }
+        if payload["automaticStandIn"] == true
+            && existing_link.as_ref().is_some_and(|link| {
+                link.interaction_status
+                    .as_deref()
+                    .is_some_and(|status| !status.is_empty())
+            })
+        {
+            return Ok(json!({"pending":true,"accepted":false,"code":"stand_in_waiting_for_user"}));
+        }
         let payload_execution_request = execution_request(&payload);
         let has_execution_request = payload_execution_request.is_some();
         if let Some(response) = request_user_input_response(&payload) {
@@ -995,7 +1083,17 @@ impl RuntimeWorkRpcHandler {
             .or_else(|| bool_field(&payload, "queue_if_busy"))
             .unwrap_or(false);
         let was_busy = self.is_busy_local_task(&local_task_id);
-        if was_busy && !queue_if_busy {
+        // Native completion can precede isolated app-server/process cleanup.
+        // Admit one continuation through the existing serial scheduler while
+        // retaining the old execution's resources until cleanup finishes.
+        let completed_native_turn = existing_link.as_ref().is_some_and(|link| {
+            crate::runtime_work::lifecycle::native_execution_state(link).is_some_and(|state| {
+                state.phase == crate::runtime_work::lifecycle::NativeExecutionPhase::Idle
+                    && state.execution_outcome.as_deref() == Some("succeeded")
+            })
+        }) && self.is_active_local_task(&local_task_id)
+            && !self.is_queued_local_task(&local_task_id);
+        if was_busy && !queue_if_busy && !completed_native_turn {
             return Ok(json!({
                 "success": false,
                 "error": "runtime task is already running",
@@ -1228,7 +1326,7 @@ impl RuntimeWorkRpcHandler {
             resume_thread_id,
             initial_thread_goal,
         };
-        if was_busy {
+        if was_busy && !completed_native_turn {
             self.queue_turn(turn).await?;
         } else {
             self.spawn_turn(turn).await?;
@@ -1511,7 +1609,8 @@ impl RuntimeWorkRpcHandler {
             "runtime guidance requested",
             &[("local_task_id", local_task_id.clone())],
         );
-        let Some(mut active_turn) = self.wait_for_active_codex_turn(&local_task_id).await else {
+        let Some((thread_id, mut turn_id)) = self.wait_for_guidance_turn(&local_task_id).await
+        else {
             log_executor_event(
                 "runtime guidance rejected",
                 &[
@@ -1544,8 +1643,8 @@ impl RuntimeWorkRpcHandler {
         let steer_result = self
             .codex_app_server
             .steer_turn(
-                &active_turn.thread_id,
-                &active_turn.turn_id,
+                &thread_id,
+                &turn_id,
                 Some(guidance_id.clone()),
                 Value::Array(steer_input.clone()),
                 additional_context.clone(),
@@ -1556,14 +1655,16 @@ impl RuntimeWorkRpcHandler {
                 let Some(actual_turn_id) = active_turn_id_from_steer_mismatch(&error) else {
                     return Ok(runtime_guidance_failure(
                         &local_task_id,
-                        &active_turn,
+                        &thread_id,
+                        &turn_id,
                         error,
                     ));
                 };
-                if actual_turn_id == active_turn.turn_id {
+                if actual_turn_id == turn_id {
                     return Ok(runtime_guidance_failure(
                         &local_task_id,
-                        &active_turn,
+                        &thread_id,
+                        &turn_id,
                         error,
                     ));
                 }
@@ -1571,21 +1672,15 @@ impl RuntimeWorkRpcHandler {
                     "runtime guidance active turn corrected",
                     &[
                         ("local_task_id", local_task_id.clone()),
-                        ("thread_id", active_turn.thread_id.clone()),
-                        ("previous_turn_id", active_turn.turn_id.clone()),
+                        ("thread_id", thread_id.clone()),
+                        ("previous_turn_id", turn_id.clone()),
                         ("turn_id", actual_turn_id.clone()),
                     ],
                 );
-                self.record_active_codex_turn(
-                    &local_task_id,
-                    active_turn.execution_id,
-                    active_turn.thread_id.clone(),
-                    actual_turn_id.clone(),
-                );
-                active_turn.turn_id = actual_turn_id.clone();
+                turn_id = actual_turn_id.clone();
                 self.codex_app_server
                     .steer_turn(
-                        &active_turn.thread_id,
+                        &thread_id,
                         &actual_turn_id,
                         Some(guidance_id.clone()),
                         Value::Array(steer_input),
@@ -1598,17 +1693,11 @@ impl RuntimeWorkRpcHandler {
         match steer_result {
             Ok(turn_id) => {
                 self.set_interaction_status(&local_task_id, None);
-                self.record_active_codex_turn(
-                    &local_task_id,
-                    active_turn.execution_id,
-                    active_turn.thread_id.clone(),
-                    turn_id.clone(),
-                );
                 log_executor_event(
                     "runtime guidance accepted",
                     &[
                         ("local_task_id", local_task_id.clone()),
-                        ("thread_id", active_turn.thread_id.clone()),
+                        ("thread_id", thread_id.clone()),
                         ("turn_id", turn_id.clone()),
                     ],
                 );
@@ -1624,7 +1713,8 @@ impl RuntimeWorkRpcHandler {
             }
             Err(error) => Ok(runtime_guidance_failure(
                 &local_task_id,
-                &active_turn,
+                &thread_id,
+                &turn_id,
                 error,
             )),
         }
@@ -2018,12 +2108,20 @@ impl RuntimeWorkRpcHandler {
                 }));
             }
             let previous = scheduler.clone();
+            scheduler.refresh_automatic_waits(&self.store, None);
             let turn = scheduler.force_start(&local_task_id).ok_or_else(|| {
                 AppIpcError::new("runtime_queue_failed", "queued runtime task disappeared")
             })?;
             (previous, turn, scheduler.queued_turns.clone())
         };
-        if let Err(error) = self.persist_turn_queue(remaining_turns).await {
+        if let Err(error) = self
+            .persist_turn_queue(
+                remaining_turns,
+                Some(&previous),
+                std::slice::from_ref(&queued_turn),
+            )
+            .await
+        {
             *self
                 .turn_scheduler
                 .lock()
@@ -2106,7 +2204,10 @@ impl RuntimeWorkRpcHandler {
                 .collect::<Vec<_>>();
             (previous, ordered_task_ids, reordered)
         };
-        if let Err(error) = self.persist_turn_queue(reordered).await {
+        if let Err(error) = self
+            .persist_turn_queue(reordered, Some(&previous), &[])
+            .await
+        {
             *self
                 .turn_scheduler
                 .lock()
@@ -2220,6 +2321,7 @@ fn apply_runtime_profile_handle(runtime_handle: &mut Value, payload: &Value) {
             COLLABORATION_MANAGER_CONTEXT_KEY,
             "collaborationDispatchTaskId",
             "collaborationMemberRuntimeProfiles",
+            super::project_coordination_execution::IDENTITY_KEY,
         ] {
             if let Some(value) = profile.get(key) {
                 handle.insert(key.to_owned(), value.clone());
@@ -2412,7 +2514,8 @@ fn model_selection_identity(selection: Option<&Value>) -> Option<(String, Option
 
 fn runtime_guidance_failure(
     local_task_id: &str,
-    active_turn: &ActiveCodexTurn,
+    thread_id: &str,
+    turn_id: &str,
     error: String,
 ) -> Value {
     let code = codex_guidance_failure_code(&error);
@@ -2421,8 +2524,8 @@ fn runtime_guidance_failure(
         &[
             ("local_task_id", local_task_id.to_owned()),
             ("code", code.to_owned()),
-            ("thread_id", active_turn.thread_id.clone()),
-            ("turn_id", active_turn.turn_id.clone()),
+            ("thread_id", thread_id.to_owned()),
+            ("turn_id", turn_id.to_owned()),
         ],
     );
     json!({
@@ -2476,6 +2579,30 @@ fn synthetic_transcript_turn_id_base(value: &str) -> Option<&str> {
         return None;
     }
     Some(turn_id)
+}
+
+fn superseded_turn_identities(link: &RuntimeTaskLink, turn_id: &str) -> Vec<String> {
+    let mut identities = vec![turn_id.to_owned()];
+    if let Some(native_id) = resolve_codex_turn_id(link, turn_id) {
+        if native_id != turn_id {
+            identities.push(native_id.clone());
+        }
+        if let Some(mappings) = link
+            .runtime_handle
+            .get("turnIdsBySubtask")
+            .and_then(Value::as_object)
+        {
+            identities.extend(
+                mappings
+                    .iter()
+                    .filter(|(alias, native)| {
+                        native.as_str() == Some(native_id.as_str()) && alias.as_str() != turn_id
+                    })
+                    .map(|(alias, _)| alias.clone()),
+            );
+        }
+    }
+    identities
 }
 
 fn retry_source_turn_id(payload: &Value) -> Option<String> {

@@ -17,6 +17,10 @@ import { writeFile } from 'node:fs/promises'
 import { verifyDownloadedDshRuntimeCache } from './dsh-runtime-cache.mjs'
 import { telemetryEvents } from './response-protocol.mjs'
 import { verifySmartAppMarketplaceIdentity } from './smart-app-marketplace-identity.mjs'
+import {
+  verifyRunningSmartAppInstallRejected,
+  verifyStoppedSmartAppInstallAllowed,
+} from './smart-app-running-install-guard.mjs'
 
 export async function verifyHarnessLifecycle(
   control,
@@ -42,7 +46,7 @@ export async function verifyHarnessLifecycle(
     ]),
   })
   await control.command('waitFor', `[data-testid="smart-app-created-item-${INSTALLATION_ID}"]`, {
-    text: 'DSH E2E Smoke 0.1.0-rc.8',
+    text: 'DSH E2E Smoke 0.2.0-rc.2',
     timeoutMs: uiTimeoutMs,
   })
   await captureScreenshot(control, 'harness-apps-04-created.png', 'body')
@@ -88,7 +92,7 @@ export async function verifyHarnessLifecycle(
     'waitFor',
     `[data-testid="smart-app-created-item-${IMPORTED_INSTALLATION_ID}"]`,
     {
-      text: 'DSH E2E Smoke 0.1.0-rc.8',
+      text: 'DSH E2E Smoke 0.2.0-rc.2',
       timeoutMs: uiTimeoutMs,
     }
   )
@@ -183,7 +187,7 @@ export async function verifyHarnessLifecycle(
     'Making the Smart app private left it listed in the public marketplace'
   )
   await waitForMissing(control, '[data-testid="smart-app-share-dialog"]', uiTimeoutMs)
-  await control.command('click', sharedVisibilitySelector)
+  await control.command('clickWhenEnabled', sharedVisibilitySelector)
   await control.command('waitFor', '[data-testid="smart-app-share-scope-private"]', {
     timeoutMs: uiTimeoutMs,
   })
@@ -265,6 +269,11 @@ export async function verifyHarnessLifecycle(
     `${activeWorkspaceContentSelector} [data-testid="harness-app-open-${IMPORTED_INSTALLATION_ID}"]`,
     { timeoutMs: 30_000 }
   )
+  const runningInstallGuard = await verifyRunningSmartAppInstallRejected(control, {
+    installationId: IMPORTED_INSTALLATION_ID,
+    modelKey: await control.command('getValue', importedModelSelector),
+    resultDir,
+  })
   await control.command(
     'click',
     `${activeWorkspaceContentSelector} [data-testid="smart-app-actions-${IMPORTED_INSTALLATION_ID}"]`
@@ -281,11 +290,18 @@ export async function verifyHarnessLifecycle(
     'waitFor',
     `[data-testid="harness-app-start-${IMPORTED_INSTALLATION_ID}"]`,
     {
+      enabled: true,
       timeoutMs: 30_000,
     }
   )
+  await verifyStoppedSmartAppInstallAllowed(control, runningInstallGuard)
 
   const modelSelector = `[data-testid="harness-app-model-${INSTALLATION_ID}"]`
+  await control.command('waitFor', modelSelector, {
+    enabled: true,
+    stableMs: 300,
+    timeoutMs: uiTimeoutMs,
+  })
   const initialModelKey = await control.command('getValue', modelSelector)
   await control.command('select', modelSelector, {
     by: 'label',
@@ -470,7 +486,7 @@ export async function verifyHarnessLifecycle(
   assert.deepEqual(
     await verifyDownloadedDshRuntimeCache(join(resultDir, 'harness-runtime'), '0.1.0-rc.8'),
     legacyRuntimeCache,
-    'Reopening a legacy app must reuse its previously verified runtime archive'
+    'Reopening an authenticated app must preserve the verified legacy runtime archive'
   )
   const reopenedAppTabId = await control.command('getAttribute', appSurface, {
     value: 'data-workspace-tab-id',

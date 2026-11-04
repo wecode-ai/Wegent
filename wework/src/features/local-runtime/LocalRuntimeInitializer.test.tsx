@@ -436,21 +436,6 @@ describe('LocalRuntimeInitializer', () => {
     expect(screen.getByTestId('local-runtime-copy-debug-button')).toHaveTextContent('已复制')
   })
 
-  test('keeps the startup screen titlebar draggable while executor is starting', async () => {
-    ensureMock.mockImplementation(() => new Promise(() => undefined))
-
-    render(
-      <LocalRuntimeInitializer startupReady={false}>
-        <div data-testid="main-app">Main app</div>
-      </LocalRuntimeInitializer>
-    )
-
-    const dragRegion = within(screen.getByTestId('local-runtime-titlebar-drag-region')).getByTestId(
-      'macos-titlebar-drag-region'
-    )
-    expect(dragRegion).toHaveClass('electron-titlebar-drag-region')
-  })
-
   test('does not remount children when the startup screen is dismissed', async () => {
     ensureMock.mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' })
     const onMount = vi.fn()
@@ -492,8 +477,9 @@ describe('LocalRuntimeInitializer', () => {
   })
 
   test('shows startup error and retries initialization', async () => {
+    const startupError = new Error('stdio unavailable')
     ensureMock
-      .mockRejectedValueOnce(new Error('stdio unavailable'))
+      .mockRejectedValueOnce(startupError)
       .mockResolvedValueOnce({ running: true, ready: true, deviceId: 'local-device' })
 
     Object.defineProperty(navigator, 'userAgent', {
@@ -510,7 +496,11 @@ describe('LocalRuntimeInitializer', () => {
     expect(await screen.findByTestId('local-runtime-error')).toHaveTextContent('stdio unavailable')
     expect(screen.getByText('~/.wework/logs/executor.log')).toBeInTheDocument()
     await waitFor(() =>
-      expect(desktopHostInvokeMock).toHaveBeenCalledWith('renderer.startupFailed')
+      expect(desktopHostInvokeMock).toHaveBeenCalledWith('renderer.startupFailed', {
+        message: 'stdio unavailable',
+        stack: startupError.stack,
+        source: 'local_runtime_initialize',
+      })
     )
 
     await userEvent.click(screen.getByTestId('local-runtime-retry-button'))

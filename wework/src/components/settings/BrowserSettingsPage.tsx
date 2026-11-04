@@ -155,6 +155,19 @@ export function BrowserSettingsPage() {
         </h2>
         <SettingsGroup>
           <SettingsRow
+            label={t('workbench.browser_settings_full_control')}
+            description={t('workbench.browser_settings_full_control_description')}
+            control={
+              <SettingsSwitch
+                data-testid="browser-full-control-toggle"
+                checked={preferences.browserFullControl}
+                disabled={controlsDisabled}
+                onCheckedChange={checked => void savePreferences({ browserFullControl: checked })}
+                aria-label={t('workbench.browser_settings_full_control')}
+              />
+            }
+          />
+          <SettingsRow
             label={t('workbench.browser_settings_external_links')}
             description={t('workbench.browser_settings_external_links_description')}
             control={

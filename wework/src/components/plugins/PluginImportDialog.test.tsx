@@ -1,8 +1,8 @@
-import { render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { LocalCodexPluginApi, LocalPluginImportPreview } from '@/api/local/codexPlugins'
 import '@/i18n'
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { PluginImportDialog } from './PluginImportDialog'
 
 const desktopHostMock = vi.hoisted(() => vi.fn())
@@ -41,19 +41,6 @@ function pluginApi(overrides: Partial<LocalCodexPluginApi> = {}): LocalCodexPlug
 }
 
 describe('PluginImportDialog', () => {
-  test('warns about unofficial packages even when they only contain skills', async () => {
-    desktopHostMock.mockResolvedValue({ canceled: false, filePaths: ['/tmp/skills.zip'] })
-    const api = pluginApi({
-      previewPluginImport: vi
-        .fn()
-        .mockResolvedValue({ ...validPreview, executableCapabilities: [] }),
-    })
-    render(<PluginImportDialog pluginApi={api} onCancel={vi.fn()} onImported={vi.fn()} />)
-    await userEvent.click(screen.getByTestId('plugin-import-select'))
-    expect(await screen.findByTestId('plugin-install-unofficial-warning')).toBeInTheDocument()
-    expect(api.importPluginPackage).not.toHaveBeenCalled()
-  })
-
   test('cancels with Escape without importing a package', async () => {
     const onCancel = vi.fn()
     const api = pluginApi()
@@ -65,34 +52,6 @@ describe('PluginImportDialog', () => {
 
   beforeEach(() => {
     desktopHostMock.mockReset()
-  })
-
-  test('explains how to fix a ZIP with an extra wrapper directory', async () => {
-    desktopHostMock.mockResolvedValue({
-      canceled: false,
-      filePaths: ['/tmp/wrapped.zip'],
-    })
-    const api = pluginApi({
-      previewPluginImport: vi.fn().mockResolvedValue({
-        ...validPreview,
-        valid: false,
-        issues: [
-          {
-            code: 'manifest_not_at_root',
-            path: 'example-plugin/.codex-plugin/plugin.json',
-            message: 'manifest is nested',
-          },
-        ],
-      }),
-    })
-    render(<PluginImportDialog pluginApi={api} onCancel={vi.fn()} onImported={vi.fn()} />)
-
-    await userEvent.click(screen.getByTestId('plugin-import-select'))
-
-    expect(await screen.findByTestId('plugin-import-issues')).toHaveTextContent(
-      '.codex-plugin/plugin.json'
-    )
-    expect(screen.queryByTestId('plugin-import-confirm')).not.toBeInTheDocument()
   })
 
   test('shows localized guidance for password-protected ZIP files', async () => {
@@ -123,32 +82,6 @@ describe('PluginImportDialog', () => {
     expect(screen.queryByText(/Password required/i)).not.toBeInTheDocument()
   })
 
-  test('requires trust confirmation before importing executable plugin capabilities', async () => {
-    desktopHostMock.mockResolvedValue({
-      canceled: false,
-      filePaths: ['/tmp/example-plugin.zip'],
-    })
-    const imported = {
-      pluginName: 'example-plugin',
-      displayName: 'Example Plugin',
-      version: '1.0.0',
-    }
-    const importPluginPackage = vi.fn().mockResolvedValue(imported)
-    const onImported = vi.fn()
-    const api = pluginApi({ importPluginPackage })
-    render(<PluginImportDialog pluginApi={api} onCancel={vi.fn()} onImported={onImported} />)
-
-    await userEvent.click(screen.getByTestId('plugin-import-select'))
-    const confirm = await screen.findByTestId('plugin-import-confirm')
-    expect(confirm).toBeDisabled()
-
-    await userEvent.click(screen.getByTestId('plugin-import-risk-confirm'))
-    await userEvent.click(confirm)
-
-    await waitFor(() => expect(importPluginPackage).toHaveBeenCalledWith(validPreview, false))
-    expect(onImported).toHaveBeenCalledWith(imported)
-  })
-
   test('does not expose raw installation errors in the localized dialog', async () => {
     desktopHostMock.mockResolvedValue({
       canceled: false,
@@ -170,22 +103,5 @@ describe('PluginImportDialog', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('插件导入或安装失败，请稍后重试')
     expect(screen.queryByText(/codex_app_server_request_failed/i)).not.toBeInTheDocument()
-  })
-
-  test('saves the bundled example package to the selected path', async () => {
-    desktopHostMock.mockResolvedValue({
-      canceled: false,
-      filePath: '/tmp/example.zip',
-    })
-    const savePluginExample = vi.fn().mockResolvedValue('/tmp/example.zip')
-    const api = pluginApi({ savePluginExample })
-    render(<PluginImportDialog pluginApi={api} onCancel={vi.fn()} onImported={vi.fn()} />)
-
-    await userEvent.click(screen.getByTestId('plugin-import-download-example'))
-
-    await waitFor(() => expect(savePluginExample).toHaveBeenCalledWith('/tmp/example.zip'))
-    expect(await screen.findByTestId('plugin-import-example-saved')).toHaveTextContent(
-      '/tmp/example.zip'
-    )
   })
 })

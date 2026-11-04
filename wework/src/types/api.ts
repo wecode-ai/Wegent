@@ -91,7 +91,7 @@ import type {
 } from '@wegent/chat-core/runtime-stream-types'
 export type {
   RuntimeGoal,
-  RuntimeGoalContinuationPayload,
+  RuntimeTurnUpdatedPayload,
   RuntimeSupervisorState,
   RuntimeTaskTitleUpdatedPayload,
   ChatChunkPayload,
@@ -106,7 +106,7 @@ export type {
   RuntimeSubagentActivityPayload,
   RuntimeSupervisorEventPayload,
   RuntimeGoalStatus,
-  RuntimeGoalContinuationStatus,
+  RuntimeTurnUpdateStatus,
   RuntimeSupervisorMode,
   RuntimeSupervisorStatus,
   ModelSelectionConfig,
@@ -913,6 +913,9 @@ export interface RuntimeTaskExecutionConfig {
 }
 
 export interface RuntimeTaskCreateRequest extends RuntimeTaskCreateIntent {
+  /** Identity that owns this scheduled work; checked again when it executes. */
+  standInOwner?: { userId: number; roleId: string }
+  standInCalendar?: Record<string, never>
   forceStart?: boolean
   /** Logical route used to bind this task to a project Issue. */
   executionDeviceId?: string
@@ -1114,7 +1117,7 @@ export interface GitCloneProjectOperation extends CloneGitRepositoryInput {
   name: string
   status: 'cloning' | 'opening' | 'failed'
   failureStage?: 'clone' | 'open'
-  failureReason?: 'executor-offline' | 'clone-failed' | 'open-failed'
+  failureReason?: 'executor-offline' | 'executor-not-found' | 'clone-failed' | 'open-failed'
   error?: string
 }
 
@@ -1555,6 +1558,8 @@ export interface PluginMarketplaceItem {
   displayName: string
   description: string
   version?: string | null
+  /** Cloud release version when an owner card displays its editable local version. */
+  sharedVersion?: string | null
   author?: string | null
   visibility: 'personal' | 'workspace' | 'public'
   featured: boolean
@@ -1695,6 +1700,7 @@ export interface PluginSubmissionInitRequest {
   visibility?: 'personal' | 'workspace' | 'public'
   targets?: PluginAccessTarget[]
   allowCopy?: boolean
+  releaseNotes?: string | null
 }
 
 export interface PluginSubmissionInitResponse {

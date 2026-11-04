@@ -28,6 +28,16 @@ If a connected cloud device and the current local Wework executor refer to the s
 
 To create a Git project, select a device, repository, default branch, and destination. If repositories are unavailable, check the Git connection and token permissions in Settings.
 
+## Select and create branches
+
+Use the branch menu in the composer to search and switch local branches, or create and check out a new branch. The list excludes tags and remote-tracking refs and places the current local branch first. Branch listing and current-branch queries use commands compatible with older Git versions, without depending on `git branch --format` or `--show-current`. A detached HEAD has an empty current branch name; local branches remain selectable.
+
+Selecting a branch performs checkout on the execution device even when its name matches the last displayed branch, so cached UI state cannot prevent recovery from detached HEAD.
+
+Pushing also uses a current-branch query compatible with older Git versions. Check out a branch before pushing from a detached HEAD.
+
+If another device still reports `unknown option`, confirm that its Wework executor has been updated. Cloud connections to cloud or remote devices also require an updated Wegent Backend. Git queries run on the device that owns the workspace; updating Git on another machine does not change that device's queries.
+
 ## View pull request and merge request status
 
 When a task is opened or selected, Wework reads the branch, remote URL, PR/MR status, and change counts concurrently. It displays the PR/MR status as soon as that lookup finishes instead of waiting for a slower diff count; changed-file and line counts update independently afterward. These Git queries do not start the user's login shell, so shell startup scripts, SDK initialization, and other personal environment configuration cannot block the environment panel.
@@ -170,6 +180,8 @@ The native task board's view dropdown on the right provides switching, creation,
 
 Project administrators can save multiple views, bind each lane to a status or tag, reorder lanes, configure tag filters, and choose the project default view. Entering a project opens its default; subsequent switches apply to the current visit. Views and their default are shared with project members. Deleting the default view restores the base board. Lane settings and card fields are edited in one dialog and saved together; card fields apply to every view in the project.
 
+Add an **Other (unmatched)** lane, name it **Backlog**, and move it to the left. Each view supports one such lane. It displays Issues within the view filters that match none of the other status or tag lanes. New unmatched Issues appear automatically, including those with unrelated business tags. Dragging back removes all stage tags bound by this view while preserving other tags and status. If the status still matches another status lane, change the status first. A return that would violate the view filters is also blocked. The lane’s create action keeps the normal initial status and supplies tags satisfying the view filters. The action is hidden when that status matches another lane or the filters cannot be satisfied.
+
 Tag names allow up to 32 Unicode code points, including supplementary characters such as emoji. Stored names have no leading or trailing whitespace; lanes and filters must reference the same canonical names. Issue tags, project tags, tag lanes, and filters use the same length limit. Longer input displays an error and cannot be saved; names are never automatically truncated. Historical long tags retain their original values when read or when unrelated fields such as titles change.
 
 Each Issue and the tag catalog saved in project settings allow up to 20 distinct tags. Dragging an Issue with 19 tags into a new tag lane adds its twentieth tag. Adding another tag at the limit displays an error, preserves the original tags and version, and shows no success feedback. Replacing a tag between two tag lanes remains available. Tag lists are never automatically truncated; historical lists above the limit remain intact when read or when unrelated fields change.
@@ -186,6 +198,14 @@ Renaming or deleting a tag in a native project saves the catalog, tags on undele
 An Issue can appear in both its matching status and tag lanes. After a cross-type drag, the destination card is highlighted and feedback describes the actual change. Dragging into a tag lane never reopens a completed Issue. Custom views with In progress or In review lanes also support Focus view to expand execution progress.
 
 Existing projects keep the base board without converting historical Issue statuses or tags. Concurrent configuration changes produce a conflict message and refresh the latest configuration. Older clients cannot edit unknown view formats created by newer versions.
+
+## Sub-issue progress on cards
+
+Issue cards with sub-issues show a progress ring and **Sub-issues 2/5**, meaning 2 of 5 direct sub-issues are completed. The ring turns green when all are complete. Select this control to enter the Issue's sub-issue board without opening its details.
+
+Progress counts direct sub-issues that the current user can view and that are not archived. It excludes deeper descendants and is independent of search, tag filters, and grouping. The control is hidden when no eligible sub-issues exist. Local and cloud projects share this presentation.
+
+Desktop regression: `pnpm --filter wework e2e:desktop --segment collaboration-parent-board`. The new progress checks share the existing parent-board CI checkpoint and desktop runtime.
 
 ## Lane sorting
 

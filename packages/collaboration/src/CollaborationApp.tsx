@@ -2,10 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { bulkIssueStatus } from './platform/bulkIssueStatus'
-import { runnerEnvironmentError } from './execution-environment/runnerEnvironmentError'
-import { BrowserTaskDrafts } from './issue-detail/BrowserTaskDrafts'
-import { saveProjectBoardViews } from './project-board/saveProjectBoardViews'
+import { ProjectTemplateSettings } from "./templates/ProjectTemplateSettings";
+import { useCollaborationTemplateStore } from "./templates/context";
+import { templateMessages } from "./templates/messages";
+import { bulkIssueStatus } from "./platform/bulkIssueStatus";
+import { runnerEnvironmentError } from "./execution-environment/runnerEnvironmentError";
+import { BrowserTaskDrafts } from "./issue-detail/BrowserTaskDrafts";
+import { saveProjectBoardViews } from "./project-board/saveProjectBoardViews";
+import type { BoardIssueCreateDefaults } from "./project-board/projectBoardViews";
 import { RuntimeConfigurationProvider } from "./runtime-profile/RuntimeConfigurationProvider";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
@@ -21,6 +25,7 @@ import { IssueCreate, IssueDetail } from "./IssueDetail";
 import { IssueExecutionEnvironmentNotice } from "./execution-environment/IssueExecutionEnvironmentNotice";
 import { useProjectExecutionEnvironmentReadiness } from "./execution-environment/issueEnvironmentReadiness";
 import { IssueArchiveDialog, IssueArchiveDrawer } from "./issue-archive";
+import { prepareIssueArchiveSubtree } from "./issue-archive/prepareIssueArchive";
 import {
   CollaborationProjectViewShell,
   ProjectLoadingSkeleton,
@@ -78,12 +83,15 @@ export interface CollaborationIssueDetailRenderContext {
   onClose(): void;
   onChange(issue: CollaborationIssue): void;
   onRead(issue: CollaborationIssue): void;
+  onOpenRelatedIssue(issue: CollaborationIssue): void;
+  onAddChild?(): void;
   onCreateTask?(): void;
-  /** Present only for completed Issues when archiving is enabled. */
+  /** Present for editable Issues when archiving is enabled. */
   onDelete?(): void;
 }
 
 interface CollaborationAppProps {
+  parentGroupingEnabled?: boolean;
   api: SharedWorkspaceApi;
   host: CollaborationHostAdapter;
   initialProject?: CollaborationProject;
@@ -92,7 +100,7 @@ interface CollaborationAppProps {
   createProjectRequestKey?: number;
   refreshProjectRequestKey?: number;
   showProjectBack?: boolean;
-  /** Enables completed-Issue archive actions and the project archive box. */
+  /** Enables Issue archive actions and the project archive box. */
   issueArchiveEnabled?: boolean;
   onProjectChange?(project: CollaborationProject): void;
   /**
@@ -134,6 +142,7 @@ function projectStatuses(
 }
 
 export function CollaborationApp({
+  parentGroupingEnabled = false,
   api,
   host,
   initialProject,
@@ -150,12 +159,15 @@ export function CollaborationApp({
   renderIssueDetail,
 }: CollaborationAppProps) {
   const messages = collaborationMessages[locale];
+  const templateStore = useCollaborationTemplateStore();
   const translate = useMemo(
     () => createCollaborationTranslator(locale),
     [locale],
   );
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
   const [createIssueOpen, setCreateIssueOpen] = useState(false);
+  const [createIssueDefaults, setCreateIssueDefaults] =
+    useState<BoardIssueCreateDefaults>();
   const [settingsSectionId, setSettingsSectionId] =
     useState<ProjectSettingsSectionId>(
       host.location.projectSettingsSection ?? "project",
@@ -246,6 +258,7 @@ export function CollaborationApp({
   };
   const requestIssueCreate = () => {
     if (!project) return;
+    setCreateIssueDefaults(undefined);
     setCreateIssueOpen(true);
   };
   useEffect(() => {
@@ -303,7 +316,7 @@ export function CollaborationApp({
     setArchiveIssueError(null);
     const results = await Promise.allSettled(
       archiveIssueTargets.map(async (issue) => {
-        await onPrepareIssueArchive?.(issue);
+        await prepareIssueArchiveSubtree(issues, issue, onPrepareIssueArchive);
         const archived = await commands.archiveIssue(issue.id, {
           throwOnError: true,
         });
@@ -672,6 +685,7 @@ export function CollaborationApp({
                 board: (
                   <div className="relative flex min-h-0 min-w-0 flex-1">
                     <ProjectBoardAdapter
+                      parentGroupingEnabled={parentGroupingEnabled}
                       emptyState={
                         <div
                           className="collaboration-empty-project"
@@ -818,6 +832,10 @@ export function CollaborationApp({
                         });
                       }}
                       onCreateIssue={requestIssueCreate}
+                      onCreateUnmatchedIssue={(defaults) => {
+                        setCreateIssueDefaults(defaults);
+                        setCreateIssueOpen(true);
+                      }}
                       onDeleteIssue={
                         issueArchiveAvailable ? requestIssueArchive : undefined
                       }
@@ -923,21 +941,23 @@ export function CollaborationApp({
                           : undefined
                       }
                       batchFailedLabel={translate(
-                        'todo.batch_status_failed',
-                        '部分任务更新失败，请查看以下原因并重试。'
+                        "todo.batch_status_failed",
+                        "部分任务更新失败，请查看以下原因并重试。",
                       )}
                       onBulkStatusChange={(selectedIssues, status) =>
                         bulkIssueStatus(
                           selectedIssues,
-                          issue =>
+                          (issue) =>
                             commands.updateIssue(
                               issue.id,
                               { version: issue.version, status },
-                              { throwOnError: true }
+                              { throwOnError: true },
                             ),
-                          error =>
+                          (error) =>
                             runnerEnvironmentError(error, translate) ??
-                            (error instanceof Error ? error.message : messages.saveFailed)
+                            (error instanceof Error
+                              ? error.message
+                              : messages.saveFailed),
                         )
                       }
                       statusName={(status) =>
@@ -999,6 +1019,32 @@ export function CollaborationApp({
                           />
                         ),
                       },
+                      ...(templateStore
+                        ? [
+                            {
+                              id: "configuration-sharing",
+                              label: templateMessages[locale].configuration,
+                              testId: "collaboration-project-settings-sharing",
+                              content: (
+                                <ProjectTemplateSettings
+                                  agentConfiguration={
+                                    host.projectAgentConfiguration
+                                  }
+                                  key={project.id}
+                                  onChange={commands.replaceProject}
+                                  api={api}
+                                  project={project}
+                                  locale={locale}
+                                  currentUserId={templateStore.library.ownerId}
+                                  canManage={
+                                    project.access_role === "Owner" ||
+                                    project.access_role === "Maintainer"
+                                  }
+                                />
+                              ),
+                            },
+                          ]
+                        : []),
                       ...createProjectAiTeamSections({
                         translate: translate,
                         membersContent: (
@@ -1038,7 +1084,18 @@ export function CollaborationApp({
                         ),
                         groupsContent: api.projects.listCollaborationGroups ? (
                           <ProjectCollaborationGroups
+                            agentConfiguration={host.projectAgentConfiguration}
+                            agentResourceContext={
+                              host.projectAgentResourceContext
+                            }
+                            location={
+                              project.project_store === "local"
+                                ? "local"
+                                : "cloud"
+                            }
+                            onProjectChanged={commands.replaceProject}
                             api={api}
+                            currentUserId={templateStore?.library.ownerId}
                             projectId={project.id}
                             workspaceId={project.workspace_id}
                             locale={locale}
@@ -1139,6 +1196,7 @@ export function CollaborationApp({
           )}
           {createIssueOpen && project && (
             <IssueCreate
+              defaults={createIssueDefaults}
               api={api}
               project={project}
               allIssues={issues}
@@ -1181,12 +1239,36 @@ export function CollaborationApp({
                 },
                 onChange: commands.replaceIssue,
                 onRead: commands.confirmIssueRead,
+                onOpenRelatedIssue: (related) => {
+                  if (
+                    related.can_view_detail === false ||
+                    related.cloud_project_id !== project.id
+                  )
+                    return;
+                  host.navigate({
+                    projectId: project.id,
+                    issueId: related.id,
+                    view: host.location.view,
+                  });
+                },
+                onAddChild: canEditCollaborationIssue(selectedIssue)
+                  ? () => {
+                      setCreateIssueDefaults({
+                        status:
+                          projectStatuses(project, messages, translate)[0]
+                            ?.id ?? "inbox",
+                        tags: [],
+                        draftScope: `child:${selectedIssue.id}`,
+                        parent: selectedIssue,
+                      });
+                      setCreateIssueOpen(true);
+                    }
+                  : undefined,
                 onCreateTask: onCreateTask
                   ? () => onCreateTask(project, selectedIssue)
                   : undefined,
                 onDelete:
                   issueArchiveAvailable &&
-                  selectedIssue.status === "completed" &&
                   canEditCollaborationIssue(selectedIssue)
                     ? () => requestIssueArchive(selectedIssue)
                     : undefined,
@@ -1232,7 +1314,6 @@ export function CollaborationApp({
                 }
                 onDelete={
                   issueArchiveAvailable &&
-                  selectedIssue.status === "completed" &&
                   canEditCollaborationIssue(selectedIssue)
                     ? () => requestIssueArchive(selectedIssue)
                     : undefined

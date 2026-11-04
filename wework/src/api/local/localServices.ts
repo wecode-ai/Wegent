@@ -1,9 +1,11 @@
+import type { ConnectionDependencyPluginApi } from '@/api/standInConnectionDependencies'
 import { createStandInExecutorApi } from '@/api/standIn'
 import type { McpAppRequest } from '@/api/mcpApps'
 import { createLocalProjectDevicePluginApi } from '@/api/projectDevicePlugins'
 import { requestRunnerSelection } from '@/lib/runner-selection'
 import {
   cloudRunnerModels,
+  requiresCloudModelCatalog,
   resolveRunnerSelection,
   runnerModelKey,
   type RunnerSelection,
@@ -36,7 +38,7 @@ import {
   buildHarnessUserContext,
   type HarnessContextRegistration,
 } from '@/features/harness-apps/harnessContext'
-import { reconnectDshExecutorEvents } from '@/api/dsh/executorTransport'
+import { DshExecutorTransportError, reconnectDshExecutorEvents } from '@/api/dsh/executorTransport'
 import { createExecutorClientFromApis } from '@/api/executorAccess'
 import { listLocalInstalledPluginsFromDisk } from '@/api/local/codexPlugins'
 import { getAppPreferences } from '@/desktop/appPreferences'
@@ -343,6 +345,7 @@ type LocalExecutorRequest = <T>(method: string, params?: Record<string, unknown>
 type LocalExecutorSubscribe = (handler: (event: LocalExecutorEvent) => void) => Promise<() => void>
 
 interface LocalAppServicesDeps {
+  connectionDependencyPlugins?: ConnectionDependencyPluginApi
   listCloudModels?: () => Promise<UnifiedModel[]>
   listCloudInstalledPlugins?: (deviceId: string) => Promise<InstalledPlugin[]>
   available?: () => Promise<LocalExecutorStatus>
@@ -482,6 +485,8 @@ async function reconcilePendingLocalModelCatalog(
   try {
     await reconciliation
   } catch (error) {
+    // A transport interruption must not suppress synchronization after recovery.
+    if (error instanceof DshExecutorTransportError && error.retryable) tracker.key = ''
     console.error('Local model catalog reconciliation failed', error)
   } finally {
     if (tracker.inFlight === reconciliation) tracker.inFlight = null
@@ -740,10 +745,34 @@ function runtimeHandleDebug(value: Record<string, unknown>): Record<string, unkn
   }
 }
 
-function runtimeTranscriptMessageCount(response: unknown): number | null {
+function runtimeTranscriptSummary(response: unknown): Record<string, unknown> {
   const responseRecord = recordValue(response)
   const messages = responseRecord.messages
-  return Array.isArray(messages) ? messages.length : null
+  return {
+    messageCount: Array.isArray(messages) ? messages.length : null,
+    threadId: stringValue(responseRecord.threadId),
+    running: typeof responseRecord.running === 'boolean' ? responseRecord.running : null,
+    turns: Array.isArray(responseRecord.turns)
+      ? responseRecord.turns.map(value => {
+          const turn = recordValue(value)
+          return {
+            id: stringValue(turn.id),
+            status: stringValue(turn.status),
+            clientUserMessageId: stringValue(turn.clientUserMessageId),
+            items: Array.isArray(turn.items)
+              ? turn.items.map(value => {
+                  const item = recordValue(value)
+                  return {
+                    id: stringValue(item.id),
+                    type: stringValue(item.type),
+                    blockType: stringValue(recordValue(item.block).type),
+                  }
+                })
+              : null,
+          }
+        })
+      : null,
+  }
 }
 
 function workspaceLabel(workspacePath: string, label: unknown): string {
@@ -842,6 +871,9 @@ function normalizeRuntimeTaskSummary(
     ...(Object.keys(runtimeHandle).length > 0 ? { runtimeHandle } : {}),
     ...(modelSelection ? { modelSelection } : {}),
     ...(hasGoalStatus ? { goalStatus } : {}),
+    ...(taskRecord.executionState
+      ? { executionState: taskRecord.executionState as RuntimeTaskSummary['executionState'] }
+      : {}),
     ...(goalExecutionStatus ? { goalExecutionStatus } : {}),
     ...(hasInteractionStatus ? { interactionStatus } : {}),
     ...(threadStatus ? { threadStatus } : {}),
@@ -2494,7 +2526,7 @@ export function createRuntimeWorkApiFromIpc(
         console.debug(`[Wework] ${transportLabel} runtime IPC transcript response`, {
           address: runtimeAddressDebug(normalizedData),
           elapsedMs: Math.round(nowMs() - startedAt),
-          messageCount: runtimeTranscriptMessageCount(response),
+          ...runtimeTranscriptSummary(response),
         })
       }
       return response
@@ -2725,7 +2757,10 @@ export function createRuntimeWorkApiFromIpc(
       try {
         const response = await request(
           'runtime.tasks.list',
-          requestOptions?.preferCached ? { preferCached: true } : {},
+          {
+            ...(requestOptions?.preferCached ? { preferCached: true } : {}),
+            ...(requestOptions?.pendingOnly ? { pendingOnly: true } : {}),
+          },
           localDeviceId
         )
         if (identity) {
@@ -3493,6 +3528,24 @@ export function createAutomationApiFromIpc(
       schemaVersion: 2,
       deviceId: localDeviceId,
     }
+    if (taskRequest.standInOwner) {
+      const continuation = data.continuationPayload as RuntimeSendRequest | null | undefined
+      return {
+        id: data.id ?? '',
+        version: data.version ?? 0,
+        name: data.name,
+        description: data.description ?? '',
+        prompt: data.prompt,
+        schedule: serializeLocalAutomationSchedule(data.schedule),
+        timezone: data.timezone,
+        enabled: data.enabled,
+        conversationMode: data.conversationMode,
+        notificationPolicy: data.notificationPolicy,
+        taskRequest,
+        taskPayload: { runtime: 'codex', standaloneChatWorkspace: true },
+        continuationPayload: continuation ? { taskId: continuation.address.taskId } : null,
+      }
+    }
     const resolvedTaskRequest = await resolveLocalRuntimeTaskWorkspace(
       taskRequest,
       localDeviceId,
@@ -3737,11 +3790,28 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       timeout_seconds?: number
       max_output_bytes?: number
     }
-  ) =>
-    request<DeviceCommandResponse>(
-      'device.execute_command',
-      normalizeLocalDeviceRecord({ deviceId, ...data }, await getDeviceCommandLocalDeviceId())
-    )
+  ) => {
+    const startedAt = performance.now()
+    const tracePhase = (phase: string) => {
+      if (data.command_key !== 'home_dir' && data.command_key !== 'ls_dirs') return
+      console.debug('[Wework] Device directory command phase', {
+        commandKey: data.command_key,
+        phase,
+        elapsedMs: Math.round(performance.now() - startedAt),
+      })
+    }
+    try {
+      tracePhase('resolve_device')
+      const localDeviceId = await getDeviceCommandLocalDeviceId()
+      tracePhase('dispatch')
+      return await request<DeviceCommandResponse>(
+        'device.execute_command',
+        normalizeLocalDeviceRecord({ deviceId, ...data }, localDeviceId)
+      )
+    } finally {
+      tracePhase('settled')
+    }
+  }
 
   const deviceApi: WorkbenchServices['deviceApi'] = {
     async listDevices() {
@@ -3868,7 +3938,16 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     },
   }
   const runtimeWorkApi = createRuntimeWorkApiFromIpc(
-    (method, params) => request(method, params),
+    async (method, params) => {
+      if (
+        (method === 'runtime.tasks.transcript' || method === 'runtime.tasks.transcript.search') &&
+        (!params?.runtime || params.runtime === 'codex')
+      ) {
+        // Restored sessions may read Codex before model discovery initializes its proxy/catalog.
+        await ensureStatus()
+      }
+      return request(method, params)
+    },
     getLocalDeviceId,
     {
       cloudModelGateway: deps.cloudModelGateway,
@@ -3978,10 +4057,8 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     runnerSelection?: RunnerSelection
   ) => {
     const environments = agent.executionPolicy ? await listRunnerEnvironments(projectId) : []
-    const modelRequirement =
-      agent.modelPolicy?.mode === 'fixed' ? agent.modelPolicy.model : runnerSelection?.model
     const cloudModels =
-      agent.executionPolicy && (!modelRequirement || modelRequirement.source === 'cloud')
+      agent.executionPolicy && requiresCloudModelCatalog(agent.modelPolicy, runnerSelection)
         ? await (deps.listCloudModels?.() ?? Promise.resolve([]))
         : []
     let routing: ReturnType<typeof resolveRunnerSelection> | null = null
@@ -4627,7 +4704,10 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       },
     },
     runtimeWorkApi,
-    standInApi: createStandInExecutorApi((method, payload) => request(method, payload)),
+    standInApi: createStandInExecutorApi(
+      (method, payload) => request(method, payload),
+      deps.connectionDependencyPlugins
+    ),
     composerCatalogApi: createRuntimeComposerApi(
       {
         request: async (method, params, deviceId) => {

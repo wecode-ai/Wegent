@@ -851,6 +851,7 @@ class LoopItemService:
                 assigned_by_user_id=user_id,
                 workflow_step=None,
                 notify=values.notify_assignee,
+                initial_assignment=True,
                 trigger=(
                     "default"
                     if payload.get("assignee_user_id") == user_id
@@ -2514,7 +2515,7 @@ class LoopItemService:
         return updated
 
     def delete(self, db: Session, item_id: str, user_id: int) -> LoopItem:
-        """Archive a completed TODO subtree; rows are kept for restoration."""
+        """Archive an editable TODO subtree; rows are kept for restoration."""
 
         item = self.get(db, item_id, user_id)
         self._require_item_access(db, item, user_id, action=IssueAction.EDIT_CONTENT)
@@ -2533,15 +2534,9 @@ class LoopItemService:
             )
             pending_parent_ids = [child.id for child in children]
             archived_items.extend(children)
-        incomplete = [
-            archived_item.id
-            for archived_item in archived_items
-            if archived_item.status != "completed"
-        ]
-        if incomplete:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "Only completed TODO subtrees can be archived",
+        for descendant in archived_items[1:]:
+            self._require_item_access(
+                db, descendant, user_id, action=IssueAction.EDIT_CONTENT
             )
         # An archived Issue must not leave a Run owning a real process. Cancel
         # every cancellable Run of the archived subtree in the same transaction
@@ -2622,6 +2617,10 @@ class LoopItemService:
             )
             pending_parent_ids = [child.id for child in children]
             restored_items.extend(children)
+        for descendant in restored_items[1:]:
+            self._require_item_access(
+                db, descendant, user_id, action=IssueAction.EDIT_CONTENT
+            )
         for restored_item in restored_items:
             restored_item.deleted_at = None
             restored_item.version += 1

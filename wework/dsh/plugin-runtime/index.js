@@ -1,5 +1,5 @@
 export const name = 'wework-plugin-runtime'
-export const inject = ['webServer']
+export const inject = ['webServer', 'weworkRequestSecurity']
 export const BASE_PATH = '/wework/plugins/v1/rpc'
 
 const ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/
@@ -72,7 +72,7 @@ export function apply(ctx) {
     const unregister = ctx.webServer.register({
       kind: 'exact',
       path: BASE_PATH,
-      handler: (req, res) => handleRpc(req, res, request),
+      handler: ctx.weworkRequestSecurity.wrap((req, res) => handleRpc(req, res, request)),
     })
     return () => {
       active = false
@@ -84,8 +84,6 @@ export function apply(ctx) {
 }
 
 export async function handleRpc(req, res, request) {
-  if (!trustedBrowserRequest(req))
-    return sendError(res, new PluginRuntimeError('forbidden', 'Forbidden', 403))
   if (req.method !== 'POST') {
     res.writeHead(405, { allow: 'POST', 'cache-control': 'no-store' })
     res.end()
@@ -130,22 +128,6 @@ async function readJsonBody(req) {
   }
 }
 
-function trustedBrowserRequest(req) {
-  const remoteAddress = req.socket?.remoteAddress ?? ''
-  if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(remoteAddress)) return false
-  const fetchSite = singleHeader(req.headers['sec-fetch-site'])
-  if (fetchSite && !['same-origin', 'none'].includes(fetchSite)) return false
-  const origin = singleHeader(req.headers.origin)
-  const host = singleHeader(req.headers.host)
-  if (!origin) return true
-  if (!host) return false
-  try {
-    return new URL(origin).host === host
-  } catch {
-    return false
-  }
-}
-
 function sendError(res, error) {
   const normalized =
     error instanceof PluginRuntimeError
@@ -179,10 +161,6 @@ function requiredId(value, label) {
     throw new PluginRuntimeError('invalid_id', `${label} must match ${ID_PATTERN}`, 400)
   }
   return value
-}
-
-function singleHeader(value) {
-  return Array.isArray(value) ? value[0] : value
 }
 
 function isRecord(value) {

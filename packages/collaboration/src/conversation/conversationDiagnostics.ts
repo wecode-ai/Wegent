@@ -170,7 +170,6 @@ export type ConversationDiagnosticEventName =
   | 'search-diagram-viewer-start'
   | 'search-diagram-viewer-result'
   | 'search-diagram-viewer-stop'
-  | 'search-diagram-viewer-timeout'
 
 export interface ConversationDiagnosticEvent {
   sequence: number

@@ -7,6 +7,21 @@ use serde_json::json;
 use super::*;
 
 #[test]
+fn lifecycle_snapshot_carries_the_selected_model_without_client_enrichment() {
+    let selection = json!({"modelName": "local-model:fixture", "modelType": "runtime",
+        "options": {"permissionMode": "read-only"}});
+    let task = RuntimeTaskLink {
+        runtime_handle: json!({"modelSelection": selection}),
+        ..RuntimeTaskLink::new_pending("task".into(), "/tmp/task".into(), "Task".into())
+    };
+    assert_eq!(local_task_json(task.clone())["modelSelection"], selection);
+    assert_eq!(
+        local_task_json(task.list_summary())["modelSelection"],
+        selection
+    );
+}
+
+#[test]
 fn runtime_task_link_does_not_persist_running_state() {
     let link = RuntimeTaskLink::new_pending(
         "task-1".to_owned(),

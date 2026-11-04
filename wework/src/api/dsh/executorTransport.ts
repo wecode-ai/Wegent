@@ -61,9 +61,10 @@ export class DshExecutorTransportError extends Error {
     code: string,
     message: string,
     retryable = false,
-    details: Record<string, unknown> = {}
+    details: Record<string, unknown> = {},
+    options?: ErrorOptions
   ) {
-    super(message)
+    super(message, options)
     this.name = 'DshExecutorTransportError'
     this.code = code
     this.retryable = retryable
@@ -114,6 +115,18 @@ export async function requestDshExecutor<T>(
     diagnosticCount < 3
   if (diagnose) modelDiagnosticCounts.set(method, diagnosticCount + 1)
   const diagnosticStart = performance.now()
+  const transportDiagnostic = (stage: string, details: Record<string, unknown> = {}) => {
+    console.warn(
+      '[Wework] Executor transport diagnostic ' +
+        JSON.stringify({
+          requestId,
+          method,
+          stage,
+          elapsedMs: Date.now() - startedAt,
+          ...details,
+        })
+    )
+  }
   const diagnostic = (stage: string, details: Record<string, number | boolean> = {}) => {
     if (!diagnose) return
     logModelLoading(requestId, `rpc.${method}.${stage}`, {
@@ -125,6 +138,7 @@ export async function requestDshExecutor<T>(
     request_id: requestId,
     method,
   })
+  const requestBody = JSON.stringify({ id: requestId, method, params })
   let response: Response
   try {
     diagnostic('fetch_started')
@@ -135,17 +149,20 @@ export async function requestDshExecutor<T>(
         'content-type': 'application/json',
         'x-request-id': requestId,
       },
-      body: JSON.stringify({ id: requestId, method, params }),
+      body: requestBody,
     })
   } catch (error) {
     diagnostic('fetch_failed')
+    transportDiagnostic('fetch_failed', {
+      errorType: error instanceof Error ? error.name : typeof error,
+    })
     console.warn('[Wework] Executor RPC transport failed', {
       request_id: requestId,
       method,
       elapsed_ms: Date.now() - startedAt,
       error,
     })
-    throw error
+    throw connectionError(error)
   }
   diagnostic('headers_received', { status: response.status })
   console.debug('[Wework] Executor RPC response received', {
@@ -154,14 +171,15 @@ export async function requestDshExecutor<T>(
     elapsed_ms: Date.now() - startedAt,
     status: response.status,
   })
-  let body: { ok: true; result: T } | ({ ok?: false } & DshExecutorErrorBody)
+  let parsedBody: unknown
   try {
-    body = (await response.json()) as
-      | { ok: true; result: T }
-      | ({ ok?: false } & DshExecutorErrorBody)
-    diagnostic('body_parsed', { ok: response.ok && body.ok === true })
+    parsedBody = await response.json()
   } catch (error) {
     diagnostic('body_parse_failed')
+    transportDiagnostic('body_parse_failed', {
+      status: response.status,
+      errorType: error instanceof Error ? error.name : typeof error,
+    })
     console.warn('[Wework] Executor RPC response parsing failed', {
       request_id: requestId,
       method,
@@ -169,10 +187,19 @@ export async function requestDshExecutor<T>(
       status: response.status,
       error_type: error instanceof Error ? error.name : typeof error,
     })
-    throw error
+    throw connectionError(error)
   }
+  if (parsedBody === null || typeof parsedBody !== 'object' || Array.isArray(parsedBody)) {
+    throw new DshExecutorTransportError(
+      'protocol_mismatch',
+      'DSH executor returned an invalid RPC response'
+    )
+  }
+  const body = parsedBody as { ok: true; result: T } | ({ ok?: false } & DshExecutorErrorBody)
+  diagnostic('body_parsed', { ok: response.ok && body.ok === true })
   if (!response.ok || body.ok !== true) {
     const error = transportError(response.status, body as DshExecutorErrorBody)
+    transportDiagnostic('rpc_failed', { status: response.status, code: error.code })
     console.warn('[Wework] Executor RPC request failed', {
       request_id: requestId,
       method,
@@ -184,6 +211,17 @@ export async function requestDshExecutor<T>(
     throw error
   }
   return body.result
+}
+
+function connectionError(error: unknown): unknown {
+  if (!(error instanceof TypeError)) return error
+  return new DshExecutorTransportError(
+    'runtime_unavailable',
+    error.message,
+    true,
+    {},
+    { cause: error }
+  )
 }
 
 export function subscribeDshExecutorEvents(

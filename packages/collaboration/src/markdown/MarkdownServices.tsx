@@ -1,133 +1,137 @@
-import { createContext, useContext, type ReactNode } from "react";
+import { createContext, useContext, type ReactNode } from 'react'
 
 export interface MarkdownFileOpenOptions {
-  lineStart?: number;
-  lineEnd?: number;
-  isDirectory?: boolean;
-  traceId?: string;
+  lineStart?: number
+  lineEnd?: number
+  isDirectory?: boolean
+  traceId?: string
 }
 
 /** Platform operations only. All Markdown markup and interaction live in this package. */
 export interface MarkdownServices {
-  translate: (key: string, fallback?: string) => string;
-  copyText: (text: string) => Promise<void>;
-  onCopy?: () => void;
-  openExternalUrl: (url: string) => void | Promise<unknown>;
-  openAuthorizationUrl?: (url: string) => void | boolean | Promise<unknown>;
-  navigateTo?: (path: string) => void;
-  openHtmlFile?: (path: string) => boolean;
-  fetchAttachmentBlob?: (id: number) => Promise<Blob>;
-  readLocalFile?: (path: string) => Promise<Blob>;
-  renderVisualization?: (part: {
-    file: string;
-    mode?: "wide";
-    title?: string;
-  }) => ReactNode;
-  windowMarkdown?: boolean;
-  theme: "dark" | "light" | "system";
-  plantumlServerUrl?: string;
+  translate: (key: string, fallback?: string) => string
+  copyText: (text: string) => Promise<void>
+  onCopy?: () => void
+  openExternalUrl: (url: string) => void | Promise<unknown>
+  openAuthorizationUrl?: (url: string) => void | boolean | Promise<unknown>
+  navigateTo?: (path: string) => void
+  openHtmlFile?: (path: string) => boolean
+  fetchAttachmentBlob?: (id: number) => Promise<Blob>
+  readLocalFile?: (path: string) => Promise<Blob>
+  renderVisualization?: (part: { file: string; mode?: 'wide'; title?: string }) => ReactNode
+  windowMarkdown?: boolean
+  theme: 'dark' | 'light' | 'system'
+  plantumlServerUrl?: string
 }
 
 export const markdownMessages = {
-  "zh-CN": {
-    "citation.page": "页码",
-    "citation.slide": "幻灯片",
-    "followup.idle": "复制后续问题",
-    "followup.copied": "后续问题已复制",
-    "followup.failed": "复制失败，请重试",
-    "table.copy": "复制表格",
-    "table.copied": "表格已复制",
-    "table.failed": "复制表格失败，请重试",
-    "table.expand": "展开表格",
-    "table.close": "收起表格",
-    "workbench.diagram_image_copied": "图片已复制",
-    "workbench.diagram_image_copy_failed": "复制图片失败",
-    "workbench.diagram_copy_image": "复制图片",
-    "workbench.diagram_image_saved": "图片已保存",
-    "workbench.diagram_image_save_failed": "保存图片失败",
-    "workbench.diagram_save_image": "保存图片",
-    "workbench.diagram_exit_full_screen": "退出全屏",
-    "workbench.diagram_full_screen": "全屏查看",
-    "code.copy": "复制代码",
-    "code.wrap_on": "开启自动换行",
-    "code.wrap_off": "禁用自动换行",
+  'zh-CN': {
+    'citation.page': '页码',
+    'citation.slide': '幻灯片',
+    'followup.idle': '复制后续问题',
+    'followup.copied': '后续问题已复制',
+    'followup.failed': '复制失败，请重试',
+    'table.copy': '复制表格',
+    'table.copied': '表格已复制',
+    'table.failed': '复制表格失败，请重试',
+    'table.expand': '展开表格',
+    'table.close': '收起表格',
+    'workbench.diagram_image_copied': '图片已复制',
+    'workbench.diagram_image_copy_failed': '复制图片失败',
+    'workbench.diagram_copy_image': '复制图片',
+    'workbench.diagram_image_saved': '图片已保存',
+    'workbench.diagram_image_save_failed': '保存图片失败',
+    'workbench.diagram_save_image': '保存图片',
+    'workbench.diagram_exit_full_screen': '退出全屏',
+    'workbench.diagram_zoom_out': '缩小',
+    'workbench.diagram_zoom_in': '放大',
+    'workbench.diagram_fit': '适应窗口',
+    'workbench.diagram_preview': '图表预览',
+    'workbench.diagram_loading': '正在渲染图表…',
+    'workbench.diagram_render_failed': '图表渲染失败，源码如下',
+    'workbench.diagram_retry': '重试',
+    'workbench.diagram_full_screen': '全屏查看',
+    'code.copy': '复制代码',
+    'code.wrap_on': '开启自动换行',
+    'code.wrap_off': '禁用自动换行',
   },
   en: {
-    "citation.page": "page",
-    "citation.slide": "slide",
-    "followup.idle": "Copy follow-up prompt",
-    "followup.copied": "Follow-up prompt copied",
-    "followup.failed": "Could not copy. Try again.",
-    "table.copy": "Copy table",
-    "table.copied": "Table copied",
-    "table.failed": "Could not copy table. Try again.",
-    "table.expand": "Expand table",
-    "table.close": "Close expanded table",
-    "workbench.diagram_image_copied": "Image copied",
-    "workbench.diagram_image_copy_failed": "Failed to copy image",
-    "workbench.diagram_copy_image": "Copy image",
-    "workbench.diagram_image_saved": "Image saved",
-    "workbench.diagram_image_save_failed": "Failed to save image",
-    "workbench.diagram_save_image": "Save image",
-    "workbench.diagram_exit_full_screen": "Exit full screen",
-    "workbench.diagram_full_screen": "Full screen",
-    "code.copy": "Copy code",
-    "code.wrap_on": "Enable word wrap",
-    "code.wrap_off": "Disable word wrap",
+    'citation.page': 'page',
+    'citation.slide': 'slide',
+    'followup.idle': 'Copy follow-up prompt',
+    'followup.copied': 'Follow-up prompt copied',
+    'followup.failed': 'Could not copy. Try again.',
+    'table.copy': 'Copy table',
+    'table.copied': 'Table copied',
+    'table.failed': 'Could not copy table. Try again.',
+    'table.expand': 'Expand table',
+    'table.close': 'Close expanded table',
+    'workbench.diagram_image_copied': 'Image copied',
+    'workbench.diagram_image_copy_failed': 'Failed to copy image',
+    'workbench.diagram_copy_image': 'Copy image',
+    'workbench.diagram_image_saved': 'Image saved',
+    'workbench.diagram_image_save_failed': 'Failed to save image',
+    'workbench.diagram_save_image': 'Save image',
+    'workbench.diagram_exit_full_screen': 'Exit full screen',
+    'workbench.diagram_zoom_out': 'Zoom out',
+    'workbench.diagram_zoom_in': 'Zoom in',
+    'workbench.diagram_fit': 'Fit to window',
+    'workbench.diagram_preview': 'Diagram preview',
+    'workbench.diagram_loading': 'Rendering diagram…',
+    'workbench.diagram_render_failed': 'Could not render the diagram. Source shown below.',
+    'workbench.diagram_retry': 'Retry',
+    'workbench.diagram_full_screen': 'Full screen',
+    'code.copy': 'Copy code',
+    'code.wrap_on': 'Enable word wrap',
+    'code.wrap_off': 'Disable word wrap',
   },
-};
+}
 
 async function copyBrowserText(text: string): Promise<void> {
   if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text);
-    return;
+    await navigator.clipboard.writeText(text)
+    return
   }
 
-  const textarea = document.createElement("textarea");
-  textarea.value = text;
-  textarea.style.position = "fixed";
-  textarea.style.opacity = "0";
-  document.body.appendChild(textarea);
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.style.position = 'fixed'
+  textarea.style.opacity = '0'
+  document.body.appendChild(textarea)
   try {
-    textarea.select();
-    if (!document.execCommand?.("copy")) {
-      throw new Error("Clipboard copy is not supported");
+    textarea.select()
+    if (!document.execCommand?.('copy')) {
+      throw new Error('Clipboard copy is not supported')
     }
   } finally {
-    textarea.remove();
+    textarea.remove()
   }
 }
 
 export const browserMarkdownServices: MarkdownServices = {
-  translate: (key) =>
-    markdownMessages.en[key as keyof typeof markdownMessages.en] ?? key,
+  translate: key => markdownMessages.en[key as keyof typeof markdownMessages.en] ?? key,
   copyText: copyBrowserText,
-  openExternalUrl: (url) => {
-    const parsed = new URL(url, window.location.href);
-    if (!["https:", "http:", "mailto:", "tel:"].includes(parsed.protocol))
-      return;
-    window.open(parsed.href, "_blank", "noopener,noreferrer");
+  openExternalUrl: url => {
+    const parsed = new URL(url, window.location.href)
+    if (!['https:', 'http:', 'mailto:', 'tel:'].includes(parsed.protocol)) return
+    window.open(parsed.href, '_blank', 'noopener,noreferrer')
   },
-  theme: "system",
-  plantumlServerUrl: "https://www.plantuml.com/plantuml/svg",
-};
+  theme: 'system',
+  plantumlServerUrl: 'https://www.plantuml.com/plantuml/svg',
+}
 
-const MarkdownServicesContext = createContext<MarkdownServices>(
-  browserMarkdownServices,
-);
+const MarkdownServicesContext = createContext<MarkdownServices>(browserMarkdownServices)
 export function MarkdownServicesProvider({
   value,
   children,
 }: {
-  value: MarkdownServices;
-  children: ReactNode;
+  value: MarkdownServices
+  children: ReactNode
 }) {
   return (
-    <MarkdownServicesContext.Provider value={value}>
-      {children}
-    </MarkdownServicesContext.Provider>
-  );
+    <MarkdownServicesContext.Provider value={value}>{children}</MarkdownServicesContext.Provider>
+  )
 }
 export function useMarkdownServices() {
-  return useContext(MarkdownServicesContext);
+  return useContext(MarkdownServicesContext)
 }

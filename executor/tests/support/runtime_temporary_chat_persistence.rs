@@ -334,7 +334,13 @@ while IFS= read -r line; do
       printf '{"method":"turn/completed","params":{"threadId":"temporary-thread","turn":{"id":"turn-%s","status":"completed"}}}\n' "$turn_count"
       continue
       ;;
-    *'"method":"thread/unsubscribe"'*) thread_loaded=0; result='{}' ;;
+    *'"method":"thread/unsubscribe"'*)
+      thread_loaded=0
+      printf '{"id":%s,"result":{"status":"unsubscribed"}}\n' "$request_id"
+      closed_thread_id=$(printf '%s\n' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
+      printf '%s\n' '{"method":"thread/closed","params":{"threadId":"'"$closed_thread_id"'"}}'
+      continue
+      ;;
     *) result='{}' ;;
   esac
   printf '{"id":%s,"result":%s}\n' "$request_id" "$result"

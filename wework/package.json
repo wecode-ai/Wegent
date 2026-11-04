@@ -1,7 +1,7 @@
 {
   "name": "wework",
   "private": true,
-  "version": "0.5.13-beta.8",
+  "version": "0.6.5-beta.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -104,7 +104,6 @@
     "archiver": "8.0.0",
     "clsx": "^2.1.1",
     "dequal": "2.0.3",
-    "extract-zip": "2.0.1",
     "highlight.js": "11.11.1",
     "html2canvas": "1.4.1",
     "i18next": "^26.2.0",
@@ -132,7 +131,8 @@
     "remark-parse": "^11.0.0",
     "semver": "7.8.5",
     "tailwind-merge": "^3.6.0",
-    "unified": "^11.0.5"
+    "unified": "^11.0.5",
+    "yauzl": "3.4.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -147,9 +147,11 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@types/semver": "7.8.0",
+    "@types/yauzl": "3.4.0",
     "@vitejs/plugin-react": "^6.0.1",
     "@vitest/coverage-istanbul": "^4.1.8",
     "autoprefixer": "^10.5.0",
+    "chokidar": "3.6.0",
     "dingtalk-workspace-cli": "1.0.58",
     "eslint": "^10.3.0",
     "eslint-plugin-react-hooks": "^7.1.1",

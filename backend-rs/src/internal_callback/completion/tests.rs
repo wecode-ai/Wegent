@@ -40,8 +40,7 @@ fn assistant_subtasks_statement_matches_the_source_shape() {
          subtasks_0030.updated_at AS subtasks_0030_updated_at, subtasks_0030.completed_at AS subtasks_0030_completed_at, \
          subtasks_0030.sender_type AS subtasks_0030_sender_type, subtasks_0030.sender_user_id AS subtasks_0030_sender_user_id, \
          subtasks_0030.reply_to_subtask_id AS subtasks_0030_reply_to_subtask_id \nFROM subtasks_0030 \n\
-         WHERE subtasks_0030.task_id = ? AND subtasks_0030.`role` = 'ASSISTANT' \n\
-         ORDER BY subtasks_0030.message_id ASC"
+         WHERE subtasks_0030.task_id = ? AND subtasks_0030.`role` = 'ASSISTANT'"
     );
 }
 

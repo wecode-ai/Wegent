@@ -9,6 +9,10 @@ export {
   type QuickPhraseMode,
 } from '@wegent/chat-core/composer-quick-phrases'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import {
+  INTERACTIONS_PATH,
+  INTERACTIONS_TAB_ID,
+} from '@/features/notifications/RuntimeInteractionsContext'
 import type { ModelSelectionConfig } from '@/types/api'
 import {
   defaultLocalHarnessPreferences,
@@ -45,6 +49,7 @@ export interface AppPreferences {
   localCodexSubscriptionEnabled: boolean
   telemetryConsentAsked: boolean
   telemetryEnabled: boolean
+  performanceRecordingEnabled: boolean
   supervisorPrinciples: string
   supervisorModelSelection: ModelSelectionConfig | null
   projectAiModelSelection: ModelSelectionConfig | null
@@ -56,6 +61,7 @@ export interface AppPreferences {
   browserExternalLinkTarget: BrowserLinkTarget
   browserLocalLinkTarget: BrowserLinkTarget
   browserDownloadDirectory: string | null
+  browserFullControl: boolean
   browserAskBeforeDownload: boolean
   appshotsPlaySound: boolean
   computerUseEnabled?: boolean
@@ -127,6 +133,7 @@ export interface AppPreferencesPatch {
   localCodexSubscriptionEnabled?: boolean
   telemetryConsentAsked?: boolean
   telemetryEnabled?: boolean
+  performanceRecordingEnabled?: boolean
   supervisorPrinciples?: string
   supervisorModelSelection?: ModelSelectionConfig | null
   projectAiModelSelection?: ModelSelectionConfig | null
@@ -138,6 +145,7 @@ export interface AppPreferencesPatch {
   browserExternalLinkTarget?: BrowserLinkTarget
   browserLocalLinkTarget?: BrowserLinkTarget
   browserDownloadDirectory?: string | null
+  browserFullControl?: boolean
   browserAskBeforeDownload?: boolean
   appshotsPlaySound?: boolean
   computerUseEnabled?: boolean
@@ -161,6 +169,7 @@ export const defaultAppPreferences: AppPreferences = {
     { id: 'fixed-task', kind: 'task' },
     { id: 'fixed-board', kind: 'board' },
     { id: 'fixed-agent', kind: 'agent' },
+    { id: INTERACTIONS_TAB_ID, kind: 'auxiliary', contentRoute: INTERACTIONS_PATH },
   ],
   startupWorkspaceTabId: 'fixed-task',
   systemDragEnabled: true,
@@ -173,6 +182,7 @@ export const defaultAppPreferences: AppPreferences = {
   localCodexSubscriptionEnabled: true,
   telemetryConsentAsked: false,
   telemetryEnabled: false,
+  performanceRecordingEnabled: false,
   supervisorPrinciples: '',
   supervisorModelSelection: null,
   projectAiModelSelection: null,
@@ -184,6 +194,7 @@ export const defaultAppPreferences: AppPreferences = {
   browserExternalLinkTarget: 'system',
   browserLocalLinkTarget: 'wework',
   browserDownloadDirectory: null,
+  browserFullControl: false,
   browserAskBeforeDownload: false,
   appshotsPlaySound: true,
   computerUseEnabled: false,
@@ -343,6 +354,10 @@ export function mergeAppPreferences(value: unknown): AppPreferences {
       typeof record.telemetryEnabled === 'boolean'
         ? record.telemetryEnabled
         : defaultAppPreferences.telemetryEnabled,
+    performanceRecordingEnabled:
+      typeof record.performanceRecordingEnabled === 'boolean'
+        ? record.performanceRecordingEnabled
+        : defaultAppPreferences.performanceRecordingEnabled,
     supervisorPrinciples:
       typeof record.supervisorPrinciples === 'string'
         ? record.supervisorPrinciples
@@ -382,6 +397,7 @@ export function mergeAppPreferences(value: unknown): AppPreferences {
       typeof record.browserDownloadDirectory === 'string' && record.browserDownloadDirectory.trim()
         ? record.browserDownloadDirectory.trim()
         : defaultAppPreferences.browserDownloadDirectory,
+    browserFullControl: record.browserFullControl === true,
     browserAskBeforeDownload:
       typeof record.browserAskBeforeDownload === 'boolean'
         ? record.browserAskBeforeDownload

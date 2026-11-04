@@ -67,6 +67,7 @@ pub struct CodexLocalConfig {
     config_path: String,
     remote_apps_enabled: bool,
     enabled_plugin_keys: Vec<String>,
+    disabled_plugin_keys: Vec<String>,
 }
 
 fn default_remote_apps_enabled() -> bool {
@@ -196,7 +197,13 @@ fn read_codex_local_config_from_path(codex_home: &Path) -> Result<CodexLocalConf
                 config_path.display()
             )
         })?,
-        enabled_plugin_keys: read_enabled_plugin_keys(&content).map_err(|error| {
+        enabled_plugin_keys: read_plugin_keys(&content, true).map_err(|error| {
+            format!(
+                "Failed to parse Codex config {}: {error}",
+                config_path.display()
+            )
+        })?,
+        disabled_plugin_keys: read_plugin_keys(&content, false).map_err(|error| {
             format!(
                 "Failed to parse Codex config {}: {error}",
                 config_path.display()
@@ -205,7 +212,7 @@ fn read_codex_local_config_from_path(codex_home: &Path) -> Result<CodexLocalConf
     })
 }
 
-fn read_enabled_plugin_keys(content: &str) -> Result<Vec<String>, String> {
+fn read_plugin_keys(content: &str, enabled: bool) -> Result<Vec<String>, String> {
     let config = content
         .parse::<DocumentMut>()
         .map_err(|error| error.to_string())?;
@@ -216,7 +223,7 @@ fn read_enabled_plugin_keys(content: &str) -> Result<Vec<String>, String> {
             plugins
                 .iter()
                 .filter(|(_, plugin)| {
-                    plugin.get("enabled").and_then(|enabled| enabled.as_bool()) == Some(true)
+                    plugin.get("enabled").and_then(|value| value.as_bool()) == Some(enabled)
                 })
                 .map(|(key, _)| key.to_owned())
                 .collect::<Vec<_>>()
@@ -356,7 +363,19 @@ fn copy_codex_config_for_wework(source: &Path, destination: &Path) -> Result<(),
     }
     let content = fs::read_to_string(source)
         .map_err(|error| format!("Failed to read {}: {error}", source.display()))?;
-    let sanitized = remove_wework_managed_marketplace(&content).map_err(|error| {
+    let target = destination.join("config.toml");
+    match fs::canonicalize(&target) {
+        Ok(target_path) => {
+            let source_path = fs::canonicalize(source)
+                .map_err(|error| format!("Failed to resolve {}: {error}", source.display()))?;
+            if source_path == target_path {
+                return Err("Cannot import Codex configuration into its source file".to_owned());
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("Failed to resolve {}: {error}", target.display())),
+    }
+    let sanitized = sanitize_imported_codex_config(&content).map_err(|error| {
         format!(
             "Failed to parse Codex config {} before importing it: {error}",
             source.display()
@@ -371,10 +390,12 @@ fn copy_codex_config_for_wework(source: &Path, destination: &Path) -> Result<(),
     replace_config(&destination.join("config.toml"), sanitized)
 }
 
-fn remove_wework_managed_marketplace(content: &str) -> Result<String, String> {
+fn sanitize_imported_codex_config(content: &str) -> Result<String, String> {
     let mut config = content
         .parse::<DocumentMut>()
         .map_err(|error| error.to_string())?;
+    // Let the destination runtime catalog select its default model.
+    config.remove("model");
     let remove_marketplaces_table = config
         .get_mut("marketplaces")
         .and_then(|item| item.as_table_like_mut())
@@ -484,7 +505,15 @@ mod tests {
         .unwrap();
 
         let config = fs::read_to_string(wework_home.join("config.toml")).unwrap();
-        assert!(config.contains("model = \"native\""));
+        assert!(config
+            .parse::<DocumentMut>()
+            .unwrap()
+            .get("model")
+            .is_none());
+        assert_eq!(
+            fs::read_to_string(native_home.join("config.toml")).unwrap(),
+            "model = \"native\"\n"
+        );
         assert!(config.contains("apps = false"));
         assert_eq!(
             fs::read_to_string(wework_home.join("skills/example/SKILL.md")).unwrap(),
@@ -556,6 +585,10 @@ mod tests {
         let current = read_codex_local_config_from_path(&codex_home).unwrap();
         assert!(current.remote_apps_enabled);
         assert_eq!(current.enabled_plugin_keys, vec!["enabled@wework-personal"]);
+        assert_eq!(
+            current.disabled_plugin_keys,
+            vec!["disabled@wework-personal"]
+        );
 
         write_remote_apps_enabled(&codex_home, false).unwrap();
 
@@ -652,7 +685,8 @@ mod tests {
         let destination = root.path().join("destination");
         fs::create_dir_all(home.join(".codex/skills/example")).unwrap();
         fs::create_dir_all(&destination).unwrap();
-        fs::write(home.join(".codex/config.toml"), "model = \"gpt-5\"\n").unwrap();
+        let source_config = "model = \"gpt-5\"\npersonality = \"friendly\"\n";
+        fs::write(home.join(".codex/config.toml"), source_config).unwrap();
         fs::write(home.join(".codex/skills/example/SKILL.md"), "example").unwrap();
         fs::write(destination.join("config.toml"), "old\n").unwrap();
 
@@ -660,13 +694,61 @@ mod tests {
 
         assert_eq!(
             fs::read_to_string(destination.join("config.toml")).unwrap(),
-            "model = \"gpt-5\"\n"
+            "personality = \"friendly\"\n"
+        );
+        assert_eq!(
+            fs::read_to_string(home.join(".codex/config.toml")).unwrap(),
+            source_config
         );
         assert_eq!(
             fs::read_to_string(destination.join("skills/example/SKILL.md")).unwrap(),
             "example"
         );
         assert_eq!(result.imported_entries, vec!["config.toml", "skills"]);
+    }
+
+    #[test]
+    fn rejects_importing_codex_config_into_its_source() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join(".codex");
+        fs::create_dir_all(&source).unwrap();
+        let config = "model = \"native\"\n";
+        fs::write(source.join("config.toml"), config).unwrap();
+
+        let error = import_external_content_from_paths("codex", root.path(), &source).unwrap_err();
+
+        assert!(error.contains("Cannot import Codex configuration into its source file"));
+        assert_eq!(
+            fs::read_to_string(source.join("config.toml")).unwrap(),
+            config
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_importing_codex_config_through_a_source_symlink() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join(".codex");
+        let destination = root.path().join("destination");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&destination).unwrap();
+        let config = "model = \"native\"\n";
+        fs::write(source.join("config.toml"), config).unwrap();
+        std::os::unix::fs::symlink(source.join("config.toml"), destination.join("config.toml"))
+            .unwrap();
+
+        let error =
+            import_external_content_from_paths("codex", root.path(), &destination).unwrap_err();
+
+        assert!(error.contains("Cannot import Codex configuration into its source file"));
+        assert_eq!(
+            fs::read_to_string(source.join("config.toml")).unwrap(),
+            config
+        );
+        assert!(fs::symlink_metadata(destination.join("config.toml"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
     }
 
     #[test]
@@ -677,7 +759,11 @@ mod tests {
         let home = root.path().join("home");
         let destination = root.path().join("destination");
         fs::create_dir_all(home.join(".codex")).unwrap();
-        fs::write(home.join(".codex/config.toml"), "model = \"imported\"\n").unwrap();
+        fs::write(
+            home.join(".codex/config.toml"),
+            "model = \"imported\"\npersonality = \"friendly\"\n",
+        )
+        .unwrap();
         let plugin_lock =
             super::super::personal_marketplace_lock::acquire_personal_marketplace_lock(
                 &destination.join("plugins/cache/wework-personal"),
@@ -708,7 +794,7 @@ mod tests {
         importer.join().unwrap();
         assert_eq!(
             fs::read_to_string(destination.join("config.toml")).unwrap(),
-            "model = \"imported\"\n"
+            "personality = \"friendly\"\n"
         );
     }
 

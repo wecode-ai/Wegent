@@ -581,9 +581,12 @@ const sharedMessages: Record<
     "todo.priority_urgent": "紧急",
     "todo.assignee": "负责人",
     "todo.search_assignee": "搜索负责人",
-    "todo.comment_assign_to": "转派给",
-    "todo.keep_assignee": "保持当前",
+    "todo.comment_assign_to": "转派给：",
+    "todo.assignment_suggestion": "转派建议：{{name}}",
+    "todo.dismiss_assignment_suggestion": "忽略转派建议",
     "todo.send_and_assign": "发送并转派",
+    "todo.keep_assignee": "保持当前",
+    "todo.confirm_assignment": "填入转派对象",
     "todo.assign_only": "转派",
     "todo.no_matching_assignee": "没有匹配的负责人",
     "todo.assignee_add_member": "添加人员",
@@ -724,7 +727,7 @@ const sharedMessages: Record<
     "todo.archive_issue_title": "归档任务？",
     "todo.archive_issue_description": "“{{title}}”将从看板中归档。",
     "todo.archive_issue_children_description":
-      "“{{title}}”及同批已完成子任务将从看板中归档。",
+      "“{{title}}”及其子任务将从看板中归档。",
     "todo.archive_issue_restore_hint": "归档后可从当前项目的归档箱恢复。",
     "todo.archive_issue_failed_count": "{{count}} 个任务归档失败，请重试。",
     "todo.archive_completed_tasks": "归档已完成任务",
@@ -1130,9 +1133,12 @@ const sharedMessages: Record<
     "todo.priority_urgent": "Urgent",
     "todo.assignee": "Assignee",
     "todo.search_assignee": "Search assignees",
-    "todo.comment_assign_to": "Assign to",
-    "todo.keep_assignee": "Keep current",
+    "todo.comment_assign_to": "Assign to:",
+    "todo.assignment_suggestion": "Suggested assignee: {{name}}",
+    "todo.dismiss_assignment_suggestion": "Dismiss assignment suggestion",
     "todo.send_and_assign": "Send and assign",
+    "todo.keep_assignee": "Keep current",
+    "todo.confirm_assignment": "Use as assignment target",
     "todo.assign_only": "Assign",
     "todo.no_matching_assignee": "No matching assignees",
     "todo.assignee_add_member": "Add member",
@@ -1281,7 +1287,7 @@ const sharedMessages: Record<
     "todo.archive_issue_description":
       "“{{title}}” will be archived from the board.",
     "todo.archive_issue_children_description":
-      "“{{title}}” and completed child issues archived with it will be removed from the board.",
+      "“{{title}}” and its child issues will be removed from the board.",
     "todo.archive_issue_restore_hint":
       "You can restore it later from this project's archive.",
     "todo.archive_issue_failed_count":

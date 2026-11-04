@@ -255,6 +255,7 @@ pub async fn load_task_detail(
                     erp: state.erp.as_ref(),
                     redis: state.cache.kinds_cache(),
                 },
+                &state.entity_resolvers,
                 user_id,
                 team.id,
                 team.user_id,

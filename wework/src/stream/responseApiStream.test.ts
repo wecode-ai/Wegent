@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, test, vi } from 'vitest'
 import { createResponseApiStreamState, emitResponseApiEvent } from './responseApiStream'
 
@@ -252,13 +254,13 @@ describe('emitResponseApiEvent', () => {
   })
 
   test('maps root goal turn lifecycle events', () => {
-    const onRuntimeGoalContinuation = vi.fn()
+    const onRuntimeTurnUpdated = vi.fn()
     const state = createResponseApiStreamState()
 
     for (const status of ['started', 'settled'] as const) {
       emitResponseApiEvent(
-        { onRuntimeGoalContinuation },
-        'runtime.goal.continuation',
+        { onRuntimeTurnUpdated },
+        'runtime.turn.updated',
         {
           taskId: 'task-1',
           subtaskId: '2',
@@ -269,7 +271,7 @@ describe('emitResponseApiEvent', () => {
       )
     }
 
-    expect(onRuntimeGoalContinuation).toHaveBeenNthCalledWith(1, {
+    expect(onRuntimeTurnUpdated).toHaveBeenNthCalledWith(1, {
       taskId: 'task-1',
       subtaskId: '2',
       deviceId: 'device-1',
@@ -277,7 +279,7 @@ describe('emitResponseApiEvent', () => {
       turnId: 'turn-2',
       status: 'started',
     })
-    expect(onRuntimeGoalContinuation).toHaveBeenNthCalledWith(2, {
+    expect(onRuntimeTurnUpdated).toHaveBeenNthCalledWith(2, {
       taskId: 'task-1',
       subtaskId: '2',
       deviceId: 'device-1',

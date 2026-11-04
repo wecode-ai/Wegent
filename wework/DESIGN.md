@@ -616,6 +616,27 @@ recipe closely:
   changes keep the grabbed thumb point under that pointer. Disable both row and
   text compensation during the drag; release samples the new reading position.
 
+跟随动画从实际滚动位置开始，持有连续位置计算下一帧；浏览器取整后的显示位置
+不能覆盖未完成的亚像素进度。内容缩短时将连续位置限制到新的实际底部，弹簧收敛后
+精确写入底部。用户输入、导航、暂停或会话切换均清除位置、速度和时钟。
+Streaming follow starts from the actual scroll position and retains a continuous
+position between frames. Browser quantization affects presentation, not the next
+spring step. Content shrink clamps the retained position to the new DOM end;
+settling writes that exact end. Input, navigation, suspension and conversation
+changes clear the position, velocity and clock.
+
+```mermaid
+flowchart LR
+    Start[Start from actual scrollTop] --> Position[Retain continuous position]
+    Position --> Clamp[Clamp to current DOM end]
+    Clamp --> Step[Advance spring toward end]
+    Step --> Position
+    Step --> DOM[Write position; browser may quantize]
+    Step --> Settle[On settle write exact end]
+    Settle --> Reset[Clear position, velocity and clock]
+    Cancel[Input, navigation, suspension or conversation change] --> Reset
+```
+
 The Composer is not a green brand block, a thick outlined form, or a card with
 an exaggerated shadow.
 
@@ -704,9 +725,9 @@ must not discard entered data without warning. Do not stack modal dialogs.
   validation, or persistent system feedback.
 - Open on keyboard focus as well as hover and dismiss on blur, pointer exit, or
   Escape.
-- A focusable row retaining focus after activation must not keep its hover card
-  open unless that card explicitly opens on focus or focus has moved into its
-  interactive content.
+- A hover-only card closes on pointer exit even if its row or an action inside
+  retains focus. Cards that need focus-driven visibility must explicitly enable
+  `openOnFocus`; `interactive` enables pointer actions without retaining visibility.
 - Use the shared `Tooltip` component for compact controls instead of the native
   HTML `title` attribute. Icon-only controls must keep a localized
   `aria-label`; controls that currently have neither a visible label nor a
@@ -786,6 +807,78 @@ Load unopened dialogs and editors on demand. Refresh failures preserve valid
 same-scope data and show a local error, never an empty-state substitute. Scope
 changes hide old data and reject late responses. Follow the shared
 [implementation contract](../frontend/AGENTS.md#page-data-loading-and-error-isolation).
+
+智能工作台列表由 `useSmartAppCatalog` 按 API 实例、页面模式、查询、来源和标签
+隔离作用域。本机安装列表与云端目录各自持有请求身份、数据、加载和错误状态，
+并行读取并独立发布；任一来源变慢或失败都不能隐藏另一来源的有效卡片。
+同作用域后台刷新保留卡片和模型选择器，只有更新的本机数据才能更新模型值；
+切换作用域时隐藏旧数据，迟到响应不能覆盖当前内容。失败保留该来源的有效数据，
+显示错误和重试入口，不能伪装为成功空列表。本机变更完成后刷新原页面模式的当前查询，
+仅等待本机读取完成即可恢复操作，云端刷新继续在后台运行。
+已确认的本机生命周期事件只使本机旧请求失效并更新本机数据，不能取消云端读取。
+独立展示不代表操作可以使用未知本机状态：本机读取尚未完成、正在刷新或失败时，
+保留现有卡片和模型值，禁用安装、更新、模型绑定和移除等依赖本机事实的操作。
+对话框确认与异步下载完成后重新检查当前作用域和请求身份；就绪后使用当前安装状态，
+详情与安装准备对话框绑定发现作用域；切换时立即隐藏旧对话框，同作用域刷新保留详情。
+运行中的更新仍须用户确认停止。
+原生安装在串行操作内、写文件及注册表前检查实时运行状态，
+防止另一窗口启动工作台后被覆盖。
+
+`useSmartAppCatalog` isolates discovery by API instance, page mode, query, source
+and tag. Local installations and the cloud catalog each own their request
+identity, data, loading and error state. They load concurrently and publish
+independently; a slow or failed source cannot hide valid cards from the other.
+Same-scope refreshes keep cards and model controls mounted, and only newer local
+data can update model values. Scope changes hide previous data and reject late
+responses. Failures preserve the affected source's valid data with an error and
+retry action, never a successful empty result. Completed local mutations refresh
+the current query of their original page mode and await only local discovery;
+cloud revalidation continues in the background. Confirmed local lifecycle events
+invalidate only older local reads and update local data; cloud discovery continues.
+Independent discovery does not make unknown local state safe for mutations.
+Initial, refreshing or failed local reads retain cards and model values but disable
+install, update, model binding and removal. Dialog confirmation and completed
+downloads recheck the current scope and request identity. Ready actions use current
+installation facts. Details and prepared install dialogs belong to their discovery
+scope: switching scopes immediately hides them, while same-scope refreshes retain
+details. A running update still requires stop confirmation. Native
+installation checks live runtime ownership inside its serial operation before
+writing files or the registry, preventing an app started in another window from
+being overwritten.
+
+```mermaid
+flowchart TD
+    Owner[API instance + mode + query + source + tag] --> Local[Read local installations]
+    Owner --> Selection[Details and prepared install dialogs belong to this scope]
+    Owner --> Cloud[Read cloud catalog and tags]
+    Local --> LocalCurrent{Local request ID and scope current?}
+    Cloud --> CloudCurrent{Cloud request ID and scope current?}
+    LocalCurrent -- Yes, success --> LocalData[Publish local cards and model state]
+    CloudCurrent -- Yes, success --> CloudData[Publish cloud catalog]
+    LocalCurrent -- Yes, failure --> LocalError[Keep local data with error and retry]
+    CloudCurrent -- Yes, failure --> CloudError[Keep cloud data with error and retry]
+    LocalCurrent -- No --> Discard[Discard late response]
+    CloudCurrent -- No --> Discard
+    Mutation[Local mutation completes] --> Mode{Original mode still active?}
+    Mode -- Yes --> Owner
+    Mode -- No --> Ignore[Ignore old-mode refresh]
+    Event[Confirmed local lifecycle event] --> Invalidate[Invalidate older local requests only]
+    Invalidate --> Existing{Current scope has local data?}
+    Existing -- Yes --> LocalData
+    Existing -- No --> Local
+    Local --> ReadOnly[Keep cards; disable local mutations while pending]
+    LocalError --> ReadOnly
+    LocalData --> Ready{Current local read succeeded?}
+    Ready -- No --> ReadOnly
+    Ready -- Yes --> Action[Read current installation facts at action time]
+    Action --> Kind{Install or update?}
+    Kind -- No --> Other[Perform selected local operation]
+    Kind -- Yes --> Running{Running update?}
+    Running -- Yes --> Stop[Confirm and stop]
+    Running -- No --> Install[Install]
+    Stop --> Install
+    Install --> Native[Serial native owner rejects live running target before writes]
+```
 
 Every interactive component must account for the applicable states:
 
@@ -968,6 +1061,39 @@ focus behavior, such as revealing actions. Handwritten CSS uses the equivalent
     Content --> Composer
   ```
 
+  桌面端数学公式由共享 `AssistantMarkdown` 统一排版。参考 Codex 的
+  KaTeX 路径，支持 `\(…\)`、`\[…\]`、`$…$`、`$$…$$` 和 `math`
+  代码块。解析器先识别真正的数学节点，再将 TeX 分隔符转换为 Streamdown
+  支持的美元分隔符；保留引用、列表缩进、代码示例与链接目标。单美元公式
+  不接受两端空白或紧随数字的结束符，避免将常见金额识别为公式。
+  展示公式只在可容纳块的 Markdown 容器中展开；表格、标题、强调与链接
+  标签中的公式保留行内形式，不能插入换行破坏容器。
+  KaTeX 使用其开源发行包的专用数学字体、HTML 与 MathML 输出；禁用可信
+  HTML 命令。长行间公式在消息内横向滚动，原始消息及复制内容保持不变。
+
+  Desktop math belongs to shared `AssistantMarkdown`. Like Codex, it uses
+  KaTeX for inline and display TeX, dollar delimiters and `math` fences. Only
+  parsed math nodes have their TeX delimiters normalized before Streamdown's
+  block splitting and streaming completion. Quotes, list indentation, code,
+  link destinations and common currency text retain their Markdown meaning.
+  Display delimiters expand only in block-capable Markdown containers. Table
+  cells, headings, emphasis and link labels retain inline math without inserted
+  line breaks.
+  KaTeX's open-source math fonts, HTML and MathML are bundled locally, with
+  trusted HTML commands disabled. Display equations scroll horizontally within
+  the message; stored messages and message-copy content remain unchanged.
+
+  ```mermaid
+  flowchart LR
+    Source[Original message] --> Parse[Markdown parser with math delimiters]
+    Parse --> Normalize[Normalize parsed TeX using block and inline container boundaries]
+    Normalize --> Streamdown[Streamdown blocks and streaming completion]
+    Streamdown --> Math[Remark math nodes]
+    Math --> Sanitize[Existing HTML sanitization]
+    Sanitize --> KaTeX[KaTeX HTML and MathML]
+    Parse --> Literal[Code, links and escaped text remain literal]
+  ```
+
   `RuntimeExecutionDetails` owns the desktop execution dialog chrome, status
   badges, metadata, stop state, transcript error/retry state and footer actions.
   Its host supplies the authoritative runtime session, transcript body and real
@@ -1011,6 +1137,28 @@ focus behavior, such as revealing actions. Handwritten CSS uses the equivalent
   locale rules in both hosts. Explicit transition properties avoid collisions
   with the Web animation plugin.
 
+  Tool detail and group expansion belong to a conversation, canonical turn and
+  stable member block IDs. Transcript reconciliation can change an assistant
+  view's guidance anchor while retaining the same tools; remounting that view
+  must read the existing tool state. Groups use member IDs rather than segment
+  positions. Messages without a canonical turn retain their message scope.
+  Completed-response shell expansion remains local to its assistant view and
+  includes expanded tools belonging to that view.
+
+  ```mermaid
+  sequenceDiagram
+    participant User
+    participant View as Assistant view
+    participant Store as Shared expansion state
+    participant Projection as Canonical turn projection
+    User->>View: Expand tool detail
+    View->>Store: Store conversation + turn + call ID
+    Projection->>View: Reconcile guidance anchor and replace view ID
+    View->>Store: Read the same conversation + turn + call ID
+    Store-->>View: Keep tool detail expanded during final text
+    View->>Store: Collapse only this view's member tools on shell close
+  ```
+
   `ComposerProseMirrorEditor` and its schema, Markdown parser/serializer,
   editing commands, mention/link node views and diagnostics belong to the shared
   composer module. Both hosts use the same tables, lists, selection, undo/redo,
@@ -1034,7 +1182,116 @@ focus behavior, such as revealing actions. Handwritten CSS uses the equivalent
   response text and processing blocks, guidance segments, interrupted-run timing,
   failure details, retry controls, generated-image galleries and final artifacts.
   Its native adapter supplies image loading/downloading and inline visualization
-  services. `MessageHoverActions` owns copy/edit/fork controls and localized time
+  services. The Executor advertises the inline visualization contract through
+  Codex developer instructions on thread start, resume, and fork; text-only
+  auxiliary threads do not receive it. Generated fragments use unique durable
+  task-owned paths and an absolute `visualize` content reference in the final
+  response. Codex keeps that reference in its normal transcript. Replaying a
+  message reads the original file through the desktop file service and runs it
+  in an opaque-origin `allow-scripts` iframe. The host owns a complete HTML
+  document in standards mode and reports its intrinsic content height to size
+  the frame. Fragments supply scoped styles and local interactions using the
+  documented host theme tokens; they do not depend
+  on a ChatGPT widget bridge. Inline fragments are response content; an explicit
+  export is a separate deliverable. Loading failures remain visible and retryable.
+  The visualization host is transparent and unframed; the generated content owns
+  its cards and borders so the conversation never adds a second enclosing panel.
+  The sandbox contains native scroll chaining at its document root. Wheel input
+  stays native while an internal scroll region can consume it; at a boundary the
+  bridge consumes the internal remainder and forwards only the remaining pixel
+  delta. The host dispatches wheel input through the existing conversation scroll
+  controller before moving its actual viewport, so user scrolling cannot be
+  mistaken for a layout change and snapped back to the bottom. Custom controls
+  that cancel wheel events and internal overscroll containment keep ownership.
+
+  桌面 E2E 先激活操作所属的工作区标签页，等待控件可见，再将目标区域移入视口；
+  后台保留的 DOM 不能作为交互就绪的证明。通过 Chromium 输入协议命中实际 iframe 后发送原生滚轮，并逐条等待
+  回执；不能把跨进程 iframe 的输入直接送给主渲染器。鼠标移动前后观测同一输入点，
+  仅当其仍命中原 iframe 且位于目标区域内时发送滚轮；遮挡或移出目标直接报错，
+  附前后几何、命中元素及最近可识别祖先信息，不重试。祖先诊断限制层数和标识字段长度，
+  不读取文本。临时根页面被动监听器只记录可信原生事件，
+  在所有退出路径清理，并先于 debugger 使用权释放。回执不代表 DOM 已收到事件；
+  根页面探针只提供即时诊断，实际投递由业务断言确认。内联可视化输入、主工作台
+  截图、堆读取和持续媒体模拟共用 debugger 使用权，最后一个使用者释放时才断开自建连接，
+  外部检查器的连接始终由外部持有。意外断开使原有使用权失效，不能误关新连接。
+  Desktop E2E first activates the owning workspace tab, waits for visible
+  controls, and reveals the target region. Retained background DOM does not
+  establish interaction readiness. It dispatches native wheel input through Chromium hit testing and
+  awaits each protocol acknowledgement. Before
+  and after the mouse move, the fixed input point must hit the same owned iframe
+  and remain inside the target region. Occlusion or loss of the target fails with
+  both observations, without retries. Hit diagnostics include the nearest
+  identified ancestor with bounded traversal and identifier field lengths, without text.
+  A temporary passive root listener records
+  only trusted native events and is cleaned up on every exit before releasing
+  the debugger lease. Acknowledgements do not establish DOM delivery, and the
+  root probe is an immediate diagnostic snapshot; business assertions verify
+  actual delivery. Inline
+  visualization input, main workbench screenshots, heap reads and persistent
+  media overrides share debugger leases. Only the final lease detaches a
+  connection owned by the workbench;
+  externally attached inspectors retain ownership. Unexpected detachment
+  invalidates old leases so they cannot detach a replacement connection.
+
+  ```mermaid
+  sequenceDiagram
+    participant Test as Desktop E2E
+    participant Lease as Shared debugger leases
+    participant Chromium
+    participant Frame as Opaque-origin iframe
+    Test->>Test: Activate owning tab, wait for visibility and reveal target
+    Test->>Lease: Acquire input lease
+    Test->>Test: Install root probe; observe fixed point ownership and identified ancestor
+    Test->>Chromium: Dispatch mouse move and await acknowledgement
+    Chromium-->>Test: Acknowledge mouse move
+    Test->>Test: Recheck point ownership and target region; fail if lost
+    Test->>Chromium: Dispatch wheel at clipped frame coordinates
+    Chromium->>Frame: Hit test and deliver trusted native input
+    Chromium-->>Test: Acknowledge dispatch
+    Test->>Test: Read trusted root events; finally remove probe
+    Note over Test,Chromium: Dispatch acknowledgement does not establish DOM delivery
+    Test->>Lease: Release input lease
+    Note over Lease: Detach owned connection after the final consumer releases
+  ```
+
+  ```mermaid
+  sequenceDiagram
+    participant Executor
+    participant Codex as Codex CLI / app-server
+    participant Storage as Task files + Codex transcript
+    participant Markdown as Shared message renderer
+    participant Host as Desktop visualization host
+    Executor->>Codex: Start / resume / fork with visualization instructions
+    Codex->>Storage: Write unique HTML fragment and final absolute reference
+    Storage->>Markdown: Stream or replay unchanged assistant message
+    Markdown->>Host: Parsed visualization reference
+    Host->>Storage: Read complete HTML through desktop file service
+    Storage-->>Host: Fragment or explicit read failure
+    Host->>Host: Compose HTML document in standards mode
+    Host->>Host: Render sandbox, report content size, follow Wework theme
+  ```
+
+  ```mermaid
+  sequenceDiagram
+    participant Wheel as Sandbox wheel input
+    participant Region as Internal scroll regions
+    participant Bridge as Opaque-origin message bridge
+    participant Controller as Shared conversation scroll controller
+    participant Viewport as Actual conversation viewport
+    Wheel->>Region: Plan scroll consumption along event path
+    alt Entire delta stays inside sandbox
+      Region->>Region: Preserve native scrolling or control interaction
+    else Delta reaches conversation
+      Wheel->>Wheel: Cancel native chaining
+      Wheel->>Region: Consume available internal distance
+      Wheel->>Bridge: Post remaining pixel delta with frame token
+      Bridge->>Bridge: Validate source, token and finite deltas
+      Bridge->>Controller: Dispatch wheel to record user intent
+      Bridge->>Viewport: Scroll once after intent is recorded
+    end
+  ```
+
+  `MessageHoverActions` owns copy/edit/fork controls and localized time
   labels. `MessageList` owns the complete message-row composition, visibility,
   virtual measurements, text selection and edit lifecycle. `UserMessage` and
   `UserMessageEditForm` preserve native rich Markdown, image/document attachment
@@ -1781,12 +2038,46 @@ implementation and WCAG conflict.
 - Native title-bar drag regions must not geometrically overlap visible
   interactive controls. Explicitly carve controls out of the drag region even
   when they declare `no-drag`.
+- 标题栏内绝对定位的拖拽区必须以标题栏为定位边界；调试面板展开时停用
+  底下的原生拖拽区，收起或关闭后恢复。
+- Anchor absolutely positioned title-bar drag regions to the title bar. Disable
+  underlying native drag regions while the debug panel is expanded, and restore
+  them when it collapses or closes.
+- 刷新期间收到的原生工作区菜单操作必须在工作区挂载后执行一次。
+- Replay native workspace-menu actions received during refresh once the workspace
+  mounts, without executing consumed actions again after a remount.
 - Respect macOS traffic-light safe areas, Windows controls, system scaling, and
   actual platform shortcuts.
 - Use the platform modifier in both behavior and visible shortcut labels.
 - File paths, terminals, permissions, and external applications reflect the
   actual current environment.
 - Keep pane resize and open/close motion stable under window zoom.
+- 进程浏览器关闭时，进行中的 DOM 快照读取必须随原生窗口或渲染器销毁立即结算，
+  返回既有的窗口不存在状态；活窗口的读取错误仍须上抛。执行脚本前注册生命周期
+  监听，并在所有结算路径移除监听，不得以超时、重试或等待渲染器响应代替关闭事件。
+- Process Explorer snapshots must settle when their native window closes or its
+  renderer is destroyed, preserving the existing absent-window result. Register
+  lifecycle listeners before executing renderer code, remove them after every
+  settlement, and propagate failures from a live window.
+
+  ```mermaid
+  sequenceDiagram
+    participant Caller
+    participant Snapshot as Native snapshot collector
+    participant Window as Process Explorer
+    Caller->>Snapshot: Request window snapshot
+    Snapshot->>Window: Register closed and destroyed listeners
+    Snapshot->>Window: executeJavaScript
+    alt Renderer responds while window is live
+      Window-->>Snapshot: DOM snapshot or execution error
+    else Window closes or renderer is destroyed
+      Window-->>Snapshot: closed / destroyed
+      Note over Snapshot: Settle without awaiting the abandoned script
+    end
+    Snapshot->>Window: Remove both lifecycle listeners
+    Snapshot-->>Caller: Snapshot, absent-window result, or live execution error
+  ```
+
 - Verify changes through the isolated real-Electron flow in `AGENTS.md`, never a
   personal Wework window.
 
@@ -1825,12 +2116,84 @@ When a screenshot feels wrong, compare it in this order: composition, surface
 hierarchy, typography, spacing, control sizing, radii, elevation, then color.
 Do not try to rescue incorrect composition by adding accent color or decoration.
 
+### 13.1 Composition and information density
+
+Simplicity means a clear hierarchy with few competing decisions. A small number
+of controls is not evidence of a successful composition. Whitespace must help
+users read, understand relationships, and act; it must not leave essential
+content visually weak or disconnected.
+
+Review the whole application window at its intended display size, not only a
+cropped component or an enlarged screenshot. Check these points explicitly:
+
+- **Visual hierarchy:** Can a user immediately identify the primary question or
+  work item, understand its source, and find the next action? Repeated source
+  titles and metadata must not compete with the actual work content.
+- **Spatial relationships:** Do the source, question, supporting context, and
+  response form read as one coherent group? Avoid detached controls at opposite
+  edges, unrelated gaps between connected elements, and content that appears to
+  float in an otherwise unstructured pane.
+- **Proportion and density:** Are pane widths, reading width, top inset, and
+  vertical spacing appropriate for the amount of content? A single pending item
+  is a normal working state, not an empty state. A sparse list or short question
+  must still have a deliberate composition in a wide desktop window. Do not
+  stretch a short response field merely because horizontal space is available.
+- **Context for decisions:** Does the initial view contain enough available
+  context to make the requested judgment? Show a concise explanation or evidence
+  summary when the task provides one; keep lengthy logs and secondary details
+  progressively disclosed. Do not hide all useful context behind a generic
+  disclosure, invent supporting information, or force users to open the original
+  conversation for every simple decision.
+- **Restraint:** Fix hierarchy, grouping, and proportions before adding UI.
+  Decorative cards, redundant instructions, extra controls, and fabricated
+  metadata must not be used to fill space. Unused space is acceptable when the
+  content that remains is intentional, readable, and complete.
+
+For list/detail and human-response surfaces, inspect zero, one, and multiple
+items, short and long content, and both wide and constrained windows. Include
+the ordinary unfocused state; a blue focus ring must not be the only visible
+anchor. Preserve the hierarchy when details expand, drafts grow, an item is
+handled, or an error appears. Apply the responsive and accessibility checks
+above rather than judging only a populated desktop happy path.
+
+### 13.2 Review evidence and conclusions
+
+Review functional correctness, interaction usability, and visual quality as
+separate dimensions. Passing tests, matching screenshot hashes, and finding no
+functional blockers do not establish that a screen is visually well designed.
+
+When an independent reviewer is requested, explicitly include the composition
+checks above in the assignment. Ask the reviewer to assess the actual work at
+the full-window scale, including the one-item state, rather than only verify
+controls and screenshot provenance. Give the reviewer the user's visual
+requirements and relevant before/after evidence.
+
+The review conclusion must identify the states and window sizes actually
+inspected, findings in each dimension, and any unverified scope. Describe visual
+defects concretely, such as excessive reading width, weak question emphasis, or
+disconnected context and response controls; do not dismiss structural problems
+as subjective taste. Reserve an unqualified UI approval for a review that
+actually assessed composition. The implementing agent must also inspect the
+result and remains responsible for addressing the user's requirements.
+
+These are review acceptance criteria, not authorization to run verification
+tools. Follow the repository's E2E and `ai:verify` execution policy.
+
 ## 14. Notification inbox and unread contract
 
 The title-bar bell is the product's single notification inbox. Its badge is the
 sum of unread items from every registered source. The macOS Dock badge mirrors
 that sum; it does not count tray-menu rows. A tray preference may hide the
 unread-task section in the tray, but must never change the bell or Dock total.
+
+The bell also links to the singleton **Needs your input** workspace tab. Its
+pending count tracks unresolved structured questions independently of unread
+notifications: reading, dismissing, or marking notifications read never answers
+a question. In-app reminders, that tab, and the original conversation share the
+same request identity and response state. Simple business questions can be
+answered inline; approvals, authorization, and complex forms link to their
+original context. Keep one notification-settings surface and one reply control
+implementation; do not recreate per-source human-response forms.
 
 ```mermaid
 flowchart LR

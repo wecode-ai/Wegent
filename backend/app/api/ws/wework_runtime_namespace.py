@@ -15,6 +15,7 @@ from socketio.exceptions import ConnectionRefusedError
 
 from app.api.ws.connection_utils import enter_connect_room, save_connect_session
 from app.api.ws.decorators import trace_websocket_event
+from app.api.ws.mcp_app_ownership import McpAppOwnership
 from app.core.config import settings
 from app.schemas.project_chat import (
     ProjectChatAgentFailure,
@@ -32,6 +33,7 @@ from app.services.device.command_registry import (
 )
 from app.services.device.command_service import (
     DeviceCommandError,
+    is_builtin_branch_query,
     local_device_command_service,
 )
 from app.services.device.remote_control_policy import (
@@ -136,6 +138,7 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
 
     def __init__(self, namespace: str = WEWORK_RUNTIME_NAMESPACE):
         super().__init__(namespace)
+        self._mcp_app_ownership = McpAppOwnership(self._release_mcp_app)
         self._event_handlers: dict[str, str] = {
             WEWORK_RUNTIME_REQUEST_EVENT: "on_runtime_request",
             PROJECT_CHAT_SUBSCRIBE_EVENT: "on_project_chat_subscribe",
@@ -206,6 +209,21 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
         )
         logger.info("[Wework Runtime WS] Connected user=%s sid=%s", user.id, sid)
 
+    async def _release_mcp_app(
+        self, user_id: int, device_id: str, payload: dict[str, Any]
+    ) -> None:
+        await relay_ipc_request(
+            user_id=user_id,
+            device_id=device_id,
+            method="runtime.mcp_apps.request",
+            params=payload,
+            timeout_seconds=DEFAULT_IPC_TIMEOUT_SECONDS,
+        )
+
+    async def on_disconnect(self, sid: str, reason: Any = None) -> None:
+        """Revoke retained app sessions when their authenticated owner disappears."""
+        await self._mcp_app_ownership.disconnect(sid)
+
     async def on_runtime_request(self, sid: str, data: dict) -> dict:
         """Relay one app IPC-style runtime request to an online executor."""
 
@@ -246,13 +264,22 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
                 user_email=string_field(session, "user_email") or "",
             )
 
-        try:
-            result = await relay_ipc_request(
+        async def invoke() -> dict[str, Any]:
+            return await relay_ipc_request(
                 user_id=int(user_id),
                 device_id=device_id,
                 method=method,
                 params=params,
                 timeout_seconds=timeout_seconds_from(data),
+            )
+
+        try:
+            result = (
+                await self._mcp_app_ownership.request(
+                    sid, int(user_id), device_id, params, invoke
+                )
+                if method == "runtime.mcp_apps.request"
+                else await invoke()
             )
         except RuntimeRpcError as exc:
             return ipc_error(
@@ -514,15 +541,20 @@ async def relay_ipc_request(
             ) from exc
 
     if method == "device.execute_command":
+        command_key = str(params.get("command_key") or "")
+        configured_commands = settings.LOCAL_DEVICE_COMMANDS
         try:
             command = resolve_local_device_command(
-                str(params.get("command_key") or ""),
-                settings.LOCAL_DEVICE_COMMANDS,
+                command_key,
+                configured_commands,
             )
         except CommandRegistryError as exc:
             raise DeviceCommandError(str(exc)) from exc
         if command is None:
             raise DeviceCommandError("Device command key is not configured")
+        uses_builtin_branch_query = is_builtin_branch_query(
+            command_key, configured_commands
+        )
         try:
             route = await runtime_route_resolver.resolve(
                 user_id=user_id,
@@ -546,6 +578,7 @@ async def relay_ipc_request(
             user_id=user_id,
             device_id=route.runtime_device_id,
             command=command.command,
+            command_key=command_key if uses_builtin_branch_query else None,
             path=params.get("path") if isinstance(params.get("path"), str) else None,
             cwd=params.get("cwd") if isinstance(params.get("cwd"), str) else None,
             args=params.get("args") if isinstance(params.get("args"), list) else [],

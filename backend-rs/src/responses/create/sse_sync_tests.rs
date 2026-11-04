@@ -334,6 +334,16 @@ impl RecordingRedis {
             .count()
     }
 
+    fn cancel_get_after(&self, marker: &str) -> bool {
+        let calls = self.calls();
+        let Some(index) = calls.iter().position(|call| call == marker) else {
+            return false;
+        };
+        calls[index + 1..]
+            .iter()
+            .any(|call| call.starts_with("GET chat:cancel:"))
+    }
+
     fn mark_cancelled(&self) {
         self.cancelled.store(true, Ordering::SeqCst);
     }
@@ -593,6 +603,7 @@ async fn an_already_set_cancel_resolves_on_the_initial_get() {
     let executor = executor_manager();
     let request = execution_request();
     let ctx = ConsumerContext {
+        package_mode: false,
         mysql: &mysql,
         redis: Some(&redis),
         tables: tables(),
@@ -623,6 +634,23 @@ async fn an_already_set_cancel_resolves_on_the_initial_get() {
     );
 }
 
+/// The client's read timeout bounds inactivity, not total stream lifetime.
+/// Reintroducing `RequestBuilder::timeout(STREAM_TIMEOUT)` would make this
+/// assertion fail and reproduce the 300-second truncation regression.
+#[test]
+fn chat_shell_stream_request_has_no_total_timeout() {
+    let client = HttpClient::builder().build().expect("HTTP client");
+    let request = stream_request(
+        &client,
+        "http://127.0.0.1:1/v1/responses",
+        &json!({"stream": true}),
+        "req-test",
+    )
+    .expect("request builds");
+
+    assert!(request.timeout().is_none());
+}
+
 /// A cross-worker cancel is acted on while `.send()` still awaits the HTTP
 /// response headers; the previous implementation could only poll between
 /// chunks, so it stayed suspended for the whole header wait.
@@ -634,6 +662,7 @@ async fn cancel_is_observed_while_the_header_wait_is_outstanding() {
     let executor = executor_manager();
     let request = execution_request();
     let ctx = ConsumerContext {
+        package_mode: false,
         mysql: &mysql,
         redis: Some(&redis),
         tables: tables(),
@@ -681,6 +710,7 @@ async fn cancel_is_observed_during_a_slow_persistence_step() {
     let mysql = RecordingMysql::gated(gate);
     let executor = executor_manager();
     let ctx = ConsumerContext {
+        package_mode: false,
         mysql: &mysql,
         redis: Some(&redis),
         tables: tables(),
@@ -741,6 +771,7 @@ async fn terminal_received_with_delayed_eof_keeps_polling_during_the_drain() {
     let mysql = RecordingMysql::gated(gate.clone());
     let executor = executor_manager();
     let ctx = ConsumerContext {
+        package_mode: false,
         mysql: &mysql,
         redis: Some(&redis),
         tables: tables(),
@@ -802,8 +833,8 @@ async fn terminal_received_with_delayed_eof_keeps_polling_during_the_drain() {
         "the completed result survives the in-drain cancellation"
     );
     assert!(
-        redis.count("GET chat:cancel:") >= 2,
-        "the same poll keeps issuing GETs through the drain: {:?}",
+        redis.cancel_get_after("GET chat:task_streaming:424242"),
+        "the cancellation poll must issue a GET after terminal persistence starts: {:?}",
         redis.calls()
     );
     let subtask_reads = mysql
@@ -909,6 +940,7 @@ async fn unregister_del_waits_for_an_admitted_cancel_get() {
     let executor = executor_manager();
     let request = execution_request();
     let ctx = ConsumerContext {
+        package_mode: false,
         mysql: &mysql,
         redis: Some(&redis),
         tables: tables(),

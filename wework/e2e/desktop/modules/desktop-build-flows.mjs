@@ -1,3 +1,5 @@
+import { verifyNativeMcpCloudRouting } from './mcp-app-cloud-routing.mjs'
+import { packagedComponentRoots } from './packaged-component-resources.mjs'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 
@@ -421,8 +423,8 @@ function hostCodexTarget() {
   return target
 }
 
-async function resolveDesktopCodexBinary() {
-  const configured = process.env.WEWORK_E2E_CODEX_BIN
+async function resolveDesktopCodexBinary(environment = process.env) {
+  const configured = environment.WEWORK_E2E_CODEX_BIN
   if (configured) {
     return resolveExecutable(configured, 'codex', 'Configured Wework E2E Codex')
   }
@@ -491,8 +493,17 @@ async function prepareHarnessRuntimeRoots(appBinary) {
     await readFile(dshEntry)
   }
 
+  const components = JSON.parse(
+    await readFile(join(packagedResourcesRoot, 'components.json'), 'utf8')
+  )
+  const componentRoots = await packagedComponentRoots({
+    appBinary,
+    resourcesRoot: packagedResourcesRoot,
+    components: components.components,
+    resultDir,
+  })
   return {
-    corePluginsRoot: join(packagedResourcesRoot, 'wework-core-plugins'),
+    corePluginsRoot: componentRoots.weworkCorePlugins,
     harnessRuntimeRoot: runtimeRoot,
   }
 }
@@ -1197,12 +1208,18 @@ async function verifyCloudProjectFlow(
     text: CLOUD_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+
   control.releaseCloudInitialResponse()
   await waitForSnapshot(
     control,
     value => !value.testIds.includes(runningTaskTestId),
     'The initial cloud task did not settle after its streamed response completed',
     DEFAULT_STEP_TIMEOUT_MS
+  )
+  await verifyNativeMcpCloudRouting(
+    control,
+    cloudEnvironment,
+    join(resultDir, 'electron-user-data')
   )
   await captureVerificationScreenshot(control, 'cloud-05-initial-task-completed.png')
 

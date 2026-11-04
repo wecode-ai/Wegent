@@ -2,6 +2,44 @@
 use super::stand_in_agent::apply_stand_in_agent;
 use super::stand_in_workspace::apply_stand_in_workspace;
 use super::*;
+use crate::runtime_work::response::local_task_json;
+
+impl RuntimeWorkRpcHandler {
+    /// Notification history follows assignment ownership, including archived work.
+    pub(super) fn stand_in_assignment_tasks(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let user = payload["userId"]
+            .as_i64()
+            .ok_or_else(|| AppIpcError::new("bad_request", "userId is required"))?;
+        let assignments = payload["assignments"]
+            .as_array()
+            .ok_or_else(|| AppIpcError::new("bad_request", "assignments is required"))?;
+        let items: Vec<Value> = self
+            .local_task_links(true)
+            .into_iter()
+            .filter(|task| {
+                let origin = &task.runtime_handle["origin"];
+                !self.archived_link_is_deleted(task)
+                    && origin["initiatedBy"] == "stand_in"
+                    && origin["projectStore"] == "cloud"
+                    && origin["userId"] == user
+                    && assignments.iter().any(|assignment| {
+                        ["projectId", "itemId", "humanAssignmentId"]
+                            .iter()
+                            .all(|key| {
+                                assignment[key]
+                                    .as_str()
+                                    .is_some_and(|value| !value.is_empty())
+                            })
+                            && assignment["projectId"] == origin["cloudProjectId"]
+                            && assignment["itemId"] == origin["loopItemId"]
+                            && assignment["humanAssignmentId"] == origin["humanAssignmentId"]
+                    })
+            })
+            .map(local_task_json)
+            .collect();
+        Ok(json!({"items":items}))
+    }
+}
 
 pub(super) fn settings_error(error: crate::task_runtime::TaskRuntimeError) -> AppIpcError {
     let code = match &error {
@@ -142,6 +180,7 @@ impl RuntimeWorkRpcHandler {
             return Ok(settings);
         }
         let mut settings = payload["settings"].clone();
+        settings["id"] = json!(settings["id"].as_str().unwrap_or("default").to_owned());
         if settings["executionDeviceId"].as_str() != Some(self.device_id.as_str()) {
             return Err(AppIpcError::new(
                 "wrong_device",
@@ -151,6 +190,27 @@ impl RuntimeWorkRpcHandler {
         settings["projectStore"] = json!(project_store);
         settings["projectId"] = json!(project);
         settings["userId"] = json!(user_id);
+        let gate = self.task_send_gate(&format!("stand-in-processing:{user_id}"));
+        let _guard = gate.lock().await;
+        let previous = store
+            .personal_stand_in(user_id, &self.device_id)
+            .map_err(settings_error)?;
+        if settings.get("connections").is_none() {
+            if let Some(role) = previous["roles"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|role| role["id"] == settings["id"])
+            {
+                if role["connections"].is_array() {
+                    settings["connections"] = role["connections"].clone();
+                }
+            }
+        }
+        let mut prepared = json!({"roles":[settings]});
+        self.prepare_connection_boundaries(&mut prepared, &previous)
+            .await?;
+        let settings = prepared["roles"][0].clone();
         store
             .save_stand_in_settings(&project, user_id, settings)
             .map_err(settings_error)
@@ -646,7 +706,7 @@ impl RuntimeWorkRpcHandler {
         config: &Value,
         issue: &Value,
         binding: &Value,
-        payload: Value,
+        mut payload: Value,
     ) -> Result<(), AppIpcError> {
         if config["projectStore"] == "cloud" {
             self.verify_stand_in_user(config).await?;
@@ -707,6 +767,14 @@ impl RuntimeWorkRpcHandler {
             "task_binding_created",
             json!({"taskId":task_id,"retry":retry}),
         );
+        if config["manual"] != true {
+            use sha2::{Digest, Sha256};
+            payload["automaticStandIn"] = json!(true);
+            payload["commandId"] = json!(format!(
+                "stand-in-initial:{:x}",
+                Sha256::digest(task_id.as_bytes())
+            ));
+        }
         let result = self.dispatch_stand_in_task(payload, retry).await;
         if let Err(error) = result {
             let cleanup = if local {
@@ -741,7 +809,7 @@ impl RuntimeWorkRpcHandler {
         }
         Ok(())
     }
-    async fn start_local_stand_in(
+    pub(super) async fn start_local_stand_in(
         &self,
         config: &Value,
         issue: &Value,
@@ -817,7 +885,7 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) async fn prepare_stand_in_execution(
         &self,
-        mut payload: Value,
+        payload: Value,
         config: &Value,
     ) -> Result<Value, AppIpcError> {
         let agent = self.stand_in_agent(config).await?.or_else(|| {
@@ -827,6 +895,16 @@ impl RuntimeWorkRpcHandler {
                 "model_policy":{"mode":"user_select"}, "system_prompt":"", "additional_skills":[], "plugins":[], "mcp_servers":{}
             }))
         });
+        self.prepare_stand_in_execution_with_agent(payload, config, agent)
+            .await
+    }
+
+    pub(super) async fn prepare_stand_in_execution_with_agent(
+        &self,
+        mut payload: Value,
+        config: &Value,
+        agent: Option<Value>,
+    ) -> Result<Value, AppIpcError> {
         if let Some(agent) = agent {
             let catalog = self.runner_catalog().await?;
             apply_stand_in_agent(
@@ -884,7 +962,7 @@ impl RuntimeWorkRpcHandler {
     }
 }
 
-fn assignment_after_enable(assignment: &Value, config: &Value) -> bool {
+pub(super) fn assignment_after_enable(assignment: &Value, config: &Value) -> bool {
     let parse = |value: &Value| {
         value
             .as_str()

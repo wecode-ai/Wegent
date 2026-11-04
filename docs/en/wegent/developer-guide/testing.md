@@ -17,6 +17,13 @@ The project includes comprehensive unit testing support across all modules:
 - **Executor Manager** (Task Management): pytest + pytest-mock + pytest-cov
 - **Shared** (Utilities): pytest + pytest-cov
 - **Frontend** (Next.js + React 19): Jest + @testing-library/react
+- **Wework** (Electron + React): Vitest + @testing-library/react and the Node.js test runner
+
+## Maintaining Wework Unit Tests
+
+Run related tests with `pnpm --filter wework test <test-file>`. Count expanded parameterized cases when measuring reductions, rather than files or `test()` declarations. Do not reduce the count by skipping cases, merging tests, or changing discovery rules.
+
+Prioritize behavior coverage for task creation and sending, permissions and resource ownership, persistence, failure recovery, state machines, and upgrade or rollback. Tests with identical inputs, actions, and assertions can be removed; independent checks of colors, spacing, icons, and ordinary display formatting can be trimmed according to maintenance needs. Coverage evidence helps detect omissions but cannot alone establish behavioral equivalence. Run affected tests and review assertions after cleanup, preserving security assertions and distinct critical boundary cases.
 
 ## Current Test Coverage
 
@@ -231,6 +238,13 @@ frontend/src/__tests__/
 
 ## Wework Unit Tests
 
+Focus unit coverage on task state and message consistency, account and permission
+boundaries, persistence, device and runtime routing, input submission, and failure
+recovery. Do not add standalone cases for CSS classes, icons, copy ordering, source
+keywords, fixed metadata, or diagnostic log formatting. Keep mixed scenarios focused
+on business outcomes. Retain telemetry consent, opt-out, redaction, and account
+isolation coverage rather than separate analytics-label or debug-snapshot tests.
+
 Run the complete Wework unit test suite from the repository root:
 
 ```bash
@@ -249,6 +263,36 @@ For compatibility, the test script removes one standalone leading `--`, then
 passes all remaining file filters and Vitest options through unchanged. For a
 focused run, confirm that the reported `Test Files` count matches the intended
 scope so an accidental full-suite run is caught immediately.
+
+Pure logic tests without DOM dependencies should declare `// @vitest-environment node`
+at the top of the file. These tests do not load the browser mocks, storage, or plugin UI
+fixtures in `src/test/setup.dom.ts`. Tests exercising browser behavior keep the default
+jsdom environment. Component tests import plugin UI helpers from `@/test/setup.dom`.
+
+Wework CI runs tests without collecting coverage by default to avoid Istanbul
+instrumentation overhead. Collect focused coverage when needed with
+`pnpm --dir wework exec vitest run <test-file> --coverage`.
+Full renderer push checks report the current shard's passed file count every 15 seconds;
+complete diagnostics remain in the logs.
+
+A running Executor writes to `tasks.sqlite` concurrently. Desktop E2E fixtures that
+write directly to this database must set `PRAGMA busy_timeout = 10000` on their
+independent connection so normal write transactions can release their locks.
+Keep this wait scoped to the fixture connection and preserve business assertions
+and global UI timeout budgets.
+
+### Async Question Model Fixtures
+
+The desktop E2E async question fixture recognizes only an exact expected answer
+in a user message after the matching `function_call_output` acknowledgement,
+using the shared parser to remove runtime context wrappers from the reply.
+AGENTS.md and environment context can also arrive with `role=user`; scanning the
+whole request or matching an answer substring cannot establish a user reply.
+
+`desktop-async-input-fixture.test.mjs` covers injected context, historical answers,
+tool output, and actual replies. Existing desktop async question scenarios retain
+the distracting word `Complete` in their prompt and assert both the waiting
+message before an answer and the completion message afterward.
 
 ## Wework Desktop Cloud Device Tests
 
@@ -320,6 +364,15 @@ unrelated modules do not make the summary fail.
 
 CI reliability depends on these invariants:
 
+- Desktop E2E element mounting and subsequent value polling each use the shared
+  step budget. Mounting must not consume the entire value loop before its first
+  read; retain actual-value diagnostics and exact-match assertions.
+- After routing control commands back from another window, explicitly restore
+  native window focus before checking virtualized content. Control routing does
+  not bring a native window to the foreground.
+- Desktop teardown observes both exit events and operating-system liveness and
+  always checks the entire process group. Timeouts retain the PID, exit status,
+  and Linux kernel process state without relaxing cleanup assertions.
 - The platform E2E MySQL service must allow enough startup grace for its first
   initialization. Its health-check `start-period` should cover a cold start on
   a shared runner before the interval and retry count determine failure; reruns

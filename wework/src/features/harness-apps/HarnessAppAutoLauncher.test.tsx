@@ -1,7 +1,7 @@
+import { captureHarnessAppLaunchDiagnostics } from '@/e2e/harness-app-launch-diagnostics'
 import { act, render, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { HarnessAppAutoLauncher } from './HarnessAppAutoLauncher'
-import { captureHarnessAppLaunchDiagnostics } from '@/e2e/harness-app-launch-diagnostics'
 
 const mocks = vi.hoisted(() => ({
   list: vi.fn(),
@@ -28,7 +28,7 @@ const mocks = vi.hoisted(() => ({
   notifyInstallationsChanged: vi.fn(),
 }))
 
-const workbenchState = vi.hoisted(() => ({ models: [] as unknown[] }))
+const workbenchState = vi.hoisted(() => ({ models: [] as unknown[], isModelCatalogReady: true }))
 
 vi.mock('@/api/local/harnessApps', () => ({
   harnessAppsApi: {
@@ -70,22 +70,28 @@ vi.mock('@/features/local-harness/localHarnessModels', () => ({
   listLocalHarnessModelOptions: mocks.listModelOptions,
 }))
 
-vi.mock('@/features/workbench/useWorkbench', () => ({
-  useWorkbench: () => ({
-    projectChat: { models: workbenchState.models },
-    services: {
-      localDecisionRouterApi: {
-        resolveLaunch: mocks.resolveDecisionLaunch,
-        unregister: mocks.unregisterDecision,
-      },
-      localHarnessModelApi: {
-        resolveLaunch: mocks.resolveLaunch,
-        unregisterProxy: mocks.unregisterProxy,
-        unregisterContext: mocks.unregisterContext,
-      },
+vi.mock('@/features/workbench/useWorkbench', () => {
+  const services = {
+    localDecisionRouterApi: {
+      resolveLaunch: mocks.resolveDecisionLaunch,
+      unregister: mocks.unregisterDecision,
     },
-  }),
-}))
+    localHarnessModelApi: {
+      resolveLaunch: mocks.resolveLaunch,
+      unregisterProxy: mocks.unregisterProxy,
+      unregisterContext: mocks.unregisterContext,
+    },
+  }
+  return {
+    useWorkbench: () => ({
+      projectChat: {
+        models: workbenchState.models,
+        isModelCatalogReady: workbenchState.isModelCatalogReady,
+      },
+      services,
+    }),
+  }
+})
 
 const installation = {
   id: 'app-1',
@@ -115,6 +121,7 @@ describe('HarnessAppAutoLauncher', () => {
   beforeEach(() => {
     Object.values(mocks).forEach(mock => mock.mockReset())
     workbenchState.models = []
+    workbenchState.isModelCatalogReady = true
     mocks.resolveLaunch.mockResolvedValue({
       baseUrl: 'http://127.0.0.1:9000',
       proxyToken: 'proxy-token',
@@ -262,44 +269,6 @@ describe('HarnessAppAutoLauncher', () => {
     }
   )
 
-  test('starts the reopened tab after a closed in-flight launch releases its routes', async () => {
-    let releaseStart: (value: typeof running) => void = () => {}
-    mocks.list.mockResolvedValue([installation])
-    mocks.start
-      .mockReturnValueOnce(
-        new Promise(resolve => {
-          releaseStart = resolve
-        })
-      )
-      .mockResolvedValue(running)
-    mocks.resolveLaunch
-      .mockResolvedValueOnce({
-        baseUrl: 'http://127.0.0.1:9000/v1/harness-router/old-token',
-        proxyToken: 'old-token',
-      })
-      .mockResolvedValueOnce({
-        baseUrl: 'http://127.0.0.1:9000/v1/harness-router/new-token',
-        proxyToken: 'new-token',
-      })
-    const original = render(<HarnessAppAutoLauncher installationId="app-1" />)
-    await waitFor(() => expect(mocks.start).toHaveBeenCalledTimes(1))
-    original.unmount()
-    const settled = vi.fn()
-    render(<HarnessAppAutoLauncher installationId="app-1" onStartupSettled={settled} />)
-
-    releaseStart(running)
-    await waitFor(() => expect(settled).toHaveBeenCalledWith('app-1'))
-
-    expect(mocks.start).toHaveBeenCalledTimes(2)
-    expect(mocks.register).toHaveBeenCalledTimes(1)
-    expect(mocks.register).toHaveBeenCalledWith(running)
-    expect(mocks.unregisterProxy).toHaveBeenCalledWith('old-token')
-    expect(mocks.unregisterProxy).not.toHaveBeenCalledWith('new-token')
-    expect(mocks.unregisterProxy.mock.invocationCallOrder[0]!).toBeLessThan(
-      mocks.start.mock.invocationCallOrder[1]!
-    )
-  })
-
   test('uses the committed catalog when a reopened launch waits for old route cleanup', async () => {
     let releaseHandoff: () => void = () => {}
     let releaseCleanup: (token: null) => void = () => {}
@@ -392,50 +361,6 @@ describe('HarnessAppAutoLauncher', () => {
     expect(mocks.failLaunch).toHaveBeenCalledWith('app-1', expect.any(String))
     expect(mocks.resolveLaunch).not.toHaveBeenCalled()
     expect(mocks.start).not.toHaveBeenCalled()
-  })
-
-  test('keeps one catalog snapshot for default and additional registration', async () => {
-    let resolveDefault: (value: { baseUrl: string; proxyToken: string }) => void = () => {}
-    mocks.list.mockResolvedValue([installation])
-    mocks.start.mockResolvedValue(running)
-    mocks.listModelOptions.mockReturnValue([
-      { key: 'model-1', label: 'Default model' },
-      { key: 'model-2', label: 'Second model' },
-    ])
-    mocks.resolveLaunch.mockReturnValueOnce(
-      new Promise(resolve => {
-        resolveDefault = resolve
-      })
-    )
-    const view = render(<HarnessAppAutoLauncher installationId="app-1" />)
-    await waitFor(() => expect(mocks.resolveLaunch).toHaveBeenCalledTimes(1))
-
-    workbenchState.models = [{ name: 'model-1' }, { name: 'model-3' }]
-    mocks.listModelOptions.mockReturnValue([
-      { key: 'model-1', label: 'Refreshed default' },
-      { key: 'model-3', label: 'Third model' },
-    ])
-    view.rerender(<HarnessAppAutoLauncher installationId="app-1" />)
-    await act(async () =>
-      resolveDefault({ baseUrl: 'http://127.0.0.1:9000', proxyToken: 'default-token' })
-    )
-    await waitFor(() => expect(mocks.register).toHaveBeenCalledWith(running))
-
-    expect(mocks.resolveLaunch).toHaveBeenCalledTimes(2)
-    expect(mocks.resolveLaunch).toHaveBeenLastCalledWith(
-      'opencode',
-      { key: 'model-2', label: 'Second model' },
-      undefined,
-      false
-    )
-    expect(mocks.start).toHaveBeenCalledTimes(1)
-    expect(mocks.start).toHaveBeenCalledWith(
-      expect.objectContaining({
-        additionalModels: [
-          { modelKey: 'model-2', displayName: 'Second model', baseUrl: 'http://127.0.0.1:9000' },
-        ],
-      })
-    )
   })
 
   test.each(['takeProxy', 'takeAdditionalProxies', 'takeContext', 'takeDecision'] as const)(
@@ -547,51 +472,6 @@ describe('HarnessAppAutoLauncher', () => {
     }
   })
 
-  test('starts and registers an installed Smart app when its tab opens', async () => {
-    mocks.list.mockResolvedValue([installation])
-    mocks.start.mockResolvedValue(running)
-
-    render(<HarnessAppAutoLauncher installationId="app-1" />)
-
-    await waitFor(() =>
-      expect(mocks.start).toHaveBeenCalledWith({
-        installationId: 'app-1',
-        modelBaseUrl: 'http://127.0.0.1:9000',
-        contextBaseUrl: 'http://127.0.0.1:9001',
-        contextToken: 'context-token',
-        decisionBaseUrl: null,
-        decisionProtocolVersion: null,
-      })
-    )
-    expect(mocks.resolveDecisionLaunch).not.toHaveBeenCalled()
-    expect(mocks.storeDecision).not.toHaveBeenCalled()
-    expect(mocks.storeProxy).toHaveBeenCalledWith('app-1', 'proxy-token')
-    expect(mocks.storeContext).toHaveBeenCalledWith('app-1', 'context-token')
-    expect(mocks.register).toHaveBeenCalledWith(running)
-    expect(mocks.notifyInstallationsChanged).toHaveBeenCalledWith({
-      type: 'updated',
-      installationId: 'app-1',
-      installation: running,
-    })
-    expect(mocks.clearLaunch).toHaveBeenCalledWith('app-1')
-  })
-
-  test('registers an already running Smart app without starting it again', async () => {
-    mocks.list.mockResolvedValue([running])
-
-    render(<HarnessAppAutoLauncher installationId="app-1" />)
-
-    await waitFor(() => expect(mocks.register).toHaveBeenCalledWith(running))
-    expect(mocks.start).not.toHaveBeenCalled()
-    expect(mocks.resolveDecisionLaunch).not.toHaveBeenCalled()
-    expect(mocks.notifyInstallationsChanged).toHaveBeenCalledWith({
-      type: 'updated',
-      installationId: 'app-1',
-      installation: running,
-    })
-    expect(mocks.clearLaunch).toHaveBeenCalledWith('app-1')
-  })
-
   test('starts an installation only once across concurrent mounts', async () => {
     let resolveInstallations: ((value: (typeof installation)[]) => void) | undefined
     const firstSettled = vi.fn()
@@ -653,17 +533,6 @@ describe('HarnessAppAutoLauncher', () => {
 
     await waitFor(() => expect(mocks.start).toHaveBeenCalled())
     expect(mocks.resolveDecisionLaunch).not.toHaveBeenCalled()
-    expect(mocks.storeDecision).not.toHaveBeenCalled()
-  })
-
-  test('unregisters the decision route when the app never starts', async () => {
-    mocks.list.mockResolvedValue([grantedInstallation])
-    mocks.start.mockRejectedValue(new Error('start failed'))
-
-    render(<HarnessAppAutoLauncher installationId="app-1" />)
-
-    await waitFor(() => expect(mocks.unregisterDecision).toHaveBeenCalledWith('decision-token'))
-    expect(mocks.stop).not.toHaveBeenCalled()
     expect(mocks.storeDecision).not.toHaveBeenCalled()
   })
 

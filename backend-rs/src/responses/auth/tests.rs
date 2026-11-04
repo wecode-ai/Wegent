@@ -140,7 +140,7 @@ fn sha256_is_lowercase_hex() {
 fn session_payload_filter() {
     let claims = |scope: Option<serde_json::Value>, token_use: Option<&str>| SessionClaims {
         sub: Some("yingeng".to_string()),
-        scope: scope.map(|_| serde::de::IgnoredAny),
+        scope,
         token_use: token_use.map(str::to_string),
         exp: None,
     };
@@ -235,6 +235,7 @@ async fn a_rejected_deferred_user_read_writes_nothing() {
         AuthenticatedKey {
             api_key_id: 6539,
             api_key_name: None,
+            key_hash: String::new(),
             lookup: UserLookup::ById(509),
         },
     )
@@ -273,6 +274,7 @@ async fn the_deferred_user_read_follows_the_api_keys_reload_on_one_handle() {
         AuthenticatedKey {
             api_key_id: 6539,
             api_key_name: None,
+            key_hash: String::new(),
             lookup: UserLookup::ById(509),
         },
     )
@@ -306,6 +308,7 @@ async fn the_service_key_deferred_read_repeats_the_follow_up_lookup() {
         AuthenticatedKey {
             api_key_id: 6539,
             api_key_name: None,
+            key_hash: String::new(),
             lookup: UserLookup::ByName("yingeng".to_string()),
         },
     )

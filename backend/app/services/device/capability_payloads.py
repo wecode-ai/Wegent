@@ -19,6 +19,8 @@ from app.services.plugin_device_installation_service import (
     plugin_device_installation_service,
 )
 from app.services.plugin_package_storage import plugin_package_storage
+from app.services.plugin_release_components import components_with_manifest_account_auth
+from app.services.skill_resolution import get_runtime_skill_shells
 
 logger = logging.getLogger(__name__)
 
@@ -343,6 +345,7 @@ class CapabilityPayloadResolver:
             "name": name,
             "namespace": namespace,
             "is_public": skill.user_id == 0,
+            "bind_shells": get_runtime_skill_shells(skill),
             "content_hash": f"sha256:{file_hash}" if file_hash else None,
             "download_path": (
                 f"/api/v1/kinds/skills/{skill.id}/download?namespace={namespace}"
@@ -407,9 +410,10 @@ class CapabilityPayloadResolver:
                 if release_id_override is not None:
                     payload["version"] = release.version
                     payload["checksum"] = f"sha256:{release.sha256}"
-                    release_components = (release.scan_report_json or {}).get(
-                        "components"
-                    ) or {}
+                    release_components = components_with_manifest_account_auth(
+                        (release.scan_report_json or {}).get("components") or {},
+                        release.manifest_json or {},
+                    )
                     if release_components:
                         payload["components"] = release_components
                 download_url, expires_at = plugin_package_storage.presign_download(

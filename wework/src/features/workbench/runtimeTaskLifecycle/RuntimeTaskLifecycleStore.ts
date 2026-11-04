@@ -141,6 +141,19 @@ export class RuntimeTaskLifecycleStore {
     if (changed) this.publish()
   }
 
+  invalidateNativeExecutions(): RuntimeTaskAddress[] {
+    let changed = false
+    const addresses: RuntimeTaskAddress[] = []
+    for (const machine of this.machines.values()) {
+      if (machine.getState().task?.executionState) {
+        addresses.push(machine.getState().address)
+        changed = machine.dispatch({ type: 'executor_replaced' }) || changed
+      }
+    }
+    if (changed) this.publish()
+    return addresses
+  }
+
   syncDevices(devices: DeviceInfo[]): void {
     let changed = false
     const aliases = getUnambiguousWorkbenchDeviceAliases(devices)
@@ -191,6 +204,7 @@ export class RuntimeTaskLifecycleStore {
       }>
     }
   ): void {
+    if (this.getTask(address)?.task?.executionState) return
     if (transcript.running === true) {
       const current = this.getTask(address)
       if (shouldIgnoreStaleRunningTranscript(current)) return
@@ -328,6 +342,7 @@ export class RuntimeTaskLifecycleStore {
     transcript: RuntimePaneTranscript,
     options: SyncTranscriptOptions = {}
   ): void {
+    if (this.getTask(address)?.task?.executionState) return
     logRuntimeTaskCreateStage('lifecycle-transcript-received', {
       taskId: address.taskId,
       deviceId: address.deviceId,
@@ -355,9 +370,12 @@ export class RuntimeTaskLifecycleStore {
           currentTurn?.active && terminalTurn?.id && this.isPriorTurn(address, terminalTurn.id)
         ))
     if (!ignoreStaleIdleTranscript) this.syncRuntimeTranscriptSnapshot(address, transcript)
-    const streamingTurn = transcript.turns.findLast(
-      turn => turn.status === 'pending' || turn.status === 'streaming'
-    )
+    // Only the latest canonical turn can identify the current execution.
+    const latestTurn = transcript.turns.at(-1)
+    const streamingTurn =
+      latestTurn?.status === 'pending' || latestTurn?.status === 'streaming'
+        ? latestTurn
+        : undefined
     const hasStreamingTurn = Boolean(streamingTurn)
     const current = this.getTask(address)
     const ignoreStaleRunningTranscript = shouldIgnoreStaleRunningTranscript(current)
@@ -386,8 +404,21 @@ export class RuntimeTaskLifecycleStore {
         turnId: streamingTurn?.id,
       })
     } else if (transcript.running === true) {
-      if (ignoreStaleRunningTranscript) return
-      this.executorStarted(address)
+      if (!ignoreStaleRunningTranscript) {
+        this.executorStarted(address)
+      }
+      if (
+        (current?.execution.phase === 'idle' || current?.execution.phase === 'running') &&
+        !current.turn.active &&
+        latestTurn?.id &&
+        isTerminalTurnStatus(latestTurn.status) &&
+        (current.turn.latestId === null || current.turn.latestId === latestTurn.id)
+      ) {
+        // Older streaming history may coexist with the latest terminal turn.
+        // Retain terminal identity even when completed task metadata arrives after history.
+        // Execution ownership and a known later turn remain independent of that history.
+        this.turnSettled(address, latestTurn.id, terminalTurnOutcome(latestTurn.status))
+      }
     } else if (transcript.running === false && !ignoreStaleIdleTranscript) {
       this.executorSettled(address)
       this.turnSettled(
@@ -455,9 +486,11 @@ export class RuntimeTaskLifecycleStore {
       previous.turn.phase === 'awaiting' &&
       canonicalEvent.type === 'executor_snapshot_received' &&
       canonicalEvent.task.running === true
-    // Executor confirmation can admit a turn first seen in streaming history.
+    // Native snapshots are ordered by revision and executor epoch. Legacy turn
+    // history must not reject their authoritative startup or settlement updates.
     if (
       canonicalEvent.type === 'executor_snapshot_received' &&
+      !canonicalEvent.task.executionState &&
       !confirmsAcceptedSend &&
       (previous.turn.active
         ? previous.task !== null
@@ -477,6 +510,7 @@ export class RuntimeTaskLifecycleStore {
     }
     if (
       canonicalEvent.type === 'executor_snapshot_received' &&
+      !canonicalEvent.task.executionState &&
       canonicalEvent.task.running === true &&
       !confirmsAcceptedSend &&
       !isRuntimeGoalExecutionActive(canonicalEvent.task) &&

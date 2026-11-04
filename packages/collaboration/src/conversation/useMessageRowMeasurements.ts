@@ -8,28 +8,29 @@ import {
   recordConversationDiagnostic,
 } from './conversationDiagnostics'
 
-/** resizeItem is the only writer, for both pre-paint Markdown and observed layout. */
-export function useMessageRowMeasurements(
-  listRef: RefObject<HTMLDivElement | null>,
-  virtualizer: ConversationVirtualizer,
-  enabled: boolean,
+const initialBounds = new WeakMap<HTMLElement, DOMRect>()
+
+/** TanStack owns the observer, resize batching, and the only size writer. */
+export function useMessageRowMeasure(
   onMeasurement?: (measurement: VirtualMessageMeasurement) => void
 ) {
-  const observerRef = useRef<ResizeObserver | null>(null)
-  const observed = useRef(new Set<HTMLElement>())
-  const measure = useCallback(
-    (row: HTMLElement) => {
-      if (!enabled || !listRef.current?.contains(row)) return
+  return useCallback(
+    (
+      row: HTMLElement,
+      entry: ResizeObserverEntry | undefined,
+      virtualizer: ConversationVirtualizer
+    ) => {
       const index = Number(row.dataset.index)
-      if (!Number.isInteger(index) || index < 0 || index >= virtualizer.options.count) return
-      const rect = row.getBoundingClientRect()
-      if (rect.width <= 0 || rect.height <= 0) return
-      const measuredSize = Math.round(rect.height)
       const item = virtualizer.getVirtualItems().find(item => item.index === index)
-      if (item?.size === measuredSize) return
-      const previousTotalSize = virtualizer.getTotalSize()
-      if (isConversationDiagnosticsEnabled())
-        recordConversationDiagnostic('virtual-measurement', {
+      const border = entry?.borderBoxSize?.[0]
+      const rect = border ? null : (initialBounds.get(row) ?? row.getBoundingClientRect())
+      const width = border?.inlineSize ?? rect!.width
+      const height = border?.blockSize ?? rect!.height
+      const measuredSize = Math.round(height)
+      if (width <= 0 || height <= 0) return item?.size ?? virtualizer.options.estimateSize(index)
+      if (item?.size !== measuredSize && (onMeasurement || isConversationDiagnosticsEnabled())) {
+        const previousTotalSize = virtualizer.getTotalSize()
+        const details = {
           ...getConversationDiagnosticContext(row),
           rowIndex: index,
           previousSize: item?.size ?? null,
@@ -40,49 +41,68 @@ export function useMessageRowMeasurements(
           rowStart: item?.start,
           rowEnd: item?.end,
           scrolling: virtualizer.isScrolling,
+        }
+        const messageId =
+          row.querySelector<HTMLElement>('[data-message-id]')?.dataset.messageId ?? null
+        queueMicrotask(() => {
+          if (isConversationDiagnosticsEnabled())
+            recordConversationDiagnostic('virtual-measurement', details)
+          onMeasurement?.({
+            messageId,
+            previousSize: item?.size ?? null,
+            measuredSize,
+            previousTotalSize,
+            nextTotalSize: virtualizer.getTotalSize(),
+          })
         })
-      virtualizer.resizeItem(index, measuredSize)
-      onMeasurement?.({
-        messageId: row.querySelector<HTMLElement>('[data-message-id]')?.dataset.messageId ?? null,
-        previousSize: item?.size ?? null,
-        measuredSize,
-        previousTotalSize,
-        nextTotalSize: virtualizer.getTotalSize(),
+      }
+      return measuredSize
+    },
+    [onMeasurement]
+  )
+}
+
+export function useMessageRowMeasurements(
+  listRef: RefObject<HTMLDivElement | null>,
+  virtualizer: ConversationVirtualizer,
+  enabled: boolean
+) {
+  const pending = useRef(new Set<HTMLElement>())
+  const measureRows = useCallback(
+    (rows: HTMLElement[]) => {
+      if (!enabled) return
+      const attached = rows.filter(row => listRef.current?.contains(row))
+      // Read the complete initial batch before registering rows can update virtual layout.
+      attached.forEach(row => initialBounds.set(row, row.getBoundingClientRect()))
+      attached.forEach(row => {
+        if (virtualizer.isScrolling) pending.current.add(row)
+        virtualizer.measureElement(row)
+        initialBounds.delete(row)
       })
     },
-    [enabled, listRef, onMeasurement, virtualizer]
+    [enabled, listRef, virtualizer]
   )
 
   useLayoutEffect(() => {
     if (!enabled) return
-    const observer = new ResizeObserver(entries => {
-      entries.forEach(entry => measure(entry.target as HTMLElement))
-    })
-    observerRef.current = observer
-    return () => {
-      observer.disconnect()
-      observerRef.current = null
-      observed.current.clear()
+    virtualizer.measureElement(null)
+    const rows = Array.from(
+      listRef.current?.querySelectorAll<HTMLElement>('[data-message-row][data-index]') ?? []
+    )
+    const changed = rows.filter(
+      row =>
+        virtualizer.elementsCache.get(virtualizer.options.getItemKey(Number(row.dataset.index))) !==
+        row
+    )
+    for (const row of pending.current) {
+      if (!listRef.current?.contains(row)) pending.current.delete(row)
     }
-  }, [enabled, measure])
-
-  useLayoutEffect(() => {
-    if (!enabled) return
-    observed.current.forEach(row => {
-      if (!listRef.current?.contains(row)) {
-        observerRef.current?.unobserve(row)
-        observed.current.delete(row)
-      }
-    })
-    listRef.current
-      ?.querySelectorAll<HTMLElement>('[data-message-row][data-index]')
-      .forEach(row => {
-        if (!observed.current.has(row)) {
-          observed.current.add(row)
-          observerRef.current?.observe(row)
-        }
-        measure(row)
-      })
+    if (!virtualizer.isScrolling) {
+      changed.push(...pending.current)
+      pending.current.clear()
+    }
+    if (changed.length) measureRows([...new Set(changed)])
   })
-  return measure
+  const measureRow = useCallback((row: HTMLElement) => measureRows([row]), [measureRows])
+  return { measureRow, measureRows }
 }

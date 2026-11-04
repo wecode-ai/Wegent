@@ -5,7 +5,7 @@
 use std::{
     ops::{Deref, DerefMut},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
     },
 };
@@ -17,12 +17,27 @@ use serde_json::Value;
 #[derive(Clone, Debug)]
 pub struct CodexNotification {
     message: Value,
-    runtime_delivered: Arc<AtomicBool>,
+    sequence: u64,
+    process_generation: u64,
+    runtime_delivery: Arc<AtomicBool>,
 }
 
 impl CodexNotification {
+    pub(crate) fn process_generation(&self) -> u64 {
+        self.process_generation
+    }
+
+    pub(crate) fn with_process_generation(mut self, generation: u64) -> Self {
+        self.process_generation = generation;
+        self
+    }
+
+    pub(crate) fn sequence(&self) -> u64 {
+        self.sequence
+    }
+
     pub(crate) fn claim_runtime_delivery(&self) -> bool {
-        !self.runtime_delivered.swap(true, Ordering::AcqRel)
+        !self.runtime_delivery.swap(true, Ordering::AcqRel)
     }
 
     pub fn into_value(self) -> Value {
@@ -32,9 +47,12 @@ impl CodexNotification {
 
 impl From<Value> for CodexNotification {
     fn from(message: Value) -> Self {
+        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
         Self {
+            sequence: SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1,
+            process_generation: 0,
             message,
-            runtime_delivered: Arc::new(AtomicBool::new(false)),
+            runtime_delivery: Arc::new(AtomicBool::new(false)),
         }
     }
 }

@@ -56,17 +56,37 @@ A collaboration-group assignment changes the Issue owner to the member taking th
 
 An AI-only handoff retains the worker as owner and does not start a coordinator summary.
 
-## Archive completed Issues
+## Archive Issues
 
-Project boards and tables can archive Issues whose status is **Completed**. Incomplete Issues do not expose the archive action and cannot be included in a batch archive.
+Every editable Issue can be archived through **More information → Archive issue** in its details, regardless of status. This entry also works on tag-organized boards without a Completed column. Read-only users do not receive an archive action.
 
-- Single archive: open a completed Issue's action menu and select **Archive**.
+- Single archive: open Issue details and select **More information → Archive issue**. Completed Issues retain their existing card and table shortcuts.
 - Batch archive: select **Archive completed issues** in the board's **Completed** column header.
 - Browse and restore: open the project's **Archived Issues** drawer to page through archived records and restore them individually. A restored Issue returns to the active list in its original project.
 
 Archiving a parent Issue also archives its child Issues so the active task tree cannot retain orphaned children. Restoring that parent from the archive restores the full subtree. Restoring a child that was archived independently restores only that Issue. Native cloud projects, local projects, and GitHub/GitLab-backed projects share the same interaction. For external projects, archive and restore close and reopen the external Issue respectively.
 
+Archiving first stops linked active runs in the subtree and cancels executions that have not started. A failure to confirm termination blocks archiving and can be addressed before resubmission. Cancelling the confirmation leaves the tree unchanged. Restoration preserves status, dates, and parent relationships.
+
+Before archiving or restoring a subtree, the server checks edit permission for every affected Issue. Any denial rejects the whole operation without changing Issues or cancelling queued executions. Project administrators retain access to all descendants.
+
+## Gantt task hierarchy
+
+The Gantt chart indents parents, children, and grandchildren and expands them initially. Use the arrow beside a parent title to collapse or expand its subtree. Reopening a parent preserves previously collapsed children. The arrows remain usable when the task column is collapsed.
+
+Scheduled tasks matching the filters and date window retain their readable ancestors. Undated, out-of-window, or filtered ancestors provide context without fabricated bars or dates derived from children. Grouping applies to roots, keeping each subtree together. Unscheduled tasks use an independent drag overlay that remains visible above the bottom scrolling list.
+
 ## Regression verification
+
+The existing `pnpm --filter wework e2e:desktop --segment collaboration-parent-board` checkpoint additionally verifies these user stories with real local persistence:
+
+1. A planner sees three indented generations, collapses subtrees, preserves nested collapse state, and operates arrows with the task column collapsed.
+2. A member filtering by a grandchild's status retains ancestor context without a fabricated parent bar.
+3. A planner drags an undated task above the scrolling list, sees the overlay, drops on a date, and observes a persisted start/end range and Gantt bar.
+4. An editor opens an unfinished parent's archive action from a tag board. Cancel receives initial focus, Tab and Shift+Tab stay inside the dialog, and cancelling returns focus to the more menu without mutation. Confirming then removes the entire subtree from active storage.
+5. A member restores the parent through the archive drawer, verifies original statuses and relationships, and sees the grandchild return to the Gantt chart.
+
+These cases reuse the existing CI checkpoint, build, and services. Fixtures remain inside the isolated Executor home and are cleaned up with the runner. Focused tests cover permission denial, cloud statuses, and external-provider protocol behavior separately.
 
 `pnpm --filter wework e2e:desktop --segment collaboration-shared-core` uses isolated Electron, the real backend, and the local Executor. Only model services are simulated. Added checks cover:
 
@@ -79,7 +99,7 @@ Archiving a parent Issue also archives its child Issues so the active task tree 
 
 Cloud fixtures are archived by the checkpoint cleanup. Local fixtures live only in the test Executor home. Failures retain runner logs; tests do not skip or retry to hide failures.
 
-`pnpm --filter wework e2e:desktop --segment collaboration-issue-archive` uses a real local project to verify that incomplete Issues cannot be archived, along with single archive and restore, batch archive, and archive-drawer updates.
+`pnpm --filter wework e2e:desktop --segment collaboration-issue-archive` uses a real local project to verify completed-Issue card shortcuts, single archive and restore, batch archive, and archive-drawer updates.
 
 `pnpm --filter wework e2e:desktop --segment collaboration-human-round-resume` covers concurrent human and AI assignment, Delivery returning to the coordinator, replies to the current human assignment opening a new task without acknowledgement text in its prompt.
 

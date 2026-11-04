@@ -1,8 +1,10 @@
 import { readRawRequestBody } from '../modules/response-protocol.mjs'
+import { fetchLocalRuntime } from '../modules/runtime-request.mjs'
 import assert from 'node:assert/strict'
 
 import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
 import { handleEmptyReplyPrediction } from '../modules/response-protocol.mjs'
+import { verifySidebarHoverLifecycle } from '../modules/sidebar-hover.mjs'
 
 const WORKBENCH = '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const COMPOSER = `${WORKBENCH} [data-testid="chat-message-input"][contenteditable="true"]`
@@ -58,11 +60,11 @@ function streamEvents(id, text, completed) {
 
 async function listTasks(control, timeoutMs) {
   const origin = await control.command('getLocationOrigin', 'body')
-  const response = await fetch(`${origin}/wework/executor/v1/rpc`, {
+  const response = await fetchLocalRuntime(control, `${origin}/wework/executor/v1/rpc`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ id: 'sidebar-state-list', method: 'runtime.tasks.list', params: {} }),
-    signal: AbortSignal.timeout(timeoutMs),
+    timeoutMs: timeoutMs,
   })
   const payload = await response.json()
   assert.equal(response.ok, true)
@@ -119,6 +121,8 @@ export function createDesktopScenario({ uiTimeoutMs, workspacePath }) {
       active = true
       try {
         await createSingleRootLocalProject(control, workspacePath, 'running-sidebar-state')
+        const project = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+        await verifySidebarHoverLifecycle(control, project.workbench.currentProject.id, uiTimeoutMs)
         await control.command('waitFor', COMPOSER, { timeoutMs: uiTimeoutMs })
         await selectE2EModel(control, undefined, undefined, WORKBENCH)
         await control.command('fill', COMPOSER, { value: FIRST })

@@ -21,6 +21,7 @@ import {
 } from 'react'
 import { AssistantMarkdown } from '@/components/chat/AssistantMarkdown'
 import { DiagramImageActions } from '@/components/chat/DiagramImageActions'
+import { captureDiagramArtifact } from '@/components/chat/diagramImageExport'
 import { getRuntimeConfig } from '@/config/runtime'
 import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -247,7 +248,7 @@ const WorkspaceBinaryFilePreview = memo(function WorkspaceBinaryFilePreview({
       </Profiler>
       {isDiagram ? (
         <DiagramImageActions
-          containerRef={containerRef}
+          getArtifact={() => captureDiagramArtifact(containerRef.current)}
           filename={diagramFilename}
           theme={themeType}
         />

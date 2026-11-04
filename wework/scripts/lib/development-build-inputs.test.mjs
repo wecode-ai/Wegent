@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { developmentBuildInputs } from './development-build-inputs.mjs'
 import { mkdtemp, mkdir, writeFile, rename, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'

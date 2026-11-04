@@ -7,6 +7,7 @@ import { basename, resolve } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 
 import { componentReleaseScope } from './desktop-component-release.mjs'
+import { validateUpgradeCatalog } from '../electron/src/runtime/upgrade-policy.mjs'
 
 const [
   assetsDirectory,
@@ -81,9 +82,19 @@ for (const [platform, architecture] of [
     if (platform === 'linux') continue
     throw new Error(`Component release descriptor is missing: ${sourcePath}`)
   }
+  if (
+    source.schemaVersion !== 1 ||
+    source.appVersion !== version ||
+    source.sourceSha !== sourceSha ||
+    source.platform !== platform ||
+    source.arch !== architecture
+  )
+    throw new Error('Component release descriptor does not match the delivered release')
   const components = {}
   for (const [id, component] of Object.entries(source.components ?? {})) {
     const releaseScope = componentReleaseScope(id)
+    if (releaseScope === 'version' && component.version !== `wework-${sourceSha.slice(0, 12)}`)
+      throw new Error(`Component version does not match the delivered release: ${id}`)
     if (component.releaseScope !== releaseScope) {
       throw new Error(
         `Component release scope mismatch for ${id}: expected ${releaseScope}, received ${component.releaseScope}`
@@ -122,6 +133,19 @@ for (const [platform, architecture] of [
         (process.env.WEWORK_REQUIRE_UPGRADE_POLICY === 'true' && platform !== 'linux')
       )
         throw error
+    }
+    if (upgradePolicy) {
+      validateUpgradeCatalog(upgradePolicy)
+      const target = upgradePolicy.releases.find(release => release.version === version)
+      if (
+        upgradePolicy.channel !== targetChannel ||
+        upgradePolicy.platform !== platform ||
+        upgradePolicy.arch !== architecture ||
+        !target ||
+        target.fixture ||
+        target.sourceSha !== sourceSha
+      )
+        throw new Error('Verified upgrade policy does not match the release target')
     }
     await writeFile(
       resolve(output, `components-${targetChannel}-${platform}-${architecture}.json`),

@@ -1,6 +1,48 @@
-import { existsSync, statSync, watch } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
+import { once } from 'node:events'
 import path from 'node:path'
+import chokidar from 'chokidar'
 import { developmentBuildInputs } from './development-build-inputs.mjs'
+
+export function watchDevelopmentDirectory(
+  directory,
+  { recursive, ignored },
+  notify,
+  createWatcher = chokidar.watch
+) {
+  const roots = [directory, realpathSync(directory)]
+  const watcher = createWatcher(directory, {
+    ignoreInitial: true,
+    depth: recursive ? undefined : 0,
+    ignored,
+  })
+  watcher.on('all', (event, filename) => notify(event, path.relative(directory, filename)))
+  // Node-backed normalized change events are throttled for 50 ms. Preserve
+  // raw edits as well; the input snapshot deduplicates repeated notifications.
+  watcher.on('raw', (event, filename, details) => {
+    const changed = rawNotificationPath(filename, details?.watchedPath)
+    if (!changed) return
+    const relative = roots
+      .map(root => path.relative(root, changed))
+      .find(
+        value => value !== '..' && !value.startsWith(`..${path.sep}`) && !path.isAbsolute(value)
+      )
+    if (relative !== undefined)
+      notify(event, filename ? relative || path.basename(directory) : undefined)
+  })
+  return {
+    ready: once(watcher, 'ready'),
+    on: (...args) => watcher.on(...args),
+    close: () => watcher.close(),
+  }
+}
+
+function rawNotificationPath(filename, watched) {
+  const name = filename == null ? undefined : String(filename)
+  if (!watched) return name && path.isAbsolute(name) ? name : undefined
+  if (!name || path.basename(watched) === name) return watched
+  return path.resolve(watched, name)
+}
 
 /** Serialize fresh builds so emitted asset references never cross build generations. */
 export async function watchDevelopmentBuild({
@@ -10,17 +52,15 @@ export async function watchDevelopmentBuild({
   build,
   onError,
   debounceMs = 350,
-  watchDirectory = watch,
+  watchDirectory = watchDevelopmentDirectory,
 }) {
-  const roots = directories.map(directory => path.resolve(directory))
-  const sourceFiles = files.map(file => path.resolve(file))
-  const exclusions = ignored.map(directory => path.resolve(directory))
+  const watchers = []
   let closed = false
   let pending = false
   let timer
   let running
   const excluded = (filename, directory) =>
-    exclusions.some(root => filename === root || filename.startsWith(`${root}${path.sep}`)) ||
+    ignored.some(root => filename === root || filename.startsWith(`${root}${path.sep}`)) ||
     path
       .relative(directory, filename)
       .split(path.sep)
@@ -49,49 +89,48 @@ export async function watchDevelopmentBuild({
       })
     }, debounceMs)
   }
-  const observer = createDirectoryObserver({
-    watchDirectory,
-    excluded,
-    onUnknown: schedule,
-    onError,
-    onChange: (filename, directory) => {
-      try {
-        if (inputChanged?.(filename, directory)) schedule()
-      } catch (error) {
-        onError(error)
+  const observe = (directory, recursive, accept) => {
+    if (!existsSync(directory)) return
+    const watcher = watchDirectory(
+      directory,
+      {
+        recursive,
+        ignored: filename => excluded(path.resolve(filename), directory),
+      },
+      (_event, filename) => {
+        // The initial build reads all inputs after subscriptions become ready.
+        if (!inputChanged) return
+        if (!filename) return schedule()
+        const name = String(filename)
+        const resolved =
+          recursive && name === path.basename(directory) ? directory : path.resolve(directory, name)
+        if (excluded(resolved, directory) || !accept(resolved)) return
+        try {
+          if (inputChanged(resolved, directory)) schedule()
+        } catch (error) {
+          onError(error)
+        }
       }
-    },
-  })
+    )
+    watcher.on('error', onError)
+    watchers.push(watcher)
+  }
+  for (const directory of directories) observe(directory, true, () => true)
   const parents = new Map()
-  for (const file of sourceFiles) {
+  for (const file of files) {
     const parent = path.dirname(file)
     const names = parents.get(parent) ?? new Set()
     names.add(file)
     parents.set(parent, names)
   }
+  for (const [parent, names] of parents) observe(parent, false, filename => names.has(filename))
   try {
-    for (const [parent, names] of parents) {
-      if (existsSync(parent))
-        observer.observe(
-          parent,
-          parent,
-          statSync(parent, { bigint: true }),
-          filename => names.has(filename),
-          `files\0${parent}`
-        )
-    }
-    inputChanged = developmentBuildInputs({
-      directories: roots,
-      files: sourceFiles,
-      excluded,
-      onDirectory: (directory, root, stat) => observer.observe(directory, root, stat),
-    })
+    await Promise.all(watchers.map(watcher => watcher.ready))
+    inputChanged = developmentBuildInputs({ directories, files, excluded })
     running = build()
     await running
   } catch (error) {
-    closed = true
-    clearTimeout(timer)
-    observer.close()
+    await Promise.all(watchers.map(watcher => watcher.close()))
     throw error
   } finally {
     running = undefined
@@ -101,68 +140,8 @@ export async function watchDevelopmentBuild({
     async close() {
       closed = true
       clearTimeout(timer)
-      observer.close()
+      await Promise.all(watchers.map(watcher => watcher.close()))
       await running
-    },
-  }
-}
-
-function createDirectoryObserver({ watchDirectory, excluded, onChange, onUnknown, onError }) {
-  const watchers = new Map()
-  const observe = (directory, root, stat, accept = () => true, key = `${root}\0${directory}`) => {
-    const previous = watchers.get(key)
-    if (previous?.ino === stat.ino) return
-    watchers.delete(key)
-    previous?.watcher.close()
-    let watcher
-    try {
-      // Directory inodes survive atomic file saves; recursive fs.watch on Linux
-      // attaches to file inodes and can miss the next replacement.
-      watcher = watchDirectory(directory, { recursive: false }, (_event, filename) => {
-        try {
-          const current = statSync(directory, { bigint: true, throwIfNoEntry: false })
-          if (!current?.isDirectory()) {
-            if (watchers.get(key)?.watcher === watcher) watchers.delete(key)
-            watcher.close()
-            if (accept(directory)) onChange(directory, root)
-            return
-          }
-          if (current.ino !== stat.ino) {
-            observe(directory, root, current, accept, key)
-            if (accept(directory)) onChange(directory, root)
-            else onUnknown()
-            return
-          }
-          if (!filename) {
-            if (accept(directory)) onChange(directory, root)
-            else onUnknown()
-            return
-          }
-          // A directory-self notification must rescan the observed root.
-          const name = String(filename)
-          const resolved =
-            name === path.basename(directory) ? directory : path.resolve(directory, name)
-          if (!excluded(resolved, root) && accept(resolved)) onChange(resolved, root)
-        } catch (error) {
-          onError(error)
-        }
-      })
-    } catch (error) {
-      if (error.code === 'ENOENT') return
-      throw error
-    }
-    const entry = { watcher, ino: stat.ino }
-    watchers.set(key, entry)
-    watcher.on('error', onError)
-    watcher.once('close', () => {
-      if (watchers.get(key) === entry) watchers.delete(key)
-    })
-  }
-  return {
-    observe,
-    close() {
-      for (const { watcher } of watchers.values()) watcher.close()
-      watchers.clear()
     },
   }
 }

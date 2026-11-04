@@ -352,6 +352,9 @@ export function createDesktopScenario({
       terminal = true
       await control.command('waitFor', COMPOSER)
       await control.command('fill', COMPOSER, { value: TERMINAL_ERROR })
+      await control.command('waitFor', `${WORKBENCH} [data-testid="send-message-button"]`, {
+        enabled: true,
+      })
       await control.command('press', COMPOSER, { key: 'Enter' })
       await control.command('waitFor', `${WORKBENCH} [data-testid="assistant-error-card"]`, {
         text: TERMINAL_ERROR,

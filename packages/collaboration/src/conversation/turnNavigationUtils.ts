@@ -109,8 +109,18 @@ function buildUserTurnsFromNavigation(
         ? (loadedTurnsByTurnId.get(item.turnId)?.find(turn => !turn.runtimeGuidance) ??
           (indexedTurn?.turnId || indexedTurn?.runtimeGuidance ? undefined : indexedTurn))
         : (loadedTurnsById.get(item.id) ?? loadedTurnsByIndex.get(item.messageIndex))
+    const loadedMessageId =
+      loadedTurn?.id ??
+      (item.userMessageId === null
+        ? findLoadedNavigationMessageId(messages, {
+            navigationId: item.id,
+            userMessageId: item.userMessageId,
+            turnId: item.turnId,
+            messageIndex: item.messageIndex,
+          })
+        : null)
     return {
-      id: loadedTurn?.id ?? item.id,
+      id: loadedMessageId ?? item.id,
       userMessageId: item.userMessageId,
       turnId: item.turnId ?? loadedTurn?.turnId,
       turnIndex: typeof item.turnIndex === 'number' ? item.turnIndex : index,
@@ -120,7 +130,7 @@ function buildUserTurnsFromNavigation(
       promptPreview: loadedTurn?.promptPreview ?? item.promptPreview,
       responsePreview: loadedTurn?.responsePreview || item.responsePreview || '',
       cursor: item.cursor ?? null,
-      loaded: Boolean(loadedTurn),
+      loaded: Boolean(loadedMessageId),
     }
   })
   const navigationMessageIds = new Set(navigationTurns.map(turn => turn.id))
@@ -275,6 +285,14 @@ export function findLoadedNavigationMessageId(
         message.role === 'user' && !message.runtimeGuidance && message.turnId === target.turnId
     )
     if (turnMessage) return turnMessage.id
+    // A native summary explicitly reports null when a turn has no user item.
+    // Failed turns still project an assistant error row that can be navigated to.
+    if (target.userMessageId === null) {
+      const assistant = messages.find(
+        message => message.role === 'assistant' && message.turnId === target.turnId
+      )
+      if (assistant) return assistant.id
+    }
   }
 
   const indexedMessage = messages.find(

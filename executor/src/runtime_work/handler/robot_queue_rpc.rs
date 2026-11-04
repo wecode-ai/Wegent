@@ -53,6 +53,7 @@ impl RuntimeWorkRpcHandler {
                 if ticks % LOCAL_ISSUE_HEARTBEAT_TICKS == 0 {
                     handler.heartbeat_local_issue_executions();
                 }
+                handler.reconcile_local_project_coordination().await;
                 handler.drain_local_issue_queue().await;
             }
         });
@@ -416,9 +417,9 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) fn project_queue_progress(&self, local_task_id: &str, content: &str) {
-        if !self
-            .local_task_link(local_task_id)
-            .is_some_and(|link| link.runtime_handle["origin"]["projectStore"] == "local")
+        if self.store.read_task(local_task_id, |link| {
+            link.runtime_handle["origin"]["projectStore"] == "local"
+        }) != Some(true)
         {
             return;
         }

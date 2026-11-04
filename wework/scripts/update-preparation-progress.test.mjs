@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
 import { waitForUpdatePreparation } from '../e2e/desktop/modules/update-preparation-progress.mjs'
@@ -18,6 +20,13 @@ test('allows independent bounded host, extraction, and runtime preparation', asy
   const progress = await waitForUpdatePreparation(async () => ({ phase: phases.shift() }), timing)
   assert.equal(progress.phase, 'ready')
   assert.ok(timing.now() > 300_000)
+  assert.equal(phases.length, 0)
+})
+
+test('observes the catalog refresh before host transfer without treating it as a regression', async () => {
+  const phases = ['preparing', 'preparing', 'host', 'extracting', 'runtime', 'ready']
+  const progress = await waitForUpdatePreparation(async () => ({ phase: phases.shift() }), clock())
+  assert.equal(progress.phase, 'ready')
   assert.equal(phases.length, 0)
 })
 

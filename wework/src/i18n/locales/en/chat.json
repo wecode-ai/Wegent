@@ -11,6 +11,11 @@
     "load_failed": "Could not load conversation history",
     "retry": "Retry"
   },
+  "visualization": {
+    "loading": "Loading visualization…",
+    "load_failed": "Could not load visualization",
+    "retry": "Retry"
+  },
   "table": {
     "expand": "Expand table",
     "close": "Close expanded table",
@@ -252,6 +257,7 @@
       "collapse_file_diff": "Collapse file diff",
       "expand_file_diff": "Expand file diff",
       "copy_git_apply": "Copy git apply command",
+      "copied_git_apply": "Copied",
       "hide_files": "Hide files",
       "show_files": "Show files",
       "show_split": "Switch to split view",

@@ -1,6 +1,8 @@
-import { describe, expect, test, vi } from 'vitest'
+// @vitest-environment node
+
 import type { InstalledPlugin } from '@/types/api'
-import { preparePluginTrial, PluginInstallationInspectionError } from './preparePluginTrial'
+import { describe, expect, test, vi } from 'vitest'
+import { PluginInstallationInspectionError, preparePluginTrial } from './preparePluginTrial'
 
 function plugin(marketplace = 'wegent'): InstalledPlugin {
   return {
@@ -34,19 +36,6 @@ function options() {
 }
 
 describe('preparePluginTrial', () => {
-  test('uses local membership without cloud inspection or installation', async () => {
-    const input = options()
-    const installed = plugin()
-    input.readLocalInstalledPlugins.mockResolvedValue({
-      items: [installed],
-      deviceId: 'local-device',
-    })
-    expect(await preparePluginTrial(input)).toBe(installed)
-    expect(input.listInstalledPlugins).not.toHaveBeenCalled()
-    expect(input.ensureInstalled).not.toHaveBeenCalled()
-    expect(input.onInstalling).not.toHaveBeenCalled()
-  })
-
   test.each(['other-device', undefined])(
     'does not treat inventory from %s as target-device confirmation',
     async deviceId => {

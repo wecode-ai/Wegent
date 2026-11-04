@@ -49,8 +49,21 @@ create_stub() {
     cat > "$path" <<'STUB'
 #!/usr/bin/env bash
 printf '%s %s\n' "$(basename "$0")" "$*" >> "$CALL_LOG"
+if [ "${PUSH_GATE_TEST_VERIFY_GIT_ISOLATION:-0}" = "1" ]; then
+    while IFS= read -r git_env_name; do
+        if printenv "$git_env_name" >/dev/null; then
+            echo "Quality check inherited repository-local variable: $git_env_name" >&2
+            exit 11
+        fi
+    done < <(git rev-parse --local-env-vars; printf '%s\n' WEGENT_APP_LIFECYCLE_FD WEGENT_APP_IPC_ENDPOINT WEGENT_APP_IPC_OWNER_TOKEN WEGENT_APP_IPC_TOKEN WEGENT_PLUGIN_RUNTIME_TARGET WEGENT_CAPABILITIES_HOME)
+fi
 if [ "$(basename "$0")" = "pnpm" ]; then
     case "$*" in
+        '--filter @wegent/chat-core test'*)
+            if [ "${PUSH_GATE_TEST_FAIL_CHAT_CORE:-0}" = "1" ]; then
+                exit 7
+            fi
+            ;;
         '--filter wework typecheck'|'--filter wework lint'|'--filter wework run lint:task-lifecycle')
             if [ "$*" = "--filter wework typecheck" ] && [ "${PUSH_GATE_TEST_REQUIRE_STATIC_ISOLATION:-0}" = "1" ]; then
                 rm -f "$CALL_LOG.wework-typecheck-complete"
@@ -233,12 +246,25 @@ fi
 
 : > "$CALL_LOG"
 
-AI_VERIFIED=1 \
+if ! AI_VERIFIED=1 \
 AI_PUSH_FULL_TESTS=1 \
+PUSH_GATE_TEST_VERIFY_GIT_ISOLATION=1 \
+GIT_DIR="$(git rev-parse --absolute-git-dir)" \
+GIT_WORK_TREE="$PROJECT_ROOT" \
+WEGENT_APP_LIFECYCLE_FD=99 \
+WEGENT_APP_IPC_ENDPOINT=parent-workbench \
+WEGENT_APP_IPC_OWNER_TOKEN=test-owner \
+WEGENT_APP_IPC_TOKEN=test-connection \
+WEGENT_PLUGIN_RUNTIME_TARGET=codex \
+WEGENT_CAPABILITIES_HOME=/parent-capabilities \
 PATH="$TMP_DIR/bin:$PATH" \
 bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$FULL_TEST_OUT" 2>&1
 refs/heads/topic $LOCAL_SHA refs/heads/topic $REMOTE_SHA
 EOF
+then
+    cat "$FULL_TEST_OUT"
+    exit 1
+fi
 
 if ! grep -qE '(^| )pytest tests/' "$CALL_LOG"; then
     echo "Expected AI_PUSH_FULL_TESTS=1 to run the full Python pytest suite."
@@ -352,8 +378,8 @@ bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$WEWORK_FULL_TEST_OUT
 refs/heads/topic $WEWORK_FULL_LOCAL_SHA refs/heads/topic $WEWORK_FULL_BASE_SHA
 EOF
 
-if ! grep -qE '^pnpm --filter wework exec vitest run --dir src --pool=threads --maxWorkers 1 --testTimeout 15000 --shard=1/2$' "$CALL_LOG" ||
-    ! grep -qE '^pnpm --filter wework exec vitest run --dir src --pool=threads --maxWorkers 1 --testTimeout 15000 --shard=2/2$' "$CALL_LOG"; then
+if ! grep -qE '^pnpm --filter wework exec vitest run --dir src --pool=threads --maxWorkers 1 --testTimeout 15000 --reporter=default --shard=1/2$' "$CALL_LOG" ||
+    ! grep -qE '^pnpm --filter wework exec vitest run --dir src --pool=threads --maxWorkers 1 --testTimeout 15000 --reporter=default --shard=2/2$' "$CALL_LOG"; then
     echo "Expected full renderer tests to exclude Electron-owned test files and use two shards."
     echo "Calls:"
     cat "$CALL_LOG"
@@ -365,6 +391,14 @@ if ! grep -qE 'Running full renderer unit tests in 2 shards with 1 worker each' 
     cat "$WEWORK_FULL_TEST_OUT"
     exit 1
 fi
+
+for shard in 1 2; do
+    if ! grep -q "wework_test_shard_${shard}: finished (exit 0)" "$WEWORK_FULL_TEST_OUT"; then
+        echo "Expected renderer shard $shard to report completion."
+        cat "$WEWORK_FULL_TEST_OUT"
+        exit 1
+    fi
+done
 
 assert_renderer_tests_follow_static_checks
 
@@ -389,7 +423,7 @@ if [ "$(cat "$CALL_LOG.renderer-order")" != "$(printf 'start 1\nfinish 1\nstart 
     exit 1
 fi
 for shard in 1 2; do
-    if ! grep -qE "^pnpm --filter wework exec vitest run --dir src --pool=threads --maxWorkers 1 --testTimeout 15000 --shard=$shard/2$" "$CALL_LOG"; then
+    if ! grep -qE "^pnpm --filter wework exec vitest run --dir src --pool=threads --maxWorkers 1 --testTimeout 15000 --reporter=default --shard=$shard/2$" "$CALL_LOG"; then
         echo "Expected serialized execution to retain renderer shard $shard and its original budget."
         exit 1
     fi
@@ -572,6 +606,12 @@ if ! grep -qE '^pnpm --filter wecode-ai-assistant run test --passWithNoTests --m
     exit 1
 fi
 
+if ! grep -qE '^pnpm --filter @wegent/chat-core test --maxWorkers 2$' "$CALL_LOG"; then
+    echo "Expected chat-core tests to use the same bounded worker budget as the frontend."
+    cat "$CALL_LOG"
+    exit 1
+fi
+
 if ! grep -qE '^pnpm --filter wecode-ai-assistant exec next typegen$' "$CALL_LOG"; then
     echo "Expected frontend changes to regenerate Next.js route types."
     echo "Calls:"
@@ -583,6 +623,35 @@ if ! grep -qE '^pnpm --filter wecode-ai-assistant exec tsc --noEmit$' "$CALL_LOG
     echo "Expected frontend changes to run the TypeScript check after route type generation."
     echo "Calls:"
     cat "$CALL_LOG"
+    exit 1
+fi
+
+: > "$CALL_LOG"
+
+AI_VERIFIED=1 \
+FRONTEND_PRE_PUSH_TEST_WORKERS=1 \
+PATH="$TMP_DIR/bin:$PATH" \
+bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$TMP_DIR/frontend-serial.out" 2>&1
+refs/heads/topic $FRONTEND_LOCAL_SHA refs/heads/topic $FRONTEND_REMOTE_SHA
+EOF
+
+for expected_frontend_command in \
+    'pnpm --filter @wegent/chat-core test --maxWorkers 1' \
+    'pnpm --filter wecode-ai-assistant run test --passWithNoTests --maxWorkers 1'; do
+    if ! grep -qFx "$expected_frontend_command" "$CALL_LOG"; then
+        echo "Expected the frontend worker override to cover both test suites: $expected_frontend_command"
+        cat "$CALL_LOG"
+        exit 1
+    fi
+done
+
+if AI_VERIFIED=1 \
+    PUSH_GATE_TEST_FAIL_CHAT_CORE=1 \
+    PATH="$TMP_DIR/bin:$PATH" \
+    bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$TMP_DIR/frontend-core-failure.out" 2>&1; then
+refs/heads/topic $FRONTEND_LOCAL_SHA refs/heads/topic $FRONTEND_REMOTE_SHA
+EOF
+    echo "Expected a chat-core test failure to block the push."
     exit 1
 fi
 
@@ -608,7 +677,7 @@ if ! grep -qE '^cargo test --all-features --lib$' "$CALL_LOG"; then
     exit 1
 fi
 
-if grep -qE '^cargo test --all-features$' "$CALL_LOG"; then
+if grep -qE '^cargo test --all-features --no-fail-fast$' "$CALL_LOG"; then
     echo "Expected Executor changes to skip the full Rust test suite by default."
     echo "Calls:"
     cat "$CALL_LOG"
@@ -624,10 +693,15 @@ bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$EXECUTOR_FULL_TEST_O
 refs/heads/topic $EXECUTOR_LOCAL_SHA refs/heads/topic $EXECUTOR_REMOTE_SHA
 EOF
 
-if ! grep -qE '^cargo test --all-features$' "$CALL_LOG"; then
+if ! grep -qE '^cargo test --all-features --no-fail-fast$' "$CALL_LOG"; then
     echo "Expected AI_PUSH_FULL_TESTS=1 to run the full Rust test suite."
     echo "Calls:"
     cat "$CALL_LOG"
+    exit 1
+fi
+
+if grep -qE '^cargo test --all-features --lib$' "$CALL_LOG"; then
+    echo "Full Rust runs must not execute the same library suite twice."
     exit 1
 fi
 

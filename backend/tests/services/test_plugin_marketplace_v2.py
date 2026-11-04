@@ -462,7 +462,7 @@ def test_restricted_submission_cannot_enter_legacy_review(
         test_db,
         user_id=test_user.id,
         request=PluginSubmissionInitRequest(
-            slug="review-once",
+            slug="gitlab-engineering",
             displayName="Review Once",
             version="1.0.0",
             filename="review-once.zip",
@@ -611,7 +611,7 @@ def test_uploading_restricted_update_keeps_the_published_release_visible(
         test_db,
         user_id=test_user.id,
         request=PluginSubmissionInitRequest(
-            slug="gitlab-stable",
+            slug="gitlab-engineering",
             displayName="GitLab Stable",
             version="1.0.0",
             filename="gitlab-v1.zip",
@@ -636,7 +636,7 @@ def test_uploading_restricted_update_keeps_the_published_release_visible(
         test_db,
         user_id=test_user.id,
         request=PluginSubmissionInitRequest(
-            slug="gitlab-stable",
+            slug="gitlab-engineering",
             displayName="GitLab Next",
             version="2.0.0",
             filename="gitlab-v2.zip",

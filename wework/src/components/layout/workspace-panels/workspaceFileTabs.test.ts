@@ -1,6 +1,8 @@
+// @vitest-environment node
+
+import type { WorkspaceTarget } from '@/types/workspace-files'
 import { expect, test } from 'vitest'
 import { workspaceFileTabId, workspaceFileTabLabel } from './workspaceFileTabs'
-import type { WorkspaceTarget } from '@/types/workspace-files'
 
 const target: WorkspaceTarget = {
   deviceId: 'fixture-device',
@@ -21,9 +23,10 @@ test('file identity normalizes paths and does not depend on the browsing root', 
   )
 })
 
-test('Windows paths share a tab regardless of case or path separator', () => {
-  expect(workspaceFileTabId(target, 'C:\\fixture\\repo\\A.ts')).toBe(
-    workspaceFileTabId(target, 'c:/fixture/repo/a.ts')
+test('POSIX backslashes remain part of the filename and tab identity', () => {
+  const path = String.raw`/fixture/repo/report\2026.md`
+  expect(workspaceFileTabLabel(path)).toBe(String.raw`report\2026.md`)
+  expect(workspaceFileTabId(target, path)).not.toBe(
+    workspaceFileTabId(target, '/fixture/repo/report/2026.md')
   )
-  expect(workspaceFileTabLabel('C:\\fixture\\repo\\A.ts')).toBe('A.ts')
 })

@@ -55,8 +55,9 @@ pub use config::{init_env, init_env_file};
 pub use filters::RequestIdFilter;
 pub use git_repositories::GitRepositoriesService;
 pub use hybrid::{
-    HybridConfig, load_routes_config, run_hybrid, run_hybrid_with_gateway, serve_hybrid,
-    serve_hybrid_application, serve_hybrid_application_with_gateway,
+    HybridConfig, load_routes_config, run_hybrid, run_hybrid_with_gateway,
+    run_hybrid_with_services, serve_hybrid, serve_hybrid_application,
+    serve_hybrid_application_with_gateway, serve_hybrid_application_with_services,
 };
 pub use knowledge_documents_content::access::is_organization_namespace;
 pub use repository_tokens::{RepositoryTokenResolver, StoredRepositoryTokens};
@@ -105,6 +106,7 @@ mod cloud_project_automations;
 mod cloud_projects;
 mod cloud_projects_members;
 mod cloud_projects_runtime_default;
+mod collaboration_templates;
 pub mod config;
 mod connector_runtime;
 mod conversion_callback;
@@ -116,6 +118,7 @@ mod device_artifacts;
 mod device_command;
 pub mod device_commands;
 pub mod device_identity;
+mod device_identity_lock;
 mod device_online_state;
 mod device_records;
 mod device_running_tasks;
@@ -145,6 +148,7 @@ mod internal_callback;
 mod internal_conversion_callback;
 mod internal_robot_queue;
 pub mod json_decode_error;
+mod jwt_compat;
 mod knowledge_artifacts;
 mod knowledge_base_detail;
 mod knowledge_bases_all_grouped;
@@ -169,6 +173,7 @@ mod loop_tasks;
 mod market_subscriptions;
 mod marketplace_tags;
 mod mcp;
+mod project_coordination;
 pub mod task_store_background;
 pub mod task_store_maintenance;
 
@@ -200,6 +205,7 @@ mod oidc_login;
 pub mod oidc_service;
 pub mod permissions;
 mod pet;
+mod plugin_account_auth;
 mod plugin_publications;
 mod plugins_capabilities_probe;
 mod plugins_installed;
@@ -237,6 +243,7 @@ mod skills;
 mod smart_apps_download;
 mod smart_apps_marketplace;
 mod snapshots;
+pub mod socketio;
 mod socketio_emit;
 pub mod socketio_rpc;
 mod sql_support;
@@ -352,6 +359,9 @@ mod workspaces_execution_environments;
 brz_http_server::registry!(
     dependencies(state: Arc<AppState>),
     auth = auth::AppAuthenticator
+);
+brz_socket_io::registry!(
+    dependencies(app: Arc<AppState>, runtime: Arc<crate::socketio::runtime::SocketRuntime>)
 );
 brz_http_server::registry!(
     group = runtime_check,

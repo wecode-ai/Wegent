@@ -54,6 +54,25 @@ target is treated as unordered and the drag result is lost.
 | Attachment/model/skill selection      | `projectChat` context                                                                                                                                                                    | Send payload, composer controls                                                                                    | In-task option locking is derived from `projectChat.isOptionsLocked`                                                                                                                                                                        |
 | Device availability                   | `state.devices` + current task/project device selection                                                                                                                                  | Composer disabled reason, device prompts                                                                           | Use only for send preconditions; never for assistant streaming status                                                                                                                                                                       |
 
+## Conversation Scrolling and Diagram Rendering
+
+TanStack Virtual and its native ResizeObserver own message measurements. Keep message content visible during scrolling and reuse rows by message identity. Do not introduce a second height writer, replace scrolling content with placeholders, or estimate Markdown height on every frame.
+
+Opening a conversation initially positions it at the latest content; returning to a reader position restores the saved location. A boundary observer rooted in the current scroll container prefetches the previous page before the reader reaches loaded history. Prepending history preserves the reader position through stable message, content-item, and paragraph identities. The boundary marker always occupies one pixel; loading feedback and pagination actions are portaled outside the transcript without affecting measurements. Open search retains explicit pagination, and hidden panes suspend automatic loading. Failures and completed requests that leave the boundary unchanged offer manual recovery without a request loop. Manual retries retain the control and keyboard focus.
+
+Diagram previews cache sanitized static SVG artifacts and dimensions by document, source, theme, and server address. Mermaid compilation is serialized, and concurrent requests for the same artifact share one compilation. Message rows mount static images with a lightweight zoom canvas, and fullscreen presentation reuses the same artifact. Inline diagrams allow vertical touch scrolling of the conversation; fullscreen retains unrestricted dragging. Remounting an offscreen row must not recompile the same diagram or retain a full file viewer for every row.
+
+```mermaid
+flowchart LR
+  A[Scroll container] --> B[History boundary prefetch]
+  B --> C[Prepend history]
+  C --> D[Restore semantic reader anchor]
+  B --> E[Loading feedback or pagination action outside transcript]
+  F[Message row] --> G[Diagram artifact cache]
+  G --> H[Static image with lightweight zoom]
+  H -->|Open full diagram| I[Fullscreen presentation of same artifact]
+```
+
 ## Board Conversation Split Views
 
 The project-space board Hover task panel is a split view of the original task conversation, not a separate preview conversation. The Task page, Hover panel, and card summary must use the same runtime task address and read the same canonical `RuntimeConversationTurn[]` from `runtimeConversationCache`.
@@ -126,14 +145,26 @@ that identity, but it must not be required before the turn becomes active.
 Guidance and interruption therefore still target the current turn when a live
 notification is delayed or missing.
 
+The UI and guidance must read the same `NativeExecutionState`, rather than
+infer execution from local request controls. A start receipt may only bind the
+current request's `starting` state; native notifications then supply process
+generation and timing. A late receipt cannot reactivate a settled or replaced
+request, and a delayed start notification for the same turn cannot revive a
+stopped state. Native Goal continuations can outlive local request controls and must
+remain guidable through their native running turn. Waiting for the next turn
+is bounded and does not create another guidance state.
+
 When the user sends guidance, Wework optimistically inserts the guidance
 message into the current turn before calling `runtime.tasks.guidance`. If
 Codex `turn/steer` explicitly reports that the expected turn ID differs from
-the actual active turn ID, the executor updates its record with the returned
-ID and retries exactly once. The successful response turn ID may rebind the
-optimistic message to the correct turn. On failure, Wework removes the
+the actual active turn ID, the executor corrects this guidance request's target
+and retries exactly once without rewriting execution state. The successful
+response turn ID may rebind the optimistic message to the correct turn. On failure, Wework removes the
 optimistic message and keeps a retryable queue item so the transcript never
 shows guidance that Codex did not accept.
+
+Queue items display the specific failure reason; an absent active turn asks
+the user to edit and resend.
 
 **Interrupt and send now** optimistically marks the running turn as cancelled
 and removes in-flight optimistic guidance before requesting interruption. The
@@ -305,17 +336,112 @@ The center dot in the sidebar running indicator represents only an `active`
 goal. Paused and blocked goals still exist but do not show this dot; its absence
 does not mean that no goal exists.
 
-The goal bar's running presentation must be constrained by the current runtime task execution snapshot. When App Server explicitly reports `running: false` for the current task, an otherwise `active` goal must be derived as `paused` in the UI and its displayed elapsed time must stop. This prevents an interrupted task from showing an active, ticking goal when it is reopened.
+The lifecycle Store owns Goal running presentation and elapsed time. When `executionState`
+exists, its native phase takes precedence over the legacy `running` field. Only legacy
+snapshots without native evidence derive an active Goal as paused from explicit
+`running: false`; an absent field preserves unknown state. This presentation derivation
+does not call the Goal pause API; persisting a pause remains a user action.
 
-- Task execution is known only when `running` is an explicit boolean. A missing field means the state is unknown and must not pause the goal.
-- This derivation affects only Wework presentation and elapsed-time calculation; it does not automatically call the goal pause API. Persisting `paused` remains an explicit user action through **Pause goal**.
-- When the task reports `running: true` again, the goal uses the original status returned by the runtime goal API.
+The executor's shared lifecycle transition owns Codex execution state independently of RPC
+completion and message content. Task lists, task details, and `runtime.turn.updated` events
+carry the same `executionState`, including execution phase, current/latest turn identity,
+turn outcome, native timing, and revision. Revisions travel as decimal strings so JavaScript
+does not lose nanosecond sequence precision. Viewers accept newer revisions only; old lists,
+history reads, and previous RPC completions cannot overwrite a newer turn. Executor restart
+never reuses an in-memory running state. The revision covers the complete snapshot: interaction, Goal, and model-selection changes advance it without inventing native progress or changing native timing. Model selection is included directly, so live events and list responses require no different client enrichment.
 
-Automatic continuation for an active goal is driven separately by root-turn lifecycle events. After
-`runtime.goal.continuation: started`, the goal bar must keep showing “Goal continuing” while the
-assistant is producing output, thinking, or invoking tools. Assistant output starting is not a turn
-completion signal and must not clear continuation state. Clear that state only for the matching
-`settled` event, a non-active goal update, a cleared goal, or a pane switch to another task.
+`running` denotes an executing native turn, `continuing` a completed turn awaiting Goal
+continuation, and `starting` an admitted request. Continuing executions remain busy without
+an active turn or a model-thinking indicator. Goal status and execution status are separate:
+completing a Goal does not cancel its open turn, and completing a turn does not finish an
+execution that is continuing toward its Goal.
+
+`queued` means the scheduler has not admitted execution; no model turn is running.
+Enqueue, cancellation, and dequeue advance the same execution revision only after queue
+persistence succeeds. Cancelling admission preserves the previous turn's result, and an
+older queued snapshot cannot make the cancelled task busy again.
+
+`recovering` means the executor owns Goal recovery or bounded retry backoff. Recovery awaiting admission has no process binding; backoff retains process ownership and must settle when that process exits. Recovery remains busy without an active model turn; its queued legacy
+`task.running: false` must not present that owned recovery as stopped.
+
+Content mappers neither cache Goal status nor gate native lifecycle delivery. Native turn
+completion settles that turn's messages and thinking blocks. Late content can enrich a
+settled message but cannot restore streaming. After committing content, the native completion entry publishes the terminal event with full text and native turn identity. Clients must not synthesize an empty completion from a lifecycle snapshot. An ordinary RPC releases its own scheduling resources without repeating native successful results; it must preserve recovery journals for still-active Goal executions. Context compaction can
+update content routing without replacing execution state. Compaction events use the native
+turn identity carried by each notification, never a previous manual compaction request ID.
+Only a native turn start establishes the active content buffer; late text cannot reassign it.
+
+Stopping requests cancellation and pauses the local outbound queue. A native terminal event
+with its turn identity settles the message. Cancellation callbacks and list refreshes can
+finish after the next turn starts; they must not mark the current message stopped and
+discard the new turn's streamed content.
+
+After a native turn starts, successful, cancelled, and failed RPC results release request
+resources without repeating terminal events or changing the execution snapshot. Admission
+failures before native start still settle the request and report the error.
+
+The overload recovery loop reports its exit through the same notification channel on
+cancellation, Goal mutation, or error, carrying the failed turn's identity. Only the matching
+recovery can settle; an old recovery exit cannot stop a newer turn. A successful native
+restart clears the pending exit notification. RPC completion does not settle recovery.
+
+History reads obey the same native boundary. After Codex returns an admitted turn identity
+but before its start notification arrives, history may infer interruption for the unfinished
+record. The history merge protects that admitted identity before cloud outcome reporting.
+This changes only the history view, without advancing execution or creating an active
+content buffer. A leftover request binding cannot reopen a natively completed turn.
+
+A user-only preview without native identity stays pending. Complete presentation content
+does not complete a turn. A synthetic done status would survive native binding, suppress
+streaming, and prematurely mark collaboration member activities successful.
+
+A queued marker does not establish that optional queuePosition metadata has rendered.
+Desktop E2E waits for the position element before reading it, then preserves numeric and
+ordering assertions. Waiting for the queued icon is not an equivalent prerequisite.
+
+The streaming ingress reads only required metadata rather than copying the complete task
+and completed history for each text chunk. The lifecycle reducer filters unrelated events
+before reading task state; routing identity and local Issue progress use read-only Store
+projections. Lifecycle boundaries still publish complete snapshots. Do not hide backlog by
+dropping events or increasing observation timeouts. Manual compaction records admission
+intent and request errors; native events provide its progress and turn outcome without a
+synthetic assistant message.
+
+The lifecycle owner receives native events through a bounded channel with backpressure,
+so congestion cannot discard events. Subscriptions belong to the long-lived client and
+survive app-server replacement. Events and native turn executions carry a process generation;
+an old process exit settles only executions it owns, preserving replacement executions and
+unbound request admissions. Explicit stops also publish an exit boundary, while the owner
+keeps receiving events from the replacement process. Ordinary broadcast serves observers such as reply
+prediction. Request cleanup does not wait for native publication; no completion handshake
+or timeout fallback connects the two lifetimes. The sole native owner retains source order.
+
+Per-turn processes for named Homes publish JSON-RPC notifications and local interaction
+settlements into that same native channel at their source, independently of request observers.
+Their process exits also carry a generation. Explicit thread unsubscription retains the
+existing admission lock until Codex responds, preventing a late unsubscribe from overtaking
+a new resume and removing the replacement execution's listener.
+
+Interaction notifications reuse the execution entry point's effective permission profile.
+Automatically approved requests do not create pending user cards; read-only and stand-in
+confirmation limits remain intact. Local answer, cancellation, and expiry settlements enter
+the same native mailbox with their original turn/request identity, updating both messages
+and recovery items rather than reaching only the request observer.
+Successful requests cannot consume native content buffers early. Native completion commits
+the complete ordered content and removes that turn's buffer, clearing blocking questions
+while preserving asynchronous questions that remain unanswered across turns.
+
+DSH session projection opens native turns from native start events. RPC admission,
+late user binding, and historical token usage replayed during resume cannot create turns.
+Restored usage updates only the cumulative baseline and cannot upload the previous turn
+again or advance its cloud sequence. Native results publish only for an open turn owned
+by that owner; historical completions and compaction notifications can update snapshots
+and caches without inventing new conversation results.
+
+Native start also establishes the content turn. The request-created callback only binds
+user-message identity. An early binding retains a pending record without claiming model
+execution has started. Binding may also arrive after content or even completion, but cannot
+drop received text, move subsequent turns, or restore streaming on a settled turn.
 
 When the user stops the current response for a task with an active goal, Wework must persist
 `paused` through the runtime goal API before cancelling the current turn. This ordering disables
@@ -329,15 +455,15 @@ merely because the goal bar has not rendered yet.
 
 The sidebar running indicator, composer state, message state, and unread reminder represent different facts and must not share one ambiguous "active" boolean:
 
-| State          | Definition                                                                        | UI contract                                                                                                  |
-| -------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| Running        | `task.running === true`                                                           | Show the sidebar spinner, pause in the current pane composer, and "Thinking" in the message area             |
-| Turn streaming | `task.running === true` with a streaming assistant message                        | Use only for streaming-message lifecycle; it must not create a second running definition for other UI states |
-| Settled unread | The task transitions from running to not running while it is not the current task | Show the blue unread dot in the sidebar and optionally send one completion notification                      |
+| State          | Definition                                                                        | UI contract                                                                                                        |
+| -------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Running        | `task.running === true`                                                           | Show the sidebar spinner and pause in the current pane composer; the active turn determines the thinking indicator |
+| Turn streaming | `task.running === true` with a streaming assistant message                        | Use only for streaming-message lifecycle; it must not create a second running definition for other UI states       |
+| Settled unread | The task transitions from running to not running while it is not the current task | Show the blue unread dot in the sidebar and optionally send one completion notification                            |
 
-`running` is the executor's authoritative task-lifecycle state, not the state of one individual turn. While an Active Goal continuation loop is alive, the executor must continue reporting `running: true` even when no assistant message is streaming between two automatic turns. The sidebar spinner, composer pause button, and message-area "Thinking" therefore remain visible without creating unread state. If the executor restarts without restoring that execution loop, it must report `running: false` even when the persisted `goalStatus` is still `active`; Wework must not infer execution from the Goal status. A stale streaming message from the previous turn must not be revived.
+`running` is the executor's authoritative task-lifecycle state, not the state of one individual turn. While an Active Goal continuation loop is alive, the executor must continue reporting `running: true` even when no assistant message is streaming between two automatic turns. The sidebar spinner and composer pause button therefore remain visible without creating unread state. The message area shows continuation without inventing model thinking. If the executor restarts without restoring that execution loop, it must report `running: false` even when the persisted `goalStatus` is still `active`; Wework must not infer execution from the Goal status. A stale streaming message from the previous turn must not be revived.
 
-A terminal task event must immediately mark the local task as `running: false` and refresh the work list. If a concurrent refresh returns an older `running: true` snapshot, the reducer must preserve the locally settled state until the same task receives a new start event; a stale response must not relight the spinner, pause button, or "Thinking". Execution identity is `deviceId + taskId`. `workspacePath` is routing metadata that may change between creation, refresh, and transcript recovery, so it must not participate in execution-state identity.
+Native execution changes only through newer executor snapshots; a turn terminal event cannot directly set `running: false`. Older snapshots cannot overwrite newer ones. Other runtimes without native snapshots retain their explicit execution boundaries. Execution identity is `deviceId + taskId`. `workspacePath` is routing metadata that may change between creation, refresh, and transcript recovery, so it must not participate in execution-state identity.
 
 Unread is created only from a running-state edge for the same task: it was
 `running: true`, it is now `running: false`, and it is not the currently open
@@ -353,8 +479,8 @@ tasks start read after the upgrade.
 The executor's `RuntimeTaskLink.running` field exists only in current-process
 memory and runtime API responses. `runtime-work/index.json` must not serialize
 the field, and readers must ignore any legacy `running` value left in an older
-index. Whether a task is executing is determined only by the current
-executor's active-task set.
+index. Codex execution is determined by the current executor's owned native
+execution state, independently of whether one request remains in the active-task set.
 
 ## Composer Mode Indicators
 
@@ -587,7 +713,7 @@ After changing this path, run `pnpm --filter wework e2e:desktop -- --segment tas
 
 ## Maintenance Rules
 
-- Add new task lifecycle state or transitions to `RuntimeTaskMachine` and its internal reducer first, then expose a Store event and derived snapshot field.
+- Define native lifecycle transitions in the executor owner first, then expose versioned snapshots through the Store and derive UI fields in `RuntimeTaskMachine`.
 - Do not recompute task running, turn activity, busy, or unread state in layouts, pane hooks, or components.
 - Do not add independent `isSending`, `isRunning`, or `isStreaming` React state. New external facts must enter through Store event routing.
 - When runtime work and message state disagree, do not override display inside UI components and do not add fallback settlement; fix the primary path.

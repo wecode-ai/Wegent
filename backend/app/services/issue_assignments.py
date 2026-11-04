@@ -150,12 +150,19 @@ class IssueAssignmentService:
         comment_id: str | None = None,
         comment_body: str | None = None,
         replace_root_assignments: bool = False,
+        initial_assignment: bool = False,
     ) -> tuple[AssignmentEvent, bool]:
         del workspace_id
         self._lock_issue(db, issue_id)
         normalized_type = self._member_type(member_type)
         normalized_id = member_id.strip()
-        current = self._active_events(db, issue_id, for_update=True)
+        # A newly inserted Issue cannot have history or index rows. Locking that
+        # absent range would block independent first assignments in InnoDB.
+        current = (
+            {}
+            if initial_assignment
+            else self._active_events(db, issue_id, for_update=True)
+        )
         existing = current.get(
             (normalized_type, normalized_id, self._workflow_step(workflow_step))
         )
@@ -220,8 +227,12 @@ class IssueAssignmentService:
         else:
             comment.metadata_json = metadata
         db.flush()
-        self._refresh_active_index(db, issue_id)
-        return AssignmentEvent(comment=comment, metadata=metadata), True
+        event = AssignmentEvent(comment=comment, metadata=metadata)
+        if initial_assignment:
+            self._insert_active_index(db, issue_id, [event])
+        else:
+            self._refresh_active_index(db, issue_id)
+        return event, True
 
     def remove(
         self,
@@ -287,6 +298,12 @@ class IssueAssignmentService:
             LoopItemActiveAssignment.parent_id == issue_id,
             LoopItemActiveAssignment.resource_type == "assignment_index",
         ).delete(synchronize_session=False)
+        self._insert_active_index(db, issue_id, list(active.values()))
+
+    @staticmethod
+    def _insert_active_index(
+        db: Session, issue_id: str, active: list[AssignmentEvent]
+    ) -> None:
         db.add_all(
             [
                 LoopItemActiveAssignment(
@@ -301,7 +318,7 @@ class IssueAssignmentService:
                     loop_item_id=event.id,
                     sort_order=position,
                 )
-                for position, event in enumerate(active.values())
+                for position, event in enumerate(active)
             ]
         )
         db.flush()

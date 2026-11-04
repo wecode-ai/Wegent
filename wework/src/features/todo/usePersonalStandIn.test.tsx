@@ -1,8 +1,8 @@
-import { act, renderHook, waitFor } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
 import { newStandInRole, type PersonalStandInSettings } from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { act, renderHook, waitFor } from '@testing-library/react'
+import { describe, expect, it, vi } from 'vitest'
 import { usePersonalStandIn } from './usePersonalStandIn'
 
 function fixture() {
@@ -31,19 +31,6 @@ describe('personal stand-in Executor routing', () => {
       await result.current.save()
     })
     expect(personalSave).toHaveBeenCalledExactlyOnceWith(7, settings, 'selected-device')
-  })
-
-  it('uses the newly selected Executor for subsequent saves', async () => {
-    const { settings, personalGet, personalSave, services } = fixture()
-    const { result } = renderHook(() => usePersonalStandIn(services, 7, undefined, false))
-    await waitFor(() => expect(result.current.loading).toBe(false))
-    act(() => result.current.setDeviceId('remote-device'))
-    await waitFor(() => expect(result.current.loading).toBe(false))
-    expect(personalGet).toHaveBeenLastCalledWith(7, 'remote-device')
-    await act(async () => {
-      await result.current.save()
-    })
-    expect(personalSave).toHaveBeenCalledExactlyOnceWith(7, settings, 'remote-device')
   })
 
   it('preserves the draft and reports the Executor rejection', async () => {

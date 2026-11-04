@@ -104,6 +104,19 @@ When the upstream has not started a response stream and the model service return
 
 If the upstream returns a standard `Retry-After` header, the proxy uses that delay instead, capped at 60 seconds for one wait. Non-429 responses do not activate this policy. After the retry budget is exhausted, the proxy returns the final 429 status and error body to Codex. A stream that has already started is never replayed by this mechanism, preventing duplicate generation or tool execution.
 
+### Retry Status
+
+When Codex or the model proxy reports a retry event, the conversation immediately
+shows “Retrying automatically…” in its processing header instead of showing only
+thinking status. Rate-limit waits retain their dedicated “Model rate limited.
+Waiting to retry…” message. Output recovery or task completion clears the retry
+status. Sustained interruptions still show detailed reconnecting guidance, with
+a proxy settings action for ChatGPT models.
+
+This status depends on runtime events. Request-level retries that Codex does not
+report, including its hidden first WebSocket retry, cannot yet be identified by
+the UI.
+
 ### Codex Direct-Provider Overload Recovery
 
 Native Codex providers can bypass the compatibility proxy. When the app-server

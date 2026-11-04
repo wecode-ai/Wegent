@@ -609,8 +609,14 @@ async def persist_completed_result(
     error: Optional[str] = None,
     executor_name: Optional[str] = None,
     executor_namespace: Optional[str] = None,
-) -> None:
-    """Persist a terminal result and clean up streaming state."""
+    expected_status: Optional[str] = None,
+) -> bool:
+    """Persist a terminal result and clean up streaming state.
+
+    When ``expected_status`` is given the database update is conditional and
+    ``False`` is returned if the subtask already left that status, so callers
+    can drop a stale terminal event instead of overwriting a newer one.
+    """
     import app.services.chat.storage as chat_storage
     import app.services.chat.storage.db as chat_db
 
@@ -623,11 +629,14 @@ async def persist_completed_result(
         "executor_namespace": executor_namespace,
     }
 
-    await chat_db.db_handler.update_subtask_status(
+    persisted = await chat_db.db_handler.update_subtask_status(
         subtask_id,
         normalized_status,
         **update_kwargs,
+        expected_status=expected_status,
     )
+    if expected_status is not None and not persisted:
+        return False
     if normalized_status == "COMPLETED":
         await _persist_standalone_workspace_path(task_id, result)
     try:
@@ -642,6 +651,7 @@ async def persist_completed_result(
             exc,
             exc_info=True,
         )
+    return True
 
 
 async def _persist_standalone_workspace_path(

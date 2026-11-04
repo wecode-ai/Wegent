@@ -28,6 +28,47 @@ pub struct TableTemplates {
     pub subtasks: &'static str,
 }
 
+/// One `subtasks` row as `socketio`'s streaming-status checks read it.
+///
+/// The statements project the full ORM column list, so every column is labeled
+/// with its physical table prefix (`subtasks_…` or `subtasks_00NN_…`); the
+/// decode resolves each field by that suffix.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StreamingSubtask {
+    pub id: i64,
+    pub task_id: i64,
+    pub status: String,
+    pub created_at: Option<chrono::NaiveDateTime>,
+}
+
+impl StreamingSubtask {
+    /// Decode the streaming fields from a projected subtask row.
+    pub fn from_row(row: &brz_mysql::MysqlRow) -> brz_mysql::MysqlResult<Self> {
+        Ok(Self {
+            id: field(row, "id")?,
+            task_id: field(row, "task_id")?,
+            status: field(row, "status")?,
+            created_at: field(row, "created_at")?,
+        })
+    }
+}
+
+/// Resolve `column` in a projection labeled `<physical_table>_<column>`.
+fn field<T: brz_mysql::FromMysqlValue>(
+    row: &brz_mysql::MysqlRow,
+    column: &str,
+) -> brz_mysql::MysqlResult<T> {
+    let suffix = format!("_{column}");
+    let label = row
+        .columns()
+        .find(|name| name.ends_with(&suffix))
+        .ok_or_else(|| brz_mysql::MysqlError::ColumnNotFound(column.to_owned()))?;
+    row.get::<T>(label)?
+        .ok_or_else(|| brz_mysql::MysqlError::UnexpectedNull {
+            column: column.to_owned(),
+        })
+}
+
 /// The base-table templates of the open-source default store.
 pub fn default_table_templates() -> TableTemplates {
     TableTemplates {

@@ -4853,6 +4853,8 @@ while IFS= read -r line; do
       ;;
     *'"method":"thread/unsubscribe"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"status":"unsubscribed"}}}}'
+      closed_thread_id=$(printf '%s\n' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
+      printf '%s\n' '{{"method":"thread/closed","params":{{"threadId":"'"$closed_thread_id"'"}}}}'
       ;;
     *'"method":"thread/resume"'*)
       case "$line" in
@@ -5027,6 +5029,8 @@ while IFS= read -r line; do
     *'"method":"thread/unsubscribe"'*)
       thread_loaded=0
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"status":"unsubscribed"}}}}'
+      closed_thread_id=$(printf '%s\n' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
+      printf '%s\n' '{{"method":"thread/closed","params":{{"threadId":"'"$closed_thread_id"'"}}}}'
       ;;
     *'"method":"turn/start"'*)
       if [ "$thread_loaded" -eq 0 ]; then
@@ -5034,7 +5038,8 @@ while IFS= read -r line; do
       else
         turn_count=$((turn_count + 1))
         printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-'"$turn_count"'","status":"inProgress"}}}}}}'
-        printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-ephemeral","turnId":"turn-'"$turn_count"'","delta":"done '"$turn_count"'","phase":"finalAnswer"}}}}'
+        printf '%s\n' '{{"method":"turn/started","params":{{"threadId":"thread-ephemeral","turn":{{"id":"turn-'"$turn_count"'","status":"inProgress"}}}}}}'
+        printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-ephemeral","turnId":"turn-'"$turn_count"'","itemId":"text-'"$turn_count"'","delta":"done '"$turn_count"'","phase":"finalAnswer"}}}}'
         printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-ephemeral","turn":{{"id":"turn-'"$turn_count"'","status":"completed"}}}}}}'
       fi
       ;;
@@ -5085,6 +5090,8 @@ while IFS= read -r line; do
       ;;
     *'"method":"thread/unsubscribe"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"status":"unsubscribed"}}}}'
+      closed_thread_id=$(printf '%s\n' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
+      printf '%s\n' '{{"method":"thread/closed","params":{{"threadId":"'"$closed_thread_id"'"}}}}'
       ;;
   esac
 done
@@ -5119,6 +5126,8 @@ while IFS= read -r line; do
       ;;
     *'"method":"thread/unsubscribe"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"status":"unsubscribed"}}}}'
+      closed_thread_id=$(printf '%s\n' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
+      printf '%s\n' '{{"method":"thread/closed","params":{{"threadId":"'"$closed_thread_id"'"}}}}'
       ;;
     *'"method":"thread/resume"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-persistent"}}}}}}'
@@ -5286,10 +5295,14 @@ while IFS= read -r line; do
       turn_start_count=$((turn_start_count + 1))
       if [ "$turn_start_count" -eq 1 ]; then
         printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-a","status":"inProgress"}}}}}}'
+        printf '%s\n' '{{"method":"turn/started","params":{{"threadId":"thread-a","turn":{{"id":"turn-a","status":"inProgress"}}}}}}'
       else
         printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-b","status":"inProgress"}}}}}}'
-        printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-a","turnId":"turn-a","delta":"alpha","phase":"finalAnswer"}}}}'
-        printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-b","turnId":"turn-b","delta":"beta","phase":"finalAnswer"}}}}'
+        printf '%s\n' '{{"method":"turn/started","params":{{"threadId":"thread-b","turn":{{"id":"turn-b","status":"inProgress"}}}}}}'
+        printf '%s\n' '{{"method":"item/started","params":{{"threadId":"thread-a","turnId":"turn-a","item":{{"id":"text-a","type":"agentMessage","phase":"commentary","text":""}}}}}}'
+        printf '%s\n' '{{"method":"item/started","params":{{"threadId":"thread-b","turnId":"turn-b","item":{{"id":"text-b","type":"agentMessage","phase":"commentary","text":""}}}}}}'
+        printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-a","turnId":"turn-a","itemId":"text-a","delta":"alpha"}}}}'
+        printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-b","turnId":"turn-b","itemId":"text-b","delta":"beta"}}}}'
         printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-a","turn":{{"id":"turn-a","status":"completed"}}}}}}'
         printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-b","turn":{{"id":"turn-b","status":"completed"}}}}}}'
       fi
@@ -5369,6 +5382,8 @@ while IFS= read -r line; do
     printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-input"}}}}}}'
   elif printf '%s\n' "$line" | grep -q '"method":"thread/unsubscribe"'; then
     printf '%s\n' '{{"id":'"$request_id"',"result":{{"status":"unsubscribed"}}}}'
+    closed_thread_id=$(printf '%s\n' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
+    printf '%s\n' '{{"method":"thread/closed","params":{{"threadId":"'"$closed_thread_id"'"}}}}'
   elif printf '%s\n' "$line" | grep -q '"method":"thread/resume"'; then
     printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-input"}}}}}}'
   elif printf '%s\n' "$line" | grep -q '"method":"thread/read"'; then
@@ -5389,6 +5404,7 @@ while IFS= read -r line; do
   elif printf '%s\n' "$line" | grep -q '"method":"turn/start"'; then
     turn_active=true
     printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-input","status":"inProgress"}}}}}}'
+    printf '%s\n' '{{"method":"turn/started","params":{{"threadId":"thread-input","turn":{{"id":"turn-input","status":"inProgress"}}}}}}'
     printf '%s\n' '{}'
     sleep 0.1
     notification_index=0
@@ -5408,8 +5424,8 @@ while IFS= read -r line; do
     fi
   elif printf '%s\n' "$line" | grep -q '"id":{}' && printf '%s\n' "$line" | grep -q '"result"'; then
     turn_active=false
-    printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"delta":"answered","phase":"finalAnswer"}}}}'
-    printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-input","status":"completed"}}}}}}'
+    printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-input","turnId":"turn-input","itemId":"answered-message","delta":"answered","phase":"finalAnswer"}}}}'
+    printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-input","turn":{{"id":"turn-input","status":"completed"}}}}}}'
   elif printf '%s\n' "$line" | grep -q '"id":99' && printf '%s\n' "$line" | grep -q '"result"'; then
     printf '%s\n' '{{"method":"item/started","params":{{"threadId":"thread-input","turnId":"turn-input","item":{{"id":"auto-approval-sentinel","type":"commandExecution","status":"inProgress","command":"approval returned"}}}}}}'
   elif printf '%s\n' "$line" | grep -q '"id":98' && printf '%s\n' "$line" | grep -q '"result"'; then
@@ -5449,6 +5465,8 @@ while IFS= read -r line; do
       ;;
     *'"method":"thread/unsubscribe"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"status":"unsubscribed"}}}}'
+      closed_thread_id=$(printf '%s\n' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
+      printf '%s\n' '{{"method":"thread/closed","params":{{"threadId":"'"$closed_thread_id"'"}}}}'
       ;;
     *'"method":"thread/name/set"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
@@ -5529,6 +5547,8 @@ while IFS= read -r line; do
       ;;
     *'"method":"thread/unsubscribe"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"status":"unsubscribed"}}}}'
+      closed_thread_id=$(printf '%s\n' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
+      printf '%s\n' '{{"method":"thread/closed","params":{{"threadId":"'"$closed_thread_id"'"}}}}'
       ;;
     *'"method":"thread/resume"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
@@ -5551,6 +5571,7 @@ while IFS= read -r line; do
     *'"method":"turn/start"'*)
       turn_count=$((turn_count + 1))
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-'"$turn_count"'","status":"inProgress"}}}}}}'
+      printf '%s\n' '{{"method":"turn/started","params":{{"threadId":"thread-1","turn":{{"id":"turn-'"$turn_count"'","status":"inProgress"}}}}}}'
       ;;
     *'"method":"turn/steer"'*)
       printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-1","turn":{{"id":"turn-1","status":"completed","items":[]}}}}}}'
@@ -5601,6 +5622,8 @@ while IFS= read -r line; do
       ;;
     *'"method":"thread/unsubscribe"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"status":"unsubscribed"}}}}'
+      closed_thread_id=$(printf '%s\n' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
+      printf '%s\n' '{{"method":"thread/closed","params":{{"threadId":"'"$closed_thread_id"'"}}}}'
       ;;
     *'"method":"thread/goal/get"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"goal":null}}}}'
@@ -5650,6 +5673,8 @@ while IFS= read -r line; do
       ;;
     *'"method":"thread/unsubscribe"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"status":"unsubscribed"}}}}'
+      closed_thread_id=$(printf '%s\n' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
+      printf '%s\n' '{{"method":"thread/closed","params":{{"threadId":"'"$closed_thread_id"'"}}}}'
       ;;
     *'"method":"thread/resume"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'

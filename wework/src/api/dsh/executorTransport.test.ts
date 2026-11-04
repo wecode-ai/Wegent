@@ -153,6 +153,84 @@ describe('DSH executor transport', () => {
     warning.mockRestore()
   })
 
+  test('records fetch failure correlation without logging tool arguments', async () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const error = new TypeError('Failed to fetch')
+    const fetchMock = vi.fn().mockRejectedValue(error)
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      await expect(
+        requestDshExecutor('runtime.mcp_apps.request', {
+          privateArgument: 'private-value',
+        })
+      ).rejects.toMatchObject({
+        name: 'DshExecutorTransportError',
+        code: 'runtime_unavailable',
+        retryable: true,
+        cause: error,
+      })
+      const diagnostic = warning.mock.calls.find(([message]) =>
+        String(message).startsWith('[Wework] Executor transport diagnostic ')
+      )
+      const request = JSON.parse(fetchMock.mock.calls[0][1].body)
+      expect(
+        JSON.parse(String(diagnostic?.[0]).replace('[Wework] Executor transport diagnostic ', ''))
+      ).toMatchObject({
+        requestId: request.id,
+        method: 'runtime.mcp_apps.request',
+        stage: 'fetch_failed',
+        errorType: 'TypeError',
+      })
+      expect(JSON.stringify(warning.mock.calls)).not.toContain('private-value')
+    } finally {
+      warning.mockRestore()
+    }
+  })
+
+  test('preserves explicit fetch cancellation', async () => {
+    const error = new DOMException('Request cancelled', 'AbortError')
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(error))
+    await expect(requestDshExecutor('runtime.tasks.list')).rejects.toBe(error)
+  })
+
+  test('does not classify serialization errors as connection failures', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const params: Record<string, unknown> = {}
+    params.circular = params
+    await expect(requestDshExecutor('runtime.tasks.list', params)).rejects.toBeInstanceOf(TypeError)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  test('classifies a disconnected response body as retryable', async () => {
+    const error = new TypeError('Network connection lost')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        status: 200,
+        ok: true,
+        json: vi.fn().mockRejectedValue(error),
+      })
+    )
+    await expect(requestDshExecutor('runtime.tasks.list')).rejects.toMatchObject({
+      name: 'DshExecutorTransportError',
+      retryable: true,
+      cause: error,
+    })
+  })
+
+  test.each([null, [], 42, 'invalid'])(
+    'rejects invalid response envelope %j without retrying',
+    async body => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(body))))
+      await expect(requestDshExecutor('runtime.tasks.list')).rejects.toMatchObject({
+        name: 'DshExecutorTransportError',
+        code: 'protocol_mismatch',
+        retryable: false,
+      })
+    }
+  )
+
   test('logs correlated metadata when an executor response is not valid json', async () => {
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     vi.stubGlobal(

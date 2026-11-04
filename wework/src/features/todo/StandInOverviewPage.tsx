@@ -1,3 +1,4 @@
+import { WORKSPACE_NAVIGATION_EVENT, type WorkspaceNavigationDetail } from '@/lib/navigation'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useStandInOpened } from '@/telemetry/useStandInOpened'
 import { useContext, useEffect, useRef, useState, type ComponentProps } from 'react'
@@ -14,6 +15,7 @@ import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import { standInOrigin, standInState } from '@/features/notifications/standInNotifications'
 import type { RuntimeTaskAddress } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
+import { isDesktopRuntime } from '@/lib/runtime-environment'
 import { usePersonalStandIn } from './usePersonalStandIn'
 import { StandInSettingsPage, type StandInSettingsHandle } from './StandInSettingsPage'
 import { StandInConversation } from './StandInConversation'
@@ -21,6 +23,7 @@ import { StandInWorkList } from './StandInWorkList'
 import { standInWorkRole } from './standInWork'
 import { StandInMemoryPanel } from './StandInMemoryPanel'
 import { StandInPrimaryProfile } from './StandInPrimaryProfile'
+import { StandInProcessingNotice } from './StandInProcessingNotice'
 import { StandInProposalCard } from './StandInProposalCard'
 import { inboxRuntimeItem, useStandInInbox } from './useStandInInbox'
 
@@ -29,27 +32,91 @@ type SettingsProps = ComponentProps<typeof StandInSettingsPage>
 export function StandInOverviewPage({
   onOpenTask,
   initialPrimaryProfile = false,
+  initialWorkView = 'work',
+  settingsRequestKey,
   active = true,
   ...props
 }: SettingsProps & {
   onOpenTask?(address: RuntimeTaskAddress): Promise<void> | void
   initialPrimaryProfile?: boolean
+  initialWorkView?: 'work' | 'scheduled'
+  settingsRequestKey?: string
   active?: boolean
 }) {
   const { t } = useTranslation('common')
   const workbench = useContext(WorkbenchContext)
   const state = usePersonalStandIn(props.services, props.userId, props.initialDeviceId, false)
-  const [roleId, setRoleId] = useState<string>()
+  const { saved, setDraft, reload } = state
+  const [roleId, setRoleId] = useState<string | undefined>(
+    props.initialProfileId === '@primary' ? undefined : props.initialProfileId
+  )
   const [chatting, setChatting] = useState(false)
+  const [calendarRequest, setCalendarRequest] = useState(initialWorkView === 'scheduled' ? 1 : 0)
   const [profile, setProfile] = useState<'primary' | 'role' | 'create' | 'memory' | null>(
-    initialPrimaryProfile ? 'primary' : null
+    initialWorkView === 'scheduled'
+      ? props.initialProfileId && props.initialProfileId !== '@primary'
+        ? 'role'
+        : 'primary'
+      : initialPrimaryProfile || props.initialProfileId === '@primary'
+        ? 'primary'
+        : props.initialProfileId
+          ? 'role'
+          : null
   )
   const [proposal, setProposal] = useState<StandInProposal | null>(null)
   const [proposalError, setProposalError] = useState<string | null>(null)
   const [resolving, setResolving] = useState(false)
   const panelRef = useRef<StandInSettingsHandle>(null)
+  const previousSettingsRequest = useRef(settingsRequestKey)
+  useEffect(() => {
+    if (previousSettingsRequest.current === settingsRequestKey) return
+    previousSettingsRequest.current = settingsRequestKey
+    if (!settingsRequestKey) return
+    const targetRole = props.initialProfileId === '@primary' ? undefined : props.initialProfileId
+    const targetPanel = props.initialProfileId === '@primary' ? 'primary' : 'role'
+    if (profile === targetPanel && roleId === targetRole) return
+    const openSettings = () => {
+      setRoleId(targetRole)
+      setProfile(targetPanel)
+    }
+    if (panelRef.current) panelRef.current.requestLeave(openSettings)
+    else openSettings()
+  }, [settingsRequestKey, props.initialProfileId, profile, roleId])
+  useEffect(() => {
+    if (!active) return
+    const onNavigate = (event: Event) => {
+      const route = (event as CustomEvent<WorkspaceNavigationDetail>).detail?.contentRoute
+      if (!route) return
+      const [pathname, search] = route.split('?')
+      if (pathname !== '/stand-in') return
+      if (!search) {
+        const openPrimary = () => {
+          setRoleId(undefined)
+          setChatting(false)
+          setProfile(null)
+          reload()
+        }
+        if (panelRef.current) panelRef.current.requestLeave(openPrimary)
+        else openPrimary()
+        return
+      }
+      if (new URLSearchParams(search).get('view') !== 'scheduled') return
+      const openView = () => {
+        setCalendarRequest(value => value + 1)
+        setProfile(roleId ? 'role' : 'primary')
+      }
+      // Preserve settings drafts and guard every request, including the same URL.
+      if (panelRef.current) panelRef.current.requestLeave(openView)
+      else openView()
+    }
+    window.addEventListener(WORKSPACE_NAVIGATION_EVENT, onNavigate)
+    return () => window.removeEventListener(WORKSPACE_NAVIGATION_EVENT, onNavigate)
+  }, [active, roleId, reload])
+  const leavePanel = (action: () => void) => {
+    if (panelRef.current) panelRef.current.requestLeave(action)
+    else action()
+  }
   const pressedInPanel = useRef(false)
-  const { saved, setDraft, reload } = state
   const deviceId = saved?.executionDeviceId
   const api = props.services.standInApi
   const inbox = useStandInInbox(api, props.userId, deviceId)
@@ -93,9 +160,6 @@ export function StandInOverviewPage({
     roleId ? 'role' : 'primary',
     active && profile !== 'role' && profile !== 'create'
   )
-  const title = role
-    ? standInRoleName(role, roles.indexOf(role), t('standIn.personal.default_role'))
-    : t('standIn.title')
   const merged = new Map(
     (workbench?.runtimeTaskReminders.items ?? []).map(item => {
       const origin = standInOrigin(item)
@@ -115,7 +179,7 @@ export function StandInOverviewPage({
   const items = [...merged.values()]
     .filter(item => standInWorkRole(item) !== null)
     .sort((a, b) => standInState(b).updatedAt.localeCompare(standInState(a).updatedAt))
-  const roleItems = items.filter(item => standInWorkRole(item) === (roleId ?? '@primary'))
+  const roleItems = roleId ? items.filter(item => standInWorkRole(item) === roleId) : items
   const needsAttention = items.filter(
     item =>
       ['waiting', 'failed'].includes(standInState(item).status) ||
@@ -125,101 +189,94 @@ export function StandInOverviewPage({
       )
   )
   const conversation = roleId ? chatting : !chatting
-  const enabled = role ? role.enabled : state.draft?.primary?.enabled !== false
-  const chooseRole = (id?: string) => {
-    setRoleId(id)
-    setChatting(false)
-    setProfile(null)
-  }
+  const chooseRole = (id?: string) =>
+    leavePanel(() => {
+      setCalendarRequest(0)
+      setRoleId(id)
+      setChatting(false)
+      setProfile(null)
+    })
   return (
     <section
       className="relative flex h-full min-h-0 min-w-0 text-base text-text-primary"
       data-testid="stand-in-overview"
     >
-      <nav
-        aria-label={t('standIn.workspace.navigation')}
-        className="flex w-36 shrink-0 flex-col border-r border-border bg-muted/30 p-2 md:w-44"
-        data-testid="stand-in-overview-status"
-      >
-        <button
-          type="button"
-          data-testid="stand-in-primary-open"
-          aria-current={!roleId ? 'page' : undefined}
-          onClick={() => chooseRole()}
-          className={`flex min-h-9 items-center gap-2 rounded-md px-2 text-left text-sm ${!roleId ? 'bg-muted font-medium' : 'hover:bg-muted'}`}
-        >
-          <StandInIcon
-            enabled={state.draft?.primary?.enabled !== false}
-            className="h-5 w-5 shrink-0"
-          />
-          {t('standIn.title')}
-        </button>
-        <p className="px-2 pb-2 pt-6 text-xs text-text-muted">{t('standIn.workspace.roles')}</p>
-        {roles.map((value, index) => {
-          const projects = props.projects.filter(project =>
-            roleIncludesProject(value, {
-              id: project.id,
-              store: project.project_store === 'local' ? 'local' : 'cloud',
-            })
-          )
-          return (
-            <button
-              key={value.id}
-              type="button"
-              data-testid={`stand-in-overview-role-${value.id}`}
-              aria-current={roleId === value.id ? 'page' : undefined}
-              onClick={() => chooseRole(value.id)}
-              className={`min-h-9 rounded-md px-2 py-2 text-left text-sm ${roleId === value.id ? 'bg-muted font-medium' : 'hover:bg-muted'}`}
-            >
-              <span className="flex items-center gap-2">
-                <StandInIcon enabled={value.enabled} className="h-4 w-4 shrink-0" />
-                <span className="truncate">
-                  {standInRoleName(value, index, t('standIn.personal.default_role'))}
-                </span>
-              </span>
-              <span className="sr-only">
-                {t(value.enabled ? 'standIn.auto_on' : 'standIn.auto_off')}
-                {t('standIn.personal.connected_selected', { count: projects.length })}
-              </span>
-              <span
-                className="mt-1 block truncate pl-6 text-xs text-text-muted"
-                title={[
-                  ...projects.map(project => project.name),
-                  ...(value.connections ?? []).map(source => source.name),
-                ].join(' · ')}
-              >
-                {[
-                  ...projects.map(project => project.name),
-                  ...(value.connections ?? []).map(source => source.name),
-                ].join(' · ') ||
-                  t(value.enabled ? 'standIn.workspace.receiving' : 'standIn.workspace.paused')}
-              </span>
-            </button>
-          )
-        })}
-        <button
-          type="button"
-          data-testid="stand-in-create-role"
-          onClick={() => setProfile('create')}
-          className="mt-2 inline-flex min-h-9 items-center gap-2 rounded-md px-2 text-left text-sm text-text-secondary hover:bg-muted"
-        >
-          <Plus className="h-4 w-4" />
-          {t('standIn.workspace.create_role')}
-        </button>
-      </nav>
       <main className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-        <header className="flex flex-wrap items-center gap-3 border-b border-border px-5 py-4">
-          <div className="min-w-0 flex-1">
-            <h1 className="heading-md truncate">{title}</h1>
-            <p className="mt-1 text-xs text-text-muted">
-              {t(enabled ? 'standIn.workspace.receiving' : 'standIn.workspace.paused')}
-            </p>
-          </div>
+        <header className="flex flex-wrap items-center gap-2 border-b border-border px-5 py-2">
+          <nav
+            className="min-w-0 flex-1 overflow-x-auto"
+            aria-label={t('standIn.workspace.switch_role')}
+            data-testid="stand-in-role-selector"
+          >
+            <div className="flex w-max items-center gap-1" data-testid="stand-in-overview-status">
+              <button
+                type="button"
+                data-testid="stand-in-primary-open"
+                aria-current={!roleId ? 'page' : undefined}
+                onClick={() => chooseRole()}
+                className={`inline-flex min-h-8 shrink-0 items-center gap-2 rounded-lg px-3 text-sm ${!roleId ? 'bg-muted font-medium' : 'text-text-secondary hover:bg-muted'}`}
+              >
+                <StandInIcon
+                  enabled={state.draft?.primary?.enabled !== false}
+                  className="h-4 w-4"
+                />
+                {t('standIn.title')}
+              </button>
+              {roles.map((value, index) => {
+                const projects = props.projects.filter(project =>
+                  roleIncludesProject(value, {
+                    id: project.id,
+                    store: project.project_store === 'local' ? 'local' : 'cloud',
+                  })
+                )
+                const scope = [
+                  ...projects.map(project => project.name),
+                  ...(value.connections ?? []).map(source => source.name),
+                ].join(' · ')
+                return (
+                  <button
+                    key={value.id}
+                    type="button"
+                    data-testid={`stand-in-overview-role-${value.id}`}
+                    aria-current={roleId === value.id ? 'page' : undefined}
+                    title={
+                      scope ||
+                      t(value.enabled ? 'standIn.workspace.receiving' : 'standIn.workspace.paused')
+                    }
+                    onClick={() => chooseRole(value.id)}
+                    className={`inline-flex min-h-8 shrink-0 items-center gap-2 rounded-lg px-3 text-sm ${roleId === value.id ? 'bg-muted font-medium' : 'text-text-secondary hover:bg-muted'}`}
+                  >
+                    <StandInIcon enabled={value.enabled} className="h-4 w-4" />
+                    <span className="max-w-40 truncate">
+                      {standInRoleName(value, index, t('standIn.personal.default_role'))}
+                    </span>
+                    <span className="sr-only">{scope}</span>
+                    <span className="sr-only">
+                      {t(value.enabled ? 'standIn.auto_on' : 'standIn.auto_off')}
+                      {t('standIn.personal.connected_selected', { count: projects.length })}
+                    </span>
+                  </button>
+                )
+              })}
+              <button
+                type="button"
+                data-testid="stand-in-create-role"
+                onClick={() => {
+                  setCalendarRequest(0)
+                  setProfile('create')
+                }}
+                className="inline-flex min-h-8 shrink-0 items-center gap-1 rounded-lg px-2 text-sm text-text-secondary hover:bg-muted"
+              >
+                <Plus className="h-4 w-4" />
+                {t('standIn.workspace.create_role')}
+              </button>
+            </div>
+          </nav>
           {
             <button
               type="button"
               data-testid="stand-in-role-chat"
-              onClick={() => setChatting(value => !value)}
+              onClick={() => leavePanel(() => setChatting(value => !value))}
               className="inline-flex min-h-8 items-center gap-2 rounded-md px-2 text-sm hover:bg-muted"
             >
               <MessageSquare className="h-4 w-4" />
@@ -248,7 +305,11 @@ export function StandInOverviewPage({
           <button
             type="button"
             data-testid="stand-in-settings-open"
-            onClick={() => setProfile(role ? 'role' : 'primary')}
+            disabled={(!state.saved && state.loading) || state.saving}
+            onClick={() => {
+              setCalendarRequest(0)
+              setProfile(role ? 'role' : 'primary')
+            }}
             className="inline-flex min-h-8 items-center gap-2 rounded-md px-2 text-sm hover:bg-muted"
           >
             <Settings className="h-4 w-4" />
@@ -273,6 +334,22 @@ export function StandInOverviewPage({
           </div>
         ) : (
           <>
+            {deviceId && !profile && (
+              <StandInProcessingNotice
+                key={`${props.userId}:${deviceId}`}
+                api={api}
+                userId={props.userId}
+                deviceId={deviceId}
+                onOpen={() => setProfile('primary')}
+                onOpenTask={
+                  onOpenTask
+                    ? taskId => {
+                        void onOpenTask({ taskId, deviceId, runtime: 'codex' })
+                      }
+                    : undefined
+                }
+              />
+            )}
             {(state.error || proposalError || inbox.error) && (
               <div role="alert" className="flex items-center gap-3 px-5 py-2 text-sm text-error">
                 <span className="flex-1">{state.error || proposalError || inbox.error}</span>
@@ -315,28 +392,37 @@ export function StandInOverviewPage({
               </div>
             ))}
             {!roleId && conversation && !!needsAttention.length && (
-              <div className="flex flex-wrap gap-2 px-5 pt-3" data-testid="stand-in-important-work">
-                {needsAttention.slice(0, 3).map(item => (
-                  <button
-                    type="button"
-                    key={item.key}
-                    data-testid={`stand-in-attention-${item.task.taskId}`}
-                    onClick={() => {
-                      const owner = standInWorkRole(item)
-                      setRoleId(owner === '@primary' ? undefined : (owner ?? undefined))
-                      setChatting(owner === '@primary')
-                    }}
-                    className="min-h-8 rounded-md border border-border px-3 text-sm hover:bg-muted"
-                  >
-                    {item.task.title} ·{' '}
-                    {t(`standIn.personal.activity_${standInState(item).status}`)}
-                  </button>
-                ))}
+              <div className="space-y-2 px-5 pt-3" data-testid="stand-in-important-work">
+                {needsAttention.slice(0, 3).map(item => {
+                  const sourceName = inbox.items.find(work => work.taskId === item.task.taskId)
+                    ?.source.name
+                  return (
+                    <button
+                      type="button"
+                      key={item.key}
+                      data-testid={`stand-in-attention-${item.task.taskId}`}
+                      onClick={() => {
+                        if (onOpenTask) void onOpenTask(item.address)
+                      }}
+                      className="flex min-h-14 w-full items-center gap-3 rounded-md border border-border px-3 py-2 text-left text-sm hover:bg-muted"
+                    >
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate font-medium">{item.task.title}</span>
+                        <span className="mt-1 block truncate text-text-muted">
+                          {sourceName && `${sourceName} · `}
+                          {t(`standIn.personal.activity_${standInState(item).status}`)}
+                        </span>
+                      </span>
+                      <span className="shrink-0">{t('standIn.workspace.review_work')}</span>
+                    </button>
+                  )
+                })}
               </div>
             )}
             {conversation && api && deviceId ? (
               <StandInConversation
                 active={active && conversation}
+                hasPendingWork={!roleId && needsAttention.length > 0}
                 key={`${deviceId}:${props.userId}:${roleId ? `role:${roleId}` : 'primary'}`}
                 api={api}
                 userId={props.userId}
@@ -368,25 +454,32 @@ export function StandInOverviewPage({
                 onOpenTask={onOpenTask}
               />
             ) : (
-              <StandInWorkList
-                active={active && !conversation}
-                key={roleId ? `role:${roleId}` : 'primary'}
-                items={roleItems}
-                inbox={visibleInbox.filter(work => work.roleId === (roleId ?? '@primary'))}
-                api={api}
-                userId={props.userId}
-                deviceId={deviceId}
-                onRefresh={inbox.refresh}
-                onOpenTask={onOpenTask}
-              />
+              <div className="flex min-h-0 flex-1 flex-col">
+                <StandInWorkList
+                  active={active && !conversation}
+                  key={roleId ? `role:${roleId}` : 'primary'}
+                  items={roleItems}
+                  inbox={
+                    roleId ? visibleInbox.filter(work => work.roleId === roleId) : visibleInbox
+                  }
+                  api={api}
+                  userId={props.userId}
+                  deviceId={deviceId}
+                  onRefresh={inbox.refresh}
+                  onOpenTask={onOpenTask}
+                />
+              </div>
             )}
           </>
         )}
         {profile &&
+          (profile !== 'primary' || state.draft) &&
           createPortal(
             <div
-              className="fixed inset-0 z-modal bg-black/20 text-text-primary"
+              className={`fixed inset-x-0 bottom-0 z-modal bg-black/20 text-text-primary ${isDesktopRuntime() ? 'top-[38px]' : 'top-0'}`}
               data-testid="stand-in-profile-backdrop"
+              style={{ display: active ? undefined : 'none' }}
+              inert={!active}
               onMouseDown={event => {
                 pressedInPanel.current = event.target !== event.currentTarget
               }}
@@ -425,7 +518,8 @@ export function StandInOverviewPage({
                 ) : profile === 'primary' && state.draft ? (
                   <StandInPrimaryProfile
                     ref={panelRef}
-                    key={state.draft.executionDeviceId}
+                    key={`${state.draft.executionDeviceId}:${calendarRequest}`}
+                    initialCalendar={calendarRequest > 0}
                     settings={state.draft}
                     saving={state.saving || state.loading}
                     services={props.services}
@@ -442,15 +536,19 @@ export function StandInOverviewPage({
                       }
                     }}
                     error={state.error}
+                    onReload={state.reload}
                     api={api}
                     localDeviceId={state.currentDeviceId}
                     projects={props.projects}
                   />
                 ) : (
                   <StandInSettingsPage
+                    key={`${profile === 'create' ? '@create' : (roleId ?? '@default')}:${calendarRequest}`}
+                    initialCalendar={calendarRequest > 0}
                     {...props}
                     ref={panelRef}
                     initialProfileId={roleId}
+                    initialDeviceId={deviceId}
                     initialCreate={profile === 'create'}
                     onDeleted={() => {
                       setRoleId(undefined)
@@ -459,8 +557,10 @@ export function StandInOverviewPage({
                       setProfile(null)
                     }}
                     onCancel={() => setProfile(null)}
-                    onSaved={() => {
-                      reload()
+                    onSaved={value => {
+                      if (value.executionDeviceId && value.executionDeviceId !== deviceId)
+                        state.setDeviceId(value.executionDeviceId)
+                      else reload()
                       setProfile(null)
                     }}
                   />

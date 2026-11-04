@@ -16,6 +16,20 @@ Wework 支持启动隔离的开发验证会话，让 AI 在真实 Electron 应�
 pnpm --filter wework e2e:desktop:cloud -- --segment plugin-periodic-reconcile
 ```
 
+插件账户迟到响应 E2E 由故障代理为指定响应添加唯一 `Server-Timing` 诊断标记，并保持真实上游响应正文原样。验证按标记确认渲染器实际消费旧响应，再检查当前账户清单持续稳定。浏览器可能为同一 HTTP 响应记录多个 fetch 消费者，不能以时间窗口内“恰好一条记录”代替响应身份。代理字节保持及重复消费者关联有协议测试，真实账户/设备边界仍由既有桌面 checkpoint 验证。
+
+## 桌面 E2E 启动前准备
+
+模型目录覆盖等会被 Codex 缓存的配置必须在场景的 `prepareApp` 中写入，先于应用和共享 app-server 启动。`human-interactions` 在此阶段声明 `request_user_input_async`；不要等到 `verify` 才改配置或删除磁盘缓存，已经运行的进程可能仍使用旧目录。
+
+Windows CI 以普通账户执行桌面测试。DingTalk 协议 fixture 在切换账户前编译到工作区，通过 `WEWORK_E2E_DWS_FIXTURE_BIN` 交给分身场景复用，避免依赖普通账户的 Rust 工具链。未提供预编译文件的本地运行仍在场景准备阶段编译。覆盖属于协议集成测试，不代表真实钉钉兼容性已验证。
+
+## 共享 Codex 启动保护
+
+共享 app-server 的启动看门狗必须同时考虑已有活动轮次和仍在准备 native 线程的轮次。另一个轮次尚未收到 `thread/start` 响应时，没有 thread ID 并不代表它可以被重启中断。准备阶段使用按客户端计数的生命周期保护，在初始化完成、失败或取消时释放；模型执行阶段继续由活动线程记录保护。不调整启动超时，也不重提已有轮次。
+
+`executor/tests/codex_app_server_contract/startup.rs` 的进程级协议回归通过可观察的文件关卡阻塞第二个线程响应，跨过真实看门狗期限后再释放，验证两个轮次均能完成。该用例保留真实 Executor 和子进程 IPC，使用合成 Codex 协议服务；不代表真实 Codex 在同一故障注入下的兼容性已验证。
+
 ## 启动会话
 
 构建时的 `prepare-codex-binary.mjs` 使用 Node 原生 HTTP/HTTPS 流下载锁定版本，处理重定向并删除失败的临时文件；归档通过完整性校验后才解包使用。下载流不依赖 Node 内置 Fetch 的 Undici 解析器，避免其异常终止构建进程。
@@ -28,11 +42,21 @@ pnpm --filter wework ai:verify start
 
 ## 共享桌面 E2E 运行时镜像
 
+完整源码的浅克隆不设置 `filter: blob:none`：工作目录需要全部 blob，过滤会把下载推迟到 checkout 的第二次 promisor 请求。仅变更分类任务保留完整提交历史及 blob 过滤，避免拉取历史文件内容。共享运行时合约测试检查浅克隆任务不引入这种额外请求。
+
+独立 MinIO 的 API 端口由共享分配器分配，并排除固定版本的控制台默认端口 `13333`。该版本即使设置 `MINIO_BROWSER=off` 仍会检查端口相等并退出，详见固定源码的 [默认值](https://github.com/minio/minio/blob/9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a/cmd/globals.go#L215)及[启动检查](https://github.com/minio/minio/blob/9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a/cmd/common-main.go#L502)。端口回归直接从 `13333` 开始分配，验证排除后的端口可真实绑定；不靠重启 MinIO 掩盖冲突。
+
+非草稿 PR 只触发 Wework 桌面 E2E 时，也必须启动 `e2e-tests.yml` 中的 Backend Rust 运行时生产任务，不能只以平台 E2E 是否运行作为条件。生产任务先检查内容寻址镜像是否存在，缓存命中时复用既有镜像；缓存未命中时构建并发布，供桌面构建消费。`ruby .github/scripts/test-backend-rs-e2e-runtime.rb` 覆盖平台、桌面和草稿 PR 的生产条件。
+
 Linux 桌面 E2E 构建和缓存预热使用 `e2e-tests.yml` 生产的 Rust Backend OCI 镜像。消费者必须与生产方的 `SOURCE_DIGEST` 表达式保持一致，包括示例程序源码；只哈希主程序会生成无人发布的镜像标签，最终以 `manifest unknown` 超时失败。修改运行时镜像输入时，运行 `bash .github/scripts/test-wework-core-e2e-runtimes.sh`，检查桌面验证和缓存预热两个消费者与生产方的摘要契约。
 
 ## 操作与断言
 
+Linux 隔离桌面使用 `Xvfb -noreset`，使显示服务在整个 checkpoint 内持续可连接。默认的“最后一个客户端断开即 reset”会在短连接 `xprop` 探测与 Openbox 连接之间关闭监听，详见 [Debian 的生命周期分析](https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=1095028#43)。不通过重启窗口管理器或延长等待隐藏启动失败。
+
 后续命令都传入启动命令返回的 session 路径。优先使用稳定的 `data-testid` 选择器。
+
+创建 Issue 后，API 列表中已存在该记录不代表详情界面已完成渲染。共享的 `createAndAssignCloudIssue` 流程使用 `clickWhenEnabled` 等待详情负责人控件出现并启用后再点击，沿用默认步骤时限；不能用 API 落库状态代替控件就绪，也不能用延时或重跑掩盖竞争。
 
 ```bash
 pnpm --filter wework ai:verify snapshot --session /path/to/session.json

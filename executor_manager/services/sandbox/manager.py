@@ -1670,16 +1670,125 @@ class SandboxManager(metaclass=SingletonMeta):
         """
         sandbox = self._repository.load_sandbox(task_id_str)
         if sandbox is None:
-            # Clean up orphaned ZSet entry
-            self._repository.remove_from_active_set(task_id_str)
-            logger.debug(f"[SandboxManager] Cleaned orphaned ZSet entry: {task_id_str}")
+            # The session hash may have expired before GC reached this entry
+            # (Redis restart or a failed TTL extension). Delete by task-id
+            # label so the Pod does not become an orphan.
+            if await self._delete_orphaned_executor(task_id_str):
+                self._repository.remove_from_active_set(task_id_str)
+                logger.debug(
+                    f"[SandboxManager] Cleaned orphaned ZSet entry: {task_id_str}"
+                )
             return
 
         logger.info(
             f"[SandboxManager] Terminating expired sandbox: {sandbox.sandbox_id}, "
             f"last_activity={sandbox.last_activity_at}"
         )
+        if not await self._archive_before_terminate(sandbox):
+            logger.warning(
+                "[SandboxManager] Deferring termination of sandbox %s because "
+                "workspace archiving failed",
+                sandbox.sandbox_id,
+            )
+            return
+
+        # Archiving can take minutes; a new execution may have renewed the
+        # sandbox in the meantime. Re-read the record before deleting it.
+        refreshed = self._repository.load_sandbox(task_id_str)
+        if refreshed is None:
+            self._repository.remove_from_active_set(task_id_str)
+            return
+        idle_seconds = time.time() - (refreshed.last_activity_at or 0)
+        if idle_seconds < self._config.timeout.redis_ttl:
+            logger.info(
+                "[SandboxManager] Sandbox %s became active during archiving; "
+                "skipping termination",
+                task_id_str,
+            )
+            return
         await self.terminate_sandbox(task_id_str)
+
+    async def _delete_orphaned_executor(self, task_id: str) -> bool:
+        """Delete a Pod whose sandbox record is gone but is still tracked.
+
+        Returns True when the executor is removed (or already absent), so the
+        active-set entry can be dropped; False keeps the entry for the next GC
+        run to retry.
+        """
+        try:
+            executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
+            result = await asyncio.to_thread(
+                executor.delete_executor_by_task_id, task_id
+            )
+        except Exception as exc:
+            logger.warning(
+                "[SandboxManager] Failed to delete orphaned executor " "task_id=%s: %s",
+                task_id,
+                exc,
+            )
+            return False
+
+        status = str((result or {}).get("status", "")).lower()
+        if status in {"success", "not_found"}:
+            logger.info(
+                "[SandboxManager] Removed orphaned executor task_id=%s status=%s",
+                task_id,
+                status,
+            )
+            return True
+        logger.warning(
+            "[SandboxManager] Could not delete orphaned executor task_id=%s "
+            "result=%s",
+            task_id,
+            result,
+        )
+        return False
+
+    async def _archive_before_terminate(self, sandbox: Sandbox) -> bool:
+        """Archive the sandbox workspace so the task stays resumable.
+
+        Expired sandboxes used to be deleted without an archive, which left the
+        task bound to a missing executor and made every follow-up unrecoverable.
+        Archiving is retried on each GC run; a sandbox idle far past the TTL is
+        still deleted so a broken archive cannot pin Pods forever.
+        """
+        idle_seconds = time.time() - (sandbox.last_activity_at or 0)
+        grace_seconds = self._config.timeout.redis_ttl * 3
+        if sandbox.metadata.get("task_id") is None:
+            # Without a task id there is nothing to archive against; retrying
+            # cannot help, so do not pin the Pod for the whole grace window.
+            logger.warning(
+                "[SandboxManager] Sandbox %s has no task_id; deleting without "
+                "archiving",
+                sandbox.sandbox_id,
+            )
+            return True
+        archived = await self._archive_sandbox_before_cleanup(sandbox)
+
+        if archived:
+            logger.info(
+                "[SandboxManager] Archived workspace before terminating sandbox %s",
+                sandbox.sandbox_id,
+            )
+            return True
+        if idle_seconds >= grace_seconds:
+            logger.error(
+                "[SandboxManager] Workspace archive failed for sandbox %s after "
+                "%.0fs idle; terminating anyway to avoid pinning the Pod",
+                sandbox.sandbox_id,
+                idle_seconds,
+            )
+            return True
+
+        # Keep the Redis session hash alive for the whole retry window;
+        # otherwise it expires before the force-delete threshold and GC loses
+        # the container name needed to retry the archive or delete the Pod.
+        session_ttl = self._config.timeout.session_hash_ttl
+        self._repository.extend_session_hash_ttl(
+            sandbox.sandbox_id,
+            int(grace_seconds + session_ttl),
+        )
+        return False
 
     async def _collect_expired_sandboxes(self) -> None:
         """Terminate expired sandboxes.

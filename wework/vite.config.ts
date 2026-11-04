@@ -5,8 +5,12 @@ import { pathToFileURL } from 'node:url'
 import { createLogger, defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import { fileViewerRenderers } from '@file-viewer/vite-plugin'
-import { configDefaults } from 'vitest/config'
 import { excalidrawAssets } from './vite/excalidrawAssets'
+import { lucideIconChunks } from './vite/lucideIconChunks'
+import {
+  parseTelemetryIdentity,
+  parseTelemetryContextFields,
+} from './src/telemetry/collectionPolicy'
 
 function normalizeBackendUrl(value: string): string {
   const url = new URL(value)
@@ -17,17 +21,6 @@ function normalizeBackendUrl(value: string): string {
   return url.toString().replace(/\/$/, '')
 }
 
-function discoverNodeTestScripts(directory: string): string[] {
-  return fs.readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
-    const entryPath = path.join(directory, entry.name)
-    if (entry.isDirectory()) return discoverNodeTestScripts(entryPath)
-    if (!entry.isFile() || !entry.name.endsWith('.test.mjs')) return []
-    if (!fs.readFileSync(entryPath, 'utf8').includes("from 'node:test'")) return []
-    return [path.relative(__dirname, entryPath).replaceAll('\\', '/')]
-  })
-}
-
-const nodeTestScripts = discoverNodeTestScripts(path.resolve(__dirname, './scripts'))
 const backendProxyTarget = normalizeBackendUrl(
   process.env.VITE_WEGENT_BACKEND_URL || 'http://localhost:8000'
 )
@@ -127,8 +120,16 @@ export default defineConfig({
   base: appBasePath,
   customLogger: logger,
   plugins: [
+    {
+      name: 'telemetry-collection-policy',
+      configResolved(config) {
+        parseTelemetryIdentity(config.env.VITE_WEWORK_TELEMETRY_IDENTITY ?? '')
+        parseTelemetryContextFields(config.env.VITE_WEWORK_TELEMETRY_CONTEXT_FIELDS ?? '')
+      },
+    },
     react(),
     excalidrawAssets(),
+    lucideIconChunks(),
     ...internalVitePlugins,
     preserveDshUiEntryExports(),
     fileViewerRenderers({
@@ -254,34 +255,6 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
       '@wecode': path.resolve(__dirname, './wecode'),
       '@extensions': extensionsDir,
-    },
-  },
-  test: {
-    environment: 'jsdom',
-    setupFiles: './src/test/setup.ts',
-    globals: true,
-    server: {
-      deps: {
-        inline: [/@file-viewer/, /@panzoom/, /mermaid/],
-      },
-    },
-    // Keep local and pre-push runs below the resource-contention point where
-    // jsdom-heavy files begin timing out nondeterministically.
-    maxWorkers: 2,
-    exclude: [
-      ...configDefaults.exclude,
-      ...nodeTestScripts,
-      'dsh/**/*.test.mjs',
-      'e2e/**',
-      'electron/**',
-      'scripts/electron-e2e-launch-arguments.test.mjs',
-      'scripts/harness-runtime-metadata.test.mjs',
-      'test-results/**',
-    ],
-    coverage: {
-      provider: 'istanbul',
-      reporter: ['text', 'json', 'lcov'],
-      reportsDirectory: './coverage',
     },
   },
 })

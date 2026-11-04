@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import assert from 'node:assert/strict'
 import { afterEach, test, vi } from 'vitest'
 import { verifyTerminalHistory } from '../e2e/desktop/scenarios/background-terminals.scenario.mjs'

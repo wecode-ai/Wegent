@@ -15,6 +15,7 @@ pub(crate) fn app(mysql: brz_mysql::MysqlService) -> Arc<AppState> {
     let oidc_config = config::OidcConfig::default();
     Arc::new(AppState {
         completion_app: std::sync::OnceLock::new(),
+        callback_subscriptions: None,
         background_jobs: crate::background_jobs::BackgroundJobsClient::new(
             crate::background_jobs::config::BackgroundJobsConfig {
                 scheduler_enabled: true,

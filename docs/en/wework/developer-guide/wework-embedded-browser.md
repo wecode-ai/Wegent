@@ -24,6 +24,18 @@ Bridge requests must include the authentication token. `open` and `navigate` all
 
 The bridge supports limited concurrency. A long `waitFor` request must not block independent `click`, `fill`, or `inspect` requests; when the concurrency limit is reached, return an explicit busy error instead of waiting forever.
 
+### Agent action approval
+
+A high-risk browser action suspends its original tool call before changing the page. Electron registers a pending approval for 60 seconds and displays Continue and Cancel in the browser panel. Continue executes that call's saved arguments once and returns the execution result to the same MCP call, so the AI does not need to invoke the action again. Rejection, expiry, page navigation, browser closure, or a disconnected original request ends the wait without executing. The former authorization-for-a-later-retry path has been removed. Subsequent inspect, wait, or other status updates must retain the pending approval. The embedded-browser desktop checkpoint uses a real MCP call to verify the pending state, inspection, completion of the original call after Continue, and exactly one page mutation.
+
+When several actions await approval in one browser, the panel displays the most recently registered request and keeps it selected during inspection. Resolving it reveals any remaining pending request; each approval still applies only to its own waiting operation.
+
+User takeover takes priority and displays the resume control. Inspection while paused must not clear takeover state. Resuming AI restores any unexpired pending approval; takeover neither approves nor rejects it.
+
+Failures from other operations retain their error status, message, and code, including `wait_timeout` reported as `needs_user`, while pending approve/reject controls remain available. Pending approval details replace activity details only for idle/running updates or an operation that itself requires approval. Desktop regression checks must confirm renderer delivery of the post-inspect host events before asserting approval controls; a stability window alone cannot prove delivery.
+
+Mutating browser requests reserve 60 seconds for human approval in addition to their existing 45-second action budget. Only the browser MCP tool budget is 120 seconds; observation requests retain their 45-second limit. Disconnecting must cancel the pending operation so it cannot execute after its tool call has ended.
+
 ### Multi-tab navigation connection graph
 
 ```mermaid
@@ -160,6 +172,10 @@ This binding keeps the browser the user sees and the browser the agent controls 
 Each pane/task label currently maps to one browser host. Wework can keep multiple top-level task tabs and their independent browsers alive, but there is no browser-internal multi-tab model inside one task. Adding browser-internal tabs must extend bridge routing identity, lifecycle ownership, and the Agent tool protocol instead of reusing another task's host.
 
 A programmatic first open must treat "the panel was requested" and "the native WebView is ready for navigation" as separate phases. The bridge stores pending navigation with a request ID and executes it only after the browser host for that task has nonzero visible bounds and reaches the ready state. If the frontend listener registers after the request, it recovers the event from the pending-request snapshot. The tool may report success only after the native WebView has navigated to the requested URL, not merely because the right panel or a blank WebView was created.
+
+`state().url` includes navigation intent during loading and cannot prove completion. The Electron manager tracks `navigationCompletion`; a native loading promise can finish during bootstrap handoff, so readiness also requires the committed URL to match the current request target and the main frame to stop loading. A redirect replaces that target with its final committed URL, so a redirected open completes. Bridge `open` awaits that complete barrier and checks navigation failure before tools inspect the page.
+
+Browser guests share the platform background policy used by other workbench surfaces. Apply it on the common initialization path for both preload branches. Disable guest background throttling on macOS/Linux so hidden task pages continue executing scripts. Windows retains its default visibility lifecycle and the existing global background timer policy. Before inspecting a background task, the `embedded-browser` checkpoint reads and asserts the actual guest policy rather than checking only the main window.
 
 Close requests triggered by task switching or component unmounting must include the expected native label. A stale pane may close only the WebView it created; it must not close an instance that was relabeled or adopted by a replacement pane. An inactive task may prepare a hidden ready browser, but it cannot display that browser over the active task.
 

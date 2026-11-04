@@ -220,6 +220,7 @@ export interface WorkbenchContextValue {
     selectedModel: UnifiedModel | null
     activeModel?: UnifiedModel | null
     selectedModelOptions: ModelOptions
+    isModelCatalogReady: boolean
     isModelSelectionReady: boolean
     onModelSelectorOpenChange?: (open: boolean, closeReason?: ModelSelectorCloseReason) => void
     input: string

@@ -9,13 +9,30 @@ root = File.expand_path("../..", __dir__)
 workflows = File.join(root, ".github/workflows")
 producer = YAML.safe_load(File.read(File.join(workflows, "e2e-tests.yml")))
   .fetch("jobs").fetch("build-backend-rs-e2e-runtime")
+[[false, false, false, false],
+ [true, false, false, true],
+ [false, true, false, true],
+ [true, true, false, true],
+ [false, true, true, false]].each do |platform, desktop, draft, expected|
+  values = {
+    "github.event_name" => "pull_request",
+    "github.event.pull_request.draft" => draft,
+    "needs.changes.outputs.platform_e2e" => platform.to_s,
+    "needs.changes.outputs.wework_desktop_e2e" => desktop.to_s
+  }
+  expression = producer.fetch("if")
+  values.each { |key, value| expression = expression.gsub(key, value.inspect) }
+  unless eval(expression) == expected
+    raise "Backend runtime producer eligibility differs for platform=#{platform}, desktop=#{desktop}, draft=#{draft}"
+  end
+end
 steps = producer.fetch("steps")
 step = ->(name) { steps.find { |candidate| candidate["name"] == name }.fetch("run") }
 digest = steps.find { |candidate| candidate["id"] == "runtime" }
   .fetch("env").fetch("SOURCE_DIGEST")
 
 recipe = ".github/runtime-images/backend-rs-e2e.Dockerfile"
-%W[backend-rs/examples/** #{recipe}].each do |input|
+%W[backend-rs/examples/** #{recipe} .github/runtime-images/backend-rs-builder.Dockerfile].each do |input|
   raise "Backend Rust runtime digest omits #{input}" unless digest.include?("'#{input}'")
 end
 %w[wework-e2e.yml ci-cache-warmup.yml].each do |name|
@@ -35,6 +52,11 @@ end
 Dir.mktmpdir("backend-rs-runtime-contract") do |directory|
   FileUtils.mkdir_p(File.join(directory, File.dirname(recipe)))
   FileUtils.cp(File.join(root, recipe), File.join(directory, recipe))
+  %w[.github/runtime-images/backend-rs-builder.Dockerfile .github/ci/rust-toolchain
+    .github/scripts/ci-prebuilt-images.mjs .github/scripts/resolve-ci-image.mjs backend-rs/Cargo.toml backend-rs/Cargo.lock].each do |input|
+    FileUtils.mkdir_p(File.dirname(File.join(directory, input)))
+    FileUtils.cp(File.join(root, input), File.join(directory, input))
+  end
   bin = File.join(directory, "bin")
   FileUtils.mkdir_p(bin)
   File.write(File.join(bin, "cargo"), <<~'SH')
@@ -62,17 +84,25 @@ Dir.mktmpdir("backend-rs-runtime-contract") do |directory|
         while (($# > 1)); do
           case "$1" in
             --file) recipe="$2"; shift 2 ;;
-            --tag) shift 2 ;;
+            --tag|--platform|--target|--build-arg) shift 2 ;;
             *) exit 1 ;;
           esac
         done
         test -f "${recipe:?Docker build must use its checked-in recipe}"
         mkdir -p "$TEST_IMAGE/app"
+        if [[ "$recipe" == .github/runtime-images/backend-rs-builder.Dockerfile ]]; then
+          for binary in wegent-backend-rs attachment-s3-e2e attachment-hosting-e2e; do
+            printf '#!/bin/sh\nexit 0\n' > "$TEST_IMAGE/app/$binary"
+            chmod 0755 "$TEST_IMAGE/app/$binary"
+          done
+          exit 0
+        fi
         while read -r instruction source destination; do
           [[ "$instruction" == COPY ]] || continue
           cp "$context/$source" "$TEST_IMAGE$destination"
         done < "$recipe"
         ;;
+      manifest) exit 1 ;;
       push|pull) ;;
       create) echo contract-container ;;
       cp) cp "$TEST_IMAGE/${2#*:/}" "$3" ;;
@@ -83,6 +113,7 @@ Dir.mktmpdir("backend-rs-runtime-contract") do |directory|
   FileUtils.chmod(0755, Dir[File.join(bin, "*")])
   environment = {
     "PATH" => "#{bin}:#{ENV.fetch('PATH')}",
+    "GITHUB_REPOSITORY_OWNER" => "example",
     "CARGO_TARGET_DIR" => File.join(directory, "target"),
     "IMAGE" => "contract-image",
     "TEST_IMAGE" => File.join(directory, "image"),

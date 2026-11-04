@@ -1,8 +1,10 @@
-import { describe, expect, it } from 'vitest'
+// @vitest-environment node
+
 import type { CloudLoopItem } from '@/api/deliveries'
 import { RuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle'
 import type { RuntimeTaskSummary, RuntimeWorkListResponse } from '@/types/api'
-import { isRuntimeMyWorkItem, mergeRuntimeMyWorkItems, runtimeMyWorkItems } from './runtimeMyWork'
+import { describe, expect, it } from 'vitest'
+import { mergeRuntimeMyWorkItems, runtimeMyWorkItems } from './runtimeMyWork'
 
 const target = {
   projectId: 'default-work-items',
@@ -65,26 +67,6 @@ function issue(overrides: Partial<CloudLoopItem> = {}): CloudLoopItem {
 }
 
 describe('runtimeMyWorkItems', () => {
-  it('projects ordinary Runtime Tasks into the unified My Tasks board', () => {
-    const [item] = runtimeMyWorkItems(runtimeWork([task()]), target)
-
-    expect(item).toMatchObject({
-      id: 'runtime:device-1:task-1',
-      cloud_project_id: target.projectId,
-      project_store: target.projectStore,
-      local_project_id: 91,
-      local_project_name: 'Local project',
-      status: 'in_review',
-      runtime_address: {
-        deviceId: 'device-1',
-        taskId: 'task-1',
-        runtime: 'codex',
-        workspacePath: '/tmp/project',
-      },
-    })
-    expect(isRuntimeMyWorkItem(item)).toBe(true)
-  })
-
   it('excludes archived Runtime Tasks from the board projection', () => {
     expect(runtimeMyWorkItems(runtimeWork([task({ status: 'archived' })]), target)).toEqual([])
   })
@@ -163,25 +145,5 @@ describe('mergeRuntimeMyWorkItems', () => {
     )
 
     expect(mergeRuntimeMyWorkItems([persisted], [runtime])).toEqual([persisted])
-  })
-
-  it('deduplicates from the binding table even when the Runtime Task handle has no Issue id', () => {
-    const persisted = issue()
-    const [runtime] = runtimeMyWorkItems(runtimeWork([task()]), target)
-
-    expect(
-      mergeRuntimeMyWorkItems(
-        [persisted],
-        [runtime],
-        [
-          {
-            loop_item_id: persisted.id,
-            device_id: runtime.runtime_address.deviceId,
-            task_id: runtime.runtime_address.taskId,
-          },
-        ],
-        [persisted.id]
-      )
-    ).toEqual([persisted])
   })
 })

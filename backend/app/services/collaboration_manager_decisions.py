@@ -72,6 +72,11 @@ def _require_manager_dispatch(
             status.HTTP_409_CONFLICT,
             "Collaboration dispatch is unavailable",
         )
+    if "project_coordination" in dispatch.runtime_origin_context:
+        from app.services.collaboration_revocation import execution_authorized
+
+        if not execution_authorized(db, dispatch):
+            raise HTTPException(403, "Project coordination authority is revoked")
     group = collaboration_group_snapshot_for_dispatch(item=item, execution=dispatch)
     manager = db.get(ProjectChatAgent, manager_agent_id)
     if (

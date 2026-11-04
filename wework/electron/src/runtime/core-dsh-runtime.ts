@@ -4,6 +4,7 @@ import semver from 'semver'
 import { hashComponentPath } from './component-update-manager.js'
 import { copyManagedPlugin } from './managed-plugin-files.js'
 import { runtimeNodeArgs } from './electron-node-runtime.js'
+import { recordReleaseDiagnostic } from './release-diagnostics.js'
 
 export const CORE_DSH_VERSION = '0.2.0-rc.2'
 const PROFILE_NAME = 'wework-core'
@@ -18,6 +19,7 @@ const CORE_PLUGIN_PACKAGES = [
   ['@wegent/dsh-transcript-sync', 'wework-transcript-sync'],
   ['@wegent/dsh-plugin-runtime', 'wework-plugin-runtime'],
   ['@wegent/dsh-connection-runtime', 'wework-connection-runtime'],
+  ['@wegent/dsh-coordination-runtime', 'wework-coordination-runtime'],
   ['@wegent/dsh-connection-dingtalk', 'wework-connection-dingtalk'],
   ['@wegent/dsh-conversation-export', 'wework-conversation-export'],
   ['@wegent/dsh-ui-core-apps', 'wework-ui-core-apps'],
@@ -43,6 +45,7 @@ const CORE_HOST_BUNDLES = [
   '@wegent/dsh-terminal-runtime',
   '@wegent/dsh-plugin-runtime',
   '@wegent/dsh-connection-runtime',
+  '@wegent/dsh-coordination-runtime',
   '@wegent/dsh-connection-dingtalk',
   '@wegent/dsh-app-wework',
   '@deepseek-ai/dsh-web-app',
@@ -155,19 +158,24 @@ export async function prepareCoreDshRuntime(
   if (!pluginsRoot) {
     throw new Error('WEWORK_CORE_PLUGIN_ROOT is required for the packaged Core DSH runtime')
   }
+  recordReleaseDiagnostic('core-preparation', { phase: 'runtime-select-start' }, true)
   const runtime = await selectCoreDshRuntime(options.runtimeRoot, pluginsRoot)
+  recordReleaseDiagnostic('core-preparation', { phase: 'runtime-select-finish' }, true)
   const nodeCommand = options.environment.WEWORK_NODE_PATH?.trim() || 'node'
   const dshHome = resolve(options.dataDirectory, 'dsh-core')
   const managedUiPlugins = !usesEmptyUiPluginProfile(options.environment)
+  recordReleaseDiagnostic('core-preparation', { phase: 'plugins-hash-start' }, true)
   const corePluginsFingerprint =
     options.environment.WEWORK_CORE_PLUGINS_SHA256?.trim() ||
     (await hashComponentPath(resolve(pluginsRoot)))
+  recordReleaseDiagnostic('core-preparation', { phase: 'profile-prepare-start' }, true)
   await prepareProfile({
     runtime,
     dshHome,
     managedUiPlugins,
     corePluginsFingerprint,
   })
+  recordReleaseDiagnostic('core-preparation', { phase: 'profile-prepare-finish' }, true)
   return {
     command: nodeCommand,
     entry: runtime.entry,

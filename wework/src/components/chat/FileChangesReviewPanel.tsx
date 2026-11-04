@@ -19,6 +19,7 @@ import { PatchDiff } from '@pierre/diffs/react'
 import type { RefObject } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useOptionalAppearance } from '@/features/appearance'
+import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { CodeCommentContext } from '@/types/workspace-files'
@@ -41,6 +42,8 @@ import { ReviewFileTree } from './FileChangesReviewTree'
 
 const LARGE_DIFF_FILE_COUNT_THRESHOLD = 12
 const LARGE_DIFF_LINE_COUNT_THRESHOLD = 700
+const COPY_FEEDBACK_DURATION_MS = 1500
+const REFRESH_FEEDBACK_DURATION_MS = 600
 const PIERRE_DIFF_CSS = `
   :host {
     --diffs-light-bg: rgb(var(--color-bg-base));
@@ -138,6 +141,12 @@ export function FileChangesReviewPanel({
   const [actionError, setActionError] = useState<string | null>(null)
   const [commentSelection, setCommentSelection] = useState<DiffCommentSelection | null>(null)
   const [comment, setComment] = useState('')
+  // Kept here rather than in the toolbar, which unmounts while a refresh reloads the diff.
+  const [gitApplyCommandCopied, showGitApplyCommandCopied] =
+    useTransientFlag(COPY_FEEDBACK_DURATION_MS)
+  const [refreshFeedbackActive, showRefreshFeedback] = useTransientFlag(
+    REFRESH_FEEDBACK_DURATION_MS
+  )
   const diffLinesRef = useRef<HTMLDivElement>(null)
 
   const sections = useMemo(() => parseUnifiedDiff(diff), [diff])
@@ -218,8 +227,17 @@ export function FileChangesReviewPanel({
 
   const copyGitApplyCommand = () => {
     const patch = diff.trimEnd()
-    void navigator.clipboard?.writeText(`git apply <<'PATCH'\n${patch}\nPATCH`)
+    navigator.clipboard
+      ?.writeText(`git apply <<'PATCH'\n${patch}\nPATCH`)
+      .then(showGitApplyCommandCopied, () => undefined)
   }
+
+  const refresh = onRefresh
+    ? () => {
+        showRefreshFeedback()
+        onRefresh()
+      }
+    : undefined
 
   return (
     <div
@@ -245,13 +263,15 @@ export function FileChangesReviewPanel({
             fileTreeVisible={fileTreeVisible}
             diffStyle={diffStyle}
             canRefresh={Boolean(onRefresh)}
-            onRefresh={onRefresh}
+            refreshing={refreshFeedbackActive}
+            onRefresh={refresh}
             onToggleWrap={() => setWrapLines(value => !value)}
             onToggleHunks={() => setHunksCollapsed(value => !value)}
             onToggleFileTree={() => setFileTreeVisible(value => !value)}
             onToggleDiffStyle={() =>
               setDiffStyle(current => (current === 'unified' ? 'split' : 'unified'))
             }
+            gitApplyCommandCopied={gitApplyCommandCopied}
             onCopyGitApplyCommand={copyGitApplyCommand}
           />
           {isLargeDiff ? (
@@ -298,6 +318,8 @@ export function FileChangesReviewPanel({
                 canComment={Boolean(onAddCodeComment)}
                 commentSelection={commentSelection}
                 onCommentSelectionChange={selection => {
+                  // A typed draft keeps its selection until it is cancelled or added.
+                  if (comment.trim()) return
                   setCommentSelection(selection)
                   setComment('')
                 }}
@@ -358,11 +380,13 @@ function ReviewToolbar({
   fileTreeVisible,
   diffStyle,
   canRefresh,
+  refreshing,
   onRefresh,
   onToggleWrap,
   onToggleHunks,
   onToggleFileTree,
   onToggleDiffStyle,
+  gitApplyCommandCopied,
   onCopyGitApplyCommand,
 }: {
   title?: string
@@ -376,15 +400,19 @@ function ReviewToolbar({
   fileTreeVisible: boolean
   diffStyle: 'unified' | 'split'
   canRefresh: boolean
+  refreshing: boolean
   onRefresh?: () => void
   onToggleWrap: () => void
   onToggleHunks: () => void
   onToggleFileTree: () => void
   onToggleDiffStyle: () => void
+  gitApplyCommandCopied: boolean
   onCopyGitApplyCommand: () => void
 }) {
   const { t } = useTranslation('chat')
   const [menuOpen, setMenuOpen] = useState(false)
+  const switcherRef = useRef<HTMLDivElement>(null)
+  const switcherButtonRef = useRef<HTMLButtonElement>(null)
   const sourceBranchLabel = branchName?.trim() || t('file_changes.branch_unknown')
   const targetBranchLabel = targetBranchName?.trim()
   const hasBranchContext = Boolean(branchName?.trim() || targetBranchName?.trim())
@@ -393,6 +421,26 @@ function ReviewToolbar({
     (hasBranchContext ? t('file_changes.branch_label') : t('file_changes.changes_label'))
   const canSwitchView = Boolean(viewOptions?.length)
 
+  useEscapeKey(
+    () => {
+      setMenuOpen(false)
+      switcherButtonRef.current?.focus()
+    },
+    menuOpen,
+    switcherRef
+  )
+
+  useEffect(() => {
+    if (!menuOpen) return
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!switcherRef.current?.contains(event.target as Node)) setMenuOpen(false)
+    }
+    document.addEventListener('pointerdown', handlePointerDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+    }
+  }, [menuOpen])
+
   return (
     <div
       data-testid="file-changes-review-toolbar"
@@ -400,10 +448,11 @@ function ReviewToolbar({
     >
       <div className="flex min-h-8 items-center gap-2">
         <div className="flex min-w-0 flex-1 items-center gap-2 text-xs font-medium text-text-primary">
-          <div className="relative shrink-0">
+          <div ref={switcherRef} className="relative shrink-0">
             {canSwitchView ? (
               <>
                 <button
+                  ref={switcherButtonRef}
                   type="button"
                   data-testid="review-view-switcher-button"
                   aria-haspopup="menu"
@@ -455,6 +504,7 @@ function ReviewToolbar({
             onClick={onRefresh}
             disabled={!canRefresh}
             icon={RefreshCw}
+            iconClassName={refreshing ? 'animate-spin motion-reduce:animate-none' : undefined}
           />
           <ToolbarButton
             testId="toggle-file-tree-button"
@@ -498,9 +548,13 @@ function ReviewToolbar({
           />
           <ToolbarButton
             testId="copy-git-apply-command-button"
-            label={t('file_changes.actions.copy_git_apply')}
+            label={
+              gitApplyCommandCopied
+                ? t('file_changes.actions.copied_git_apply')
+                : t('file_changes.actions.copy_git_apply')
+            }
             onClick={onCopyGitApplyCommand}
-            icon={Copy}
+            icon={gitApplyCommandCopied ? Check : Copy}
           />
         </div>
       </div>
@@ -532,6 +586,7 @@ function ToolbarButton({
   disabled,
   pressed,
   icon: Icon,
+  iconClassName,
 }: {
   testId: string
   label: string
@@ -539,6 +594,7 @@ function ToolbarButton({
   disabled?: boolean
   pressed?: boolean
   icon: typeof FileText
+  iconClassName?: string
 }) {
   return (
     <button
@@ -554,9 +610,32 @@ function ToolbarButton({
         pressed && 'border-border bg-muted text-text-primary'
       )}
     >
-      <Icon className="h-4 w-4" />
+      <Icon className={cn('h-4 w-4', iconClassName)} />
     </button>
   )
+}
+
+function useTransientFlag(durationMs: number) {
+  const [active, setActive] = useState(false)
+  const timeoutRef = useRef<number | null>(null)
+
+  useEffect(
+    () => () => {
+      if (timeoutRef.current !== null) window.clearTimeout(timeoutRef.current)
+    },
+    []
+  )
+
+  const show = useCallback(() => {
+    if (timeoutRef.current !== null) window.clearTimeout(timeoutRef.current)
+    setActive(true)
+    timeoutRef.current = window.setTimeout(() => {
+      timeoutRef.current = null
+      setActive(false)
+    }, durationMs)
+  }, [durationMs])
+
+  return [active, show] as const
 }
 
 function AllDiffSections({
