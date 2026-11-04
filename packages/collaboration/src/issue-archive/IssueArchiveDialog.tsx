@@ -61,10 +61,16 @@ export function IssueArchiveDialog({
                     ? "todo.archive_issue_children_description"
                     : "todo.archive_issue_description",
                   hasChildren
-                    ? "“{{title}}”及同批已完成子任务将从看板中归档。"
+                    ? "“{{title}}”及其子任务将从看板中归档。"
                     : "“{{title}}”将从看板中归档。",
                   { title: title ?? "" },
                 )}
+          </p>
+          <p className="mt-2 text-xs leading-5 text-text-muted">
+            {translate(
+              "todo.delete_issue_execution_hint",
+              "该任务正在执行的 AI 运行会被停止。",
+            )}
           </p>
           <p className="mt-2 text-xs leading-5 text-text-muted">
             {translate(

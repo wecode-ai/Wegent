@@ -849,7 +849,7 @@ class ExternalLoopItemProvider:
         return self._response(db, project, issue, access, user_id)
 
     def archive(self, db: Session, item_id: str, user_id: int) -> None:
-        """Archive a completed external issue subtree by closing it upstream."""
+        """Archive an editable external issue subtree by closing it upstream."""
 
         project, _ = self._resolve_project(db, item_id)
         access = require_cloud_project_role(db, project.id, user_id, BaseRole.Viewer)
@@ -863,21 +863,24 @@ class ExternalLoopItemProvider:
         if target is None or not target[1]["can_edit"]:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
         subtree_ids = self._subtree_ids(responses, item_id)
-        if any(
-            responses[current_id][1]["status"] != "completed"
-            for current_id in subtree_ids
-        ):
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "Only completed TODO subtrees can be archived",
-            )
         closed: list[int] = []
+        cancelled_runs = []
         try:
             for current_id in reversed(subtree_ids):
                 number = self._number(responses[current_id][0])
                 self._update_issue(project, number, {"state": "closed"})
                 closed.append(number)
+            for current_id in subtree_ids:
+                cancelled_runs.extend(
+                    self._cancel_active_executions(
+                        db,
+                        current_id,
+                        note="Issue was archived while the Run was active",
+                    )
+                )
+            db.commit()
         except Exception:
+            db.rollback()
             for number in reversed(closed):
                 try:
                     self._update_issue(
@@ -892,6 +895,12 @@ class ExternalLoopItemProvider:
                         number,
                     )
             raise
+        if cancelled_runs:
+            from app.services.loop_item_executions.cancellation import (
+                request_execution_cancellations,
+            )
+
+            request_execution_cancellations(cancelled_runs)
         self._invalidate_issue_page_cache(project.id)
 
     def list_archived(
@@ -903,7 +912,7 @@ class ExternalLoopItemProvider:
         offset: int,
         limit: int,
     ) -> tuple[list[dict[str, object]], str | None]:
-        """List closed completed external Issue roots."""
+        """List readable closed external Issue roots regardless of status."""
 
         access = require_cloud_project_role(db, project_id, user_id, BaseRole.Viewer)
         project = access.project
@@ -917,11 +926,7 @@ class ExternalLoopItemProvider:
             }
             for issue in self._list_issues_state(project, "closed")
         ]
-        visible = [
-            response
-            for response in responses
-            if response["can_view_detail"] and response["status"] == "completed"
-        ]
+        visible = [response for response in responses if response["can_view_detail"]]
         archived_ids = {str(response["id"]) for response in visible}
         roots = [
             response
@@ -1072,8 +1077,9 @@ class ExternalLoopItemProvider:
         item_id: str,
         *,
         preserve_automation_run_id: str = "",
+        note: str = "Assignee changed before the run finished",
     ) -> list:
-        """Cancel any active runs of one issue (assignee changed/unassigned).
+        """Cancel active runs when an Issue is reassigned or archived.
 
         Returns the runs that were cancelled and already handed to a device so
         callers can ask the executor to stop them after the change commits.
@@ -1100,7 +1106,7 @@ class ExternalLoopItemProvider:
             cancelled = loop_item_execution_service.cancel(
                 db,
                 execution_id=execution.id,
-                note="Assignee changed before the run finished",
+                note=note,
                 commit=False,
             )
             if (

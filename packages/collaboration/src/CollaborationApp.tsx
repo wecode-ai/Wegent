@@ -25,6 +25,7 @@ import { IssueCreate, IssueDetail } from "./IssueDetail";
 import { IssueExecutionEnvironmentNotice } from "./execution-environment/IssueExecutionEnvironmentNotice";
 import { useProjectExecutionEnvironmentReadiness } from "./execution-environment/issueEnvironmentReadiness";
 import { IssueArchiveDialog, IssueArchiveDrawer } from "./issue-archive";
+import { collectIssueSubtreeIds } from "./board";
 import {
   CollaborationProjectViewShell,
   ProjectLoadingSkeleton,
@@ -85,7 +86,7 @@ export interface CollaborationIssueDetailRenderContext {
   onOpenRelatedIssue(issue: CollaborationIssue): void;
   onAddChild?(): void;
   onCreateTask?(): void;
-  /** Present only for completed Issues when archiving is enabled. */
+  /** Present for editable Issues when archiving is enabled. */
   onDelete?(): void;
 }
 
@@ -99,7 +100,7 @@ interface CollaborationAppProps {
   createProjectRequestKey?: number;
   refreshProjectRequestKey?: number;
   showProjectBack?: boolean;
-  /** Enables completed-Issue archive actions and the project archive box. */
+  /** Enables Issue archive actions and the project archive box. */
   issueArchiveEnabled?: boolean;
   onProjectChange?(project: CollaborationProject): void;
   /**
@@ -315,7 +316,13 @@ export function CollaborationApp({
     setArchiveIssueError(null);
     const results = await Promise.allSettled(
       archiveIssueTargets.map(async (issue) => {
-        await onPrepareIssueArchive?.(issue);
+        for (const id of collectIssueSubtreeIds(issues, issue.id)) {
+          const target =
+            id === issue.id
+              ? issue
+              : issues.find((candidate) => candidate.id === id);
+          if (target) await onPrepareIssueArchive?.(target);
+        }
         const archived = await commands.archiveIssue(issue.id, {
           throwOnError: true,
         });
@@ -1026,7 +1033,9 @@ export function CollaborationApp({
                               testId: "collaboration-project-settings-sharing",
                               content: (
                                 <ProjectTemplateSettings
-                                  agentConfiguration={host.projectAgentConfiguration}
+                                  agentConfiguration={
+                                    host.projectAgentConfiguration
+                                  }
                                   key={project.id}
                                   onChange={commands.replaceProject}
                                   api={api}
@@ -1266,7 +1275,6 @@ export function CollaborationApp({
                   : undefined,
                 onDelete:
                   issueArchiveAvailable &&
-                  selectedIssue.status === "completed" &&
                   canEditCollaborationIssue(selectedIssue)
                     ? () => requestIssueArchive(selectedIssue)
                     : undefined,
@@ -1312,7 +1320,6 @@ export function CollaborationApp({
                 }
                 onDelete={
                   issueArchiveAvailable &&
-                  selectedIssue.status === "completed" &&
                   canEditCollaborationIssue(selectedIssue)
                     ? () => requestIssueArchive(selectedIssue)
                     : undefined

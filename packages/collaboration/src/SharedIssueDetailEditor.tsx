@@ -2790,14 +2790,16 @@ export function TodoEditor(props: TodoEditorProps) {
             >
               {workspaceProperties}
               {editable && props.onDelete ? (
-                <button
-                  className="task-detail-more-menu-danger"
-                  data-testid="cloud-todo-detail-delete"
-                  onClick={props.onDelete}
-                  type="button"
-                >
-                  {props.deleteLabel ?? t("todo.delete_issue", "删除任务")}
-                </button>
+                <Popover.Close asChild>
+                  <button
+                    className="task-detail-more-menu-danger"
+                    data-testid="cloud-todo-detail-delete"
+                    onClick={props.onDelete}
+                    type="button"
+                  >
+                    {props.deleteLabel ?? t("todo.delete_issue", "删除任务")}
+                  </button>
+                </Popover.Close>
               ) : null}
             </IssuePropertiesPopover>
           ) : null}

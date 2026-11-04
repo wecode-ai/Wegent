@@ -2515,7 +2515,7 @@ class LoopItemService:
         return updated
 
     def delete(self, db: Session, item_id: str, user_id: int) -> LoopItem:
-        """Archive a completed TODO subtree; rows are kept for restoration."""
+        """Archive an editable TODO subtree; rows are kept for restoration."""
 
         item = self.get(db, item_id, user_id)
         self._require_item_access(db, item, user_id, action=IssueAction.EDIT_CONTENT)
@@ -2534,16 +2534,6 @@ class LoopItemService:
             )
             pending_parent_ids = [child.id for child in children]
             archived_items.extend(children)
-        incomplete = [
-            archived_item.id
-            for archived_item in archived_items
-            if archived_item.status != "completed"
-        ]
-        if incomplete:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "Only completed TODO subtrees can be archived",
-            )
         # An archived Issue must not leave a Run owning a real process. Cancel
         # every cancellable Run of the archived subtree in the same transaction
         # so the recycle-bin rows never disagree with the execution queue.
