@@ -1,3 +1,4 @@
+import { useMilestoneFilter } from "./milestones/useMilestoneFilter";
 import { MilestoneBulkAction } from "./milestones/MilestoneBulkAction";
 import { MilestonesPage } from "./milestones/MilestonesPage";
 import { MilestonePicker } from "./milestones/MilestonePicker";
@@ -172,10 +173,6 @@ export function CollaborationApp({
   );
   const archiveLoadGeneration = useRef(0);
   const [restoringIssueId, setRestoringIssueId] = useState<string | null>(null);
-  const [milestoneFilter, setMilestoneFilter] = useState<{
-    projectId: string;
-    value: string | null;
-  } | null>(null);
   const { state, commands } = useCollaborationWorkspaceController({
     api,
     location: host.location,
@@ -415,15 +412,12 @@ export function CollaborationApp({
     />
   ) : null;
 
-  const currentMilestoneFilter =
-    milestoneFilter && milestoneFilter.projectId === project?.id
-      ? milestoneFilter.value
-      : "all";
-  const filteredIssues = issues.filter(
-    (issue) =>
-      currentMilestoneFilter === "all" ||
-      (issue.milestone_id ?? null) === currentMilestoneFilter,
+  const milestoneFilter = useMilestoneFilter(
+    project?.id,
+    host.location.view,
+    issues,
   );
+  const { value: currentMilestoneFilter, filteredIssues } = milestoneFilter;
   const milestoneLabels = milestoneMessages[locale];
   const milestonesEnabled = Boolean(
     api.milestones &&
@@ -441,15 +435,13 @@ export function CollaborationApp({
           api={api.milestones}
           projectId={project.id}
           value={currentMilestoneFilter}
-          onChange={(value) =>
-            setMilestoneFilter({ projectId: project.id, value })
-          }
+          onChange={milestoneFilter.select}
           label={milestoneLabels.title}
           noneLabel={milestoneLabels.none}
           allLabel={milestoneLabels.all}
           errorLabel={milestoneLabels.error}
           retryLabel={milestoneLabels.retry}
-          onMissingValue={() => setMilestoneFilter(null)}
+          onMissingValue={milestoneFilter.clear}
           testId="milestone-filter"
         />
       </div>
@@ -934,7 +926,8 @@ export function CollaborationApp({
                       project={project}
                       issues={filteredIssues}
                       allIssues={issues}
-                      onOpenChildren={() => setMilestoneFilter(null)}
+                      onOpenChildren={milestoneFilter.openChildren}
+                      onCurrentParentIdChange={milestoneFilter.changeParent}
                       members={members ?? []}
                       statuses={projectStatuses(project, messages, translate)}
                       taskBindings={taskBindings}

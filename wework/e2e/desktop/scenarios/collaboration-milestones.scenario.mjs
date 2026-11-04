@@ -485,6 +485,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         `${scoped('cloud-todo-board-breadcrumb')} > div > button`
       )
       await control.command('waitFor', scoped(`cloud-todo-card-${localIssue}`))
+      assert.equal(await control.command('getValue', scoped('milestone-filter')), localId)
       await control.command('select', scoped('milestone-filter'), { value: localId })
       await openMilestones(control)
       await deleteMilestone(control, localId)

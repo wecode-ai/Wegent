@@ -132,6 +132,7 @@ interface ProjectBoardAdapterProps {
   ): Promise<void>;
   onOpen(issue: CollaborationIssue): void;
   onOpenChildren?(issue: CollaborationIssue): void;
+  onCurrentParentIdChange?(parentId: string | null): void;
   onDeleteIssue?(issue: CollaborationIssue): void;
   onMove(
     issue: CollaborationIssue,
@@ -181,6 +182,7 @@ export function ProjectBoardAdapter({
   onMove,
   onOpen,
   onOpenChildren,
+  onCurrentParentIdChange,
   project,
   renderIssueCard,
   statuses,
@@ -292,6 +294,8 @@ export function ProjectBoardAdapter({
     extensions,
     focusStorageKey: `collaboration-board-focus:${project.id}`,
     items: issues,
+    hierarchyItems: allIssues,
+    onCurrentParentIdChange,
     supportsOrder,
     onMove: async (issue, _column, _beforeItemId, mutation) => {
       try {
