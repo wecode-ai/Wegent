@@ -606,7 +606,31 @@ impl CodexAppServerClient {
 
     async fn restart_stalled_turn_process(&self, thread_id: &str) -> bool {
         let mut state = self.state.lock().await;
-        if state.active_threads.get(thread_id) != Some(&1)
+        let pending_request_count = match state.process.as_ref() {
+            Some(process) => process.pending.lock().await.len(),
+            None => 0,
+        };
+        log_executor_event(
+            "codex shared startup recovery state",
+            &[
+                ("thread_id", thread_id.to_owned()),
+                (
+                    "active_thread_count",
+                    state.active_threads.len().to_string(),
+                ),
+                (
+                    "active_turn_count",
+                    state.active_threads.values().sum::<usize>().to_string(),
+                ),
+                ("pending_request_count", pending_request_count.to_string()),
+                (
+                    "preparing_turn_count",
+                    state.preparing_turns.count().to_string(),
+                ),
+            ],
+        );
+        if state.preparing_turns.count() != 0
+            || state.active_threads.get(thread_id) != Some(&1)
             || state.active_threads.values().sum::<usize>() != 1
         {
             return false;
@@ -1365,6 +1389,7 @@ struct CodexAppServerSharedState {
     executor_shutdown_requested: bool,
     next_id: u64,
     active_threads: HashMap<String, usize>,
+    preparing_turns: startup::SharedTurnPreparations,
     thread_activity_changed: Arc<tokio::sync::Notify>,
     mcp_app_sessions: HashSet<(String, String, String)>,
     thread_generations: HashMap<String, u64>,
@@ -1424,6 +1449,7 @@ impl Default for CodexAppServerSharedState {
             executor_shutdown_requested: false,
             next_id: 1,
             active_threads: HashMap::new(),
+            preparing_turns: startup::SharedTurnPreparations::default(),
             thread_activity_changed: Arc::new(tokio::sync::Notify::new()),
             mcp_app_sessions: HashSet::new(),
             thread_generations: HashMap::new(),
@@ -2075,6 +2101,9 @@ async fn run_codex_app_server_turn_on_shared_client(
     }
     let mut capability_lease =
         Some(crate::services::capability_activation::begin_execution().await);
+    // A peer preparing its thread still owns the shared process, before it
+    // can be represented in active_threads by its native thread ID.
+    let turn_preparation = client.state.lock().await.preparing_turns.begin();
     let CodexAppServerTurnOptions {
         direct_thread_id,
         fork_thread_id,
@@ -2229,6 +2258,7 @@ async fn run_codex_app_server_turn_on_shared_client(
 
         // Thread initialization captures native capabilities; model work must not
         // keep capability publication or other task startups waiting.
+        drop(turn_preparation);
         drop(capability_lease.take());
 
         if awaits_initial_goal_turn {

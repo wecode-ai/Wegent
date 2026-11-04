@@ -3,9 +3,32 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[cfg(test)]
 mod tests;
+
+#[derive(Default)]
+pub(super) struct SharedTurnPreparations(Arc<AtomicUsize>);
+
+impl SharedTurnPreparations {
+    pub(super) fn begin(&self) -> SharedTurnPreparation {
+        self.0.fetch_add(1, Ordering::AcqRel);
+        SharedTurnPreparation(Arc::clone(&self.0))
+    }
+
+    pub(super) fn count(&self) -> usize {
+        self.0.load(Ordering::Acquire)
+    }
+}
+
+pub(super) struct SharedTurnPreparation(Arc<AtomicUsize>);
+
+impl Drop for SharedTurnPreparation {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
 
 pub(super) async fn wait_for_shared_startup<T>(
     client: &CodexAppServerClient,
