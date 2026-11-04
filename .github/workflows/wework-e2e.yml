@@ -538,7 +538,7 @@ jobs:
         run: |
           # This installer only feeds the E2E run, so trade package size for
           # packaging time instead of using the release compression mode.
-          pnpm --dir wework/electron exec electron-builder --config electron-builder.config.cjs --win --x64 --prepackaged release/WeWork-win32-x64 --publish never -c.compression=store
+          pnpm --dir wework/electron exec electron-builder --config electron-builder.config.cjs --win --x64 --prepackaged release/WeWork-win32-x64 --publish never --config.compression=store
           if ($LASTEXITCODE -ne 0) {
             throw "Failed to build the Windows installer"
           }

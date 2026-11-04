@@ -251,7 +251,7 @@ const buildBlock = workflow
 assert.match(buildBlock, /--prepackaged release\/WeWork-win32-x64/);
 assert.match(
   buildBlock,
-  /-c\.compression=store/,
+  /--config\.compression=store/,
   "Installer E2E packaging must not pay the release compression cost",
 );
 assert.match(

@@ -2866,7 +2866,7 @@ if [[ "$wework_windows_desktop_core_build_job" != *"runs-on: windows-latest"* ]]
   [[ "$wework_windows_desktop_core_build_job" != *"needs.changes.outputs.windows_installer_e2e == 'true'"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"run-windows-standard-user-process.ps1"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"windows-installer.e2e.mjs"* ]] ||
-  [[ "$wework_windows_desktop_core_build_job" != *"-c.compression=store"* ]] ||
+  [[ "$wework_windows_desktop_core_build_job" != *"--config.compression=store"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"REDIS_WINDOWS_VERSION: 8.10.1"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"REDIS_WINDOWS_SHA256: 4e8f2f956ed92feadf3f64b4e137ed34026438821e692e7ae22c9bba5976607a"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"name: wework-desktop-windows-redis-e2e-tools"* ]]; then
