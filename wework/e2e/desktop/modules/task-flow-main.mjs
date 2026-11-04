@@ -1587,6 +1587,10 @@ async function main() {
       )
       const nextUserDataDirectory =
         activeAppEnvironment.WEWORK_USER_DATA_DIR || electronUserDataDirectory
+      if (nextUserDataDirectory !== previousUserDataDirectory) {
+        // Preferences belong to the Electron profile, not the shared controller.
+        control.experimentalFeaturesEnabled = undefined
+      }
       const nextDeviceIdPath = join(nextUserDataDirectory, 'desktop-device-id')
       const desktopDeviceIdAfterRestart = (await readFile(nextDeviceIdPath, 'utf8')).trim()
       assert.match(
