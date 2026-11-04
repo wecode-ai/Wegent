@@ -16,6 +16,10 @@ Edit responsibilities and shared preferences in the primary profile, and role re
 
 You can also describe a role or configuration change in conversation. AI creates a proposal showing the affected roles, source scopes, and handling policies. Review it and explicitly confirm before applying. Continue discussing to revise it, or dismiss it. A stale proposal cannot overwrite newer settings.
 
+## Model selection
+
+Stand-in profiles support cloud models and custom models configured on the execution device. Cloud models use that device's connected Wework cloud account; local custom models use its provider configuration and authentication. The primary conversation and the concrete work it creates both use the saved model selection. After switching execution devices, confirm that the selected device has the required model configuration and access.
+
 ## DingTalk and collaboration sources
 
 Select DingTalk in the profile's connection sources. By default, intake includes mentions from all groups and direct messages from all contacts accessible to the selected account, including future groups and contacts. Switch to filtered sources to search and select individual sources in a batch. Each source remains bound to the DingTalk account used when selecting it. Complete any required plugin installation or authentication before choosing sources.
