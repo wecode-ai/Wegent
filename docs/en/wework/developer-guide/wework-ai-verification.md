@@ -22,6 +22,12 @@ Write configuration that Codex caches, including model catalog overrides, in the
 
 Windows CI runs desktop tests under a standard account. Compile the DingTalk protocol fixture into the workspace before switching accounts and pass it through `WEWORK_E2E_DWS_FIXTURE_BIN` for the stand-in scenarios to reuse, without relying on that account's Rust toolchain. Local runs without a prebuilt fixture still compile it during scenario preparation. This is protocol integration coverage; real DingTalk compatibility remains unverified.
 
+## Shared Codex startup protection
+
+The shared app-server startup watchdog must account for active turns and turns still preparing native threads. A peer waiting for `thread/start` does not yet have a thread ID, but must still be protected from restart. A client-scoped preparation lifetime is released on initialization, failure, or cancellation; active-thread records continue protection during model execution. This does not increase startup timeouts or resubmit existing turns.
+
+The process-level protocol regression in `executor/tests/codex_app_server_contract/startup.rs` holds the second thread response behind observable file gates, crosses the real watchdog deadline, then releases it and verifies both turns complete. Executor and child-process IPC remain real while the Codex protocol service is synthetic; real Codex compatibility with the same fault injection remains unverified.
+
 ## Start a session
 
 During builds, `prepare-codex-binary.mjs` downloads the locked version through native Node HTTP/HTTPS streams, follows redirects, and removes failed temporary files. Archives are extracted for use only after integrity verification. The download stream does not depend on the Undici parser used by Node's built-in Fetch, avoiding parser crashes that terminate the build process.

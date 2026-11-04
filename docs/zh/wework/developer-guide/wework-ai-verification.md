@@ -22,6 +22,12 @@ pnpm --filter wework e2e:desktop:cloud -- --segment plugin-periodic-reconcile
 
 Windows CI 以普通账户执行桌面测试。DingTalk 协议 fixture 在切换账户前编译到工作区，通过 `WEWORK_E2E_DWS_FIXTURE_BIN` 交给分身场景复用，避免依赖普通账户的 Rust 工具链。未提供预编译文件的本地运行仍在场景准备阶段编译。覆盖属于协议集成测试，不代表真实钉钉兼容性已验证。
 
+## 共享 Codex 启动保护
+
+共享 app-server 的启动看门狗必须同时考虑已有活动轮次和仍在准备 native 线程的轮次。另一个轮次尚未收到 `thread/start` 响应时，没有 thread ID 并不代表它可以被重启中断。准备阶段使用按客户端计数的生命周期保护，在初始化完成、失败或取消时释放；模型执行阶段继续由活动线程记录保护。不调整启动超时，也不重提已有轮次。
+
+`executor/tests/codex_app_server_contract/startup.rs` 的进程级协议回归通过可观察的文件关卡阻塞第二个线程响应，跨过真实看门狗期限后再释放，验证两个轮次均能完成。该用例保留真实 Executor 和子进程 IPC，使用合成 Codex 协议服务；不代表真实 Codex 在同一故障注入下的兼容性已验证。
+
 ## 启动会话
 
 构建时的 `prepare-codex-binary.mjs` 使用 Node 原生 HTTP/HTTPS 流下载锁定版本，处理重定向并删除失败的临时文件；归档通过完整性校验后才解包使用。下载流不依赖 Node 内置 Fetch 的 Undici 解析器，避免其异常终止构建进程。
