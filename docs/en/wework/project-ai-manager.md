@@ -14,6 +14,8 @@ Configure multiple manager triggers under **Project settings → Automatic proce
 
 Ordinary automation rules and manager triggers appear together under Automatic processing. Saving overlapping event triggers returns a conflict, and runtime selection starts only one rule for an event. Issues created by the manager do not trigger the manager again.
 
+For ordinary automation rules, choose **Status reached** and select one of the project's default or custom statuses. It runs only when an Issue actually changes into the selected status: saving the same status does not trigger it, while leaving and re-entering can trigger it again. Automatic status advances caused by a rule do not immediately trigger that same originating rule, preventing a self-triggering loop.
+
 Manual conversations and event triggers both create ordinary task executions. Cloud runs are scheduled in the background while Wework is closed; local projects run on the local executor. Manager runs are serialized per project and show distinct waiting, running, completed, and failed states.
 
 ## Issue boundaries
