@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { ACTIVE_COMPOSER_SELECTOR } from '../modules/shared.mjs'
+import { refreshPluginInventory } from '../modules/plugin-inventory-state.mjs'
 import {
   inventory,
   openPlugin,
@@ -40,7 +41,8 @@ export async function createDesktopScenario({
         fixtures.push({ ...release, slug })
       }
       await openPlugin(control, fixtures[0])
-      await control.command('click', testId('plugins-refresh-button'))
+      // Establish reconciled installations before verifying the long list.
+      await refreshPluginInventory(control, workbenchReadyTimeoutMs)
       // Composer catalogs load on demand; open the real picker before checking its projection.
       await control.command('click', testId('new-chat-button'))
       await control.command('click', testId('composer-plugin-picker-button'))
