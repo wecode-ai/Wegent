@@ -525,6 +525,8 @@
         },
         "linkPreview": {
           "previewOnly": "仅预览",
+          "watermarkLoading": "正在准备预览水印...",
+          "watermarkUnavailable": "无法生成预览水印，内容暂不可用。",
           "loading": "正在安全加载文件...",
           "viewOnline": "点击查看在线预览",
           "coverUnavailable": "首页预览暂不可用，点击可继续尝试在线预览",
