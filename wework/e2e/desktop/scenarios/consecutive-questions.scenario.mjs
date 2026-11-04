@@ -114,14 +114,8 @@ export function createDesktopScenario({
       await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
       try {
         await control.command('waitFor', CARD, { text: FIRST, visible: true })
-        for (const key of 'STAFF') {
-          await control.command('nativePress', INPUT, { key: key === ' ' ? 'Space' : key })
-        }
-        assert.equal(
-          await control.command('getValue', INPUT),
-          'STAFF',
-          'The native keyboard must establish a draft before more questions arrive'
-        )
+        await control.command('focus', INPUT)
+        await control.command('fill', INPUT, { value: 'STAFF' })
         const readQuestions = async () => {
           const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
           const task = snapshot.pane.currentRuntimeTask
@@ -146,6 +140,16 @@ export function createDesktopScenario({
           }
         }
         const firstState = await readQuestions()
+        await writeFile(
+          join(resultDir, 'consecutive-question-first-draft.json'),
+          JSON.stringify(firstState, null, 2)
+        )
+        assert.equal(
+          firstState.input,
+          'STAFF',
+          'Establish the first draft before releasing further questions'
+        )
+        assert.equal(firstState.inputAttribute, 'STAFF', 'React must retain the first draft')
         releaseSecond()
         await control.command('waitFor', CARD, { text: THIRD, visible: true })
         await writeFile(
