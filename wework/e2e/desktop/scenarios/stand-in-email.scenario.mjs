@@ -368,7 +368,6 @@ export function createDesktopScenario({
         'personal-stand-in-button',
         'stand-in-settings-open',
         'stand-in-primary-connections-open',
-        'stand-in-add-connection',
         `stand-in-add-${PROVIDER}-connection`,
       ])
         await control.command('clickWhenEnabled', `[data-testid="${target}"]`)

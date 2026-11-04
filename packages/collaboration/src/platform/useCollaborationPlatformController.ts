@@ -217,7 +217,10 @@ export function useCollaborationPlatformController({
     error: null,
   });
   const loadRevisionRef = useRef(0);
-  const navigationCacheReadyRef = useRef(false);
+  // Incomplete catalogs have settled; loading catalogs still need completion.
+  const navigationCacheStatusRef = useRef<
+    "loading" | "incomplete" | "complete"
+  >("loading");
   const navigationCacheRef = useRef({
     workspaces: [] as CollaborationWorkspace[],
     projects: [] as CollaborationProject[],
@@ -235,17 +238,17 @@ export function useCollaborationPlatformController({
         sources.some((source, index) => source !== previousSources[index])
       ) {
         navigationSourcesRef.current = sources;
-        navigationCacheReadyRef.current = false;
+        navigationCacheStatusRef.current = "loading";
         navigationCacheRef.current = { workspaces: [], projects: [] };
       }
-      if (force) navigationCacheReadyRef.current = false;
+      if (force) navigationCacheStatusRef.current = "loading";
       const rootView = location.rootView ?? "home";
       if (
         !force &&
         !location.workspaceId &&
         !location.projectId &&
         (rootView === "home" || rootView === "devices") &&
-        navigationCacheReadyRef.current
+        navigationCacheStatusRef.current === "complete"
       ) {
         setState((current) => ({
           ...current,
@@ -297,7 +300,7 @@ export function useCollaborationPlatformController({
           : null,
         loading: workspaceId
           ? current.workspace?.id !== workspaceId
-          : !navigationCacheReadyRef.current,
+          : navigationCacheStatusRef.current !== "complete",
         error: null,
       }));
       if (!workspaceId) {
@@ -312,6 +315,7 @@ export function useCollaborationPlatformController({
         let successfulNavigationLoads = 0;
         let primaryNavigationSettled = false;
         let navigationComplete = false;
+        navigationCacheStatusRef.current = "loading";
         const publish = () => {
           if (revision !== loadRevisionRef.current) return;
           const snapshot = mergeRootNavigationSnapshots(snapshots);
@@ -458,11 +462,13 @@ export function useCollaborationPlatformController({
         navigationComplete = results.every(
           (result) => result.status === "fulfilled",
         );
+        if (revision === loadRevisionRef.current) {
+          navigationCacheStatusRef.current = navigationComplete
+            ? "complete"
+            : "incomplete";
+        }
         if (successfulNavigationLoads > 0) {
           publish();
-          if (revision === loadRevisionRef.current) {
-            navigationCacheReadyRef.current = navigationComplete;
-          }
         }
         if (
           revision === loadRevisionRef.current &&
@@ -541,11 +547,17 @@ export function useCollaborationPlatformController({
             : cachedWorkspace?.project_count === 0 ||
               cachedWorkspaceProjects.length > 0);
         const canUseNavigationCache =
-          !force && (navigationCacheReadyRef.current || targetCoveredByCache);
+          !force &&
+          (navigationCacheStatusRef.current === "complete" ||
+            (navigationCacheStatusRef.current === "incomplete" &&
+              targetCoveredByCache));
+        if (!canUseNavigationCache) {
+          navigationCacheStatusRef.current = "loading";
+        }
         const navigationCollections = canUseNavigationCache
           ? {
               ...cachedNavigation,
-              complete: navigationCacheReadyRef.current,
+              complete: navigationCacheStatusRef.current === "complete",
               successfulLoads: 1,
             }
           : await loadNavigationCollections(
@@ -559,7 +571,7 @@ export function useCollaborationPlatformController({
           workspaces,
           projects: navigationProjects,
         };
-        if (complete) navigationCacheReadyRef.current = true;
+        navigationCacheStatusRef.current = complete ? "complete" : "incomplete";
         setState((current) => ({
           ...current,
           navigationIncomplete: !complete,
