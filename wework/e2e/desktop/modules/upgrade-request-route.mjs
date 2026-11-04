@@ -26,7 +26,7 @@ export async function routeUpgradeRequests(child, origin, logPath) {
 export function upgradeTransportScript(origin, pauseArgument) {
   return `(() => {
     const require = process.getBuiltinModule('module').createRequire(process.execPath)
-    const {app, session} = require('electron')
+    const {app, session, dialog} = require('electron')
     const pauseArgument = ${JSON.stringify(pauseArgument)}
     const launchArguments = process.argv.slice(1).filter(argument => argument !== pauseArgument)
     process.argv = [process.argv[0], ...launchArguments]
@@ -40,6 +40,13 @@ export function upgradeTransportScript(origin, pauseArgument) {
       args: (options?.args ?? launchArguments).filter(argument => argument !== pauseArgument)
     })
     if (${Boolean(process.env.WEWORK_UPGRADE_DIAGNOSTIC_CHECKPOINT)}) {
+      // Startup failures can occur before product logging is initialized. Keep
+      // the native error dialog and retain its exact message in CI diagnostics.
+      const showErrorBox = dialog.showErrorBox.bind(dialog)
+      dialog.showErrorBox = (title, content) => {
+        console.error('[desktop-e2e-startup-error]', JSON.stringify({title, content}))
+        return showErrorBox(title, content)
+      }
       const report = () => console.log('[desktop-e2e-startup]', JSON.stringify({
         pid: process.pid, ready: app.isReady(), userData: app.getPath('userData')
       }))
