@@ -57,7 +57,9 @@ export async function getKnowledgeBase(id: number): Promise<KnowledgeBase> {
 
 /** Return the effective reader capability used only for knowledge UI state. */
 export async function getDocumentProtection(id: number): Promise<DocumentProtection> {
-  return apiClient.get<DocumentProtection>(`/knowledge-bases/${id}/document-protection`)
+  return apiClient.get<DocumentProtection>(
+    `/knowledge-bases/${id}/document-protection?preview_watermark=true`
+  )
 }
 
 /**
