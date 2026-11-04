@@ -10,7 +10,8 @@ function timestamp(value, label) {
 function immediatelyEligible(event) {
   return (
     event.processingMode === 'immediate' ||
-    ['human_command', 'schedule_due', 'assignment'].includes(event.kind) ||
+    Boolean(event.dispatch) ||
+    ['human_command', 'schedule_due'].includes(event.kind) ||
     (event.kind === 'work_state' && event.requiresAction === true)
   )
 }

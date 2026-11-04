@@ -171,7 +171,6 @@ plugin_segments=(
   sites-plugin-auto-install
 )
 formal_release_segments=(
-  app-update-full
   app-update-refresh
 )
 cloud_worktree_segments=(
@@ -361,7 +360,7 @@ validate_registered_checkpoint_coverage() {
     cd "$repository_root"
     node --input-type=module -e '
       import { readFileSync } from "node:fs"
-      import { UPGRADE_CHECKPOINT_GROUP } from "./wework/e2e/desktop/upgrade-suite.mjs"
+      import { upgradeVerificationCheckpoint } from "./wework/e2e/desktop/upgrade-suite.mjs"
       import {
         DESKTOP_CHECKPOINTS,
         DESKTOP_CHECKPOINT_CI_HOSTS,
@@ -377,11 +376,12 @@ validate_registered_checkpoint_coverage() {
       const upgradeVerifier = readFileSync("wework/scripts/verify-release-upgrades.mjs", "utf8")
       if (!releaseWorkflow.includes("node wework/scripts/verify-release-upgrades.mjs") ||
           !upgradeVerifier.includes("--parallel-segments") ||
-          !upgradeVerifier.includes("${UPGRADE_CHECKPOINT_GROUP},app-update-full")) {
-        console.error("The release workflow must invoke the registered upgrade checkpoint group")
+          !upgradeVerifier.includes("diagnosticCheckpoint || upgradeVerificationCheckpoint(platform)")) {
+        console.error("The release workflow must invoke its registered platform upgrade checkpoints")
         process.exit(1)
       }
-      const covered = new Set(expandDesktopCheckpoints([...process.argv.slice(1), UPGRADE_CHECKPOINT_GROUP]))
+      const releaseCheckpoints = ["macos", "windows"].map(upgradeVerificationCheckpoint)
+      const covered = new Set(expandDesktopCheckpoints([...process.argv.slice(1), ...releaseCheckpoints]))
       for (const checkpoint of registered) {
         const host = DESKTOP_CHECKPOINT_CI_HOSTS.get(checkpoint) ?? checkpoint
         if (!covered.has(host)) {
@@ -911,7 +911,8 @@ classify_wework_path() {
       return
       ;;
 
-    wework/e2e/desktop/scenarios/native-lifecycle.scenario.mjs)
+    wework/e2e/desktop/scenarios/native-lifecycle.scenario.mjs | \
+      wework/e2e/desktop/scenarios/native-guidance.scenario.mjs)
       select_target "core:native-lifecycle"
       return
       ;;
@@ -2083,16 +2084,41 @@ classify_path() {
       wework/e2e/desktop/support/mysql-helper.py)
       select_all_desktop_suites
       ;;
-    .github/workflows/wework-e2e.yml | \
+    .github/ci/rust-toolchain | \
+      .github/runtime-images/* | .github/scripts/ci-prebuilt-images.mjs | \
+      .github/scripts/resolve-ci-image.mjs | .github/ci/prebuilt-images.json | \
+      .github/scripts/publish-ci-prebuild.sh | .github/scripts/restore-ci-downloads.sh | \
+      .github/actions/setup-rust-cache/* | \
+      .github/actions/setup-sccache/* | \
+      .github/actions/setup-node-workspace/* | \
+      .github/actions/setup-python-uv-cache/* | \
+      .github/actions/build-wework-windows-e2e/* | \
+      .github/actions/build-wework-macos-e2e/* | \
+      .github/workflows/wework-e2e.yml | \
       .github/actions/build-wework-core-e2e/* | \
+      .github/actions/build-minio-e2e/* | \
+      .github/actions/setup-minio-e2e/* | \
+      .github/ci/wework-linux-checkpoint-durations.json | \
+      .github/scripts/order-wework-linux-e2e.* | \
       docker/wework-e2e/* | \
       .github/scripts/download-actions-artifact.sh | \
+      .github/scripts/restore-actions-runtime.sh | \
+      .github/scripts/runtime-artifact.* | \
+      .github/scripts/prepare-macos-inspector-e2e.sh | \
+      .github/scripts/build-macos-e2e-runtimes.sh | \
+      .github/scripts/macos-e2e-source-digest.* | \
+      .github/scripts/macos-e2e-build*.mjs | .github/scripts/restore-macos-ci-build.mjs | \
+      .github/scripts/verified-build-oci.mjs | \
+      .github/scripts/restore-macos-e2e-runtime-oci.sh | .github/scripts/publish-macos-e2e-runtime-oci.sh | \
       .github/scripts/archive-wework-core-e2e-build.sh | \
+      .github/scripts/wework-core-e2e-transport.* | \
       .github/scripts/classify-ci-changes.sh | \
       .github/scripts/classify-wework-desktop-e2e.sh | \
       .github/scripts/restore-wework-core-e2e-build.sh | \
       .github/scripts/test-classify-ci-changes.sh)
       select_all_desktop_suites
+      ;;
+    wework/scripts/ci-test-sequencer.*)
       ;;
     wework/*)
       classify_wework_path "$path"

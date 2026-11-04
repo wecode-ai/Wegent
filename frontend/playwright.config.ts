@@ -2,6 +2,8 @@ import { defineConfig, devices } from '@playwright/test'
 
 const EXECUTOR_REGRESSION_SPEC =
   /(tasks\/(agent-conversation-regression|claude-background-lifecycle|claudecode-compaction|pipeline-session-archive|provider-native-claudecode|device-artifact-declaration)|collaboration\/(collaboration-agent-execution|issue-dispatch-executor))\.spec\.ts/
+const EXECUTOR_INDEPENDENT_SPEC =
+  /tasks\/(claude-background-lifecycle|pipeline-session-archive|provider-native-claudecode)\.spec\.ts/
 // Specs that share the mock provider MCP server and must run serially.
 const PROVIDER_NATIVE_CHAT_SPEC =
   /(tasks\/provider-native-(chat|dingtalk|state-and-contract)|knowledge\/dingtalk-import)\.spec\.ts/
@@ -110,16 +112,29 @@ export default defineConfig({
       dependencies: ['setup'],
     },
     {
-      name: 'executor-chromium',
+      name: 'executor-device-chromium',
       testMatch: EXECUTOR_REGRESSION_SPEC,
-      // Executor regression specs share administrator DingTalk configuration and
-      // the provider mock's global MCP call state, so files must not overlap.
+      testIgnore: EXECUTOR_INDEPENDENT_SPEC,
+      // Device registration and lifecycle flows retain their shared real device.
       workers: 1,
+      fullyParallel: false,
       use: {
         ...devices['Desktop Chrome'],
         storageState: './e2e/.auth/user.json',
       },
       dependencies: ['setup'],
+    },
+    {
+      // Keep the existing CI entry point and run isolated files after device flows.
+      name: 'executor-chromium',
+      testMatch: EXECUTOR_INDEPENDENT_SPEC,
+      workers: 2,
+      fullyParallel: false,
+      use: {
+        ...devices['Desktop Chrome'],
+        storageState: './e2e/.auth/user.json',
+      },
+      dependencies: ['executor-device-chromium'],
     },
     /* Performance tests */
     {

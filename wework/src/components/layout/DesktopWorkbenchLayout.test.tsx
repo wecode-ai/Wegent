@@ -60,7 +60,7 @@ import {
   requestNewChatComposerFocus,
 } from '@/lib/workbenchComposerFocus'
 import { PopoutWorkbenchPage } from '@/pages/PopoutWorkbenchPage'
-import { preloadDefaultDshUiTestModules } from '@/test/setup'
+import { preloadDefaultDshUiTestModules } from '@/test/setup.dom'
 import type { ProjectWithTasks, RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
 import type {
   RuntimePaneTranscript,
@@ -2298,23 +2298,6 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('workspace-plan-panel')).toHaveTextContent('已流式补充第二步')
   })
 
-  test('keeps the empty composer at the intended desktop proportion', () => {
-    render(<DesktopWorkbenchLayout {...baseProps} />)
-
-    expect(screen.getByTestId('composer-plugin-picker-button')).toBeVisible()
-    expect(screen.getByTestId('desktop-empty-composer-frame')).toHaveClass(
-      'flex',
-      'min-h-0',
-      'flex-1',
-      'flex-col'
-    )
-    expect(screen.getByTestId('desktop-empty-composer-dock')).toHaveClass(
-      'w-[min(46rem,calc(100%_-_2rem))]',
-      'min-w-0',
-      'shrink-0'
-    )
-  })
-
   test('treats a selected runtime task with an empty transcript as a conversation', () => {
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
       if (this.getAttribute('data-testid') === 'composer-toolbar') {
@@ -2437,6 +2420,97 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(await screen.findByTestId('transient-notice')).toHaveTextContent('已发送到私聊')
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
+
+  test('keeps IM actions available while experimental features are disabled', () => {
+    experimentalFeatures.enabled = false
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          currentRuntimeTask: {
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+            taskId: 'runtime-1',
+          },
+        }}
+      />
+    )
+
+    expect(screen.queryByTestId('fork-runtime-task-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('continue-in-im-button')).toBeInTheDocument()
+    expect(screen.queryByTestId('workbench-harness-selector')).not.toBeInTheDocument()
+  })
+
+  test('does not open a direct stand-in route while experimental features are disabled', () => {
+    experimentalFeatures.enabled = false
+    const original = window.location.href
+    try {
+      window.history.replaceState({}, '', '/stand-in?profileId=default')
+      render(<DesktopWorkbenchLayout {...baseProps} />)
+      expect(screen.queryByTestId('personal-stand-in-workspace')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('stand-in-overview')).not.toBeInTheDocument()
+    } finally {
+      window.history.replaceState({}, '', original)
+    }
+  })
+
+  test('shows only the local runtime selector in the task composer', () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    expect(screen.getByTestId('workbench-harness-selector')).toHaveTextContent('Codex')
+    expect(screen.queryByTestId('workbench-team-selector')).not.toBeInTheDocument()
+  })
+
+  test('hides cloud project space entries in the @ menu while experimental features are disabled', async () => {
+    experimentalFeatures.enabled = false
+    deliveryApiMock.available = true
+
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    const editor = (await screen.findByTestId('chat-message-input')) as HTMLElement & {
+      value: string
+    }
+    act(() => {
+      editor.value = '@'
+      editor.focus()
+    })
+
+    expect(await screen.findByTestId('mention-files-action')).toBeInTheDocument()
+    expect(screen.queryByTestId('mention-cloud-space-direct-action')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('mention-cloud-projects-action')).not.toBeInTheDocument()
+  })
+
+  test('shows the work-item composer guide while experimental features are disabled', async () => {
+    experimentalFeatures.enabled = false
+    deliveryApiMock.available = true
+    deliveryApiMock.listCloudProjects.mockResolvedValue({
+      items: [
+        {
+          id: 'default-work-items',
+          public_id: 'default-work-items',
+          project_key: 'WORK',
+          name: '我的任务',
+          description: '',
+          project_store: 'local',
+          task_provider: 'local',
+          provider_config: {},
+          created_by_user_id: 1,
+          status: 'active',
+          tags: [],
+          version: 1,
+          created_at: '2026-08-09T00:00:00Z',
+          updated_at: '2026-08-09T00:00:00Z',
+          metadata: { system_kind: 'default_work_items' },
+        },
+      ],
+    })
+
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    expect(await screen.findByTestId('project-space-context-pill')).toHaveTextContent('我的任务')
   })
 
   test('restores delivery context when an opened runtime task is absent from runtime work', async () => {

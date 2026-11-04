@@ -1,6 +1,6 @@
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import '@/i18n'
-import { installDshUiTestContributions } from '@/test/setup'
+import { installDshUiTestContributions } from '@/test/setup.dom'
 import type { DeviceInfo, ProjectWithTasks, RuntimeWorkListResponse } from '@/types/api'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'

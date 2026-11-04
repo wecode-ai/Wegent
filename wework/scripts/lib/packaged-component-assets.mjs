@@ -1,8 +1,9 @@
-import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { create } from 'tar'
 import { hashComponentPath } from './component-content-hash.mjs'
 import { componentReleaseScope, MANAGED_COMPONENT_IDS } from '../desktop-component-release.mjs'
+import { extractRuntimeArchive } from './extract-runtime-archive.mjs'
 
 export function deliveredPackagePaths(installerRoot, platform, arch) {
   const directories = {
@@ -79,26 +80,53 @@ export async function preparePackagedComponentAssets({
 }
 
 async function archiveComponent({ component, id, resourcesRoot, platform, arch, output }) {
-  const sourcePath = resolve(resourcesRoot, component.path)
+  const sourcePath = resolve(resourcesRoot, component.archive?.path ?? component.path)
   if (!sourcePath.startsWith(resolve(resourcesRoot) + sep))
     throw new Error(`Packaged component path escapes the application: ${id}`)
   const source = await stat(sourcePath)
   if (!source.isDirectory() && !source.isFile())
     throw new Error(`Component source is unavailable: ${sourcePath}`)
-  const contentSha256 = await hashComponentPath(sourcePath)
-  if (contentSha256 !== component.sha256)
-    throw new Error(`Packaged component checksum mismatch: ${id}`)
   const temporary = join(output, `.component-${id}.tar.gz`)
-  await create(
-    {
-      cwd: source.isDirectory() ? sourcePath : dirname(sourcePath),
-      file: temporary,
-      gzip: true,
-      mtime: new Date(0),
-      portable: true,
-    },
-    source.isDirectory() ? ['.'] : [basename(sourcePath)]
-  )
+  let contentSha256
+  let entryPath
+  if (component.archive) {
+    const archive = component.archive
+    if (
+      !source.isFile() ||
+      !Number.isSafeInteger(archive.bytes) ||
+      archive.bytes <= 0 ||
+      source.size !== archive.bytes ||
+      !/^[a-f0-9]{64}$/.test(archive.sha256) ||
+      (await hashComponentPath(sourcePath)) !== archive.sha256
+    )
+      throw new Error(`Packaged component archive integrity mismatch: ${id}`)
+    const checked = await mkdtemp(join(output, `.verify-${id}-`))
+    try {
+      await extractRuntimeArchive(sourcePath, checked)
+      contentSha256 = await hashComponentPath(checked)
+      if (contentSha256 !== component.sha256)
+        throw new Error(`Packaged component checksum mismatch: ${id}`)
+    } finally {
+      await rm(checked, { recursive: true, force: true })
+    }
+    await cp(sourcePath, temporary)
+    entryPath = '.'
+  } else {
+    contentSha256 = await hashComponentPath(sourcePath)
+    if (contentSha256 !== component.sha256)
+      throw new Error(`Packaged component checksum mismatch: ${id}`)
+    await create(
+      {
+        cwd: source.isDirectory() ? sourcePath : dirname(sourcePath),
+        file: temporary,
+        gzip: true,
+        mtime: new Date(0),
+        portable: true,
+      },
+      source.isDirectory() ? ['.'] : [basename(sourcePath)]
+    )
+    entryPath = source.isDirectory() ? '.' : basename(sourcePath)
+  }
   const archiveSha256 = await hashComponentPath(temporary)
   const assetName = `WeworkComponent_${id}_${archiveSha256}_${platform}_${arch}.tar.gz`
   await rename(temporary, join(output, assetName))
@@ -108,6 +136,6 @@ async function archiveComponent({ component, id, resourcesRoot, platform, arch, 
     archiveSha256,
     assetName,
     releaseScope: componentReleaseScope(id),
-    entryPath: source.isDirectory() ? '.' : basename(sourcePath),
+    entryPath,
   }
 }

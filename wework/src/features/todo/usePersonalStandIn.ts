@@ -1,4 +1,4 @@
-import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
+import { getStandInErrorMessage, reportStandInError } from '@/lib/stand-in-error-message'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { dequal } from 'dequal'
 import type {
@@ -50,7 +50,10 @@ export function usePersonalStandIn(
       setError(null)
     })()
       .catch(cause => {
-        if (active) setError(getStandInErrorMessage(cause))
+        if (active) {
+          reportStandInError('load_settings', cause, deviceId)
+          setError(getStandInErrorMessage(cause, 'load_settings_failed'))
+        }
       })
       .finally(() => {
         if (active) setLoading(false)
@@ -103,7 +106,8 @@ export function usePersonalStandIn(
       setDraft(result)
       return result
     } catch (cause) {
-      setError(getStandInErrorMessage(cause))
+      reportStandInError('save_settings', cause, loaded.current?.deviceId)
+      setError(getStandInErrorMessage(cause, 'save_settings_failed'))
       return null
     } finally {
       setSaving(false)

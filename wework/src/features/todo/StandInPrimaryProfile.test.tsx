@@ -77,6 +77,22 @@ function fixture() {
   }
 }
 
+it('explains an environment load failure and recovers without losing profile edits', async () => {
+  const props = fixture()
+  const listRuntimeWork = vi.mocked(props.services.runtimeWorkApi!.listRuntimeWork)
+  listRuntimeWork.mockRejectedValueOnce(new Error('internal failure'))
+  const user = userEvent.setup()
+  render(<StandInPrimaryProfile {...props} />)
+  expect(await screen.findByRole('alert')).toHaveTextContent('未能加载所选设备的项目和工作目录')
+  await user.type(screen.getByTestId('stand-in-preferences'), ' draft')
+  await user.click(screen.getByTestId('stand-in-primary-environment-retry'))
+  await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
+  expect(screen.getByTestId('stand-in-preferences')).toHaveValue(
+    'Review my work\n\nKeep replies concise draft'
+  )
+  expect(props.onSave).not.toHaveBeenCalled()
+})
+
 it('keeps existing identity and execution settings without a global processing switch', () => {
   const props = fixture()
   render(<StandInPrimaryProfile {...props} />)
@@ -94,9 +110,13 @@ it('consumes a menu calendar deep link once and returns to the connection list o
   const user = userEvent.setup()
   render(<StandInPrimaryProfile {...props} initialCalendar />)
   expect(screen.getByTestId('stand-in-calendar-connection')).toBeVisible()
+  expect(screen.queryByText('返回连接')).not.toBeInTheDocument()
+  expect(screen.getAllByTestId('stand-in-connections-back')).toHaveLength(1)
   await user.click(screen.getByTestId('stand-in-connections-back'))
   await user.click(screen.getByTestId('stand-in-primary-back-to-settings'))
   await user.click(screen.getByTestId('stand-in-primary-connections-open'))
+  if (screen.queryByTestId('stand-in-add-connection'))
+    await user.click(screen.getByTestId('stand-in-add-connection'))
   expect(screen.getByTestId('stand-in-time-connections')).toBeVisible()
   expect(screen.queryByTestId('stand-in-calendar-connection')).not.toBeInTheDocument()
 })
@@ -120,12 +140,15 @@ it('protects an unsaved mailbox when returning from the primary connections head
   fireEvent.change(screen.getByTestId('stand-in-email-email'), {
     target: { value: 'owner@example.com' },
   })
-  await user.click(screen.getByTestId('stand-in-primary-back-to-settings'))
+  expect(screen.getAllByTestId('stand-in-connections-back')).toHaveLength(1)
+  await user.click(screen.getByTestId('stand-in-connections-back'))
   expect(screen.getByTestId('stand-in-email-discard')).toBeVisible()
   await user.click(screen.getByTestId('stand-in-email-discard-cancel-button'))
   expect(screen.getByTestId('stand-in-email-email')).toHaveValue('owner@example.com')
-  await user.click(screen.getByTestId('stand-in-primary-back-to-settings'))
+  await user.click(screen.getByTestId('stand-in-connections-back'))
   await user.click(screen.getByTestId('stand-in-email-discard'))
+  expect(screen.queryByTestId('stand-in-email-connections')).not.toBeInTheDocument()
+  await user.click(screen.getByTestId('stand-in-primary-back-to-settings'))
   expect(screen.getByTestId('stand-in-primary-connections-open')).toBeVisible()
   expect(props.onSave).not.toHaveBeenCalled()
 })
@@ -167,6 +190,21 @@ it('consolidates saved instructions without losing content and keeps connection 
       }),
     })
   )
+})
+
+it('returns from connections without discarding the profile draft', async () => {
+  const props = fixture()
+  const user = userEvent.setup()
+  render(<StandInPrimaryProfile {...props} />)
+  await user.type(screen.getByTestId('stand-in-preferences'), '; keep this draft')
+  await user.click(screen.getByTestId('stand-in-primary-connections-open'))
+  await user.click(screen.getByTestId('stand-in-primary-back-to-settings'))
+  expect(screen.getByTestId('stand-in-preferences')).toHaveValue(
+    'Review my work\n\nKeep replies concise; keep this draft'
+  )
+  expect(screen.queryByTestId('stand-in-primary-discard')).not.toBeInTheDocument()
+  expect(props.onSave).not.toHaveBeenCalled()
+  expect(props.onClose).not.toHaveBeenCalled()
 })
 
 it('persists real project and model selections and protects unsaved changes when switching devices', async () => {

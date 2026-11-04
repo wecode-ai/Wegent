@@ -4,6 +4,45 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 
 const MAX_TOOL_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 
+pub(crate) fn connection_auth_target(
+    root: &Path,
+    plugin_key: &str,
+    declaration: &Value,
+) -> Result<Value, AppIpcError> {
+    let manifest = read_plugin_manifest(root)?;
+    if manifest["name"].as_str() != Some(plugin_key) {
+        return Err(AppIpcError::new(
+            "connection_dependency_denied",
+            "Installed plugin manifest identity does not match",
+        ));
+    }
+    let matches: Vec<&Value> = manifest["connectors"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|connector| {
+            connector["localAuth"].is_object()
+                && if let Some(tool) = declaration["toolId"].as_str() {
+                    connector["localAuth"]["tool"]["id"].as_str() == Some(tool)
+                } else {
+                    connector["slug"] == declaration["connectorSlug"]
+                }
+        })
+        .collect();
+    if matches.len() != 1 {
+        return Err(AppIpcError::new(
+            "connection_tool_unavailable",
+            "The dependency must declare one matching localAuth tool",
+        ));
+    }
+    let slug = matches[0]["slug"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| AppIpcError::new("local_auth_invalid", "Missing connector identity"))?;
+    parse_local_auth_spec(&manifest, Some(slug))?;
+    Ok(json!({"pluginKey":plugin_key,"connectorSlug":slug}))
+}
+
 // Replies retain the existing source-bound permission checks in the caller.
 pub(crate) async fn run_plugin_tool(
     plugin_key: &str,
@@ -176,6 +215,45 @@ fn parse_connection_tool_output(
 #[cfg(test)]
 mod connection_tool_tests {
     use super::*;
+
+    #[test]
+    fn connection_tool_identity_follows_the_installed_manifest_and_rejects_ambiguity() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join(".codex-plugin")).unwrap();
+        for slug in ["dingtalk", "dingtalk-local"] {
+            let connector = json!({"slug":slug,"localAuth":{"kind":"browser_oauth","health":["health"],"start":["login"],"tool":{"id":"dws","source":"bundled"}}});
+            let path = root.path().join(".codex-plugin/plugin.json");
+            fs::write(
+                &path,
+                json!({"name":"dingtalk","connectors":[connector.clone()]}).to_string(),
+            )
+            .unwrap();
+            assert_eq!(
+                connection_auth_target(root.path(), "dingtalk", &json!({"toolId":"dws"})).unwrap(),
+                json!({"pluginKey":"dingtalk","connectorSlug":slug})
+            );
+            assert!(
+                connection_auth_target(root.path(), "other", &json!({"toolId":"dws"})).is_err()
+            );
+            assert!(connection_auth_target(
+                root.path(),
+                "dingtalk",
+                &json!({"toolId":"unrelated"})
+            )
+            .is_err());
+            fs::write(
+                &path,
+                json!({"name":"dingtalk","connectors":[connector.clone(),connector]}).to_string(),
+            )
+            .unwrap();
+            assert_eq!(
+                connection_auth_target(root.path(), "dingtalk", &json!({"toolId":"dws"}))
+                    .unwrap_err()
+                    .code,
+                "connection_tool_unavailable"
+            );
+        }
+    }
 
     #[tokio::test]
     async fn connection_cli_rejects_oversized_stdout_before_the_process_closes_it() {

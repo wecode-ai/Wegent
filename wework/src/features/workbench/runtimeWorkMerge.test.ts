@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, test } from 'vitest'
 import type { DeviceInfo, RuntimeProjectWork, RuntimeWorkListResponse } from '@/types/api'
 import { buildRuntimeRemoteProjectStateId } from '@/lib/runtime-project-identity'

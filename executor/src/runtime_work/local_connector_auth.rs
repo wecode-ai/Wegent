@@ -24,7 +24,7 @@ use tools::{parse_tool_spec, resolve_auth_tool, LocalAuthToolSpec};
 
 mod connection_tools;
 mod diagnostics;
-pub(crate) use connection_tools::{run_connection_tool, run_plugin_tool};
+pub(crate) use connection_tools::{connection_auth_target, run_connection_tool, run_plugin_tool};
 mod github_cli;
 mod logout;
 mod python;

@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { createCloudRuntimeIpcClient as createSharedCloudRuntimeIpcClient } from '@wegent/chat-core'
 import { describe, expect, it, vi } from 'vitest'
 import { createCloudRuntimeIpcClient, RUNTIME_TRANSCRIPT_ACK_TIMEOUT_MS } from './runtimeIpc'

@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
 import { waitForUpdatePreparation } from '../e2e/desktop/modules/update-preparation-progress.mjs'

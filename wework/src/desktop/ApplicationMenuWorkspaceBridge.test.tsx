@@ -7,9 +7,13 @@ import type { WorkspaceTab } from '@/features/workspace-tabs/workspaceTabs'
 import type { DesktopHostEvent } from '@/api/dsh/desktopHost'
 
 const mocks = vi.hoisted(() => ({
+  experimental: true,
   subscribe: vi.fn(),
   invoke: vi.fn(async () => undefined),
   navigate: vi.fn(),
+}))
+vi.mock('@/features/experimental-features/useExperimentalFeaturesEnabled', () => ({
+  useExperimentalFeaturesEnabled: () => mocks.experimental,
 }))
 vi.mock('@/api/dsh/desktopHost', () => ({
   subscribeDesktopHostEvents: mocks.subscribe,
@@ -68,7 +72,17 @@ function setup({
 }
 
 describe('application menu workspace actions', () => {
-  beforeEach(() => vi.clearAllMocks())
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.experimental = true
+  })
+
+  test('opens ordinary automations while My stand-in is disabled', () => {
+    mocks.experimental = false
+    const { send } = setup()
+    send('open-automations')
+    expect(mocks.navigate).toHaveBeenCalledExactlyOnceWith('/automations')
+  })
 
   test('opens new task and project-space tabs without discarding the active tab', () => {
     const { context, send } = setup()
@@ -128,22 +142,16 @@ describe('application menu workspace actions', () => {
   test('routes plugin, automation, and application items through navigation', () => {
     const { send } = setup()
     for (const action of ['open-plugins', 'open-automations', 'open-applications']) send(action)
-    expect(mocks.navigate.mock.calls).toEqual([
-      ['/plugins'],
-      ['/stand-in?view=scheduled'],
-      ['/sites'],
-    ])
+    expect(mocks.navigate.mock.calls).toEqual([['/plugins'], ['/automations'], ['/sites']])
   })
 
-  test('preserves the active identity and device when opening schedules from settings', () => {
+  test('opens independent schedules without carrying calendar identity and device state', () => {
     const original = window.location.href
     window.history.replaceState({}, '', '/stand-in?profileId=reviewer&deviceId=device-a')
     try {
       const { send } = setup({ pathname: '/stand-in' })
       send('open-automations')
-      expect(mocks.navigate).toHaveBeenCalledWith(
-        '/stand-in?view=scheduled&profileId=reviewer&deviceId=device-a'
-      )
+      expect(mocks.navigate).toHaveBeenCalledWith('/automations')
     } finally {
       window.history.replaceState({}, '', original)
     }
