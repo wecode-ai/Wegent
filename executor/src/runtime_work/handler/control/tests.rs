@@ -748,7 +748,11 @@ fn remote_creation_binds_before_dispatch_and_rolls_back_definite_rejection() {
 
 #[test]
 fn cloud_mutations_use_the_authorized_backend_and_preserve_deployment_prefixes() {
-    use axum::{routing::post, Json, Router};
+    use axum::{
+        extract::Query,
+        routing::{get, post},
+        Json, Router,
+    };
     let _guard = crate::test_env::lock();
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -764,21 +768,19 @@ fn cloud_mutations_use_the_authorized_backend_and_preserve_deployment_prefixes()
             let barrier = Arc::new(tokio::sync::Barrier::new(4));
             let app = Router::new()
                 .route(
-                    "/deployed/api/runtime-work/transcript",
-                    post(
-                        move |Json(address): Json<crate::task_runtime::RuntimeTaskAddress>| {
-                            assert_eq!(address.device_id, "control-test-device");
-                            assert!(address.task_id.starts_with("cloud-"));
-                            let parallel = parallel.clone();
-                            let barrier = barrier.clone();
-                            async move {
-                                if parallel.load(Ordering::SeqCst) {
-                                    barrier.wait().await;
-                                }
-                                Json(json!({"messages":[]}))
+                    "/deployed/api/v1/runtime-tasks/cloud-context",
+                    get(move |Query(address): Query<HashMap<String, String>>| {
+                        assert_eq!(address["device_id"], "control-test-device");
+                        assert!(address["task_id"].starts_with("cloud-"));
+                        let parallel = parallel.clone();
+                        let barrier = barrier.clone();
+                        async move {
+                            if parallel.load(Ordering::SeqCst) {
+                                barrier.wait().await;
                             }
-                        },
-                    ),
+                            Json(json!({"task_id":address["task_id"],"cloud_project_id":"project"}))
+                        }
+                    }),
                 )
                 .route(
                     "/deployed/api/runtime-work/rename",
@@ -856,7 +858,12 @@ fn cloud_mutations_use_the_authorized_backend_and_preserve_deployment_prefixes()
 
 #[test]
 fn cloud_conversation_search_preserves_visible_titles_and_reports_failed_checks() {
-    use axum::{http::StatusCode, routing::post, Json, Router};
+    use axum::{
+        extract::Query,
+        http::StatusCode,
+        routing::{get, post},
+        Json, Router,
+    };
     let _guard = crate::test_env::lock();
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -873,19 +880,22 @@ fn cloud_conversation_search_preserves_visible_titles_and_reports_failed_checks(
             let validation_error = invalid.clone();
             let app = Router::new().route(
                 "/api/runtime-work/transcript",
-                post(
-                    move |Json(address): Json<crate::task_runtime::RuntimeTaskAddress>| {
+                post(|| async { (StatusCode::BAD_GATEWAY, Json(json!({"detail":"Remote control is disabled for this app device"}))) }),
+            ).route(
+                "/api/v1/runtime-tasks/cloud-context",
+                get(
+                    move |Query(address): Query<HashMap<String, String>>| {
                         let invalid = validation_error.load(Ordering::SeqCst);
                         async move {
-                            assert_eq!(address.device_id, "control-test-device");
-                            let status = if address.task_id == "cloud-denied" {
+                            assert_eq!(address["device_id"], "control-test-device");
+                            let status = if address["task_id"] == "cloud-denied" {
                                 StatusCode::FORBIDDEN
                             } else if invalid {
                                 StatusCode::UNPROCESSABLE_ENTITY
                             } else {
                                 StatusCode::OK
                             };
-                            (status, Json(json!({"messages":[]})))
+                            (status, Json(json!({"task_id":address["task_id"],"cloud_project_id":"project"})))
                         }
                     },
                 ),

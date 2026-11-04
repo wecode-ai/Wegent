@@ -176,13 +176,18 @@ impl RuntimeWorkRpcHandler {
         link: &RuntimeTaskLink,
     ) -> Result<(), AppIpcError> {
         if cloud_bound(link) {
-            // Reuse the existing addressed transcript API's current resource permissions.
-            self.control_backend(
+            // The desktop resolves current owner/binding/project permissions through
+            // cloud-context before reading locally. A transcript RPC to this device
+            // would incorrectly require enabling remote control for local data.
+            let query = url::form_urlencoded::Serializer::new(String::new())
+                .append_pair("device_id", &self.device_id)
+                .append_pair("task_id", &link.local_task_id)
+                .finish();
+            self.control_http(
                 context,
-                "/runtime-work/transcript",
-                json!({
-                "deviceId": self.device_id, "taskId": link.local_task_id,
-                "workspacePath":link.workspace_path,"limit":1}),
+                reqwest::Method::GET,
+                &format!("/v1/runtime-tasks/cloud-context?{query}"),
+                None,
             )
             .await?;
         }
