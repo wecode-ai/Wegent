@@ -1137,6 +1137,8 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       )
       const localhostWait = await bridgeCall({
         action: 'waitFor',
+        // The previous origin serves the same text and the address bar updates
+        // before navigation commits. Wait for the target document itself.
         options: {
           condition: {
             textVisible: READY_TEXT,
