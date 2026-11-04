@@ -8,9 +8,19 @@ import {
 } from '@wegent/collaboration/composer/composerProseMirrorModel'
 import { createDesktopScenario } from '../../e2e/desktop/scenarios/workbench-control.scenario.mjs'
 import { CLOUD_DEVICE_ID } from '../../e2e/desktop/modules/shared.mjs'
+import { waitForScenarioProgress } from '../../e2e/desktop/modules/scenario-progress.mjs'
 
 vi.mock('../../e2e/desktop/modules/cloud-environment.mjs', () => ({
   verifyLocalExecutorUsesCloudSocketUrl: vi.fn(),
+}))
+
+vi.mock('../../e2e/desktop/modules/shared.mjs', async importOriginal => ({
+  ...(await importOriginal<typeof import('../../e2e/desktop/modules/shared.mjs')>()),
+  selectE2EModel: vi.fn(),
+}))
+
+vi.mock('../../e2e/desktop/modules/scenario-progress.mjs', () => ({
+  waitForScenarioProgress: vi.fn(),
 }))
 
 vi.mock('../../e2e/desktop/modules/transport-fault-proxy.mjs', () => ({
@@ -29,9 +39,11 @@ afterEach(() => vi.unstubAllGlobals())
 async function prepareFixture({
   waitError,
   role = 'executor',
+  modelResponseTimeoutMs = 180000,
 }: {
   waitError?: Error
   role?: string
+  modelResponseTimeoutMs?: number
 }) {
   const workspacePath = '/fixture/exact-remote-workspace'
   const origin = {
@@ -73,7 +85,7 @@ async function prepareFixture({
   )
   const restContext = { backendUrl: 'http://backend.test', authToken: 'synthetic' }
   const environment = { ...restContext, workspacePath, waitForRuntimeTask }
-  const scenario = createDesktopScenario({ uiTimeoutMs: 1000 })
+  const scenario = createDesktopScenario({ uiTimeoutMs: 1000, modelResponseTimeoutMs })
   await scenario.prepareCloud(restContext)
   scenario.setCloudEnvironment(environment)
   return { workspacePath, requests, environment, restContext, scenario, waitForRuntimeTask }
@@ -160,6 +172,35 @@ test('control model recognizes the source message after real composer link seria
     ).toBe(true)
     expect(response.writeHead).toHaveBeenCalledWith(200, expect.any(Object))
     expect(response.end.mock.calls[0][0]).toContain('WEWORK_CONTROL_SOURCE_READY')
+  } finally {
+    await scenario.cleanup()
+  }
+})
+
+test('control workflow uses the runner model-response budget instead of the UI-action budget', async () => {
+  const modelResponseTimeoutMs = 98765
+  const { scenario } = await prepareFixture({ modelResponseTimeoutMs })
+  const reachedWorkflowWait = new Error('Reached the complete workflow wait')
+  const command = vi.fn(
+    async (action: string, _selector: string, options?: { text?: string; timeoutMs?: number }) => {
+      if (action === 'getWorkbenchDebugSnapshot')
+        return JSON.stringify({
+          workbench: { currentRuntimeTask: { deviceId: 'local-device', taskId: 'source-task' } },
+        })
+      if (action === 'waitFor' && options?.text === 'WEWORK_CONTROL_COMPLETE') {
+        expect(options.timeoutMs).toBe(modelResponseTimeoutMs)
+        throw reachedWorkflowWait
+      }
+    }
+  )
+  try {
+    await expect(scenario.verify({ command })).rejects.toBe(reachedWorkflowWait)
+    expect(waitForScenarioProgress).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.any(Function),
+      expect.any(Number),
+      modelResponseTimeoutMs
+    )
   } finally {
     await scenario.cleanup()
   }

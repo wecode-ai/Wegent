@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
+import { EventEmitter } from 'node:events'
 
 import { verifyLocalExecutorUsesCloudSocketUrl } from '../modules/cloud-environment.mjs'
 import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
 import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
+import { waitForScenarioProgress } from '../modules/scenario-progress.mjs'
 import {
   assistantMessage,
   createSse,
@@ -63,7 +65,7 @@ function callResult(body, callId) {
   return output
 }
 
-export function createDesktopScenario({ uiTimeoutMs }) {
+export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
   let active = false
   let sourceId
   let sourceTaskId
@@ -89,6 +91,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
   let followUpRequests = 0
   let remoteUiFollowUpRequests = 0
   let failure
+  const progress = new EventEmitter()
   const request = async (path, body) => {
     const response = await fetch(`${cloud.backendUrl}${path}`, {
       method: 'POST',
@@ -466,6 +469,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
             await steps[stage][2]?.(value)
             observed.push(steps[stage][0])
             stage += 1
+            progress.emit('change')
           }
           events =
             stage === steps.length
@@ -513,6 +517,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         response.end(createSse([responseCreated(id), ...events]))
       } catch (error) {
         failure = error
+        progress.emit('change')
         response.writeHead(500)
         response.end('Workbench control checkpoint failed')
       }
@@ -582,9 +587,15 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       sourceTaskId = task.taskId
       sourceId = `conv_${Buffer.from(JSON.stringify([task.deviceId, task.taskId])).toString('base64url')}`
       await send(CONTROLLER)
+      await waitForScenarioProgress(
+        progress,
+        () => ({ step: stage, error: failure }),
+        steps.length,
+        modelResponseTimeoutMs
+      )
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: 'WEWORK_CONTROL_COMPLETE',
-        timeoutMs: uiTimeoutMs,
+        timeoutMs: modelResponseTimeoutMs,
       })
       if (failure) throw failure
       assert.equal(scopedFollowUps, 1, 'Scoped target must resume its original conversation')
