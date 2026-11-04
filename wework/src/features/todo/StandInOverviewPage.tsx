@@ -118,7 +118,7 @@ export function StandInOverviewPage({
     else action()
   }
   const pressedInPanel = useRef(false)
-  const deviceId = saved?.executionDeviceId
+  const deviceId = saved?.executionDeviceId ?? props.initialDeviceId
   const api = props.services.standInApi
   const inbox = useStandInInbox(api, props.userId, deviceId)
   useEffect(

@@ -210,6 +210,7 @@ impl RuntimeWorkRpcHandler {
                 .ok_or_else(|| AppIpcError::new("bad_request", "weeklyReview is required"))?;
             let gate = self.task_send_gate(&format!("stand-in-processing:{user}"));
             let _guard = gate.lock().await;
+            let mut initialized = None;
             if selected
                 && self
                     .automation_store
@@ -225,16 +226,36 @@ impl RuntimeWorkRpcHandler {
                     .map_err(super::stand_in::settings_error)?;
                 // Materialize the same implicit default shown by the profile UI, without re-enabling saved identities.
                 if !settings["primary"].is_object() {
+                    let mut previous = settings.clone();
                     settings["primary"] = json!({"enabled":true,"prompt":"","preferences":""});
-                    store
+                    let saved = store
                         .save_personal_stand_in(user, &self.device_id, settings)
                         .map_err(super::stand_in::settings_error)?;
+                    previous["version"] = saved["version"].clone();
+                    initialized = Some((store, previous));
                 }
             }
-            let result = self
+            let result = match self
                 .automation_store
                 .complete_stand_in_onboarding(user, selected.then(|| template.clone()))
-                .map_err(|error| AppIpcError::new("automation_store_error", error))?;
+            {
+                Ok(result) => result,
+                Err(error) => {
+                    if let Some((store, previous)) = initialized {
+                        store
+                            .save_personal_stand_in(user, &self.device_id, previous)
+                            .map_err(|rollback| {
+                                AppIpcError::new(
+                                    "automation_store_error",
+                                    format!(
+                                        "{error}; restoring primary settings failed: {rollback}"
+                                    ),
+                                )
+                            })?;
+                    }
+                    return Err(AppIpcError::new("automation_store_error", error));
+                }
+            };
             self.emit_automations_changed(&template.id, "updated");
             result
         } else {
