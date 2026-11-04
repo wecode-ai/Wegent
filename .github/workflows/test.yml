@@ -193,6 +193,15 @@ jobs:
           echo 'cargo test --locked' > ../.ci-artifacts/backend-rs-tests/command.txt
           cargo test --locked 2>&1 | tee ../.ci-artifacts/backend-rs-tests/cargo-test.log
 
+      - name: Test Git connection inbox against real Redis
+        working-directory: backend-rs
+        env:
+          GIT_INBOX_TEST_REDIS_ENDPOINT: 127.0.0.1:6379
+        run: |
+          set -o pipefail
+          cargo test --locked --lib git_connection_inbox::store::redis_tests -- --ignored --test-threads=1 \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/git-inbox-redis.log
+
       - name: Verify attachment API key authentication with MySQL
         working-directory: backend-rs
         run: |

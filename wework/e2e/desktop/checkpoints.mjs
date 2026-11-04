@@ -50,6 +50,7 @@ export const DESKTOP_CHECKPOINTS = [
   'project-coordination',
   'stand-in-identities',
   'stand-in-connections',
+  'stand-in-git',
   'stand-in-mcp',
   'stand-in-cli',
   'stand-in-plugin-bridge',

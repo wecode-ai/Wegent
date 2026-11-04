@@ -297,6 +297,7 @@ mod tasks_search;
 pub use tasks_search::statements as tasks_search_statements;
 mod admin_marketplace_resources;
 mod admin_templates;
+mod git_connection_inbox;
 mod teams;
 pub mod token_issuers;
 mod tokens_probe;

@@ -233,11 +233,47 @@ impl RuntimeWorkRpcHandler {
                 .personal_stand_in(user, &self.device_id)
                 .map_err(settings_error)?;
             let mut settings = payload["settings"].clone();
-            self.prepare_connection_boundaries(&mut settings, &previous)
-                .await?;
             store
+                .validate_personal_stand_in_settings(user, &self.device_id, settings.clone())
+                .map_err(settings_error)?;
+            self.preflight_git_connections(&settings, &previous).await?;
+            if let Err(error) = self
+                .prepare_connection_boundaries(&mut settings, &previous)
+                .await
+            {
+                let has_git = stand_in_identities(&settings).iter().any(|r| {
+                    r["connections"].as_array().into_iter().flatten().any(|s| {
+                        s["providerId"]
+                            .as_str()
+                            .is_some_and(|p| p.starts_with(super::super::git_connections::PACKAGE))
+                    })
+                });
+                if has_git {
+                    return Err(AppIpcError::new("git_connection_save_incomplete",format!("Cloud connection changes may be partially applied; retry this draft or recover existing receivers ({})",error.code)));
+                }
+                return Err(error);
+            }
+            let saved = store
                 .save_personal_stand_in(user, &self.device_id, settings)
-                .map_err(settings_error)
+                .map_err(settings_error)?;
+            let active: HashSet<String> = stand_in_identities(&saved)
+                .iter()
+                .flat_map(|role| role["connections"].as_array().into_iter().flatten())
+                .filter_map(|source| source["subscriptionId"].as_str().map(str::to_owned))
+                .collect();
+            for role in stand_in_identities(&previous) {
+                for source in role["connections"].as_array().into_iter().flatten() {
+                    if let Some(id) = source["subscriptionId"]
+                        .as_str()
+                        .filter(|id| !active.contains(*id))
+                    {
+                        store
+                            .queue_git_disconnect(user, id, &source["generation"])
+                            .map_err(settings_error)?;
+                    }
+                }
+            }
+            Ok(saved)
         } else {
             store
                 .personal_stand_in(user, &self.device_id)
@@ -278,14 +314,26 @@ impl RuntimeWorkRpcHandler {
             {
                 if crate::task_runtime::personal_stand_in::source_provider(source)
                     != crate::task_runtime::personal_stand_in::EMAIL_PROVIDER
+                    && !(crate::task_runtime::personal_stand_in::source_provider(source)
+                        .starts_with(super::super::git_connections::PACKAGE)
+                        && source["kind"] == "repository")
                 {
                     continue;
+                }
+                if crate::task_runtime::personal_stand_in::source_provider(source)
+                    .starts_with(super::super::git_connections::PACKAGE)
+                {
+                    self.prepare_git_connection(source).await?;
                 }
                 let existing = before.and_then(|row| {
                     crate::task_runtime::personal_stand_in::stand_in_connection(row, source)
                 });
                 let boundary = existing
-                    .filter(|_| preserve)
+                    .filter(|row| {
+                        preserve
+                            && row["generation"] == source["generation"]
+                            && row["subscriptionId"] == source["subscriptionId"]
+                    })
                     .map(|row| row["boundary"].clone())
                     .filter(Value::is_object);
                 source.as_object_mut().unwrap().remove("boundary");

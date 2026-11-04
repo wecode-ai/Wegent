@@ -353,7 +353,9 @@ fn validate_connections(role: &Value) -> Result<(), TaskRuntimeError> {
                                     && (all || other["scope"] == "all")
                             })
                             && validate_policy(&row["policy"])
-                            && (source_provider(row) != EMAIL_PROVIDER
+                            && ((source_provider(row) != EMAIL_PROVIDER
+                                && !source_provider(row)
+                                    .starts_with("@wegent/dsh-connection-git/"))
                                 || row["policy"]["askBeforeAct"] == true)
                             && ids.insert((
                                 row["providerId"].to_string(),
@@ -454,6 +456,21 @@ impl LocalTaskStore {
         let saved = self.save_personal_stand_in_on(&connection, user, device, value)?;
         connection.commit()?;
         Ok(saved)
+    }
+
+    pub(crate) fn validate_personal_stand_in_settings(
+        &self,
+        user: i64,
+        device: &str,
+        value: Value,
+    ) -> Result<(), TaskRuntimeError> {
+        let mut guard = self.connection()?;
+        let transaction = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let result = self
+            .save_personal_stand_in_on(&transaction, user, device, value)
+            .map(|_| ());
+        transaction.rollback()?;
+        result
     }
 
     pub(super) fn save_personal_stand_in_on(
@@ -568,6 +585,8 @@ pub(super) fn stamp_stand_in_connections(identity: &mut Value, previous: &Value)
                     && source_provider(row) == source_provider(source)
                     && row["kind"] == source["kind"]
                     && row["profile"] == source["profile"]
+                    && row["generation"] == source["generation"]
+                    && row["subscriptionId"] == source["subscriptionId"]
             })
         });
         source["enabledAfter"] = before
@@ -596,10 +615,60 @@ mod email_policy_tests {
     use super::*;
 
     #[test]
+    fn git_connection_save_preflight_never_commits_the_draft() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        let original = store.personal_stand_in(7, "mac").unwrap();
+        let mut draft = original.clone();
+        draft["primary"] =
+            json!({"enabled":false,"prompt":"","preferences":"Draft only","connections":[]});
+        store
+            .validate_personal_stand_in_settings(7, "mac", draft.clone())
+            .unwrap();
+        assert_eq!(store.personal_stand_in(7, "mac").unwrap(), original);
+        let saved = store
+            .save_personal_stand_in(7, "mac", draft.clone())
+            .unwrap();
+        assert!(matches!(
+            store.validate_personal_stand_in_settings(7, "mac", draft),
+            Err(TaskRuntimeError::VersionConflict)
+        ));
+        assert_eq!(store.personal_stand_in(7, "mac").unwrap(), saved);
+    }
+    #[test]
+    fn git_takeover_resets_collection_stamp_but_ordinary_saves_preserve_it() {
+        let previous = json!({"enabled":true,"connections":[{"providerId":"@wegent/dsh-connection-git/github","profile":"account","id":"repo","kind":"repository","subscriptionId":"receiver","generation":"old","enabledAfter":"2026-01-01T00:00:00Z"}]});
+        let mut unchanged = previous.clone();
+        stamp_stand_in_connections(&mut unchanged, &previous);
+        assert_eq!(
+            unchanged["connections"][0]["enabledAfter"],
+            previous["connections"][0]["enabledAfter"]
+        );
+        let mut takeover = previous.clone();
+        takeover["connections"][0]["generation"] = json!("new");
+        stamp_stand_in_connections(&mut takeover, &previous);
+        assert_ne!(
+            takeover["connections"][0]["enabledAfter"],
+            previous["connections"][0]["enabledAfter"]
+        );
+    }
+    #[test]
     fn email_connections_always_require_native_confirmation() {
         let mut role = json!({"connections":[{"providerId":EMAIL_PROVIDER,"profile":"account","kind":"inbox","id":"INBOX","name":"Mailbox","policy":{"automatic":true,"askBeforeAct":true}}]});
         assert!(validate_connections(&role).is_ok());
         role["connections"][0]["policy"]["askBeforeAct"] = json!(false);
         assert!(validate_connections(&role).is_err());
+    }
+    #[test]
+    fn git_sources_cannot_disable_native_external_write_confirmation() {
+        for provider in [
+            "@wegent/dsh-connection-git/github",
+            "@wegent/dsh-connection-git/gitlab",
+        ] {
+            let mut role = json!({"connections":[{"providerId":provider,"profile":"account","kind":"personal","id":"personal","name":"Personal events","policy":{"automatic":true,"askBeforeAct":true}}]});
+            assert!(validate_connections(&role).is_ok());
+            role["connections"][0]["policy"]["askBeforeAct"] = json!(false);
+            assert!(validate_connections(&role).is_err());
+        }
     }
 }

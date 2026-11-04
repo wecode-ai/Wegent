@@ -35,6 +35,7 @@ core_segments=(
   stand-in
   stand-in-identities
   stand-in-connections
+  stand-in-git
   stand-in-mcp
   stand-in-cli
   stand-in-plugin-bridge
@@ -269,6 +270,7 @@ core_shards[1]+=',human-interactions'
 core_shards[2]+=',human-interactions-browser'
 core_shards[2]+=',human-interactions-hidden'
 core_shards[4]+=',human-interactions-issue'
+core_shards[2]+=',stand-in-git'
 
 validate_core_shards() {
   declare -A known_segments=()
@@ -455,6 +457,7 @@ select_collaboration_dispatch_checkpoints() {
   select_target "core:stand-in"
   select_target "core:stand-in-identities"
   select_target "core:stand-in-connections"
+  select_target "core:stand-in-git"
   select_target "core:stand-in-mcp"
   select_target "core:stand-in-cli"
   select_target "core:stand-in-plugin-bridge"
@@ -1043,9 +1046,13 @@ classify_wework_path() {
       select_target "core:stand-in-email"
       return
       ;;
+    wework/e2e/desktop/scenarios/stand-in-git.scenario.mjs|wework/e2e/desktop/modules/stand-in-git-readonly.mjs|wework/src/features/todo/StandInGitConnections*|wework/dsh/connection-git/*|executor/src/runtime_work/git_connections.rs|executor/src/runtime_work/handler/git_connections.rs|executor/src/runtime_work/handler/git_webhook_setup.rs|executor/src/runtime_work/handler/git_source_workspace.rs|executor/src/runtime_work/local_connector_auth/gitlab_cli.rs|executor/src/task_runtime/mcp/git_connections.rs|backend-rs/src/git_connection_inbox/*)
+      select_target "core:stand-in-git"
+      ;;
     wework/e2e/desktop/scenarios/stand-in-identities.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-action-confirmation.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-list-confirmation.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-profile.scenario.mjs|wework/src/features/todo/StandInConnectionSettings*|wework/src/features/todo/StandInDeviceSelect*|wework/src/features/todo/StandInMemory*|wework/src/features/todo/StandInConversation*|wework/src/features/todo/StandInWork*|wework/src/features/todo/StandInPrimaryProfile*|wework/src/features/todo/StandInProposal*|wework/src/features/todo/StandInDingTalkConnections*|wework/src/features/todo/StandInSourceConnections*|wework/e2e/desktop/scenarios/stand-in-connections.scenario.mjs|wework/dsh/connection-*/*|wework/dsh/plugin-runtime/connections*|wework/dsh/plugin-runtime/connection-dependencies*|wework/dsh/plugin-runtime/connection-tools*|executor/src/runtime_work/connection_cli.rs|executor/src/runtime_work/connection_dependencies.rs|wework/e2e/desktop/scenarios/stand-in-cli.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-plugin-bridge.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-alternate-source.scenario.mjs|wework/e2e/desktop/fixtures/connection-source/*|executor/src/agents/codex/connection_mcp.rs|executor/src/runtime_work/connection_mcp*|wework/e2e/desktop/scenarios/stand-in-mcp.scenario.mjs|executor/src/runtime_work/connection_host.rs|executor/src/runtime_work/handler/connections.rs|wework/src/features/todo/useStandInInbox*|executor/src/runtime_work/handler/stand_in_conversations.rs|executor/src/runtime_work/handler/stand_in_dingtalk_work.rs|executor/src/runtime_work/handler/stand_in_work.rs|executor/src/runtime_work/handler/stand_in_ingress.rs|executor/src/task_runtime/stand_in_memories.rs|executor/src/runtime_work/handler/stand_in_memory.rs|executor/src/task_runtime/stand_in_inbox.rs|executor/src/task_runtime/stand_in_proposals.rs)
       select_target "core:stand-in-identities"
       select_target "core:stand-in-connections"
+      select_target "core:stand-in-git"
       select_target "core:stand-in-mcp"
       select_target "core:stand-in-cli"
       select_target "core:stand-in-plugin-bridge"
@@ -1080,6 +1087,7 @@ classify_wework_path() {
       select_target "core:stand-in"
       select_target "core:stand-in-identities"
       select_target "core:stand-in-connections"
+      select_target "core:stand-in-git"
       select_target "core:stand-in-mcp"
       select_target "core:stand-in-cli"
       select_target "core:stand-in-plugin-bridge"

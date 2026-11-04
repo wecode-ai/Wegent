@@ -36,6 +36,17 @@ impl RuntimeWorkRpcHandler {
         name: &str,
         args: Value,
     ) -> Result<Value, AppIpcError> {
+        if name == "validate_git_binding" {
+            return self.bound_git_work_args(&identity, args).await;
+        }
+        if name == "prepare_git_workspace" {
+            return self.prepare_git_source_workspace(&identity, args).await;
+        }
+        if matches!(name, "configure_git_webhook" | "git_webhook_plan") {
+            return self
+                .configure_git_webhook(&identity, &args, name == "git_webhook_plan")
+                .await;
+        }
         if identity.device != self.device_id
             || identity.work.is_some()
             || !matches!(identity.role.as_deref(), None | Some("@primary"))

@@ -8,6 +8,97 @@ enum MessageGrouping<'a> {
     Uncertain(Option<&'a str>),
 }
 
+#[cfg(test)]
+mod git_operation_tests {
+    use super::*;
+    #[test]
+    fn git_canonical_events_deduplicate_across_scopes_but_not_users_or_roles() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        let source = json!({"providerId":"@wegent/dsh-connection-git/github","profile":"account","id":"repo","kind":"repository"});
+        let mut personal = source.clone();
+        personal["id"] = json!("personal");
+        personal["kind"] = json!("personal");
+        let message =
+            json!({"id":"git-canonical:one","text":"comment","at":"2026-01-01T00:00:00Z"});
+        let first = store
+            .ingest_stand_in_message(7, "role", &source, &message, None)
+            .unwrap();
+        let repeated = store
+            .ingest_stand_in_message(7, "role", &personal, &message, None)
+            .unwrap();
+        assert_eq!(first["id"], repeated["id"]);
+        assert_eq!(
+            store
+                .stand_in_messages(7, first["id"].as_str().unwrap())
+                .unwrap()
+                .len(),
+            1
+        );
+        for (user, role) in [(8, "role"), (7, "other")] {
+            let independent = store
+                .ingest_stand_in_message(user, role, &personal, &message, None)
+                .unwrap();
+            assert_ne!(first["id"], independent["id"]);
+        }
+    }
+    #[test]
+    fn uncertain_git_writes_cannot_be_replayed_under_a_new_request_id() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        let source = json!({"providerId":"@wegent/dsh-connection-git/github","profile":"account","id":"repo","kind":"repository","name":"org/repo"});
+        let work = store
+            .ingest_stand_in_message(
+                7,
+                "role",
+                &source,
+                &json!({"id":"event","text":"task","at":"2026-01-01T00:00:00Z"}),
+                None,
+            )
+            .unwrap();
+        let work = work["id"].as_str().unwrap();
+        let action =
+            json!({"profile":"account","path":"issues/1/comments","body":{"body":"reply"}});
+        let (id, prior) = store
+            .begin_git_operation(7, work, "request", &action)
+            .unwrap();
+        assert!(prior.is_none());
+        assert!(store
+            .begin_git_operation(7, work, "request", &action)
+            .is_err());
+        assert!(store
+            .begin_git_operation(7, work, "new-request", &action)
+            .is_err());
+        assert!(store
+            .begin_git_operation(8, work, "request", &action)
+            .is_err());
+        let mut disguised = action.clone();
+        disguised["generation"] = json!("new-generation");
+        disguised["unused"] = json!("not-part-of-the-remote-request");
+        assert!(store
+            .begin_git_operation(7, work, "another-request", &disguised)
+            .is_err());
+        let result = json!({"html_url":"https://github.com/org/repo/issues/1#issuecomment-1","updated_at":"2026-01-01T00:00:00Z","canonicalEventId":"git-canonical:sent"});
+        store.complete_git_operation(7, &id, &result).unwrap();
+        assert_eq!(
+            store
+                .begin_git_operation(7, work, "request", &action)
+                .unwrap()
+                .1,
+            Some(result)
+        );
+        assert!(store
+            .git_sent_event(7, "account", "git-canonical:sent")
+            .unwrap());
+        assert!(!store
+            .git_sent_event(7, "account", "git-canonical:edited")
+            .unwrap());
+        assert!(!store
+            .git_sent_event(8, "account", "git-canonical:sent")
+            .unwrap());
+    }
+}
+
 pub(crate) fn stand_in_record_key(prefix: &str, value: &Value) -> String {
     format!(
         "{prefix}:{:x}",
@@ -40,14 +131,21 @@ fn find_message(
     source: &Value,
     message: &str,
 ) -> Result<Option<Value>, TaskRuntimeError> {
-    let raw: Option<String> = connection.query_row(
+    let canonical = super::personal_stand_in::source_provider(source)
+        .starts_with("@wegent/dsh-connection-git/")
+        && message.starts_with("git-canonical:");
+    let raw: Option<String> = if canonical {
+        connection.query_row("SELECT metadata FROM loop_items WHERE resource_type='stand_in_message' AND json_extract(metadata,'$.userId')=?1 AND json_extract(metadata,'$.roleId')=?2 AND json_extract(metadata,'$.source.providerId')=?3 AND json_extract(metadata,'$.source.profile')=?4 AND json_extract(metadata,'$.id')=?5 LIMIT 1",params![user,role,super::personal_stand_in::source_provider(source),source["profile"].as_str(),message],|row|row.get(0)).optional()?
+    } else {
+        connection.query_row(
         "SELECT metadata FROM loop_items WHERE resource_type='stand_in_message'
          AND json_extract(metadata,'$.userId')=?1 AND json_extract(metadata,'$.roleId')=?2
          AND json_extract(metadata,'$.source.profile')=?3 AND json_extract(metadata,'$.source.kind')=?4
          AND json_extract(metadata,'$.source.id')=?5 AND json_extract(metadata,'$.id')=?6 AND COALESCE(json_extract(metadata,'$.source.providerId'),?7)=?8 LIMIT 1",
         params![user, role, source["profile"].as_str(), source["kind"].as_str(), source["id"].as_str(), message, super::personal_stand_in::DINGTALK_PROVIDER, super::personal_stand_in::source_provider(source)],
         |row| row.get(0),
-    ).optional()?;
+    ).optional()?
+    };
     raw.map(|raw| {
         serde_json::from_str(&raw).map_err(|error| TaskRuntimeError::Invalid(error.to_string()))
     })
@@ -84,6 +182,146 @@ fn refresh_work(connection: &Connection, work: &mut Value) -> Result<(), TaskRun
 }
 
 impl LocalTaskStore {
+    pub(crate) fn queue_git_disconnect(
+        &self,
+        user: i64,
+        subscription: &str,
+        generation: &Value,
+    ) -> Result<(), TaskRuntimeError> {
+        let connection = self.connection()?;
+        let id = stand_in_record_key("git-disconnect", &json!([user, subscription]));
+        write_record(
+            &connection,
+            &id,
+            "stand_in_git_disconnect",
+            &json!({"id":id,"userId":user,"subscriptionId":subscription,"generation":generation}),
+        )
+    }
+    pub(crate) fn pending_git_disconnects(
+        &self,
+        user: i64,
+    ) -> Result<Vec<Value>, TaskRuntimeError> {
+        let connection = self.connection()?;
+        super::stand_in_processing::rows(&connection, "stand_in_git_disconnect", user)
+    }
+    pub(crate) fn finish_git_disconnect(&self, id: &str) -> Result<(), TaskRuntimeError> {
+        self.connection()?.execute(
+            "DELETE FROM loop_items WHERE id=?1 AND resource_type='stand_in_git_disconnect'",
+            params![id],
+        )?;
+        Ok(())
+    }
+    pub(crate) fn begin_git_operation(
+        &self,
+        user: i64,
+        work: &str,
+        request: &str,
+        action: &Value,
+    ) -> Result<(String, Option<Value>), TaskRuntimeError> {
+        self.stand_in_work(user, work)?;
+        self.begin_git_operation_record(user, work, request, action)
+    }
+    pub(crate) fn begin_git_subscription_operation(
+        &self,
+        user: i64,
+        subscription: &str,
+        request: &str,
+        action: &Value,
+    ) -> Result<(String, Option<Value>), TaskRuntimeError> {
+        self.begin_git_operation_record(
+            user,
+            &format!("subscription:{subscription}"),
+            request,
+            action,
+        )
+    }
+    fn begin_git_operation_record(
+        &self,
+        user: i64,
+        work: &str,
+        request: &str,
+        action: &Value,
+    ) -> Result<(String, Option<Value>), TaskRuntimeError> {
+        let mut guard = self.connection()?;
+        let tx = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let id = stand_in_record_key("git-operation", &json!([user, work, request]));
+        if let Some(row) = read_record(&tx, &id, "stand_in_git_operation")? {
+            if row["action"] != *action {
+                return Err(TaskRuntimeError::Invalid(
+                    "Git operation ID was reused with different contents".into(),
+                ));
+            }
+            if row["status"] == "succeeded" {
+                return Ok((id, Some(row["result"].clone())));
+            }
+            return Err(TaskRuntimeError::Invalid(
+                "Git write outcome is uncertain; inspect the remote result before another write"
+                    .into(),
+            ));
+        }
+        // Only fields that change the remote effect identify an uncertain write.
+        // Request IDs, consumer generations and unused arguments cannot bypass it.
+        let fields: &[&str] = if work.starts_with("subscription:") {
+            &["profile", "instance", "repository", "callbackUrl", "events"]
+        } else {
+            &[
+                "providerId",
+                "profile",
+                "instance",
+                "repository",
+                "method",
+                "path",
+                "body",
+            ]
+        };
+        let mut contents = json!({});
+        for field in fields {
+            contents[*field] = action[*field].clone();
+        }
+        if let Some(events) = contents.get_mut("events").and_then(Value::as_array_mut) {
+            events.sort_by_key(Value::to_string);
+        }
+        let action_key = stand_in_record_key("git-action", &contents);
+        let uncertain:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM loop_items WHERE resource_type='stand_in_git_operation' AND json_extract(metadata,'$.userId')=?1 AND json_extract(metadata,'$.workId')=?2 AND json_extract(metadata,'$.actionKey')=?3 AND json_extract(metadata,'$.status')='sending')",params![user,work,action_key],|row|row.get(0))?;
+        if uncertain {
+            return Err(TaskRuntimeError::Invalid("An identical Git write has an uncertain outcome; changing requestId cannot retry it".into()));
+        }
+        write_record(
+            &tx,
+            &id,
+            "stand_in_git_operation",
+            &json!({"id":id,"userId":user,"workId":work,"action":action,"actionKey":action_key,"status":"sending"}),
+        )?;
+        tx.commit()?;
+        Ok((id, None))
+    }
+
+    pub(crate) fn complete_git_operation(
+        &self,
+        user: i64,
+        id: &str,
+        result: &Value,
+    ) -> Result<(), TaskRuntimeError> {
+        let connection = self.connection()?;
+        let mut row = read_record(&connection, id, "stand_in_git_operation")?
+            .filter(|r| r["userId"] == user)
+            .ok_or(TaskRuntimeError::TaskNotFound)?;
+        row["status"] = json!("succeeded");
+        row["result"] = result.clone();
+        write_record(&connection, id, "stand_in_git_operation", &row)
+    }
+
+    pub(crate) fn git_sent_event(
+        &self,
+        user: i64,
+        profile: &str,
+        event: &str,
+    ) -> Result<bool, TaskRuntimeError> {
+        let connection = self.connection()?;
+        let found:bool=connection.query_row("SELECT EXISTS(SELECT 1 FROM loop_items WHERE resource_type='stand_in_git_operation' AND json_extract(metadata,'$.userId')=?1 AND json_extract(metadata,'$.status')='succeeded' AND json_extract(metadata,'$.action.profile')=?2 AND json_extract(metadata,'$.result.canonicalEventId')=?3)",params![user,profile,event],|row|row.get(0))?;
+        Ok(found)
+    }
+
     pub fn stand_in_source_errors(&self, user: i64) -> Result<Vec<Value>, TaskRuntimeError> {
         let connection = self.connection()?;
         let mut statement=connection.prepare("SELECT metadata FROM loop_items WHERE resource_type='stand_in_source' AND json_extract(metadata,'$.userId')=?1 AND json_extract(metadata,'$.error') IS NOT NULL ORDER BY updated_at DESC")?;

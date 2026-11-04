@@ -1,0 +1,84 @@
+{
+  "name": "@wegent/dsh-connection-git",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "~4.0.4",
+    "@wegent/dsh-connection-runtime": "0.1.0"
+  },
+  "wework": {
+    "connections": {
+      "apiVersion": 1,
+      "dependencies": {},
+      "providers": [
+        {
+          "id": "github",
+          "displayName": "GitHub",
+          "uses": [],
+          "collectionModes": [
+            "poll"
+          ],
+          "resourceKinds": [
+            "personal",
+            "repository"
+          ],
+          "resourceLabels": {
+            "personal": "个人事件",
+            "repository": "仓库全部事件"
+          },
+          "eventTypes": [
+            "git.event"
+          ],
+          "authTarget": {
+            "pluginKey": "github",
+            "connectorSlug": "wework-github-cli"
+          },
+          "locales": {
+            "en": {
+              "displayName": "GitHub",
+              "resourceLabels": {
+                "personal": "Personal events",
+                "repository": "All repository events"
+              }
+            }
+          }
+        },
+        {
+          "id": "gitlab",
+          "displayName": "GitLab",
+          "uses": [],
+          "collectionModes": [
+            "poll"
+          ],
+          "resourceKinds": [
+            "personal",
+            "repository"
+          ],
+          "resourceLabels": {
+            "personal": "个人事件",
+            "repository": "仓库全部事件"
+          },
+          "eventTypes": [
+            "git.event"
+          ],
+          "locales": {
+            "en": {
+              "displayName": "GitLab",
+              "resourceLabels": {
+                "personal": "Personal events",
+                "repository": "All repository events"
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

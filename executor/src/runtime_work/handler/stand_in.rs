@@ -208,6 +208,7 @@ impl RuntimeWorkRpcHandler {
             }
         }
         let mut prepared = json!({"roles":[settings]});
+        self.preflight_git_connections(&prepared, &previous).await?;
         self.prepare_connection_boundaries(&mut prepared, &previous)
             .await?;
         let settings = prepared["roles"][0].clone();

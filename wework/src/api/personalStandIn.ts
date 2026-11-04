@@ -21,6 +21,12 @@ export interface StandInSourceConnection {
   policy: StandInHandlingPolicy
   /** Host-owned intake boundary, prepared when the subscription is enabled. */
   boundary?: { partition: string; sequence: number }
+  /** Git repository webhook binding; credentials are never stored here. */
+  subscriptionId?: string
+  generation?: string
+  resumePending?: boolean
+  /** Draft-only takeover intent, consumed by the host during save. */
+  pendingTakeover?: boolean
 }
 
 export interface StandInProjectPolicy extends StandInProjectRef {

@@ -1,0 +1,291 @@
+// Local live-provider extension: real CLI account/API, with only model responses simulated.
+import assert from 'node:assert/strict'
+import { createHmac } from 'node:crypto'
+import { requestExecutor } from './executor-rpc.mjs'
+import { readMcpToolOutput } from './mcp-tool-results.mjs'
+import {
+  assistantMessage,
+  createSse,
+  isReplyPredictionRequest,
+  mcpToolRequestEvents,
+  readRequestBody,
+  requestContainsToolOutput,
+  responseCompleted,
+  responseCreated,
+} from './response-protocol.mjs'
+
+const MARKER = 'GIT_READONLY_RESTART_VERIFICATION'
+const PROVIDER = '@wegent/dsh-connection-git/github'
+
+export function createGitReadonlyVerification({
+  request,
+  captureScreenshot,
+  uiTimeoutMs,
+  modelResponseTimeoutMs,
+}) {
+  let restart
+  let round = 0
+  let readCompleted = false
+  let live
+  const rpc = (control, method, params) => requestExecutor(control, method, params, uiTimeoutMs)
+  async function waitFor(read, ready) {
+    const deadline = Date.now() + modelResponseTimeoutMs
+    let latest
+    while (Date.now() < deadline) {
+      latest = await read()
+      if (ready(latest)) return latest
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+    assert.fail(`Git readonly work did not reach its expected state: ${JSON.stringify(latest)}`)
+  }
+  return {
+    setRestartDesktopApp(value) {
+      restart = value
+    },
+    async handleHttp(req, response, url) {
+      if (!live || req.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
+        return false
+      const body = await readRequestBody(req)
+      if (isReplyPredictionRequest(body)) return false
+      const input = JSON.stringify(body.input ?? [])
+      let events
+      if (input.includes('Review this silent intake batch')) {
+        const readId = `git-intake-${round}`
+        const actionId = `git-arrange-${round}`
+        if (requestContainsToolOutput(body, actionId)) {
+          assert.equal(JSON.parse(readMcpToolOutput(body, actionId)).status, 'pending')
+          events = [assistantMessage('已安排只读验证。')]
+          round++
+        } else if (requestContainsToolOutput(body, readId)) {
+          const snapshot = JSON.parse(readMcpToolOutput(body, readId)).snapshot
+          const event = snapshot.events.find(item => item.kind === 'connection')
+          events = event
+            ? mcpToolRequestEvents(body, {
+                toolName: 'create_work',
+                directToolName: 'mcp__wework_stand_in__create_work',
+                argumentsValue: {
+                  eventIds: [event.id],
+                  roleId: event.roleIds[0],
+                  title: 'GitHub 只读验证',
+                },
+                searchCallId: `git-arrange-search-${round}`,
+                toolCallId: actionId,
+              }).events
+            : [assistantMessage('没有新的 GitHub 工作。')]
+        } else
+          events = mcpToolRequestEvents(body, {
+            toolName: 'read_intake',
+            directToolName: 'mcp__wework_stand_in__read_intake',
+            argumentsValue: {},
+            searchCallId: `git-intake-search-${round}`,
+            toolCallId: readId,
+          }).events
+      } else if (input.includes(MARKER)) {
+        if (requestContainsToolOutput(body, 'git-live-denied-write')) {
+          const result = readMcpToolOutput(body, 'git-live-denied-write')
+          assert.match(
+            result,
+            /rejected by user/,
+            'The native result must explicitly report user rejection'
+          )
+          assert.ok(
+            !result.includes('canonicalEventId'),
+            'A denied write must not produce an outgoing receipt'
+          )
+          events = [assistantMessage('只读验证完成；已取消外部写入。')]
+        } else if (requestContainsToolOutput(body, 'git-live-read')) {
+          const result = JSON.parse(readMcpToolOutput(body, 'git-live-read'))
+          assert.equal(result.data.full_name, live.repository)
+          assert.equal(result.profile, live.identity.profile)
+          readCompleted = true
+          events = mcpToolRequestEvents(body, {
+            toolName: 'git_write',
+            directToolName: 'mcp__wework_stand_in__git_write',
+            argumentsValue: {
+              requestId: 'git-live-denied-write',
+              instance: live.identity.instance,
+              accountId: live.identity.accountId,
+              repository: live.repository,
+              method: 'POST',
+              path: 'issues/1/comments',
+              body: { body: 'This verification write must be denied and never published.' },
+            },
+            searchCallId: 'git-live-write-search',
+            toolCallId: 'git-live-denied-write',
+          }).events
+        } else
+          events = mcpToolRequestEvents(body, {
+            toolName: 'git_read',
+            directToolName: 'mcp__wework_stand_in__git_read',
+            argumentsValue: { operation: 'repository' },
+            searchCallId: 'git-live-read-search',
+            toolCallId: 'git-live-read',
+          }).events
+      } else return false
+      const id = `git-readonly-${Date.now()}`
+      response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
+      response.end(createSse([responseCreated(id), ...events, responseCompleted(id)]))
+      return true
+    },
+    async verify(control, userId) {
+      const repository = process.env.WEWORK_GIT_READONLY_REPOSITORY?.trim()
+      if (!repository) return
+      assert.ok(restart, 'Live readonly verification needs the shared restart lifecycle')
+      const identity = await rpc(control, 'runtime.connections.git.read', {
+        providerId: PROVIDER,
+        instance: 'https://github.com',
+        operation: 'identity',
+      })
+      const repo = await rpc(control, 'runtime.connections.git.read', {
+        providerId: PROVIDER,
+        instance: identity.instance,
+        profile: identity.profile,
+        operation: 'repository',
+        repository,
+      })
+      assert.equal(repo.data.full_name, repository)
+      live = { identity, repository }
+      const original = await rpc(control, 'runtime.stand_in.personal.get', { userId })
+      const catalog = await rpc(control, 'runtime.runner.catalog', {})
+      const model = catalog.models.find(item => item.runtime === 'codex' && item.is_default)
+      assert.ok(model, 'Readonly work requires the real Codex runtime')
+      const source = {
+        providerId: PROVIDER,
+        profile: identity.profile,
+        id: String(repo.data.id),
+        name: repository,
+        kind: 'repository',
+        policy: { automatic: true, askBeforeAct: true, immediate: false },
+      }
+      const saved = await rpc(control, 'runtime.stand_in.personal.save', {
+        userId,
+        settings: {
+          ...original,
+          processing: { mode: 'silent', intervalMinutes: 1 },
+          primary: { ...original.primary, enabled: true, prompt: '', preferences: '', model },
+          roles: [
+            {
+              ...original.roles[0],
+              name: 'GitHub 只读验证',
+              enabled: true,
+              prompt: MARKER,
+              model,
+              connections: [source],
+            },
+          ],
+        },
+      })
+      const connection = saved.roles[0].connections[0]
+      const binding = { deviceId: saved.executionDeviceId, generation: connection.generation }
+      const base = `/v1/git-connections/subscriptions/${connection.subscriptionId}`
+      try {
+        const configuration = await request(`${base}/configuration`, 'POST', {
+          ...binding,
+          reveal: true,
+        })
+        await restart({
+          afterStop: async () => {
+            const payload = JSON.stringify({
+              repository: { id: repo.data.id, full_name: repository },
+              title: MARKER,
+            })
+            const headers = {
+              'x-github-event': 'wework_readonly_verification',
+              'x-github-delivery': 'live-offline-delivery',
+              'x-hub-signature-256': `sha256=${createHmac('sha256', configuration.secret).update(payload).digest('hex')}`,
+            }
+            await request(
+              `/v1/git-connections/hooks/${connection.subscriptionId}`,
+              'POST',
+              payload,
+              200,
+              headers
+            )
+            const listed = await request('/v1/git-connections/subscriptions')
+            assert.equal(
+              listed.items.find(row => row.id === connection.subscriptionId).pendingCount,
+              1,
+              'Cloud must buffer the event while the execution device is stopped'
+            )
+            assert.equal(
+              readCompleted,
+              false,
+              'An offline execution device cannot run the readonly work'
+            )
+          },
+        })
+        await control.command('waitFor', '[data-testid="personal-stand-in-button"]')
+        const status = await waitFor(
+          () => rpc(control, 'runtime.stand_in.processing.status', { userId }),
+          row => row.pendingCount > 0 || row.running || readCompleted
+        )
+        if (status.pendingCount > 0 && !status.running)
+          await rpc(control, 'runtime.stand_in.processing.check', { userId })
+        const works = await waitFor(
+          () => rpc(control, 'runtime.stand_in.work.list', { userId }),
+          rows =>
+            rows.items?.some(
+              row => row.source?.subscriptionId === connection.subscriptionId && row.taskId
+            )
+        )
+        const work = works.items.find(
+          row => row.source.subscriptionId === connection.subscriptionId
+        )
+        await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
+        await control.command('waitFor', `[data-testid="stand-in-attention-${work.taskId}"]`, {
+          timeoutMs: modelResponseTimeoutMs,
+        })
+        await control.command(
+          'clickWhenEnabled',
+          `[data-testid="stand-in-attention-${work.taskId}"]`
+        )
+        await control.command('waitFor', '[data-testid="request-user-input-card"]', {
+          timeoutMs: modelResponseTimeoutMs,
+        })
+        assert.equal(
+          readCompleted,
+          true,
+          'The restarted device must complete the account-bound native Git read'
+        )
+        const approval = await control.command('getText', '[data-testid="request-user-input-card"]')
+        for (const field of [
+          repository,
+          identity.instance,
+          String(identity.accountId),
+          'POST',
+          'issues/1/comments',
+          'This verification write must be denied and never published.',
+        ])
+          assert.ok(approval.includes(field), `Native confirmation must contain ${field}`)
+        await captureScreenshot(
+          control,
+          'git-08-live-read-completed-external-write-awaiting-confirmation.png'
+        )
+        const rejectText = await control.command(
+          'getText',
+          '[data-testid="request-user-input-option-__mcp_approval-1"]'
+        )
+        assert.match(
+          rejectText,
+          /拒绝|取消|Decline|Deny|Reject|Cancel/i,
+          'Choose only the native rejection action'
+        )
+        await control.command(
+          'clickWhenEnabled',
+          '[data-testid="request-user-input-option-__mcp_approval-1"]'
+        )
+        await control.command('waitFor', '[data-testid="message-assistant"]', {
+          text: '只读验证完成；已取消外部写入。',
+          timeoutMs: modelResponseTimeoutMs,
+        })
+        await captureScreenshot(control, 'git-09-external-write-denied-no-publication.png')
+      } finally {
+        const latest = await rpc(control, 'runtime.stand_in.personal.get', { userId })
+        await rpc(control, 'runtime.stand_in.personal.save', {
+          userId,
+          settings: { ...original, version: latest.version },
+        })
+      }
+    },
+  }
+}

@@ -26,6 +26,7 @@ mod connection_tools;
 mod diagnostics;
 pub(crate) use connection_tools::{connection_auth_target, run_connection_tool, run_plugin_tool};
 mod github_cli;
+pub(crate) mod gitlab_cli;
 mod logout;
 mod tools;
 
@@ -58,6 +59,9 @@ static BROWSER_AUTH_SESSIONS: OnceLock<Mutex<HashMap<String, BrowserAuthSession>
 const DEFAULT_COMMAND_TIMEOUT_SECONDS: u64 = 45;
 
 pub async fn health(payload: Value) -> Result<Value, AppIpcError> {
+    if gitlab_cli::is_target(&payload) {
+        return gitlab_cli::health(&payload).await;
+    }
     if github_cli::is_target(&payload) {
         return github_cli::health().await;
     }
@@ -85,6 +89,9 @@ pub async fn health(payload: Value) -> Result<Value, AppIpcError> {
 }
 
 pub async fn start(payload: Value) -> Result<Value, AppIpcError> {
+    if gitlab_cli::is_target(&payload) {
+        return gitlab_cli::start(&payload).await;
+    }
     if github_cli::is_target(&payload) {
         return github_cli::start().await;
     }
@@ -109,6 +116,9 @@ pub async fn start(payload: Value) -> Result<Value, AppIpcError> {
 }
 
 pub async fn poll(payload: Value) -> Result<Value, AppIpcError> {
+    if gitlab_cli::is_target(&payload) {
+        return poll_browser_auth(&payload).await;
+    }
     if github_cli::is_target(&payload) {
         return poll_browser_auth(&payload).await;
     }

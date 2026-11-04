@@ -213,6 +213,7 @@ describe('core DSH runtime', () => {
             '@wegent/dsh-connection-runtime',
             '@wegent/dsh-coordination-runtime',
             '@wegent/dsh-connection-dingtalk',
+            '@wegent/dsh-connection-git',
             '@wegent/dsh-app-wework',
             '@deepseek-ai/dsh-web-app',
             '@wegent/dsh-executor-runtime',
@@ -683,6 +684,7 @@ describe('core DSH runtime', () => {
       '@wegent/dsh-connection-runtime',
       '@wegent/dsh-coordination-runtime',
       '@wegent/dsh-connection-dingtalk',
+      '@wegent/dsh-connection-git',
       '@wework/dsh-browser-auth',
     ])
     expect(manifest.dsh.profile.bundles).toEqual([
@@ -696,6 +698,7 @@ describe('core DSH runtime', () => {
       '@wegent/dsh-connection-runtime',
       '@wegent/dsh-coordination-runtime',
       '@wegent/dsh-connection-dingtalk',
+      '@wegent/dsh-connection-git',
       '@wegent/dsh-app-wework',
       '@deepseek-ai/dsh-web-app',
       '@wegent/dsh-executor-runtime',

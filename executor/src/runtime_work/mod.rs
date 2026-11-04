@@ -21,6 +21,7 @@ mod connectors;
 pub(crate) mod dingtalk;
 mod events;
 pub mod fork_transfer;
+pub(crate) mod git_connections;
 mod handler;
 pub(crate) mod lifecycle;
 pub(crate) mod local_connector_auth;

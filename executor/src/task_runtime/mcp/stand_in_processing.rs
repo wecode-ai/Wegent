@@ -43,7 +43,7 @@ pub(super) fn call(
     }
     if name == "read_intake" {
         return Ok(
-            json!({"snapshot":state["snapshot"],"actions":store.stand_in_actions(identity.user).map_err(|e| e.to_string())?.into_iter().rev().take(50).collect::<Vec<_>>()}),
+            json!({"snapshot":super::git_connections::summarize(state["snapshot"].clone()),"actions":store.stand_in_actions(identity.user).map_err(|e| e.to_string())?.into_iter().rev().take(50).collect::<Vec<_>>()}),
         );
     }
     let events = arguments["eventIds"].as_array();
@@ -82,7 +82,9 @@ pub(super) fn call(
             } else {
                 Vec::new()
             };
-            return Ok(json!({"work":work,"sourceMessages":messages}));
+            return Ok(super::git_connections::summarize(
+                json!({"work":work,"sourceMessages":messages}),
+            ));
         }
     }
     if name == "create_work" {

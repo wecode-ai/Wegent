@@ -9,6 +9,7 @@ import { StandInProcessingSettings } from './StandInProcessingSettings'
 import { StandInConnectionHeader } from './StandInConnectionHeader'
 import { StandInConnections } from './StandInConnections'
 import { StandInSourceConnections } from './StandInSourceConnections'
+import { StandInGitConnections, GIT_CONNECTION_PREFIX } from './StandInGitConnections'
 import { StandInEmailConnections, EMAIL_PROVIDER } from './StandInEmailConnections'
 import {
   AutomationsPage,
@@ -264,6 +265,16 @@ export function StandInConnectionSettings({
                   key={deviceId}
                   role={role}
                   local={deviceId === localDeviceId}
+                  disabled={disabled || loading}
+                  onChange={onChange}
+                />
+              ) : provider.id.startsWith(GIT_CONNECTION_PREFIX) ? (
+                <StandInGitConnections
+                  key={`${deviceId}:${role.id}:${provider.id}`}
+                  provider={provider}
+                  role={role}
+                  api={api}
+                  deviceId={deviceId}
                   disabled={disabled || loading}
                   onChange={onChange}
                 />
