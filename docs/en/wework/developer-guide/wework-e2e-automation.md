@@ -202,6 +202,9 @@ captures the interface and confirms shared project settings were not deleted
 without authorization. It reuses account switching and restores
 the original account. `stand-in-cloud` invokes the same function in CI without
 another shard or duplicate execution.
+Private management uses a 1280×720 window and existing geometry checks to verify
+that the entry, dialog and close action remain visible. Cleanup restores the
+original window size.
 
 The first cloud publication wait includes two 15-second scheduler ticks plus the
 model response budget, covering source collection and receipt observation. Model

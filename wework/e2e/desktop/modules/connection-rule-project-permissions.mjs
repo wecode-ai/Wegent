@@ -3,6 +3,7 @@ import { requestExecutor } from './executor-rpc.mjs'
 import { TransportFaultProxy } from './transport-fault-proxy.mjs'
 import { reloadMainWindow } from './workspace-flows.mjs'
 import { openProjectBoard } from './collaboration-board-personal-view.mjs'
+import { waitForElementInsideScroller } from './conversation-layout.mjs'
 
 export async function permissionRequest(
   environment,
@@ -58,6 +59,7 @@ export async function verifyConnectionRuleProjectPermissions(
   let cloudRule
   let uiRule
   let failure
+  let originalWindowSize
   try {
     await restart({
       appEnvironmentOverrides: {
@@ -121,9 +123,20 @@ export async function verifyConnectionRuleProjectPermissions(
     })
     const content = '[data-testid="workspace-tab-content-fixed-board"]'
     await reloadMainWindow(control, 'The Viewer role did not reconnect after reload')
+    originalWindowSize = await control.command('setMainWindowSize', 'body', {
+      value: JSON.stringify({ width: 1280, height: 720 }),
+    })
     const project = await request(`/v1/cloud-projects/${projectId}`)
     await openProjectBoard(control, selector => `${content} ${selector}`, project)
     console.log('[source-rule-permissions] Viewer project opened through the project picker')
+    await waitForElementInsideScroller(
+      control,
+      `${content} [data-testid="private-connection-rules-open"]`,
+      content,
+      'Private source rule entry must fit the compact project header',
+      options.uiTimeoutMs,
+      { clipToViewport: true }
+    )
     assert.equal(
       Number(
         await control.command(
@@ -139,6 +152,22 @@ export async function verifyConnectionRuleProjectPermissions(
       `${content} [data-testid="private-connection-rules-open"]`
     )
     await control.command('waitFor', `${content} [data-testid="connection-rules-project-readonly"]`)
+    await waitForElementInsideScroller(
+      control,
+      `${content} [role="dialog"]`,
+      'body',
+      'Private source dialog must fit the compact window',
+      options.uiTimeoutMs,
+      { clipToViewport: true }
+    )
+    await waitForElementInsideScroller(
+      control,
+      `${content} [data-testid="private-connection-rules-close"]`,
+      `${content} [role="dialog"]`,
+      'Private source dialog close must remain visible',
+      options.uiTimeoutMs,
+      { clipToViewport: true }
+    )
     for (const testId of ['connection-rule-create', `connection-rule-toggle-${uiRule.id}`]) {
       assert.equal(
         Number(await control.command('getElementCount', `${content} [data-testid="${testId}"]`)),
@@ -254,6 +283,9 @@ export async function verifyConnectionRuleProjectPermissions(
             WEWORK_E2E_CLOUD_BACKEND_URL: environment.backendUrl,
           },
         })
+        if (originalWindowSize) {
+          await control.command('setMainWindowSize', 'body', { value: originalWindowSize })
+        }
       }
       for (const rule of [cloudRule, uiRule].filter(Boolean)) {
         await request(`/v1/cloud-projects/${projectId}/automations/${rule.cloudRuleId}`, {
