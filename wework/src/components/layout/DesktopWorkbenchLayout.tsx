@@ -483,10 +483,14 @@ export function DesktopWorkbenchLayout({
   const activeItem = standInOpen ? 'stand-in' : 'chat'
   const taskReminders = runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
   const toggleMyWork = useCallback(() => {
+    if (standInOpen) {
+      navigateTo(defaultProjectSpaceContentRoute())
+      return
+    }
     setTaskView(currentView =>
       currentView === 'default-work-items' ? 'workbench' : 'default-work-items'
     )
-  }, [])
+  }, [standInOpen])
   const activateBlankComposer = useCallback(() => {
     setTaskView('workbench')
     setActiveLocalHarnessSessionId(null)
@@ -1047,7 +1051,7 @@ export function DesktopWorkbenchLayout({
         state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
       }
       activeItem={activeItem}
-      taskView={taskView}
+      taskView={taskBoardOpen ? 'default-work-items' : 'workbench'}
       localHarnessSessions={localHarnessSessions}
       activeLocalHarnessSessionId={activeLocalHarnessSessionId}
       collapsed={collapsed}
