@@ -69,6 +69,9 @@ pub struct ExecutionRequest {
     pub auth_token: Option<String>,
     pub runtime_auth_token: Option<String>,
     pub skill_identity_token: Option<String>,
+    /// Set by the device from its RuntimeWork task, never from a dispatch payload.
+    #[serde(skip)]
+    pub agent_home_runtime_task_id: Option<String>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -122,6 +125,7 @@ impl Default for ExecutionRequest {
             auth_token: None,
             runtime_auth_token: None,
             skill_identity_token: None,
+            agent_home_runtime_task_id: None,
             extra: Map::new(),
         }
     }
