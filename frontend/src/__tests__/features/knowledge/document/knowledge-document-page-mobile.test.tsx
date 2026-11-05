@@ -7,6 +7,7 @@ import { KnowledgeDocumentPageDesktop } from '@/features/knowledge/document/comp
 import { KnowledgeDocumentPageMobile } from '@/features/knowledge/document/components/KnowledgeDocumentPageMobile'
 import { knowledgeBaseApi } from '@/apis/knowledge-base'
 import { createKnowledgeBase, getKnowledgeBase } from '@/apis/knowledge'
+import { knowledgePermissionApi } from '@/apis/knowledge-permission'
 import { codeWikiApi } from '@/apis/code-wiki'
 import type {
   AllGroupedKnowledgeResponse,
@@ -104,6 +105,7 @@ jest.mock('@/features/knowledge/code-wiki/CodeWikiReader', () => ({
 }))
 jest.mock('@/apis/knowledge-permission', () => ({
   knowledgePermissionApi: {
+    deletePermission: jest.fn(),
     getMyPermission: jest.fn(async () => ({
       has_access: true,
       role: 'Owner',
@@ -575,5 +577,57 @@ it.each([500, 403, 404])(
     expect(await screen.findByTestId('mock-detail-panel')).toHaveTextContent('Docs')
     expect(getKnowledgeBase).toHaveBeenLastCalledWith(7)
     log.mockRestore()
+  }
+)
+
+it.each(['same', 'library', 'return', 'unmount'])(
+  'refreshes a closed-dialog write only for its current page resource (switch=%s)',
+  async mode => {
+    const next = { ...baseKb, id: 88, name: 'Next library' }
+    data.personal.created_by_me.push(row(next))
+    jest.mocked(getKnowledgeBase).mockImplementation(async id => (id === 88 ? next : baseKb))
+    jest.spyOn(window, 'confirm').mockReturnValue(true)
+    jest.mocked(knowledgePermissionApi.listPermissions).mockResolvedValueOnce({
+      pending: [],
+      approved: {
+        Owner: [],
+        Maintainer: [],
+        Developer: [],
+        RestrictedAnalyst: [],
+        Reporter: [
+          { id: 91, user_id: 6, display_name: 'Granted user', email: '', role: 'Reporter' },
+        ],
+      },
+    } as never)
+    let finish!: (value: { message: string }) => void
+    jest.mocked(knowledgePermissionApi.deletePermission).mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finish = resolve
+        })
+    )
+    const { unmount } = render(<KnowledgeDocumentPageMobile />)
+    const user = userEvent.setup()
+    await user.click(await screen.findByTestId('more-kb-7'))
+    await user.click(screen.getByTestId('permission-kb-7'))
+    await screen.findByText('Granted user')
+    await user.click(screen.getByTitle('document.permission.remove'))
+    await user.click(screen.getByTestId('close-knowledge-access'))
+    if (mode === 'library' || mode === 'return') {
+      await user.click(screen.getByTestId('open-kb-88'))
+      await screen.findByText('Next library')
+      if (mode === 'return') {
+        await user.click(screen.getByTestId('knowledge-detail-back-button'))
+        await user.click(screen.getByTestId('more-kb-7'))
+        await user.click(screen.getByTestId('permission-kb-7'))
+        await screen.findByTestId('perm-tab-user')
+      }
+    }
+    if (mode === 'unmount') unmount()
+    const reads = jest.mocked(knowledgeBaseApi.getAllGrouped).mock.calls.length
+    await act(async () => finish({ message: 'ok' }))
+    if (mode !== 'same') expect(knowledgeBaseApi.getAllGrouped).toHaveBeenCalledTimes(reads)
+    else
+      await waitFor(() => expect(knowledgeBaseApi.getAllGrouped).toHaveBeenCalledTimes(reads + 1))
   }
 )

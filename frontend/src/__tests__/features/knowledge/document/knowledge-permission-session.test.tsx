@@ -21,7 +21,11 @@ jest.mock('@/apis/client', () => ({
   default: { getCacheScope: () => mockScope },
 }))
 jest.mock('@/apis/knowledge-permission', () => ({
-  knowledgePermissionApi: { listPermissions: jest.fn(), deletePermission: jest.fn() },
+  knowledgePermissionApi: {
+    listPermissions: jest.fn(),
+    deletePermission: jest.fn(),
+    updatePermission: jest.fn(),
+  },
 }))
 
 it.each(['user', 'backend', 'session', 'library'])(
@@ -159,4 +163,68 @@ it('rejects an old A request after the resource scope goes A to B to A', async (
   })
   expect(result.current.permissions).toEqual(response)
   expect(result.current.loading).toBe(false)
+})
+
+it.each(['delete', 'update'])(
+  'notifies the live page after the permission UI closes (%s)',
+  async kind => {
+    mockUser = { id: 1 }
+    mockScope = 'backend:session-1'
+    let finish!: (value: never) => void
+    const operation =
+      kind === 'delete'
+        ? knowledgePermissionApi.deletePermission
+        : knowledgePermissionApi.updatePermission
+    jest.mocked(operation).mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finish = resolve
+        }) as never
+    )
+    const changed = jest.fn()
+    const { result, unmount } = renderHook(() =>
+      useKnowledgePermissions({ kbId: 27, onChanged: changed })
+    )
+    let request!: Promise<unknown>
+    act(() => {
+      request =
+        kind === 'delete'
+          ? result.current.deletePermission(91)
+          : result.current.updatePermission(91, 'Reporter')
+    })
+    const reads = jest.mocked(knowledgePermissionApi.listPermissions).mock.calls.length
+    unmount()
+    await act(async () => {
+      finish({ message: 'ok' } as never)
+      await request
+    })
+    expect(changed).toHaveBeenCalledTimes(1)
+    expect(knowledgePermissionApi.listPermissions).toHaveBeenCalledTimes(reads)
+  }
+)
+
+it('does not notify a new cache session after the permission UI closes', async () => {
+  mockScope = 'backend:session-1'
+  let finish!: (value: { message: string }) => void
+  jest.mocked(knowledgePermissionApi.deletePermission).mockImplementationOnce(
+    () =>
+      new Promise(resolve => {
+        finish = resolve
+      })
+  )
+  const changed = jest.fn()
+  const { result, unmount } = renderHook(() =>
+    useKnowledgePermissions({ kbId: 27, onChanged: changed })
+  )
+  let request!: Promise<void>
+  act(() => {
+    request = result.current.deletePermission(91)
+  })
+  unmount()
+  mockScope = 'backend:session-2'
+  await act(async () => {
+    finish({ message: 'ok' })
+    await request
+  })
+  expect(changed).not.toHaveBeenCalled()
 })

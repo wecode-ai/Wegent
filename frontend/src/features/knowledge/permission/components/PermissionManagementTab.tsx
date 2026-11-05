@@ -68,7 +68,8 @@ interface PermissionManagementTabProps {
 
 export function PermissionManagementTab(props: PermissionManagementTabProps) {
   const { user } = useUser()
-  const scope = JSON.stringify([user?.id, client.getCacheScope(), props.kbId, props.kbNamespace])
+  const cacheScope = client.getCacheScope()
+  const scope = JSON.stringify([user?.id, cacheScope, props.kbId, props.kbNamespace])
   const activeScope = useRef({ key: scope, version: 0 })
   if (activeScope.current.key !== scope) {
     activeScope.current = { key: scope, version: activeScope.current.version + 1 }
@@ -81,13 +82,16 @@ export function PermissionManagementTab(props: PermissionManagementTabProps) {
       alive.current = false
     }
   }, [])
-  const current = () => alive.current && activeScope.current.version === version
+  const sameScope = () =>
+    activeScope.current.version === version && client.getCacheScope() === cacheScope
+  const current = () => alive.current && sameScope()
   return (
     <PermissionManagementSession
       key={scope}
       {...props}
+      isCurrentUi={current}
       onChanged={() => {
-        if (current()) props.onChanged?.()
+        if (sameScope()) props.onChanged?.()
       }}
       onAccessDenied={() => {
         if (current()) props.onAccessDenied?.()
@@ -103,7 +107,8 @@ function PermissionManagementSession({
   extensionTabs,
   onChanged,
   onAccessDenied,
-}: PermissionManagementTabProps) {
+  isCurrentUi,
+}: PermissionManagementTabProps & { isCurrentUi: () => boolean }) {
   const { t } = useTranslation('knowledge')
 
   // Safe translation helper that falls back when key is not found
@@ -181,7 +186,7 @@ function PermissionManagementSession({
   const handleUpdateRole = async (permissionId: number, role: MemberRole) => {
     try {
       await updatePermission(permissionId, role)
-      setEditingId(null)
+      if (isCurrentUi()) setEditingId(null)
     } catch (_err) {
       // Error is handled by the hook
     }

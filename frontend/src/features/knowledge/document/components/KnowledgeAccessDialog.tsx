@@ -37,7 +37,19 @@ interface KnowledgeAccessDialogProps {
 export function KnowledgeAccessDialog(props: KnowledgeAccessDialogProps) {
   const { user } = useUser()
   const scope = JSON.stringify([user?.id, client.getCacheScope(), props.kbId])
-  return <KnowledgeAccessSession key={scope} {...props} />
+  const activeScope = useRef({ key: scope, version: 0 })
+  if (activeScope.current.key !== scope)
+    activeScope.current = { key: scope, version: activeScope.current.version + 1 }
+  const version = activeScope.current.version
+  return (
+    <KnowledgeAccessSession
+      key={scope}
+      {...props}
+      onChanged={() => {
+        if (activeScope.current.version === version) props.onChanged()
+      }}
+    />
+  )
 }
 
 function KnowledgeAccessSession(props: KnowledgeAccessDialogProps) {

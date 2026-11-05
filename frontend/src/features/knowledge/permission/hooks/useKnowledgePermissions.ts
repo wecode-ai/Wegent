@@ -39,7 +39,8 @@ const emptyState: PermissionState = {
 export function useKnowledgePermissions(options: UseKnowledgePermissionsOptions) {
   const { kbId, includePendingRequests = false } = options
   const { user } = useUser()
-  const scope = JSON.stringify([user?.id, client.getCacheScope(), kbId])
+  const cacheScope = client.getCacheScope()
+  const scope = JSON.stringify([user?.id, cacheScope, kbId])
   const scopeRef = useRef(scope)
   scopeRef.current = scope
   const callbacks = useRef(options)
@@ -73,7 +74,10 @@ export function useKnowledgePermissions(options: UseKnowledgePermissionsOptions)
       fresh: () => boolean = () => true
     ): Promise<T> => {
       const current = () =>
-        mounted.current && scopeRef.current === scope && generation.current === currentGeneration
+        mounted.current &&
+        scopeRef.current === scope &&
+        generation.current === currentGeneration &&
+        client.getCacheScope() === cacheScope
       if (!current()) throw new Error('Permission session changed')
       pending.current++
       setState(prev => ({ ...prev, loading: true, error: null }))
@@ -100,7 +104,7 @@ export function useKnowledgePermissions(options: UseKnowledgePermissionsOptions)
         }
       }
     },
-    [scope, currentGeneration]
+    [scope, currentGeneration, cacheScope]
   )
 
   const read = useCallback(
@@ -150,16 +154,17 @@ export function useKnowledgePermissions(options: UseKnowledgePermissionsOptions)
     async <T>(operation: () => Promise<T>, refresh: () => Promise<void>): Promise<T> => {
       const result = await run(operation)
       if (
-        mounted.current &&
         scopeRef.current === scope &&
-        generation.current === currentGeneration
+        generation.current === currentGeneration &&
+        client.getCacheScope() === cacheScope
       ) {
+        // Invalidate the live owner even when the permission UI has closed.
         callbacks.current.onChanged?.()
-        await refresh()
+        if (mounted.current) await refresh()
       }
       return result
     },
-    [run, scope, currentGeneration]
+    [run, scope, currentGeneration, cacheScope]
   )
   const applyPermission = useCallback(
     (role: MemberRole) =>

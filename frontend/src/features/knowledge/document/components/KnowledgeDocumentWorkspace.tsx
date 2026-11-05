@@ -119,12 +119,6 @@ function KnowledgeDocumentSession({
     )
       setAccessKbId(null)
   }, [accessKbId, accessKb, sidebar.hasLoaded, sidebar.isGroupsLoading, sidebar.loadError])
-  const { refreshAll } = sidebar
-  const permissionsChanged = useCallback(() => {
-    if (!alive.current) return
-    setPermissionRevision(value => value + 1)
-    void refreshAll()
-  }, [refreshAll])
   const hasAdvancedKnowledge = useMemo(
     () =>
       getRuntimeConfigSync().enableCodeWiki || hasAdvancedKnowledgeBases(sidebar.allKnowledgeBases),
@@ -337,6 +331,29 @@ function KnowledgeDocumentSession({
     sidebar,
     availableGroups: availableGroupsForCreate,
   })
+
+  const { refreshAll } = sidebar
+  // Closing the dialog preserves the owner of writes that are still in flight.
+  const permissionResource = accessKbId ?? dialogs.createdKb?.id ?? sidebar.selectedKbId
+  const permissionOwner = useRef({ kbId: permissionResource, version: 0 })
+  if (permissionResource !== null && permissionResource !== permissionOwner.current.kbId) {
+    permissionOwner.current = {
+      kbId: permissionResource,
+      version: permissionOwner.current.version + 1,
+    }
+  }
+  const permissionVersion = permissionOwner.current.version
+  const permissionCacheScope = client.getCacheScope()
+  const permissionsChanged = useCallback(() => {
+    if (
+      !alive.current ||
+      permissionOwner.current.version !== permissionVersion ||
+      client.getCacheScope() !== permissionCacheScope
+    )
+      return
+    setPermissionRevision(value => value + 1)
+    void refreshAll()
+  }, [refreshAll, permissionVersion, permissionCacheScope])
 
   const { createdKb, createdAtListRevision, dismissCreatedKb } = dialogs
   useEffect(() => {
