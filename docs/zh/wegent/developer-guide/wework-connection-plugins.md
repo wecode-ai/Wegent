@@ -85,25 +85,33 @@ DSH 宿主只发布当前已注册插件的指导。Executor 每回合重新读�
 
 连接建立只使领域指导可用，不产生业务提醒。收到后续新邮件、@消息、PR 变化或流水线失败时，既有事件协议触发研判。准备只读结论、交付有用的新发现，与对外发送或持续代办是不同权限路径；插件指导始终不能扩大已有授权。
 
-## 只读分页与采集进度分离
+## 能力声明与只读分页
 
-需要续读的 Provider 声明 `readPagination: "cursor"`，在 `readSource` 接收可选 `cursor`，并在 `hasMore: true` 时返回非空 `nextCursor`。框架只校验最多 8192 个 UTF-8 字节的 opaque 字符串并透传，每页仍重新检查该用户、角色和当前精确来源授权；不支持该能力的插件收到读游标会明确报错，不能忽略。
+连接协议描述资源和能力，不描述某个示例任务。能采集事件不代表能任意读取资源，能读取不代表能执行外部操作。插件只声明其实际实现的能力；新增系统通过相同注册表接入，不向框架添加系统名称或 CLI 参数分支。
 
-首次读取继续使用 `since` 与 1–20 的 `limit`；续页只需相同 `source` 与 `cursor`。框架不会为续页注入新的默认开始时间或页大小。插件必须把游标绑定到来源和账号、首次读取的固定开始/结束时间及页大小；变更显式窗口、篡改或跨来源重放必须拒绝。游标短期有效；实现可使用仅在插件进程内生成的签名密钥，重启后要求重新开始读取，不读取或移动账号凭据。
+提供只读能力的 Provider 声明 `read: { inputSchema, itemSchema, pagination }`，同时实现 `readSource(context, { source, query, cursor })`。`pagination` 为 `cursor` 或 `none`；删除独立的 `readPagination` 声明，避免目录与实现使用两份分页配置。`query` 是插件定义的 JSON 对象：消息插件可以定义时间窗口，仓库插件可以定义路径和版本，指标插件可以定义指标名称。框架不规定所有查询必须有时间，也不规定七天、二十条或邮件字段。
 
-只读游标只承载查询位置，不保存处理状态，也不能写入 `checkpoint`、推进采集边界或产生 intake 事件。模型应继续可查的必要分页和后续上下文，取得实际处理/回复证据后再判断是否仍需行动；不能把尚未完成的读取、`hasMore` 或实现局限当作普通交付。
+`inputSchema`、`itemSchema` 以及 action 的输入与结果 schema 使用 JSON Schema 2020-12。标准校验器不转换输入类型、不应用 schema 默认值，也不加载远程 `$ref`；插件实现自己的业务默认值。`items` 中每项仅额外要求稳定、非空的字符串 `id`，其他字段由 `itemSchema` 定义，静态资源无需伪造 `at` 或 `text`。校验失败明确报错，不能静默删除字段或截断返回页。
+
+例如，一个非消息连接可声明 `query: { metric: "build.duration" }`，返回 `{ id: "build-42", value: 18.5, unit: "s" }`。它与邮箱、日历或代码仓库共用权限、校验和生命周期，不需要新增宿主分支。
+
+首次读取使用 `source` 与可选 `query`；续页使用相同来源和不透明的 `cursor`，不必重复查询参数。框架只保留通用资源预算：输入 1 MiB、结果 8 MiB、最多 1000 个数据项、游标 8192 个 UTF-8 字节。原生模型入口另限制查询对象为 64 KiB。各插件可在 schema 中声明更小的业务限制。每页重新验证用户、设备、角色、工作及当前精确来源；来源工作只能读取宿主已绑定的来源，不能借同角色的其他连接扩展权限。
+
+`hasMore: true` 必须伴随可推进的 `nextCursor`。插件绑定账号、来源和首次查询快照；如果底层 SDK 已提供游标，直接保留其权威字段，不重造分页算法。显式改变快照、篡改或跨来源重放必须拒绝。游标可短期有效，插件重启后可要求重新开始读取。不支持读取或分页的 Provider 会在目录中如实表达，并明确拒绝不支持的调用。
+
+只读游标、采集 `checkpoint` 和操作回执是三类独立状态。读取不能推进采集边界、改变处理状态或产生 intake 事件。模型应补齐作出当前判断所必需的上下文；任务成果应是查清的事实或实际操作结果，不能用任务已创建、尚未完成的读取或实现限制代替交付。
 
 ## Provider 接口
 
-| 方法                            | 输入与结果                                                                       |
-| ------------------------------- | -------------------------------------------------------------------------------- |
-| `check(context)`                | 返回 `{ status: 'ready' }`、`auth_required` 或 `error`，只检查状态，不主动登录。 |
-| `listResources(context, query)` | 接收 `kind`、`query`、可选 `cursor`；返回 `items`、`hasMore`、`nextCursor`。     |
-| `validate(context, source)`     | 验证资源类型、身份和账号访问条件。失败不能继续采集。                             |
-| `initialize(context, source)`   | 为新订阅建立检查点，避免首次接入重放全部历史。                                   |
-| `collect(context, input)`       | 接收 `source`、`checkpoint`，返回 `events`、`nextCheckpoint`、`hasMore`。        |
-| `readSource(context, input)`    | 可选；读取有界的具体来源内容，不修改采集检查点。                                 |
-| `executeAction(context, input)` | 可选；只执行清单声明、且已由宿主按原生权限路径授权的具体资源操作。               |
+| 方法                            | 输入与结果                                                                                                          |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `check(context)`                | 返回 `{ status: 'ready' }`、`auth_required` 或 `error`，只检查状态，不主动登录。                                    |
+| `listResources(context, query)` | 接收 `kind`、`query`、可选 `cursor`；返回 `items`、`hasMore`、`nextCursor`。                                        |
+| `validate(context, source)`     | 验证资源类型、身份和账号访问条件。失败不能继续采集。                                                                |
+| `initialize(context, source)`   | 为新订阅建立检查点，避免首次接入重放全部历史。                                                                      |
+| `collect(context, input)`       | 接收 `source`、`checkpoint`，返回 `events`、`nextCheckpoint`、`hasMore`。                                           |
+| `readSource(context, input)`    | 按已声明的 `read` 接收 `source`、`query`、`cursor`，返回 `items`、`hasMore` 和可选 `nextCursor`，不修改采集检查点。 |
+| `executeAction(context, input)` | 可选；只执行清单声明、且已由宿主按原生权限路径授权的具体资源操作。                                                  |
 
 资源包含 `providerId`、`id`、`profile`、`kind`、`name`。用户保存后，Executor 增加处理策略和服务端生成的 `enabledAfter`。检查点为 JSON 对象，由插件解释；宿主在外层保存版本、错误和来源，不能把这些元数据混入插件检查点。
 
@@ -115,7 +123,7 @@ DSH 宿主只发布当前已注册插件的指导。Executor 每回合重新读�
 
 插件实现必须处理分页边界、重复数据和失效检查点，不得在错误时推进游标。实现可以使用闭包捕获自己声明的 DSH 服务；上下文包含已解析依赖和生命周期 `signal`。停用插件后，在途采集结果会被拒绝。
 
-写操作在 Provider 中使用 `actions: [{ id: "retry_build", resourceKinds: ["repository"] }]` 声明，并实现 `executeAction(context, { action, source, ...input })`。只允许该 Provider 已声明的动作和资源类型，不允许使用 `scope: "all"` 或通配资源作为操作目标。动作清单不会自动向模型暴露写入工具，也不能代替原生授权；宿主已授权的具体工具才可通过统一 RPC 调用。插件必须在实际投递前继续验证其业务边界，不能根据事件正文或调用者伪造的策略自行授权。
+每项操作声明 `id`、`resourceKinds`、`inputSchema` 和 `resultSchema`，并实现 `executeAction(context, { action, source, ...input })`。框架校验除宿主持有的 `action`、`source` 外的输入，以及插件实际返回的结果。只允许该 Provider 已声明的动作和资源类型，不允许使用 `scope: "all"` 或通配资源作为操作目标。动作清单不会自动向模型暴露写入工具，也不能代替原生授权；宿主已授权的具体工具才可通过统一 RPC 调用。插件必须在实际投递前继续验证其业务边界，不能根据事件正文或调用者伪造的策略自行授权。现有发送、合并、工作区及未知投递保护继续生效，不能用 schema 校验替代这些安全守卫。
 
 ## 事件身份、版本和处理进度
 
@@ -209,7 +217,7 @@ Provider 的 `cliReadTools` 按依赖别名声明 Connector、固定命令前缀
 
 Executor 用共享依赖解析器定位精确已安装版本，拒绝跨市场替代和目录穿越，只执行原 `localAuth.tool` 解析出的受管二进制，不启动 Shell，不执行 Skill 文本，不在后台下载工具。原 Connector 登录与账号环境由现有授权服务管理。CLI 进程最多运行 40 秒，标准输出最多 8 MiB；超限时无需等待进程结束便会终止该次调用并清理子进程。失败不推进检查点；解析错误和非登录错误不触发登录。只有明确的登录错误码才返回原插件身份的 `connector_auth_required`。
 
-钉钉声明五个读取操作：`listProfiles`、`searchGroups`、`searchUsers`、`listMentions` 和 `searchMessages`。应用已删除 `runtime.connections.command`、`context.readCommand`、钉钉专用读取参数白名单和缓存路径解析器；没有保留回退入口。
+具体读取操作以插件自己的 `cliReadTools` 声明为准，框架不维护第二份业务功能白名单。静态 argv 只受长度、非空和无 NUL 等结构约束，框架不解释特定工具的快捷命令或 flag 语法。连接依赖、固定操作与参数映射仍逐次验证。应用已删除 `runtime.connections.command`、`context.readCommand`、钉钉专用读取参数白名单和缓存路径解析器，没有保留回退入口。
 
 ## 运行与分发
 

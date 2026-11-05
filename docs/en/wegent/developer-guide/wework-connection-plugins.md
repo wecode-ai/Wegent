@@ -81,25 +81,33 @@ The DSH host publishes guidance only for currently registered plugins. On every 
 
 Connecting only makes the guidance available; it does not create a business reminder. Subsequent mail, mentions, PR changes and pipeline failures trigger assessment through the existing event protocol. Read-only preparation and useful findings remain distinct from external actions and ongoing responsibilities. Plugin guidance never expands existing authorization.
 
-## Read pagination is separate from collection progress
+## Capability declarations and read pagination
 
-Providers that support continuations declare `readPagination: "cursor"`, accept optional `cursor` in `readSource`, and return a nonempty `nextCursor` whenever `hasMore` is true. The framework validates and forwards an opaque string of at most 8192 UTF-8 bytes, rechecking the current user, role and exact source authorization on every page. Providers without this capability reject read cursors instead of silently ignoring them.
+The connection protocol describes resources and capabilities, rather than individual example tasks. Event collection does not imply arbitrary resource access, and reading does not authorize external actions. Plugins declare only implemented capabilities. New systems use the same registry without adding system names or CLI flag branches to the framework.
 
-The first read uses `since` and a `limit` of 1–20; continuation only needs the same `source` and `cursor`. The framework does not inject a new default start time or page size into continuations. Providers must bind cursors to the source/account, fixed initial time window and page size, rejecting changed explicit windows, tampering and cross-source replay. Cursors expire; an in-memory signing key can invalidate them across plugin restarts without reading or moving account credentials.
+A readable provider declares `read: { inputSchema, itemSchema, pagination }` and implements `readSource(context, { source, query, cursor })`. Pagination is `cursor` or `none`; the separate `readPagination` field is removed so discovery and implementation share one declaration. `query` is a provider-defined JSON object: message providers may accept a time window, repository providers a path and revision, and metric providers a metric name. The framework does not require every resource to have a timestamp, a seven-day window, a twenty-item page, or email fields.
 
-Read cursors carry query position only. They must not update processing state, collection checkpoints or intake events. The model should finish available necessary pages and follow-up context before deciding whether action is still needed. Unfinished retrieval, `hasMore` and implementation limitations are not ordinary user deliverables.
+Read input, item, and action input/result schemas use JSON Schema 2020-12. The standard validator does not coerce types, apply schema defaults, or load remote `$ref` values. Providers implement business defaults. Each read item additionally requires only a stable, nonempty string `id`; `itemSchema` defines its other fields. Static resources need not invent `at` or `text`. Validation errors are explicit, without silently removing fields or truncating pages.
+
+For example, a non-message provider can accept `query: { metric: "build.duration" }` and return `{ id: "build-42", value: 18.5, unit: "s" }`. It shares authorization, validation, and lifecycle handling with mail, calendar, and repository providers without a new host branch.
+
+Initial reads use `source` and optional `query`. Continuations use the same source and an opaque `cursor`, without repeating query parameters. Generic budgets are 1 MiB input, 8 MiB result, 1000 items, and 8192 UTF-8 bytes per cursor; the native model entry additionally limits the query object to 64 KiB. Provider schemas may impose smaller business limits. Every page revalidates the user, device, role, work, and exact current source. Source work can read only its host-bound source, rather than other connections belonging to the same role.
+
+`hasMore: true` requires an advancing `nextCursor`. Providers bind cursors to the account, source, and original query snapshot. Reuse authoritative SDK pagination fields when available instead of implementing another pagination engine. Changed snapshots, tampering, and cross-source replay must be rejected. Cursors may expire or require a fresh read after plugin restart. Providers accurately advertise unsupported reads or pagination and reject unsupported calls explicitly.
+
+Read cursors, collection checkpoints, and action receipts are separate state. Reads cannot advance collection boundaries, modify processing state, or create intake events. The model should retrieve the context necessary for the current judgment. Useful delivery consists of verified findings or actual action results; creating a task, unfinished retrieval, or implementation limitations cannot substitute for that outcome.
 
 ## Provider contract
 
-| Method                          | Behavior                                                                                         |
-| ------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `check(context)`                | Returns `ready`, `auth_required` or `error` without starting login.                              |
-| `listResources(context, query)` | Accepts `kind`, `query`, optional `cursor`; returns `items`, `hasMore`, `nextCursor`.            |
-| `validate(context, source)`     | Validates resource identity, kind and account availability before collection.                    |
-| `initialize(context, source)`   | Establishes the initial checkpoint without replaying all history.                                |
-| `collect(context, input)`       | Accepts `source` and `checkpoint`; returns `events`, `nextCheckpoint`, `hasMore`.                |
-| `readSource(context, input)`    | Optional bounded source content, without advancing collection checkpoints.                       |
-| `executeAction(context, input)` | Optional declared operation on a concrete resource, authorized by the original native host flow. |
+| Method                          | Behavior                                                                                                                                                             |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `check(context)`                | Returns `ready`, `auth_required` or `error` without starting login.                                                                                                  |
+| `listResources(context, query)` | Accepts `kind`, `query`, optional `cursor`; returns `items`, `hasMore`, `nextCursor`.                                                                                |
+| `validate(context, source)`     | Validates resource identity, kind and account availability before collection.                                                                                        |
+| `initialize(context, source)`   | Establishes the initial checkpoint without replaying all history.                                                                                                    |
+| `collect(context, input)`       | Accepts `source` and `checkpoint`; returns `events`, `nextCheckpoint`, `hasMore`.                                                                                    |
+| `readSource(context, input)`    | Declared `read` capability accepting `source`, `query`, and `cursor`; returns `items`, `hasMore`, and optional `nextCursor` without changing collection checkpoints. |
+| `executeAction(context, input)` | Optional declared operation on a concrete resource, authorized by the original native host flow.                                                                     |
 
 Resources contain `providerId`, `id`, `profile`, `kind` and `name`. Executor owns handling policy and the `enabledAfter` cutoff. Checkpoints are opaque JSON objects, separate from host metadata. Events require stable `id`, `text` and `at`; use RFC 3339 timestamps. Event types must follow the provider declaration. Optional message fields include sender, quoted-message and topic identifiers.
 
@@ -109,7 +117,7 @@ Discovery may also return `availability`. Return `auth_required` only after a bu
 
 Providers must handle pagination, duplicate events and invalid checkpoints explicitly. Context exposes resolved dependencies and a lifecycle abort signal. Implementations can capture their declared DSH services. Disabling the plugin rejects in-flight collection results.
 
-Declare writes with `actions: [{ id: "retry_build", resourceKinds: ["repository"] }]` and implement `executeAction(context, { action, source, ...input })`. Calls require a declared action and resource kind belonging to that Provider, and reject `scope: "all"` or wildcard operation targets. An action declaration neither exposes a model write tool automatically nor replaces native authorization; only an already authorized host tool may invoke the shared RPC. Plugins must still validate their business boundaries before delivery and must never treat event content or forged caller policies as authorization.
+Declare each action with `id`, `resourceKinds`, `inputSchema`, and `resultSchema`, and implement `executeAction(context, { action, source, ...input })`. The framework validates the input excluding the host-owned `action` and `source` fields, then validates the actual result. Calls require a declared action and resource kind belonging to that Provider, and reject `scope: "all"` or wildcard operation targets. An action declaration neither exposes a model write tool automatically nor replaces native authorization; only an already authorized host tool may invoke the shared RPC. Plugins must still validate their business boundaries before delivery and must never treat event content or forged caller policies as authorization. Existing native send, merge, workspace, and delivery-uncertainty guards remain in force; schema validation does not replace them.
 
 ## Event identity, versions and processing progress
 
@@ -177,7 +185,7 @@ A provider's `cliReadTools` maps dependency aliases to Connector slugs, fixed ou
 
 Executor obtains the read declaration from the active host rather than caller input. Unknown operations, extra arguments, option-like values and NUL values are rejected. The shared resolver selects the exact installed plugin version, rejects cross-market substitutions and path traversal, and executes only its existing `localAuth.tool` binary. It never starts a shell, executes Skill prose, or downloads a tool in the background. Existing account authorization and broker environment remain in charge of credentials. CLI processes have a 40-second deadline and an 8 MiB stdout limit. Oversized output fails immediately without waiting for process exit, and the child is cleaned up. Only explicit authentication error codes return `connector_auth_required` with the original plugin and Connector identity; network failures do not imply login failure.
 
-DingTalk declares five reads: `listProfiles`, `searchGroups`, `searchUsers`, `listMentions`, and `searchMessages`. The app-specific `runtime.connections.command`, `context.readCommand`, DingTalk read-command allowlist and cache-root resolver have been removed, with no fallback. Replies retain their existing source-bound confirmation path.
+Read operations come from each plugin's current `cliReadTools` declaration, rather than a second business-operation allowlist in the framework. Static argv has bounded, nonempty, NUL-free structural validation; the framework does not interpret a particular CLI's shortcut or flag syntax. Dependency, fixed-operation, and parameter mappings remain enforced on every call. The app-specific `runtime.connections.command`, `context.readCommand`, DingTalk read-command allowlist and cache-root resolver have been removed, with no fallback. Replies retain their existing source-bound confirmation path.
 
 ## Collection and delivery
 
