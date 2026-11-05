@@ -330,11 +330,7 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
         let _activation = crate::services::capability_activation::activate().await;
         let queued_ms = started.elapsed().as_millis();
         let _publication_lock = self.store.lock_shared_manifest()?;
-        let mut activation = activation_revision::ActivationRevision::begin(
-            &self.store,
-            &request.plugins,
-            &request.skills,
-        )?;
+        let mut activation = activation_revision::ActivationRevision::begin(&self.store, &[], &[])?;
         let mut manifest;
         let mut results = Vec::new();
         let plugins_superseded;
@@ -409,6 +405,7 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
                     spec,
                     request.generation,
                     &mut manifest,
+                    &mut activation,
                 )?);
             }
             if request.complete && !plugins_superseded {
@@ -428,6 +425,7 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
                         &spec,
                         request.generation,
                         &mut manifest,
+                        &mut activation,
                     )?);
                 }
             }
@@ -444,6 +442,7 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
                     ));
                     continue;
                 }
+                activation.observe_plugin(&spec)?;
                 record_intent(&mut manifest, &spec, request.generation, false);
                 self.store
                     .manifest
@@ -473,9 +472,10 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
                 .collect();
             {
                 let _binding = self.plugin_sync_binding.lock_active()?;
-                self.remove_stale_managed_skills(&desired, &mut manifest)?;
+                self.remove_stale_managed_skills(&desired, &mut manifest, &mut activation)?;
             }
             for spec in &request.skills {
+                activation.observe_skill(&spec.name)?;
                 skill_results.push(self.sync_skill(spec, &mut manifest).await);
             }
             let _binding = self.plugin_sync_binding.lock_active()?;
@@ -511,6 +511,10 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
                 ("changed", changes.changed.to_string()),
                 ("requires_restart", changes.requires_restart.to_string()),
                 ("detection_ms", changes.detection_ms.to_string()),
+                ("inspected_plugins", changes.inspected_plugins.to_string()),
+                ("hashed_files", changes.hashed_files.to_string()),
+                ("hashed_bytes", changes.hashed_bytes.to_string()),
+                ("reused_hashes", changes.reused_hashes.to_string()),
                 ("changed_plugins", changes.plugins.join(",")),
                 ("changed_skills", changes.skills.join(",")),
             ],
@@ -531,6 +535,7 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
         spec: &PluginSyncSpec,
         generation: u64,
         manifest: &mut Value,
+        activation: &mut activation_revision::ActivationRevision<'_>,
     ) -> Result<Value, CapabilitySyncError> {
         let existing = manifest
             .get("plugins")
@@ -568,7 +573,12 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
                 .into_keys()
                 .filter(|key| key != &spec.key)
                 .collect();
-            self.remove_managed_plugins(vec![(spec.key.clone(), plugin)], &desired, manifest)
+            self.remove_managed_plugins(
+                vec![(spec.key.clone(), plugin)],
+                &desired,
+                manifest,
+                activation,
+            )
         } else {
             self.store
                 .manifest
