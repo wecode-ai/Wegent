@@ -575,8 +575,9 @@ const server = http.createServer((req, res) => {
   }
   let body = ''
 
-  req.on('data', chunk => {
-    body += chunk.toString()
+  req.setEncoding('utf8')
+  req.on('data', (chunk: string) => {
+    body += chunk
   })
 
   req.on('end', () => withMockScope(scope, handleRequest))

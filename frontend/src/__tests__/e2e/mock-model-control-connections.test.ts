@@ -1,7 +1,14 @@
 /** @jest-environment node */
 
 import { once } from 'node:events'
-import { Agent, get, type Server, type ServerResponse } from 'node:http'
+import {
+  Agent,
+  get,
+  request,
+  type IncomingMessage,
+  type Server,
+  type ServerResponse,
+} from 'node:http'
 import type { AddressInfo } from 'node:net'
 
 describe('mock model controls', () => {
@@ -75,6 +82,61 @@ describe('mock model controls', () => {
     expect(response.status).toBe(200)
     return response.json()
   }
+
+  it('preserves UTF-8 split across HTTP chunks through rules and model output', async () => {
+    const matchText = 'fragmented-utf8'
+    const responseContent = 'before中 between😀 after'
+    const rule = { matchText, responseContent, chunkDelayMs: 0 }
+    const body = Buffer.from(JSON.stringify(rule))
+    const splitAt = [body.indexOf(Buffer.from('中')) + 1, body.indexOf(Buffer.from('😀')) + 2]
+    const chunks = [
+      body.subarray(0, splitAt[0]),
+      body.subarray(splitAt[0], splitAt[1]),
+      body.subarray(splitAt[1]),
+    ]
+    const received = new Promise<IncomingMessage>(resolve => {
+      server.once('request', incoming => resolve(incoming))
+    })
+    const client = request(`${url}/stream-rules`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    })
+    const response = new Promise<{ status?: number; body: string }>((resolve, reject) => {
+      client.on('error', reject)
+      client.on('response', incoming => {
+        let text = ''
+        incoming.setEncoding('utf8')
+        incoming.on('data', chunk => (text += chunk))
+        incoming.on('error', reject)
+        incoming.on('end', () => resolve({ status: incoming.statusCode, body: text }))
+      })
+    })
+    try {
+      client.flushHeaders()
+      const incoming = await received
+      for (const chunk of chunks) {
+        const observed = once(incoming, 'data')
+        client.write(chunk)
+        await observed
+      }
+      client.end()
+      const saved = await response
+      expect(saved.status).toBe(200)
+      expect(JSON.parse(saved.body).rule).toEqual(rule)
+
+      const stream = await modelRequest(matchText).result
+      const output = stream
+        .split('\n')
+        .filter(line => line.startsWith('data: '))
+        .map(line => JSON.parse(line.slice(6)))
+        .filter(event => event.type === 'content_block_delta')
+        .map(event => event.delta.text)
+        .join('')
+      expect(output).toBe(responseContent)
+    } finally {
+      client.destroy()
+    }
+  })
 
   async function hold(matchText: string) {
     await post('/stream-rules', {
