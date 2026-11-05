@@ -156,6 +156,23 @@ function handleEmptyReplyPrediction(body, response) {
   return true
 }
 
+function handleModelMaintenanceRequest(body, response) {
+  const kind = codexRequestKind(body)
+  if (!['compaction', 'prewarm'].includes(kind)) return false
+  const id = `desktop-e2e-${kind}`
+  response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+  response.end(
+    createSse([
+      responseCreated(id),
+      ...(kind === 'compaction'
+        ? [assistantMessage('Desktop E2E context compaction completed.')]
+        : []),
+      responseCompleted(id),
+    ])
+  )
+  return true
+}
+
 function responseCreated(id) {
   return {
     type: 'response.created',
@@ -909,6 +926,7 @@ export {
   delegatedTaskResultEvents,
   codexRequestMetadata,
   codexRequestKind,
+  handleModelMaintenanceRequest,
   latestModelInputText,
   isReplyPredictionRequest,
   isReplyPredictionVisionRequest,

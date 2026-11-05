@@ -12,6 +12,7 @@ import {
   createSse,
   delegatedTaskResultEvents,
   handleEmptyReplyPrediction,
+  handleModelMaintenanceRequest,
   mcpToolRequestEvents,
   readRequestBody,
   requestContainsToolOutput,
@@ -85,6 +86,7 @@ export function createDesktopScenario(options) {
       const body = await readRequestBody(request)
       assert.equal(request.headers.authorization, `Bearer ${MODEL_API_KEY}`)
       assert.equal(body.model, MODEL)
+      if (handleModelMaintenanceRequest(body, response)) return true
       if (handleEmptyReplyPrediction(body, response)) return true
       const resultEvents = delegatedTaskResultEvents(body)
       if (resultEvents) {

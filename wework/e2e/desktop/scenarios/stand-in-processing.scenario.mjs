@@ -8,6 +8,8 @@ import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
 import {
   assistantMessage,
   createSse,
+  delegatedTaskResultEvents,
+  handleModelMaintenanceRequest,
   isReplyPredictionRequest,
   mcpToolRequestEvents,
   readRequestBody,
@@ -83,10 +85,13 @@ export function createDesktopScenario({
       if (req.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
       const body = await readRequestBody(req)
+      if (handleModelMaintenanceRequest(body, response)) return true
       if (isReplyPredictionRequest(body)) return false
       const input = JSON.stringify(body.input ?? [])
-      let events
-      if (input.includes('Review this silent intake batch')) {
+      let events = delegatedTaskResultEvents(body)
+      if (events) {
+        // A result wake is a new host turn, even when its history quotes the original request.
+      } else if (input.includes('Review this silent intake batch')) {
         coordinatorCalls++
         const readId = `silent-read-${round}`
         const actionId = `silent-action-${round}`

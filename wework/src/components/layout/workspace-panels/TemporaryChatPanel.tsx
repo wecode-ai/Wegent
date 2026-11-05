@@ -711,6 +711,7 @@ export function TemporaryChatPanel({
         busy && options.interruptWhenBusy
           ? interruptAndSendRuntimePaneMessage
           : sendRuntimePaneMessage
+      const lifecycleBeforeSend = lifecycleStore.getTaskRevision(targetAddress)
       const sent = await sendMessage(
         {
           address: targetAddress,
@@ -740,7 +741,7 @@ export function TemporaryChatPanel({
       )
       if (isRuntimeTaskBusyError(sendError)) {
         conversationQueue.enqueue(queuedMessage, {
-          value: lifecycleStore.getTaskRevision(targetAddress),
+          value: lifecycleBeforeSend,
         })
         sideChatProjectChat.resetAttachments()
         if (options.guideWhenBusy) {

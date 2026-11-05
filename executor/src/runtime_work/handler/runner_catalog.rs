@@ -149,10 +149,11 @@ impl RuntimeWorkRpcHandler {
                             "The selected local model is unavailable on this device",
                         )
                     })?;
-                payload["modelConfig"] = config.clone();
+                payload["modelConfig"] = with_request_reasoning(&config, &payload["modelConfig"]);
                 for key in ["executionRequest", "execution_request"] {
                     if let Some(request) = payload.get_mut(key).filter(|value| value.is_object()) {
-                        request["model_config"] = config.clone();
+                        request["model_config"] =
+                            with_request_reasoning(&config, &request["model_config"]);
                     }
                 }
             }
@@ -226,9 +227,19 @@ impl RuntimeWorkRpcHandler {
                     "The selected local model is unavailable on this device",
                 )
             })?;
-        request.model_config = resolved;
+        request.model_config = with_request_reasoning(&resolved, &request.model_config);
         Ok(())
     }
+}
+
+fn with_request_reasoning(authoritative: &Value, requested: &Value) -> Value {
+    let mut config = authoritative.clone();
+    // Credentials, endpoints and model identity remain device-owned. Reasoning
+    // is a per-turn user option, normalized by the runtime before execution.
+    if let Some(reasoning) = requested.get("reasoning").filter(|value| !value.is_null()) {
+        config["reasoning"] = reasoning.clone();
+    }
+    config
 }
 
 fn claude_runner_models(settings: &Value) -> Result<Vec<Value>, AppIpcError> {
@@ -314,6 +325,68 @@ mod tests {
             "modelConfig":{"model_id":"upstream","wework_model_kind":"model-interface","model_provider":"local-company","api_key":secret,
                 "responses_url":"https://model.example/v1/messages","upstream_api_format":"anthropic-messages",
                 "codex_catalog_model_id":"wework-custom-company","runtime_config":{"codex":{"use_user_config":false}}}})
+    }
+
+    #[test]
+    fn local_interface_preserves_per_turn_reasoning_without_accepting_configuration_overrides() {
+        let handler = RuntimeWorkRpcHandler::new("device", "unused");
+        let mut model = local_model("current-secret");
+        model["modelConfig"]["reasoning"] = json!({"effort":"medium"});
+        handler
+            .replace_local_runner_models(json!({"models":[model]}))
+            .unwrap();
+        for effort in ["low", "high"] {
+            let mut request = ExecutionRequest {
+                model_config: json!({"model_id":"local-model:company","model_provider":"local-company",
+                    "reasoning":{"effort":effort,"summary":"concise"},
+                    "api_key":"untrusted-secret","responses_url":"https://untrusted.example"}),
+                ..Default::default()
+            };
+            handler
+                .resolve_local_model_reference(&mut request, "work")
+                .unwrap();
+            assert_eq!(
+                request.model_config["reasoning"],
+                json!({"effort":effort,"summary":"concise"})
+            );
+            assert_eq!(request.model_config["api_key"], "current-secret");
+            assert_eq!(
+                request.model_config["responses_url"],
+                "https://model.example/v1/messages"
+            );
+            assert_eq!(request.model_config["model_id"], "upstream");
+        }
+    }
+
+    #[test]
+    fn local_interface_materialization_preserves_explicit_reasoning_and_device_defaults() {
+        let handler = RuntimeWorkRpcHandler::new("device", "unused");
+        let mut model = local_model("current-secret");
+        model["modelConfig"]["reasoning"] = json!({"effort":"medium"});
+        handler
+            .replace_local_runner_models(json!({"models":[model]}))
+            .unwrap();
+        let mut payload = json!({"runnerRouting":{"model":{"runtime":"codex","provider":"local-company","model_id":"local-model:company"}},
+            "modelConfig":{"reasoning":{"effort":"low"},"api_key":"old"},
+            "executionRequest":{"model_config":{"reasoning":{"effort":"high"},"responses_url":"https://untrusted.example"}},
+            "execution_request":{"model_config":{"reasoning":null}}});
+        handler
+            .materialize_local_runner_models(&mut payload)
+            .unwrap();
+        assert_eq!(payload["modelConfig"]["reasoning"]["effort"], "low");
+        assert_eq!(
+            payload["executionRequest"]["model_config"]["reasoning"]["effort"],
+            "high"
+        );
+        assert_eq!(
+            payload["execution_request"]["model_config"]["reasoning"]["effort"],
+            "medium"
+        );
+        assert_eq!(payload["modelConfig"]["api_key"], "current-secret");
+        assert_eq!(
+            payload["executionRequest"]["model_config"]["responses_url"],
+            "https://model.example/v1/messages"
+        );
     }
 
     #[tokio::test]

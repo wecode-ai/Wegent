@@ -61,6 +61,7 @@ const mocks = vi.hoisted(() => ({
   usageHandlers: [] as Array<{ onContextUsageUpdated?: (usage: RuntimeContextUsage) => void }>,
   resetAttachments: vi.fn(),
   busy: false,
+  busySendError: false,
   lifecycleOwnerEpoch: 0,
   interruptAndSendRuntimePaneMessage: vi.fn(async () => true),
   sendRuntimePaneMessage: vi.fn(async () => true),
@@ -451,7 +452,7 @@ vi.mock('@/features/workbench/runtimeModelSelection', () => ({
 
 vi.mock('@/features/workbench/runtimePaneStatus', () => ({
   deriveRuntimePaneStatus: () => ({ isBusy: mocks.busy }),
-  isRuntimeTaskBusyError: () => false,
+  isRuntimeTaskBusyError: () => mocks.busySendError,
 }))
 
 vi.mock('@/features/workbench/runtimeConversationCache', () => ({
@@ -528,6 +529,7 @@ describe('TemporaryChatPanel', () => {
     mocks.usageHandlers = []
     mocks.lifecycleOwnerEpoch++
     mocks.busy = false
+    mocks.busySendError = false
     mocks.interruptAndSendRuntimePaneMessage.mockClear()
     mocks.resetAttachments.mockReset()
     mocks.sendRuntimePaneMessage.mockReset()
@@ -1547,6 +1549,42 @@ describe('TemporaryChatPanel', () => {
         initialAddress={address}
       />
     )
+    await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.queryByTestId('mock-queue-row')).toBeNull())
+  })
+
+  it('drains a busy rejection when the external turn settled while the send was pending', async () => {
+    mocks.runtimeWork = { projects: [], chats: [], totalTasks: 0 }
+    mocks.busySendError = true
+    mocks.lifecycleSnapshot = {
+      derived: { isRunning: false, isTurnActive: false },
+      turn: { id: null },
+    }
+    let rejectBusy!: () => void
+    mocks.sendRuntimePaneMessage.mockImplementationOnce(
+      () =>
+        new Promise<boolean>(resolve => {
+          rejectBusy = () => resolve(false)
+        })
+    )
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        instanceId="busy-rejection-settled"
+        initialAddress={address}
+      />
+    )
+    await userEvent.click(screen.getByTestId('mock-send'))
+    await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledTimes(1))
+    await act(async () => {
+      // A background result turn may complete before the rejected send returns.
+      mocks.lifecycleSnapshot = {
+        derived: { isRunning: false, isTurnActive: false },
+        turn: { id: null },
+      }
+      rejectBusy()
+    })
     await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledTimes(2))
     await waitFor(() => expect(screen.queryByTestId('mock-queue-row')).toBeNull())
   })
