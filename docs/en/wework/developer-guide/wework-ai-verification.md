@@ -114,3 +114,53 @@ The desktop CI `workspace-tabs` checkpoint covers detaching a fixed tab and rest
 ## AI workflow
 
 An AI should start with `snapshot` to confirm the route and available `data-testid` values, make the smallest required interaction, and use `wait-for` plus `snapshot` or `text` to verify the result. Always call `stop` when finished. On failure, keep the session directory and inspect `app.log`.
+
+## General DevTools access and performance analysis
+
+Isolated verification instances expose authenticated CDP through the Electron main process. Commands remain available while the renderer is paused at a breakpoint. Ordinary application instances do not register this endpoint. Enumerate targets and substitute a returned `id` for `ID`:
+
+```bash
+pnpm --filter wework ai:verify start
+pnpm --filter wework ai:verify devtools --session SESSION --value '{"action":"targets"}'
+pnpm --filter wework ai:verify devtools --session SESSION --value '{"action":"command","target":ID,"method":"Schema.getDomains"}'
+pnpm --filter wework ai:verify performance-start --session SESSION --target ID
+# Reproduce the interaction using existing click, fill, press and wait-for commands.
+pnpm --filter wework ai:verify performance-stop --session SESSION --target ID --output report.json
+pnpm --filter wework ai:verify devtools --session SESSION --value '{"action":"detach","target":ID}'
+pnpm --filter wework ai:verify stop --session SESSION
+```
+
+The `devtools` command accepts any `Domain.command` supported by the instance, `params`, and an optional child `sessionId`. There is no domain allowlist. Use Network response bodies and request data, Runtime object properties, Debugger sources and breakpoints, DOM, CSS, HeapProfiler, Tracing, or other CDP domains directly. Obtain worker/frame sessions through `Target.setAutoAttach` or `Target.attachToTarget`. Availability depends on the bundled Chromium/Electron version; this transport does not implement the DevTools panel UI or its extensions. See the [Electron Debugger API](https://www.electronjs.org/docs/latest/api/debugger).
+
+Use `--file request.json` for JSON input and `--output result.json` for large responses. Enable the desired domains, then read protocol events with a non-destructive cursor:
+
+```bash
+pnpm --filter wework ai:verify devtools --session SESSION --value '{"action":"command","target":ID,"method":"Network.enable"}'
+pnpm --filter wework ai:verify devtools --session SESSION --value '{"action":"command","target":ID,"method":"Runtime.enable"}'
+pnpm --filter wework ai:verify devtools --session SESSION --value '{"action":"events","target":ID,"after":0,"limit":1000}' --output events.json
+```
+
+Pass `next` as the next `after`; `latest` identifies the current end. Each target retains up to 20,000 events or 32 MiB. `lost` reports events evicted since the supplied cursor. Drain frequently for high-volume capture. For large traces, use `Tracing.start` with `ReturnAsStream`, followed by `IO.read` and `IO.close`. Unexpected detachment retains buffered events and the `Inspector.detached` reason; explicitly detach before reconnecting. Opening the target's DevTools panel may detach Electron's debugger.
+
+The performance convenience commands use this same transport to capture CPU sampling, timeline, network, console, exceptions and scripts. Stopping automatically writes:
+
+- `report.json`: sampled self/inclusive CPU costs with source locations, long tasks and timeline totals per process/thread, slow requests with initiator stacks, redirects/failures/pending requests, console, exceptions and before/after metrics.
+- `report.json.evidence.json`: the original CPU profile, Chromium trace and protocol events for further investigation.
+
+Script-declared source maps resolve generated CPU locations to original files, lines and columns. Isolated E2E builds generate source maps; normal builds do not expose source as a result of this change. Inline, file and network source maps are supported, with network maps loaded through CDP. Mapping failures retain generated locations and report errors; use `Debugger.getScriptSource` to investigate further. CPU costs are sampled. Never add parent/child inclusive costs or nested trace durations. Nonzero `lostEvents` or `traceDataLoss` means incomplete evidence; shorten capture or adjust generic collection. Convenience recording profiles the root target; profile worker sessions separately using CDP.
+
+Retrieve network bodies and console remote-object properties on demand using CDP; the report does not expand them automatically. Events are captured after their domains are enabled. Diagnostics may include sensitive request headers, payloads and logs. Keep them local and out of Git. Release sessions with `detach` and always clean up the isolated application with `stop`.
+
+### User story coverage
+
+The `devtools-performance` checkpoint runs in real Electron: discover a target, record and reproduce a known CPU hotspot, map it to original source, capture real HTTP/console/exception evidence, inspect DOM, command a worker child session, resume a paused renderer, then detach and reconnect. Invalid protocol commands and duplicate recording must fail without corrupting the connection. It is included in an existing core CI shard without adding a CI job.
+
+```bash
+pnpm --filter wework e2e:desktop --segment devtools-performance
+```
+
+Once CPU profiling stops successfully, trace collection, parsing or report-write failures release recording state while preserving the original error, so another recording can start. A failure to stop the profiler retains unconsumed state. The `devtools-performance` checkpoint also triggers a real output-directory write failure and verifies that a subsequent recording starts and completes.
+
+A successful explicit `detach` discards unfinished recording state for that target, allowing cancellation or recovery after an unexpected disconnect. Failed detaches retain state. The real Electron checkpoint also detaches during a recording, then starts another recording and generates its report.
+
+All desktop checkpoints use a `desktop-control` registry within their result directory for on-demand diagnosis of their isolated instance. Native macOS process snapshots read PID parent relationships first, then collect detailed metrics and command lines only for the Electron process tree, keeping unrelated process arguments out of the collection buffer.

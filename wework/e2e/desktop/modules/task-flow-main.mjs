@@ -1402,6 +1402,7 @@ async function main() {
         desktopScenario?.authToken ??
         'wework-desktop-e2e-cloud-token',
       WEWORK_E2E_CONTROL_URL: control.controlUrl,
+      WEWORK_DESKTOP_CONTROL_REGISTRY_DIR: join(resultDir, 'desktop-control'),
       WEWORK_E2E_MODEL_API_KEY: MODEL_API_KEY,
       WEWORK_E2E_MODEL_SERVER_URL: control.url,
       WEWORK_E2E_CODEX_HOME_INITIALIZATION: RUNS_PLUGIN_E2E ? 'true' : 'false',

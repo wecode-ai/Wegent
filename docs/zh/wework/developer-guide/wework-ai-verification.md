@@ -114,3 +114,53 @@ Electron 不会为 WebContents 自动创建网页右键菜单。Wework 由 Elect
 ## AI 验证流程
 
 AI 应先执行 `snapshot` 确认路由和可用的 `data-testid`，再进行最小必要操作，并以 `wait-for` 加 `snapshot` 或 `text` 验证结果。结束时必须执行 `stop`；若失败，保留该会话目录中的 `app.log` 以便诊断。
+
+## 通用 DevTools 与性能分析
+
+隔离验证实例通过主进程提供鉴权的 CDP 通道。它不经过渲染线程，因此在断点暂停时仍能读取事件并恢复执行。普通应用实例不注册此入口。先启动实例并枚举目标，将返回的 `id` 用作下面的 `ID`：
+
+```bash
+pnpm --filter wework ai:verify start
+pnpm --filter wework ai:verify devtools --session SESSION --value '{"action":"targets"}'
+pnpm --filter wework ai:verify devtools --session SESSION --value '{"action":"command","target":ID,"method":"Schema.getDomains"}'
+pnpm --filter wework ai:verify performance-start --session SESSION --target ID
+# 使用已有 click、fill、press、wait-for 等命令复现需要分析的操作。
+pnpm --filter wework ai:verify performance-stop --session SESSION --target ID --output report.json
+pnpm --filter wework ai:verify devtools --session SESSION --value '{"action":"detach","target":ID}'
+pnpm --filter wework ai:verify stop --session SESSION
+```
+
+`devtools` 接受任意当前 Chromium 支持的 `Domain.command`、`params` 和可选的 `sessionId`，不维护协议域白名单。可直接使用 `Network.getResponseBody`、`Network.getRequestPostData`、`Runtime.getProperties`、`Debugger.getScriptSource`、`Debugger.setBreakpointByUrl`、`DOM.getDocument`、`CSS`、`HeapProfiler` 和 `Tracing`；用 `Target.setAutoAttach` / `Target.attachToTarget` 获取子会话，再将返回的 `sessionId` 传回命令。协议能力与限制取决于本实例的 Chromium/Electron 版本，并不承诺 DevTools 面板自身的 UI 或扩展功能。参见 [Electron Debugger API](https://www.electronjs.org/docs/latest/api/debugger)。
+
+输入也可通过 `--file request.json` 提供；`--output result.json` 保存完整响应，适合源码、大对象或快照。启用所需协议域后，通过事件游标读取网络、console、异常、脚本和其他协议事件：
+
+```bash
+pnpm --filter wework ai:verify devtools --session SESSION --value '{"action":"command","target":ID,"method":"Network.enable"}'
+pnpm --filter wework ai:verify devtools --session SESSION --value '{"action":"command","target":ID,"method":"Runtime.enable"}'
+pnpm --filter wework ai:verify devtools --session SESSION --value '{"action":"events","target":ID,"after":0,"limit":1000}' --output events.json
+```
+
+将返回的 `next` 作为下一次 `after`；`latest` 表示当前末尾。读取不删除事件。每个目标最多保留 20,000 个事件或 32 MiB，超过时 `lost` 明确报告该游标遗漏的事件数量。高频采集应及时分页读取；大 trace 使用 `Tracing.start` 的 `ReturnAsStream`，再用 `IO.read` / `IO.close`，避免把整个 trace 填入事件缓冲区。重连必须先显式 `detach`；发生意外断开时仍能读取已保留事件及 `Inspector.detached` 原因。打开该目标的 DevTools 面板可能使 Electron debugger 断开，不要同时使用。
+
+性能录制便捷命令复用上述通用协议，启用 CPU sampling、时间线、网络、console、异常和脚本事件。停止后自动生成：
+
+- `report.json`：CPU self / inclusive 耗时、带线程信息的长任务和时间线汇总、慢请求及发起调用栈、重定向/失败/未完成请求、console 和异常、起止指标。
+- `report.json.evidence.json`：原始 CPU profile、Chromium trace 和协议事件，便于复核及继续分析。
+
+CPU 位置通过脚本声明的 source map 映射到原始文件、行、列；隔离 E2E 构建启用 source map，普通构建不因此暴露源码。内联、文件和网络 source map 均可读取，网络映射使用 CDP 加载。无法映射时保留生成代码位置并记录错误，AI 可继续调用 `Debugger.getScriptSource` 定位。CPU 耗时属于采样数据；父子 inclusive 耗时、嵌套 trace 时间不能相加。`lostEvents` 或 `traceDataLoss` 非零时证据不完整，应缩短录制或调整通用采集方式。便捷录制对根目标采样；worker 等子目标可使用通用协议单独采样。
+
+网络正文和 console 对象的属性需按需用协议读取，报告不自动展开所有正文和远程对象。采集仅覆盖启用后发生的事件。报告与原始数据可能包含请求头、正文、日志等敏感信息，只保留在本地验证目录，不要提交仓库。最终用 `detach` 释放连接，始终用 `stop` 清理隔离实例。
+
+### 用户故事与回归
+
+`devtools-performance` checkpoint 在真实 Electron 中验证 AI 从发现目标到录制、复现、分析的完整流程：定位已知 CPU 热点并映射原始源码，捕获真实 HTTP 请求、console 和异常，读取 DOM，向 worker 子会话发送命令，在断点暂停后通过主进程恢复，再断开和重连。协议错误和重复录制必须明确失败且不破坏连接。它注册在现有 core CI 分片，无新增 CI 作业。
+
+```bash
+pnpm --filter wework e2e:desktop --segment devtools-performance
+```
+
+CPU 录制成功停止后，即使 trace 读取、解析或报告写入失败，也会清理录制状态并保留原始错误，允许下一次按需录制。若停止 profiler 本身失败，则保留尚未消费的录制状态。`devtools-performance` 还会制造真实的报告目录写入失败，验证随后可以重新开始并完成录制。
+
+显式 `detach` 成功后会丢弃该目标未完成的录制状态，可用于取消录制或在意外断开后重新开始；detach 失败时保留状态。真实 Electron 回归也覆盖录制中断开后重新录制并生成报告。
+
+所有桌面 checkpoint 共用结果目录内的 `desktop-control` 注册表，便于按需诊断自己的隔离实例。macOS 原生进程快照先读取 PID 父子关系，再只读取 Electron 进程树的详细指标和命令行，避免全机无关进程的参数撑满采集缓冲区。

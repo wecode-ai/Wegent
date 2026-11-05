@@ -102,6 +102,25 @@ test('cancels instant navigation without issuing another scroll write', () => {
   expect(current.scroller.scrollTo).toHaveBeenCalledTimes(writes)
 })
 
+test.each(['wheel', 'unmount'] as const)(
+  '%s cancels the instant completion frame after native offset read-back',
+  reason => {
+    const current = fixture({ reducedMotion: true })
+    fireEvent.scroll(current.scroller)
+    expect(current.navigation).toHaveBeenLastCalledWith('target')
+    const writes = vi.mocked(current.scroller.scrollTo).mock.calls.length
+    if (reason === 'wheel') fireEvent.wheel(current.scroller, { deltaY: -10 })
+    else current.unmount()
+    expect(current.navigation).toHaveBeenLastCalledWith(null)
+    const notifications = current.navigation.mock.calls.length
+    current.frame()
+    fireEvent.scroll(current.scroller)
+    current.frame()
+    expect(current.navigation).toHaveBeenCalledTimes(notifications)
+    expect(current.scroller.scrollTo).toHaveBeenCalledTimes(writes)
+  }
+)
+
 test.each(['wheel', 'scrollbar', 'pause', 'replace', 'unmount'] as const)(
   '%s cancels the pending native search animation at its current position',
   reason => {

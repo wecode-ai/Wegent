@@ -17,6 +17,12 @@ import { readRolloutHeader, seedAiVerifyRollout } from './ai-verify-rollout.mjs'
 import { WindowCommandQueue } from './desktop-control-queue.mjs'
 import { wrapWindowsScriptCommand } from './child-process-command.mjs'
 import { processIsAlive, windowsTaskkillArguments } from '../e2e/desktop/process-lifecycle.mjs'
+import {
+  createDevtoolsClient,
+  startPerformanceRecording,
+  stopPerformanceRecording,
+  writeDiagnosticFile,
+} from './ai-verify-devtools.mjs'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..')
@@ -136,6 +142,10 @@ function usage() {
   console.error(`Usage:
   pnpm --filter wework ai:verify start
   pnpm --filter wework ai:verify start --packaged true
+  pnpm --filter wework ai:verify devtools --session PATH --value '{"action":"targets"}'
+  pnpm --filter wework ai:verify devtools --session PATH --value '{"action":"command","target":ID,"method":"Network.enable"}'
+  pnpm --filter wework ai:verify performance-start --session PATH --target ID
+  pnpm --filter wework ai:verify performance-stop --session PATH --target ID --output report.json
   pnpm --filter wework ai:verify <${Object.keys(AI_VERIFY_ACTIONS).join('|')}|status|stop> --session PATH [options]
 
 Options:
@@ -812,6 +822,39 @@ async function main() {
   }
   if (command === 'status') {
     console.log(JSON.stringify(await request(session, session.token, '/status'), null, 2))
+    return
+  }
+  if (['devtools', 'performance-start', 'performance-stop'].includes(command)) {
+    const client = await createDevtoolsClient(
+      session.directory,
+      resolveCommandTimeout(options.timeout)
+    )
+    let result
+    if (command === 'devtools') {
+      const input = options.file ? await readFile(options.file, 'utf8') : options.value
+      if (!input) throw new Error('devtools requires --value JSON or --file PATH')
+      result = await client(JSON.parse(input))
+      if (options.output) {
+        await writeDiagnosticFile(resolve(options.output), result)
+        console.log(resolve(options.output))
+        return
+      }
+    } else {
+      const target = Number(options.target)
+      if (!Number.isSafeInteger(target) || target <= 0)
+        throw new Error('--target must be a webContents id')
+      if (command === 'performance-stop' && !options.output) throw new Error('--output is required')
+      result =
+        command === 'performance-start'
+          ? await startPerformanceRecording(client, session.directory, target)
+          : await stopPerformanceRecording(
+              client,
+              session.directory,
+              target,
+              resolve(options.output)
+            )
+    }
+    console.log(JSON.stringify(result, null, 2))
     return
   }
   const action = AI_VERIFY_ACTIONS[command]
