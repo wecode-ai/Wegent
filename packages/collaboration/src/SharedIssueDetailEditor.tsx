@@ -2259,7 +2259,10 @@ export function TodoEditor(props: TodoEditorProps) {
       value={assigneeTarget}
       onChange={setAssigneeTarget}
       disabled={!canAssign || saving}
-      className="relative inline-flex min-w-0 max-w-full cursor-pointer items-center gap-1.5 whitespace-nowrap text-inherit disabled:cursor-default"
+      className={cn(
+        "relative inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap text-inherit disabled:cursor-default",
+        workspacePanel && "min-w-0 max-w-full",
+      )}
       triggerContent={
         <>
           {assigneeTarget.startsWith("group:") ? (
@@ -2272,8 +2275,7 @@ export function TodoEditor(props: TodoEditorProps) {
           )}
           <strong
             className={cn(
-              "min-w-0 truncate",
-              workspacePanel ? "font-medium" : "font-normal",
+              workspacePanel ? "min-w-0 truncate font-medium" : "font-normal",
             )}
           >
             {assigneeName ?? t("todo.unassigned", "未指派")}

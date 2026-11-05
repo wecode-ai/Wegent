@@ -325,6 +325,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await control.command('waitFor', scoped(`cloud-todo-card-milestone-${issue.id}`), {
         text: 'Cloud release',
       })
+      await control.command('scrollIntoView', scoped(`cloud-todo-card-milestone-${issue.id}`))
       await captureScreenshot(control, 'milestones-02b-cloud-card-metadata.png', 'body')
       await request(`/api/v1/loop-items/${issue.id}`, 'DELETE')
       await openMilestones(control)
@@ -392,10 +393,17 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await control.command('waitFor', `${scoped('issue-milestone')}:enabled`)
       await control.command('select', scoped('issue-milestone'), { value: localId })
       await control.command('fill', scoped('cloud-todo-title'), { value: 'Local milestone Issue' })
+      await control.command('fill', scoped('cloud-todo-detail-description'), {
+        value: 'Describe the local delivery scope before splitting it into child Issues.',
+      })
       await control.command('click', scoped('cloud-todo-modal-close'))
       await control.command('clickWhenEnabled', scoped('collaboration-issue-create'))
       await control.command('waitFor', `${scoped('issue-milestone')}:enabled`)
       assert.equal(await control.command('getValue', scoped('issue-milestone')), localId)
+      const assigneeLabel = `${scoped('cloud-todo-create-assignee')} strong`
+      assert.equal(await control.command('getText', assigneeLabel), '未指派')
+      const [unassigned] = JSON.parse(await control.command('getElementMetrics', assigneeLabel))
+      assert.ok(unassigned.scrollWidth <= unassigned.clientWidth + 1, 'Short assignee must fit')
       await captureScreenshot(control, 'milestones-05b-local-restored-draft.png', 'body')
       await control.command('click', scoped('cloud-todo-modal-close'))
       const localIssue = await createCollaborationBoardIssue(
@@ -422,10 +430,14 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         await control.command('getElementMetrics', scoped('issue-title-properties'))
       )
       const [description] = JSON.parse(
-        await control.command('getElementMetrics', `${CONTENT} .task-detail-desc`)
+        await control.command('getElementMetrics', `${CONTENT} .task-detail-workspace-description`)
       )
       const [children] = JSON.parse(
         await control.command('getElementMetrics', scoped('issue-hierarchy-summary'))
+      )
+      assert.ok(
+        properties && description && children,
+        'Expected properties, body and child section'
       )
       assert.ok(properties.bottom <= description.top + 1, 'Properties must precede the body')
       assert.ok(description.bottom <= children.top + 1, 'Child Issues must follow the body')
@@ -575,9 +587,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await control.command('waitFor', scoped(`cloud-todo-card-milestone-${localIssue}`), {
         text: '协作交付目标',
       })
+      await control.command('scrollIntoView', scoped(`cloud-todo-card-milestone-${localIssue}`))
       await captureScreenshot(control, 'milestones-08g-parent-milestone.png', 'body')
       await control.command('click', scoped('cloud-board-parent-layout'))
       await control.command('waitFor', scoped(`cloud-todo-card-${localIssue}`))
+      await control.command('scrollIntoView', scoped(`cloud-todo-card-milestone-${localIssue}`))
       await captureScreenshot(control, 'milestones-08h-board-milestone.png', 'body')
       await control.command('waitFor', scoped(`collaboration-issue-children-${localIssue}`), {
         text: '1/1',
