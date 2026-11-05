@@ -1,11 +1,13 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { ComponentProps } from 'react'
-import { expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import '@/i18n'
 import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
 import type { InstalledPluginItem } from '../PluginManagementRows'
 import { CategoryBrowseDialog } from './CategoryBrowseDialog'
 import { MarketplaceCatalogView } from './MarketplaceCatalogView'
+import { MarketplaceCardGrid } from './MarketplaceCardGrid'
+import { PluginMarketplaceRevealButton } from './PluginMarketplaceRevealButton'
 import {
   findInstalledPluginForMarketplaceItem,
   isMarketplaceUninstallPending,
@@ -34,6 +36,36 @@ const labels = {
   copy: '复制',
 }
 const noop = vi.fn()
+
+beforeEach(() => {
+  // Model a real viewport and full-height content, rather than treating every
+  // element as jsdom's zero-size box. Keep the production virtualizer real.
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
+    const viewport = this.classList.contains('overflow-y-auto')
+    const contentHeight = Number.parseFloat((this.firstElementChild as HTMLElement)?.style.height)
+    const height = viewport ? 240 : Number.isFinite(contentHeight) ? contentHeight : 88
+    const scroll = this.closest('.overflow-y-auto')?.scrollTop ?? 0
+    return new DOMRect(0, viewport ? 0 : 40 - scroll, 1100, height)
+  })
+  vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function () {
+    return this.getBoundingClientRect().height
+  })
+  vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(1100)
+  vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function () {
+    return this.getBoundingClientRect().height
+  })
+  vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1100)
+  vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(function () {
+    return Math.max(
+      this.clientHeight,
+      ...Array.from(this.querySelectorAll<HTMLElement>('[style]')).map(
+        element => (Number.parseFloat(element.style.height) || 0) + 40
+      )
+    )
+  })
+})
+
+afterEach(() => vi.restoreAllMocks())
 
 function listing(id: number, marketplace: string): PluginMarketplaceItem {
   return {
@@ -103,7 +135,7 @@ const inventory = [
 ]
 
 function view(
-  entry: 'grid' | 'search' | 'category',
+  entry: 'grid' | 'search' | 'category' | 'official',
   pending: ReadonlySet<string>,
   installing = false,
   listings = items,
@@ -140,7 +172,7 @@ function view(
     hasMarketplace: true,
     marketplaces: [{ key: 'cloud:default', id: 'cloud', name: 'Cloud', kind: 'cloud' }],
     selectedMarketplaceKey: 'cloud:default',
-    selectedDistributionTab: 'all',
+    selectedDistributionTab: entry === 'official' ? 'official' : 'all',
     marketplaceSourceFilterKey: '',
     marketplaceDistributionLabels: {
       official: '官方',
@@ -173,6 +205,127 @@ function view(
   }
   return <MarketplaceCatalogView {...props} />
 }
+
+test('scrolling only resolves operation state for newly visible grid rows', async () => {
+  const catalog = Array.from({ length: 200 }, (_, index) => listing(index + 1, 'wegent'))
+  const isLocallyUninstalling = vi.fn<(item: PluginMarketplaceItem) => boolean>(() => false)
+  const result = render(
+    <div className="overflow-y-auto" data-plugin-market-scroll-region="">
+      <MarketplaceCardGrid
+        items={catalog}
+        isLoggedIn
+        isReconciling={false}
+        installingMarketplacePluginIds={new Set()}
+        isLocallyUninstalling={isLocallyUninstalling}
+        allowPendingRetry={false}
+        labels={labels}
+        onAction={noop}
+      />
+    </div>
+  )
+  const mountedIds = () =>
+    Array.from(result.container.querySelectorAll('article.plugin-market-card')).map(
+      card => card.getAttribute('data-testid')!
+    )
+  const initial = new Set(mountedIds())
+  const viewport = result.container.firstElementChild as HTMLElement
+  isLocallyUninstalling.mockClear()
+  viewport.scrollTop = 96
+  fireEvent.scroll(viewport)
+  await waitFor(() => expect(mountedIds().some(id => !initial.has(id))).toBe(true))
+  expect(isLocallyUninstalling).toHaveBeenCalled()
+  const reevaluated = isLocallyUninstalling.mock.calls.map(
+    ([item]) => `plugin-marketplace-row-${item.id}`
+  )
+  expect(reevaluated.filter(id => initial.has(id))).toEqual([])
+})
+
+test.each(['official', 'search', 'category'] as const)(
+  '%s mounts a viewport-sized slice and follows the actual scroll container',
+  async entry => {
+    const catalog = Array.from({ length: 200 }, (_, index) => ({
+      ...listing(index + 1, 'openai-curated-remote'),
+      name: `plugin-${index + 1}`,
+      displayName: `Plugin ${index + 1}`,
+      installed: false,
+      installedLocally: false,
+      installedPluginId: null,
+    }))
+    const result = render(view(entry, new Set(), false, catalog, []))
+    const viewport = result.container.querySelector<HTMLElement>('.overflow-y-auto')!
+    await screen.findByTestId('plugin-marketplace-row-1')
+    expect(result.container.querySelectorAll('article.plugin-market-card').length).toBeLessThan(30)
+    expect(screen.queryByTestId('plugin-marketplace-row-180')).not.toBeInTheDocument()
+    viewport.scrollTop = viewport.scrollHeight - viewport.clientHeight
+    fireEvent.scroll(viewport)
+    await waitFor(() =>
+      expect(screen.queryByTestId('plugin-marketplace-row-1')).not.toBeInTheDocument()
+    )
+    expect(result.container.querySelectorAll('article.plugin-market-card').length).toBeLessThan(30)
+    expect(result.container.querySelector('article.plugin-market-card')).toBeInTheDocument()
+    expect(
+      screen.getByTestId(`plugin-marketplace-row-${entry === 'search' ? 100 : 200}`)
+    ).toBeInTheDocument()
+  }
+)
+
+test('the shared grid updates columns after resizing without losing the final plugin', async () => {
+  const media = Object.assign(new EventTarget(), {
+    matches: true,
+    media: '(max-width: 1050px)',
+    onchange: null,
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+  })
+  vi.spyOn(window, 'matchMedia').mockReturnValue(media)
+  const catalog = Array.from({ length: 200 }, (_, index) => listing(index + 1, 'wegent'))
+  const result = render(view('official', new Set(), false, catalog, []))
+  const first = await screen.findByTestId('plugin-marketplace-row-1')
+  expect(first.parentElement?.children).toHaveLength(1)
+  act(() => {
+    media.matches = false
+    media.dispatchEvent(new Event('change'))
+  })
+  await waitFor(() =>
+    expect(screen.getByTestId('plugin-marketplace-row-1').parentElement?.children).toHaveLength(2)
+  )
+  const viewport = screen.getByTestId('plugins-market-scroll-region')
+  viewport.scrollTop = viewport.scrollHeight - viewport.clientHeight
+  fireEvent.scroll(viewport)
+  await screen.findByTestId('plugin-marketplace-row-200')
+  expect(result.container.querySelectorAll('article.plugin-market-card').length).toBeLessThan(30)
+})
+
+test('marketplace cards defer logo fetching and decoding in categorized previews', async () => {
+  const item = {
+    ...listing(54, 'openai-curated-remote'),
+    interface: { logo: 'https://example.com/plugin.png' },
+  }
+  render(view('official', new Set(), false, [item], []))
+  const row = await screen.findByTestId('plugin-marketplace-row-54')
+  expect(row.querySelector('img')).toHaveAttribute('loading', 'lazy')
+  expect(row.querySelector('img')).toHaveAttribute('decoding', 'async')
+  fireEvent.error(row.querySelector('img')!)
+  expect(row.querySelector('img')).not.toBeInTheDocument()
+})
+
+test('more previews defer their icons while keeping the category action available', () => {
+  const onReveal = vi.fn()
+  const items = [1, 2, 3].map(id => ({
+    ...listing(id, 'openai-curated-remote'),
+    interface: { logo: `https://example.com/${id}.png` },
+  }))
+  const result = render(
+    <PluginMarketplaceRevealButton items={items} label="更多" onReveal={onReveal} />
+  )
+  expect(result.container.querySelectorAll('img')).toHaveLength(3)
+  for (const image of result.container.querySelectorAll('img')) {
+    expect(image).toHaveAttribute('loading', 'lazy')
+    expect(image).toHaveAttribute('decoding', 'async')
+  }
+  fireEvent.click(screen.getByRole('button', { name: '更多' }))
+  expect(onReveal).toHaveBeenCalledOnce()
+})
 
 test('the local operation uses the same resolved installation ID as uninstall execution', () => {
   expect(resolveMarketplaceUninstallId(items[0], inventory)).toBe(localId)

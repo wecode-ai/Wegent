@@ -20,6 +20,7 @@ import {
   PluginInstallationSupersededError,
 } from '@/features/plugins/waitForPluginDeviceReceipt'
 import { useInstalledPluginDetail } from './hooks/useInstalledPluginDetail'
+import { useMarketplacePluginDetail } from './hooks/useMarketplacePluginDetail'
 import {
   beginPluginSettingsRequest,
   ExpiredPluginSettingsRequest,
@@ -251,7 +252,6 @@ import {
   isCodexCatalogItem,
   isMarketplaceSourceValid,
   isUserAddedMarketplace,
-  keepRicherMarketplacePluginDetail,
   localMarketplaceIdFromItem,
   localMarketplaceKey,
   marketplaceComponentCount,
@@ -472,7 +472,6 @@ export function PluginsWorkspace({
     message: string
     source?: 'detail-read' | 'auth-health'
   } | null>(null)
-  const [marketplaceDetailLoadError, setMarketplaceDetailLoadError] = useState<string | null>(null)
   const [marketplaceDetailRevision, setMarketplaceDetailRevision] = useState(0)
   const connectorActionInFlight = useRef(false)
   const [connectorActionSlug, setConnectorActionSlug] = useState<string | null>(null)
@@ -819,8 +818,6 @@ export function PluginsWorkspace({
     setIsCreateMenuOpen(false)
     navigateTo('/plugins/create')
   }, [])
-  const [selectedMarketplacePluginDetail, setSelectedMarketplacePluginDetail] =
-    useState<InstalledPluginItem | null>(null)
 
   const selectedMarketplace = useMemo(
     () =>
@@ -4823,6 +4820,55 @@ export function PluginsWorkspace({
     setSelectedMarketplacePluginId,
   })
 
+  const selectedMarketplaceDetailKey = selectedMarketplacePlugin
+    ? JSON.stringify([
+        marketplaceCacheKeyValue,
+        currentDeviceId,
+        marketplacePluginDetailSelectionKey(selectedMarketplacePlugin),
+        marketplaces.find(
+          entry => entry.id === localMarketplaceIdFromItem(selectedMarketplacePlugin)
+        )?.path,
+      ])
+    : ''
+  const marketplaceInstalledDetail = selectedMarketplacePlugin
+    ? findInstalledPluginForMarketplaceItem(selectedMarketplacePlugin, installedPlugins)
+    : null
+  const marketplaceBaseDetail = useMemo(
+    () =>
+      selectedMarketplacePlugin
+        ? marketplaceInstalledDetail
+          ? withMarketplaceListingInterface(marketplaceInstalledDetail, selectedMarketplacePlugin)
+          : toMarketplaceInstalledPluginItem(selectedMarketplacePlugin)
+        : null,
+    [selectedMarketplacePlugin, marketplaceInstalledDetail]
+  )
+  const {
+    detail: selectedMarketplacePluginDetail,
+    loading: marketplaceDetailLoading,
+    error: marketplaceDetailLoadError,
+  } = useMarketplacePluginDetail({
+    selectionKey: selectedMarketplaceDetailKey,
+    revision: marketplaceDetailRevision,
+    base: marketplaceBaseDetail,
+    errorMessage: t('workbench.plugins_detail_load_failed', '插件详情加载失败，请重试。'),
+    read:
+      selectedMarketplacePlugin && localMarketplaceIdFromItem(selectedMarketplacePlugin)
+        ? () =>
+            marketplaceInstalledDetail
+              ? localPluginApi.readInstalledPluginDetail(marketplaceInstalledDetail.raw)
+              : localPluginApi.readMarketplacePluginDetail(
+                  marketplacePluginDetailSource(selectedMarketplacePlugin, marketplacesRef.current),
+                  selectedMarketplacePlugin.name,
+                  {
+                    version: JSON.stringify([
+                      selectedMarketplacePlugin.version,
+                      selectedMarketplacePlugin.latestReleaseId,
+                    ]),
+                  }
+                )
+        : undefined,
+  })
+
   const selectedPlugin = useInstalledPluginDetail(
     selectedPluginSummary,
     localPluginApi.readInstalledPluginDetail,
@@ -4994,80 +5040,6 @@ export function PluginsWorkspace({
     selectedPluginId,
     t,
   ])
-
-  const selectedMarketplacePluginRef = useRef(selectedMarketplacePlugin)
-  selectedMarketplacePluginRef.current = selectedMarketplacePlugin
-  const installedPluginsForDetailRef = useRef(installedPlugins)
-  installedPluginsForDetailRef.current = installedPlugins
-  const selectedMarketplaceDetailKey = selectedMarketplacePlugin
-    ? JSON.stringify([
-        marketplacePluginDetailSelectionKey(selectedMarketplacePlugin),
-        marketplaces.find(
-          entry => entry.id === localMarketplaceIdFromItem(selectedMarketplacePlugin)
-        )?.path,
-      ])
-    : ''
-
-  useEffect(() => {
-    setMarketplaceDetailLoadError(null)
-    if (!selectedMarketplaceDetailKey) {
-      setSelectedMarketplacePluginDetail(null)
-      return
-    }
-
-    const selected = selectedMarketplacePluginRef.current
-    if (!selected) {
-      setSelectedMarketplacePluginDetail(null)
-      return
-    }
-
-    const installedDetail = findInstalledPluginForMarketplaceItem(
-      selected,
-      installedPluginsForDetailRef.current
-    )
-    const baseDetail = installedDetail
-      ? withMarketplaceListingInterface(installedDetail, selected)
-      : toMarketplaceInstalledPluginItem(selected)
-
-    const marketplaceId = localMarketplaceIdFromItem(selected)
-    const shouldFetchLocalDetail = Boolean(marketplaceId)
-
-    if (!shouldFetchLocalDetail) {
-      setSelectedMarketplacePluginDetail(baseDetail)
-      return
-    }
-
-    let disposed = false
-    setSelectedMarketplacePluginDetail(baseDetail)
-    const readDetail = async () =>
-      installedDetail
-        ? localPluginApi.readInstalledPluginDetail(installedDetail.raw)
-        : localPluginApi.readMarketplacePluginDetail(
-            marketplacePluginDetailSource(selected, marketplacesRef.current),
-            selected.name
-          )
-    void readDetail()
-      .then(detail => {
-        if (disposed) return
-        setSelectedMarketplacePluginDetail(previous =>
-          withMarketplacePluginDetail(
-            keepRicherMarketplacePluginDetail(previous, baseDetail),
-            detail
-          )
-        )
-      })
-      .catch(() => {
-        if (!disposed) {
-          setMarketplaceDetailLoadError(
-            t('workbench.plugins_detail_load_failed', '插件详情加载失败，请重试。')
-          )
-        }
-      })
-
-    return () => {
-      disposed = true
-    }
-  }, [localPluginApi, selectedMarketplaceDetailKey, marketplaceDetailRevision, t])
 
   useEffect(() => {
     if (!selectedMarketplacePlugin) {
@@ -5867,6 +5839,7 @@ export function PluginsWorkspace({
       <>
         <PluginDetailView
           plugin={detailPlugin}
+          detailLoading={marketplaceDetailLoading}
           backLabel={t('workbench.plugins_back_to_marketplace', '返回插件市场')}
           usableOnThisDevice={isInstalled}
           accessRole={selectedMarketplacePlugin.accessRole}

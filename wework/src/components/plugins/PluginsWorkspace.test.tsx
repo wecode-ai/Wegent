@@ -47,7 +47,7 @@ import type {
 } from '@/types/api'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { mergeMarketplaceCatalog } from './marketplaceCatalogMerge'
 import * as pluginDetailView from './PluginDetailView'
 import { PluginsWorkspace } from './PluginsWorkspace'
@@ -1750,7 +1750,30 @@ function holdNextCloudPluginRead(source: 'marketplace' | 'installed') {
 }
 
 describe('PluginsWorkspace', () => {
+  let restoreMenuGeometry: Array<() => void> = []
+  afterEach(() => {
+    restoreMenuGeometry.forEach(restore => restore())
+    restoreMenuGeometry = []
+  })
   beforeEach(() => {
+    // Radix hides detached anchors. Model visible action triggers instead of
+    // jsdom's zero-size rectangles without replacing the real popover logic.
+    const getRect = HTMLElement.prototype.getBoundingClientRect
+    const bounds = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(function () {
+        const id = this.dataset.testid ?? ''
+        return id.startsWith('plugin-marketplace-actions-') && !id.includes('actions-menu-')
+          ? new DOMRect(16, 16, 28, 28)
+          : getRect.call(this)
+      })
+    const width = vi.spyOn(document.documentElement, 'clientWidth', 'get').mockReturnValue(1024)
+    const height = vi.spyOn(document.documentElement, 'clientHeight', 'get').mockReturnValue(768)
+    restoreMenuGeometry = [
+      () => bounds.mockRestore(),
+      () => width.mockRestore(),
+      () => height.mockRestore(),
+    ]
     delete window.__WEWORK_RUNTIME_CONFIG__
     telemetryMocks.track.mockClear()
     desktopHostMock.mockReset()
@@ -2744,23 +2767,35 @@ describe('PluginsWorkspace', () => {
   })
 
   test('renders large search result sets in bounded batches', async () => {
-    mockSystemSkillsFetch({ marketplaceCount: 80 })
-    render(<PluginsWorkspace />)
+    // The real virtualizer needs a non-zero scroll viewport in jsdom.
+    const geometry = [
+      vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(560),
+      vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1100),
+      vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(88),
+    ]
+    try {
+      mockSystemSkillsFetch({ marketplaceCount: 80 })
+      render(<PluginsWorkspace />)
 
-    expect(await screen.findByText('Documents')).toBeInTheDocument()
-    fireEvent.change(screen.getByTestId('plugins-search-input'), {
-      target: { value: 'plugin' },
-    })
+      expect(await screen.findByText('Documents')).toBeInTheDocument()
+      fireEvent.change(screen.getByTestId('plugins-search-input'), {
+        target: { value: 'plugin' },
+      })
 
-    await waitFor(() => expect(screen.getAllByTestId(/^plugin-marketplace-row-/)).toHaveLength(40))
+      await waitFor(() =>
+        expect(screen.getAllByTestId(/^plugin-marketplace-row-/)).toHaveLength(40)
+      )
 
-    await userEvent.click(screen.getByTestId('plugins-category-more-all'))
+      await userEvent.click(screen.getByTestId('plugins-category-more-all'))
 
-    await waitFor(() =>
-      expect(screen.queryByTestId('plugins-category-more-all')).not.toBeInTheDocument()
-    )
-    expect(screen.getAllByTestId(/^plugin-marketplace-row-/).length).toBeGreaterThan(0)
-    expect(screen.queryByTestId('plugins-category-browse-dialog')).not.toBeInTheDocument()
+      await waitFor(() =>
+        expect(screen.queryByTestId('plugins-category-more-all')).not.toBeInTheDocument()
+      )
+      expect(screen.getAllByTestId(/^plugin-marketplace-row-/).length).toBeGreaterThan(0)
+      expect(screen.queryByTestId('plugins-category-browse-dialog')).not.toBeInTheDocument()
+    } finally {
+      geometry.forEach(mock => mock.mockRestore())
+    }
   })
 
   test('switching distribution tabs does not start extra plugin/list requests', async () => {
@@ -8479,6 +8514,7 @@ describe('PluginsWorkspace', () => {
       })
       const previousInvoke = vi.mocked(requestLocalExecutor).getMockImplementation()
       let rejected = false
+      let releaseDetail: (() => void) | undefined
       vi.mocked(requestLocalExecutor).mockImplementation((command: string, args?: unknown) => {
         if (command === 'executor.plugins.manifest.read') {
           expect(args).toEqual({ marketplacePath: source.path, pluginName: 'github' })
@@ -8497,6 +8533,11 @@ describe('PluginsWorkspace', () => {
               rejected = true
               return Promise.reject(new Error('403 <html><svg>upstream response</svg></html>'))
             }
+            return new Promise(resolve => {
+              releaseDetail = () => {
+                void Promise.resolve(previousInvoke?.(command, args)).then(resolve)
+              }
+            })
           }
         }
         return previousInvoke?.(command, args) as Promise<unknown>
@@ -8511,11 +8552,18 @@ describe('PluginsWorkspace', () => {
         expect(screen.queryByText(/upstream response/)).not.toBeInTheDocument()
         await userEvent.click(screen.getByTestId('plugin-detail-load-retry'))
       }
+      await waitFor(() => expect(releaseDetail).toBeTypeOf('function'))
+      expect(screen.getByTestId('plugin-detail-loading')).toBeInTheDocument()
+      expect(
+        screen.queryByTestId('plugin-connection-manage-connector:github')
+      ).not.toBeInTheDocument()
+      await act(async () => releaseDetail!())
       await waitFor(() =>
         expect(screen.getByTestId('plugin-connection-manage-connector:github')).toHaveTextContent(
           '登录'
         )
       )
+      expect(screen.queryByTestId('plugin-detail-loading')).not.toBeInTheDocument()
       expect(screen.queryByTestId('plugin-detail-action-error')).not.toBeInTheDocument()
       await userEvent.click(screen.getByTestId('plugin-connection-manage-connector:github'))
       expect(await screen.findByTestId('plugin-github-cli-auth-dialog')).toBeInTheDocument()

@@ -238,43 +238,6 @@ export function withMarketplacePluginDetail(
   }
 }
 
-export function pluginDetailHasVisibleComponents(plugin: InstalledPluginItem): boolean {
-  const components = plugin.raw.spec.components
-  return (
-    components.skills.length > 0 ||
-    components.commands.length > 0 ||
-    (components.apps?.length ?? 0) > 0 ||
-    components.agents.length > 0 ||
-    components.mcps.length > 0 ||
-    components.hooks.length > 0 ||
-    (components.connectors?.length ?? 0) > 0
-  )
-}
-
-export function keepRicherMarketplacePluginDetail(
-  previous: InstalledPluginItem | null,
-  next: InstalledPluginItem
-): InstalledPluginItem {
-  if (
-    previous &&
-    previous.raw.spec.source.pluginKey === next.raw.spec.source.pluginKey &&
-    pluginDetailHasVisibleComponents(previous) &&
-    !pluginDetailHasVisibleComponents(next)
-  ) {
-    return {
-      ...next,
-      raw: {
-        ...next.raw,
-        spec: {
-          ...next.raw.spec,
-          components: previous.raw.spec.components,
-        },
-      },
-    }
-  }
-  return next
-}
-
 export function createDefaultPluginApi(apiBaseUrl?: string, token?: string | null) {
   const runtime = getRuntimeConfig()
   const resolvedApiBaseUrl = apiBaseUrl || runtime.apiBaseUrl
