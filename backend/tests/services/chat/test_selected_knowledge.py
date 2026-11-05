@@ -171,6 +171,36 @@ def test_apply_selected_knowledge_context_is_idempotent(
     assert request.user_selected_skills == ["demo-knowledge"]
 
 
+def test_apply_selected_knowledge_context_rejects_partially_registered_providers() -> (
+    None
+):
+    request = ExecutionRequest(
+        bot=[{"shell_type": "Chat"}],
+        knowledge_base_ids=[12],
+        external_knowledge_refs=[
+            {
+                "provider": "unregistered",
+                "mode": "explicit",
+                "id": "kb-1",
+                "name": "Unavailable knowledge",
+            }
+        ],
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        apply_selected_knowledge_context(
+            MagicMock(),
+            request,
+            SimpleNamespace(
+                json={"spec": {"knowledgeBaseRefs": [{"id": 12, "name": "产品知识"}]}}
+            ),
+        )
+
+    assert exc_info.value.status_code == 503
+    assert "unregistered" in exc_info.value.detail
+    assert request.provider_native_knowledge is False
+
+
 def test_selected_wegent_source_includes_bounded_routing_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1053,7 +1083,7 @@ def test_apply_selected_knowledge_context_keeps_legacy_path_for_unsupported_shel
     ("skill_name", "expected_mcp_name"),
     [
         ("wegent-knowledge", "wegent-knowledge"),
-        ("dingtalk-docs", "dingtalk-docs_dingtalk_docs"),
+        ("ap-knowledge", "ap-knowledge"),
     ],
 )
 def test_provider_skill_frontmatter_matches_runtime_mcp_resolution(
@@ -1082,6 +1112,33 @@ def test_provider_skill_frontmatter_matches_runtime_mcp_resolution(
         skill_configs=[skill_config],
     )
     activate_provider_native_knowledge(request, [skill_name])
+
+    assert request.provider_native_knowledge is True
+
+
+def test_connector_managed_skill_keeps_the_legacy_personal_url() -> None:
+    """Historical API-key users keep their personal MCP URL in the Skill."""
+    skill_path = (
+        Path(__file__).resolve().parents[3]
+        / "init_data"
+        / "skills"
+        / "dingtalk-docs"
+        / "SKILL.md"
+    )
+    frontmatter = yaml.safe_load(
+        skill_path.read_text(encoding="utf-8").split("---", 2)[1]
+    )
+    skill_config = {"name": "dingtalk-docs", **frontmatter}
+
+    servers = extract_skill_mcp_servers([skill_config])
+    assert [server["name"] for server in servers] == ["dingtalk-docs_dingtalk_docs"]
+
+    request = ExecutionRequest(
+        bot=[{"shell_type": "ClaudeCode", "mcp_servers": servers}],
+        skill_names=["dingtalk-docs"],
+        skill_configs=[skill_config],
+    )
+    activate_provider_native_knowledge(request, ["dingtalk-docs"])
 
     assert request.provider_native_knowledge is True
 

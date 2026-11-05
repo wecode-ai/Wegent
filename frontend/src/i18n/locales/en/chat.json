@@ -36,6 +36,7 @@
     "edit": "Edit",
     "save": "Save",
     "cancel": "Cancel",
+    "authorize_connector": "Open app authorization",
     "re_edit": "Re-edit",
     "re_edit_tooltip": "Re-edit",
     "forward": "Send to Collaboration"

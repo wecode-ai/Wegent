@@ -43,6 +43,13 @@ _COMPONENTS = {
         "/api/internal/workspace-archives/{task_id}/restore-sandbox",
         "SandboxRestoreResponse",
     ),
+    "connector_connection_refresh": (
+        "connector_apps",
+        "refresh_connector_connection",
+        "POST",
+        "/api/connector-apps/{slug}/connection/refresh",
+        "ConnectorConnectionResponse",
+    ),
     "runtime_rpc": (
         "internal.robot_queue",
         "emit_runtime_rpc",

@@ -152,6 +152,34 @@ fn skill_materialization_rejects_path_traversal_slugs() {
 }
 
 #[test]
+fn unauthorized_app_skill_guides_the_agent_to_request_authorization() {
+    let temp = tempfile::tempdir().expect("temporary directory should be created");
+    let skills_root = temp.path().join("skills");
+
+    materialize_skills(
+        &skills_root,
+        &[json!({
+            "slug": "dingtalk_log",
+            "name": "钉钉日志",
+            "authorizationRequired": true,
+            "tools": [],
+        })],
+        &[],
+        &mut false,
+    )
+    .expect("guidance skill should materialize");
+
+    let content = fs::read_to_string(
+        skills_root
+            .join("wegent-connector-dingtalk_log")
+            .join("SKILL.md"),
+    )
+    .expect("skill should be readable");
+    assert!(content.contains("connector_auth_required"));
+    assert!(content.contains("connectorSlug=dingtalk_log"));
+}
+
+#[test]
 fn revision_rejects_stale_cloud_mutations() {
     let revision = AtomicU64::new(0);
 

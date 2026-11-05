@@ -43,7 +43,12 @@ import {
   listPersonalMarketplacePluginsFromDisk,
   peekLocalCodexPluginsReadState,
 } from '@/api/local/codexPlugins'
-import { authorizeWegentConnector, listWegentConnectorApps } from '@/api/cloud/connectorApps'
+import {
+  authorizeWegentConnector,
+  listWegentConnectorApps,
+  notifyConnectorAuthorizationChanged,
+  refreshWegentConnector,
+} from '@/api/cloud/connectorApps'
 import { trackPluginEvent as track } from '@/telemetry/businessEvents'
 import {
   installedPluginTelemetryIdentity,
@@ -3280,6 +3285,14 @@ export function PluginsWorkspace({
       if (app.connection.status === 'connected') {
         navigateTo('/settings/connections')
         return
+      }
+      if (app.connection.status === 'expired') {
+        const connection = await refreshWegentConnector(cloudApiBaseUrl, cloudToken, app.slug)
+        if (connection.status === 'connected') {
+          notifyConnectorAuthorizationChanged()
+          navigateTo('/settings/connections')
+          return
+        }
       }
       await authorizeWegentConnector(
         cloudApiBaseUrl,

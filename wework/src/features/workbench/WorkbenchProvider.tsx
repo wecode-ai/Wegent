@@ -2531,8 +2531,14 @@ export function WorkbenchProvider({
             void listWegentInstalledConnectorApps(cloudConnection.apiBaseUrl, cloudConnection.token)
               .then(async installedConnectors => {
                 if (!isCurrent() || !pluginInventoryReadIsCurrent(cacheKey, snapshot)) return
-                const connected = installedConnectors.apps.filter(
-                  app => app.enabled && app.callable
+                const visible = installedConnectors.apps.filter(
+                  app =>
+                    app.enabled &&
+                    ['connected', 'expired'].includes(app.connection.status) &&
+                    (app.tool_summaries?.length ?? 0) > 0
+                )
+                const connected = visible.filter(
+                  app => app.callable && app.connection.status === 'connected'
                 )
                 const synced = await requestLocalExecutor<{
                   apps: Array<{ slug: string; skillPath: string }>
@@ -2548,14 +2554,14 @@ export function WorkbenchProvider({
                 const paths = new Map(synced.apps.map(app => [app.slug, app.skillPath]))
                 if (getPluginMarketplaceCache(cacheKey)?.deviceId !== deviceId) return
                 writePluginInventory(cacheKey, deviceId, {
-                  connectorApps: connected
+                  connectorApps: visible
                     .filter(app => !isSystemApplicationConnectorSlug(app.slug))
                     .map(app => ({
                       id: `wegent:${app.slug}`,
                       name: app.runtime_name ?? app.slug,
                       description: app.description ?? '',
                       logoUrl: app.icon_url ?? null,
-                      isAccessible: true,
+                      isAccessible: app.connection.status === 'connected',
                       isEnabled: true,
                       pluginDisplayNames: ['Wegent Cloud'],
                       source: 'wegent-connector',

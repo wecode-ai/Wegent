@@ -1,0 +1,13 @@
+{
+  "order": 15500,
+  "scenario": "./scenarios/connector-oauth.scenario.mjs",
+  "scenarioOnly": true,
+  "cloudOnly": true,
+  "ci": {
+    "cloud": {
+      "order": 5500,
+      "shard": 8,
+      "position": 4000
+    }
+  }
+}

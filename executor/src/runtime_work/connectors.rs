@@ -422,8 +422,22 @@ fn materialize_skills(
                     .join("\n")
             )
         };
+        let authorization_section = if app
+            .get("authorizationRequired")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            format!(
+                "\nThis app is not authorized for the current user yet, so its tools are unavailable.\n\
+                 When the user's request needs it, say briefly that authorization is required and end the turn with\n\
+                 `connector_auth_required` and `connectorSlug={slug}` so Wework shows its authorization card.\n\
+                 Do not claim the app does not exist and do not guess credentials.\n"
+            )
+        } else {
+            String::new()
+        };
         let body = format!(
-            "---\nname: wegent-connector-{slug}\ndescription: Use the administrator-managed Wegent connector app {slug}.\n---\n\n# Wegent connector `{slug}`\n\n{description}\n\nUse the `wegent_apps` MCP server. Only call tools whose names start with `{slug}__`.\nAuthentication and credentials are managed by Wegent; never request or expose them.\n{tool_section}"
+            "---\nname: wegent-connector-{slug}\ndescription: Use the administrator-managed Wegent connector app {slug}.\n---\n\n# Wegent connector `{slug}`\n\n{description}\n\nUse the `wegent_apps` MCP server. Only call tools whose names start with `{slug}__`.\nAuthentication and credentials are managed by Wegent; never request or expose them.\n{authorization_section}{tool_section}"
         );
         write_skill_if_changed(&skill_path, &body, changed)?;
         let marker = tool_definitions_marker(tools.iter().filter(|tool| {

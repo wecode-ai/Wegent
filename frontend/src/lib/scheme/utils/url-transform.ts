@@ -46,7 +46,8 @@ export function createSchemeAwareUrlTransform(
     }
 
     // Fallback to react-markdown default for any other cases
-    // If react-markdown deems it unsafe, it will be sanitized
-    return defaultUrlTransform(trimmed)
+    // If react-markdown deems it unsafe, it will be sanitized. The helper can
+    // be missing under CommonJS interop, so unknown schemes fail closed.
+    return typeof defaultUrlTransform === 'function' ? defaultUrlTransform(trimmed) : ''
   }
 }
