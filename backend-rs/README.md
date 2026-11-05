@@ -62,6 +62,13 @@ under the same prefix remain with Python.
 
 ## Observability foundation
 
+MySQL migration and default-data initialization run from the Rust executable
+before HTTP and background consumers start. The hybrid launcher then starts
+Python with initialization owned by Rust. Historical Alembic revision IDs and
+`alembic_version` remain compatible; migration execution uses embedded SQL and
+native Rust data transformations. See the [database migration guide](../docs/en/wegent/developer-guide/rust-database-migrations.md)
+for commands, configuration and verification.
+
 The Rust binary initializes `brz-logs`, writing its `info.log`, `warn.log`, and
 `error.log` files to a `rust` subdirectory of the Backend `LOG_DIR` supplied by
 the repository launcher. The hybrid launcher nests it under `logs/backend/rust`

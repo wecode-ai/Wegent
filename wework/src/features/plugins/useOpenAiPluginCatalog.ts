@@ -6,7 +6,6 @@ import { getPluginMarketplaceCache, setPluginMarketplaceCache } from './pluginMa
 import { raceWithTimeout } from '@/lib/promise-timeout'
 import { remoteCatalogErrorKind } from './remotePluginError'
 
-const FRESH_MS = 60_000
 const REQUEST_TIMEOUT_MS = 30_000
 
 export function useOpenAiPluginCatalog({
@@ -18,21 +17,21 @@ export function useOpenAiPluginCatalog({
   enabled: boolean
   readCatalog: (options: {
     forceRefetch: boolean
+    accountScope: string
   }) => Promise<{ items: PluginMarketplaceItem[]; deviceId: string }>
 }) {
   const [refreshRequest, setRefreshRequest] = useState({ cacheKey, revision: 0 })
   const revision = refreshRequest.cacheKey === cacheKey ? refreshRequest.revision : 0
-  const forcedRevision = useRef(-1)
+  const forcedRevision = useRef<string | null>(null)
   const [state, setState] = useState<{
     cacheKey: string
     loading: boolean
     error: ReturnType<typeof remoteCatalogErrorKind> | null
   }>({ cacheKey, loading: false, error: null })
-  const refresh = useCallback(
-    () => setRefreshRequest(value => ({ cacheKey, revision: value.revision + 1 })),
-    [cacheKey]
-  )
-  const requested = enabled || revision > 0
+  const refresh = useCallback(() => {
+    if (enabled) setRefreshRequest(value => ({ cacheKey, revision: value.revision + 1 }))
+  }, [cacheKey, enabled])
+  const requested = enabled
 
   useEffect(() => {
     if (!requested) return
@@ -40,20 +39,14 @@ export function useOpenAiPluginCatalog({
     void Promise.resolve().then(async () => {
       if (cancelled) return
       const initial = getPluginMarketplaceCache(cacheKey)
-      const force = revision > 0 && revision !== forcedRevision.current
-      if (
-        !force &&
-        initial?.openAiCatalogFetchedAt &&
-        Date.now() - initial.openAiCatalogFetchedAt < FRESH_MS
-      ) {
-        setState({ cacheKey, loading: false, error: null })
-        return
-      }
-      forcedRevision.current = revision
+      const requestKey = JSON.stringify([cacheKey, revision])
+      const force = revision > 0 && requestKey !== forcedRevision.current
+      // The API owns freshness after validating the current device and auth fingerprint.
+      forcedRevision.current = requestKey
       setState({ cacheKey, loading: true, error: null })
       try {
         const result = await raceWithTimeout(
-          readCatalog({ forceRefetch: force }),
+          readCatalog({ forceRefetch: force, accountScope: cacheKey }),
           REQUEST_TIMEOUT_MS,
           () => new Error('Remote plugin catalog timed out')
         )

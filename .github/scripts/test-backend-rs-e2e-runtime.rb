@@ -32,8 +32,25 @@ digest = steps.find { |candidate| candidate["id"] == "runtime" }
   .fetch("env").fetch("SOURCE_DIGEST")
 
 recipe = ".github/runtime-images/backend-rs-e2e.Dockerfile"
-%W[backend-rs/examples/** #{recipe} .github/runtime-images/backend-rs-builder.Dockerfile].each do |input|
+%W[backend-rs/examples/** backend-rs/migrations/** #{recipe} .github/runtime-images/backend-rs-builder.Dockerfile].each do |input|
   raise "Backend Rust runtime digest omits #{input}" unless digest.include?("'#{input}'")
+end
+
+# Compile-time migration assets must exist at the same relative paths inside the
+# builder. Check the actual include paths against its COPY instructions.
+builder = File.read(File.join(root, ".github/runtime-images/backend-rs-builder.Dockerfile"))
+copies = builder.scan(/^COPY (backend-rs\/\S+) (\.\/\S+)$/)
+Dir[File.join(root, "backend-rs/src/migrations/**/*.rs")].each do |source|
+  File.read(source).scan(/include_(?:str|bytes)!\(\s*"([^"]+)"/).flatten.each do |path|
+    asset = File.expand_path(path, File.dirname(source))
+    relative = asset.delete_prefix("#{root}/backend-rs/")
+    copied = copies.any? do |input, destination|
+      prefix = destination.delete_prefix("./")
+      candidate = File.join(root, input, relative.delete_prefix("#{prefix}/"))
+      relative.start_with?("#{prefix}/") && File.file?(candidate)
+    end
+    raise "Backend Rust builder omits embedded asset #{relative}" unless copied
+  end
 end
 %w[wework-e2e.yml ci-cache-warmup.yml].each do |name|
   definition = YAML.safe_load(File.read(File.join(workflows, name)))

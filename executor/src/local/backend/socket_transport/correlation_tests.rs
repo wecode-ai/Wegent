@@ -219,3 +219,47 @@ async fn closing_during_binary_attachments_delivers_transport_close() {
     assert_eq!(reason, json!("transport close"));
     server.await.unwrap();
 }
+
+#[tokio::test]
+async fn failed_capability_ack_requests_reconnect_but_cannot_close_a_new_generation() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let mut socket = accept_connection(listener).await;
+        while let Some(message) = socket.next().await {
+            if message.unwrap() == Message::Text("41/local-executor,".into()) {
+                break;
+            }
+        }
+    });
+    let client = ClientBuilder::new(format!("http://{address}"))
+        .namespace(NAMESPACE)
+        .transport_type(TransportType::Websocket)
+        .reconnect(false)
+        .connect()
+        .await
+        .unwrap();
+    client.disconnect().await.unwrap();
+    let transport = SocketIoTransport::default();
+    let closed = Arc::new(AtomicU64::new(0));
+    let close_count = closed.clone();
+    transport.on_close(Arc::new(move || {
+        close_count.fetch_add(1, Ordering::AcqRel);
+    }));
+    for (ack_generation, current_generation, expected_closes) in [(1, 1, 1), (1, 2, 1)] {
+        transport
+            .generation
+            .store(current_generation, Ordering::Release);
+        transport
+            .acknowledge(
+                ack_generation,
+                &client,
+                DEVICE_SYNC_CAPABILITIES_EVENT,
+                17,
+                json!({"success": true}),
+            )
+            .await;
+        assert_eq!(closed.load(Ordering::Acquire), expected_closes);
+    }
+    server.await.unwrap();
+}

@@ -385,6 +385,17 @@ describe('WorkspaceTabsProvider routing', () => {
     expect(window.location.pathname).toBe('/plugins')
   })
 
+  test('does not apply the startup preference to later task creation after an explicit route', () => {
+    window.history.replaceState({}, '', '/pending-interactions')
+    render(<RoutingHarness startupTabKind="board" />)
+
+    act(() => navigateTo('/'))
+
+    expect(screen.getByTestId('active-tab-kind')).toHaveTextContent('task')
+    expect(screen.getByTestId('active-tab-route').textContent).toBe('/')
+    expect(window.location.pathname).toBe('/')
+  })
+
   test('recreates the preferred startup tab when the persisted list no longer contains it', () => {
     localStorage.setItem(
       'wework.workspaceTabs.v3:context-test',

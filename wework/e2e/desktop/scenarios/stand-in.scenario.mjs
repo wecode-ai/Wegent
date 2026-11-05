@@ -353,6 +353,12 @@ export async function createDesktopScenario({
       await control.command('click', `${CONTENT} [data-testid="collaboration-tab-board"]`)
       await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`)
       await control.command('waitFor', '[data-testid="stand-in-auto"][aria-checked="true"]')
+      // Establish a dirty draft before the concurrent write. Clean settings
+      // may legitimately refresh while workbench services are recreated.
+      await control.command('fill', '[data-testid="stand-in-prompt"]', {
+        value: `${MARKER} 保留草稿`,
+      })
+      await control.command('waitFor', '[data-testid="stand-in-pending-save"]')
       const concurrentSettings = await requestExecutor(
         control,
         'runtime.stand_in.get',
@@ -374,9 +380,6 @@ export async function createDesktopScenario({
         },
         uiTimeoutMs
       )
-      await control.command('fill', '[data-testid="stand-in-prompt"]', {
-        value: `${MARKER} 保留草稿`,
-      })
       await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
       await control.command('waitFor', '[data-testid="stand-in-settings"] [role="alert"]')
       assert.equal(

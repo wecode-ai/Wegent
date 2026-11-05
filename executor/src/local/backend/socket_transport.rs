@@ -77,7 +77,12 @@ where
     F: Future<Output = ()> + Send + 'static,
 {
     if run_in_background {
-        std::mem::drop(tokio::spawn(future));
+        // Capability publication includes synchronous filesystem verification.
+        // Keep it off reactor workers so sockets, heartbeats and IPC stay live.
+        let runtime = tokio::runtime::Handle::current();
+        std::mem::drop(tokio::task::spawn_blocking(move || {
+            runtime.block_on(future)
+        }));
     } else {
         future.await;
     }
@@ -98,6 +103,23 @@ pub struct SocketIoTransport {
 }
 
 impl SocketIoTransport {
+    async fn acknowledge(
+        &self,
+        generation: u64,
+        socket: &Client,
+        event: &str,
+        ack_id: i32,
+        payload: Value,
+    ) {
+        if let Err(error) = socket.ack_with_id(ack_id, payload).await {
+            eprintln!(
+                "local backend {}",
+                format_socket_error("ack", Some(event), &error)
+            );
+            self.invalidate_generation(generation).await;
+        }
+    }
+
     async fn connected_socket(&self) -> Result<ConnectedSocket, String> {
         self.client
             .lock()
@@ -177,21 +199,26 @@ impl LocalBackendTransport for SocketIoTransport {
             for (event, handler) in handlers {
                 let run_in_background = event == DEVICE_SYNC_CAPABILITIES_EVENT;
                 let handler_event = event.clone();
+                let ack_transport = self.clone();
                 builder = builder.on(event, move |payload: Payload, socket: Client| {
                     let handler = Arc::clone(&handler);
                     let handler_event = handler_event.clone();
+                    let ack_transport = ack_transport.clone();
                     async move {
                         dispatch_handler(run_in_background, async move {
                             let ack_id = payload.ack_id();
                             let value = payload_to_value(payload);
                             let ack_payload = handler(value).await;
                             if let (Some(ack_id), Some(ack_payload)) = (ack_id, ack_payload) {
-                                if let Err(error) = socket.ack_with_id(ack_id, ack_payload).await {
-                                    eprintln!(
-                                        "local backend {}",
-                                        format_socket_error("ack", Some(&handler_event), &error,)
-                                    );
-                                }
+                                ack_transport
+                                    .acknowledge(
+                                        generation,
+                                        &socket,
+                                        &handler_event,
+                                        ack_id,
+                                        ack_payload,
+                                    )
+                                    .await;
                             }
                         })
                         .await;
@@ -428,5 +455,41 @@ mod tests {
             .await
             .expect("background handler should finish")
             .expect("finished signal should be sent");
+    }
+
+    #[tokio::test]
+    async fn synchronous_capability_work_does_not_starve_transport_reactor() {
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            mpsc, Arc,
+        };
+
+        let (started, start) = oneshot::channel();
+        let (released, release) = mpsc::channel();
+        let (finished, finish) = oneshot::channel();
+        let completed = Arc::new(AtomicBool::new(false));
+        let completed_work = completed.clone();
+        dispatch_handler(true, async move {
+            started.send(()).unwrap();
+            // A bounded real blocking operation makes a reactor-thread regression
+            // fail deterministically rather than hanging this current-thread test.
+            let _ = release.recv_timeout(Duration::from_secs(2));
+            completed_work.store(true, Ordering::Release);
+            let _ = finished.send(());
+        })
+        .await;
+        tokio::time::timeout(Duration::from_secs(1), start)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            !completed.load(Ordering::Acquire),
+            "The reactor must run while synchronous publication is still blocked"
+        );
+        released.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(1), finish)
+            .await
+            .unwrap()
+            .unwrap();
     }
 }

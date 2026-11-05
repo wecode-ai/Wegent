@@ -19,6 +19,7 @@ mod assignment_receipts;
 mod code_projects;
 pub(crate) mod execution_workspace;
 mod issue_badges;
+pub(crate) mod milestones;
 mod ordering;
 #[path = "project_coordination.rs"]
 mod project_coordination;
@@ -613,7 +614,11 @@ impl LocalTaskStore {
             input.status
         };
         let completed_at = (status == "completed").then(|| now.clone());
+        milestones::require_milestone(&transaction, project_id, input.milestone_id.as_deref())?;
         let mut metadata = json!({"tags": input.tags});
+        if let Some(milestone_id) = input.milestone_id {
+            metadata["milestone_id"] = json!(milestone_id);
+        }
         issue_badges::update_source(
             &mut metadata,
             "issue",
@@ -816,6 +821,14 @@ impl LocalTaskStore {
                 None
             };
         let mut metadata = current.metadata;
+        if let Some(milestone_id) = input.milestone_id {
+            milestones::require_milestone(&transaction, project_id, milestone_id.as_deref())?;
+            if let Some(milestone_id) = milestone_id {
+                metadata["milestone_id"] = json!(milestone_id);
+            } else if let Some(metadata) = metadata.as_object_mut() {
+                metadata.remove("milestone_id");
+            }
+        }
         if content_updated {
             issue_badges::update_source(
                 &mut metadata,
@@ -5887,6 +5900,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Do the thing".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -5905,6 +5919,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    milestone_id: None,
                     position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
@@ -5959,6 +5974,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Run immediately".to_owned(),
                     description: "Do not require a second assignment update.".to_owned(),
                     status: "inbox".to_owned(),
@@ -6021,6 +6037,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Coordinate manually".to_owned(),
                     description: "The human leader decides the next dispatch.".to_owned(),
                     status: "inbox".to_owned(),
@@ -6096,6 +6113,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Resolve manager".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -6212,6 +6230,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Comment run".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -6295,6 +6314,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    milestone_id: None,
                     position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
@@ -6409,6 +6429,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Coordinate work".to_owned(),
                     description: String::new(),
                     status: "in_progress".to_owned(),
@@ -6472,6 +6493,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Continue work".to_owned(),
                     description: String::new(),
                     status: "in_progress".to_owned(),
@@ -6548,6 +6570,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Assigned run".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -6566,6 +6589,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    milestone_id: None,
                     position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
@@ -6669,6 +6693,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Legacy run".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -6687,6 +6712,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    milestone_id: None,
                     position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
@@ -6756,6 +6782,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Unread activity".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -6787,6 +6814,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Review me".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -6805,6 +6833,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    milestone_id: None,
                     position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
@@ -6852,6 +6881,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Already reviewed".to_owned(),
                     description: String::new(),
                     status: "in_review".to_owned(),
@@ -6870,6 +6900,7 @@ mod tests {
                 &project.id,
                 &second.id,
                 TaskUpdate {
+                    milestone_id: None,
                     position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
@@ -7051,6 +7082,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Investigate CPU".to_owned(),
                     description: "Determine whether load is sustained.".to_owned(),
                     status: "inbox".to_owned(),
@@ -7617,6 +7649,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "看下cpu占用".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -7805,6 +7838,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Approve me".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -7823,6 +7857,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    milestone_id: None,
                     position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
@@ -7877,6 +7912,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Approve me".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -7895,6 +7931,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    milestone_id: None,
                     position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
@@ -8031,6 +8068,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Implement runtime contract".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -8049,6 +8087,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    milestone_id: None,
                     position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
@@ -8285,6 +8324,7 @@ mod tests {
                 .create_task(
                     &project.id,
                     TaskCreate {
+                        milestone_id: None,
                         title: title.to_owned(),
                         description: String::new(),
                         status: "inbox".to_owned(),
@@ -8303,6 +8343,7 @@ mod tests {
                     &project.id,
                     &task.id,
                     TaskUpdate {
+                        milestone_id: None,
                         position: None,
                         assignee_group_id: None,
                         assignee_user_id: None,
@@ -8403,6 +8444,7 @@ mod tests {
                 .create_task(
                     &project.id,
                     TaskCreate {
+                        milestone_id: None,
                         title: format!("Parallel {index}"),
                         description: String::new(),
                         status: "inbox".to_owned(),
@@ -8421,6 +8463,7 @@ mod tests {
                     &project.id,
                     &task.id,
                     TaskUpdate {
+                        milestone_id: None,
                         position: None,
                         assignee_group_id: None,
                         assignee_user_id: None,
@@ -8493,6 +8536,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Run unbound".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -8511,6 +8555,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    milestone_id: None,
                     position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
@@ -8556,6 +8601,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Archived project".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -8604,6 +8650,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Fail me".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -8687,6 +8734,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Reject me".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -8763,6 +8811,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Approval task".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -8781,6 +8830,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    milestone_id: None,
                     position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
@@ -8817,6 +8867,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Recover me".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -8883,6 +8934,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Reconcile me".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -9009,6 +9061,7 @@ mod tests {
                 .create_task(
                     &project.id,
                     TaskCreate {
+                        milestone_id: None,
                         title: title.to_owned(),
                         description: String::new(),
                         status: "inbox".to_owned(),
@@ -9097,6 +9150,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Reconcile me".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -9123,6 +9177,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Run after recovery".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -9211,6 +9266,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Retry missing runtime task".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -9298,6 +9354,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Retry me".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -9521,6 +9578,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "After migration".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -9539,6 +9597,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    milestone_id: None,
                     position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
@@ -9588,6 +9647,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Track status".to_owned(),
                     description: String::new(),
                     status: "pending".to_owned(),
@@ -9657,6 +9717,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Workflow status".to_owned(),
                     description: String::new(),
                     status: "pending".to_owned(),
@@ -10172,6 +10233,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Parent".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -10193,6 +10255,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Child".to_owned(),
                     description: String::new(),
                     status: "pending".to_owned(),
@@ -10232,6 +10295,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "First".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -10249,6 +10313,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Second".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -10341,6 +10406,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Bound task".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -10423,6 +10489,7 @@ mod tests {
             .create_task(
                 DEFAULT_WORK_ITEM_PROJECT_ID,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Runtime-owned status".to_owned(),
                     description: String::new(),
                     status: "in_review".to_owned(),
@@ -10683,6 +10750,7 @@ mod tests {
             .create_task(
                 DEFAULT_WORK_ITEM_PROJECT_ID,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Temporary child context".to_owned(),
                     description: String::new(),
                     status: "completed".to_owned(),
@@ -10742,6 +10810,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "First bound task".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -10759,6 +10828,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Second bound task".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -10818,6 +10888,7 @@ mod tests {
             .create_task(
                 DEFAULT_WORK_ITEM_PROJECT_ID,
                 TaskCreate {
+                    milestone_id: None,
                     title: "System task".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -10835,6 +10906,7 @@ mod tests {
             .create_task(
                 &user_project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "User issue".to_owned(),
                     description: String::new(),
                     status: "pending".to_owned(),
@@ -10925,6 +10997,7 @@ mod tests {
             .create_task(
                 &local_project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Persisted".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -11100,6 +11173,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Workflow delivery".to_owned(),
                     description: String::new(),
                     status: "pending".to_owned(),

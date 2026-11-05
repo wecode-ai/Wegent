@@ -1,3 +1,5 @@
+import { IssueCardMilestone } from "../issue-card/IssueCardMilestone";
+import type { Milestone } from "../milestones/types";
 import { unmatchedCreateDefaults } from "../project-board/projectBoardViews";
 import {
   projectBoardDnd,
@@ -83,6 +85,7 @@ export interface ProjectBoardAdapterLabels {
 export interface ProjectBoardIssueCardRenderContext {
   column: ProjectBoardColumn;
   defaultCard: ReactNode;
+  metadata?: ReactNode;
   childrenAction?: ReactNode;
   display: {
     showAssignee: boolean;
@@ -106,6 +109,7 @@ export type ProjectBoardIssueCardRenderer = (
 interface ProjectBoardAdapterProps {
   parentGroupingEnabled?: boolean;
   emptyState?: ReactNode;
+  filterAction?: ReactNode;
   toolbarAction?: ReactNode;
   runtime?: SharedWorkspaceRuntimeApi;
   previewDisabled?: boolean;
@@ -114,6 +118,8 @@ interface ProjectBoardAdapterProps {
   boardError: string | null;
   agents: CollaborationAgent[];
   issues: CollaborationIssue[];
+  allIssues?: CollaborationIssue[];
+  milestones?: readonly Milestone[];
   labels: ProjectBoardAdapterLabels;
   members: CollaborationMember[];
   project: CollaborationProject;
@@ -130,6 +136,8 @@ interface ProjectBoardAdapterProps {
     settings?: import("../project-board/projectBoardViews").BoardViewSaveSettings,
   ): Promise<void>;
   onOpen(issue: CollaborationIssue): void;
+  onOpenChildren?(issue: CollaborationIssue): void;
+  onCurrentParentIdChange?(parentId: string | null): void;
   onDeleteIssue?(issue: CollaborationIssue): void;
   onMove(
     issue: CollaborationIssue,
@@ -159,6 +167,7 @@ function issueSearchText(
 export function ProjectBoardAdapter({
   parentGroupingEnabled = false,
   emptyState,
+  filterAction,
   toolbarAction,
   runtime,
   previewDisabled = false,
@@ -166,6 +175,8 @@ export function ProjectBoardAdapter({
   agents,
   boardError,
   issues,
+  allIssues = issues,
+  milestones = [],
   labels,
   members,
   onCreateIssue,
@@ -177,14 +188,37 @@ export function ProjectBoardAdapter({
   onSaveViews,
   onMove,
   onOpen,
+  onOpenChildren,
+  onCurrentParentIdChange,
   project,
   renderIssueCard,
   statuses,
   taskBindings,
 }: ProjectBoardAdapterProps) {
+  const milestonesById = useMemo(
+    () => new Map(milestones.map((milestone) => [milestone.id, milestone])),
+    [milestones],
+  );
+  const renderMilestoneMetadata = (
+    issue: CollaborationIssue,
+    inline = false,
+  ) => {
+    const milestone =
+      issue.can_view_detail !== false && issue.milestone_id
+        ? milestonesById.get(issue.milestone_id)
+        : undefined;
+    return milestone ? (
+      <IssueCardMilestone
+        itemId={issue.id}
+        title={milestone.title}
+        label={translate("todo.milestone", "里程碑")}
+        inline={inline}
+      />
+    ) : null;
+  };
   const childrenProgress = useMemo(
-    () => collectIssueChildrenProgress(issues),
-    [issues],
+    () => collectIssueChildrenProgress(allIssues),
+    [allIssues],
   );
   const savedViews = useSavedBoardViews({
     projectKey: `${project.project_store}:${project.id}`,
@@ -288,6 +322,8 @@ export function ProjectBoardAdapter({
     extensions,
     focusStorageKey: `collaboration-board-focus:${project.id}`,
     items: issues,
+    hierarchyItems: allIssues,
+    onCurrentParentIdChange,
     supportsOrder,
     onMove: async (issue, _column, _beforeItemId, mutation) => {
       try {
@@ -347,6 +383,8 @@ export function ProjectBoardAdapter({
                 translate,
                 getParentTitle: (issue) => issue.title,
                 getParentKey: (issue) => issue.id,
+                renderParentMetadata: (issue) =>
+                  renderMilestoneMetadata(issue, true),
                 onOpenParent: onOpen,
                 onEnterParent: (issue) =>
                   controller.setCurrentParentId(issue.id),
@@ -389,6 +427,7 @@ export function ProjectBoardAdapter({
             translate={translate}
           />
         }
+        filterAction={filterAction}
         toolbarAction={
           <>
             {parentBoard.toggle}
@@ -626,7 +665,9 @@ export function ProjectBoardAdapter({
             showPriority: display.show_priority,
             showTags: display.show_tags,
           };
+          const metadata = renderMilestoneMetadata(issue);
           const cardProps = {
+            metadata,
             translate,
             item: issue,
             unread: false,
@@ -652,7 +693,10 @@ export function ProjectBoardAdapter({
                 itemId={issue.id}
                 progress={progress}
                 translate={translate}
-                onOpen={() => controller.setCurrentParentId(issue.id)}
+                onOpen={() => {
+                  onOpenChildren?.(issue);
+                  controller.setCurrentParentId(issue.id);
+                }}
               />
             ) : null;
           const defaultCard = (
@@ -662,6 +706,7 @@ export function ProjectBoardAdapter({
             renderIssueCard({
               column,
               defaultCard,
+              metadata,
               childrenAction,
               display: issueDisplay,
               focused,

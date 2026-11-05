@@ -14,6 +14,10 @@ const fixture = vi.hoisted(() => ({
   version: '1.0.0',
   request: vi.fn(),
 }))
+vi.mock('@/api/local/runtimeAuthStatus', () => ({
+  getLocalCodexAuthStatus: vi.fn().mockResolvedValue({ sha256: 'test-account' }),
+}))
+
 vi.mock('@/lib/runtime-environment', () => ({
   isDesktopRuntime: () => true,
   isElectronRuntime: () => true,

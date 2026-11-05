@@ -18,6 +18,10 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { InstalledPluginItem } from './PluginManagementRows'
 import { PluginManagementWorkspace } from './PluginManagementWorkspace'
 
+vi.mock('@/api/local/runtimeAuthStatus', () => ({
+  getLocalCodexAuthStatus: vi.fn().mockResolvedValue({ sha256: 'test-account' }),
+}))
+
 vi.mock('@/lib/navigation', () => ({
   navigateTo: vi.fn(),
 }))
