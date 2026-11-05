@@ -1,3 +1,5 @@
+import "./milestones.css";
+import { Flag } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
 import type {
@@ -9,10 +11,12 @@ import { canManageCollaborationIssueSecurity } from "../permissions";
 import { useIssueAssignmentsByIssueId } from "../platform/useIssueAssignmentsByIssueId";
 import type { Milestone, MilestoneInput } from "./types";
 import { milestoneMessages } from "./messages";
-import { useMilestones } from "./useMilestones";
+import { useMilestones, milestoneVisibilityScope } from "./useMilestones";
 
-const buttonClass =
-  "min-h-11 rounded-md border border-border px-3 text-sm hover:bg-muted disabled:opacity-50 md:min-h-8";
+const buttonBaseClass =
+  "min-h-11 rounded-md border px-3 text-sm disabled:opacity-50 md:min-h-8 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/40";
+const buttonClass = `${buttonBaseClass} border-border hover:bg-muted`;
+const primaryButtonClass = `${buttonBaseClass} border-transparent bg-text-primary text-background hover:bg-text-primary/90`;
 
 export function MilestonesPage({
   api,
@@ -42,12 +46,7 @@ export function MilestonesPage({
     project.id,
     true,
     issues.map((issue) => `${issue.id}:${issue.version}`).join("|"),
-    JSON.stringify([
-      project.current_user_id,
-      project.access_role,
-      project.project_store,
-      project.default_issue_security,
-    ]),
+    milestoneVisibilityScope(project),
   );
   const [state, setState] = useState<"open" | "closed">("open");
   const [selected, setSelected] = useState<string | null>(null);
@@ -91,253 +90,287 @@ export function MilestonesPage({
 
   return (
     <section
-      className="min-h-0 flex-1 overflow-auto p-4"
+      className="min-h-0 flex-1 overflow-auto px-5 py-6"
       data-testid="milestones-page"
       aria-busy={busy}
     >
-      <div className="mb-4 flex max-w-3xl flex-wrap items-center gap-2">
-        {(["open", "closed"] as const).map((value) => (
-          <button
-            type="button"
-            className={`${buttonClass} aria-pressed:bg-text-primary aria-pressed:text-background aria-pressed:hover:bg-text-primary`}
-            data-testid={`milestones-${value}`}
-            key={value}
-            aria-pressed={value === state}
-            onClick={() => {
-              setState(value);
-              setSelected(null);
-            }}
-          >
-            {m[value]}
-          </button>
-        ))}
-        {canManage ? (
-          <button
-            type="button"
-            data-testid="milestone-create"
-            className={`${buttonClass} ml-auto bg-text-primary text-background`}
-            onClick={() => {
-              setEditing("new");
-              setFailed(false);
-            }}
-          >
-            {m.new}
-          </button>
-        ) : null}
-      </div>
-      {query.error || failed ? (
-        <p role="alert" className="mb-3 text-sm text-red-600">
-          {m.error}{" "}
-          <button
-            type="button"
-            className={buttonClass}
-            data-testid="milestones-retry"
-            onClick={() => {
-              setFailed(false);
-              setEditing(null);
-              setDeleting(null);
-              query.reload();
-            }}
-          >
-            {editing ? m.discardAndRefresh : m.retry}
-          </button>
-        </p>
-      ) : null}
-      {query.loading ? <p role="status">{m.loading}</p> : null}
-      {editing && canManage ? (
-        <MilestoneForm
-          key={editing === "new" ? "new" : editing.id}
-          milestone={editing === "new" ? null : editing}
-          messages={m}
-          busy={busy}
-          onCancel={() => setEditing(null)}
-          onSave={(input) =>
-            void mutate(() =>
-              editing === "new"
-                ? api.milestones!.create(project.id, input)
-                : api.milestones!.update(project.id, editing.id, {
-                    ...input,
-                    version: editing.version,
-                  }),
-            )
-          }
-        />
-      ) : null}
-      {deleting && canManage ? (
-        <div
-          className="my-3 flex max-w-3xl flex-wrap items-center gap-3 rounded-md border border-border p-3"
-          role="alert"
-        >
-          <span className="min-w-0 max-w-full break-words">
-            {deleting.title}: {m.confirm}
-          </span>
-          <button
-            type="button"
-            className={buttonClass}
-            data-testid="milestone-delete-confirm"
-            disabled={busy}
-            onClick={() =>
-              void mutate(() =>
-                api.milestones!.remove(
-                  project.id,
-                  deleting.id,
-                  deleting.version,
-                ),
-              )
-            }
-          >
-            {m.remove}
-          </button>
-          <button
-            type="button"
-            className={buttonClass}
-            data-testid="milestone-delete-cancel"
-            disabled={busy}
-            onClick={() => setDeleting(null)}
-          >
-            {m.cancel}
-          </button>
-        </div>
-      ) : null}
-      {!query.loading &&
-      !query.error &&
-      query.items.filter((item) => item.state === state).length === 0 ? (
-        <p className="py-8 text-sm text-text-muted">{m.empty}</p>
-      ) : null}
-      {active ? (
-        <>
-          <button
-            type="button"
-            className={buttonClass}
-            data-testid="milestones-back"
-            onClick={() => setSelected(null)}
-          >
-            {m.back}
-          </button>
-          <h2 className="heading-md my-3 max-w-3xl break-words">
-            {active.title}
-          </h2>
-          <p className="max-w-3xl whitespace-pre-wrap break-words text-sm text-text-secondary">
-            {active.description}
-          </p>
-          {(active.archived_issues ?? 0) > 0 ? (
-            <p className="my-3 text-sm text-text-muted">
-              {active.archived_issues} {m.archived}{" "}
-              {onOpenArchive ? (
-                <button
-                  type="button"
-                  className={buttonClass}
-                  data-testid="milestone-view-archive"
-                  onClick={onOpenArchive}
-                >
-                  {m.viewArchive}
-                </button>
-              ) : null}
-            </p>
-          ) : null}
-          <div key={active.id}>
-            {renderIssues(
-              linkedIssues,
-              assignmentsByIssueId,
-              (active.archived_issues ?? 0) > 0 ? m.noActiveIssues : m.noIssues,
-              active.id,
-            )}
-          </div>
-        </>
-      ) : (
-        query.items
-          .filter((item) => item.state === state)
-          .map((item) => {
-            const total = item.open_issues + item.closed_issues;
-            const progress = total
-              ? Math.round((item.closed_issues * 100) / total)
-              : 0;
-            const overdue =
-              item.state === "open" &&
-              item.due_on &&
-              item.due_on < new Date().toLocaleDateString("sv-SE");
-            return (
-              <article
-                key={item.id}
-                className="max-w-3xl border-b border-border py-4"
-                data-testid={`milestone-${item.id}`}
+      <div
+        className="mx-auto w-full max-w-6xl"
+        data-testid="milestones-content"
+      >
+        <header className="mb-6 space-y-4">
+          {active ? (
+            <button
+              type="button"
+              className="min-h-11 text-sm text-text-secondary hover:text-text-primary md:min-h-8"
+              data-testid="milestones-back"
+              onClick={() => setSelected(null)}
+            >
+              ← {m.back}
+            </button>
+          ) : (
+            <div>
+              <h1 className="heading-medium">{m.title}</h1>
+              <p className="mt-1 text-sm text-text-muted">{m.intro}</p>
+            </div>
+          )}
+          {!active ? (
+            <div
+              className="flex flex-wrap items-center justify-between gap-3"
+              data-testid="milestones-toolbar"
+            >
+              <div
+                className="inline-flex items-center gap-1 rounded-lg bg-muted p-1"
+                role="group"
+                aria-label={m.title}
               >
-                <div className="flex flex-wrap items-center gap-2">
+                {(["open", "closed"] as const).map((value) => (
                   <button
                     type="button"
-                    data-testid={`milestone-open-${item.id}`}
-                    onClick={() => setSelected(item.id)}
-                    className="min-h-11 min-w-0 max-w-full break-words text-left text-sm font-semibold hover:underline md:min-h-8"
+                    className="min-h-11 rounded-md px-3 text-sm text-text-secondary aria-pressed:bg-background aria-pressed:text-text-primary aria-pressed:shadow-sm md:min-h-8"
+                    data-testid={`milestones-${value}`}
+                    key={value}
+                    aria-pressed={value === state}
+                    onClick={() => {
+                      setState(value);
+                      setSelected(null);
+                    }}
                   >
-                    {item.title}
-                  </button>
-                  {item.due_on ? (
-                    <span className="text-xs text-text-muted">
-                      {m.due}: {item.due_on} {overdue ? `· ${m.overdue}` : ""}
+                    {m[value]}{" "}
+                    <span className="ml-2 text-xs text-text-muted">
+                      {
+                        query.items.filter((item) => item.state === value)
+                          .length
+                      }
                     </span>
-                  ) : null}
-                  {canManage ? (
-                    <div className="ml-auto flex gap-2">
-                      <button
-                        type="button"
-                        className={buttonClass}
-                        data-testid={`milestone-edit-${item.id}`}
-                        disabled={busy}
-                        onClick={() => setEditing(item)}
-                      >
-                        {m.edit}
-                      </button>
-                      <button
-                        type="button"
-                        className={buttonClass}
-                        data-testid={`milestone-state-${item.id}`}
-                        disabled={busy}
-                        onClick={() =>
-                          void mutate(() =>
-                            api.milestones!.update(project.id, item.id, {
-                              title: item.title,
-                              description: item.description,
-                              due_on: item.due_on,
-                              version: item.version,
-                              state: item.state === "open" ? "closed" : "open",
-                            }),
-                          )
-                        }
-                      >
-                        {item.state === "open" ? m.close : m.reopen}
-                      </button>
-                      <button
-                        type="button"
-                        className={buttonClass}
-                        data-testid={`milestone-delete-${item.id}`}
-                        disabled={busy}
-                        onClick={() => setDeleting(item)}
-                      >
-                        {m.remove}
-                      </button>
-                    </div>
-                  ) : null}
-                </div>
-                <p className="my-2 whitespace-pre-wrap break-words text-sm text-text-secondary">
-                  {item.description}
-                </p>
-                <progress
-                  className="h-2 w-full accent-current"
-                  aria-label={item.title}
-                  max={100}
-                  value={progress}
-                />
-                <p className="mt-1 text-xs text-text-muted">
-                  {progress}% · {item.closed_issues} {m.completed} ·{" "}
-                  {item.open_issues} {m.remaining}
-                  {(item.archived_issues ?? 0) > 0
-                    ? ` · ${item.archived_issues} ${m.archived}`
-                    : ""}
-                </p>
-              </article>
-            );
-          })
-      )}
+                  </button>
+                ))}
+              </div>
+              {canManage ? (
+                <button
+                  type="button"
+                  data-testid="milestone-create"
+                  className={primaryButtonClass}
+                  onClick={() => {
+                    setEditing("new");
+                    setFailed(false);
+                  }}
+                >
+                  {m.new}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+        </header>
+        {query.error || failed ? (
+          <p role="alert" className="mb-3 text-sm text-red-600">
+            {m.error}{" "}
+            <button
+              type="button"
+              className={buttonClass}
+              data-testid="milestones-retry"
+              onClick={() => {
+                setFailed(false);
+                setEditing(null);
+                setDeleting(null);
+                query.reload();
+              }}
+            >
+              {editing ? m.discardAndRefresh : m.retry}
+            </button>
+          </p>
+        ) : null}
+        {query.loading ? <p role="status">{m.loading}</p> : null}
+        {editing && canManage ? (
+          <MilestoneForm
+            key={editing === "new" ? "new" : editing.id}
+            milestone={editing === "new" ? null : editing}
+            messages={m}
+            busy={busy}
+            onCancel={() => setEditing(null)}
+            onSave={(input) =>
+              void mutate(() =>
+                editing === "new"
+                  ? api.milestones!.create(project.id, input)
+                  : api.milestones!.update(project.id, editing.id, {
+                      ...input,
+                      version: editing.version,
+                    }),
+              )
+            }
+          />
+        ) : null}
+        {deleting && canManage ? (
+          <div
+            className="my-3 flex max-w-3xl flex-wrap items-center gap-3 rounded-md border border-border p-3"
+            role="alert"
+          >
+            <span className="min-w-0 max-w-full break-words">
+              {deleting.title}: {m.confirm}
+            </span>
+            <button
+              type="button"
+              className={buttonClass}
+              data-testid="milestone-delete-confirm"
+              disabled={busy}
+              onClick={() =>
+                void mutate(() =>
+                  api.milestones!.remove(
+                    project.id,
+                    deleting.id,
+                    deleting.version,
+                  ),
+                )
+              }
+            >
+              {m.remove}
+            </button>
+            <button
+              type="button"
+              className={buttonClass}
+              data-testid="milestone-delete-cancel"
+              disabled={busy}
+              onClick={() => setDeleting(null)}
+            >
+              {m.cancel}
+            </button>
+          </div>
+        ) : null}
+        {!query.loading &&
+        !query.error &&
+        !active &&
+        !editing &&
+        query.items.filter((item) => item.state === state).length === 0 ? (
+          <div
+            className="flex min-h-64 flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-border px-6 py-12 text-center"
+            data-testid="milestones-empty"
+          >
+            <Flag className="h-6 w-6 text-text-muted" aria-hidden="true" />
+            <h2 className="heading-small">
+              {state === "closed" ? m.emptyClosed : m.empty}
+            </h2>
+            <p className="max-w-md text-sm text-text-muted">
+              {state === "closed" ? m.emptyClosedHint : m.emptyHint}
+            </p>
+          </div>
+        ) : null}
+        {active ? (
+          <>
+            <h2 className="heading-medium mb-3 break-words">{active.title}</h2>
+            <p className="max-w-3xl whitespace-pre-wrap break-words text-sm text-text-secondary">
+              {active.description}
+            </p>
+            <div className="my-4">
+              <MilestoneProgress item={active} messages={m} />
+            </div>
+            {(active.archived_issues ?? 0) > 0 ? (
+              <p className="my-3 text-sm text-text-muted">
+                {active.archived_issues} {m.archived}{" "}
+                {onOpenArchive ? (
+                  <button
+                    type="button"
+                    className={buttonClass}
+                    data-testid="milestone-view-archive"
+                    onClick={onOpenArchive}
+                  >
+                    {m.viewArchive}
+                  </button>
+                ) : null}
+              </p>
+            ) : null}
+            <div key={active.id}>
+              {renderIssues(
+                linkedIssues,
+                assignmentsByIssueId,
+                (active.archived_issues ?? 0) > 0
+                  ? m.noActiveIssues
+                  : m.noIssues,
+                active.id,
+              )}
+            </div>
+          </>
+        ) : (
+          query.items
+            .filter((item) => item.state === state)
+            .map((item) => {
+              const overdue =
+                item.state === "open" &&
+                item.due_on &&
+                item.due_on < new Date().toLocaleDateString("sv-SE");
+              return (
+                <article
+                  key={item.id}
+                  className="border-b border-border py-5"
+                  data-testid={`milestone-${item.id}`}
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      data-testid={`milestone-open-${item.id}`}
+                      onClick={() => setSelected(item.id)}
+                      className="min-h-11 min-w-0 max-w-full break-words text-left text-sm font-semibold hover:underline md:min-h-8"
+                    >
+                      {item.title}
+                    </button>
+                    {item.due_on ? (
+                      <span className="text-xs text-text-muted">
+                        {m.due}: {item.due_on} {overdue ? `· ${m.overdue}` : ""}
+                      </span>
+                    ) : null}
+                    {canManage ? (
+                      <div className="ml-auto flex gap-2">
+                        <button
+                          type="button"
+                          className={buttonClass}
+                          data-testid={`milestone-edit-${item.id}`}
+                          disabled={busy}
+                          onClick={() => setEditing(item)}
+                        >
+                          {m.edit}
+                        </button>
+                        <button
+                          type="button"
+                          className={buttonClass}
+                          data-testid={`milestone-state-${item.id}`}
+                          disabled={busy}
+                          onClick={() =>
+                            void mutate(() =>
+                              api.milestones!.update(project.id, item.id, {
+                                title: item.title,
+                                description: item.description,
+                                due_on: item.due_on,
+                                version: item.version,
+                                state:
+                                  item.state === "open" ? "closed" : "open",
+                              }),
+                            )
+                          }
+                        >
+                          {item.state === "open" ? m.close : m.reopen}
+                        </button>
+                        <button
+                          type="button"
+                          className={buttonClass}
+                          data-testid={`milestone-delete-${item.id}`}
+                          disabled={busy}
+                          onClick={() => setDeleting(item)}
+                        >
+                          {m.remove}
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                  <p className="my-2 whitespace-pre-wrap break-words text-sm text-text-secondary">
+                    {item.description}
+                  </p>
+                  <div>
+                    <MilestoneProgress item={item} messages={m} />
+                  </div>
+                </article>
+              );
+            })
+        )}
+      </div>
     </section>
   );
 }
@@ -360,7 +393,7 @@ function MilestoneForm({
   return (
     <form
       data-testid="milestone-form"
-      className="mb-4 max-w-2xl space-y-3 rounded-md border border-border p-3"
+      className="milestone-form mb-4 max-w-2xl space-y-3 rounded-md border border-border p-3"
       onSubmit={(event) => {
         event.preventDefault();
         const form = new FormData(event.currentTarget);
@@ -380,7 +413,7 @@ function MilestoneForm({
           required
           maxLength={255}
           defaultValue={milestone?.title ?? ""}
-          className="mt-1 min-h-11 w-full rounded-md border border-border bg-background px-2 md:min-h-8"
+          className="milestone-form-field mt-1 min-h-11 w-full rounded-md bg-background px-2 md:min-h-8"
         />
       </label>
       <label className="block text-sm">
@@ -389,7 +422,7 @@ function MilestoneForm({
           data-testid="milestone-description"
           name="description"
           defaultValue={milestone?.description ?? ""}
-          className="mt-1 min-h-20 w-full rounded-md border border-border bg-background p-2"
+          className="milestone-form-field mt-1 min-h-20 w-full rounded-md bg-background p-2"
         />
       </label>
       <label className="block text-sm">
@@ -399,7 +432,7 @@ function MilestoneForm({
           name="due_on"
           type="date"
           defaultValue={milestone?.due_on ?? ""}
-          className="ml-2 min-h-11 rounded-md border border-border bg-background px-2 md:min-h-8"
+          className="milestone-form-field ml-2 min-h-11 rounded-md bg-background px-2 md:min-h-8"
         />
       </label>
       <div className="flex gap-2">
@@ -407,7 +440,7 @@ function MilestoneForm({
           type="submit"
           data-testid="milestone-save"
           disabled={busy}
-          className={`${buttonClass} bg-text-primary text-background`}
+          className={primaryButtonClass}
         >
           {m.save}
         </button>
@@ -422,5 +455,43 @@ function MilestoneForm({
         </button>
       </div>
     </form>
+  );
+}
+
+function MilestoneProgress({
+  item,
+  messages: m,
+}: {
+  item: Milestone;
+  messages:
+    | (typeof milestoneMessages)["en"]
+    | (typeof milestoneMessages)["zh-CN"];
+}) {
+  const total = item.open_issues + item.closed_issues;
+  const progress = total ? Math.round((item.closed_issues * 100) / total) : 0;
+  return (
+    <>
+      <div
+        className="h-1.5 w-full overflow-hidden rounded-full bg-muted"
+        role="progressbar"
+        aria-label={item.title}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={progress}
+      >
+        <span
+          data-testid={`milestone-progress-fill-${item.id}`}
+          className="block h-full rounded-full bg-text-primary"
+          style={{ width: `${progress}%` }}
+        />
+      </div>
+      <p className="mt-1 text-xs text-text-muted">
+        {progress}% · {item.closed_issues} {m.completed} · {item.open_issues}{" "}
+        {m.remaining}
+        {(item.archived_issues ?? 0) > 0
+          ? ` · ${item.archived_issues} ${m.archived}`
+          : ""}
+      </p>
+    </>
   );
 }

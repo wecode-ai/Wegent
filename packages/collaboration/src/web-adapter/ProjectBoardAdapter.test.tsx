@@ -31,6 +31,7 @@ describe('board card sub-issue progress', () => {
     }
     const onOpen = vi.fn()
     const props = {
+      parentGroupingEnabled: true,
       project: {
         id: 'project',
         project_key: 'TEST',
@@ -68,6 +69,20 @@ describe('board card sub-issue progress', () => {
     try {
       act(() => root.render(<ProjectBoardAdapter {...props} />))
       const selector = '[data-testid="collaboration-issue-children-parent"]'
+      const milestone = { id: 'ms', project_id: 'project', title: 'Release target', description: '', state: 'open' as const, due_on: null, version: 1, open_issues: 2, closed_issues: 1 }
+      const linked = props.issues.map(issue => ({ ...issue, milestone_id: milestone.id }))
+      act(() => root.render(<ProjectBoardAdapter {...props} issues={linked} milestones={[milestone]} />))
+      const milestoneSelector = '[data-testid="cloud-todo-card-milestone-parent"]'
+      expect(container.querySelector(milestoneSelector)?.textContent).toContain('Release target')
+      act(() => container.querySelector<HTMLButtonElement>('[data-testid="cloud-board-parent-layout"]')!.click())
+      expect(container.querySelector('[data-testid="cloud-board-parent-rows"]')).toBeTruthy()
+      expect(container.querySelector(milestoneSelector)?.textContent).toContain('Release target')
+      act(() => container.querySelector<HTMLButtonElement>('[data-testid="cloud-board-parent-layout"]')!.click())
+      act(() => root.render(<ProjectBoardAdapter {...props} issues={linked} milestones={[]} />))
+      expect(container.querySelector(milestoneSelector)).toBeNull()
+      act(() => root.render(<ProjectBoardAdapter {...props} issues={linked.map(issue => ({ ...issue, can_view_detail: false }))} milestones={[milestone]} />))
+      expect(container.querySelector(milestoneSelector)).toBeNull()
+      act(() => root.render(<ProjectBoardAdapter {...props} />))
       expect(container.querySelector(selector)?.textContent).toBe('子任务 1/2')
       expect(
         container.querySelector('[data-testid="collaboration-issue-children-child"]')

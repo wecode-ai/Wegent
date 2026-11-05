@@ -112,7 +112,9 @@ describe('TodoEditor external item sync', () => {
     )
     first.unmount()
     render(<TodoEditor {...props} />)
-    await screen.findByText('Draft release')
+    await waitFor(() =>
+      expect(screen.getByTestId('issue-milestone')).toHaveDisplayValue('Draft release')
+    )
     expect(screen.getByTestId('issue-milestone')).toHaveValue('ms-draft')
     localStorage.removeItem('wework-todo-draft:11:inbox')
   })
@@ -599,7 +601,11 @@ describe('TodoEditor external item sync', () => {
     expect(screen.getByText('较早完成的任务')).toBeInTheDocument()
     expect(toggle).toHaveTextContent('收起')
     expect(toggle).toHaveAttribute('aria-expanded', 'true')
-    await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
+    expect(screen.queryByTestId('cloud-todo-create-task')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-tasks')).toContainElement(
+      screen.getByTestId('cloud-todo-personal-task-start')
+    )
+    await userEvent.click(screen.getByTestId('cloud-todo-personal-task-start'))
     expect(onCreateTask).toHaveBeenCalledOnce()
   })
 
@@ -1429,3 +1435,41 @@ describe('TodoEditor create parent resolution', () => {
     })
   })
 })
+
+it.each(['modal', 'workspace-panel'] as const)(
+  'groups milestone properties and puts child Issues after the description in %s',
+  async presentation => {
+    render(
+      <TodoEditor
+        mode="edit"
+        item={baseItem}
+        project={{ ...project, task_provider: 'local' }}
+        allItems={[baseItem]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        presentation={presentation}
+        onOpenRelatedIssue={vi.fn()}
+        onAddChild={vi.fn()}
+        api={{ ...api, listMilestones: vi.fn(async () => []) } as never}
+      />
+    )
+    const picker = await screen.findByTestId('issue-milestone')
+    expect(screen.getByTestId('issue-title-properties').contains(picker)).toBe(true)
+    expect(picker.closest('header')).toBeNull()
+    if (presentation === 'workspace-panel') {
+      const grid = screen.getByTestId('issue-property-grid')
+      expect(Array.from(grid.querySelectorAll('dt')).map(label => label.textContent)).toEqual([
+        '状态',
+        '负责人',
+        '里程碑',
+        '时间范围',
+      ])
+      expect(grid.contains(picker)).toBe(true)
+    }
+    const description = screen.getByTestId('cloud-todo-detail-description')
+    const children = screen.getByTestId('issue-hierarchy-summary')
+    expect(
+      description.compareDocumentPosition(children) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+  }
+)

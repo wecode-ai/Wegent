@@ -1,6 +1,10 @@
 export const milestoneMessages = {
   "zh-CN": {
     title: "里程碑",
+    intro: "围绕交付目标组织 Issue，跟踪范围、截止日期与完成进度。",
+    emptyHint: "创建里程碑，并将相关 Issue 关联到同一个交付目标。",
+    emptyClosed: "暂无已关闭的里程碑",
+    emptyClosedHint: "关闭后的里程碑会显示在这里，完成统计仍会保留。",
     new: "新建里程碑",
     name: "名称",
     description: "目标描述",
@@ -38,6 +42,13 @@ export const milestoneMessages = {
   },
   en: {
     title: "Milestones",
+    intro:
+      "Organize Issues around delivery goals and track scope, due dates, and progress.",
+    emptyHint:
+      "Create a milestone and link related Issues to a shared delivery goal.",
+    emptyClosed: "No closed milestones",
+    emptyClosedHint:
+      "Closed milestones appear here with their delivery statistics preserved.",
     new: "New milestone",
     name: "Title",
     description: "Description",

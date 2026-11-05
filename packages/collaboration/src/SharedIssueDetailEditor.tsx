@@ -385,6 +385,7 @@ function ScheduleRangeControl({
   editable,
   invalid,
   triggerClassName,
+  showLabel = true,
   startTestId,
   dueTestId,
   onStartDateChange,
@@ -397,6 +398,7 @@ function ScheduleRangeControl({
   editable: boolean;
   invalid: boolean;
   triggerClassName: string;
+  showLabel?: boolean;
   startTestId: string;
   dueTestId: string;
   onStartDateChange(value: string): void;
@@ -416,10 +418,12 @@ function ScheduleRangeControl({
           disabled={!editable}
           aria-label={translate("todo.schedule_range", "时间范围")}
         >
-          <Calendar className="h-3.5 w-3.5 shrink-0 text-text-muted" />
-          <span className="text-text-muted">
-            {translate("todo.schedule_range", "时间范围")}
-          </span>
+          <Calendar className="h-4 w-4 shrink-0 text-text-muted" />
+          {showLabel ? (
+            <span className="text-text-muted">
+              {translate("todo.schedule_range", "时间范围")}
+            </span>
+          ) : null}
           <span
             className={cn(
               "max-w-64 truncate text-text-primary",
@@ -2255,24 +2259,29 @@ export function TodoEditor(props: TodoEditorProps) {
       value={assigneeTarget}
       onChange={setAssigneeTarget}
       disabled={!canAssign || saving}
-      className="relative inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap text-inherit disabled:cursor-default"
+      className="relative inline-flex min-w-0 max-w-full cursor-pointer items-center gap-1.5 whitespace-nowrap text-inherit disabled:cursor-default"
       triggerContent={
         <>
           {assigneeTarget.startsWith("group:") ? (
-            <UsersRound aria-hidden="true" size={15} />
+            <UsersRound aria-hidden="true" size={16} />
           ) : assigneeTarget.startsWith("agent:") ||
             assigneeTarget.startsWith("team:") ? (
-            <Bot aria-hidden="true" size={15} />
+            <Bot aria-hidden="true" size={16} />
           ) : (
-            <CircleUserRound aria-hidden="true" size={15} />
+            <CircleUserRound aria-hidden="true" size={16} />
           )}
-          <strong className={workspacePanel ? undefined : "font-normal"}>
+          <strong
+            className={cn(
+              "min-w-0 truncate",
+              workspacePanel ? "font-medium" : "font-normal",
+            )}
+          >
             {assigneeName ?? t("todo.unassigned", "未指派")}
           </strong>
-          {item && !assigneeChanged
+          {item && !assigneeChanged && !workspacePanel
             ? extensions?.renderAssignmentReceipts?.(item)
             : null}
-          {canAssign ? <ChevronDown aria-hidden="true" size={13} /> : null}
+          {canAssign ? <ChevronDown aria-hidden="true" size={12} /> : null}
         </>
       }
       searchPlaceholder={t("todo.search_assignee", "搜索负责人")}
@@ -2363,7 +2372,7 @@ export function TodoEditor(props: TodoEditorProps) {
       ]}
     />
   );
-  const scheduleRangeControl = (triggerClassName: string) => (
+  const scheduleRangeControl = (triggerClassName: string, showLabel = true) => (
     <ScheduleRangeControl
       startDate={startDate}
       dueDate={dueDate}
@@ -2371,6 +2380,7 @@ export function TodoEditor(props: TodoEditorProps) {
       editable={editable}
       invalid={scheduleRangeInvalid}
       triggerClassName={triggerClassName}
+      showLabel={showLabel}
       startTestId={
         isCreate
           ? "cloud-todo-create-start-date"
@@ -2713,6 +2723,54 @@ export function TodoEditor(props: TodoEditorProps) {
   const fullScreenSectionPadding =
     fullScreen && !workspacePanel ? "px-14" : "px-5";
 
+  const personalTaskAction =
+    workspacePanel && item && props.onCreateTask
+      ? extensions?.renderPersonalTaskAction?.({
+          item,
+          tasks: effectiveTasks,
+          onCreateTask: props.onCreateTask,
+        })
+      : null;
+
+  const milestonePicker =
+    editorPort.milestones &&
+    ["local", "backend"].includes(
+      (createProps?.project ?? editProps?.project)?.task_provider ?? "",
+    ) ? (
+      <MilestonePicker
+        api={editorPort.milestones}
+        compact={!isCreate}
+        appearance="property"
+        projectId={createProps?.project.id ?? item?.cloud_project_id ?? ""}
+        value={isCreate ? createMilestoneId : (item?.milestone_id ?? null)}
+        onMissingValue={isCreate ? () => setCreateMilestoneId(null) : undefined}
+        disabled={!editable || saving}
+        label={t("todo.milestone", "里程碑")}
+        noneLabel={t("todo.not_set", "未设置")}
+        errorLabel={t("todo.milestone_error", "里程碑操作失败，请重试")}
+        retryLabel={t("todo.milestone_retry", "重试")}
+        onChange={async (value) => {
+          if (isCreate) {
+            setCreateMilestoneId(value);
+            return;
+          }
+          const current = latestItemRef.current;
+          if (!current || !editProps) return;
+          setSaving(true);
+          try {
+            editProps.onUpdated(
+              await editorPort.issues.update(current.id, {
+                version: current.version,
+                milestone_id: value,
+              }),
+            );
+          } finally {
+            setSaving(false);
+          }
+        }}
+      />
+    ) : null;
+
   return (
     <div
       className={cn(
@@ -2795,48 +2853,6 @@ export function TodoEditor(props: TodoEditorProps) {
             </button>
           )}
           <span className="flex-1" />
-          {editorPort.milestones &&
-          ["local", "backend"].includes(
-            (createProps?.project ?? editProps?.project)?.task_provider ?? "",
-          ) ? (
-            <MilestonePicker
-              api={editorPort.milestones}
-              compact={!isCreate}
-              projectId={
-                createProps?.project.id ?? item?.cloud_project_id ?? ""
-              }
-              value={
-                isCreate ? createMilestoneId : (item?.milestone_id ?? null)
-              }
-              onMissingValue={
-                isCreate ? () => setCreateMilestoneId(null) : undefined
-              }
-              disabled={!editable || saving}
-              label={t("todo.milestone", "里程碑")}
-              noneLabel={t("todo.no_milestone", "未设置里程碑")}
-              errorLabel={t("todo.milestone_error", "里程碑操作失败，请重试")}
-              retryLabel={t("todo.milestone_retry", "重试")}
-              onChange={async (value) => {
-                if (isCreate) {
-                  setCreateMilestoneId(value);
-                  return;
-                }
-                const current = latestItemRef.current;
-                if (!current || !editProps) return;
-                setSaving(true);
-                try {
-                  editProps.onUpdated(
-                    await editorPort.issues.update(current.id, {
-                      version: current.version,
-                      milestone_id: value,
-                    }),
-                  );
-                } finally {
-                  setSaving(false);
-                }
-              }}
-            />
-          ) : null}
           {props.headerActions}
           {workspacePanel && item ? (
             <IssuePropertiesPopover
@@ -2987,44 +3003,218 @@ export function TodoEditor(props: TodoEditorProps) {
                   ) : null}
                 </div>
               ) : null}
-              <textarea
-                ref={titleRef}
-                data-testid={
-                  isCreate ? "cloud-todo-title" : "cloud-todo-detail-title"
-                }
-                aria-label={t("todo.issue_title", "任务标题")}
-                autoFocus={isCreate}
-                value={title}
-                onChange={(event) => setTitle(event.target.value)}
-                onClick={() => beginContentEditing("title")}
-                readOnly={!editable || (readFirst && !editingContent)}
-                rows={1}
-                maxLength={255}
-                placeholder={t(
-                  "todo.issue_title_placeholder",
-                  "目标或事项标题",
+              <div
+                className="task-detail-title-properties space-y-2"
+                data-testid="issue-title-properties"
+              >
+                <div className="min-w-0 flex-1">
+                  <textarea
+                    ref={titleRef}
+                    data-testid={
+                      isCreate ? "cloud-todo-title" : "cloud-todo-detail-title"
+                    }
+                    aria-label={t("todo.issue_title", "任务标题")}
+                    autoFocus={isCreate}
+                    value={title}
+                    onChange={(event) => setTitle(event.target.value)}
+                    onClick={() => beginContentEditing("title")}
+                    readOnly={!editable || (readFirst && !editingContent)}
+                    rows={1}
+                    maxLength={255}
+                    placeholder={t(
+                      "todo.issue_title_placeholder",
+                      "目标或事项标题",
+                    )}
+                    className={cn(
+                      "block w-full resize-none overflow-hidden border-0 bg-transparent font-bold tracking-tight text-text-primary outline-none placeholder:text-text-muted",
+                      twoColumn
+                        ? "task-detail-title"
+                        : "py-1.5 text-heading-lg",
+                      readFirst &&
+                        !editingContent &&
+                        "task-detail-content-readonly",
+                      readFirst &&
+                        editable &&
+                        !editingContent &&
+                        "task-detail-content-clickable",
+                    )}
+                  />
+                </div>
+                {workspacePanel && item ? (
+                  <section
+                    className="task-detail-state-line task-detail-title-state"
+                    data-testid="cloud-todo-state-summary"
+                    data-status={status}
+                    aria-label={t("todo.current_state", "当前状态")}
+                  >
+                    <dl
+                      className="task-detail-property-grid"
+                      data-testid="issue-property-grid"
+                    >
+                      <div className="task-detail-property">
+                        <dt>{t("todo.issue_status", "状态")}</dt>
+                        <dd>
+                          <Tooltip
+                            label={t(
+                              "todo.issue_status_help",
+                              "状态：{{value}}。表示 Issue 当前所处的处理阶段。",
+                              { value: statusLabel },
+                            )}
+                            side="bottom"
+                            align="start"
+                          >
+                            <span className="task-detail-state-primary relative">
+                              {statusValue}
+                              {editable ? (
+                                <ChevronDown aria-hidden="true" size={12} />
+                              ) : null}
+                              {statusSelect}
+                            </span>
+                          </Tooltip>
+                        </dd>
+                      </div>
+                      {showAssignee ? (
+                        <div className="task-detail-property">
+                          <dt>{t("todo.assignee", "负责人")}</dt>
+                          <dd className="task-detail-property-assignee">
+                            <span
+                              className="task-detail-state-assignee"
+                              data-testid="cloud-todo-state-assignee"
+                            >
+                              {assigneeSelect}
+                            </span>
+                            {item && !assigneeChanged
+                              ? extensions?.renderAssignmentReceipts?.(item)
+                              : null}
+                          </dd>
+                        </div>
+                      ) : null}
+                      {milestonePicker ? (
+                        <div className="task-detail-property">
+                          <dt>{t("todo.milestone", "里程碑")}</dt>
+                          <dd>{milestonePicker}</dd>
+                        </div>
+                      ) : null}
+                      <div className="task-detail-property">
+                        <dt>{t("todo.schedule_range", "时间范围")}</dt>
+                        <dd>
+                          {scheduleRangeControl(
+                            "task-detail-state-due relative",
+                            false,
+                          )}
+                        </dd>
+                      </div>
+                    </dl>
+                    <div className="task-detail-property-secondary">
+                      {assigneeSaveButton}
+                      {item &&
+                      project?.project_store === "backend" &&
+                      canManageIssueSecurity ? (
+                        <Tooltip
+                          label={t(
+                            "todo.issue_security_help",
+                            "可见范围：{{value}}。控制谁可以查看这个 Issue 的详情。",
+                            { value: issueSecurityLabel },
+                          )}
+                          side="bottom"
+                          align="start"
+                        >
+                          <span className="task-detail-state-security">
+                            <Eye aria-hidden="true" size={15} />
+                            <strong>{issueSecurityLabel}</strong>
+                            <ChevronDown aria-hidden="true" size={12} />
+                            <select
+                              data-testid="cloud-issue-security-level"
+                              aria-label={t(
+                                "todo.issue_security",
+                                "任务可见范围",
+                              )}
+                              className={overlayControlClass}
+                              value={item.security_level ?? "open"}
+                              disabled={securityBusy}
+                              onChange={async (event) => {
+                                if (!editProps) return;
+                                setSecurityBusy(true);
+                                setSaveError(null);
+                                try {
+                                  const updated =
+                                    await editorPort.issues.update(item.id, {
+                                      version: item.version,
+                                      security_level: event.target.value as
+                                        | "open"
+                                        | "related",
+                                    });
+                                  editProps.onUpdated(updated);
+                                } catch (cause) {
+                                  setSaveError(
+                                    cause instanceof Error
+                                      ? cause.message
+                                      : t(
+                                          "todo.save_issue_failed",
+                                          "保存任务失败",
+                                        ),
+                                  );
+                                } finally {
+                                  setSecurityBusy(false);
+                                }
+                              }}
+                            >
+                              <option value="open">
+                                {t(
+                                  "todo.issue_security_open",
+                                  "项目可访问者可见",
+                                )}
+                              </option>
+                              <option value="related">
+                                {t(
+                                  "todo.issue_security_related",
+                                  "仅相关人员可见",
+                                )}
+                              </option>
+                            </select>
+                          </span>
+                        </Tooltip>
+                      ) : null}
+                    </div>
+                    {executionElapsedMinutes !== null ? (
+                      <span className="task-detail-state-metrics">
+                        {executionElapsedMinutes !== null ? (
+                          <Tooltip
+                            label={t(
+                              "todo.execution_duration_help",
+                              "执行时长：{{duration}}。从本轮执行开始后持续计时。",
+                              { duration: executionElapsedLabel },
+                            )}
+                            side="bottom"
+                          >
+                            <span className="task-detail-state-metric">
+                              <History aria-hidden="true" size={15} />
+                              <strong data-testid="cloud-todo-execution-duration">
+                                {executionElapsedLabel}
+                              </strong>
+                            </span>
+                          </Tooltip>
+                        ) : null}
+                      </span>
+                    ) : null}
+                    {canStartWork &&
+                    !props.defaultAssistant &&
+                    executionTaskCount === 0 ? (
+                      <button
+                        type="button"
+                        data-testid="cloud-todo-create-task"
+                        onClick={() => props.onCreateTask?.()}
+                        className="task-detail-state-action task-detail-state-action-primary"
+                      >
+                        <Play aria-hidden="true" size={14} />
+                        {t("todo.start_work", "开始处理")}
+                      </button>
+                    ) : null}
+                  </section>
+                ) : (
+                  <div>{milestonePicker}</div>
                 )}
-                className={cn(
-                  "block w-full resize-none overflow-hidden border-0 bg-transparent font-bold tracking-tight text-text-primary outline-none placeholder:text-text-muted",
-                  twoColumn ? "task-detail-title" : "py-1.5 text-heading-lg",
-                  readFirst &&
-                    !editingContent &&
-                    "task-detail-content-readonly",
-                  readFirst &&
-                    editable &&
-                    !editingContent &&
-                    "task-detail-content-clickable",
-                )}
-              />
-              {item && props.onOpenRelatedIssue ? (
-                <IssueHierarchySummary
-                  item={item}
-                  allItems={allItems}
-                  onOpen={props.onOpenRelatedIssue}
-                  onAddChild={editable ? editProps?.onAddChild : undefined}
-                  translate={t}
-                />
-              ) : null}
+              </div>
               {!workspacePanel ? (
                 <div
                   className={cn(
@@ -3184,74 +3374,88 @@ export function TodoEditor(props: TodoEditorProps) {
                       />
                     )}
                   </div>
-                  <div className="task-detail-desc-footer">
-                    {twoColumn &&
-                    !editingContent &&
-                    (descriptionOverflowing || descriptionExpanded) ? (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setDescriptionExpanded((current) => !current)
-                        }
-                        className="task-detail-desc-toggle"
-                      >
-                        <span>
-                          {descriptionExpanded
-                            ? t("todo.collapse", "收起")
-                            : t("todo.expand_description", "展开描述")}
-                        </span>
-                        <ChevronDown
-                          className={cn(
-                            "h-3.5 w-3.5 transition-transform",
-                            descriptionExpanded && "rotate-180",
-                          )}
-                        />
-                      </button>
-                    ) : null}
-                    <p
-                      className={cn(
-                        "text-xs text-text-muted",
-                        twoColumn && !workspacePanel && "hidden",
-                        workspacePanel && "task-detail-desc-hint",
-                      )}
-                    >
-                      支持 Markdown，可拖拽文件到编辑器添加附件
-                    </p>
-                    {workspacePanel && editingContent ? (
-                      <span
-                        className="task-detail-desc-actions"
-                        onClick={(event) => event.stopPropagation()}
-                      >
+                  {!readFirst ||
+                  editingContent ||
+                  descriptionOverflowing ||
+                  descriptionExpanded ? (
+                    <div className="task-detail-desc-footer">
+                      {twoColumn &&
+                      !editingContent &&
+                      (descriptionOverflowing || descriptionExpanded) ? (
                         <button
                           type="button"
-                          data-testid="cloud-todo-cancel-content-edit"
-                          disabled={saving}
-                          onClick={cancelContentEditing}
-                        >
-                          {t("common.cancel", "取消")}
-                        </button>
-                        <IssueSaveButton
-                          testId="cloud-todo-save"
-                          className="task-detail-assignment-save"
-                          saving={saving}
-                          notificationAvailable={notificationAvailable}
-                          labels={notificationSaveLabels}
-                          disabled={
-                            !dirty ||
-                            !title.trim() ||
-                            saving ||
-                            scheduleRangeInvalid
+                          onClick={() =>
+                            setDescriptionExpanded((current) => !current)
                           }
-                          onSave={saveDetails}
+                          className="task-detail-desc-toggle"
                         >
-                          {saving
-                            ? t("todo.saving", "保存中…")
-                            : t("common.save", "保存")}
-                        </IssueSaveButton>
-                      </span>
-                    ) : null}
-                  </div>
+                          <span>
+                            {descriptionExpanded
+                              ? t("todo.collapse", "收起")
+                              : t("todo.expand_description", "展开描述")}
+                          </span>
+                          <ChevronDown
+                            className={cn(
+                              "h-3.5 w-3.5 transition-transform",
+                              descriptionExpanded && "rotate-180",
+                            )}
+                          />
+                        </button>
+                      ) : null}
+                      <p
+                        className={cn(
+                          "text-xs text-text-muted",
+                          twoColumn && !workspacePanel && "hidden",
+                          workspacePanel && "task-detail-desc-hint",
+                        )}
+                      >
+                        支持 Markdown，可拖拽文件到编辑器添加附件
+                      </p>
+                      {workspacePanel && editingContent ? (
+                        <span
+                          className="task-detail-desc-actions"
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          <button
+                            type="button"
+                            data-testid="cloud-todo-cancel-content-edit"
+                            disabled={saving}
+                            onClick={cancelContentEditing}
+                          >
+                            {t("common.cancel", "取消")}
+                          </button>
+                          <IssueSaveButton
+                            testId="cloud-todo-save"
+                            className="task-detail-assignment-save"
+                            saving={saving}
+                            notificationAvailable={notificationAvailable}
+                            labels={notificationSaveLabels}
+                            disabled={
+                              !dirty ||
+                              !title.trim() ||
+                              saving ||
+                              scheduleRangeInvalid
+                            }
+                            onSave={saveDetails}
+                          >
+                            {saving
+                              ? t("todo.saving", "保存中…")
+                              : t("common.save", "保存")}
+                          </IssueSaveButton>
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
+              ) : null}
+              {item && props.onOpenRelatedIssue ? (
+                <IssueHierarchySummary
+                  item={item}
+                  allItems={allItems}
+                  onOpen={props.onOpenRelatedIssue}
+                  onAddChild={editable ? editProps?.onAddChild : undefined}
+                  translate={t}
+                />
               ) : null}
               {saveError && (
                 <p
@@ -3325,153 +3529,6 @@ export function TodoEditor(props: TodoEditorProps) {
                     </section>
                   ) : null}
 
-                  <section
-                    className="task-detail-state-line"
-                    data-testid="cloud-todo-state-summary"
-                    data-status={status}
-                    aria-label={t("todo.current_state", "当前状态")}
-                  >
-                    <span className="task-detail-state-leading">
-                      <Tooltip
-                        label={t(
-                          "todo.issue_status_help",
-                          "状态：{{value}}。表示 Issue 当前所处的处理阶段。",
-                          { value: statusLabel },
-                        )}
-                        side="bottom"
-                        align="start"
-                      >
-                        <span className="task-detail-state-primary relative">
-                          {statusValue}
-                          {editable ? (
-                            <ChevronDown aria-hidden="true" size={13} />
-                          ) : null}
-                          {statusSelect}
-                        </span>
-                      </Tooltip>
-                      {showAssignee ? (
-                        <span
-                          className="task-detail-state-assignee"
-                          data-testid="cloud-todo-state-assignee"
-                        >
-                          {assigneeSelect}
-                        </span>
-                      ) : null}
-                      {assigneeSaveButton}
-                      {scheduleRangeControl("task-detail-state-due relative")}
-                      {item &&
-                      project?.project_store === "backend" &&
-                      canManageIssueSecurity ? (
-                        <Tooltip
-                          label={t(
-                            "todo.issue_security_help",
-                            "可见范围：{{value}}。控制谁可以查看这个 Issue 的详情。",
-                            { value: issueSecurityLabel },
-                          )}
-                          side="bottom"
-                          align="start"
-                        >
-                          <span className="task-detail-state-security">
-                            <Eye aria-hidden="true" size={15} />
-                            <strong>{issueSecurityLabel}</strong>
-                            <ChevronDown aria-hidden="true" size={13} />
-                            <select
-                              data-testid="cloud-issue-security-level"
-                              aria-label={t(
-                                "todo.issue_security",
-                                "任务可见范围",
-                              )}
-                              className={overlayControlClass}
-                              value={item.security_level ?? "open"}
-                              disabled={securityBusy}
-                              onChange={async (event) => {
-                                if (!editProps) return;
-                                setSecurityBusy(true);
-                                setSaveError(null);
-                                try {
-                                  const updated =
-                                    await editorPort.issues.update(item.id, {
-                                      version: item.version,
-                                      security_level: event.target.value as
-                                        | "open"
-                                        | "related",
-                                    });
-                                  editProps.onUpdated(updated);
-                                } catch (cause) {
-                                  setSaveError(
-                                    cause instanceof Error
-                                      ? cause.message
-                                      : t(
-                                          "todo.save_issue_failed",
-                                          "保存任务失败",
-                                        ),
-                                  );
-                                } finally {
-                                  setSecurityBusy(false);
-                                }
-                              }}
-                            >
-                              <option value="open">
-                                {t(
-                                  "todo.issue_security_open",
-                                  "项目可访问者可见",
-                                )}
-                              </option>
-                              <option value="related">
-                                {t(
-                                  "todo.issue_security_related",
-                                  "仅相关人员可见",
-                                )}
-                              </option>
-                            </select>
-                          </span>
-                        </Tooltip>
-                      ) : null}
-                    </span>
-                    {executionElapsedMinutes !== null ? (
-                      <span className="task-detail-state-metrics">
-                        {executionElapsedMinutes !== null ? (
-                          <Tooltip
-                            label={t(
-                              "todo.execution_duration_help",
-                              "执行时长：{{duration}}。从本轮执行开始后持续计时。",
-                              { duration: executionElapsedLabel },
-                            )}
-                            side="bottom"
-                          >
-                            <span className="task-detail-state-metric">
-                              <History aria-hidden="true" size={15} />
-                              <strong data-testid="cloud-todo-execution-duration">
-                                {executionElapsedLabel}
-                              </strong>
-                            </span>
-                          </Tooltip>
-                        ) : null}
-                      </span>
-                    ) : null}
-                    {canStartWork &&
-                    !props.defaultAssistant &&
-                    executionTaskCount === 0 ? (
-                      <button
-                        type="button"
-                        data-testid="cloud-todo-create-task"
-                        onClick={() => props.onCreateTask?.()}
-                        className="task-detail-state-action task-detail-state-action-primary"
-                      >
-                        <Play aria-hidden="true" size={14} />
-                        {t("todo.start_work", "开始处理")}
-                      </button>
-                    ) : null}
-                  </section>
-
-                  {props.onCreateTask
-                    ? extensions?.renderPersonalTaskAction?.({
-                        item,
-                        tasks: effectiveTasks,
-                        onCreateTask: props.onCreateTask,
-                      })
-                    : null}
-
                   <ExecutionConfigurationNotice
                     key={item.id}
                     issue={item}
@@ -3479,8 +3536,19 @@ export function TodoEditor(props: TodoEditorProps) {
                   />
                   {!isCreate ? (
                     <>
+                      {personalTaskAction &&
+                      displayedTasks.length === 0 &&
+                      executionChildItems.length === 0 ? (
+                        <section className="task-detail-workspace-section">
+                          <h3 className="task-detail-workspace-section-title">
+                            {t("todo.linked_tasks", "关联任务")}
+                          </h3>
+                          {personalTaskAction}
+                        </section>
+                      ) : null}
                       <IssueLinkedTasks
                         key={item.id}
+                        creationAction={personalTaskAction}
                         tasks={displayedTasks}
                         childItems={executionChildItems}
                         statusOptions={statusOptions}
@@ -3489,7 +3557,9 @@ export function TodoEditor(props: TodoEditorProps) {
                         deviceNamesById={props.deviceNamesById}
                         selectedTaskId={props.selectedTaskId}
                         showCurrentTaskOnly={props.showCurrentTaskOnly}
-                        onCreateTask={props.onCreateTask}
+                        onCreateTask={
+                          personalTaskAction ? undefined : props.onCreateTask
+                        }
                         onOpenTaskConversation={props.onOpenTaskConversation}
                         onOpenChildTask={props.onOpenChildTask}
                         translate={t}

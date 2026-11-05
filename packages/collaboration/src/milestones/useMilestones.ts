@@ -1,3 +1,4 @@
+import type { CollaborationProject } from "../types";
 import { getClientRequestCache } from "@wegent/chat-core/request-cache";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Milestone, MilestonesApi } from "./types";
@@ -117,4 +118,21 @@ export function useMilestones(
     error: current?.error ?? false,
     reload,
   };
+}
+
+export function milestoneVisibilityScope(
+  project: Pick<
+    CollaborationProject,
+    | "current_user_id"
+    | "access_role"
+    | "project_store"
+    | "default_issue_security"
+  >,
+): string {
+  return JSON.stringify([
+    project.current_user_id,
+    project.access_role,
+    project.project_store,
+    project.default_issue_security,
+  ]);
 }

@@ -107,6 +107,84 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     }
   }
 
+  const style = (control, selector, property) =>
+    control.command('getComputedStyleValue', selector, { value: property })
+  const assertProgress = async (control, id, percent) => {
+    const track = `${scoped(`milestone-${id}`)} [role="progressbar"]`
+    assert.equal(
+      await control.command('getAttribute', track, { value: 'aria-valuenow' }),
+      String(percent)
+    )
+    const [fill] = JSON.parse(
+      await control.command('getElementMetrics', scoped(`milestone-progress-fill-${id}`))
+    )
+    const [bar] = JSON.parse(await control.command('getElementMetrics', track))
+    assert.ok(
+      Math.abs(fill.width - (bar.width * percent) / 100) <= 1,
+      `Wrong ${percent}% fill: ${JSON.stringify({ fill, bar })}`
+    )
+  }
+  const assertToolbarTypography = async control => {
+    const controls = [
+      scoped('cloud-board-group-by'),
+      scoped('cloud-board-group-filter-label'),
+      `${CONTENT} label:has(> [data-testid="milestone-filter"])`,
+      scoped('cloud-board-search'),
+      scoped('cloud-board-parent-layout'),
+    ]
+    for (const property of ['font-family', 'font-size', 'font-weight', 'line-height']) {
+      const expected = await style(control, controls[0], property)
+      for (const selector of controls.slice(1))
+        assert.equal(
+          await style(control, selector, property),
+          expected,
+          `Toolbar ${property} differs: ${selector}`
+        )
+    }
+    await control.command('nativePress', scoped('cloud-board-search'), { key: 'Shift+Tab' })
+    await control.command('waitFor', `${scoped('milestone-filter')}:focus-visible`)
+    const filterShell = `${CONTENT} .milestone-picker-filter`
+    assert.equal(await style(control, filterShell, 'outline-style'), 'solid')
+    assert.ok(parseFloat(await style(control, filterShell, 'outline-width')) >= 2)
+  }
+  const assertFormStates = async control => {
+    await control.command('focus', scoped('milestone-title'))
+    assert.equal(await style(control, scoped('milestone-title'), 'border-top-style'), 'solid')
+    assert.ok(parseFloat(await style(control, scoped('milestone-title'), 'border-top-width')) >= 1)
+    assert.notEqual(
+      await style(control, scoped('milestone-title'), 'border-top-color'),
+      'rgba(0, 0, 0, 0)'
+    )
+    const text = await style(control, scoped('milestone-save'), 'color')
+    await control.command('hover', scoped('milestone-save'))
+    assert.equal(await style(control, scoped('milestone-save'), 'color'), text)
+    const foreground = text.match(/[\d.]+/g)?.map(Number)
+    const background = (await style(control, scoped('milestone-save'), 'background-color'))
+      .match(/[\d.]+/g)
+      ?.map(Number)
+    const surface = (await style(control, 'body', 'background-color')).match(/[\d.]+/g)?.map(Number)
+    assert.ok(
+      foreground?.length >= 3 && background?.length >= 3 && surface?.length >= 3,
+      'Expected RGB colors for primary action contrast'
+    )
+    const luminance = channels =>
+      channels
+        .slice(0, 3)
+        .map(value => value / 255)
+        .map(value => (value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4))
+        .reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0)
+    const alpha = background[3] ?? 1
+    const painted = background
+      .slice(0, 3)
+      .map((value, index) => value * alpha + surface[index] * (1 - alpha))
+    const light = luminance(foreground),
+      dark = luminance(painted)
+    assert.ok(
+      (Math.max(light, dark) + 0.05) / (Math.min(light, dark) + 0.05) >= 4.5,
+      'Save hover must preserve readable contrast'
+    )
+  }
+
   return {
     requiresCloudEnvironment: true,
     async prepareCloud(environment) {
@@ -239,6 +317,16 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await control.command('waitFor', scoped('milestone-view-archive'))
       await captureScreenshot(control, 'milestones-02-cloud-archived-detail.png', 'body')
       await control.command('click', scoped('milestones-back'))
+      await request(`/api/v1/loop-items/${issue.id}/restore`, 'POST')
+      await control.command('click', scoped('collaboration-tab-board'))
+      await control.command('waitFor', scoped(`cloud-todo-card-milestone-${issue.id}`), {
+        text: 'Cloud release',
+      })
+      await captureScreenshot(control, 'milestones-02b-cloud-card-metadata.png', 'body')
+      await request(`/api/v1/loop-items/${issue.id}`, 'DELETE')
+      await openMilestones(control)
+      await control.command('waitFor', scoped(`milestone-${milestone.id}`), { text: '100%' })
+      await assertProgress(control, milestone.id, 100)
       await control.command('clickWhenEnabled', scoped(`milestone-state-${milestone.id}`))
       await control.command('click', scoped('milestones-closed'))
       await control.command('waitFor', scoped(`milestone-${milestone.id}`), {
@@ -275,6 +363,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         value: `本地与云端统一的交付目标，归档后保持进度。\n${'LongUnbrokenDeliveryIdentifier'.repeat(12)}`,
       })
       await control.command('fill', scoped('milestone-due'), { value: '2027-01-01' })
+      await assertFormStates(control)
       await captureScreenshot(control, 'milestones-05-local-form.png', 'body')
       await control.command('clickWhenEnabled', scoped('milestone-save'))
       const firstMilestone = `${CONTENT} [data-testid^="milestone-open-ms-"]`
@@ -285,6 +374,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       const localId = (
         await control.command('getAttribute', firstMilestone, { value: 'data-testid' })
       ).slice('milestone-open-'.length)
+      await assertProgress(control, localId, 0)
       await control.command('click', scoped(`milestone-edit-${localId}`))
       await control.command('fill', scoped('milestone-title'), {
         value: 'Local release · 协作交付目标',
@@ -325,6 +415,17 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         timeoutMs: uiTimeoutMs,
       })
       assert.equal(await control.command('getValue', scoped('issue-milestone')), localId)
+      const [properties] = JSON.parse(
+        await control.command('getElementMetrics', scoped('issue-title-properties'))
+      )
+      const [description] = JSON.parse(
+        await control.command('getElementMetrics', `${CONTENT} .task-detail-desc`)
+      )
+      const [children] = JSON.parse(
+        await control.command('getElementMetrics', scoped('issue-hierarchy-summary'))
+      )
+      assert.ok(properties.bottom <= description.top + 1, 'Properties must precede the body')
+      assert.ok(description.bottom <= children.top + 1, 'Child Issues must follow the body')
       await captureScreenshot(control, 'milestones-06-local-issue-assignment.png', 'body')
       await control.command('click', scoped('cloud-todo-detail-close'))
       await openMilestones(control)
@@ -424,6 +525,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await captureScreenshot(control, 'milestones-08c-local-table-bulk.png', 'body')
       await openMilestones(control)
       await control.command('waitFor', scoped(`milestone-${followUp.id}`), { text: '50%' })
+      await assertProgress(control, followUp.id, 50)
       await captureScreenshot(control, 'milestones-08d-local-multiple-progress.png', 'body')
       await bulkMilestone(control, null)
       await openMilestones(control)
@@ -461,6 +563,19 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await control.command('waitFor', `${scoped('milestone-filter')}:enabled`)
       await control.command('select', scoped('milestone-filter'), { value: localId })
       await control.command('waitFor', scoped(`cloud-todo-card-${localIssue}`))
+      await control.command('waitFor', scoped(`cloud-todo-card-milestone-${localIssue}`), {
+        text: '协作交付目标',
+      })
+      await assertToolbarTypography(control)
+      await control.command('click', scoped('cloud-board-parent-layout'))
+      await control.command('waitFor', scoped('cloud-board-parent-rows'))
+      await control.command('waitFor', scoped(`cloud-todo-card-milestone-${localIssue}`), {
+        text: '协作交付目标',
+      })
+      await captureScreenshot(control, 'milestones-08g-parent-milestone.png', 'body')
+      await control.command('click', scoped('cloud-board-parent-layout'))
+      await control.command('waitFor', scoped(`cloud-todo-card-${localIssue}`))
+      await captureScreenshot(control, 'milestones-08h-board-milestone.png', 'body')
       await control.command('waitFor', scoped(`collaboration-issue-children-${localIssue}`), {
         text: '1/1',
       })

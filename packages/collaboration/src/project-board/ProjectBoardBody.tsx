@@ -1,3 +1,4 @@
+import "./toolbar.css"
 import { ProjectBoardCardContext } from './projectBoardCardContext'
 import { registerBoardCursorPolicy } from './boardCursorPolicy'
 import { Plus, ChevronDown, ChevronRight, Search, Maximize2, Minimize2 } from 'lucide-react'
@@ -156,6 +157,7 @@ export interface ProjectBoardBodyProps<TItem> {
     onChange: (value: ProjectBoardGroupBy) => void
   ): ReactNode
   renderBoardSettingsAction?(): ReactNode
+  filterAction?: ReactNode
   toolbarAction?: ReactNode
   rootLabel: string
   rootUnitLabel: string
@@ -206,6 +208,7 @@ export function ProjectBoardBody<TItem>({
   renderExternalGroupPicker,
   renderGroupPicker,
   renderBoardSettingsAction,
+  filterAction,
   toolbarAction,
   renderItem,
   renderItemsFooter,
@@ -298,6 +301,7 @@ export function ProjectBoardBody<TItem>({
               ))}
             </select>
           </span>
+          {filterAction}
           <label className="flex h-8 min-w-52 items-center gap-2 rounded-lg border border-border px-2.5 text-xs text-text-muted keyboard:focus-within:border-focus">
             <Search className="h-3.5 w-3.5" />
             <input
@@ -313,7 +317,7 @@ export function ProjectBoardBody<TItem>({
       ) : (
         <div
           data-testid="cloud-board-toolbar"
-          className="scrollbar-none flex shrink-0 items-center gap-2 overflow-x-auto overscroll-x-contain px-6 pb-3"
+          className="project-board-toolbar scrollbar-none flex shrink-0 items-center gap-2 overflow-x-auto overscroll-x-contain px-6 pb-3"
         >
           {isMyTasksBoard && localProjectFilter && localProjectFilter.options.length > 0 ? (
             <label className="relative inline-flex h-8 min-w-40 shrink-0 cursor-pointer items-center rounded-lg border border-border bg-background pl-3 pr-8 text-xs font-medium text-text-primary hover:bg-muted">
@@ -366,6 +370,7 @@ export function ProjectBoardBody<TItem>({
               ))}
             </select>
           </label>
+          {filterAction}
           <label className="flex h-8 min-w-52 shrink-0 items-center gap-2 rounded-lg border border-border px-2.5 text-xs text-text-muted keyboard:focus-within:border-focus">
             <Search className="h-3.5 w-3.5" />
             <input

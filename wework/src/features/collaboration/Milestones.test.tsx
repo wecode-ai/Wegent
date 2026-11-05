@@ -465,3 +465,56 @@ describe('Milestones', () => {
     expect(screen.getByTestId('milestone-bulk-apply')).toHaveTextContent(/^Apply milestone$/)
   })
 })
+
+it('separates list controls from milestone detail and retains a clear empty closed state', async () => {
+  render(
+    <MilestonesPage
+      api={api()}
+      project={project}
+      issues={[]}
+      locale="en"
+      renderIssues={() => null}
+    />
+  )
+  await screen.findByTestId('milestone-open-ms-one')
+  expect(screen.getByRole('heading', { name: 'Milestones' })).toBeTruthy()
+  fireEvent.click(screen.getByTestId('milestone-open-ms-one'))
+  expect(screen.queryByTestId('milestones-toolbar')).toBeNull()
+  expect(screen.queryByTestId('milestone-create')).toBeNull()
+  expect(screen.getByTestId('milestones-back')).toBeTruthy()
+  expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '25')
+  fireEvent.click(screen.getByTestId('milestones-back'))
+  fireEvent.click(screen.getByTestId('milestones-closed'))
+  expect(screen.getByTestId('milestones-empty')).toHaveTextContent('No closed milestones')
+})
+
+it.each([
+  { open: 3, completed: 0, percent: 0 },
+  { open: 0, completed: 0, percent: 0 },
+  { open: 1, completed: 1, percent: 50 },
+  { open: 0, completed: 2, percent: 100 },
+])(
+  'renders a determinate $percent% milestone fill for $completed completed and $open remaining',
+  async ({ open, completed, percent }) => {
+    const client = api()
+    vi.mocked(client.milestones.list).mockResolvedValue([
+      { ...milestone, open_issues: open, closed_issues: completed },
+    ])
+    render(
+      <MilestonesPage
+        api={client}
+        project={project}
+        issues={[]}
+        locale="en"
+        renderIssues={() => null}
+      />
+    )
+    const progress = await screen.findByRole('progressbar')
+    expect(progress).toHaveAttribute('aria-valuenow', String(percent))
+    expect(progress).toHaveAttribute('aria-valuemin', '0')
+    expect(progress).toHaveAttribute('aria-valuemax', '100')
+    expect(screen.getByTestId('milestone-progress-fill-ms-one')).toHaveStyle({
+      width: `${percent}%`,
+    })
+  }
+)

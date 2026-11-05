@@ -1,3 +1,7 @@
+import {
+  useMilestones,
+  milestoneVisibilityScope,
+} from "./milestones/useMilestones";
 import { useMilestoneFilter } from "./milestones/useMilestoneFilter";
 import { MilestoneBulkAction } from "./milestones/MilestoneBulkAction";
 import { MilestonesPage } from "./milestones/MilestonesPage";
@@ -424,6 +428,13 @@ export function CollaborationApp({
     project &&
     ["local", "backend"].includes(project.task_provider),
   );
+  const boardMilestones = useMilestones(
+    api.milestones,
+    project?.id ?? "",
+    milestonesEnabled && ["board", "table"].includes(host.location.view),
+    issues.map((issue) => `${issue.id}:${issue.version}`).join("|"),
+    project ? milestoneVisibilityScope(project) : "",
+  );
   const hasHeaderCreateAction =
     host.location.view === "board" ||
     host.location.view === "calendar" ||
@@ -433,6 +444,7 @@ export function CollaborationApp({
       <div className="min-w-0 max-w-full shrink-0">
         <MilestonePicker
           api={api.milestones}
+          query={boardMilestones}
           projectId={project.id}
           value={currentMilestoneFilter}
           onChange={milestoneFilter.select}
@@ -442,6 +454,7 @@ export function CollaborationApp({
           errorLabel={milestoneLabels.error}
           retryLabel={milestoneLabels.retry}
           onMissingValue={milestoneFilter.clear}
+          compact
           testId="milestone-filter"
         />
       </div>
@@ -676,6 +689,7 @@ export function CollaborationApp({
               extensions={[
                 {
                   id: "milestones",
+                  after: "table",
                   label: milestoneLabels.title,
                   testId: "collaboration-milestones-tab",
                   available: milestonesEnabled,
@@ -911,12 +925,8 @@ export function CollaborationApp({
                           </div>
                         </div>
                       }
-                      toolbarAction={
-                        <>
-                          {milestoneFilterControl}
-                          {host.renderBoardToolbarAction?.(project)}
-                        </>
-                      }
+                      filterAction={milestoneFilterControl}
+                      toolbarAction={host.renderBoardToolbarAction?.(project)}
                       onMarkRead={(issue) => void commands.markIssueRead(issue)}
                       runtime={api.runtime}
                       previewDisabled={Boolean(selectedIssue)}
@@ -926,6 +936,7 @@ export function CollaborationApp({
                       project={project}
                       issues={filteredIssues}
                       allIssues={issues}
+                      milestones={boardMilestones.items}
                       onOpenChildren={milestoneFilter.openChildren}
                       onCurrentParentIdChange={milestoneFilter.changeParent}
                       members={members ?? []}
