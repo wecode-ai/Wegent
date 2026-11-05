@@ -121,6 +121,7 @@ pub(crate) async fn process_execution_event(
 
     let terminal_status = completion::terminal_status(&event.event_type);
 
+    prepare_interactive_form_event(&state.interactive_form, &mut event).await;
     let mut emitter = StatusUpdatingEmitter::new(redis.to_owned(), event.task_id, event.subtask_id);
     if terminal_status.is_none()
         && let Err(error) = emitter.emit(&mut event).await
@@ -184,6 +185,27 @@ pub(crate) async fn process_execution_event(
     channel::forward_event_to_channel_callbacks(redis, event.task_id, &event).await;
 
     Ok(())
+}
+
+async fn prepare_interactive_form_event(
+    registry: &crate::InteractiveFormRegistry,
+    event: &mut event::ExecutionEvent,
+) {
+    if event.event_type != "tool_result"
+        || !event
+            .tool_name
+            .as_deref()
+            .unwrap_or_default()
+            .contains("interactive_form_question")
+    {
+        return;
+    }
+    if let Some(payload) = registry
+        .render_payload_from_tool_input(event.task_id, event.subtask_id, event.tool_input.as_ref())
+        .await
+    {
+        event.data.insert("render_payload".into(), payload);
+    }
 }
 
 /// The deployment's task/subtask table templates.
