@@ -269,6 +269,17 @@ test('both provider manifests expose schemas through the unchanged connection re
       query: { entityKind: 'job', number: 912, view: 'logs' },
     })
     assert.equal(job.items[0].data.jobId, '912')
+    const coverage = await registry.call(f.source.providerId, 'collect', {
+      source: f.source,
+      checkpoint: {
+        tracked: {},
+        seen: {},
+        openChanges: { page: 1, coverageStatus: 'limited', coverageRevision: 1 },
+      },
+    })
+    assert.equal(coverage.events[0].eventType, 'git.monitoring_coverage')
+    assert.equal(coverage.events[0].external.coverageStatus, 'complete')
+
     for (const bad of [
       query('checks', { sha: 'invalid' }),
       query('comments', { repository: 'other/repo' }),

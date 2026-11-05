@@ -748,7 +748,10 @@ for (const platform of ['github', 'gitlab']) {
     }
     const provider = createProvider(platform)
     await provider.validate(ctx, cliSource)
-    const checkpoint = await provider.initialize(ctx, cliSource)
+    const checkpoint = {
+      ...(await provider.initialize(ctx, cliSource)),
+      openChanges: { complete: true },
+    }
     assert.equal(checkpoint.partition, undefined)
     const first = await provider.collect(ctx, { source: cliSource, checkpoint })
     assert.equal(first.events.length, 1)
@@ -799,7 +802,7 @@ test('CLI repository pages retain distinct events and reject a changed repositor
   }
   const first = await provider.collect(ctx, {
     source: cliSource,
-    checkpoint: await provider.initialize(ctx, cliSource),
+    checkpoint: { ...(await provider.initialize(ctx, cliSource)), openChanges: { complete: true } },
   })
   assert.equal(first.events.length, 100)
   assert.equal(first.nextCheckpoint.activityPage, 2)
@@ -851,7 +854,10 @@ test('CLI personal scope collects authored and received activity plus personal w
     },
   }
   const provider = createProvider('github')
-  let checkpoint = await provider.initialize(ctx, cliSource)
+  let checkpoint = {
+    ...(await provider.initialize(ctx, cliSource)),
+    openChanges: { complete: true },
+  }
   const events = []
   for (let i = 0; i < 10; i++) {
     const result = await provider.collect(ctx, { source: cliSource, checkpoint })
@@ -896,12 +902,16 @@ test('a full GitHub window reports unseen backlog but still accepts a previously
   const provider = createProvider('github')
   const cliSource = { ...source, transport: 'cli' }
   await assert.rejects(
-    provider.collect(ctx, { source: cliSource, checkpoint: { activityPage: 3 } }),
+    provider.collect(ctx, {
+      source: cliSource,
+      checkpoint: { activityPage: 3, openChanges: { complete: true } },
+    }),
     { code: 'git_backlog_limit' }
   )
   const repeated = await provider.collect(ctx, {
     source: cliSource,
     checkpoint: {
+      openChanges: { complete: true },
       activityPage: 3,
       seen: Object.fromEntries(rows.map(row => [`activity:${row.id}`, { at: row.created_at }])),
     },
@@ -954,7 +964,10 @@ for (const scope of ['personal', 'repository']) {
         },
       }
       const provider = createProvider('gitlab')
-      let checkpoint = await provider.initialize(ctx, cliSource)
+      let checkpoint = {
+        ...(await provider.initialize(ctx, cliSource)),
+        openChanges: { complete: true },
+      }
       const events = []
       for (let i = 0; i < 15; i++) {
         const result = await provider.collect(ctx, { source: cliSource, checkpoint })
@@ -1002,7 +1015,7 @@ test('activity deduplication survives the generic thirty-day checkpoint cleanup'
   const provider = createProvider('gitlab')
   const first = await provider.collect(ctx, {
     source: cliSource,
-    checkpoint: await provider.initialize(ctx, cliSource),
+    checkpoint: { ...(await provider.initialize(ctx, cliSource)), openChanges: { complete: true } },
   })
   assert.equal(first.events.length, 1)
   const completed = await provider.collect(ctx, {

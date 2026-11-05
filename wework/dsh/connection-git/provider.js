@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { createGitSourceReader } from './source-read.js'
+import { discoverOpenChanges, coverageEvents } from './repository-baseline.js'
 
 export const GIT_PACKAGE = '@wegent/dsh-connection-git/'
 const STREAMS = ['notifications', 'assigned', 'reviews']
@@ -143,6 +144,19 @@ export function createProvider(platform) {
       if (checkpoint.nextCheckAt && Date.now() < checkpoint.nextCheckAt)
         return { events: [], nextCheckpoint: checkpoint, hasMore: false }
       if (source.transport === 'cli') {
+        if (
+          source.kind === 'repository' &&
+          !checkpoint.openChanges?.complete &&
+          checkpoint.openChanges?.phase !== 'compare'
+        )
+          return discoverOpenChanges(ctx, platform, source, checkpoint, {
+            parseProfile,
+            canonicalTopic,
+            fingerprint,
+            invalid,
+          })
+        if (source.kind === 'repository' && checkpoint.openChanges?.phase === 'compare')
+          return collectTracked(ctx, platform, source, structuredClone(checkpoint))
         if (!checkpoint.activityComplete) return collectActivity(ctx, platform, source, checkpoint)
         if (source.kind === 'repository')
           return collectTracked(ctx, platform, source, structuredClone(checkpoint))
@@ -242,11 +256,23 @@ async function collectActivity(ctx, platform, source, checkpoint) {
     next.seen[key] = { digest: fingerprint(row), at }
     events.push(event)
     if (['issue', 'change_request'].includes(event.external.entityKind) && event.external.url) {
-      next.tracked[event.external.url] = {
-        repository: event.external.repositoryPath,
-        number: event.external.entityId,
-        entityKind: event.external.entityKind,
-        url: event.external.url,
+      if (
+        source.kind === 'repository' &&
+        source.transport === 'cli' &&
+        !next.tracked[event.external.url] &&
+        Object.keys(next.tracked).length >= 100
+      ) {
+        next.openChanges ??= { page: 1 }
+        Object.assign(next.openChanges, { complete: false, backlog: true, phase: 'compare' })
+        events.push(...coverageEvents(platform, source, next.openChanges, fingerprint))
+      } else {
+        next.tracked[event.external.url] ??= {
+          repository: event.external.repositoryPath,
+          number: event.external.entityId,
+          entityKind: event.external.entityKind,
+          url: event.external.url,
+        }
+        delete next.tracked[event.external.url].finished
       }
     }
   }
@@ -587,6 +613,17 @@ async function collectTracked(ctx, platform, source, next) {
   const targets = Object.values(next.tracked)
   const target = targets[next.trackIndex ?? 0]
   if (!target) {
+    if (next.openChanges?.phase === 'compare') {
+      next.tracked = Object.fromEntries(
+        Object.entries(next.tracked).filter(([, target]) => !target.finished)
+      )
+      next.trackIndex = 0
+      next.trackStep = 0
+      next.page = 1
+      if (next.openChanges.complete) delete next.openChanges.phase
+      else next.openChanges.phase = 'discover'
+      return { events: [], nextCheckpoint: next, hasMore: true }
+    }
     next.tracked = Object.fromEntries(
       Object.entries(next.tracked).filter(([, target]) => !target.finished)
     )
@@ -599,9 +636,13 @@ async function collectTracked(ctx, platform, source, next) {
     next.trackStep = 0
     next.nextCheckAt = Date.now() + Math.max(60, next.pollIntervalSeconds ?? 60) * 1000
     const cutoff = Date.now() - 30 * 86400000
+    const active = Object.keys(next.tracked).map(url => `tracked:${url}:`)
     next.seen = Object.fromEntries(
       Object.entries(next.seen).filter(
-        ([key, value]) => key.startsWith('activity:') || Date.parse(value.at) >= cutoff
+        ([key, value]) =>
+          key.startsWith('activity:') ||
+          active.some(prefix => key.startsWith(prefix)) ||
+          Date.parse(value.at) >= cutoff
       )
     )
     return { events: [], nextCheckpoint: next, hasMore: false }
@@ -650,15 +691,21 @@ async function collectTracked(ctx, platform, source, next) {
     : (response.data.check_runs ?? [response.data])
   const events = []
   for (const row of rows) {
-    const at =
-      row.updated_at ?? row.completed_at ?? row.submitted_at ?? row.created_at ?? next.until
-    if (!Number.isFinite(Date.parse(at)) || Date.parse(at) < Date.parse(source.enabledAfter))
-      continue
+    const sourceAt = row.updated_at ?? row.completed_at ?? row.submitted_at ?? row.created_at
+    const credibleTime = Number.isFinite(Date.parse(sourceAt))
+    const at = credibleTime ? sourceAt : new Date().toISOString()
     if (step === 2 && row.sha && target.sha && row.sha !== target.sha) continue
     const key = `tracked:${target.url}:${step}:${row.id ?? 'state'}`
     const digest = fingerprint(row)
     if (next.seen[key]?.digest === digest) continue
-    next.seen[key] = { digest, at }
+    if (target.baseline) {
+      next.seen[key] = { digest, at }
+      if (!credibleTime || Date.parse(sourceAt) < Date.parse(source.enabledAfter)) continue
+    } else {
+      if (!Number.isFinite(Date.parse(at)) || Date.parse(at) < Date.parse(source.enabledAfter))
+        continue
+      next.seen[key] = { digest, at }
+    }
     events.push({
       id:
         step === 1
@@ -698,6 +745,7 @@ async function collectTracked(ctx, platform, source, next) {
         objectKind: step === 1 ? 'comment' : operation,
         objectUrl: row.html_url ?? row.web_url,
         objectVersion: row.updated_at ?? row.created_at,
+        timestampBasis: credibleTime ? 'source' : 'observed_change',
         payload: row,
       },
     })
@@ -709,8 +757,10 @@ async function collectTracked(ctx, platform, source, next) {
 
 function advanceTracked(next, steps) {
   next.page = 1
-  next.trackStep = (next.trackStep ?? 0) + 1
+  const target = Object.values(next.tracked)[next.trackIndex ?? 0]
+  next.trackStep = (next.trackStep ?? 0) + (target?.baseline ? 2 : 1)
   if (next.trackStep >= steps) {
+    if (target) delete target.baseline
     next.trackIndex = (next.trackIndex ?? 0) + 1
     next.trackStep = 0
   }
