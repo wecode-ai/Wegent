@@ -26,6 +26,7 @@ import {
   verifyInteractionArchiving,
 } from '../modules/human-interaction-dismiss.mjs'
 import { verifyPendingInteractionsTab } from '../modules/pending-interactions-tab.mjs'
+import { createPersistentInteractionNoticeCase } from '../modules/human-interaction-persistent-notice.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { readProjectChatMessages } from '../modules/project-chat-snapshot.mjs'
 import { waitForElementInsideScroller, waitForSnapshot } from '../modules/conversation-layout.mjs'
@@ -57,6 +58,7 @@ export function createDesktopScenario({
   uiTimeoutMs,
 }) {
   let held
+  const persistentNotice = createPersistentInteractionNoticeCase()
   let cloud
   let environment
   let issueFixture
@@ -105,6 +107,7 @@ export function createDesktopScenario({
       if (handleEmptyReplyPrediction(body, response)) return true
       assert.ok(JSON.stringify(body).includes(PROMPT), 'Unexpected model request')
       response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
+      if (persistentNotice.handleModel(body, response)) return true
       if (handleArchiveInteractionModel(body, response)) return true
       if (JSON.stringify(body.input).includes(FOLLOWUP)) {
         response.end(
@@ -878,6 +881,8 @@ export function createDesktopScenario({
       } else await captureScreenshot(control, '09-original-task-resumes.png')
       if (checkpoint === 'human-interactions') {
         await verifyInteractionArchiving(control, modelResponseTimeoutMs, originalTaskId)
+        await control.command('click', `${page} [data-testid="interaction-open-original"]`)
+        await persistentNotice.verify(control, modelResponseTimeoutMs)
       }
     },
   }
