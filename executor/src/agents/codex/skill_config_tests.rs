@@ -329,6 +329,7 @@ async fn cancelled_reload_cleans_only_its_own_pending_request_under_contention()
         .await
         .remove(&other_id)
         .expect("Unrelated request was removed")
+        .sender
         .send(Ok(json!({"data":[]})))
         .unwrap();
     assert_eq!(other.await.unwrap().unwrap(), json!({"data":[]}));
