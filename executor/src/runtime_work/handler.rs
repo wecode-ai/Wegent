@@ -1179,6 +1179,7 @@ include!("handler/helpers.rs");
 mod collaboration;
 mod composer_catalog;
 mod dispatch;
+mod plugin_catalog;
 mod runtime_rpc;
 
 use runtime_rpc::{

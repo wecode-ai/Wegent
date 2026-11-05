@@ -110,3 +110,56 @@ test.each(['reopen', 'resize'] as const)(
     expect(current.engine.current!.options.estimateSize(0)).toBe(220)
   }
 )
+
+test.each([600, 24])(
+  'keeps retained rows in normal flow while measurements lag actual height %s',
+  height => {
+    const current = fixture()
+    const heights = new Map<number, number>()
+    const bounds = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(function (this: HTMLElement) {
+        return new DOMRect(
+          0,
+          0,
+          800,
+          this.hasAttribute('data-message-row')
+            ? (heights.get(Number(this.dataset.index)) ?? 100)
+            : 0
+        )
+      })
+    const view = render(<MessageList {...current.props} />)
+    const row = view.container.querySelector<HTMLElement>('[data-message-row]')!
+    const index = Number(row.dataset.index)
+    const message = current.props.messages[index]
+    const before = current.engine.current!.getTotalSize()
+    expect(current.engine.current!.itemSizeCache.get(message.id)).toBe(100)
+
+    heights.set(index, height)
+    const messages = current.props.messages.map((item, position) =>
+      position === index ? { ...item, content: 'A longer updated message' } : item
+    )
+    view.rerender(<MessageList {...current.props} messages={messages} />)
+
+    expect(view.container.querySelector(`[data-index="${index}"]`)).toBe(row)
+    expect(current.engine.current!.itemSizeCache.get(message.id)).toBe(100)
+    expect(current.engine.current!.getTotalSize()).toBe(before)
+    expect(row.parentElement!.style.height).toBe('')
+    expect(row.style.position).toBe('')
+    expect(row.style.transform).toBe('')
+    const reservedHeight = [...row.parentElement!.children].reduce((sum, child) => {
+      const element = child as HTMLElement
+      return (
+        sum +
+        (Number.parseFloat(element.style.marginTop) || 0) +
+        (element.hasAttribute('data-message-row')
+          ? (heights.get(Number(element.dataset.index)) ?? 100)
+          : Number.parseFloat(element.style.height) || 0)
+      )
+    }, 0)
+    expect(reservedHeight).toBe(before + height - 100)
+    bounds.mockClear()
+    view.rerender(<MessageList {...current.props} messages={[...messages]} />)
+    expect(bounds.mock.calls).toHaveLength(0)
+  }
+)

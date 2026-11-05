@@ -448,7 +448,6 @@ class SkillBindingService:
         db: Session,
         user_id: int,
         context: SkillBindingContext | None = None,
-        shell_type: str | None = None,
     ) -> list[dict[str, Any]]:
         """Return active runtime Skill refs for the user's default enabled Skills."""
         refs: list[dict[str, Any]] = []
@@ -472,8 +471,6 @@ class SkillBindingService:
             if not skill:
                 continue
             shells = get_runtime_skill_shells(skill)
-            if shell_type and shells and shell_type not in shells:
-                continue
             ref = {
                 "skill_id": skill.id,
                 "name": skill.name,

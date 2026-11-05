@@ -157,6 +157,7 @@
         "core:collaboration-local-agent-dispatch",
         "core:collaboration-local-group-cancellation",
         "core:collaboration-local-group-coordinate",
+        "core:collaboration-milestones",
         "core:collaboration-parent-board",
         "core:collaboration-remote-agent-dispatch",
         "core:collaboration-remote-group-coordinate",
@@ -204,6 +205,10 @@
         },
         {
           "file": "collaboration/collaboration-status-automation.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "collaboration/workspace-initialization.spec.ts",
           "project": "chromium"
         },
         {
@@ -468,6 +473,14 @@
         },
         {
           "file": "knowledge/knowledge.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "knowledge/company-url-scope.spec.ts",
+          "project": "chromium"
+        },
+        {
+          "file": "knowledge/stable-id-navigation.spec.ts",
           "project": "chromium"
         }
       ]

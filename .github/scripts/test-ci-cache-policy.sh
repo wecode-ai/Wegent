@@ -636,7 +636,7 @@ jobs = YAML.load_file(ARGV[0])['jobs']
     abort "#{name} must install Electron for #{segment}" unless step['if'].include?("contains(matrix.segments, '#{segment}')")
   end
   expected_commands = [
-    'pnpm --dir wework/electron install --frozen-lockfile',
+    'pnpm --dir wework prepare:electron',
     %q{pnpm --dir wework/electron exec node -e "require('node:fs').statSync(require('electron'))"}
   ]
   commands = step['run'].lines.map(&:strip).reject(&:empty?)
@@ -711,6 +711,7 @@ if grep -Fq 'warm-wework-desktop-target:' "$warmup_workflow" ||
 fi
 
 node --test "$script_dir/runtime-artifact.test.mjs"
+node --test "$script_dir/builtin-plugin-staging.test.mjs"
 node --test "$script_dir/wework-core-e2e-transport.test.mjs"
 node --test "$script_dir/frontend-e2e-build.test.mjs"
 node --test "$script_dir/macos-e2e-build.test.mjs"

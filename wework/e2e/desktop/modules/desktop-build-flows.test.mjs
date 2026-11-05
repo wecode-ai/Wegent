@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, relative, resolve } from 'node:path'
 import { test } from 'node:test'
-import { resolveDesktopCodexBinary } from './desktop-build-flows.mjs'
+import { promisify } from 'node:util'
+
+import { prepareHarnessRuntimeRoots, resolveDesktopCodexBinary } from './desktop-build-flows.mjs'
 import { createPreparationObserver } from './preparation-progress.mjs'
+
+const execute = promisify(execFile)
 
 test('resolves the per-run coding CLI instead of inheriting another run configuration', async () => {
   const root = await mkdtemp(join(tmpdir(), 'wework-codex-selection-'))
@@ -109,4 +114,73 @@ test('preparation observations preserve concurrent operations and their independ
     records.some(value => value.includes(failure.message)),
     false
   )
+})
+
+test('extracts packaged harness runtimes through native tar paths', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'wework-harness-runtime-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+
+  // Keep the fixture paths non-trivial so regressions in native path handling
+  // stay visible; Windows drive-letter behavior is covered by the Windows probe.
+  const appRoot = join(root, process.platform === 'win32' ? 'app' : 'local:results')
+  const appBinary =
+    process.platform === 'darwin'
+      ? join(appRoot, 'WeWork.app', 'Contents', 'MacOS', 'WeWork')
+      : join(appRoot, process.platform === 'win32' ? 'WeWork.exe' : 'WeWork')
+  const resourcesRoot =
+    process.platform === 'darwin'
+      ? join(appRoot, 'WeWork.app', 'Contents', 'Resources')
+      : join(appRoot, 'resources')
+  const packagedResources = join(resourcesRoot, 'harness-runtime')
+  const source = join(root, 'runtime-source')
+  const sourceEntry = join(source, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
+
+  await mkdir(dirname(sourceEntry), { recursive: true })
+  await writeFile(sourceEntry, 'module.exports = {}\n')
+  await mkdir(packagedResources, { recursive: true })
+  // Use relative operands so this fixture also runs under Git Bash/GNU tar.
+  await execute(
+    'tar',
+    ['-czf', './runtime.tar.gz', '-C', relative(packagedResources, source), '.'],
+    { cwd: packagedResources }
+  )
+  await writeFile(
+    join(packagedResources, 'runtimes.json'),
+    JSON.stringify({
+      runtimes: [{ sourceFingerprint: 'fingerprint', assetName: 'runtime.tar.gz' }],
+    })
+  )
+  await mkdir(join(resourcesRoot, 'wework-core-plugins'), { recursive: true })
+  await writeFile(
+    join(resourcesRoot, 'components.json'),
+    JSON.stringify({
+      components: {
+        weworkCorePlugins: { path: 'wework-core-plugins' },
+      },
+    })
+  )
+
+  const destinationRoot = join(
+    root,
+    process.platform === 'win32' ? 'destination' : 'destination:results'
+  )
+  const result = await prepareHarnessRuntimeRoots(appBinary, destinationRoot)
+
+  assert.equal(result.harnessRuntimeRoot, join(destinationRoot, 'harness-runtime'))
+  assert.equal(
+    await readFile(
+      join(
+        result.harnessRuntimeRoot,
+        'fingerprint',
+        'node_modules',
+        '@deepseek-ai',
+        'dsh',
+        'lib',
+        'bin.js'
+      ),
+      'utf8'
+    ),
+    'module.exports = {}\n'
+  )
+  assert.equal(result.corePluginsRoot, join(resourcesRoot, 'wework-core-plugins'))
 })

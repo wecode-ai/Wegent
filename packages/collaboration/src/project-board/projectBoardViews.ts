@@ -42,6 +42,7 @@ export interface BoardIssueCreateDefaults {
   tags: string[]
   draftScope: string
   parent: CollaborationIssue | null
+  milestoneId?: string
 }
 
 export function defaultBoardViewId(config?: ProjectBoardViews | null): string {

@@ -44,7 +44,6 @@ mod codex_mcp;
 mod execution_snapshot;
 mod home_skills;
 mod skill_archive;
-mod skill_shells;
 pub use codex::prepare_codex_runtime;
 pub(crate) use codex::prepare_codex_runtime_locked;
 pub(super) use execution_snapshot::publish_agent_skills;
@@ -564,7 +563,6 @@ async fn deploy_request_skills(
     request: &ExecutionRequest,
     skills_dir: &Path,
 ) -> Result<(), String> {
-    skill_shells::validate_shells(request)?;
     let required_skills = required_skill_names(request);
     let Some(primary_bot) = primary_bot(request) else {
         return required_skills
@@ -2524,6 +2522,8 @@ pub(super) fn write_json_file(path: &Path, value: &Value) -> Result<(), String> 
     #[cfg(windows)]
     let path = canonical_parent.join(path.file_name().ok_or("JSON file has no name")?);
     #[cfg(windows)]
+    let path = path.as_path();
+    #[cfg(windows)]
     let parent = canonical_parent.as_path();
     let mut file = tempfile::NamedTempFile::new_in(parent)
         .map_err(|error| format!("failed to stage JSON: {error}"))?;
@@ -2533,7 +2533,7 @@ pub(super) fn write_json_file(path: &Path, value: &Value) -> Result<(), String> 
     file.as_file()
         .sync_all()
         .map_err(|error| error.to_string())?;
-    file.persist(&path)
+    file.persist(path)
         .map_err(|error| format!("failed to publish JSON {}: {}", path.display(), error.error))?;
     Ok(())
 }

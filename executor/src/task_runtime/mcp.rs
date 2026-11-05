@@ -35,6 +35,7 @@ use super::{
 
 mod comments;
 mod context;
+mod parent_issue;
 mod stand_in;
 pub(crate) mod stand_in_tasks;
 #[cfg(test)]
@@ -824,7 +825,11 @@ async fn call_tool_with_runtime_context(
         .as_ref()
         .and_then(|grant| context_scope_error(grant, &arguments))
     {
-        return text_result(error, true);
+        match parent_issue::authorize_read(runtime, name, &arguments, context).await {
+            Ok(true) => {}
+            Ok(false) => return text_result(error, true),
+            Err(error) => return text_result(error, true),
+        }
     }
     let default_project_id = grant
         .as_ref()
@@ -2968,7 +2973,7 @@ fn tools() -> Vec<Value> {
         ),
         tool(
             "get_board_item",
-            "Get one board item in a project space",
+            "Get one board item in a project space. An Executor-bound agent may explicitly read its Issue's direct parent_id in the same project, subject to existing parent visibility. Use that parent item_id with list_board_item_comments, list_deliveries, read_delivery and download_delivery_asset to read requirements, comments and handoffs. Parent access is read-only; get_current_context and Delivery writes remain bound to the child Issue. Ancestors, siblings and unrelated Issues are outside this exception.",
             json!({
                 "type": "object",
                 "properties": {
@@ -4701,6 +4706,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Investigate load".to_owned(),
                     description: String::new(),
                     status: "in_progress".to_owned(),
@@ -4883,6 +4889,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Fix OAuth callback".to_owned(),
                     description: "Login fails after redirect".to_owned(),
                     status: "in_progress".to_owned(),
@@ -4900,6 +4907,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Write deployment guide".to_owned(),
                     description: String::new(),
                     status: "pending".to_owned(),
@@ -4963,6 +4971,7 @@ mod tests {
                 .create_task(
                     project_id,
                     TaskCreate {
+                        milestone_id: None,
                         title: title.to_owned(),
                         description: String::new(),
                         status: "inbox".to_owned(),
@@ -5009,6 +5018,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Inspect attachment".to_owned(),
                     description: String::new(),
                     status: "pending".to_owned(),

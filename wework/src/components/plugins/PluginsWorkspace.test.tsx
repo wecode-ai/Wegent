@@ -84,6 +84,10 @@ async function installPluginFromMarketCard(testId: string) {
   await waitFor(() => expect(screen.queryByTestId('install-plugin-dialog')).not.toBeInTheDocument())
 }
 
+vi.mock('@/api/local/runtimeAuthStatus', () => ({
+  getLocalCodexAuthStatus: vi.fn().mockResolvedValue({ sha256: 'test-account' }),
+}))
+
 vi.mock('@/desktop/localExecutor', async importOriginal => ({
   ...(await importOriginal<typeof import('@/desktop/localExecutor')>()),
   ensureLocalExecutorStarted: localExecutorMocks.ensureStarted,
@@ -6461,6 +6465,28 @@ describe('PluginsWorkspace', () => {
       cacheKey: '/api|cloud-token',
     })
 
+    // A directory is reusable only after this runtime validates its account scope.
+    vi.mocked(requestLocalExecutor).mockResolvedValueOnce({
+      marketplaces: [
+        {
+          name: 'openai-curated-remote',
+          path: 'openai-curated-remote',
+          plugins: [
+            {
+              id: 'github@openai-curated-remote',
+              name: 'github',
+              installed: false,
+              enabled: false,
+              interface: { displayName: 'GitHub' },
+            },
+          ],
+        },
+      ],
+    })
+    await createLocalCodexPluginApi().readRemoteCatalog({
+      accountScope: pluginMarketplaceCacheKey('/api', 'cloud-token'),
+    })
+
     let resolveInstalled: ((value: unknown) => void) | null = null
     const pendingInstalled = new Promise(resolve => {
       resolveInstalled = resolve
@@ -6515,6 +6541,45 @@ describe('PluginsWorkspace', () => {
 
     await userEvent.click(screen.getByTestId('plugins-refresh-button'))
     await waitFor(() => expect(unrestrictedPluginListStarted).toBe(true))
+  })
+
+  test('refreshing a non-official marketplace never reads the official directory', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockSystemSkillsFetch({ deviceAutoSyncSucceeds: true })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+    const originalInvoke = vi.mocked(requestLocalExecutor).getMockImplementation()!
+    vi.mocked(requestLocalExecutor).mockImplementation(async (method, args) => {
+      const result = await originalInvoke(method, args)
+      return method === 'executor.plugins.store.list'
+        ? { ...(result as Record<string, unknown>), supportsPluginReconciliation: true }
+        : result
+    })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await screen.findByTestId('plugin-marketplace-install-101')
+    const refresh = screen.getByTestId('plugins-refresh-button')
+    await waitFor(() => expect(refresh).toBeEnabled())
+    const before = refresh.getAttribute('data-reconciliation-revision')
+    await userEvent.click(refresh)
+    await waitFor(() =>
+      expect(refresh.getAttribute('data-reconciliation-revision')).not.toBe(before)
+    )
+    await waitFor(() => expect(refresh).toBeEnabled())
+    const catalogs = vi
+      .mocked(requestLocalExecutor)
+      .mock.calls.filter(
+        ([method, payload]) =>
+          method === 'codex.app_server_request' &&
+          (payload as { method?: string })?.method === 'plugin/list'
+      )
+    expect(catalogs.length).toBeGreaterThan(0)
+    expect(
+      catalogs.every(
+        ([, payload]) =>
+          (
+            payload as { params?: { marketplaceKinds?: string[] } }
+          ).params?.marketplaceKinds?.join() === 'local'
+      )
+    ).toBe(true)
   })
 
   test('explicit refresh supersedes a pending plugin/installed request', async () => {

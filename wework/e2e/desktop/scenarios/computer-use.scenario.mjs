@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { access, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { verifyComputerUseHostMenu } from '../modules/computer-use-host-menu.mjs'
+import { verifyComputerUseCancellation } from '../modules/computer-use-cancellation.mjs'
 
 const PAGE_SELECTOR = '[data-testid="computer-use-settings-page"]'
 const TOGGLE_SELECTOR = '[data-testid="computer-use-enabled-toggle"]'
@@ -78,6 +80,39 @@ async function assertBridgeStopped(record) {
   )
 }
 
+/** Kill the actual native worker and recover through the existing settings UI. */
+export async function verifyDriverCrashRecovery(control, runtime, executorHome, timeoutMs) {
+  const snapshot = JSON.parse(await control.command('getOwnedProcessSnapshot', 'body'))
+  assert.equal(snapshot.applicationPid, runtime.pid, 'Process diagnostics must belong to this host')
+  const workers = snapshot.processes.filter(
+    candidate =>
+      candidate.parentPid === runtime.pid &&
+      candidate.detail?.includes('computer-use-driver-worker.js')
+  )
+  assert.equal(workers.length, 1, 'Expected one native worker owned by the Wework main process')
+  assert.notEqual(workers[0].pid, runtime.pid, 'Native tools must run outside the main process')
+  process.kill(workers[0].pid, 'SIGKILL')
+
+  await control.command('waitFor', '[data-testid="computer-use-settings-error"]', { timeoutMs })
+  await waitForRuntimeRecordRemoved(executorHome, timeoutMs)
+  await assertBridgeStopped(runtime)
+  await control.command('waitFor', '[data-testid="app-shell"]', { timeoutMs })
+
+  await control.command('click', TOGGLE_SELECTOR)
+  await control.command('waitFor', TOGGLE_SELECTOR, { timeoutMs })
+  await waitForAttribute(control, TOGGLE_SELECTOR, 'aria-checked', 'false', timeoutMs)
+  await control.command('click', TOGGLE_SELECTOR)
+  await control.command('waitFor', TOGGLE_SELECTOR, { timeoutMs })
+  await waitForAttribute(control, TOGGLE_SELECTOR, 'aria-checked', 'true', timeoutMs)
+  const recovered = await readRuntimeRecord(executorHome, timeoutMs)
+  assert.ok(recovered, 'Re-enabling computer use did not restore its private bridge')
+  assert.equal(recovered.pid, runtime.pid, 'Native worker failure restarted the main application')
+  assert.ok(recovered.token !== runtime.token, 'A recovered bridge reused old authorization')
+  await verifyBridge(recovered)
+  console.log('[computer-use] Real native worker termination, cleanup, and recovery verified')
+  return recovered
+}
+
 export function createDesktopScenario({ captureScreenshot, executorHome, uiTimeoutMs }) {
   return {
     async verify(control) {
@@ -109,11 +144,18 @@ export function createDesktopScenario({ captureScreenshot, executorHome, uiTimeo
       await control.command('waitFor', TOGGLE_SELECTOR, { timeoutMs: uiTimeoutMs })
       await waitForAttribute(control, TOGGLE_SELECTOR, 'aria-checked', 'true', uiTimeoutMs)
 
-      const runtime = await readRuntimeRecord(
+      let runtime = await readRuntimeRecord(
         executorHome,
         nativeState.platform === 'darwin' ? 1_000 : uiTimeoutMs
       )
-      if (runtime) await verifyBridge(runtime)
+      if (runtime) {
+        await verifyBridge(runtime)
+        runtime = await verifyDriverCrashRecovery(control, runtime, executorHome, uiTimeoutMs)
+      }
+      if (runtime && nativeState.platform === 'darwin') {
+        await verifyComputerUseHostMenu(control, runtime, uiTimeoutMs)
+      }
+      if (runtime) await verifyComputerUseCancellation(control, runtime, uiTimeoutMs)
       if (nativeState.platform !== 'darwin') {
         assert.ok(runtime, 'Enabled computer use did not publish its private bridge')
       }

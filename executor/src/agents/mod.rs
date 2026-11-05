@@ -12,6 +12,7 @@ mod cargo_cache;
 mod claude_code;
 mod claude_options;
 mod codex;
+mod completed_file_changes;
 #[cfg(test)]
 pub(crate) use codex::LaunchEnvironment as CodexLaunchEnvironment;
 mod codex_log_db;
@@ -676,9 +677,15 @@ impl AgentEngine for AgentProcessEngine {
                                 }
                             }
                             drop(capability_lease);
-                            stream_process_engine_for(&agent_kind, spec)
-                                .run_with_events(request, sink, builder)
-                                .await
+                            let workspace = spec.current_dir().map(PathBuf::from);
+                            let engine = stream_process_engine_for(&agent_kind, spec);
+                            completed_file_changes::capture_completed_file_changes(
+                                &request,
+                                workspace,
+                                &builder,
+                                || engine.run_with_events(request.clone(), sink, builder.clone()),
+                            )
+                            .await
                         }
                         Err(message) => {
                             let mut failed_fields = fields;

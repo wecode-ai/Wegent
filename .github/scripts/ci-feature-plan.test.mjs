@@ -554,7 +554,22 @@ test("Executor labels select the matching Playwright projects", () => {
 });
 
 test("provider-only shards provision auth and keep serial/no-deps execution", () => {
-  const { plan } = planFor([], ["ci:knowledge"]);
+  const knowledge = catalog.features.knowledge;
+  const providerCatalog = {
+    ...catalog,
+    features: {
+      ...catalog.features,
+      knowledge: {
+        ...knowledge,
+        specs: knowledge.specs.filter(
+          (spec) => spec.project === "provider-native-chromium",
+        ),
+      },
+    },
+  };
+  const { plan } = planFor([], ["ci:knowledge"], {
+    catalog: providerCatalog,
+  });
   const bucket = plan.platformMatrix.find(
     (entry) => entry.provider.length && !entry.specs.length,
   );

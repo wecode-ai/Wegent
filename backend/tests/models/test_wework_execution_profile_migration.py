@@ -15,8 +15,10 @@ pytestmark = pytest.mark.unit
 
 def _load_migration() -> ModuleType:
     path = (
-        Path(__file__).parents[2]
-        / "alembic"
+        Path(__file__).parents[2].parent
+        / "backend-rs"
+        / "migrations"
+        / "reference"
         / "versions"
         / "20260813_c8d9e0f1a2b3_generalize_wework_execution_profiles.py"
     )
