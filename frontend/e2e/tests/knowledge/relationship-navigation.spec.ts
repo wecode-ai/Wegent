@@ -7,6 +7,11 @@ import { createApiClient, type ApiClient } from '../../utils/api-client'
 import { buildStorageState, getJwtExpiryMs } from '../../utils/auth-state'
 import { ADMIN_USER, REGULAR_USER } from '../../config/test-users'
 
+function fixtureName(prefix: string) {
+  // Keep namespace + display name within the persisted Kind.name limit (100).
+  return `${prefix}-${randomUUID().replaceAll('-', '').slice(0, 16)}`
+}
+
 async function selectKnowledgeTeam(page: Page, groupId: string) {
   await page.getByTestId('knowledge-team-filter').click()
   await page.getByTestId('knowledge-team-search').fill(groupId.replace(/^group-/, ''))
@@ -37,7 +42,7 @@ test('relationship navigation deduplicates libraries and filters by owning space
     const groupIds: number[] = []
     const names: string[] = []
     for (let index = 0; index < 3; index++) {
-      const name = `e2e-knowledge-navigation-${randomUUID()}`
+      const name = fixtureName('e2e-nav-team')
       teams.add(name)
       names.push(name)
       const created = await api.post<{ id: number }>('/api/groups', {
@@ -49,7 +54,7 @@ test('relationship navigation deduplicates libraries and filters by owning space
     }
     const createLibrary = async (namespace: string) => {
       const created = await api.post<{ id: number }>('/api/knowledge-bases', {
-        name: `e2e-navigation-${randomUUID()}`,
+        name: fixtureName('e2e-nav-kb'),
         namespace,
         summary_enabled: false,
       })
@@ -134,7 +139,7 @@ test('read-only permissions stay scoped on mobile and desktop without exposing m
   let context: Awaited<ReturnType<typeof browser.newContext>> | undefined
   try {
     const created = await owner.post<{ id: number }>('/api/knowledge-bases', {
-      name: 'e2e-mobile-permissions-' + randomUUID(),
+      name: fixtureName('e2e-permissions'),
       namespace: 'default',
       summary_enabled: false,
       direct_access_requirement: 'read',
@@ -174,11 +179,20 @@ test('read-only permissions stay scoped on mobile and desktop without exposing m
         await expect(page.getByTestId('knowledge-mobile-list')).toBeVisible()
         await expect(row.getByTestId('open-kb-' + id)).toBeVisible()
       }
-      const trigger = row.getByTestId('permission-kb-' + id)
+      const mobile = width <= 767
+      const trigger = row.getByTestId((mobile ? 'more-kb-' : 'permission-kb-') + id)
       const bounds = await trigger.boundingBox()
-      expect(bounds!.width).toBeGreaterThanOrEqual(44)
-      expect(bounds!.height).toBeGreaterThanOrEqual(44)
+      expect(bounds!.width).toBeGreaterThanOrEqual(mobile ? 44 : 32)
+      expect(bounds!.height).toBeGreaterThanOrEqual(mobile ? 44 : 32)
       await trigger.click()
+      if (mobile) {
+        const permission = page.getByRole('menuitem').and(page.getByTestId('permission-kb-' + id))
+        await expect(permission).toBeVisible()
+        const menuBounds = await permission.boundingBox()
+        expect(menuBounds!.width).toBeGreaterThanOrEqual(44)
+        expect(menuBounds!.height).toBeGreaterThanOrEqual(44)
+        await permission.click()
+      }
       await expect(page.getByTestId('knowledge-permission-sources')).toBeVisible()
       await expect(page.getByTestId('perm-tab-user')).toHaveCount(0)
       await page.keyboard.press('Escape')
@@ -265,7 +279,7 @@ const creationTest = test.extend<{ creation: CreationSession }>({
 
 async function createLibraryInDialog(page: Page, creation: CreationSession, owner = creation.api) {
   const dialog = page.getByTestId('create-kb-dialog')
-  await dialog.getByTestId('kb-name-input').fill('e2e-created-knowledge-' + randomUUID())
+  await dialog.getByTestId('kb-name-input').fill(fixtureName('e2e-create-kb'))
   const summarySection = dialog.getByTestId('knowledge-summary-section-trigger')
   if ((await summarySection.getAttribute('aria-expanded')) === 'false') await summarySection.click()
   const summary = dialog.locator('#knowledge-summary-enabled')
@@ -329,7 +343,7 @@ creationTest(
 creationTest(
   'defaults to an authorized team and requires an explicit personal choice for a read-only teammate',
   async ({ page, request, browser, baseURL, creation }) => {
-    const name = 'e2e-team-create-' + randomUUID()
+    const name = fixtureName('e2e-create-team')
     creation.groups.add(name)
     expect((await creation.api.createGroup({ name, display_name: name })).status).toBe(201)
     await page.goto('/knowledge?type=document')
