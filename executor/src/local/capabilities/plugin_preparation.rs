@@ -90,7 +90,11 @@ impl PreparedRuntime {
                 ensure_plugin_hook_permissions(&stage.path().join("entry"))?;
                 Some(stage)
             };
-            if !result.reused.contains(&link) {
+            // Personal marketplaces share one entry between Codex and Claude.
+            // Codex is prepared first and owns that entry, as in metadata publication.
+            if !result.reused.contains(&link)
+                && !result.staged.iter().any(|(target, _)| target == &link)
+            {
                 let stage = result.stage(store, &link)?;
                 let copy_source = runtime_stage
                     .as_ref()

@@ -65,6 +65,72 @@ fn shared_fixture(codex_only: bool) -> (tempfile::TempDir, CapabilitySyncHandler
 }
 
 #[tokio::test]
+async fn personal_marketplace_publishes_one_entry_for_both_runtimes() {
+    for shared in [false, true] {
+        for codex_only in [true, false] {
+            let (root, mut handler) = shared_fixture(codex_only);
+            if !shared {
+                handler.store = handler
+                    .store
+                    .clone()
+                    .with_store_dir(root.path().join("private-store"));
+                handler.store.shared_packages = false;
+            }
+            let mut desired = desired("alpha", 1);
+            desired["marketplace"] = json!(PERSONAL_SHARED_PLUGIN_MARKETPLACE);
+            let spec = PluginSyncSpec::from_value(&desired).unwrap();
+            let result = handler
+                .apply_sync(complete(10, vec![desired.clone()]))
+                .await
+                .unwrap();
+            assert_eq!(result["success"], true, "{result}");
+            let entry = handler
+                .store
+                .personal_marketplace_dir()
+                .join("plugins/alpha");
+            assert!(entry.join(CODEX_PLUGIN_MANIFEST_PATH).is_file());
+            assert!(entry.join(CLAUDE_PLUGIN_MANIFEST_PATH).is_file());
+            #[cfg(unix)]
+            assert_eq!(
+                fs::read_link(&entry).unwrap(),
+                handler.store.plugin_codex_link(&spec)
+            );
+            for (runtime, _) in handler.store.plugin_runtime_targets(&spec) {
+                assert!(runtime.join(CODEX_PLUGIN_MANIFEST_PATH).is_file());
+                assert!(runtime.join(CLAUDE_PLUGIN_MANIFEST_PATH).is_file());
+            }
+            let repeated = handler
+                .apply_sync(complete(11, vec![desired.clone()]))
+                .await
+                .unwrap();
+            assert_eq!(repeated["success"], true, "{repeated}");
+            if shared {
+                assert_eq!(repeated["plugins"][0]["unchanged"], true, "{repeated}");
+            }
+            assert!(entry.join(CODEX_PLUGIN_MANIFEST_PATH).is_file());
+            #[cfg(unix)]
+            {
+                let unrelated = root.path().join("unrelated");
+                fs::create_dir_all(&unrelated).unwrap();
+                fs::write(unrelated.join("marker"), "unmanaged content").unwrap();
+                fs::remove_file(&entry).unwrap();
+                std::os::unix::fs::symlink(&unrelated, &entry).unwrap();
+                let rejected = handler
+                    .apply_sync(complete(12, vec![desired]))
+                    .await
+                    .unwrap();
+                assert_eq!(rejected["success"], false, "{rejected}");
+                assert_eq!(fs::read_link(&entry).unwrap(), unrelated);
+                assert_eq!(
+                    fs::read_to_string(unrelated.join("marker")).unwrap(),
+                    "unmanaged content"
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn identical_complete_inventory_skips_installation_and_preserves_ordering() {
     for codex_only in [true, false] {
         let (_root, handler) = shared_fixture(codex_only);

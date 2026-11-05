@@ -516,11 +516,12 @@ impl GlobalCapabilityStore {
             if !exists(&target) {
                 continue;
             }
-            let runtime = if claude {
-                self.plugin_runtime_link(spec)
-            } else {
-                self.plugin_codex_link(spec)
-            };
+            let (runtime, field) =
+                if claude && spec.marketplace != PERSONAL_SHARED_PLUGIN_MARKETPLACE {
+                    (self.plugin_runtime_link(spec), "claude_link")
+                } else {
+                    (self.plugin_codex_link(spec), "codex_link")
+                };
             if target.is_symlink()
                 && fs::read_link(&target).ok().is_some_and(|link| {
                     let linked = if link.is_absolute() {
@@ -550,9 +551,7 @@ impl GlobalCapabilityStore {
                             })
                         || entry
                             .get("runtime")
-                            .and_then(|value| {
-                                value.get(if claude { "claude_link" } else { "codex_link" })
-                            })
+                            .and_then(|value| value.get(field))
                             .and_then(Value::as_str)
                             .is_some_and(|old| Path::new(old) == linked)
                 })
