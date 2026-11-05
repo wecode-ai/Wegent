@@ -60,6 +60,240 @@ test('validates protocol versions, references, versions and duplicate provider i
   }
 })
 
+test('declares public resource query parameters without inventing an instance default', () => {
+  const manifest = declaration()
+  const schema = {
+    type: 'object',
+    properties: { instance: { type: 'string', description: 'User-selected instance' } },
+    required: ['instance'],
+  }
+  manifest.wework.connections.providers[0].resourceQuerySchema = schema
+  assert.deepEqual(parseConnections(manifest).providers[0].resourceQuerySchema, schema)
+  for (const invalid of [
+    null,
+    { type: 'string' },
+    { type: 'object', properties: {}, required: ['instance'] },
+    { ...schema, required: ['instance', 'instance'] },
+    { type: 'object', properties: { instance: 'string' } },
+  ]) {
+    manifest.wework.connections.providers[0].resourceQuerySchema = invalid
+    assert.throws(() => parseConnections(manifest), { code: 'invalid_connection' })
+  }
+})
+
+test('resource pages preserve exact dynamic authorization targets and reject malformed states', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'connection-resource-auth-'))
+  let registry
+  try {
+    const path = join(root, 'package.json')
+    await writeFile(path, JSON.stringify(declaration()))
+    registry = new ConnectionRegistry({
+      inventory: async () => [installed()],
+      satisfies,
+      context: value => value,
+    })
+    const target = {
+      pluginKey: 'company-git',
+      connectorSlug: 'native-slug',
+      instance: 'https://git.company.example',
+    }
+    let availability = { status: 'auth_required', authTarget: target }
+    await registry.register({ effect() {} }, pathToFileURL(path), {
+      inbox: {
+        check: async () => ({ status: 'ready' }),
+        listResources: async () => ({ items: [], availability }),
+        validate: async () => {},
+        initialize: async () => ({}),
+        collect: async () => ({ events: [], nextCheckpoint: {}, hasMore: false }),
+      },
+    })
+    const result = await registry.call('@test/mail/inbox', 'listResources', {
+      kind: 'folder',
+      query: '',
+    })
+    assert.deepEqual(result.availability, { status: 'auth_required', authTarget: target })
+    for (const value of [
+      null,
+      { status: 'need_login' },
+      { status: 'auth_required', authTarget: {} },
+      { status: 'auth_required', authTarget: { ...target, connectorSlug: ' ' } },
+    ]) {
+      availability = value
+      await assert.rejects(
+        registry.call('@test/mail/inbox', 'listResources', { kind: 'folder', query: '' }),
+        { code: 'invalid_connection' }
+      )
+    }
+  } finally {
+    registry?.dispose()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('validates action identities and kinds without accepting undeclared operations', () => {
+  for (const actions of [
+    {},
+    [{ resourceKinds: ['folder'] }],
+    [{ id: 'retry', resourceKinds: ['unknown'] }],
+    [{ id: 'retry', resourceKinds: [] }],
+    [
+      { id: 'retry', resourceKinds: ['folder'] },
+      { id: 'retry', resourceKinds: ['folder'] },
+    ],
+  ]) {
+    const manifest = declaration()
+    manifest.wework.connections.providers[0].actions = actions
+    assert.throws(() => parseConnections(manifest), { code: 'invalid_connection' })
+  }
+})
+
+test('a new DSH connection plugin shares collection, reads, declared actions and disposal', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'wework-build-connection-'))
+  try {
+    const path = join(root, 'package.json')
+    await writeFile(
+      path,
+      JSON.stringify({
+        name: '@company/build-events',
+        wework: {
+          connections: {
+            apiVersion: 1,
+            dependencies: {},
+            providers: [
+              {
+                id: 'repositories',
+                displayName: 'Build events',
+                uses: [],
+                collectionModes: ['poll'],
+                resourceKinds: ['repository'],
+                resourceLabels: { repository: 'Repository' },
+                eventTypes: ['build.failed'],
+                actions: [{ id: 'retry', resourceKinds: ['repository'] }],
+              },
+            ],
+          },
+        },
+      })
+    )
+    const registry = new ConnectionRegistry({
+      inventory: async () => [],
+      satisfies,
+      context: value => value,
+    })
+    const source = {
+      providerId: '@company/build-events/repositories',
+      profile: 'company',
+      kind: 'repository',
+      id: 'org/project',
+      name: 'Project',
+    }
+    const executed = []
+    let cleanup
+    const base = {
+      check: async () => ({ status: 'ready' }),
+      listResources: async () => ({ items: [source] }),
+      validate: async (_ctx, input) => {
+        assert.equal(input.id, 'org/project')
+      },
+      initialize: async () => ({ sequence: 40 }),
+      collect: async (_ctx, input) => {
+        assert.deepEqual(input.checkpoint, { sequence: 40 })
+        return {
+          events: [
+            {
+              id: '41',
+              at: '2026-11-05T00:00:00Z',
+              eventType: 'build.failed',
+              text: 'Build 41 failed',
+            },
+          ],
+          nextCheckpoint: { sequence: 41 },
+          hasMore: false,
+        }
+      },
+      readSource: async () => ({
+        items: [{ id: '41', at: '2026-11-05T00:00:00Z', text: 'Build 41 failed' }],
+        hasMore: false,
+      }),
+      executeAction: async (_ctx, input) => {
+        if (input.authorization !== 'one_time') throw new Error('native_authorization_required')
+        executed.push(input.action)
+        return { status: 'completed' }
+      },
+    }
+    await assert.rejects(
+      registry.register({ effect() {} }, pathToFileURL(path), {
+        repositories: { ...base, executeAction: undefined },
+      }),
+      /Missing connection action implementation/
+    )
+    await registry.register(
+      {
+        effect(factory) {
+          cleanup = factory()
+        },
+      },
+      pathToFileURL(path),
+      { repositories: base }
+    )
+    assert.equal((await registry.catalog())[0].id, source.providerId)
+    assert.equal((await registry.call(source.providerId, 'collect', { source })).events[0].id, '41')
+    assert.equal(
+      (await registry.call(source.providerId, 'readSource', { source })).items[0].id,
+      '41'
+    )
+    await assert.rejects(
+      registry.call(source.providerId, 'executeAction', { source, action: 'retry' }),
+      /native_authorization_required/
+    )
+    await assert.rejects(
+      registry.call(source.providerId, 'executeAction', {
+        source,
+        action: 'delete',
+        authorization: 'one_time',
+      }),
+      /not declared/
+    )
+    await assert.rejects(
+      registry.call(source.providerId, 'executeAction', {
+        source: { ...source, scope: 'all', id: '*' },
+        action: 'retry',
+        authorization: 'one_time',
+      }),
+      /Unsupported all-resource scope/
+    )
+    await assert.rejects(
+      registry.call(source.providerId, 'executeAction', {
+        source: { ...source, providerId: '@other/build-events/repositories' },
+        action: 'retry',
+        authorization: 'one_time',
+      }),
+      /another provider/
+    )
+    assert.deepEqual(executed, [])
+    assert.deepEqual(
+      await registry.call(source.providerId, 'executeAction', {
+        source,
+        action: 'retry',
+        authorization: 'one_time',
+      }),
+      { status: 'completed' }
+    )
+    cleanup()
+    await assert.rejects(
+      registry.call(source.providerId, 'executeAction', {
+        source,
+        action: 'retry',
+        authorization: 'one_time',
+      }),
+      { code: 'connection_unavailable' }
+    )
+    assert.deepEqual(executed, ['retry'])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test('resolves exact source identity and distinguishes disabled and incompatible dependencies', () => {
   const definition = parseConnections(declaration())
   assert.equal(

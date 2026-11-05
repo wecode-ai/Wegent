@@ -17,6 +17,43 @@ import {
 } from '../modules/response-protocol.mjs'
 
 const USER = 9001
+const GUIDE = '[data-testid="stand-in-onboarding"]'
+
+async function verifyGuideExamples(control) {
+  for (const example of [
+    'daily_brief',
+    'meeting_prep',
+    'project_followup',
+    'dingtalk_reply',
+    'weekly_review',
+  ]) {
+    await control.command('waitFor', `button[data-testid="stand-in-onboarding-example-${example}"]`)
+  }
+  assert.equal(
+    await control.command(
+      'getElementCount',
+      `${GUIDE} button[data-testid^="stand-in-onboarding-example-"]`
+    ),
+    '5'
+  )
+  for (const selector of [
+    `${GUIDE} input[type="checkbox"]`,
+    `${GUIDE} input[type="time"]`,
+    '[data-testid="stand-in-onboarding-review"]',
+    '[data-testid="stand-in-onboarding-time"]',
+  ]) {
+    assert.equal(await control.command('getElementCount', selector), '0')
+  }
+}
+
+async function openCalendarReviewTemplate(control) {
+  await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+  await control.command('click', '[data-testid="stand-in-primary-connections-open"]')
+  await openConnectionTypePicker(control)
+  await control.command('click', '[data-testid="stand-in-time-connections"]')
+  await control.command('clickWhenEnabled', '[data-testid="stand-in-weekly-review-template"]')
+  await control.command('waitFor', '[data-testid="automation-name-input"]')
+}
 
 /** Add review coverage to the existing CI checkpoint without another app build or startup. */
 export function createDesktopScenario(options) {
@@ -68,13 +105,12 @@ export function createDesktopScenario(options) {
     },
     async verify(control) {
       const rpc = (method, params) => requestExecutor(control, method, params, options.uiTimeoutMs)
+      const initialScheduleIds = (await rpc('runtime.automations.list', {})).items
+        .map(item => item.id)
+        .sort()
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
-      await control.command('waitFor', '[data-testid="stand-in-onboarding-review"]:checked')
-      assert.equal(
-        await control.command('getValue', '[data-testid="stand-in-onboarding-time"]'),
-        '09:00'
-      )
+      await verifyGuideExamples(control)
       await options.captureScreenshot(control, 'review-01-onboarding-desktop.png')
       await control.command('setMainWindowSize', 'body', {
         value: JSON.stringify({ width: 760, height: 850 }),
@@ -100,29 +136,61 @@ export function createDesktopScenario(options) {
       await control.command('clickWhenEnabled', '[data-testid="appearance-mode-dark"]')
       await control.command('waitFor', 'html[data-theme="dark"]')
       await control.command('navigate', 'body', { value: '/stand-in' })
-      await control.command('waitFor', '[data-testid="stand-in-onboarding-review"]:checked')
+      await verifyGuideExamples(control)
       await options.captureScreenshot(control, 'review-03-onboarding-dark.png')
-      await control.command('click', '[data-testid="stand-in-onboarding-review"]')
-      await control.command('waitFor', '[data-testid="stand-in-onboarding-time"]:disabled')
-      await options.captureScreenshot(control, 'review-04-review-unchecked.png')
-      await control.command('nativePress', '[data-testid="stand-in-onboarding-review"]', {
-        key: 'Space',
-      })
-      await control.command('waitFor', '[data-testid="stand-in-onboarding-review"]:checked')
       await control.command('navigate', 'body', { value: '/settings/appearance' })
       await control.command('clickWhenEnabled', '[data-testid="appearance-mode-light"]')
       await control.command('waitFor', 'html[data-theme="light"]')
       await control.command('navigate', 'body', { value: '/stand-in' })
-      await control.command('waitFor', '[data-testid="stand-in-onboarding-review"]:checked')
+      await verifyGuideExamples(control)
       await control.command('click', '[data-testid="stand-in-onboarding-close"]')
       assert.equal(
         (await rpc('runtime.stand_in.onboarding.get', { userId: USER })).state.completed,
         false
       )
       await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
-      await control.command('fill', '[data-testid="stand-in-onboarding-time"]', { value: '10:30' })
+      await verifyGuideExamples(control)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-onboarding-complete"]')
       await control.command('waitFor', '[data-testid="stand-in-settings-open"]')
+      assert.equal(
+        (await rpc('runtime.stand_in.onboarding.get', { userId: USER })).state.completed,
+        true
+      )
+      assert.deepEqual(
+        (await rpc('runtime.automations.list', {})).items.map(item => item.id).sort(),
+        initialScheduleIds,
+        'Completing the guide must not create any arrangement'
+      )
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-guide-open"]')
+      await verifyGuideExamples(control)
+      await control.command(
+        'nativePress',
+        '[data-testid="stand-in-onboarding-example-weekly_review"]',
+        {
+          key: 'Enter',
+        }
+      )
+      await control.command('waitFor', GUIDE, { visible: false })
+      await control.command(
+        'waitFor',
+        '[data-testid="stand-in-conversation"] [data-testid="chat-message-input"]',
+        {
+          text: '每周回顾本设备',
+        }
+      )
+      assert.deepEqual(
+        (await rpc('runtime.automations.list', {})).items.map(item => item.id).sort(),
+        initialScheduleIds,
+        'Choosing a review example must fill a draft without scheduling it'
+      )
+      await options.captureScreenshot(control, 'review-04-review-example-draft.png')
+      await openCalendarReviewTemplate(control)
+      await control.command('click', '[data-testid="automation-cron-time"]')
+      await control.command('scrollIntoView', '[data-testid="automation-cron-time-option-10:30"]')
+      await control.command('clickWhenEnabled', '[data-testid="automation-cron-time-option-10:30"]')
+      await control.command('waitFor', '[data-testid="automation-cron-time"]', { text: '10:30' })
+      await control.command('clickWhenEnabled', '[data-testid="automation-save-button"]')
+      await control.command('waitFor', '[data-testid="automation-save-button"]', { visible: false })
       const review = (await rpc('runtime.automations.list', {})).items.find(
         item => item.taskRequest?.standInCalendar?.template === 'weekly_review'
       )
@@ -130,6 +198,10 @@ export function createDesktopScenario(options) {
       assert.equal(review.enabled, true)
       assert.equal(review.timezone, 'Asia/Shanghai')
       assert.equal(review.schedule.expression, '30 10 * * 1')
+      await control.command('click', '[data-testid="stand-in-primary-profile-close"]')
+      await control.command('waitFor', '[data-testid="stand-in-primary-profile"]', {
+        visible: false,
+      })
       await rpc('runtime.automations.toggle', { automationId: review.id, enabled: false })
       await rpc('runtime.stand_in.onboarding.complete', { userId: USER, weeklyReview: true })
       assert.equal(
@@ -141,6 +213,12 @@ export function createDesktopScenario(options) {
       assert.ok(
         !(await rpc('runtime.automations.list', {})).items.some(item => item.id === review.id)
       )
+      assert.ok(
+        !(await rpc('runtime.automations.list', {})).items.some(
+          item => item.taskRequest?.standInCalendar?.template === 'weekly_review'
+        ),
+        'Completing the guide again must not recreate a deleted review'
+      )
 
       // The original checkpoint retains every assertion and establishes its own model/calendar prerequisites.
       await original.verify(control)
@@ -149,12 +227,7 @@ export function createDesktopScenario(options) {
       })
       await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
       await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
-      await control.command('click', '[data-testid="stand-in-primary-connections-open"]')
-      await openConnectionTypePicker(control)
-      await control.command('click', '[data-testid="stand-in-time-connections"]')
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-weekly-review-template"]')
-      await control.command('waitFor', '[data-testid="automation-name-input"]')
+      await openCalendarReviewTemplate(control)
       assert.equal(
         await control.command('getValue', '[data-testid="automation-name-input"]'),
         '每周工作复盘'

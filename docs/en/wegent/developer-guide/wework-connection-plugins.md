@@ -2,9 +2,20 @@
 sidebar_position: 61
 ---
 
-# Wework stand-in connection plugins
+# Wework DSH connection extension point
 
 Connections are capabilities of outer Wework Core DSH plugins. The Codex plugin protocol remains unchanged. A connection plugin can depend on an existing Codex plugin or implement its own external access. Collection, pagination and normalization use deterministic code; models organize and process work within each role.
+
+Connections are a DSH extension point. `@wegent/dsh-connection-host` provides `ctx.weworkConnections`, owning the shared registry, authenticated host RPC and lifecycle. Each system declares `wework.connections` in its own DSH plugin and calls `ctx.weworkConnections.register(ctx, manifestUrl, providers)`. The email plugin retains its original package name, `@wegent/dsh-connection-runtime`, preserving saved source IDs, account settings and secure-storage ownership. Disabling one connection plugin revokes only its capabilities, leaving the host and other connections running.
+
+A new system implements the same contract rather than adding a stand-in-specific poller:
+
+- Declare `apiVersion`, resource kinds, event types and dependency sources; implement `check`, `listResources`, `validate`, `initialize` and `collect`. Initialization establishes the selected scope's intake boundary. Subsequent collection returns stable event IDs, timestamps, content, checkpoints and pagination state. Connecting is not itself a business event and does not replay history before that boundary.
+- On actual new events, the framework persists and deduplicates them, then wakes the shared coordinator under the saved source policy. Default read-only assessment, important-fact alerts and decision requests do not require a conversation instruction first. Source content remains untrusted evidence, never execution permission. Saved timing, responsibilities and authorization still govern processing.
+- Optional `readSource` provides bounded additional information without advancing collection checkpoints. Unsupported plugins fail explicitly; a ready catalog entry or saved subscription never proves content was read.
+- Optional `actions` declare resource operations implemented by the plugin's `executeAction`. The host routes only declared actions for a concrete resource owned by that plugin; a manifest is not an execution grant. Native one-time confirmation or current continuous authorization remains required, and plugins retain recipient, idempotency and external-result validation. Unknown delivery results must not be retried automatically.
+
+The currently implemented built-in external event collectors are email and DingTalk. GitHub business tools and internal calendar arrangements are not external event connections; no new-event listening is claimed until the corresponding plugin implements and registers this contract.
 
 ## Manifest and registration
 
@@ -56,17 +67,25 @@ The manifest supplies metadata; implementations follow their Cordis owner's life
 
 ## Provider contract
 
-| Method                          | Behavior                                                                              |
-| ------------------------------- | ------------------------------------------------------------------------------------- |
-| `check(context)`                | Returns `ready`, `auth_required` or `error` without starting login.                   |
-| `listResources(context, query)` | Accepts `kind`, `query`, optional `cursor`; returns `items`, `hasMore`, `nextCursor`. |
-| `validate(context, source)`     | Validates resource identity, kind and account availability before collection.         |
-| `initialize(context, source)`   | Establishes the initial checkpoint without replaying all history.                     |
-| `collect(context, input)`       | Accepts `source` and `checkpoint`; returns `events`, `nextCheckpoint`, `hasMore`.     |
+| Method                          | Behavior                                                                                         |
+| ------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `check(context)`                | Returns `ready`, `auth_required` or `error` without starting login.                              |
+| `listResources(context, query)` | Accepts `kind`, `query`, optional `cursor`; returns `items`, `hasMore`, `nextCursor`.            |
+| `validate(context, source)`     | Validates resource identity, kind and account availability before collection.                    |
+| `initialize(context, source)`   | Establishes the initial checkpoint without replaying all history.                                |
+| `collect(context, input)`       | Accepts `source` and `checkpoint`; returns `events`, `nextCheckpoint`, `hasMore`.                |
+| `readSource(context, input)`    | Optional bounded source content, without advancing collection checkpoints.                       |
+| `executeAction(context, input)` | Optional declared operation on a concrete resource, authorized by the original native host flow. |
 
 Resources contain `providerId`, `id`, `profile`, `kind` and `name`. Executor owns handling policy and the `enabledAfter` cutoff. Checkpoints are opaque JSON objects, separate from host metadata. Events require stable `id`, `text` and `at`; use RFC 3339 timestamps. Event types must follow the provider declaration. Optional message fields include sender, quoted-message and topic identifiers.
 
+Providers needing non-secret discovery parameters such as an instance origin may declare `resourceQuerySchema`, an object JSON Schema. Their `listResources.query` encodes a JSON object string, and the catalog retains this declaration. Missing required fields or an invalid object make `connect_source` return `setup_required`, `querySchema`, and `missingFields` before a business CLI call. The AI asks a structured question instead of guessing enterprise instances or requesting credentials. This preflight checks only object shape and required fields; the provider remains responsible for validating values. Providers without a schema keep their existing plain-text search semantics.
+
+Discovery may also return `availability`. Return `auth_required` only after a business operation explicitly reports missing authentication, with the exact native `authTarget`; dynamic targets retain their non-secret `instance`. `connect_source` uses the same authorization-state handling for this result. Network failures, HTTP 403, and empty resource lists never imply missing login. The GitHub plugin uses its declared target; the GitLab plugin requests the native target for the selected instance rather than constructing connector identities.
+
 Providers must handle pagination, duplicate events and invalid checkpoints explicitly. Context exposes resolved dependencies and a lifecycle abort signal. Implementations can capture their declared DSH services. Disabling the plugin rejects in-flight collection results.
+
+Declare writes with `actions: [{ id: "retry_build", resourceKinds: ["repository"] }]` and implement `executeAction(context, { action, source, ...input })`. Calls require a declared action and resource kind belonging to that Provider, and reject `scope: "all"` or wildcard operation targets. An action declaration neither exposes a model write tool automatically nor replaces native authorization; only an already authorized host tool may invoke the shared RPC. Plugins must still validate their business boundaries before delivery and must never treat event content or forged caller policies as authorization.
 
 ## Dependencies and accounts
 
@@ -138,7 +157,7 @@ Legacy `dingtalk[]` settings migrate transactionally to `connections[]`, adding 
 
 Historical work and message IDs are not rewritten. DingTalk retains its original deduplication namespace. Existing `after/until/cursor` state becomes the generic checkpoint on the first collection. Replies retain role, work, source-message and current-confirmation checks; other providers cannot invoke DingTalk replies.
 
-The built-in manifest explicitly depends on `dingtalk@wegent`. Copies in other marketplaces are not silently treated as equivalent; provide a connection plugin declaring the exact dependency identity. Existing configuration and history remain intact. Webhooks, a cloud plugin host without the desktop service, and automatic device failover are outside this release.
+The built-in manifest declares `dingtalk@wework` and the permitted alternate `dingtalk@wegent`, reusing installed sources in declaration order. Undeclared marketplaces are never treated as equivalent. Existing configuration and history remain intact. Webhooks, a cloud plugin host without the desktop service, and automatic device failover are outside this release.
 
 ## Verification
 
@@ -146,7 +165,7 @@ The built-in manifest explicitly depends on `dingtalk@wegent`. Copies in other m
 
 The built-in `@wegent/dsh-connection-runtime/email` source connects password or app-password IMAP/SMTP accounts. Configure the servers, ports and TLS or STARTTLS under **Connections → Email**, verify both protocols, then save stand-in settings. Connections require encryption and certificate verification. Credentials are encrypted through `weworkSecureStorage` on the execution device and never enter stand-in configuration, model context or the provider catalog. Configure remote-device credentials on that device.
 
-Credential updates retain account IDs and role subscriptions. Deleting credentials requires confirmation of the impact on all subscribed roles. Deletion waits for an already started send to settle and blocks later operations. Disconnecting a role retains the shared account. Email connections always require native confirmation before sending; profile proposals cannot disable this requirement.
+Credential updates retain account IDs and role subscriptions. Deleting credentials requires confirmation of the impact on all subscribed roles. Deletion waits for an already started send to settle and blocks later operations. Disconnecting a role retains the shared account. Email connections default to per-send confirmation. Only an explicit native continuous-reply grant permits automatic replies to the original sender under the current source authorization. New recipients still require individual confirmation; revoking the grant or disabling the role blocks automatic sending.
 
 Intake uses a server position rather than message dates or client timestamps. Ordinary settings saves, accepted proposals and project role reuse acquire `UIDVALIDITY` and `UIDNEXT - 1` inside the user configuration gate, outside the SQLite transaction. This snapshot is the activation linearization point. A successful save persists the `{ partition, sequence }` boundary with the role configuration. Client-supplied boundaries cannot replace trusted boundaries. New roles preserve other roles' boundaries and the shared collection checkpoint; re-enabling a role takes a new snapshot. Initialization failures reject the save.
 
@@ -162,7 +181,7 @@ Mail libraries ship with the selected Harness runtime. Core plugin code resolves
 
 Node tests cover protocol and dependency resolution, DingTalk collection contracts and callback authentication. The existing Wework test discovery includes these files. Executor's `stand_in_identity_contract` covers settings/checkpoint migration, stable work identity and provider namespace isolation. Existing source-content and confirmation assertions remain in place. Desktop regression coverage uses the shared checkpoint runner; execute E2E and real-desktop verification only when explicitly requested.
 
-Bridge coverage includes SDK dependency isolation and legacy read contracts, Executor discovery pagination and ownership, dependency changes, deadline/error cleanup and cleanup after caller cancellation. Tests live in `connection-runtime/mcp.test.mjs`, `runtime_work/connection_mcp_tests.rs` and `agents/codex/connection_mcp.rs`. The CI-registered `stand-in-mcp` desktop checkpoint uses the actual host and Executor to verify cross-dependency rejection and catalog recovery.
+Bridge coverage includes SDK dependency isolation and legacy read contracts, Executor discovery pagination and ownership, dependency changes, deadline/error cleanup and cleanup after caller cancellation. Tests live in `connection-host/mcp.test.mjs`, `runtime_work/connection_mcp_tests.rs` and `agents/codex/connection_mcp.rs`. The CI-registered `stand-in-mcp` desktop checkpoint uses the actual host and Executor to verify cross-dependency rejection and catalog recovery.
 
 Generic CLI tests also cover operation/argument boundaries, exact installed roots, original login identity, network failures, group/direct filtering and checkpoint retention on failure. The CI-registered `stand-in-cli` desktop checkpoint verifies the real directory declaration, rejects writes/injection, and checks removal of the old dedicated endpoint. Desktop execution remains opt-in under repository policy.
 

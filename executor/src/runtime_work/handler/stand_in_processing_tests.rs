@@ -740,6 +740,8 @@ async fn primary_created_work_feedback_stays_owned_and_requires_semantic_assessm
 async fn direct_connection_intake_supplies_a_native_dispatch_without_starting_assessment() {
     let root = tempfile::tempdir().unwrap();
     let (handler, store, mut settings) = fixture(root.path());
+    settings["roles"][0]["prompt"] =
+        json!("Prepare answers to deployment questions from this connected group.");
     settings["roles"][0]["connections"][0]["policy"]["immediate"] = json!(true);
     store.save_personal_stand_in(7, "mac", settings).unwrap();
     store

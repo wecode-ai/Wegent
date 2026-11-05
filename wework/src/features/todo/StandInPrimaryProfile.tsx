@@ -200,7 +200,7 @@ export function StandInPrimaryProfile({
         </>
       )}
       {connections && (
-        <div className="flex min-h-0 flex-1 flex-col">
+        <div className={calendarOpen ? 'flex min-h-0 flex-1 flex-col' : 'flex flex-1 flex-col'}>
           <StandInConnectionSettings
             ref={connectionRef}
             onNavigate={navigation.requestLeave}
@@ -290,22 +290,6 @@ export function StandInPrimaryProfile({
           )}
         </section>
       )}
-      {error && (
-        <div role="alert" className="mt-4 text-sm text-error">
-          <p>{error}</p>
-          {onReload && (
-            <button
-              type="button"
-              data-testid="stand-in-primary-settings-retry"
-              disabled={saving}
-              onClick={onReload}
-              className="min-h-8 underline"
-            >
-              {t('standIn.reload')}
-            </button>
-          )}
-        </div>
-      )}
       <ConfirmDialog
         open={discard}
         destructive
@@ -331,7 +315,24 @@ export function StandInPrimaryProfile({
           saveDisabled={saving || !dirty || scheduleDirty}
           onCancel={close}
           onSave={() => void onSave({ ...settings, primary: draft })}
-        />
+        >
+          {error && (
+            <div role="alert" className="w-full text-sm text-destructive">
+              <p>{error}</p>
+              {onReload && (
+                <button
+                  type="button"
+                  data-testid="stand-in-primary-settings-retry"
+                  disabled={saving}
+                  onClick={onReload}
+                  className="min-h-8 underline"
+                >
+                  {t('standIn.reload')}
+                </button>
+              )}
+            </div>
+          )}
+        </StandInSettingsActions>
       )}
     </div>
   )

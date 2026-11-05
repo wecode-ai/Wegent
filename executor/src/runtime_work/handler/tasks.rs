@@ -404,7 +404,8 @@ impl RuntimeWorkRpcHandler {
         }))
     }
 
-    pub(super) async fn create_task(&self, payload: Value) -> Result<Value, AppIpcError> {
+    pub(super) async fn create_task(&self, mut payload: Value) -> Result<Value, AppIpcError> {
+        normalize_user_message_presentation(&mut payload)?;
         let command_gate = payload
             .get("commandId")
             .and_then(|_| runtime_task_id(&payload))
@@ -473,6 +474,7 @@ impl RuntimeWorkRpcHandler {
             ensure_claude_execution_identity(&local_task_id, &mut request);
         }
         set_runtime_task_title(&mut request, &title);
+        self.resolve_local_model_reference(&mut request, &local_task_id)?;
         self.retain_runtime_model_config(&local_task_id, &request.model_config);
         log_executor_event(
             "runtime task create identity",
@@ -917,6 +919,7 @@ impl RuntimeWorkRpcHandler {
         self.store.update_task(local_task_id, |link| {
             apply_runtime_task_start_failure(link, error);
         });
+        self.record_stand_in_completion_outbox(local_task_id, "failed");
     }
 
     pub(super) fn record_runtime_turn_id(
@@ -1054,7 +1057,11 @@ impl RuntimeWorkRpcHandler {
             .map(Some)
     }
 
-    async fn send_message_after_local_checks(&self, payload: Value) -> Result<Value, AppIpcError> {
+    async fn send_message_after_local_checks(
+        &self,
+        mut payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        normalize_user_message_presentation(&mut payload)?;
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let existing_link = self.local_task_link(&local_task_id);
@@ -1134,6 +1141,7 @@ impl RuntimeWorkRpcHandler {
         let mut request = payload_execution_request
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
+        self.resolve_local_model_reference(&mut request, &local_task_id)?;
         if let Some(link) = existing_link.as_ref() {
             super::mcp_apps::append_model_context(&mut request, link);
             // A failed preparation has no session yet. Retry its saved snapshot;
@@ -1162,6 +1170,7 @@ impl RuntimeWorkRpcHandler {
         if let Some(link) = existing_link.as_ref() {
             restore_cloud_project_id(&mut request, &link.runtime_handle);
             restore_origin(&mut request, &link.runtime_handle);
+            self.refresh_identity_conversation_origin(&mut request, link)?;
             self.refresh_stand_in_confirmation(&mut request)?;
         }
         request.new_session = false;
@@ -1542,6 +1551,7 @@ impl RuntimeWorkRpcHandler {
         mark_runtime_model_switch(&mut request, &existing_link, &payload);
         restore_cloud_project_id(&mut request, &existing_link.runtime_handle);
         restore_origin(&mut request, &existing_link.runtime_handle);
+        self.refresh_identity_conversation_origin(&mut request, &existing_link)?;
         self.refresh_stand_in_confirmation(&mut request)?;
         request.new_session = false;
         if !workspace_path.is_empty() {

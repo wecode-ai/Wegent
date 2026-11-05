@@ -916,6 +916,7 @@ impl RuntimeWorkRpcHandler {
         if let Some(link) = self.local_task_link(local_task_id) {
             self.project_runtime_link_status_now(&link);
         }
+        self.record_stand_in_completion_outbox(local_task_id, status);
         self.schedule_worktree_prune();
         log_executor_event(
             "runtime work local execution force settled",
@@ -958,6 +959,7 @@ impl RuntimeWorkRpcHandler {
         if let Some(link) = self.local_task_link(local_task_id) {
             self.project_runtime_link_status_now(&link);
         }
+        self.record_stand_in_completion_outbox(local_task_id, "cancelled");
         self.schedule_worktree_prune();
         true
     }
@@ -965,6 +967,7 @@ impl RuntimeWorkRpcHandler {
     pub(super) fn fail_local_task_execution_start(&self, local_task_id: &str, error: &AppIpcError) {
         self.store
             .update_task(local_task_id, |link| apply_local_task_failure(link, error));
+        self.record_stand_in_completion_outbox(local_task_id, "failed");
         log_executor_event(
             "runtime work turn start failed",
             &[
@@ -1216,6 +1219,7 @@ impl RuntimeWorkRpcHandler {
             self.project_runtime_link_status_now(&link);
         }
         if status != "running" {
+            self.record_stand_in_completion_outbox(local_task_id, status);
             self.schedule_worktree_prune();
         }
         true

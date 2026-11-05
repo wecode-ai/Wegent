@@ -2,7 +2,7 @@
 use super::stand_in::settings_error;
 use super::*;
 use crate::task_runtime::personal_stand_in::{
-    source_provider, stand_in_connection, stand_in_identities,
+    source_namespace, source_provider, stand_in_connection, stand_in_identities,
 };
 use chrono::TimeZone;
 
@@ -34,6 +34,7 @@ impl RuntimeWorkRpcHandler {
             .map_err(settings_error)?
         {
             let user = settings["userId"].as_i64().unwrap_or_default();
+            self.reconcile_git_disconnects(&store, user).await?;
             let identities = stand_in_identities(&settings);
             let mut sources = std::collections::BTreeMap::<String, (Value, Vec<Value>)>::new();
             for identity in identities
@@ -41,13 +42,8 @@ impl RuntimeWorkRpcHandler {
                 .filter(|identity| identity["enabled"] == true)
             {
                 for source in identity["connections"].as_array().into_iter().flatten() {
-                    let key = json!([
-                        source_provider(source),
-                        source["profile"],
-                        source["kind"],
-                        source["id"]
-                    ])
-                    .to_string();
+                    let key =
+                        json!([source_namespace(source), source["kind"], source["id"]]).to_string();
                     let entry = sources
                         .entry(key)
                         .or_insert_with(|| (source.clone(), Vec::new()));
@@ -67,7 +63,10 @@ impl RuntimeWorkRpcHandler {
                 let mut state = store
                     .stand_in_source(user, source)
                     .map_err(settings_error)?;
-                if state["source"]["enabledAfter"] != source["enabledAfter"] {
+                if state["source"]["enabledAfter"] != source["enabledAfter"]
+                    || state["source"]["generation"] != source["generation"]
+                    || state["source"]["subscriptionId"] != source["subscriptionId"]
+                {
                     state = Value::Null;
                 }
                 if collection_error_latched(source, &state, &settings["version"]) {
@@ -187,6 +186,9 @@ impl RuntimeWorkRpcHandler {
         for message in messages {
             let concrete = concrete_connection_source(source, &message)?;
             let source = &concrete;
+            if git_message_is_echo(store, user, source, &message)? {
+                continue;
+            }
             if !["id", "text", "at"]
                 .iter()
                 .all(|key| message[*key].as_str().is_some_and(|text| !text.is_empty()))
@@ -209,10 +211,23 @@ impl RuntimeWorkRpcHandler {
                     .map(|role| role["id"].clone())
                     .collect();
                 for role in eligible {
-                    store.enqueue_stand_in_event(user,
-                        json!([source_provider(source),source["profile"],source["kind"],source["id"],message["id"],role]),
-                        json!({"kind":"connection","source":source,"message":message,"roleIds":[role],"roleScoped":true}),
-                    ).map_err(settings_error)?;
+                    let event = json!({"kind":"connection","source":source,"message":message,"roleIds":[role],"roleScoped":true});
+                    let event_identity = LocalTaskStore::canonical_connection_event_identity(
+                        &event,
+                    )
+                    .unwrap_or_else(|| {
+                        json!([
+                            source_provider(source),
+                            source["profile"],
+                            source["kind"],
+                            source["id"],
+                            message["id"],
+                            role
+                        ])
+                    });
+                    store
+                        .enqueue_stand_in_event(user, event_identity, event)
+                        .map_err(settings_error)?;
                 }
             }
             for role in roles.iter().filter(|role| {
@@ -249,6 +264,9 @@ impl RuntimeWorkRpcHandler {
         message: &Value,
     ) -> Result<(), AppIpcError> {
         let role_id = role["id"].as_str().unwrap_or_default();
+        if git_message_is_echo(store, user, source, message)? {
+            return Ok(());
+        }
         if store
             .known_stand_in_message(
                 user,
@@ -328,6 +346,21 @@ impl RuntimeWorkRpcHandler {
         let works = store
             .list_stand_in_work(user, role["id"].as_str())
             .map_err(settings_error)?;
+        if source_provider(source).starts_with(super::super::git_connections::PACKAGE) {
+            // Provider-stable entity identities are stronger than semantic
+            // similarity. Distinct entities never merge because titles match.
+            let previous = works.iter().find(|work| {
+                source_provider(&work["source"]) == source_provider(source)
+                    && work["source"]["profile"] == source["profile"]
+                    && message["topicId"]
+                        .as_str()
+                        .is_some_and(|topic| work["latestMessage"]["topicId"] == topic)
+            });
+            return Ok((
+                previous.and_then(|work| work["id"].as_str().map(str::to_owned)),
+                true,
+            ));
+        }
         let candidates: Vec<Value> = works
             .into_iter()
             .filter(|work| {
@@ -402,6 +435,22 @@ fn concrete_connection_source(source: &Value, message: &Value) -> Result<Value, 
 }
 
 fn collection_error_latched(source: &Value, state: &Value, version: &Value) -> bool {
+    if source_provider(source).starts_with(super::super::git_connections::PACKAGE)
+        && matches!(
+            state["error"]["code"].as_str(),
+            Some(
+                "git_cli_failed"
+                    | "git_cli_timeout"
+                    | "git_rate_limited"
+                    | "cloud_unavailable"
+                    | "cloud_request_failed"
+            )
+        )
+    {
+        return state["retryAt"]
+            .as_i64()
+            .is_some_and(|at| at > chrono::Utc::now().timestamp_millis());
+    }
     state["error"].is_object()
         && state["version"] == *version
         && !(source_provider(source) == crate::task_runtime::personal_stand_in::EMAIL_PROVIDER
@@ -427,6 +476,21 @@ fn save_collection_result(
                 json!({})
             };
             next["error"] = json!({"code":error.code,"message":error.message});
+            if source_provider(source).starts_with(super::super::git_connections::PACKAGE) {
+                let failures = state["failures"]
+                    .as_u64()
+                    .unwrap_or(0)
+                    .saturating_add(1)
+                    .min(10);
+                next["failures"] = json!(failures);
+                next["retryAt"] = json!(
+                    chrono::Utc::now().timestamp_millis()
+                        + ((30_000_i64 << failures.min(7)).min(3_600_000))
+                );
+                if let Some(deadline) = super::super::git_connections::retry_at(source) {
+                    next["retryAt"] = json!(next["retryAt"].as_i64().unwrap_or(0).max(deadline));
+                }
+            }
             next
         }
     };
@@ -455,8 +519,32 @@ fn validate_collection_version(
     Ok(())
 }
 
+pub(super) fn git_message_is_echo(
+    store: &LocalTaskStore,
+    user: i64,
+    source: &Value,
+    message: &Value,
+) -> Result<bool, AppIpcError> {
+    if source_provider(source).starts_with(super::super::git_connections::PACKAGE) {
+        if let (Some(profile), Some(id)) = (
+            source["profile"].as_str(),
+            message["id"]
+                .as_str()
+                .filter(|id| id.starts_with("git-canonical:")),
+        ) {
+            return store
+                .git_sent_event(user, profile, id)
+                .map_err(settings_error);
+        }
+    }
+    Ok(false)
+}
+
 pub(super) fn source_accepts_message(source: &Value, message: &Value) -> bool {
-    if source_provider(source) == crate::task_runtime::personal_stand_in::EMAIL_PROVIDER {
+    if source_provider(source) == crate::task_runtime::personal_stand_in::EMAIL_PROVIDER
+        || (source_provider(source).starts_with(super::super::git_connections::PACKAGE)
+            && super::super::git_connections::uses_webhook(source))
+    {
         let boundary = &source["boundary"];
         let position = &message["position"];
         return boundary["partition"].is_string()
@@ -478,6 +566,25 @@ pub(super) fn source_accepts_message(source: &Value, message: &Value) -> bool {
 #[cfg(test)]
 mod ordered_email_tests {
     use super::*;
+
+    #[test]
+    fn git_cli_repository_intake_uses_activation_time_without_a_cloud_boundary() {
+        let source = json!({"providerId":"@wegent/dsh-connection-git/github", "kind":"repository", "transport":"cli", "enabledAfter":"2026-11-04T00:00:00Z"});
+        assert!(!source_accepts_message(
+            &source,
+            &json!({"at":"2026-11-03T23:59:59Z"})
+        ));
+        assert!(source_accepts_message(
+            &source,
+            &json!({"at":"2026-11-04T00:00:01Z"})
+        ));
+        let mut webhook = source.clone();
+        webhook.as_object_mut().unwrap().remove("transport");
+        assert!(!source_accepts_message(
+            &webhook,
+            &json!({"at":"2026-11-04T00:00:01Z"})
+        ));
+    }
 
     #[test]
     fn ordered_email_intake_uses_each_roles_uid_boundary_instead_of_timestamp_precision() {

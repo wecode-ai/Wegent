@@ -11,7 +11,7 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "~4.0.4",
-    "@wegent/dsh-connection-runtime": "0.1.0"
+    "@wegent/dsh-connection-host": "0.1.0"
   },
   "wework": {
     "connections": {

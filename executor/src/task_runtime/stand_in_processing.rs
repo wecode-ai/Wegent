@@ -72,6 +72,30 @@ pub(super) fn update_processing_configuration(
 }
 
 impl LocalTaskStore {
+    pub(crate) fn canonical_connection_event_identity(event: &Value) -> Option<Value> {
+        let source = &event["source"];
+        let roles = event["roleIds"].as_array()?;
+        let provider = source["providerId"].as_str()?;
+        let profile = source["profile"]
+            .as_str()
+            .filter(|value| !value.is_empty())?;
+        let message = event["message"]["id"]
+            .as_str()
+            .filter(|value| value.starts_with("git-canonical:"))?;
+        if event["kind"] != "connection"
+            || event["roleScoped"] != true
+            || roles.len() != 1
+            || !roles[0].as_str().is_some_and(|id| !id.is_empty())
+            || !matches!(
+                provider,
+                "@wegent/dsh-connection-git/github" | "@wegent/dsh-connection-git/gitlab"
+            )
+        {
+            return None;
+        }
+        Some(json!([provider, profile, message, roles[0]]))
+    }
+
     pub fn enqueue_stand_in_event(
         &self,
         user: i64,
@@ -81,8 +105,29 @@ impl LocalTaskStore {
         let mut guard = self.connection()?;
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let id = stand_in_record_key("stand-in-event", &json!([user, identity]));
+        let canonical = Self::canonical_connection_event_identity(&event);
+        let binding = json!({"source":event["source"],"at":event["message"]["at"],"position":event["message"]["position"]});
         if let Some(existing) = get_item_from(&connection, &id, EVENT)? {
-            return Ok(existing.metadata);
+            let mut existing = existing.metadata;
+            if existing["userId"] == user
+                && existing["status"] == "pending"
+                && canonical.as_ref() == Some(&identity)
+                && canonical == Self::canonical_connection_event_identity(&existing)
+            {
+                if !existing["sourceBindings"].is_array() {
+                    existing["sourceBindings"] = json!([{"source":existing["source"],"at":existing["message"]["at"],"position":existing["message"]["position"]}]);
+                }
+                let bindings = existing["sourceBindings"].as_array_mut().unwrap();
+                if !bindings.contains(&binding) {
+                    bindings.push(binding);
+                    write(&connection, EVENT, &existing)?;
+                }
+            }
+            connection.commit()?;
+            return Ok(existing);
+        }
+        if canonical.as_ref() == Some(&identity) {
+            event["sourceBindings"] = json!([binding]);
         }
         event["id"] = json!(id);
         event["userId"] = json!(user);
@@ -168,6 +213,7 @@ impl LocalTaskStore {
                 | "ignore_events"
                 | "defer_events"
                 | "schedule_followup"
+                | "suggest_action"
         ) {
             return Err(TaskRuntimeError::Invalid(
                 "Unknown coordinator action".into(),
@@ -178,7 +224,25 @@ impl LocalTaskStore {
                 "Coordinator action is too large".into(),
             ));
         }
-        let id = stand_in_record_key("stand-in-action", &json!([user, batch, kind, arguments]));
+        let identity = if kind == "suggest_action" {
+            let mut ids = arguments["eventIds"]
+                .as_array()
+                .cloned()
+                .filter(|ids| {
+                    !ids.is_empty() && ids.len() <= 100 && ids.iter().all(Value::is_string)
+                })
+                .ok_or_else(|| {
+                    TaskRuntimeError::Invalid(
+                        "Suggestions require current connection events".into(),
+                    )
+                })?;
+            ids.sort_by(|left, right| left.as_str().cmp(&right.as_str()));
+            ids.dedup();
+            json!([user, kind, ids])
+        } else {
+            json!([user, batch, kind, arguments])
+        };
+        let id = stand_in_record_key("stand-in-action", &identity);
         let mut guard = self.connection()?;
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
         if super::personal_stand_in::read_personal(&connection, user, device)?["primary"]["enabled"]
@@ -239,6 +303,60 @@ impl LocalTaskStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn suggestion_identity_deduplicates_evidence_across_batches_and_rewritten_offers() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        let settings = store.personal_stand_in(7, "mac").unwrap();
+        store.save_personal_stand_in(7, "mac", settings).unwrap();
+        store
+            .save_stand_in_processing_state(7, &json!({"batchId":"first"}))
+            .unwrap();
+        let first = store
+            .queue_stand_in_action(
+                7,
+                "mac",
+                "first",
+                "suggest_action",
+                json!({"eventIds":["a","b"],"roleId":"default","message":"I can prepare replies"}),
+            )
+            .unwrap();
+        store
+            .save_stand_in_processing_state(7, &json!({"batchId":"next"}))
+            .unwrap();
+        let replay = store
+            .queue_stand_in_action(
+                7,
+                "mac",
+                "next",
+                "suggest_action",
+                json!({"eventIds":["b","a"],"roleId":"default","message":"A rewritten suggestion"}),
+            )
+            .unwrap();
+        assert_eq!(first, replay);
+        assert_eq!(store.stand_in_actions(7).unwrap().len(), 1);
+        assert!(store.list_stand_in_work(7, None).unwrap().is_empty());
+        assert!(store
+            .queue_stand_in_action(
+                7,
+                "mac",
+                "next",
+                "suggest_action",
+                json!({"eventIds":[],"roleId":"default","message":"No evidence"})
+            )
+            .is_err());
+        let different = store
+            .queue_stand_in_action(
+                7,
+                "mac",
+                "next",
+                "suggest_action",
+                json!({"eventIds":["c"],"roleId":"default","message":"New evidence"}),
+            )
+            .unwrap();
+        assert_ne!(first["id"], different["id"]);
+    }
 
     #[test]
     fn connection_timing_changes_cancel_old_commands_and_revoke_old_batch_tools() {

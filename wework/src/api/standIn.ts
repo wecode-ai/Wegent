@@ -176,6 +176,7 @@ export type StandInTelemetryFact = {
 }[keyof StandInGeneratedEventMap]
 
 export interface StandInExecutorApi {
+  gitConnection(deviceId: string, input: Record<string, unknown>): Promise<Record<string, unknown>>
   onboarding(userId: number, deviceId: string, language: string): Promise<StandInOnboardingResult>
   completeOnboarding(
     userId: number,
@@ -236,7 +237,12 @@ export interface StandInExecutorApi {
     deviceId: string,
     workId: string
   ): Promise<{ messages: StandInInboxMessage[] }>
-  runWork(userId: number, deviceId: string, workId: string): Promise<WorkspaceRuntimeTaskAddress>
+  runWork(
+    userId: number,
+    deviceId: string,
+    workId: string,
+    options?: { confirmThisRun?: boolean }
+  ): Promise<WorkspaceRuntimeTaskAddress>
   adjustMessage(
     userId: number,
     deviceId: string,
@@ -259,6 +265,11 @@ export interface StandInExecutorApi {
     >[]
     hasMore?: boolean
     nextCursor?: string
+    availability?: {
+      status: string
+      code?: string
+      authTarget?: import('./local/localConnectorAuth').LocalConnectorAuthTarget
+    }
   }>
   conversation(
     userId: number,
@@ -363,6 +374,24 @@ export function createStandInExecutorApi(
     }
   }
   return {
+    gitConnection: (deviceId, input) => {
+      const { channel, ...payload } = input
+      if (channel === 'auth') {
+        const { authOperation, ...target } = payload
+        if (!['start', 'poll', 'cancel'].includes(String(authOperation)))
+          throw new Error('Invalid authorization operation')
+        return request(`runtime.local_connector_auth.${String(authOperation)}`, target, deviceId)
+      }
+      return request(
+        channel === 'webhooks'
+          ? 'runtime.connections.git.webhooks'
+          : channel === 'authTarget'
+            ? 'runtime.connections.git.authTarget'
+            : 'runtime.connections.git.read',
+        payload,
+        deviceId
+      )
+    },
     onboarding: (userId, deviceId, language) =>
       request('runtime.stand_in.onboarding.get', { userId, language }, deviceId),
     completeOnboarding: async (userId, deviceId, weeklyReview, time, language) => {
@@ -421,8 +450,8 @@ export function createStandInExecutorApi(
     inbox: (userId, deviceId) => request('runtime.stand_in.work.list', { userId }, deviceId),
     workMessages: (userId, deviceId, workId) =>
       request('runtime.stand_in.work.messages', { userId, workId }, deviceId),
-    runWork: (userId, deviceId, workId) =>
-      request('runtime.stand_in.work.run', { userId, workId }, deviceId),
+    runWork: (userId, deviceId, workId, options) =>
+      request('runtime.stand_in.work.run', { userId, workId, ...options }, deviceId),
     organizeWork: (userId, deviceId, workId, messageIds, targetWorkId, telemetryAction) =>
       request(
         'runtime.stand_in.work.organize',

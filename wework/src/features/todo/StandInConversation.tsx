@@ -17,6 +17,8 @@ export function StandInConversation({
   active = true,
   pendingConfiguration,
   hasPendingWork = false,
+  draftRequest,
+  onDraftRequestConsumed,
 }: {
   api: StandInExecutorApi
   userId: number
@@ -26,6 +28,8 @@ export function StandInConversation({
   active?: boolean
   pendingConfiguration?: ReactNode
   hasPendingWork?: boolean
+  draftRequest?: { id: number; text: string }
+  onDraftRequestConsumed?(id: number): void
 }) {
   useStandInOpened('conversation', roleId ? 'role' : 'primary', active)
   const { t } = useTranslation('common')
@@ -78,6 +82,8 @@ export function StandInConversation({
       source={null}
       instanceId={`stand-in:${deviceId}:${taskId}`}
       testId="stand-in-conversation"
+      draftRequest={draftRequest}
+      onDraftRequestConsumed={onDraftRequestConsumed}
       initialAddress={address}
       sendEphemeral={false}
       showExecutionTools={false}

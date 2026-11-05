@@ -137,6 +137,9 @@ mod concurrency;
 mod connections;
 mod context_compaction;
 mod fork_transfer;
+mod git_connections;
+mod git_source_workspace;
+mod git_webhook_setup;
 mod hooks;
 pub(super) mod lifecycle;
 mod mcp_apps;
@@ -169,6 +172,7 @@ mod stand_in_memory;
 mod stand_in_processing;
 mod stand_in_review;
 mod stand_in_schedules;
+mod stand_in_task_results;
 mod stand_in_tasks;
 mod stand_in_telemetry;
 mod stand_in_work;
@@ -533,6 +537,7 @@ pub struct RuntimeWorkRpcHandler {
     supervisor_evaluating: Arc<Mutex<HashSet<String>>>,
     supervisor_model_configs: Arc<Mutex<HashMap<String, Value>>>,
     runtime_model_configs: Arc<Mutex<HashMap<String, Value>>>,
+    local_runner_models: Arc<Mutex<Vec<Value>>>,
     active_collaboration_rounds: Arc<Mutex<HashSet<String>>>,
     thread_event_routing: Arc<Mutex<RuntimeThreadEventRouting>>,
     codex_notification_delivery: Arc<Mutex<()>>,
@@ -890,6 +895,7 @@ impl RuntimeWorkRpcHandler {
             supervisor_evaluating: Arc::new(Mutex::new(HashSet::new())),
             supervisor_model_configs: Arc::new(Mutex::new(HashMap::new())),
             runtime_model_configs: Arc::new(Mutex::new(HashMap::new())),
+            local_runner_models: Arc::new(Mutex::new(Vec::new())),
             active_collaboration_rounds: Arc::new(Mutex::new(HashSet::new())),
             thread_event_routing: Arc::new(Mutex::new(RuntimeThreadEventRouting::default())),
             codex_notification_delivery: Arc::new(Mutex::new(())),

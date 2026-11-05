@@ -93,6 +93,8 @@ const mocks = vi.hoisted(() => ({
     chats: unknown[]
     totalTasks: number
   } | null,
+  inputByScope: {} as Record<string, string>,
+  setInputForScope: vi.fn(),
 }))
 
 function CatalogBindingProbe({ scope }: { scope?: string }) {
@@ -375,6 +377,8 @@ vi.mock('@/features/workbench/useWorkbench', () => ({
       runtimeWork: mocks.runtimeWork,
     },
     projectChat: {
+      inputByScope: mocks.inputByScope,
+      setInputForScope: mocks.setInputForScope,
       listLocalApps: mocks.mainListApps,
       trialPluginName: 'Main plugin',
       trialTemplates: [{ name: 'Main task', path: 'main' }],
@@ -555,6 +559,12 @@ describe('TemporaryChatPanel', () => {
     mocks.activeModelSelection = null
     mocks.isBootstrapping = false
     mocks.runtimeWork = null
+    mocks.inputByScope = {}
+    mocks.setInputForScope.mockReset()
+    mocks.setInputForScope.mockImplementation((scope: string, value: string) => {
+      if (value) mocks.inputByScope[scope] = value
+      else delete mocks.inputByScope[scope]
+    })
   })
 
   it('places contextual configuration decisions beside the composer and hides them when inactive', () => {
@@ -1018,6 +1028,63 @@ describe('TemporaryChatPanel', () => {
       }),
       expect.any(Object)
     )
+  })
+
+  it('appends an example once without discarding a draft or sending it', async () => {
+    const consumed = vi.fn()
+    const props = {
+      currentProject: null,
+      source: address,
+      instanceId: 'example-draft',
+      initialAddress: address,
+      initialInput: 'Existing notes',
+      draftRequest: { id: 1, text: 'Prepare my next meeting' },
+      onDraftRequestConsumed: consumed,
+    }
+    const { rerender } = render(<TemporaryChatPanel {...props} />)
+    await waitFor(() =>
+      expect(screen.getByTestId('mock-composer')).toHaveAttribute(
+        'data-draft-value',
+        'Existing notes\n\nPrepare my next meeting'
+      )
+    )
+    rerender(<TemporaryChatPanel {...props} />)
+    expect(consumed).toHaveBeenCalledTimes(1)
+    expect(mocks.sendRuntimePaneMessage).not.toHaveBeenCalled()
+    expect(mocks.createTask).not.toHaveBeenCalled()
+  })
+
+  it('restores an identity draft after navigation, isolates other identities and clears it after send', async () => {
+    mocks.activeModelSelection = {
+      modelName: 'gpt-5.6-codex',
+      modelType: 'public',
+      options: {},
+    }
+    const props = {
+      currentProject: null,
+      source: address,
+      instanceId: 'stand-in:primary',
+      initialAddress: address,
+    }
+    const draft = '在指定群里有人 @我时，先拟好回复。'
+    const first = render(<TemporaryChatPanel {...props} draftRequest={{ id: 1, text: draft }} />)
+    await waitFor(() =>
+      expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-draft-value', draft)
+    )
+    first.unmount()
+    const next = render(<TemporaryChatPanel {...props} />)
+    expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-draft-value', draft)
+    next.rerender(<TemporaryChatPanel {...props} instanceId="stand-in:other-role" />)
+    expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-draft-value', '')
+    next.rerender(<TemporaryChatPanel {...props} />)
+    expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-draft-value', draft)
+    await userEvent.click(screen.getByTestId('mock-send'))
+    await waitFor(() =>
+      expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-draft-value', '')
+    )
+    next.unmount()
+    render(<TemporaryChatPanel {...props} />)
+    expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-draft-value', '')
   })
 
   it.each(['runtime', 'creation'] as const)(

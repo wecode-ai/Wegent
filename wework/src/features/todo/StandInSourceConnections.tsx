@@ -510,6 +510,7 @@ export function StandInSourceConnections({
                 key: identity(row),
                 name: row.name,
                 policy: row.policy,
+                outbound: provider.id === '@wegent/dsh-connection-dingtalk/dingtalk',
                 testId: `${prefix}-policy-${row.id}`,
                 onChange: policy =>
                   updateRows(rows.map(value => (value === row ? { ...value, policy } : value))),
@@ -519,6 +520,7 @@ export function StandInSourceConnections({
                   key: 'new',
                   name: provider.displayName,
                   policy: newPolicy,
+                  outbound: provider.id === '@wegent/dsh-connection-dingtalk/dingtalk',
                   testId: `${prefix}-new-policy`,
                   onChange: policy =>
                     setNewPolicy({ ...policy, immediate: policy.immediate ?? false }),

@@ -14,8 +14,20 @@ export interface ConnectionDescriptor {
   collectionModes: ['poll']
   resourceKinds: string[]
   resourceLabels: Record<string, string>
+  /** Public discovery parameters encoded in listResources.query as a JSON object. */
+  resourceQuerySchema?: {
+    type: 'object'
+    properties: Record<string, Record<string, unknown>>
+    required?: string[]
+    [key: string]: unknown
+  }
+  allResourceKinds?: string[]
+  allResourceLabels?: Record<string, string>
+  allResourceLabel?: string
   locales?: Record<string, { displayName?: string; resourceLabels?: Record<string, string> }>
   eventTypes: string[]
+  /** Declared operations remain subject to native host authorization on every call. */
+  actions?: Array<{ id: string; resourceKinds: string[] }>
   /** Read contract for existing tools without readOnlyHint; explicit false always wins. */
   mcpReadTools?: Record<string, Array<{ server: string; tool: string }>>
   cliReadTools?: Record<string, ConnectionCliDeclaration>
@@ -52,25 +64,29 @@ export interface ConnectionResource {
   profile: string
   kind: string
   name: string
+  scope?: 'all'
   [key: string]: unknown
 }
 
 export interface ConnectionSource extends ConnectionResource {
   boundary?: { partition: string; sequence: number }
   enabledAfter: string
-  policy: { automatic: boolean; askBeforeAct: boolean }
+  policy: { automatic: boolean; askBeforeAct: boolean; immediate?: boolean }
 }
 
 export interface ConnectionResourceQuery {
   kind: string
   query: string
   cursor?: string
+  scope?: 'all'
 }
 
 export interface ConnectionResourcePage {
   items: ConnectionResource[]
   hasMore?: boolean
   nextCursor?: string
+  /** Dynamic discovery state, including an exact native account identity when blocked. */
+  availability?: ConnectionAvailability
 }
 
 export interface ConnectionEvent {
@@ -96,6 +112,7 @@ export interface ConnectionPage {
 export interface ConnectionAvailability {
   status: 'ready' | 'auth_required' | 'error'
   code?: string
+  authTarget?: { pluginKey: string; connectorSlug: string; instance?: string }
 }
 
 export interface ConnectionContext {
@@ -122,8 +139,10 @@ export interface ConnectionContext {
   }
 }
 
-export interface ConnectionCliDeclaration {
-  connectorSlug: string
+export type ConnectionCliDeclaration = (
+  | { connectorSlug: string; toolId?: never }
+  | { toolId: string; connectorSlug?: never }
+) & {
   outputArgs: string[]
   operations: Record<string, { command: string[]; parameters: Record<string, string> }>
 }
@@ -151,6 +170,28 @@ export interface ConnectionProvider {
   ): Promise<ConnectionResourcePage>
   validate(context: ConnectionContext, input: ConnectionSource): Promise<unknown>
   initialize(context: ConnectionContext, input: ConnectionSource): Promise<ConnectionCheckpoint>
+  /** Only the authorized host invokes actions; declarations are not execution grants. */
+  executeAction?(
+    context: ConnectionContext,
+    input: { action: string; source: ConnectionSource; [key: string]: unknown }
+  ): Promise<unknown>
+  readSource?(
+    context: ConnectionContext,
+    input: { source: ConnectionSource; since?: string; limit?: number }
+  ): Promise<{
+    items: Array<{
+      id: string
+      at: string
+      text: string
+      subject?: string
+      from?: string
+      senderName?: string
+      truncated?: boolean
+    }>
+    hasMore: boolean
+    range?: { since: string; until: string }
+    readOnly?: true
+  }>
   collect(
     context: ConnectionContext,
     input: { source: ConnectionSource; checkpoint: ConnectionCheckpoint }

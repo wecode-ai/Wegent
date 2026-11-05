@@ -2,7 +2,7 @@ import { WORKSPACE_NAVIGATION_EVENT, type WorkspaceNavigationDetail } from '@/li
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useStandInOpened } from '@/telemetry/useStandInOpened'
 import { useContext, useEffect, useRef, useState, type ComponentProps } from 'react'
-import { Brain, MessageSquare, Plus, Settings } from 'lucide-react'
+import { Brain, Check, HelpCircle, MessageSquare, Plus, Settings, UserRound } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import { StandInIcon } from '@wegent/collaboration'
 import {
@@ -29,6 +29,10 @@ import { StandInProposalCard } from './StandInProposalCard'
 import { inboxRuntimeItem, useStandInInbox } from './useStandInInbox'
 
 type SettingsProps = ComponentProps<typeof StandInSettingsPage>
+
+function roleTabClass(selected: boolean) {
+  return `inline-flex min-h-8 shrink-0 items-center gap-2 rounded-lg px-3 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus ${selected ? 'bg-text-primary font-medium text-background' : 'text-text-secondary hover:bg-muted'}`
+}
 
 export function StandInOverviewPage({
   onOpenTask,
@@ -65,6 +69,9 @@ export function StandInOverviewPage({
           : null
   )
   const [proposal, setProposal] = useState<StandInProposal | null>(null)
+  const [guideOpen, setGuideOpen] = useState(false)
+  const [exampleDraft, setExampleDraft] = useState<{ id: number; text: string }>()
+  const exampleSequence = useRef(0)
   const [proposalError, setProposalError] = useState<string | null>(null)
   const [resolving, setResolving] = useState(false)
   const panelRef = useRef<StandInSettingsHandle>(null)
@@ -197,9 +204,10 @@ export function StandInOverviewPage({
       setChatting(false)
       setProfile(null)
     })
+  const overviewError = (profile === 'primary' ? null : state.error) || proposalError || inbox.error
   const content = (
     <section
-      className="relative flex h-full min-h-0 min-w-0 text-base text-text-primary"
+      className="relative flex h-full min-h-0 min-w-0 bg-background text-base text-text-primary"
       data-testid="stand-in-overview"
     >
       <main className="relative flex min-h-0 min-w-0 flex-1 flex-col">
@@ -215,13 +223,11 @@ export function StandInOverviewPage({
                 data-testid="stand-in-primary-open"
                 aria-current={!roleId ? 'page' : undefined}
                 onClick={() => chooseRole()}
-                className={`inline-flex min-h-8 shrink-0 items-center gap-2 rounded-lg px-3 text-sm ${!roleId ? 'bg-muted font-medium' : 'text-text-secondary hover:bg-muted'}`}
+                className={roleTabClass(!roleId)}
               >
-                <StandInIcon
-                  enabled={state.draft?.primary?.enabled !== false}
-                  className="h-4 w-4"
-                />
+                <UserRound aria-hidden="true" className="h-4 w-4" />
                 {t('standIn.title')}
+                {!roleId && <Check aria-hidden="true" className="h-3.5 w-3.5" />}
               </button>
               {roles.map((value, index) => {
                 const projects = props.projects.filter(project =>
@@ -245,12 +251,16 @@ export function StandInOverviewPage({
                       t(value.enabled ? 'standIn.workspace.receiving' : 'standIn.workspace.paused')
                     }
                     onClick={() => chooseRole(value.id)}
-                    className={`inline-flex min-h-8 shrink-0 items-center gap-2 rounded-lg px-3 text-sm ${roleId === value.id ? 'bg-muted font-medium' : 'text-text-secondary hover:bg-muted'}`}
+                    className={roleTabClass(roleId === value.id)}
                   >
-                    <StandInIcon enabled={value.enabled} className="h-4 w-4" />
+                    <StandInIcon
+                      enabled={value.enabled}
+                      className={`h-4 w-4 ${roleId === value.id ? '[&_g]:text-background' : ''}`}
+                    />
                     <span className="max-w-40 truncate">
                       {standInRoleName(value, index, t('standIn.personal.default_role'))}
                     </span>
+                    {roleId === value.id && <Check aria-hidden="true" className="h-3.5 w-3.5" />}
                     <span className="sr-only">{scope}</span>
                     <span className="sr-only">
                       {t(value.enabled ? 'standIn.auto_on' : 'standIn.auto_off')}
@@ -316,6 +326,16 @@ export function StandInOverviewPage({
             <Settings className="h-4 w-4" />
             {t(role ? 'standIn.workspace.role_profile' : 'standIn.workspace.primary_profile')}
           </button>
+          <button
+            type="button"
+            data-testid="stand-in-guide-open"
+            aria-label={t('standIn.onboarding.guide')}
+            disabled={!api || !deviceId || state.loading}
+            onClick={() => setGuideOpen(true)}
+            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-text-secondary hover:bg-muted disabled:opacity-40"
+          >
+            <HelpCircle aria-hidden="true" className="h-4 w-4" />
+          </button>
         </header>
         {state.loading && !state.saved ? (
           <p role="status" className="p-5 text-text-muted">
@@ -351,10 +371,10 @@ export function StandInOverviewPage({
                 }
               />
             )}
-            {(state.error || proposalError || inbox.error) && (
+            {overviewError && (
               <div role="alert" className="flex items-center gap-3 px-5 py-2 text-sm text-error">
-                <span className="flex-1">{state.error || proposalError || inbox.error}</span>
-                {state.error && (
+                <span className="flex-1">{overviewError}</span>
+                {state.error && profile !== 'primary' && (
                   <button
                     type="button"
                     data-testid="stand-in-overview-inline-retry"
@@ -422,6 +442,10 @@ export function StandInOverviewPage({
             )}
             {conversation && api && deviceId ? (
               <StandInConversation
+                draftRequest={!roleId ? exampleDraft : undefined}
+                onDraftRequestConsumed={id =>
+                  setExampleDraft(current => (current?.id === id ? undefined : current))
+                }
                 active={active && conversation}
                 hasPendingWork={!roleId && needsAttention.length > 0}
                 key={`${deviceId}:${props.userId}:${roleId ? `role:${roleId}` : 'primary'}`}
@@ -580,6 +604,17 @@ export function StandInOverviewPage({
       userId={props.userId}
       deviceId={deviceId ?? ''}
       active={active}
+      guideOpen={guideOpen}
+      onGuideClose={() => setGuideOpen(false)}
+      onExampleSelect={text =>
+        leavePanel(() => {
+          setRoleId(undefined)
+          setChatting(false)
+          setProfile(null)
+          setGuideOpen(false)
+          setExampleDraft({ id: ++exampleSequence.current, text })
+        })
+      }
       bypass={Boolean(props.initialProfileId || profile || chatting || (!deviceId && state.error))}
       onClose={props.onCancel}
     >

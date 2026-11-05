@@ -3,6 +3,7 @@ import { validRange } from 'semver'
 
 const ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/
 const METHODS = ['check', 'listResources', 'validate', 'initialize', 'collect']
+const OPTIONAL_METHODS = ['readSource', 'executeAction']
 
 export class ConnectionError extends Error {
   constructor(code, message) {
@@ -81,6 +82,24 @@ export function parseConnections(manifest) {
         ),
       'Missing resource labels'
     )
+    if (provider.resourceQuerySchema !== undefined) {
+      const schema = provider.resourceQuerySchema
+      requireValue(
+        record(schema) &&
+          schema.type === 'object' &&
+          record(schema.properties) &&
+          Object.entries(schema.properties).every(
+            ([key, value]) => ID.test(key) && record(value)
+          ) &&
+          (schema.required === undefined ||
+            (Array.isArray(schema.required) &&
+              schema.required.every(
+                key => typeof key === 'string' && Object.hasOwn(schema.properties, key)
+              ) &&
+              new Set(schema.required).size === schema.required.length)),
+        'Invalid resource query schema'
+      )
+    }
     requireValue(
       provider.allResourceKinds === undefined ||
         (Array.isArray(provider.allResourceKinds) &&
@@ -97,6 +116,23 @@ export function parseConnections(manifest) {
       JSON.stringify(provider.collectionModes) === '["poll"]',
       'Only poll collection is supported'
     )
+    if (provider.actions !== undefined) {
+      requireValue(Array.isArray(provider.actions), 'Invalid connection actions')
+      const actions = new Set()
+      for (const action of provider.actions) {
+        requireValue(
+          record(action) &&
+            typeof action.id === 'string' &&
+            ID.test(action.id) &&
+            !actions.has(action.id) &&
+            Array.isArray(action.resourceKinds) &&
+            action.resourceKinds.length > 0 &&
+            action.resourceKinds.every(kind => provider.resourceKinds.includes(kind)),
+          'Invalid or duplicate connection action'
+        )
+        actions.add(action.id)
+      }
+    }
     if (provider.mcpReadTools !== undefined) {
       requireValue(record(provider.mcpReadTools), 'Invalid MCP read tool declarations')
       for (const [alias, tools] of Object.entries(provider.mcpReadTools)) {
@@ -224,6 +260,10 @@ export class ConnectionRegistry {
         METHODS.every(method => typeof implementation?.[method] === 'function'),
         `Incomplete connection implementation: ${id}`
       )
+      requireValue(
+        !provider.actions?.length || typeof implementation.executeAction === 'function',
+        `Missing connection action implementation: ${id}`
+      )
       return { id, definition, provider, implementation, controller: new AbortController() }
     })
     for (const entry of entries) this.entries.set(entry.id, entry)
@@ -301,7 +341,17 @@ export class ConnectionRegistry {
     const entry = this.entries.get(id)
     if (!entry)
       throw new ConnectionError('connection_unavailable', 'Connection plugin is not active')
-    requireValue(METHODS.includes(method), 'Unknown connection method')
+    requireValue(
+      METHODS.includes(method) || OPTIONAL_METHODS.includes(method),
+      'Unknown connection method'
+    )
+    if (typeof entry.implementation[method] !== 'function')
+      throw new ConnectionError(
+        method === 'executeAction' ? 'connection_action_unsupported' : 'source_read_unsupported',
+        method === 'executeAction'
+          ? 'This provider does not support connection actions'
+          : 'This provider does not support source reads'
+      )
     const dependencies = dependencyPlan(
       entry.definition,
       entry.provider.uses.length ? await this.inventory() : [],
@@ -323,7 +373,11 @@ export class ConnectionRegistry {
         'Unsupported all-resource scope'
       )
     }
-    const source = method === 'collect' ? params.source : method === 'validate' ? params : null
+    const source = ['collect', 'readSource', 'executeAction'].includes(method)
+      ? params.source
+      : method === 'validate'
+        ? params
+        : null
     if (source?.scope === 'all') {
       requireValue(
         source.id === '*' && entry.provider.allResourceKinds?.includes(source.kind),
@@ -332,10 +386,21 @@ export class ConnectionRegistry {
     } else if (source) {
       requireValue(source.scope === undefined && source.id !== '*', 'Invalid resource scope')
     }
-    if (method === 'collect') {
+    if (['collect', 'readSource', 'executeAction'].includes(method)) {
       requireValue(params.source?.providerId === id, 'Source belongs to another provider')
+      if (method === 'executeAction') {
+        requireValue(
+          source.scope === undefined &&
+            source.id !== '*' &&
+            entry.provider.actions?.some(
+              action =>
+                action.id === params.action && action.resourceKinds.includes(params.source.kind)
+            ),
+          'Connection action is not declared for this resource'
+        )
+      }
       await entry.implementation.validate(context, params.source)
-      if (params.checkpoint === null || params.checkpoint === undefined) {
+      if (method === 'collect' && (params.checkpoint === null || params.checkpoint === undefined)) {
         params.checkpoint = await entry.implementation.initialize(context, params.source)
       }
     }
@@ -393,6 +458,25 @@ export class ConnectionRegistry {
 }
 
 function validateProviderResult(provider, method, result) {
+  if (method === 'readSource') {
+    requireValue(
+      record(result) &&
+        Array.isArray(result.items) &&
+        result.items.length <= 20 &&
+        result.items.every(
+          item =>
+            record(item) &&
+            typeof item.id === 'string' &&
+            item.id.length > 0 &&
+            typeof item.at === 'string' &&
+            Number.isFinite(Date.parse(item.at)) &&
+            typeof item.text === 'string' &&
+            item.text.length <= 20000
+        ) &&
+        typeof result.hasMore === 'boolean',
+      'Invalid source read result'
+    )
+  }
   if (method === 'collect') {
     requireValue(
       record(result) &&
@@ -419,6 +503,26 @@ function validateProviderResult(provider, method, result) {
       record(result) && Array.isArray(result.items) && result.items.length <= 1000,
       'Invalid resource page'
     )
+    if (result.availability !== undefined) {
+      const availability = result.availability
+      requireValue(
+        record(availability) && ['ready', 'auth_required', 'error'].includes(availability.status),
+        'Invalid resource availability'
+      )
+      if (availability.authTarget !== undefined) {
+        const target = availability.authTarget
+        requireValue(
+          record(target) &&
+            ['pluginKey', 'connectorSlug'].every(
+              key =>
+                typeof target[key] === 'string' && target[key].trim() && target[key].length <= 256
+            ) &&
+            (target.instance === undefined ||
+              (typeof target.instance === 'string' && target.instance.trim())),
+          'Invalid resource authorization target'
+        )
+      }
+    }
     requireValue(
       result.items.every(
         item =>

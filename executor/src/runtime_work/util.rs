@@ -20,6 +20,13 @@ pub(crate) fn execution_request(payload: &Value) -> Option<ExecutionRequest> {
 }
 
 pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, payload: &Value) {
+    if payload["manualStandInConfirmation"] == true {
+        request
+            .extra
+            .insert("standInManualConfirmation".into(), json!(true));
+    } else {
+        request.extra.remove("standInManualConfirmation");
+    }
     if payload["automaticStandIn"] == true {
         request.extra.insert("standInAutomatic".into(), json!(true));
     } else {
@@ -355,6 +362,19 @@ pub(crate) fn external_work_kind(request: &ExecutionRequest) -> Option<ExternalW
 }
 
 pub(crate) fn stand_in_requires_confirmation(request: &ExecutionRequest) -> bool {
+    if request
+        .extra
+        .get("origin")
+        .and_then(|o| o["sourceProvider"].as_str())
+        .is_some_and(|id| {
+            matches!(
+                id,
+                "@wegent/dsh-connection-git/github" | "@wegent/dsh-connection-git/gitlab"
+            )
+        })
+    {
+        return true;
+    }
     if request
         .extra
         .get("standInDelegation")

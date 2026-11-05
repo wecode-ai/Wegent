@@ -618,7 +618,11 @@ impl CodexAppServerClient {
         Ok(result)
     }
 
-    async fn restart_stalled_turn_process(&self, thread_id: &str) -> bool {
+    async fn restart_stalled_turn_process(
+        &self,
+        thread_id: &str,
+        has_ready_data: impl FnOnce() -> bool + Send,
+    ) -> bool {
         let mut state = self.state.lock().await;
         let pending_request_count = match state.process.as_ref() {
             Some(process) => process.pending.lock().await.len(),
@@ -645,6 +649,10 @@ impl CodexAppServerClient {
             || active_threads.get(thread_id) != Some(&1)
             || active_threads.values().sum::<usize>() != 1
         {
+            return false;
+        }
+        // Progress may arrive while recovery waits for the admission lock.
+        if has_ready_data() {
             return false;
         }
         stop_codex_app_server_process(
@@ -2866,17 +2874,43 @@ async fn read_shared_turn_notifications(
             match timeout_at(startup_deadline, receive_notification).await {
                 Ok(received) => received?,
                 Err(_) => {
+                    let mut queued = None;
+                    let mut cancelled = false;
                     startup::recover_stalled_shared_turn(
                         client,
                         thread_id,
                         startup_timeout_seconds,
+                        || {
+                            cancelled =
+                                ensure_codex_turn_not_cancelled(&mut options.cancellation).is_err();
+                            if cancelled {
+                                return true;
+                            }
+                            queued = match notification_rx.try_recv() {
+                                Ok(message) => Some(Ok(message)),
+                                Err(broadcast::error::TryRecvError::Lagged(skipped)) => {
+                                    Some(Err(broadcast::error::RecvError::Lagged(skipped)))
+                                }
+                                Err(broadcast::error::TryRecvError::Closed) => {
+                                    Some(Err(broadcast::error::RecvError::Closed))
+                                }
+                                Err(broadcast::error::TryRecvError::Empty) => None,
+                            };
+                            queued.is_some()
+                        },
                     )
                     .await?;
-                    // Keep listening and retry recovery if this becomes the
-                    // only active turn. Goal startup may still lack a turn ID.
-                    startup_deadline =
-                        Instant::now() + Duration::from_secs(startup_timeout_seconds);
-                    continue;
+                    if cancelled {
+                        None
+                    } else if queued.is_some() {
+                        queued
+                    } else {
+                        // Keep listening and retry recovery if this becomes the
+                        // only active turn. Goal startup may still lack a turn ID.
+                        startup_deadline =
+                            Instant::now() + Duration::from_secs(startup_timeout_seconds);
+                        continue;
+                    }
                 }
             }
         } else if let Some(deadline) = goal_continuation_deadline {
@@ -2932,6 +2966,9 @@ async fn read_shared_turn_notifications(
                             ("error", error),
                         ],
                     );
+                } else {
+                    // An acknowledged interrupt awaits a terminal event, not model startup.
+                    waiting_for_initial_progress = false;
                 }
             }
             continue;

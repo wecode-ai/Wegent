@@ -76,6 +76,8 @@ Each isolated case restores original profiles, removes its events and test plugi
 
 ## Connection plugin sources
 
+Connections are supplied by DSH plugins. See the [connection extension point](./wework-connection-plugins.md) for the shared host, Provider contract and default event handling.
+
 Connection dependencies declare exact marketplace and plugin IDs through `source` and optional `alternateSources`. Resolution reuses an installed source first, choosing declaration order when several sources are installed. Disabled or incompatible installations still require explicit action; they are never enabled, upgraded, or replaced automatically. Tool calls carry the selected source's actual ID and version, and the Executor verifies that the connection plugin declared that source.
 
 DingTalk supports both `dingtalk@wegent` and `dingtalk@wework`, preserving existing installations and account configuration without migration or reinstallation. Undeclared marketplaces do not participate in resolution.
@@ -86,9 +88,13 @@ Stand-ins and ordinary tasks share the model picker, classification, sorting, an
 
 Display models and `RunnerModelIdentity` are stored separately. Display models serve the UI; execution references contain only the actual runtime, provider, model ID, and the cloud resource name, type, namespace, and owner. Saving submits only the execution reference, not model configurations or credentials. The `public` resource type means a public resource, not a public-network endpoint. Intranet, public-network, and overseas labels come from the original catalog; unmarked models are not automatically labeled public-network.
 
+The native host's `ModelConfigurationStore` owns custom interfaces in `model.yml`. After Executor starts and before Core starts, and after reading, saving, or binding the configuration file, the host serially rebuilds the Executor's in-memory interface catalog. Stand-ins select a device-owned provider and `local-model:<id>` reference. Public catalogs and stand-in settings contain no endpoints, API keys, or complete execution configurations. Dispatch resolves the current configuration by full device model identity; disabling or deleting an interface rejects new executions instead of switching to a Codex subscription. Ordinary tasks and stand-ins share protocol conversion, and concrete work inherits the saved model reference. Persisted tasks contain no credentials; each actual turn, including restored, queued, and continued work, resolves the original task’s stable model identity against the current device configuration. Missing references and disabled models reject execution before an unauthenticated request is sent.
+
 Desktop and mobile use the same complete model identity comparison, distinguishing same-name providers, namespaces, and owners. Option identifiers are independent of display names and preserve existing identifiers. Changing the device or runtime invalidates old catalog requests; unavailable saved models retain the recovery entry.
 
 The existing CI `stand-in-profile` checkpoint group includes the original `stand-in-profile-settings` scenario and the new `stand-in-model-catalog` scenario. The latter compares ordinary and stand-in labels for real Backend intranet, public-network, and unmarked models sharing an upstream model ID, then validates persisted execution references. The runner and CI catalog validator share checkpoint-group expansion so registered scenarios cannot be left outside CI.
+
+The same `stand-in-model-catalog` checkpoint loads the `stand-in-model-interface` extension while retaining the original scenario, Backend, and desktop lifecycle. It checks native `model.yml` interface selection, credential-free saved settings, and authenticated calls to the same model service from both the primary stand-in and its concrete work. It also restarts the app and continues the original work, verifying the same conversation and authenticated model calls. Existing model-service scenarios and assertions remain unchanged.
 
 ## Multiple stand-ins handling work
 
@@ -137,6 +143,8 @@ Cover the status/history overview and secondary settings, default selection of a
 ## Persistent conversations and long-term memory
 
 The primary stand-in keeps a persistent chat entry while individual work items retain separate Runtime tasks. Local Codex reuses thread resume and automatic compaction without timed thread rotation. The composer keeps model selection and hides execution controls such as context compaction, permissions, and planning.
+
+Each primary turn refreshes its orchestration contract: discover task tools, inspect existing work, create or continue an independent task with the complete requirements, sources, deliverables and authorization limits, then read actual results before reporting. This also applies to direct turns on loaded threads; concrete tasks and scenario roles do not receive this primary-only restriction. Configuration proposals remain in the identity conversation. `propose_profile` declares required settings fields, project reference objects, and independent automatic-processing, action-confirmation and timing policies. New roles preserve existing roles, and proposals are saved only after native confirmation. The identity conversation also creates or cancels schedules directly; concrete workers prepare reports and perform each execution without receiving identity configuration tools.
 
 Independent `stand_in_memory` records live in the selected Executor's SQLite database, scoped to the person, a role, a collaboration project, or a DingTalk connection. They are separate from Codex threads, responsibilities, and connection permissions. Records retain their source task, timestamps, and version; edits and deletion require the current version. Devices keep independent memories.
 
@@ -198,16 +206,38 @@ Calendar due runs use the existing per-automation history budget of 100 as their
 
 `runtime.stand_in.onboarding.get/complete` reads and submits feature choices for
 the current account on the selected Executor. Reads require no model, cloud
-catalog or execution preparation. Completion and the review arrangement share
-one Automation storage write. Opting out also records completion; closing does
-not. Existing users see onboarding once. Confirming a selected review materializes
-the UI's implicit primary profile only when absent, preserving explicit pauses
-and the calendar connection policy.
+catalog or execution preparation. Completing the introduction records completion without creating an arrangement;
+closing does not save. All five examples use equivalent buttons, with no checkbox
+or inline time field. Weekly reviews are scheduled through the conversation after
+scope and time confirmation, preserving paused identities and calendar policy.
 
 Onboarding and the calendar share the Executor's `weekly_review` template,
 defaulting to Monday 09:00 in Asia/Shanghai. Deleting an arrangement retains the
 completion record, preventing recreation on repeat submissions. Users may
 explicitly add it again through the primary calendar template.
+
+The onboarding modal offers daily briefings, meeting preparation, project follow-up
+DingTalk mention replies and weekly work reviews, and can be reopened through the question-mark icon. Choosing
+an example selects the primary conversation and appends the business request to
+its editable draft without sending, replacing existing notes or creating schedules.
+A single-person icon distinguishes the primary identity from scenario roles;
+the selected identity has an inverse-neutral background and checkmark. Conversation
+surfaces use the light theme's white background, and processing notices use a bounded bar.
+
+The host injects source discovery instructions into system prompts, including
+continuations of existing identity conversations, rather than user drafts.
+The AI inspects the profile and provider catalog, then attempts discovery using
+`connect_source`, or `list_projects` for projects. The tool returns actual provider
+status, declared authorization identity or secure account setup requirements.
+It never collects passwords, expands scope or claims message access merely because
+a provider is available. Subscription changes require `propose_profile` confirmation;
+sign-in uses native authorization. Missing inputs block aggregation until connected
+and confirmed, rather than producing fabricated summaries or unusable tasks.
+
+Identity conversations restored with an earlier desktop device identifier are
+rebound to the current host only after their persisted task ID, owner and role
+match. Owner and role stay unchanged. Ordinary tasks, external work and background
+batches retain their existing boundaries and task tools retain all permission checks.
 
 Review executions expose only the read-only `read_review_history` stand-in tool.
 The host verifies account, device, actor task, current arrangement version and

@@ -1225,7 +1225,10 @@ impl RuntimeWorkRpcHandler {
             return;
         }
         self.apply_backend_connection(&mut turn.request);
-        let stand_in_context = self.refresh_stand_in_context(&mut turn.request);
+        let execution_context = self
+            .resolve_local_model_reference(&mut turn.request, &turn.local_task_id)
+            .map_err(|error| error.message)
+            .and_then(|_| self.refresh_stand_in_context(&mut turn.request));
         crate::runtime_work::api_context::inject_current_session(
             &mut turn.request,
             &self.device_id,
@@ -1457,7 +1460,7 @@ impl RuntimeWorkRpcHandler {
                 recovery_handler.record_overload_recovery_turn(&recovery_local_task_id, &turn_id);
             });
             let result = async {
-                stand_in_context?;
+                execution_context?;
                 handler
                     .validate_project_coordinator_request(&request)
                     .await?;

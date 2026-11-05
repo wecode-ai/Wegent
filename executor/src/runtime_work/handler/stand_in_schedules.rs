@@ -172,7 +172,12 @@ impl RuntimeWorkRpcHandler {
         if args.get("taskId").is_some() {
             return Err(AppIpcError::new("bad_request", "Calendar events inherit connection settings and cannot select an execution conversation"));
         }
-        let request = json!({"schemaVersion":2,"runtime":"codex","deviceId":self.device_id,"message":required(args,"message")?,"title":required(args,"title")?,"standInOwner":{"userId":identity.user,"roleId":"@primary"},"standInCalendar":{}});
+        let calendar = match args["template"].as_str() {
+            None => json!({}),
+            Some("weekly_review") => json!({"template":"weekly_review"}),
+            Some(_) => return Err(AppIpcError::new("bad_request", "Unknown calendar template")),
+        };
+        let request = json!({"schemaVersion":2,"runtime":"codex","deviceId":self.device_id,"message":required(args,"message")?,"title":required(args,"title")?,"standInOwner":{"userId":identity.user,"roleId":"@primary"},"standInCalendar":calendar});
         self.create_automation(json!({"automation":{"id":id,"version":0,"name":required(args,"title")?,"prompt":required(args,"message")?,"schedule":schedule,"timezone":args["timezone"].as_str().unwrap_or("UTC"),"enabled":true,"conversationMode":"independent","notificationPolicy":"attention_only","taskRequest":request,"taskPayload":{"runtime":"codex"},"continuationPayload":null}})).await
     }
 

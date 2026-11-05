@@ -2,9 +2,20 @@
 sidebar_position: 61
 ---
 
-# Wework 分身连接插件
+# Wework DSH 连接扩展点
 
 连接是 Wework Core DSH 插件的一种能力。Codex 插件协议保持不变；Wework 连接插件可以依赖已有 Codex 插件，也可以自行访问外部系统。采集、分页和格式转换由代码执行，模型只参与角色内的工作整理和处理。
+
+连接是 DSH 扩展点。`@wegent/dsh-connection-host` 提供 `ctx.weworkConnections` 服务，拥有统一注册表、认证的宿主 RPC 和生命周期；各系统通过独立 DSH 插件声明 `wework.connections`，并调用 `ctx.weworkConnections.register(ctx, manifestUrl, providers)`。邮箱插件保留原包名 `@wegent/dsh-connection-runtime`，其已保存的来源 ID、账号设置和安全存储归属不变。停用某个连接插件只撤销该插件的能力，不停用连接宿主或其他连接。
+
+新系统接入同一协议，不增加分身专用轮询器：
+
+- 插件声明 `apiVersion`、资源类型、事件类型和依赖来源，实现 `check`、`listResources`、`validate`、`initialize`、`collect`。`initialize` 建立用户选定范围的接收边界；后续 `collect` 返回稳定事件 ID、事件时间、正文、检查点和分页状态。连接成功本身不是新业务事件，不重放边界之前的历史。
+- 框架在实际收到新事件后持久化、去重并按来源策略唤醒统一协调流程；默认只读研判、重要事实提醒和待决策交互不要求用户先在会话中发送指令。来源正文只作为不可信证据，不授予执行权限。具体的归集时机、职责和授权仍以保存的策略为准。
+- 可选 `readSource` 提供有界的只读补充信息，不推进收集检查点。未实现的插件明确返回不支持，不把目录就绪或订阅存在当成已经读取内容。
+- 可选 `actions` 声明资源支持的操作，`executeAction` 在原插件中实现。宿主只路由已声明且属于该插件具体资源的操作；清单不是授权。实际执行仍须通过原生单次确认或当前持续授权，插件继续验证收件人、幂等及外部操作结果，未知发送结果不得自动重试。
+
+目前实际提供外部事件采集的内置连接是邮箱和钉钉。GitHub 业务工具、内部日历安排不等同于外部事件连接；相应插件实现并注册上述协议前，不宣称已具备其新事件监听能力。
 
 ## 声明和注册
 
@@ -67,12 +78,20 @@ export async function apply(ctx) {
 | `validate(context, source)`     | 验证资源类型、身份和账号访问条件。失败不能继续采集。                             |
 | `initialize(context, source)`   | 为新订阅建立检查点，避免首次接入重放全部历史。                                   |
 | `collect(context, input)`       | 接收 `source`、`checkpoint`，返回 `events`、`nextCheckpoint`、`hasMore`。        |
+| `readSource(context, input)`    | 可选；读取有界的具体来源内容，不修改采集检查点。                                 |
+| `executeAction(context, input)` | 可选；只执行清单声明、且已由宿主按原生权限路径授权的具体资源操作。               |
 
 资源包含 `providerId`、`id`、`profile`、`kind`、`name`。用户保存后，Executor 增加处理策略和服务端生成的 `enabledAfter`。检查点为 JSON 对象，由插件解释；宿主在外层保存版本、错误和来源，不能把这些元数据混入插件检查点。
+
+需要实例地址等公开发现参数时，Provider 声明可选 `resourceQuerySchema`（对象型 JSON Schema）；`listResources.query` 此时编码为 JSON 对象字符串。目录保留该声明。`connect_source` 在缺少必填字段或无法解析对象时返回 `setup_required`、`querySchema` 和 `missingFields`，由 AI 使用结构化问题补齐；不猜测企业实例，不提前调用业务 CLI，也不索取凭据。这个预检只检查对象和必填字段，参数值仍由 Provider 验证；未声明该字段的插件保留原来的文本搜索语义。
+
+资源发现也可返回 `availability`。仅在实际业务操作明确报告认证缺失时返回 `auth_required`，并携带原生授权服务给出的精确 `authTarget`；动态实例目标保留公开的 `instance`。`connect_source` 使用同一授权状态处理该结果，不能从网络错误、403 或空列表推断登录失效。GitHub 的目标来自其插件声明；GitLab 的目标由插件根据已选择实例请求原生授权服务取得，不猜测或自行拼装连接器标识。
 
 事件至少包含稳定的 `id`、`text` 和 `at`。`eventType` 应与清单声明一致，可携带 `senderId`、`senderName`、`quotedMessageId`、`topicId` 等业务字段。时间应使用 RFC 3339；钉钉迁移保留对原时间格式的解释。
 
 插件实现必须处理分页边界、重复数据和失效检查点，不得在错误时推进游标。实现可以使用闭包捕获自己声明的 DSH 服务；上下文包含已解析依赖和生命周期 `signal`。停用插件后，在途采集结果会被拒绝。
+
+写操作在 Provider 中使用 `actions: [{ id: "retry_build", resourceKinds: ["repository"] }]` 声明，并实现 `executeAction(context, { action, source, ...input })`。只允许该 Provider 已声明的动作和资源类型，不允许使用 `scope: "all"` 或通配资源作为操作目标。动作清单不会自动向模型暴露写入工具，也不能代替原生授权；宿主已授权的具体工具才可通过统一 RPC 调用。插件必须在实际投递前继续验证其业务边界，不能根据事件正文或调用者伪造的策略自行授权。
 
 ## Codex 依赖管理
 
@@ -172,7 +191,7 @@ Executor 保留唯一的后台采集调度。它通过仅监听回环地址、�
 
 历史来源、消息和工作不重新生成 ID。钉钉继续使用原去重命名空间，原 `after/until/cursor` 在首次采集时转为通用检查点。原回复仍校验工作、角色、来源消息及最新确认策略；其他 Provider 不能调用钉钉回复。
 
-内置声明依赖明确的 `dingtalk@wegent`。其他市场中的副本不会被自动视为等价依赖；需要提供声明其准确依赖身份的连接插件，旧配置和历史仍保留。Webhook、无桌面服务的云端插件宿主和跨设备自动接管不属于本次实现。
+内置清单声明 `dingtalk@wework` 和允许的替代来源 `dingtalk@wegent`，按声明顺序复用实际安装。未声明市场中的副本不自动视为等价依赖；旧配置和历史仍保留。Webhook、无桌面服务的云端插件宿主和跨设备自动接管不属于本次实现。
 
 ## 验证
 
@@ -180,7 +199,7 @@ Executor 保留唯一的后台采集调度。它通过仅监听回环地址、�
 
 内置邮箱来源为 `@wegent/dsh-connection-runtime/email`，支持使用密码或应用授权码的 IMAP/SMTP 账号。用户在分身的「连接 → 邮箱」中填写服务器、端口和 TLS 或 STARTTLS 配置；验证收信和发信登录成功后添加连接，再保存分身设置开始接收。仅使用加密连接并校验证书。账号凭据通过 `weworkSecureStorage` 加密保存在执行设备，不进入分身配置、模型上下文或连接目录；远程设备上的账号需在对应设备配置。
 
-更新登录信息保留账号 ID 和现有角色订阅。删除账号需确认其对所有引用角色的影响；删除完成后拒绝后续收发，已经开始的发送操作先结算。移除角色连接仅解除该角色订阅，不删除共享账号。邮箱连接必须启用发送前确认，不能通过配置提案关闭。
+更新登录信息保留账号 ID 和现有角色订阅。删除账号需确认其对所有引用角色的影响；删除完成后拒绝后续收发，已经开始的发送操作先结算。移除角色连接仅解除该角色订阅，不删除共享账号。邮箱连接默认逐次确认发送；只有用户在原生界面明确授予持续回复权限后，才可按当前来源授权回复原发件人。新收件人仍需逐次确认，撤销授权或停用角色后拒绝自动发送。
 
 邮箱的启用边界使用服务器位置，而非邮件头日期或客户端时间。普通保存、接受配置提案和项目复用角色的保存流程，都会在用户配置锁内、SQLite 事务外读取 `UIDVALIDITY` 与 `UIDNEXT - 1`。该快照是启用的线性化点；成功保存时将 `{ partition, sequence }` 边界与角色配置一同持久化。客户端提交的边界不能覆盖已有可信边界。新增角色保留其他角色的起点和共享采集检查点；角色重新启用时取得新快照。初始化失败则保存失败。
 
@@ -194,11 +213,11 @@ Executor 保留唯一的后台采集调度。它通过仅监听回环地址、�
 
 邮箱协议库随选定 Harness runtime 提供。Core 插件从该运行时的 `package.json` 解析依赖，避免已复制到用户配置目录的插件错误地从配置目录查找模块。新增邮箱用户故事由共享 `stand-in-email` 桌面 checkpoint 覆盖，使用独立的真实 GreenMail IMAP/SMTP 服务和临时受信证书，只模拟模型服务；该验证不代表已验证所有外部邮箱服务商的实际兼容性。
 
-协议和依赖测试位于 `wework/dsh/plugin-runtime/connections.test.mjs`；钉钉采集契约测试位于 `wework/dsh/connection-dingtalk/provider.test.mjs`；回环鉴权测试位于 `wework/dsh/connection-runtime/rpc.test.mjs`。这些测试由现有 Wework 测试发现器执行。
+协议和依赖测试位于 `wework/dsh/plugin-runtime/connections.test.mjs`；钉钉采集契约测试位于 `wework/dsh/connection-dingtalk/provider.test.mjs`；回环鉴权测试位于 `wework/dsh/connection-host/rpc.test.mjs`。这些测试由现有 Wework 测试发现器执行。
 
 Executor 的 `stand_in_identity_contract` 覆盖历史配置、游标和去重迁移，以及不同 Provider 的命名空间隔离。分身确认和来源权限测试继续保留。桌面新增回归接入共享 checkpoint runner；按仓库政策，仅在明确要求时运行 E2E 和真实桌面验证。
 
-后台桥接验证包含 SDK 依赖隔离、旧工具读取声明、Executor 目录分页和工具归属、调用前依赖重验证、超时/失败清理，以及取消调用方后的清理；相关测试为 `connection-runtime/mcp.test.mjs`、`runtime_work/connection_mcp_tests.rs` 和 `agents/codex/connection_mcp.rs`。新增 `stand-in-mcp` 桌面 checkpoint 验证真实宿主/Executor 拒绝跨依赖调用，并检查连接目录可继续使用。
+后台桥接验证包含 SDK 依赖隔离、旧工具读取声明、Executor 目录分页和工具归属、调用前依赖重验证、超时/失败清理，以及取消调用方后的清理；相关测试为 `connection-host/mcp.test.mjs`、`runtime_work/connection_mcp_tests.rs` 和 `agents/codex/connection_mcp.rs`。新增 `stand-in-mcp` 桌面 checkpoint 验证真实宿主/Executor 拒绝跨依赖调用，并检查连接目录可继续使用。
 
 通用 CLI 测试还覆盖命令与参数边界、精确版本路径、原始登录身份、网络错误、群聊/私聊过滤及失败时不推进游标。`stand-in-cli` 桌面 checkpoint 验证真实目录中的钉钉读取声明、拒绝写入/注入及专用旧入口确已删除；已注册共享 CI，按仓库政策仅在明确要求时执行。
 

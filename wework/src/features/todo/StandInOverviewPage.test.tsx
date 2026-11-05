@@ -48,8 +48,17 @@ function requestScheduledWork() {
 vi.mock('./StandInWorkConfirmation', () => ({ StandInWorkConfirmation: () => null }))
 
 vi.mock('./StandInConversation', () => ({
-  StandInConversation: ({ roleId }: { roleId?: string }) => (
-    <div data-testid="identity-conversation">{roleId ?? 'primary'}</div>
+  StandInConversation: ({
+    roleId,
+    draftRequest,
+  }: {
+    roleId?: string
+    draftRequest?: { text: string }
+  }) => (
+    <div data-testid="identity-conversation">
+      {roleId ?? 'primary'}
+      {draftRequest?.text}
+    </div>
   ),
 }))
 
@@ -97,6 +106,39 @@ async function openRoles() {
   await waitFor(() => expect(screen.getByTestId('stand-in-settings-open')).toBeEnabled())
   expect(selector).toBeVisible()
 }
+
+it('reopens usage examples after onboarding without recreating a scheduled review', async () => {
+  const { props } = fixture([])
+  render(<StandInOverviewPage {...props} />)
+  await openRoles()
+  const user = userEvent.setup()
+  await user.click(screen.getByTestId('stand-in-guide-open'))
+  expect(await screen.findByRole('dialog', { name: '分身使用示例' })).toBeVisible()
+  expect(screen.getByTestId('stand-in-onboarding-example-daily_brief')).toBeVisible()
+  expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
+  expect(screen.getByTestId('stand-in-onboarding-example-weekly_review')).toBeVisible()
+  expect(screen.queryByTestId('stand-in-onboarding-complete')).not.toBeInTheDocument()
+  await user.click(screen.getByTestId('stand-in-onboarding-close'))
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  expect(screen.getByTestId('stand-in-settings-open')).toBeEnabled()
+})
+
+it('selects the primary conversation and inserts the chosen example as an editable draft', async () => {
+  const { props } = fixture()
+  render(<StandInOverviewPage {...props} />)
+  await openRoles()
+  const user = userEvent.setup()
+  await user.click(screen.getByTestId('stand-in-overview-role-default'))
+  expect(screen.getByTestId('stand-in-overview-role-default')).toHaveAttribute(
+    'aria-current',
+    'page'
+  )
+  await user.click(screen.getByTestId('stand-in-guide-open'))
+  await user.click(await screen.findByTestId('stand-in-onboarding-example-meeting_prep'))
+  expect(screen.getByTestId('stand-in-primary-open')).toHaveAttribute('aria-current', 'page')
+  expect(screen.getByTestId('identity-conversation')).toHaveTextContent('下一场会议')
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+})
 
 it('lists existing stand-ins without execution history and keeps project names separate', async () => {
   const role = newStandInRole('device', 'default')

@@ -36,6 +36,17 @@ impl RuntimeWorkRpcHandler {
         name: &str,
         args: Value,
     ) -> Result<Value, AppIpcError> {
+        if name == "validate_git_binding" {
+            return self.bound_git_work_args(&identity, args).await;
+        }
+        if name == "prepare_git_workspace" {
+            return self.prepare_git_source_workspace(&identity, args).await;
+        }
+        if matches!(name, "configure_git_webhook" | "git_webhook_plan") {
+            return self
+                .configure_git_webhook(&identity, &args, name == "git_webhook_plan")
+                .await;
+        }
         if name == "read_review_history" {
             return self.read_stand_in_review_history(&identity, &args).await;
         }
@@ -153,8 +164,7 @@ impl RuntimeWorkRpcHandler {
         let mut request = link.runtime_handle["executionRequest"].clone();
         request["prompt"] = json!(message);
         // Source-driven orchestration never elevates an existing conversation.
-        request["standInDelegation"] =
-            json!({"sourceTaskId":identity.task_id,"userId":identity.user,"askBeforeAct":true});
+        request["standInDelegation"] = json!({"sourceTaskId":identity.task_id,"userId":identity.user,"askBeforeAct":link.runtime_handle["origin"]["askBeforeAct"] == true || link.runtime_handle["executionRequest"]["standInDelegation"]["askBeforeAct"] == true});
         use sha2::{Digest, Sha256};
         let command = format!("stand-in-task:{:x}", Sha256::digest(client.as_bytes()));
         Box::pin(self.send_message(json!({"taskId":id,"message":message,"executionRequest":request,"clientUserMessageId":client,"commandId":command,"queueIfBusy":true,"automaticStandIn":true}))).await
@@ -220,8 +230,8 @@ impl RuntimeWorkRpcHandler {
             .map_err(super::stand_in::settings_error)?;
         let mut config = settings["primary"].clone();
         config["userId"] = json!(identity.user);
-        config["handlingPolicy"] = json!({"automatic":true,"askBeforeAct":true});
-        let origin = json!({"type":"stand_in_task","initiatedBy":"stand_in","standInId":"@primary","userId":identity.user,"deviceId":self.device_id,"sourceTaskId":identity.task_id,"askBeforeAct":true});
+        config["handlingPolicy"] = json!({"automatic":true,"askBeforeAct":false});
+        let origin = json!({"type":"stand_in_task","initiatedBy":"stand_in","standInId":"@primary","userId":identity.user,"deviceId":self.device_id,"sourceTaskId":identity.task_id,"askBeforeAct":false});
         let payload = self.prepare_stand_in_execution(json!({"taskId":id,"title":required(args,"title")?,"message":required(args,"message")?,"origin":origin,"commandId":format!("{id}:create"),"automaticStandIn":true}), &config).await?;
         Box::pin(self.create_task(payload)).await
     }

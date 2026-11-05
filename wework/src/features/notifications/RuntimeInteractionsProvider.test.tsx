@@ -834,6 +834,41 @@ describe('unified human response', () => {
     else await screen.findByTestId('runtime-interaction-notice')
   })
 
+  it.each([true, false])(
+    'uses the independent personal stand-in decision alert preference (%s)',
+    async enabled => {
+      harness.desktop = true
+      harness.focused = false
+      cacheNotificationPreferences('test:1', {
+        ...defaultNotificationPreferences,
+        stand_in: { in_app: true, system: enabled, im: null },
+      })
+      view(interactionQuestion, {
+        ...interactionTask,
+        task: {
+          ...interactionTask.task,
+          runtimeHandle: {
+            ...interactionTask.task.runtimeHandle,
+            origin: { type: 'stand_in_task' },
+          },
+        },
+      })
+      await waitFor(() => expect(context!.pending).toHaveLength(1))
+      if (enabled) {
+        await waitFor(() =>
+          expect(harness.host).toHaveBeenCalledWith(
+            'notification.show',
+            expect.objectContaining({ body: 'Keep existing customer behavior?' })
+          )
+        )
+      } else {
+        expect(harness.host).not.toHaveBeenCalledWith('notification.show', expect.anything())
+      }
+      expect(harness.send).not.toHaveBeenCalled()
+      expect(harness.guide).not.toHaveBeenCalled()
+    }
+  )
+
   it('keeps pending work when a reminder is dismissed or opened, independently of unread', async () => {
     view()
     await screen.findByTestId('runtime-interaction-notice')

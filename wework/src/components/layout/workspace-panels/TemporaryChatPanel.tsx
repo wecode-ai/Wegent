@@ -19,6 +19,7 @@ import {
   useState,
   useSyncExternalStore,
   type ReactNode,
+  type SetStateAction,
 } from 'react'
 import { TemporaryConversationLayout } from '@wegent/collaboration/conversation'
 import { createCollaborationTranslator } from '@wegent/collaboration'
@@ -88,6 +89,8 @@ interface TemporaryChatPanelProps {
   instanceId: string
   testId?: string
   initialInput?: string
+  draftRequest?: { id: number; text: string }
+  onDraftRequestConsumed?(id: number): void
   autoSubmitInitialInput?: boolean
   initialAddress?: RuntimeTaskAddress | null
   createTask?: (
@@ -127,6 +130,8 @@ export function TemporaryChatPanel({
   instanceId,
   testId = 'right-workspace-chat-panel',
   initialInput = '',
+  draftRequest,
+  onDraftRequestConsumed,
   autoSubmitInitialInput = false,
   initialAddress = null,
   createTask,
@@ -274,7 +279,29 @@ export function TemporaryChatPanel({
   const [turns, setTurns] = useState<RuntimeConversationTurn[]>(() =>
     initialAddress ? getRuntimeConversationTurns(initialAddress) : []
   )
-  const [input, setInput] = useState(initialInput)
+  const draftScopeKey = `pane:${instanceId}`
+  const [initialDraftScope] = useState(draftScopeKey)
+  const [inputState, setInputState] = useState(() => ({
+    scopeKey: draftScopeKey,
+    value: projectChat.inputByScope[draftScopeKey] ?? initialInput,
+  }))
+  const input =
+    inputState.scopeKey === draftScopeKey
+      ? inputState.value
+      : (projectChat.inputByScope[draftScopeKey] ??
+        (initialDraftScope === draftScopeKey ? initialInput : ''))
+  if (inputState.scopeKey !== draftScopeKey) {
+    setInputState({ scopeKey: draftScopeKey, value: input })
+  }
+  const writeDraftInput = projectChat.setInputForScope
+  const setInput = useCallback(
+    (value: SetStateAction<string>) => {
+      const next = typeof value === 'function' ? value(input) : value
+      writeDraftInput(draftScopeKey, next)
+      setInputState({ scopeKey: draftScopeKey, value: next })
+    },
+    [draftScopeKey, input, writeDraftInput]
+  )
   const [replaceDraftKey, setReplaceDraftKey] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [historyLoading, setHistoryLoading] = useState(
@@ -311,6 +338,7 @@ export function TemporaryChatPanel({
   const createdAddressKeyRef = useRef<string | null>(null)
   const autoSubmittedInitialInputRef = useRef(false)
   const draftEditVersionRef = useRef(0)
+  const appliedDraftRequestRef = useRef<number | null>(null)
   const autoSubmissionScopeRef = useRef<{ active: boolean } | null>(null)
   const retryInFlightRef = useRef(false)
 
@@ -341,7 +369,16 @@ export function TemporaryChatPanel({
   )
 
   useEffect(() => {
-    if (!initialInput) return
+    if (!draftRequest || appliedDraftRequestRef.current === draftRequest.id) return
+    appliedDraftRequestRef.current = draftRequest.id
+    draftEditVersionRef.current += 1
+    setInput(current => (current.trim() ? `${current}\n\n${draftRequest.text}` : draftRequest.text))
+    setReplaceDraftKey(current => current + 1)
+    onDraftRequestConsumed?.(draftRequest.id)
+  }, [draftRequest, onDraftRequestConsumed, setInput])
+
+  useEffect(() => {
+    if (!initialInput && !replaceDraftKey) return
     const frame = requestAnimationFrame(() => {
       focusComposerAtEnd(
         document.querySelector<HTMLElement>(
@@ -350,7 +387,7 @@ export function TemporaryChatPanel({
       )
     })
     return () => cancelAnimationFrame(frame)
-  }, [initialInput, testId])
+  }, [initialInput, testId, replaceDraftKey])
 
   useEffect(() => {
     if (!address) return
@@ -738,6 +775,7 @@ export function TemporaryChatPanel({
       sendEphemeral,
       taskModelIdentityPending,
       updateAddress,
+      setInput,
     ]
   )
 
@@ -763,7 +801,7 @@ export function TemporaryChatPanel({
       }, restoreInitialDraft)
     }, 0)
     return () => window.clearTimeout(timeoutId)
-  }, [autoSubmitInitialInput, initialInput, send, taskModelIdentityPending])
+  }, [autoSubmitInitialInput, initialInput, send, setInput, taskModelIdentityPending])
 
   const cancelQueuedMessage = useCallback(
     (id: string) => conversationQueue.cancel(id),
@@ -780,7 +818,7 @@ export function TemporaryChatPanel({
       sideChatProjectChat.resetAttachments()
       message.attachments?.forEach(sideChatProjectChat.addExistingAttachment)
     },
-    [conversationQueue, sideChatProjectChat]
+    [conversationQueue, setInput, sideChatProjectChat]
   )
 
   const guideQueuedMessage = useCallback(

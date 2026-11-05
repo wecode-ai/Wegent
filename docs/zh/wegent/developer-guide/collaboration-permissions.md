@@ -84,6 +84,8 @@ flowchart TD
 
 `stand-in-workspace` 桌面 E2E 通过真实 Codex、shell 和 GitHub CLI 验证插件资源读取、合成且不含凭据的 CLI 配置读取、联网、默认越界写入拒绝、AI 批准后的真实越界写入及拒绝后的不执行。`stand-in-action-confirmation` 使用真实 `connection_work` 来源验证人工批准前文件不存在、批准后文件创建。只模拟模型和审核模型响应；不读取个人登录文件，不声称验证了真实 GitHub 登录。
 
+GitHub/GitLab 仓库与个人来源使用更严格的原生边界：本地工作区分析和修改继承 `:workspace`，模型 Shell 默认不能联网；账号绑定的只读 MCP 工具在宿主执行，外部写入逐次人工原生确认。不能通过关闭角色确认设置放宽此边界。合并需明确交办并绑定 head SHA。接收、读取、确认和接管均校验用户及设备代次；Webhook 验签不授予执行权限。此扩展不改变 CP01–CP20。Executor 的 Git 权限契约测试覆盖网络、审核器和工具审批，`stand-in-git` CI 场景覆盖真实内部服务的协议边界，不声称验证真实平台登录。
+
 ## 授权与执行
 
 ```mermaid

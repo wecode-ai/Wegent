@@ -5361,6 +5361,7 @@
     "back": "Back to categories",
     "total_unread": "{{count}} unread",
     "category_tasks": "Task updates",
+    "category_stand_in": "Stand-in alerts",
     "category_collaboration": "Collaboration",
     "category_general": "Other notifications",
     "empty_category": "No notifications here",
@@ -5832,7 +5833,8 @@
       "email_message_invalid": "A new message could not be parsed, so intake is paused. Check the original message or contact support, then retry.",
       "email_mailbox_reset": "The mailbox identity changed. Remove and reconnect this inbox to establish a new intake boundary.",
       "email_send_unknown": "Delivery could not be confirmed. Check Sent mail and the recipient before attempting another send.",
-      "email_smtp_failed": "Email was not sent. Check the outgoing server and credentials, then request a new send confirmation."
+      "email_smtp_failed": "Email was not sent. Check the outgoing server and credentials, then request a new send confirmation.",
+      "git_connection_save_incomplete": "The profile was not saved. Some cloud receivers may have been created or taken over. Keep this draft and retry, or add existing connections from the connection page."
     },
     "processing": {
       "review_execution": "Review execution",
@@ -5857,7 +5859,10 @@
       "status_sending": "Sending",
       "status_succeeded": "Handled",
       "status_failed": "Failed",
-      "awaiting_user": "Open pending confirmation"
+      "awaiting_user": "Open pending confirmation",
+      "background_model_unavailable": "Background processing needs an available Codex model in primary stand-in settings. This conversation can still use its selected model.",
+      "configure_model": "Set background model",
+      "needs_input": "Your stand-in needs your input to continue this work."
     },
     "email": {
       "title": "Email",
@@ -5898,19 +5903,108 @@
       "update_help": "Updates apply to all stand-ins using this account on this device. To change the mailbox or incoming server, add a new account.",
       "verify_update": "Verify and update credentials"
     },
+    "git": {
+      "description": "Choose the personal or repository events your stand-in should follow.",
+      "instance": "GitLab URL",
+      "scope": "Event scope",
+      "personal": "All personal events",
+      "repository": "Follow a specific repository",
+      "search": "Search repositories",
+      "check_account": "Read signed-in account",
+      "confirm_write": "Confirm GitHub/GitLab write",
+      "confirm_webhook": "Confirm repository webhook configuration",
+      "webhook_write_preview": "Instance: {{instance}}\nRepository: {{repository}}\nCallback URL: {{callback}}\nEvents: {{events}}\nConnection ID: {{subscriptionId}}",
+      "approve_write": "Confirm write",
+      "decline_write": "Cancel write",
+      "write_preview": "Instance: {{instance}}\nAccount ID: {{accountId}}\nRepository: {{repository}}\nRequest: {{method}} {{path}}\nBody:\n{{body}}",
+      "more": "Load more",
+      "add": "Add connection",
+      "permissions": "New events are received after saving. Your stand-in settings determine how they are handled.",
+      "setup": "Configure a webhook for {{repository}}",
+      "callback": "Callback URL",
+      "secret": "Webhook secret",
+      "setup_help": "Enter the callback URL and secret in the repository Webhook settings, enable all supported events and send a test delivery. You can also ask the stand-in to configure it; each external write requires your approval.",
+      "hide_secret": "Close credentials",
+      "refresh": "Refresh delivery status",
+      "webhook_pending": "Cloud receiver enabled; verify delivery status",
+      "webhook_unavailable": "Cloud connection status unavailable",
+      "gap": "Event history has a retention gap. Check delivery history.",
+      "request_failed": "Connection request failed. Check the execution device, account permissions and network, then retry.",
+      "errors": {
+        "git_cli_missing": "Install gh / glab on the execution device and retry.",
+        "git_account_changed": "The active CLI account changed. Switch back to the bound account.",
+        "connector_auth_required": "Sign in to this platform on the execution device first.",
+        "git_permission_denied": "The account does not have the required repository permissions.",
+        "git_rate_limited": "Platform rate limit reached. Retry later.",
+        "cloud_unavailable": "Repository webhooks require Wework cloud. Personal polling remains available."
+      },
+      "webhook_verified": "Webhook delivery verified",
+      "reveal_secret": "Show secret",
+      "mask_secret": "Mask secret",
+      "disconnect_help": "Removing the connection and saving revokes the cloud receiver. Delete the remote webhook in repository settings.",
+      "login": "Connect account",
+      "gitlab_login_description": "Sign in with glab on the selected execution device. Copy the device code and open the authorization page. Self-managed instances need an OAuth client configured; older instances can reuse an existing CLI login.",
+      "pending": "{{count}} pending events",
+      "takeover": "Add and take over on save",
+      "takeover_help": "Saving the profile switches receipt to this device. Discarding this draft leaves the original device unchanged. Unconfirmed deliveries are retained.",
+      "save_before_setup": "Save the profile to create or take over this connection, then configure its Webhook.",
+      "configure": "Configure Webhook",
+      "reuse": "Add existing connection",
+      "selected_connections": "Connections in this profile",
+      "available_connections": "Existing cloud receivers",
+      "pending_takeover": "Pending save · take over on this device",
+      "pending_connection": "Pending save · add connection",
+      "receiving_device": "Receiving device: {{device}}",
+      "selected_device": "Selected execution device",
+      "invalid_instance": "Enter an HTTPS instance address, such as https://gitlab.com, without a username, password, path or query parameters.",
+      "account": "Platform account",
+      "account_help": "Sign in on the selected execution device.",
+      "search_placeholder": "Repository name or owner/repo",
+      "personal_help": "Select an account to receive its related events.",
+      "repository_help": "Select a repository you have access to."
+    },
     "onboarding": {
       "title": "Get started with your stand-in",
-      "description": "Choose what your stand-in can help with, then confirm to get started.",
-      "review": "Weekly work review",
-      "scope": "Review your tasks and conversations on this device over the past seven days. Find repeated instructions, rework and blockers, with at most three suggestions backed by evidence.",
-      "time": "Every Monday (Beijing time)",
-      "manage": "Edit, pause or delete it anytime in Stand-in settings → Connections → Calendar. Deleted arrangements stay deleted.",
-      "prerequisites": "Requires an enabled primary stand-in, an online device and an available model. Runs follow your calendar processing policy. Reviews suggest changes without automatically editing memories, settings or code.",
+      "description": "Start with one concrete task, then hand recurring work to your stand-in.",
       "loading": "Loading stand-in feature settings…",
       "start": "Get started",
       "later": "Maybe later",
       "saving": "Saving…",
-      "changed": "Stand-in features were configured in another window. Reload, then adjust them in Calendar."
+      "examples_title": "Ways to get started",
+      "examples_scope": "Choose an example to fill the conversation. After you send it, AI checks sources and attempts connections; you confirm sign-in, scope and recurring arrangements.",
+      "examples": {
+        "daily_brief": {
+          "title": "Daily briefing",
+          "prompt": "Combine my email, calendar and project updates into three priorities for today, with sources."
+        },
+        "meeting_prep": {
+          "title": "Meeting preparation",
+          "prompt": "Gather background, open questions and related materials for my next meeting. Flag conflicting information."
+        },
+        "project_followup": {
+          "title": "Project follow-up",
+          "prompt": "Track progress, blockers and next steps for my projects. Continue the original work when new information arrives."
+        },
+        "weekly_review": {
+          "title": "Weekly work review",
+          "prompt": "Review my work and conversations on this device from the past seven days and suggest up to three evidence-based improvements. Confirm a time with me before scheduling recurring reviews."
+        },
+        "dingtalk_reply": {
+          "title": "Reply to DingTalk mentions",
+          "prompt": "In the DingTalk groups I choose, reply briefly when someone mentions me using known information. Ask me about uncertain facts or commitments. Confirm the groups and reply rules before enabling this."
+        }
+      },
+      "guide": "Examples",
+      "examples_dialog_title": "Stand-in examples"
+    },
+    "authorization": {
+      "confirm_each": "Confirm each send",
+      "for_source": "Confirm replies for {{name}}",
+      "continuous": "Replies continuously allowed in this scope",
+      "allow_title": "Continuously allow replies?",
+      "allow_description": "After saving, the stand-in may reply within the connected scope “{{name}}” under your configured responsibilities. Email automation is limited to replies to the original sender; new recipients still require confirmation. Uncertain facts and commitments require your input. Turn this switch on at any time to revoke this permission.",
+      "allow": "Allow replies in this scope",
+      "confirm_once": "Run with confirmation this time"
     }
   },
   "workbench_error": {

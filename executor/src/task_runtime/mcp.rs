@@ -35,6 +35,7 @@ use super::{
 
 mod comments;
 mod context;
+pub(crate) mod git_connections;
 mod stand_in;
 pub(crate) mod stand_in_tasks;
 #[cfg(test)]

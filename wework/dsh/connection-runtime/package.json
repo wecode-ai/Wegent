@@ -4,19 +4,10 @@
   "private": true,
   "type": "module",
   "main": "index.js",
-  "exports": {
-    ".": {
-      "types": "./index.d.ts",
-      "default": "./index.js"
-    }
-  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
     }
-  },
-  "dependencies": {
-    "semver": "7.8.5"
   },
   "wework": {
     "connections": {
@@ -46,15 +37,23 @@
                 "inbox": "Inbox"
               }
             }
-          }
+          },
+          "actions": [
+            {
+              "id": "send_email",
+              "resourceKinds": [
+                "inbox"
+              ]
+            }
+          ]
         }
       ]
     }
   },
   "peerDependencies": {
-    "@wegent/dsh-secure-storage": "0.1.0",
     "@deepseek-ai/cordis": "~4.0.4",
-    "@wegent/dsh-plugin-runtime": "0.1.0",
-    "@wegent/dsh-executor-runtime": "0.1.0"
+    "@wegent/dsh-connection-host": "0.1.0",
+    "@wegent/dsh-secure-storage": "0.1.0",
+    "@wegent/dsh-plugin-runtime": "0.1.0"
   }
 }

@@ -11,6 +11,7 @@ import type { DshRuntimeOptions } from './dsh-runtime.js'
 import { assertExecutorWorkbenchCompatibility } from './workbench-executor-schema.js'
 import { resolveDesktopDeviceId } from './desktop-device-id.js'
 import { CoreDshPluginManager } from './core-dsh-plugin-manager.js'
+import type { ModelConfigurationStore } from '../host/model-configuration-store.js'
 
 vi.mock('./workbench-executor-schema.js', () => ({
   assertExecutorWorkbenchCompatibility: vi.fn(),
@@ -168,6 +169,67 @@ describe('DesktopRuntime lifecycle generation', () => {
 
   afterEach(async () => {
     prepareState.resolveLaunch = null
+  })
+
+  test('publishes device model interfaces before Core starts and removes disabled entries', async () => {
+    const executor = new FakeExecutor()
+    const request = vi.spyOn(executor, 'request')
+    const configuration = {
+      read: vi.fn().mockResolvedValue({ providers: [] }),
+      runtime: vi.fn().mockResolvedValue({
+        models: [
+          {
+            provider: {
+              id: 'company',
+              name: 'Company',
+              base_url: 'https://model.example/v1',
+              api_format: 'openai-responses',
+              api_key: 'private',
+            },
+            model: { id: 'assistant', model_id: 'model', catalog_entry: { slug: 'custom' } },
+          },
+        ],
+      }),
+    }
+    const runtime = createRuntime(
+      {
+        ...EXTERNAL_DSH,
+        WEWORK_EXECUTOR_PATH: '/executor',
+        WEGENT_APP_IPC_DEVICE_ID: 'test-device',
+      },
+      {
+        createExecutor: () => executor,
+        modelConfiguration: configuration as unknown as ModelConfigurationStore,
+        createCoreDsh: options => {
+          expect(executor.requests).toContain('runtime.runner.local_models.replace')
+          return createCoreDsh(options)
+        },
+      }
+    )
+    try {
+      await runtime.start()
+      expect(request).toHaveBeenCalledWith('runtime.runner.local_models.replace', {
+        models: [
+          expect.objectContaining({
+            provider: 'local-assistant',
+            model_id: 'local-model:assistant',
+            modelConfig: expect.objectContaining({ api_key: 'private' }),
+          }),
+        ],
+      })
+      configuration.runtime.mockResolvedValueOnce({ models: [] })
+      await runtime.syncLocalModels()
+      expect(request).toHaveBeenLastCalledWith('runtime.runner.local_models.replace', {
+        models: [],
+      })
+      configuration.read.mockResolvedValueOnce({ providers: [], error: 'Invalid configuration' })
+      await runtime.syncLocalModels()
+      expect(request).toHaveBeenLastCalledWith('runtime.runner.local_models.replace', {
+        models: [],
+      })
+    } finally {
+      await runtime.stop()
+    }
   })
 
   test('reapplies development configuration after each profile preparation', async () => {

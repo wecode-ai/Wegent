@@ -208,6 +208,7 @@ impl RuntimeWorkRpcHandler {
             }
         }
         let mut prepared = json!({"roles":[settings]});
+        self.preflight_git_connections(&prepared, &previous).await?;
         self.prepare_connection_boundaries(&mut prepared, &previous)
             .await?;
         let settings = prepared["roles"][0].clone();
@@ -399,6 +400,7 @@ impl RuntimeWorkRpcHandler {
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 interval.tick().await;
+                receipt_handler.flush_stand_in_task_results().await;
                 if let Err(error) = receipt_handler.flush_assignment_receipts().await {
                     log_executor_event(
                         "Assignment receipt synchronization failed",
@@ -907,6 +909,16 @@ impl RuntimeWorkRpcHandler {
         // Project agents are direct Wework profiles, not backend Teams.
         payload["executionRequest"]["team_id"] = json!(0);
         payload["executionRequest"]["user_id"] = config["userId"].clone();
+        if matches!(
+            payload["origin"]["type"].as_str(),
+            Some("connection_work" | "dingtalk_work" | "stand_in_schedule")
+        ) {
+            if let Some(user) = config["userId"].as_i64() {
+                payload["executionRequest"]["standInReportTo"] = json!({
+                    "userId":user,"taskId":super::stand_in_conversations::conversation_task_id(user,None)
+                });
+            }
+        }
         if config["handlingPolicy"]["askBeforeAct"] == true {
             if payload["runtime"] == "claude_code" {
                 return Err(AppIpcError::new(
