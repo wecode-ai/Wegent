@@ -70,29 +70,44 @@ export function createProvider() {
     async initialize(_ctx, input) {
       return { after: required(input, 'enabledAfter'), cursor: '0' }
     },
+    async readSource(ctx, input) {
+      const { source } = input
+      if (
+        source?.providerId !== PROVIDER_ID ||
+        !['group', 'direct'].includes(source.kind) ||
+        source.scope !== undefined ||
+        required(source, 'id') === '*'
+      )
+        throw invalid('Read an exact connected conversation')
+      const window = readWindow(input)
+      const selfId = await ownIdentity(ctx, required(source, 'profile'), identities)
+      const page = await readMessagePage(ctx, source, window, selfId)
+      const items = page.events.slice(0, window.limit).map(event => {
+        if (!Number.isFinite(Date.parse(event.at))) throw invalid('Invalid message time')
+        return {
+          ...event,
+          text: event.text.slice(0, 20000),
+          truncated: event.text.length > 20000,
+        }
+      })
+      return {
+        items,
+        range: { since: window.start, until: window.end },
+        hasMore: page.hasMore || page.events.length > window.limit,
+        readOnly: true,
+      }
+    },
     async collect(ctx, { source, checkpoint }) {
       try {
-        const profile = required(source, 'profile')
-        const id = required(source, 'id')
-        const selfId = await ownIdentity(ctx, profile, identities)
+        const selfId = await ownIdentity(ctx, required(source, 'profile'), identities)
         const start = checkpoint?.after ?? required(source, 'enabledAfter')
         const until = checkpoint?.until ?? new Date().toISOString()
         const cursor = checkpoint?.cursor ?? '0'
-        const args = { start, end: until, limit: '100', cursor, profile }
-        if (source.scope !== 'all') {
-          if (source.kind === 'group') args.group = id
-          else args.senderIds = id
-        }
-        const response = await readTool(
-          ctx,
-          source.kind === 'group' ? 'listMentions' : 'searchMessages',
-          args
-        )
-        const events = normalizeMessages(source, response, selfId)
-        if (typeof response.result?.hasMore !== 'boolean') throw invalid('Missing pagination state')
-        const hasMore = response.result.hasMore
-        const next = hasMore ? required(response.result, 'nextCursor') : '0'
-        if (hasMore && next === cursor) throw invalid('Pagination cursor did not advance')
+        const {
+          events,
+          hasMore,
+          nextCursor: next,
+        } = await readMessagePage(ctx, source, { start, end: until, limit: 100, cursor }, selfId)
         return {
           events,
           nextCheckpoint: hasMore
@@ -117,6 +132,42 @@ export function createProvider() {
       }
     },
   }
+}
+
+function readWindow(input) {
+  const now = Date.now()
+  const start = input.since === undefined ? new Date(now - 86400000).toISOString() : input.since
+  const since = typeof start === 'string' ? Date.parse(start) : NaN
+  const limit = input.limit === undefined ? 20 : input.limit
+  if (
+    !Number.isFinite(since) ||
+    since < now - 7 * 86400000 ||
+    since > now ||
+    !Number.isSafeInteger(limit) ||
+    limit < 1 ||
+    limit > 20
+  )
+    throw invalid('Read at most twenty messages from the past seven days')
+  return { start, end: new Date(now).toISOString(), limit, cursor: '0' }
+}
+
+async function readMessagePage(ctx, source, window, ownId) {
+  const args = { ...window, limit: String(window.limit), profile: required(source, 'profile') }
+  if (source.scope !== 'all') {
+    if (source.kind === 'group') args.group = required(source, 'id')
+    else args.senderIds = required(source, 'id')
+  }
+  const response = await readTool(
+    ctx,
+    source.kind === 'group' ? 'listMentions' : 'searchMessages',
+    args
+  )
+  const events = normalizeMessages(source, response, ownId)
+  if (typeof response.result?.hasMore !== 'boolean') throw invalid('Missing pagination state')
+  const hasMore = response.result.hasMore
+  const nextCursor = hasMore ? required(response.result, 'nextCursor') : '0'
+  if (hasMore && nextCursor === window.cursor) throw invalid('Pagination cursor did not advance')
+  return { events, hasMore, nextCursor }
 }
 
 export function normalizeMessages(source, response, ownId) {
