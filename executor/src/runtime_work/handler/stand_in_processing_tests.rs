@@ -789,3 +789,96 @@ fn intake_rechecks_collection_partition_without_changing_resource_authority() {
     );
     assert!(stand_in_connection(&role, &event["source"]).is_some());
 }
+
+#[tokio::test]
+async fn deferred_backlog_does_not_starve_new_due_events_or_lose_the_earliest_future_wake() {
+    let root = tempfile::tempdir().unwrap();
+    let (handler, store, settings) = fixture(root.path());
+    let now = chrono::Utc::now();
+    let mut earliest = Value::Null;
+    for index in 0..120 {
+        let mut event = connection_event();
+        event["message"]["id"] = json!(format!("future-{index}"));
+        event["notBefore"] = json!((now
+            + chrono::Duration::hours(1)
+            + chrono::Duration::seconds(120 - index))
+        .to_rfc3339());
+        earliest = store
+            .enqueue_stand_in_event(7, json!(["future", index]), event)
+            .unwrap();
+    }
+    let due = store
+        .enqueue_stand_in_event(7, json!("new-due"), connection_event())
+        .unwrap();
+    let mut elapsed = connection_event();
+    elapsed["notBefore"] = json!((now - chrono::Duration::minutes(1)).to_rfc3339());
+    let elapsed = store
+        .enqueue_stand_in_event(7, json!("elapsed"), elapsed)
+        .unwrap();
+    let events = handler
+        .authorized_coordination_events(&store, 7, &settings)
+        .await
+        .unwrap();
+    assert_eq!(events.len(), 100);
+    assert_eq!(events[0]["id"], due["id"]);
+    assert_eq!(events[1]["id"], elapsed["id"]);
+    assert_eq!(events[2]["id"], earliest["id"]);
+    assert_eq!(events[2]["notBefore"], earliest["notBefore"]);
+    assert!(events[2..]
+        .windows(2)
+        .all(|pair| pair[0]["notBefore"].as_str() <= pair[1]["notBefore"].as_str()));
+    assert_eq!(store.stand_in_events(7).unwrap().len(), 122);
+    assert!(store
+        .stand_in_events(7)
+        .unwrap()
+        .iter()
+        .all(|event| event["status"] == "pending"));
+}
+
+#[tokio::test]
+async fn paused_and_removed_source_backlogs_do_not_occupy_the_eligible_event_budget() {
+    let root = tempfile::tempdir().unwrap();
+    let (handler, store, mut settings) = fixture(root.path());
+    let mut paused = settings["roles"][0].clone();
+    paused["id"] = json!("paused");
+    paused["enabled"] = json!(false);
+    settings["roles"].as_array_mut().unwrap().push(paused);
+    let settings = store.save_personal_stand_in(7, "mac", settings).unwrap();
+    for index in 0..120 {
+        let mut invalid = connection_event();
+        invalid["source"]["id"] = json!("removed-source");
+        store
+            .enqueue_stand_in_event(7, json!(["removed", index]), invalid)
+            .unwrap();
+        let mut paused = connection_event();
+        paused["roleIds"] = json!(["paused"]);
+        store
+            .enqueue_stand_in_event(7, json!(["paused", index]), paused)
+            .unwrap();
+    }
+    let due = store
+        .enqueue_stand_in_event(7, json!("valid-after-backlog"), connection_event())
+        .unwrap();
+    let events = handler
+        .authorized_coordination_events(&store, 7, &settings)
+        .await
+        .unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["id"], due["id"]);
+    let stored = store.stand_in_events(7).unwrap();
+    assert_eq!(
+        stored
+            .iter()
+            .filter(|event| event["status"] == "cancelled")
+            .count(),
+        120
+    );
+    assert_eq!(
+        stored
+            .iter()
+            .filter(|event| event["status"] == "pending")
+            .count(),
+        121
+    );
+    assert!(store.stand_in_actions(7).unwrap().is_empty());
+}

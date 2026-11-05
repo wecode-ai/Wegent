@@ -161,7 +161,7 @@ impl RuntimeWorkRpcHandler {
                 })
                 .filter_map(|event| event["automationId"].as_str().map(str::to_owned)),
         );
-        let pending: Vec<Value> = intake
+        let mut pending: Vec<Value> = intake
             .into_iter()
             .filter(|event| {
                 event["status"] == "pending"
@@ -169,8 +169,16 @@ impl RuntimeWorkRpcHandler {
                         .as_str()
                         .is_some_and(|id| outstanding.contains(id))
             })
-            .take(100)
             .collect();
+        let now = chrono::Utc::now().timestamp_millis();
+        pending.sort_by_key(|event| {
+            let at = event["notBefore"]
+                .as_str()
+                .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
+                .map(|at| at.timestamp_millis())
+                .unwrap_or(i64::MIN);
+            (at > now, at)
+        });
         let mut events = Vec::new();
         let identities = stand_in_identities(settings);
         for mut event in pending {
@@ -229,13 +237,20 @@ impl RuntimeWorkRpcHandler {
                     .save_stand_in_event(user, &event)
                     .map_err(settings_error)?;
             } else {
+                let calendar = event["kind"] == "calendar";
                 events.push(event);
+                if calendar {
+                    events = super::stand_in_calendar::serialize_calendar_intake(
+                        events,
+                        busy_calendars.clone(),
+                    );
+                }
+                if events.len() == 100 {
+                    break;
+                }
             }
         }
-        Ok(super::stand_in_calendar::serialize_calendar_intake(
-            events,
-            busy_calendars,
-        ))
+        Ok(events)
     }
 
     async fn stand_in_work_transcript(&self, task_id: &str) -> Option<Value> {
