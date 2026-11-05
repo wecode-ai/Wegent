@@ -38,10 +38,12 @@ export function createReadCursor(now = Date.now) {
           !Number.isSafeInteger(state.issuedAt) ||
           state.issuedAt > now() ||
           now() - state.issuedAt > TTL_MS ||
-          !['mentions', 'conversation'].includes(state.phase) ||
-          !Number.isSafeInteger(state.offset) ||
-          state.offset < 0 ||
-          state.offset > 1000 ||
+          !Number.isFinite(Date.parse(state.start)) ||
+          !Number.isFinite(Date.parse(state.end)) ||
+          !Number.isFinite(Date.parse(state.time)) ||
+          !Number.isSafeInteger(state.limit) ||
+          state.limit < 1 ||
+          state.limit > 20 ||
           (input.since !== undefined && Date.parse(input.since) !== Date.parse(state.start)) ||
           (input.limit !== undefined && input.limit !== state.limit)
         )

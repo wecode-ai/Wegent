@@ -131,8 +131,7 @@
                     "end": "--end",
                     "limit": "--limit",
                     "cursor": "--cursor",
-                    "profile": "--profile",
-                    "conversationIds": "--conversation-ids"
+                    "profile": "--profile"
                   }
                 },
                 "listTopicReplies": {
@@ -146,6 +145,32 @@
                     "topicId": "--topic-id",
                     "time": "--time",
                     "direction": "--direction",
+                    "limit": "--limit",
+                    "profile": "--profile"
+                  }
+                },
+                "listConversation": {
+                  "command": [
+                    "chat",
+                    "+messages-list",
+                    "--forward=false"
+                  ],
+                  "parameters": {
+                    "group": "--group",
+                    "time": "--time",
+                    "limit": "--limit",
+                    "profile": "--profile"
+                  }
+                },
+                "listDirectConversation": {
+                  "command": [
+                    "chat",
+                    "+messages-list-direct",
+                    "--forward=false"
+                  ],
+                  "parameters": {
+                    "peer": "--open-dingtalk-id",
+                    "time": "--time",
                     "limit": "--limit",
                     "profile": "--profile"
                   }
@@ -168,7 +193,7 @@
               "New mentions of the user or direct messages within the selected chats; use the actual sender, quoted message and topic to understand the request."
             ],
             "prepare": [
-              "For an identity conversation, prefer read_source on the exact DingTalk source already connected to that role. Follow every nextCursor on that same source until hasMore is false: the plugin returns mention targets first, then the same conversation’s follow-up messages including the user’s own replies. Read actual replies and resolution evidence before deciding that a mention still needs an answer. Do not present unfinished data retrieval or a hasMore disclaimer as the deliverable. Prepare only a grounded useful reply for an actually unresolved request, or explain that it has already been handled. A delegated worker has no new source-read permission; the identity can pass the actual evidence into the task. Never borrow another role’s connection, substitute a chat, or send a reply without the required native approval.",
+              "For an identity conversation or verified connection work, prefer read_source on its exact connected DingTalk source. It reads recent conversation messages directly through the native SDK, newest first, including the user’s own replies. Start with the relevant recent window rather than automatically scanning seven days. Follow nextCursor without changing the window until you have read the follow-up evidence needed for the actual request; read the whole requested window for a comprehensive inventory. Check replies and resolution evidence before deciding a request still needs an answer. Do not present unfinished retrieval or a hasMore disclaimer as the deliverable. Prepare a grounded useful answer for unresolved work or explain what has already been handled. Independent delegated workers have no new source-read permission. Never borrow another role’s connection, substitute a chat, or send without the required native approval.",
               "In managed Wework executions, invoke the documented DingTalk business operation through the plugin wrapper or a declared native business tool first. Do not run ensure-dws-ready.sh, plugin-health, local-dws-ready.sh, installers or auth status as a business-work preflight, even if the standalone Skill setup recipe recommends them: these helpers can start interactive login. Wework already owns installation and native connector authorization.",
               "If the actual DingTalk business operation reports missing or expired authentication, preserve its exact declared connector identity and use Wework’s native user-initiated authorization card. Never run auth login or OAuth inside the worker. A .dws file-lock failure or operation-not-permitted error is a permission failure, not proof that login expired; do not relabel it as auth-required, copy or relocate credentials, or broaden sandbox access. Preserve the existing native approval path for the actual operation.",
               "Apply the role’s current reply and routing rules only to the request types they actually cover. Do not expand a review-specific route into a reason to defer merging, shipping, troubleshooting or other requests. Inspect existing links and follow-up records before asking anyone to repeat information you can already read. Draft a useful answer rather than an empty acknowledgement. The current user’s draft-only or do-not-send request overrides any ongoing automatic-reply grant for this run."

@@ -296,6 +296,13 @@ test('CLI declarations validate only the synthetic provider dependency and safe 
     },
   }
   assert.ok(parseConnections(manifest))
+  const shortcut = structuredClone(manifest)
+  shortcut.wework.connections.providers[0].cliReadTools.mail.operations.read.command = [
+    'record',
+    '+read',
+    '--forward=false',
+  ]
+  assert.ok(parseConnections(shortcut))
   for (const mutate of [
     p => {
       p.cliReadTools.other = p.cliReadTools.mail
@@ -303,6 +310,12 @@ test('CLI declarations validate only the synthetic provider dependency and safe 
     },
     p => {
       p.cliReadTools.mail.operations.read.command = ['']
+    },
+    p => {
+      p.cliReadTools.mail.operations.read.command = ['record', '+read;touch']
+    },
+    p => {
+      p.cliReadTools.mail.operations.read.command = ['record', '--forward=$(touch)']
     },
     p => {
       p.cliReadTools.mail.operations.read.parameters = { query: '--bad flag' }

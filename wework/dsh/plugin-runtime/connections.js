@@ -2,6 +2,8 @@ import { readFile } from 'node:fs/promises'
 import { validRange } from 'semver'
 
 const ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/
+const COMMAND_ARGUMENT =
+  /^(?:\+?[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}|--[a-zA-Z0-9][a-zA-Z0-9-]{0,63}=(?:true|false))$/
 const METHODS = ['check', 'listResources', 'validate', 'initialize', 'collect']
 const OPTIONAL_METHODS = ['readSource', 'executeAction']
 
@@ -221,7 +223,7 @@ export function parseConnections(manifest) {
               Array.isArray(spec.command) &&
               spec.command.length > 0 &&
               spec.command.length <= 8 &&
-              spec.command.every(part => typeof part === 'string' && ID.test(part)),
+              spec.command.every(part => typeof part === 'string' && COMMAND_ARGUMENT.test(part)),
             'Invalid CLI read command'
           )
           requireValue(

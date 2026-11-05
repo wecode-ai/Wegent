@@ -85,37 +85,48 @@ export function createProvider() {
         throw invalid('Read an exact connected conversation')
       const state =
         input.cursor === undefined
-          ? {
-              ...readWindow(input),
-              phase: 'mentions',
-              offset: 0,
-              issuedAt: Date.now(),
-              hasTargets: false,
-              topicsPending: false,
-            }
+          ? { ...readWindow(input), issuedAt: Date.now() }
           : readCursors.decode(source, input)
       const selfId = await ownIdentity(ctx, required(source, 'profile'), identities)
-      const page =
-        state.phase === 'mentions'
-          ? await readMessagePage(ctx, source, pageWindow(state), selfId)
-          : await readConversationPage(ctx, source, state, selfId)
-      if (page.events.length > 1000 || state.offset > page.events.length)
-        throw invalid('Invalid message page bounds')
-      const selected = page.events.slice(state.offset, state.offset + state.limit)
-      const items = selected.map(event => boundedMessage(event, selfId, state.limit))
-      const next = nextReadState(source, state, page, selected)
+      const page = await readTool(
+        ctx,
+        source.kind === 'group' ? 'listConversation' : 'listDirectConversation',
+        {
+          [source.kind === 'group' ? 'group' : 'peer']: source.id,
+          profile: source.profile,
+          time: state.time ?? state.end,
+          limit: String(state.limit),
+        }
+      )
+      if (
+        page.contractVersion !== 'im.message-list.v1' ||
+        !Array.isArray(page.messages) ||
+        page.messages.length > state.limit ||
+        page.paginationKnown !== true ||
+        typeof page.hasMore !== 'boolean' ||
+        page.failedCount !== 0 ||
+        page.partial === true
+      )
+        throw invalid('Incomplete native conversation response')
+      const since = Date.parse(state.start)
+      const until = Date.parse(state.end)
+      const messages = page.messages.map(message =>
+        nativeMessage(message, source, selfId, state.limit)
+      )
+      const reachedStart = messages.some(message => Date.parse(message.at) < since)
+      const items = messages.filter(
+        message => Date.parse(message.at) >= since && Date.parse(message.at) <= until
+      )
+      const hasMore = page.hasMore && !reachedStart
+      const time = hasMore ? required(page.nextPage, 'time') : undefined
+      if (hasMore && (!Number.isFinite(Date.parse(time)) || time === (state.time ?? state.end)))
+        throw invalid('Invalid native conversation pagination')
       return {
         items,
-        readPhase: state.phase,
         range: { since: state.start, until: state.end },
-        hasMore: next !== null,
-        ...(next ? { nextCursor: readCursors.encode(source, next) } : {}),
-        contextComplete:
-          next === null &&
-          !(
-            state.topicsPending ||
-            (state.phase === 'mentions' && selected.some(event => event.topicId))
-          ),
+        hasMore,
+        ...(hasMore ? { nextCursor: readCursors.encode(source, { ...state, time }) } : {}),
+        contextComplete: !hasMore,
         readOnly: true,
       }
     },
@@ -156,52 +167,26 @@ export function createProvider() {
   }
 }
 
-function pageWindow(state) {
-  return { start: state.start, end: state.end, limit: state.limit, cursor: state.cursor }
-}
-
-async function readConversationPage(ctx, source, state, ownId) {
-  const conversation = source.kind === 'group' ? source.id : required(state, 'conversationId')
-  if (/[,\r\n]/.test(conversation)) throw invalid('Read one exact conversation')
-  const response = await readTool(ctx, 'searchMessages', {
-    ...pageWindow(state),
-    limit: String(state.limit),
-    profile: required(source, 'profile'),
-    conversationIds: conversation,
-  })
-  return messagePage(source, response, ownId, state.cursor, true, conversation)
-}
-
-function nextReadState(source, state, page, selected) {
-  const next = {
-    ...state,
-    hasTargets: state.hasTargets || (state.phase === 'mentions' && selected.length > 0),
-    topicsPending:
-      state.topicsPending || (state.phase === 'mentions' && selected.some(event => event.topicId)),
-    conversationId: state.conversationId ?? selected[0]?.conversationId,
-    offset: state.offset + selected.length,
-  }
-  if (next.offset < page.events.length) return next
-  if (page.hasMore) return { ...next, offset: 0, cursor: page.nextCursor }
-  if (state.phase === 'mentions' && next.hasTargets)
-    return {
-      ...next,
-      phase: 'conversation',
-      offset: 0,
-      cursor: '0',
-      conversationId: source.kind === 'group' ? source.id : next.conversationId,
-    }
-  return null
-}
-
-function boundedMessage(event, ownId, limit = 20) {
-  if (!Number.isFinite(Date.parse(event.at))) throw invalid('Invalid message time')
+function nativeMessage(message, source, ownId, limit) {
+  const at = required(message, 'createTime')
+  if (!Number.isFinite(Date.parse(at))) throw invalid('Invalid native message time')
+  const text = required(message, 'text')
   const budget = Math.min(20000, Math.floor(24000 / limit))
+  const conversationId = required(message, 'conversationId')
+  if (source.kind === 'group' && conversationId !== source.id)
+    throw invalid('Native message belongs to another conversation')
   return {
-    ...event,
-    text: event.text.slice(0, budget),
-    truncated: event.text.length > budget,
-    isOwn: event.senderId === ownId,
+    id: required(message, 'messageId'),
+    eventType: 'message.received',
+    at,
+    text: text.slice(0, budget),
+    truncated: text.length > budget,
+    senderId: message.senderId ?? null,
+    senderName: message.sender ?? null,
+    isOwn: message.senderId === ownId,
+    conversationId,
+    topicId: message.threadId ?? null,
+    ...(message.quotedMessage ? { quotedMessage: boundedQuote(message.quotedMessage) } : {}),
   }
 }
 
@@ -224,7 +209,7 @@ function readWindow(input) {
     limit > 20
   )
     throw invalid('Read at most twenty messages from the past seven days')
-  return { start, end: new Date(now).toISOString(), limit, cursor: '0' }
+  return { start, end: new Date(now).toISOString(), limit }
 }
 
 async function readMessagePage(ctx, source, window, ownId) {
@@ -241,8 +226,8 @@ async function readMessagePage(ctx, source, window, ownId) {
   return messagePage(source, response, ownId, window.cursor)
 }
 
-function messagePage(source, response, ownId, cursor, context = false, conversation) {
-  const events = normalizeMessages(source, response, ownId, context, conversation)
+function messagePage(source, response, ownId, cursor) {
+  const events = normalizeMessages(source, response, ownId)
   if (typeof response.result?.hasMore !== 'boolean') throw invalid('Missing pagination state')
   const hasMore = response.result.hasMore
   const nextCursor = hasMore ? required(response.result, 'nextCursor') : '0'
@@ -250,7 +235,7 @@ function messagePage(source, response, ownId, cursor, context = false, conversat
   return { events, hasMore, nextCursor }
 }
 
-export function normalizeMessages(source, response, ownId, context = false, expectedConversation) {
+export function normalizeMessages(source, response, ownId) {
   if (
     response.success === true &&
     response.result?.hasMore === false &&
@@ -267,15 +252,14 @@ export function normalizeMessages(source, response, ownId, context = false, expe
     if (direct !== (source.kind === 'direct')) continue
     const conversationId = required(conversation, 'openConversationId')
     if (!direct && source.scope !== 'all' && conversationId !== source.id) continue
-    if (expectedConversation && conversationId !== expectedConversation) continue
     if (!Array.isArray(conversation.messages)) throw invalid('Missing messages')
     for (const message of conversation.messages) {
       const sender = required(message, 'senderOpenDingTalkId')
       const manualSelfMention =
         !direct && message.sendType === 'user' && message.messageAiSendFlag === undefined
       if (
-        (sender === ownId && !manualSelfMention && !context) ||
-        (direct && source.scope !== 'all' && sender !== source.id && !(context && sender === ownId))
+        (sender === ownId && !manualSelfMention) ||
+        (direct && source.scope !== 'all' && sender !== source.id)
       )
         continue
       events.push({
@@ -288,9 +272,6 @@ export function normalizeMessages(source, response, ownId, context = false, expe
         conversationId,
         quotedMessageId: message.quotedMessage?.openMessageId ?? null,
         topicId: message.openConvThreadId ?? null,
-        ...(context && message.quotedMessage
-          ? { quotedMessage: boundedQuote(message.quotedMessage) }
-          : {}),
         ...(source.scope === 'all'
           ? {
               resource: {

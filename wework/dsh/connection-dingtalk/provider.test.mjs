@@ -338,8 +338,25 @@ test('all-resource scopes retain the account and separate group and direct resou
   }
 })
 
-function readFixture(messages, pagination = {}) {
+const readSource = (kind = 'group') => ({
+  providerId: '@wegent/dsh-connection-dingtalk/dingtalk',
+  kind,
+  id: kind === 'group' ? 'selected' : 'alice',
+  profile: 'corp:user',
+  enabledAfter: '2026-10-01T00:00:00Z',
+})
+const nativeMessage = (id = 'message', patch = {}) => ({
+  messageId: id,
+  conversationId: 'selected',
+  text: 'Please review',
+  senderId: 'alice',
+  sender: 'Alice',
+  createTime: new Date(Date.now() - 60000).toISOString(),
+  ...patch,
+})
+function readFixture(pages = [{ messages: [] }]) {
   const calls = []
+  let index = 0
   const ctx = {
     cli: {
       async callTool(alias, input) {
@@ -349,14 +366,15 @@ function readFixture(messages, pagination = {}) {
           return { profiles: [{ profile: 'corp:user', userName: 'Me', userId: 'me' }] }
         if (input.tool === 'searchUsers')
           return { result: [{ userId: 'me', openDingTalkId: 'own' }] }
-        assert.ok(['listMentions', 'searchMessages'].includes(input.tool))
+        assert.ok(['listConversation', 'listDirectConversation'].includes(input.tool))
         return {
-          result: {
-            conversationMessagesList: messages,
-            hasMore: false,
-            nextCursor: '0',
-            ...pagination,
-          },
+          contractVersion: 'im.message-list.v1',
+          paginationKnown: true,
+          hasMore: false,
+          complete: true,
+          failedCount: 0,
+          failures: [],
+          ...pages[index++],
         }
       },
     },
@@ -364,77 +382,95 @@ function readFixture(messages, pagination = {}) {
   return { ctx, calls }
 }
 
-const readSource = (kind = 'group') => ({
-  providerId: '@wegent/dsh-connection-dingtalk/dingtalk',
-  kind,
-  id: kind === 'group' ? 'selected' : 'alice',
-  profile: 'corp:user',
-  enabledAfter: '2026-10-01T00:00:00Z',
-})
-
-test('source reads use only the selected account and group or sender without collecting', async () => {
+test('source history directly queries only the exact group or direct peer through the SDK', async () => {
   for (const kind of ['group', 'direct']) {
-    const direct = kind === 'direct'
-    const messages = [
-      conversation('selected', false, 'alice'),
-      conversation('other', false, 'bob'),
-      conversation('selected', false, 'own'),
-      conversation('dm-a', true, 'alice'),
-      conversation('dm-b', true, 'bob'),
-    ]
-    const { ctx, calls } = readFixture(messages)
     const source = Object.freeze(readSource(kind))
-    const since = new Date(Date.now() - 3600000).toISOString()
-    const result = await createProvider().readSource(ctx, { source, since, limit: 2 })
+    const fixture = readFixture([{ messages: [nativeMessage()] }])
+    const result = await createProvider().readSource(fixture.ctx, { source, limit: 2 })
     assert.equal(result.items.length, 1)
-    assert.equal(result.items[0].senderId, 'alice')
-    assert.equal(result.items[0].conversationId, direct ? 'dm-a' : 'selected')
+    assert.equal(result.contextComplete, true)
     assert.equal(result.readOnly, true)
-    assert.equal(result.hasMore, true)
-    assert.equal(result.readPhase, 'mentions')
-    assert.equal(typeof result.nextCursor, 'string')
-    assert.equal(result.range.since, since)
-    assert.ok(Date.parse(result.range.until) >= Date.parse(since))
     assert.equal(result.nextCheckpoint, undefined)
-    assert.deepEqual(calls.at(-1), {
-      tool: direct ? 'searchMessages' : 'listMentions',
+    assert.deepEqual(fixture.calls.at(-1), {
+      tool: kind === 'group' ? 'listConversation' : 'listDirectConversation',
       arguments: {
-        start: since,
-        end: result.range.until,
-        cursor: '0',
+        [kind === 'group' ? 'group' : 'peer']: source.id,
+        profile: source.profile,
+        time: result.range.until,
         limit: '2',
-        profile: 'corp:user',
-        ...(direct ? { senderIds: 'alice' } : { group: 'selected' }),
       },
     })
     assert.deepEqual(
-      calls.map(call => call.tool),
-      ['listProfiles', 'searchUsers', direct ? 'searchMessages' : 'listMentions']
+      fixture.calls.map(call => call.tool),
+      [
+        'listProfiles',
+        'searchUsers',
+        kind === 'group' ? 'listConversation' : 'listDirectConversation',
+      ]
     )
   }
 })
 
-test('source reads bound results and text and expose incomplete results', async () => {
-  const first = conversation('selected', false, 'alice')
-  first.messages[0].content = 'x'.repeat(20001)
-  const { ctx } = readFixture([first, conversation('selected', false, 'bob')])
-  const result = await createProvider().readSource(ctx, { source: readSource(), limit: 1 })
-  assert.equal(result.items.length, 1)
-  assert.equal(result.items[0].text.length, 20000)
-  assert.equal(result.items[0].truncated, true)
-  assert.equal(result.hasMore, true)
-  const paged = readFixture([conversation('selected', false, 'alice')], {
-    hasMore: true,
-    nextCursor: 'next',
-  })
-  assert.equal(
-    (await createProvider().readSource(paged.ctx, { source: readSource() })).hasMore,
-    true
-  )
+test('SDK native continuation preserves precision and same-timestamp messages without rescanning', async () => {
+  const source = readSource()
+  const time = new Date(Date.now() - 60000).toISOString().replace('Z', '123456Z')
+  const stamp = new Date(Date.now() - 120000).toISOString()
+  const fixture = readFixture([
+    {
+      messages: [nativeMessage('one', { createTime: stamp })],
+      hasMore: true,
+      complete: false,
+      nextPage: { time, nextCursor: '123456789', direction: 'older' },
+    },
+    {
+      messages: [
+        nativeMessage('two', {
+          createTime: stamp,
+          senderId: 'own',
+          text: 'Handled',
+          quotedMessage: { messageId: 'one', text: 'Please review' },
+        }),
+      ],
+    },
+  ])
+  const provider = createProvider()
+  const first = await provider.readSource(fixture.ctx, { source, limit: 1 })
+  const second = await provider.readSource(fixture.ctx, { source, cursor: first.nextCursor })
+  assert.equal(fixture.calls.at(-1).arguments.time, time)
+  assert.deepEqual(second.range, first.range)
+  assert.equal(second.items[0].id, 'two')
+  assert.equal(second.items[0].isOwn, true)
+  assert.match(second.items[0].quotedMessage.text, /Please review/)
+  assert.equal(second.hasMore, false)
+  assert.equal(fixture.calls.filter(call => call.tool === 'listConversation').length, 2)
 })
 
-test('invalid or wildcard read scopes and unbounded ranges fail before any CLI operation', async () => {
-  const { ctx, calls } = readFixture([])
+test('native history is bounded to its fixed window and page text budget', async () => {
+  const since = new Date(Date.now() - 3600000).toISOString()
+  const fixture = readFixture([
+    {
+      messages: [
+        nativeMessage('new', { text: 'x'.repeat(20001) }),
+        nativeMessage('old', { createTime: new Date(Date.now() - 7200000).toISOString() }),
+      ],
+      hasMore: true,
+      nextPage: { time: new Date(Date.now() - 7200000).toISOString() },
+    },
+  ])
+  const result = await createProvider().readSource(fixture.ctx, {
+    source: readSource(),
+    since,
+    limit: 2,
+  })
+  assert.equal(result.items.length, 1)
+  assert.equal(result.items[0].text.length, 12000)
+  assert.equal(result.items[0].truncated, true)
+  assert.equal(result.hasMore, false)
+  assert.equal(result.range.since, since)
+})
+
+test('invalid scopes and ranges fail before any CLI operation', async () => {
+  const { ctx, calls } = readFixture()
   const source = readSource()
   for (const input of [
     { source: { ...source, providerId: 'other' } },
@@ -449,179 +485,92 @@ test('invalid or wildcard read scopes and unbounded ranges fail before any CLI o
     { source, since: new Date(Date.now() - 8 * 86400000).toISOString() },
     { source, since: new Date(Date.now() + 86400000).toISOString() },
     ...[0, 21, 1.5, '2', null].map(limit => ({ source, limit })),
-  ]) {
+  ])
     await assert.rejects(createProvider().readSource(ctx, input), {
       code: 'dingtalk_response_invalid',
     })
-  }
   assert.equal(calls.length, 0)
 })
 
-test('source reads do not advance a collection checkpoint, including failed reads', async () => {
+test('invalid SDK pagination, foreign messages and incomplete responses fail without fallback', async () => {
+  for (const patch of [
+    { contractVersion: 'unknown' },
+    { paginationKnown: false },
+    { hasMore: undefined },
+    { failedCount: 1 },
+    { partial: true },
+    { hasMore: true, nextPage: {} },
+    { messages: [nativeMessage('bad', { createTime: 'invalid' })] },
+    { messages: [nativeMessage('foreign', { conversationId: 'other' })] },
+    { messages: Array.from({ length: 21 }, () => nativeMessage()) },
+  ]) {
+    const fixture = readFixture([{ messages: [], ...patch }])
+    await assert.rejects(createProvider().readSource(fixture.ctx, { source: readSource() }), {
+      code: 'dingtalk_response_invalid',
+    })
+    assert.equal(fixture.calls.filter(call => call.tool === 'listConversation').length, 1)
+  }
+  const fixture = readFixture()
+  assert.deepEqual(
+    (await createProvider().readSource(fixture.ctx, { source: readSource() })).items,
+    []
+  )
+})
+
+test('cursor rejects changed source, account, window, limit, tampering and process restart before CLI', async () => {
   const source = readSource()
-  const checkpoint = Object.freeze({
-    after: source.enabledAfter,
-    until: '2026-10-25T00:00:00Z',
-    cursor: '2',
-  })
-  const { ctx, calls } = readFixture([conversation('selected', false, 'alice')], {
-    hasMore: true,
-    nextCursor: '3',
-  })
+  const fixture = readFixture([
+    {
+      messages: [nativeMessage()],
+      hasMore: true,
+      nextPage: { time: new Date(Date.now() - 60000).toISOString() },
+    },
+  ])
   const provider = createProvider()
-  const before = await provider.collect(ctx, { source, checkpoint })
-  await provider.readSource(ctx, { source, limit: 1, checkpoint })
-  assert.equal(calls.at(-1).arguments.cursor, '0')
-  const after = await provider.collect(ctx, { source, checkpoint })
-  assert.equal(calls.at(-1).arguments.cursor, '2')
-  assert.deepEqual(after, before)
+  const first = await provider.readSource(fixture.ctx, { source, limit: 2 })
+  const before = fixture.calls.length
+  for (const input of [
+    { source: { ...source, id: 'other' }, cursor: first.nextCursor },
+    { source: { ...source, profile: 'another' }, cursor: first.nextCursor },
+    { source, cursor: first.nextCursor + 'x' },
+    { source, cursor: first.nextCursor, since: new Date(Date.now() - 3600000).toISOString() },
+    { source, cursor: first.nextCursor, limit: 3 },
+  ])
+    await assert.rejects(provider.readSource(fixture.ctx, input), {
+      code: 'source_read_cursor_invalid',
+    })
+  await assert.rejects(
+    createProvider().readSource(fixture.ctx, { source, cursor: first.nextCursor }),
+    { code: 'source_read_cursor_invalid' }
+  )
+  assert.equal(fixture.calls.length, before)
+})
+
+test('read operations preserve collection checkpoints and actual native errors', async () => {
+  const source = readSource(),
+    checkpoint = Object.freeze({ after: source.enabledAfter, cursor: '2' })
+  const fixture = readFixture([{ messages: [nativeMessage()] }])
+  await createProvider().readSource(fixture.ctx, { source, checkpoint })
+  assert.deepEqual(checkpoint, { after: source.enabledAfter, cursor: '2' })
   for (const code of [
     'connector_auth_required',
     'connection_cli_failed',
     'forbidden',
     'ECONNRESET',
   ]) {
-    const failure = Object.assign(new Error('Business read failed'), { code })
-    const blocked = {
-      cli: {
-        callTool: async () => {
-          throw failure
-        },
-      },
-    }
+    const error = Object.assign(new Error('Business read failed'), { code })
     await assert.rejects(
-      provider.readSource(blocked, { source, checkpoint }),
-      error => error === failure
-    )
-    assert.deepEqual(checkpoint, {
-      after: source.enabledAfter,
-      until: '2026-10-25T00:00:00Z',
-      cursor: '2',
-    })
-  }
-})
-
-test('source reads reject invalid message or pagination results and accept an empty page', async () => {
-  const empty = readFixture([])
-  assert.deepEqual(
-    (await createProvider().readSource(empty.ctx, { source: readSource() })).items,
-    []
-  )
-  for (const patch of [
-    { hasMore: undefined },
-    { hasMore: true, nextCursor: '0' },
-    { hasMore: true, nextCursor: '' },
-  ]) {
-    const fixture = readFixture([], patch)
-    await assert.rejects(createProvider().readSource(fixture.ctx, { source: readSource() }), {
-      code: 'dingtalk_response_invalid',
-    })
-  }
-  const invalid = conversation('selected', false, 'alice')
-  invalid.messages[0].createTime = 'not-a-date'
-  const fixture = readFixture([invalid])
-  await assert.rejects(createProvider().readSource(fixture.ctx, { source: readSource() }), {
-    code: 'dingtalk_response_invalid',
-  })
-})
-
-test('source read cursors finish mention pages then the same conversation including own replies', async () => {
-  const calls = []
-  const source = readSource()
-  const first = conversation('selected', false, 'alice')
-  const followup = conversation('selected', false, 'own')
-  followup.messages[0].content = 'I have handled this question.'
-  followup.messages[0].quotedMessage = { openMessageId: 'selected:alice', content: 'Review this' }
-  const ctx = {
-    cli: {
-      async callTool(_alias, input) {
-        calls.push(structuredClone(input))
-        if (input.tool === 'listProfiles')
-          return { profiles: [{ profile: 'corp:user', userName: 'Me', userId: 'me' }] }
-        if (input.tool === 'searchUsers')
-          return { result: [{ userId: 'me', openDingTalkId: 'own' }] }
-        if (input.tool === 'listMentions')
-          return { result: { conversationMessagesList: [first], hasMore: false, nextCursor: '0' } }
-        assert.equal(input.tool, 'searchMessages')
-        assert.equal(input.arguments.conversationIds, source.id)
-        assert.equal(input.arguments.senderIds, undefined)
-        return {
-          result: {
-            conversationMessagesList: [
-              input.arguments.cursor === '0' ? first : followup,
-              conversation('other', false, 'own'),
-            ],
-            hasMore: input.arguments.cursor === '0',
-            nextCursor: input.arguments.cursor === '0' ? 'next' : '0',
+      createProvider().readSource(
+        {
+          cli: {
+            callTool: async () => {
+              throw error
+            },
           },
-        }
-      },
-    },
+        },
+        { source }
+      ),
+      value => value === error
+    )
   }
-  const provider = createProvider()
-  const firstPage = await provider.readSource(ctx, { source, limit: 1 })
-  assert.equal(firstPage.contextComplete, false)
-  const context = await provider.readSource(ctx, { source, cursor: firstPage.nextCursor })
-  assert.equal(context.readPhase, 'conversation')
-  assert.equal(context.items.length, 1)
-  assert.equal(context.hasMore, true)
-  const last = await provider.readSource(ctx, { source, cursor: context.nextCursor })
-  assert.equal(last.hasMore, false)
-  assert.equal(last.contextComplete, true)
-  assert.equal(last.nextCursor, undefined)
-  assert.equal(last.items[0].senderId, 'own')
-  assert.equal(last.items[0].isOwn, true)
-  assert.match(last.items[0].text, /handled/)
-  assert.match(last.items[0].quotedMessage.text, /selected:alice/)
-  assert.ok(last.items.every(item => item.conversationId === source.id))
-  assert.deepEqual(last.range, firstPage.range)
-  assert.ok(
-    calls
-      .filter(call => call.tool === 'searchMessages')
-      .every(
-        call =>
-          call.arguments.start === firstPage.range.since &&
-          call.arguments.end === firstPage.range.until
-      )
-  )
-})
-
-test('source read cursors retain overflow from a provider page without dropping messages', async () => {
-  const { ctx } = readFixture([
-    conversation('selected', false, 'alice'),
-    conversation('selected', false, 'bob'),
-  ])
-  const provider = createProvider()
-  const source = readSource()
-  let page = await provider.readSource(ctx, { source, limit: 1 })
-  const phases = [page.readPhase]
-  const ids = [page.items[0].id]
-  for (let count = 0; page.hasMore && count < 5; count++) {
-    page = await provider.readSource(ctx, { source, cursor: page.nextCursor })
-    phases.push(page.readPhase)
-    ids.push(...page.items.map(item => item.id))
-  }
-  assert.equal(page.hasMore, false)
-  assert.deepEqual(phases, ['mentions', 'mentions', 'conversation', 'conversation'])
-  assert.deepEqual(ids, ['selected:alice', 'selected:bob', 'selected:alice', 'selected:bob'])
-})
-
-test('read cursors reject changed sources, windows, limits, tampering and another provider instance before CLI access', async () => {
-  const { ctx, calls } = readFixture([conversation('selected', false, 'alice')])
-  const provider = createProvider()
-  const source = readSource()
-  const first = await provider.readSource(ctx, { source, limit: 2 })
-  const before = calls.length
-  for (const input of [
-    { source: { ...source, id: 'other' }, cursor: first.nextCursor },
-    { source: { ...source, profile: 'another-account' }, cursor: first.nextCursor },
-    { source, cursor: `${first.nextCursor}x` },
-    { source, cursor: first.nextCursor, since: new Date(Date.now() - 3600000).toISOString() },
-    { source, cursor: first.nextCursor, limit: 3 },
-  ])
-    await assert.rejects(provider.readSource(ctx, input), { code: 'source_read_cursor_invalid' })
-  await assert.rejects(createProvider().readSource(ctx, { source, cursor: first.nextCursor }), {
-    code: 'source_read_cursor_invalid',
-  })
-  assert.equal(calls.length, before)
 })
