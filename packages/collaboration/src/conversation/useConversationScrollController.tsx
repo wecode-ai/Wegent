@@ -26,7 +26,10 @@ import {
   setConversationScrollSnapshot,
 } from './conversationScrollGeometry'
 import { useReaderViewportAnchor } from './useReaderViewportAnchor'
-import type { ConversationVirtualizer } from './useConversationVirtualizer'
+import {
+  syncConversationVirtualizerOffset,
+  type ConversationVirtualizer,
+} from './useConversationVirtualizer'
 import { getMessageLayoutSignature } from './messagePretextLayout'
 import {
   RuntimeTranscriptGapMarker,
@@ -323,6 +326,9 @@ export function useConversationScrollController({
     if (modeRef.current !== 'navigate') return
     const viewport = activeScrollRefRef.current.current
     if (!viewport) return
+    // Search writes the DOM before its native scroll event reaches TanStack.
+    // Read it back before row measurements resume ordinary size compensation.
+    if (virtualizerRef.current) syncConversationVirtualizerOffset(virtualizerRef.current)
     restoringRef.current = null
     const nextMode =
       getDistanceFromBottom(viewport) <= SCROLLED_TO_BOTTOM_THRESHOLD ? 'follow' : 'read'
