@@ -227,6 +227,12 @@ critical path from 614 to 478 seconds. This estimate excludes builds, preparatio
 and queueing; subsequent CI runs must establish actual savings. Additional runners
 increase preparation overhead.
 
+Plugin reinstall response checks require the current device to be `installed`,
+with actual and desired releases matching the plugin release. A background
+desired-state sync can finish before the reinstall request, making `sync: null`
+a valid idempotent response. Verify its device receipt rather than requiring a
+duplicate sync; any non-null sync response must still succeed.
+
 Step timings from successful runs `39920301020` and `39920742402` separate test
 work from setup overhead. In the first sample, non-test steps across 42 shards
 consumed about 60 runner minutes, or 31% of shard execution time; setup overhead

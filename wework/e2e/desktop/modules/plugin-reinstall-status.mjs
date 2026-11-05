@@ -14,6 +14,18 @@ import {
   until,
 } from './plugin-regression-fixture.mjs'
 
+export function assertReinstallReceipt(reply, deviceId) {
+  // A concurrent desired-state sync may finish before the idempotent install.
+  if (reply.sync !== null)
+    assert.equal(reply.sync?.success, true, 'The held reinstall returned a sync failure')
+  const plugin = reply.plugin
+  assert.ok(Number.isInteger(plugin?.spec.releaseId) && plugin.spec.releaseId > 0)
+  const device = plugin.status.devices?.find(row => row.deviceId === deviceId)
+  assert.equal(device?.state, 'installed', 'The held reinstall has no installed device receipt')
+  assert.equal(device.actualReleaseId, plugin.spec.releaseId)
+  assert.equal(device.desiredReleaseId, plugin.spec.releaseId)
+}
+
 export async function verifyPluginReinstallStatus({
   cloud,
   control,
@@ -76,7 +88,7 @@ export async function verifyPluginReinstallStatus({
     ).then(requests => requests.find(request => request.committedResponseHeld))
     assert.equal(held.status, 200)
     const reply = JSON.parse(held.readHeldResponse().body.toString('utf8'))
-    assert.equal(reply.sync?.success, true, 'The held reinstall returned a sync failure')
+    assertReinstallReceipt(reply, localDeviceId)
     assert.equal((await control.command('getText', status)).trim(), '正在安装')
     const ariaLabel = await control.command('getAttribute', status, { value: 'aria-label' })
     assert.ok(ariaLabel.startsWith('正在安装 '))
