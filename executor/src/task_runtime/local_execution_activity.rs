@@ -442,7 +442,7 @@ impl LocalTaskStore {
                         task.status.as_deref(),
                         origin_run_id.as_deref(),
                     )?;
-                    if changed > 0 && task.status.as_deref() != next_status.as_deref() {
+                    if changed > 0 && task.status.as_deref() != next_status {
                         issue_notifications::notify_followers(
                             &transaction,
                             &task_id,

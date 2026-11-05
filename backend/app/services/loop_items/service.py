@@ -777,7 +777,6 @@ class LoopItemService:
                 str(collaboration_group["id"]),
                 str(collaboration_group["name"]),
             )
-            payload["status"] = "in_progress"
         elif payload.get("assignee_user_id"):
             self.record_assignment_change(
                 task_metadata,
