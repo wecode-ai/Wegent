@@ -35,7 +35,6 @@ export async function verifyStandInResourceScopes(control, rpc, providerId) {
       [['*', 'all', 'fixture', 'record']]
     )
     await open()
-    await control.command('click', `[data-testid="${prefix}-add"]`)
     await control.command('click', `[data-testid="${prefix}-scope-selected"]`)
     await control.command('fill', `[data-testid="${prefix}-query"]`, { value: 'batch' })
     await control.command('click', `[data-testid="${prefix}-search"]`)
