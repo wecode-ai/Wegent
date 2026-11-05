@@ -16,6 +16,8 @@ export interface WegentConnectorConnection {
   external_account_name: string | null
   granted_scopes: string[]
   expires_at: string | null
+  last_error: string | null
+  tool_count: number
 }
 
 export interface WegentConnectorApp {
@@ -166,7 +168,9 @@ export async function waitForConnectorToolCatalog(
     try {
       const catalog = await listWegentInstalledConnectorApps(apiBaseUrl, token)
       const app = catalog.apps.find(item => item.slug === slug)
-      if (app && (app.tool_summaries?.length ?? 0) > 0) return true
+      // Empty tool surfaces are valid. The barrier is a callable grant with a
+      // completed discovery, not the incidental number of tools it exposed.
+      if (app?.callable && !app.connection.last_error) return true
     } catch {
       // A transient catalog read is retried until the deadline.
     }

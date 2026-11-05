@@ -389,7 +389,14 @@ describe('connector OAuth client', () => {
       const apps =
         reads < 2
           ? []
-          : [{ slug: 'slow-connector', tool_summaries: [{ name: 'slow-connector__echo' }] }]
+          : [
+              {
+                slug: 'slow-connector',
+                callable: true,
+                connection: { last_error: null, tool_count: 1 },
+                tool_summaries: [{ name: 'slow-connector__echo' }],
+              },
+            ]
       return new Response(JSON.stringify({ apps }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
@@ -428,5 +435,32 @@ describe('connector OAuth client', () => {
     await vi.advanceTimersByTimeAsync(3_000)
 
     await expect(waiting).resolves.toBe(false)
+  })
+
+  test('accepts an authorized app whose discovery returned no tools', async () => {
+    const fetchMock = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          apps: [
+            {
+              slug: 'empty-connector',
+              callable: true,
+              connection: { last_error: null, tool_count: 0 },
+              tool_summaries: [],
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      )
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(
+      waitForConnectorToolCatalog(
+        'https://backend.example.test/api',
+        'cloud-token',
+        'empty-connector'
+      )
+    ).resolves.toBe(true)
   })
 })

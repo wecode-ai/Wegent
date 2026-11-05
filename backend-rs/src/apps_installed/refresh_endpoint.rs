@@ -83,7 +83,7 @@ where
     }
 
     match probe_upstream(mysql, app, user).await {
-        Ok(tools) => {
+        Ok((tools, attempted_access)) => {
             let discovered_at = Utc::now().to_rfc3339();
             let summaries = tool_summaries(app, &tools);
             let _ = refresh::write_discovery_state(
@@ -95,6 +95,7 @@ where
                     last_error: None,
                     expired: false,
                 },
+                attempted_access.as_deref(),
             )
             .await;
         }
@@ -121,6 +122,7 @@ where
                     last_error: Some(&message),
                     ..Default::default()
                 },
+                None,
             )
             .await;
         }
@@ -142,20 +144,21 @@ async fn probe_upstream<M>(
     mysql: &M,
     app: &ConnectorApp,
     user: &UserRow,
-) -> Result<Vec<mcp::UpstreamTool>, ProbeError>
+) -> Result<(Vec<mcp::UpstreamTool>, Option<String>), ProbeError>
 where
     M: Mysql,
 {
     if app.transport == "http" {
         // HTTP-transport apps carry inline definitions instead of an MCP
         // session; the recorded deployment exposes none.
-        return Ok(Vec::new());
+        return Ok((Vec::new(), None));
     }
     let (headers, attempted_access) = service::session_headers(mysql, app, user)
         .await
         .map_err(|error| ProbeError::Transport(error.to_string()))?;
     mcp::list_tools_for_transport(&app.transport, &app.mcp_url, &headers)
         .await
+        .map(|tools| (tools, attempted_access.clone()))
         .map_err(|error| ProbeError::from_mcp(error, attempted_access))
 }
 

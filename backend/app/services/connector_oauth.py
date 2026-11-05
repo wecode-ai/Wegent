@@ -44,6 +44,7 @@ GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token"
 GITHUB_USER_URL = "https://api.github.com/user"
 GITHUB_REVOKE_URL = "https://api.github.com/applications/{client_id}/token"
 SESSION_KEY_PREFIX = "connector_oauth_session:"
+SESSION_CLAIM_PREFIX = "connector_oauth_claim:"
 POLL_INTERVAL_SECONDS = 2
 DISCOVERY_TIMEOUT_SECONDS = 15
 logger = logging.getLogger(__name__)
@@ -51,6 +52,10 @@ logger = logging.getLogger(__name__)
 
 def _session_key(session_id: str) -> str:
     return f"{SESSION_KEY_PREFIX}{session_id}"
+
+
+def _session_claim_key(session_id: str) -> str:
+    return f"{SESSION_CLAIM_PREFIX}{session_id}"
 
 
 def _state_secret() -> str:
@@ -238,11 +243,29 @@ class ConnectorOAuthService:
         if current_status == "pending":
             return ConnectorOAuthSessionPollResponse(status="pending")
         if current_status == "declined":
+            # Consume the provider's refusal on first read so the old consent
+            # page cannot subsequently be replayed with an authorization code.
+            await cache_manager.delete(_session_key(session_id))
             return ConnectorOAuthSessionPollResponse(status="declined")
+        if current_status == "claimed":
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Connector authorization result has already been claimed",
+            )
         if current_status != "success":
             return ConnectorOAuthSessionPollResponse(
                 status="failed",
                 error=str(session.get("error") or "Connector authorization failed"),
+            )
+        claimed = await cache_manager.setnx(
+            _session_claim_key(session_id),
+            {"user_id": user_id, "claimed_at": int(time.time())},
+            expire=max(1, int(session.get("expires_at") or 0) - int(time.time())),
+        )
+        if not claimed:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Connector authorization result has already been claimed",
             )
         connection = connector_connection_service.get(
             db,
@@ -320,8 +343,6 @@ class ConnectorOAuthService:
                 external_account_name=account_name,
                 expires_at=expires_at,
             )
-            if str(session.get("oauth")) == "dynamic":
-                await ConnectorOAuthService._cache_authorized_tools(db, session)
         except (httpx.HTTPError, ValueError) as exc:
             db.rollback()
             session.update(
@@ -335,6 +356,28 @@ class ConnectorOAuthService:
                 status.HTTP_502_BAD_GATEWAY,
                 "Connector authorization could not be completed",
             ) from exc
+        if str(session.get("oauth")) == "dynamic":
+            # The grant is committed. Discovery is a separate operation: a
+            # failure must neither roll it back nor be reported as success.
+            try:
+                await ConnectorOAuthService._cache_authorized_tools(db, session)
+            except Exception as exc:
+                db.rollback()
+                session.update(
+                    {
+                        "status": "failed",
+                        "error": (
+                            "Connector authorization succeeded, but tool discovery "
+                            "failed. Retry the connection."
+                        ),
+                    }
+                )
+                await ConnectorOAuthService._write_session(session_id, session)
+                raise HTTPException(
+                    status.HTTP_502_BAD_GATEWAY,
+                    "Connector authorization succeeded, but tool discovery "
+                    "failed. Retry the connection.",
+                ) from exc
         session.update({"status": "success", "completed_at": int(time.time())})
         session.pop("code_verifier", None)
         await ConnectorOAuthService._write_session(session_id, session)
@@ -342,21 +385,14 @@ class ConnectorOAuthService:
 
     @staticmethod
     async def _cache_authorized_tools(db: Session, session: dict) -> None:
-        """Populate last-known tools without turning discovery into an auth failure."""
-        try:
-            app = ConnectorAppService.get_app_by_slug(db, str(session["slug"]))
-            user = db.get(User, int(session["user_id"]))
-            if not app or not user:
-                return
-            from app.services.connector_runtime import connector_runtime_service
+        """Populate the authorized app's tools before completing the session."""
+        app = ConnectorAppService.get_app_by_slug(db, str(session["slug"]))
+        user = db.get(User, int(session["user_id"]))
+        if not app or not user:
+            raise ValueError("Connector app or authorizing user no longer exists")
+        from app.services.connector_runtime import connector_runtime_service
 
-            await connector_runtime_service.refresh_tool_summary_cache(db, app, user)
-        except Exception as exc:
-            logger.warning(
-                "Failed to cache tools for connector '%s' after authorization: %s",
-                session.get("slug"),
-                exc,
-            )
+        await connector_runtime_service.refresh_tool_summary_cache(db, app, user)
 
     @staticmethod
     async def disconnect(db: Session, *, slug: str, user_id: int) -> bool:

@@ -182,6 +182,43 @@ test.describe('Connector app OAuth loop', () => {
     expect(admin?.connection.status).toBe('connected')
   })
 
+  test('isolates independently authorized users and their upstream tool calls', async ({
+    page,
+    request,
+  }) => {
+    const regularToken = await loginToken(request, REGULAR_USER)
+    // Visibility is all users, while each user's grant is isolated. Authorize
+    // through the real session/provider callback, not a test credential write.
+    const created = await request.post(`${API_URL}/api/connector-apps/${SLUG}/oauth/sessions`, {
+      headers: authHeaders(regularToken),
+    })
+    expect(created.ok(), await created.text()).toBeTruthy()
+    const session = (await created.json()) as {
+      session_id: string
+      poll_token: string
+      authorize_url: string
+    }
+    await page.goto(session.authorize_url)
+    await expect(page.locator('body')).toContainText('Connector is connected', {
+      timeout: 30_000,
+    })
+    const regular = await installedApp(request, regularToken)
+    expect(regular?.connection.status).toBe('connected')
+    expect((regular?.tool_summaries ?? []).map(tool => tool.raw_tool_name)).toEqual([
+      CONNECTOR_OAUTH_ALLOWED_TOOL,
+    ])
+    const provider = (await (await request.get(`${MOCK_URL}/connector-oauth/_state`)).json()) as {
+      issued: number
+    }
+    expect(provider.issued).toBeGreaterThanOrEqual(2)
+
+    await request.delete(`${API_URL}/api/connector-apps/${SLUG}/connection`, {
+      headers: authHeaders(regularToken),
+    })
+    const admin = await installedApp(request, adminToken)
+    expect(admin?.connection.status).toBe('connected')
+  })
+
   test('refreshes an expired grant and asks for authorization after revocation', async ({
     page,
     request,

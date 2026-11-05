@@ -543,6 +543,77 @@ async def test_tool_request_keeps_its_header_and_attempted_grant_together(
 
 
 @pytest.mark.asyncio
+async def test_late_discovery_does_not_replace_a_reauthorized_tool_surface(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A0's discovery cannot clear the tools discovered with the new A1 grant."""
+    _create_app(test_db, test_user)
+    attempted = connector_connection_service.save_oauth_connection(
+        test_db,
+        slug=SLUG,
+        user_id=test_user.id,
+        access_token="A0",
+        refresh_token="R0",
+        token_type="bearer",
+        granted_scopes=["race:read"],
+        external_account_name="race@example.test",
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+    )
+    assert attempted is not None
+    app = _app(test_db, test_user)
+    assert app is not None
+
+    class Session:
+        async def list_tools(self, cursor=None):
+            with _competing_writer(test_db) as competing:
+                replacement = _connect(competing, test_user, access="A1", refresh="R1")
+                connector_connection_service.save_tool_summaries(
+                    competing,
+                    replacement,
+                    [{"name": "new-tool", "rawToolName": "new"}],
+                )
+            return type("Listing", (), {"tools": [], "nextCursor": None})()
+
+    @asynccontextmanager
+    async def session(config):
+        assert config["headers"]["Authorization"] == "Bearer A0"
+        yield Session()
+
+    monkeypatch.setattr(ConnectorRuntimeService, "_mcp_session", session)
+    await ConnectorRuntimeService.refresh_tool_summary_cache(test_db, app, test_user)
+
+    current = _current(test_db, test_user)
+    assert current is not None
+    assert current.access_token() == "A1"
+    assert [tool["name"] for tool in current.tool_summaries] == ["new-tool"]
+
+
+def test_discovery_does_not_revive_a_disconnected_connection(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    """An inactive row cannot receive an old successful discovery result."""
+    _create_app(test_db, test_user)
+    attempted = _connect(test_db, test_user, access="A0", refresh="R0")
+    connector_connection_service.disconnect(test_db, slug=SLUG, user_id=test_user.id)
+    row = attempted.row
+
+    connector_connection_service.save_tool_summaries(
+        test_db,
+        attempted,
+        [{"name": "stale-tool", "rawToolName": "stale"}],
+        expected_access_token_encrypted=attempted.access_token_encrypted,
+    )
+
+    test_db.expire_all()
+    test_db.refresh(row)
+    assert row.json["spec"]["toolSummaries"] == []
+    assert row.is_active is False
+
+
+@pytest.mark.asyncio
 async def test_the_same_grant_rejection_marks_it_expired(
     test_db: Session,
     test_user: User,

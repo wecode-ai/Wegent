@@ -502,6 +502,7 @@ pub(crate) async fn write_discovery_state<M>(
     mysql: &M,
     row: &KindRow,
     state: &DiscoveryState<'_>,
+    attempted_access: Option<&str>,
 ) -> Result<(), RefreshError>
 where
     M: Mysql,
@@ -516,8 +517,15 @@ where
                      '$.spec.toolsDiscoveredAt', ?, \
                      '$.spec.toolSummaries', CAST(? AS JSON), \
                      '$.spec.lastError', CAST('null' AS JSON)), \
-                     updated_at = NOW() WHERE id = ?",
-                    (discovered_at.to_string(), summaries.as_str(), row.kinds_id),
+                     updated_at = NOW() WHERE id = ? AND is_active = 1 \
+                     AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(json, \
+                       '$.spec.accessTokenEncrypted')), '') = ?",
+                    (
+                        discovered_at.to_string(),
+                        summaries.as_str(),
+                        row.kinds_id,
+                        attempted_access.unwrap_or_default(),
+                    ),
                 )
                 .await
                 .map(|_| ())
@@ -531,8 +539,14 @@ where
                         "UPDATE kinds SET json = JSON_SET(json, \
                          '$.spec.lastError', CAST(? AS JSON), \
                          '$.spec.status', 'expired'), \
-                         updated_at = NOW() WHERE id = ?",
-                        (error.as_str(), row.kinds_id),
+                         updated_at = NOW() WHERE id = ? AND is_active = 1 \
+                         AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(json, \
+                           '$.spec.accessTokenEncrypted')), '') = ?",
+                        (
+                            error.as_str(),
+                            row.kinds_id,
+                            attempted_access.unwrap_or_default(),
+                        ),
                     )
                     .await
                     .map(|_| ())
@@ -542,8 +556,14 @@ where
                     .execute(
                         "UPDATE kinds SET json = JSON_SET(json, \
                          '$.spec.lastError', CAST(? AS JSON)), \
-                         updated_at = NOW() WHERE id = ?",
-                        (error.as_str(), row.kinds_id),
+                         updated_at = NOW() WHERE id = ? AND is_active = 1 \
+                         AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(json, \
+                           '$.spec.accessTokenEncrypted')), '') = ?",
+                        (
+                            error.as_str(),
+                            row.kinds_id,
+                            attempted_access.unwrap_or_default(),
+                        ),
                     )
                     .await
                     .map(|_| ())
@@ -620,6 +640,7 @@ pub(crate) async fn record_directory_error<M>(
                     last_error: Some(message),
                     ..Default::default()
                 },
+                attempted_access,
             )
             .await
         }
@@ -996,7 +1017,7 @@ mod tests {
         json!({
             "spec": {
                 "status": "connected",
-                "accessTokenEncrypted": "access",
+            "accessTokenEncrypted": "old-access",
                 "refreshTokenEncrypted": "refresh",
                 "toolSummaries": [{"name": "old__tool", "rawToolName": "tool"}],
                 "toolsDiscoveredAt": "2026-01-01T00:00:00+00:00",
@@ -1020,6 +1041,7 @@ mod tests {
                 expired: true,
                 ..Default::default()
             },
+            Some("old-access"),
         )
         .await
         .unwrap();
@@ -1031,10 +1053,13 @@ mod tests {
         assert!(sql.contains("'$.spec.lastError'"), "{sql}");
         assert!(sql.contains("'$.spec.status', 'expired'"), "{sql}");
         // The grant and the cached surface survive the patch.
-        assert!(!sql.contains("accessTokenEncrypted"), "{sql}");
+        let assignments = sql.split("WHERE").next().unwrap_or_default();
+        assert!(!assignments.contains("accessTokenEncrypted"), "{sql}");
         assert!(!sql.contains("refreshTokenEncrypted"), "{sql}");
         assert!(!sql.contains("toolSummaries"), "{sql}");
         assert!(!sql.contains("json = ?"), "{sql}");
+        assert!(sql.contains("is_active = 1"), "{sql}");
+        assert!(sql.contains("accessTokenEncrypted"), "{sql}");
     }
 
     /// A successful pass replaces the cached surface through the same partial
@@ -1060,6 +1085,7 @@ mod tests {
                 last_error: None,
                 expired: false,
             },
+            Some("old-access"),
         )
         .await
         .unwrap();
@@ -1074,7 +1100,9 @@ mod tests {
             sql.contains("'$.spec.lastError', CAST('null' AS JSON)"),
             "{sql}"
         );
-        assert!(!sql.contains("accessTokenEncrypted"), "{sql}");
+        let assignments = sql.split("WHERE").next().unwrap_or_default();
+        assert!(!assignments.contains("accessTokenEncrypted"), "{sql}");
+        assert!(sql.contains("accessTokenEncrypted"), "{sql}");
         assert!(!sql.contains("refreshTokenEncrypted"), "{sql}");
         assert!(!sql.contains("expiresAt"), "{sql}");
         assert!(!sql.contains("json = ?"), "{sql}");

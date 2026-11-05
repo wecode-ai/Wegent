@@ -382,11 +382,18 @@ class ConnectorConnectionService:
         db: Session,
         connection: ConnectorConnection,
         summaries: list[dict[str, Any]],
+        *,
+        expected_access_token_encrypted: str | None = None,
     ) -> ConnectorConnection:
         row = ConnectorConnectionService._lock_row(
             db, slug=connection.slug, user_id=connection.user_id
         )
         if row is None:
+            db.commit()
+            return connection
+        if not ConnectorConnectionService._grant_matches_attempt(
+            row, expected_access_token_encrypted
+        ):
             db.commit()
             return connection
         spec = dict((row.json or {}).get("spec") or {})
@@ -397,16 +404,38 @@ class ConnectorConnectionService:
         return ConnectorConnectionService._save_spec(db, row=row, spec=spec)
 
     @staticmethod
+    def _grant_matches_attempt(
+        row: Kind, expected_access_token_encrypted: str | None
+    ) -> bool:
+        """Keep discovery results scoped to the credential that produced them."""
+        if expected_access_token_encrypted is None:
+            return True
+        if not row.is_active:
+            return False
+        spec = (row.json or {}).get("spec") or {}
+        return (
+            str(spec.get("accessTokenEncrypted") or "")
+            == expected_access_token_encrypted
+        )
+
+    @staticmethod
     def record_tool_error(
         db: Session,
         connection: ConnectorConnection,
         message: str,
+        *,
+        expected_access_token_encrypted: str | None = None,
     ) -> ConnectorConnection:
         """Remember a discovery failure without changing the authorization."""
         row = ConnectorConnectionService._lock_row(
             db, slug=connection.slug, user_id=connection.user_id
         )
         if row is None:
+            db.commit()
+            return connection
+        if not ConnectorConnectionService._grant_matches_attempt(
+            row, expected_access_token_encrypted
+        ):
             db.commit()
             return connection
         spec = dict((row.json or {}).get("spec") or {})

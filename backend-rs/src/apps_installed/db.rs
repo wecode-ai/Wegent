@@ -149,6 +149,7 @@ where
              kinds.updated_at AS kinds_updated_at \
              FROM kinds \
              WHERE kinds.kind = 'ConnectorApp' AND kinds.namespace = 'system' \
+             AND kinds.user_id = 0 \
              AND kinds.is_active = 1 ORDER BY kinds.name, kinds.id",
             (),
         )
@@ -180,4 +181,22 @@ where
             (slug, user_id),
         )
         .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn the_connector_catalog_only_loads_system_owned_apps() {
+        let mysql = crate::sql_test_support::KindQueryCapture::default();
+        let _: Vec<KindRow> = list_connector_app_kinds(&mysql).await.unwrap();
+        let queries = mysql.queries();
+        assert_eq!(queries.len(), 1);
+        assert!(
+            queries[0].sql.contains("kinds.user_id = 0"),
+            "another owner's ConnectorApp must not enter the system catalog: {}",
+            queries[0].sql
+        );
+    }
 }

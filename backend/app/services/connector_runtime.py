@@ -324,7 +324,9 @@ class ConnectorRuntimeService:
                 for tool in upstream_tools
                 if not allowlist or tool.name in allowlist
             ]
-        await ConnectorRuntimeService._cache_tool_summaries(db, app, user, app_tools)
+        await ConnectorRuntimeService._cache_tool_summaries(
+            db, app, user, app_tools, attempted=attempted
+        )
         return attempted
 
     @staticmethod
@@ -333,6 +335,8 @@ class ConnectorRuntimeService:
         app: ConnectorApp,
         user: User,
         tools: list[ConnectorTool],
+        *,
+        attempted: ConnectorConnection | None = None,
     ) -> None:
         connection = connector_connection_service.get(
             db,
@@ -355,7 +359,14 @@ class ConnectorRuntimeService:
         # Refresh the discovery timestamp and clear a previous failure even when
         # the upstream returns the same tool set, otherwise the cache keeps
         # expiring and a stale error stays visible after the upstream recovers.
-        connector_connection_service.save_tool_summaries(db, connection, summaries)
+        connector_connection_service.save_tool_summaries(
+            db,
+            connection,
+            summaries,
+            expected_access_token_encrypted=(
+                attempted.access_token_encrypted if attempted is not None else None
+            ),
+        )
 
     @staticmethod
     @trace_async(

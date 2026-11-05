@@ -17,6 +17,192 @@ from app.services.connector_oauth import ConnectorOAuthService
 from shared.utils.crypto import decrypt_sensitive_data
 
 
+async def _github_session(test_db: Session, test_user: User) -> tuple[dict, str]:
+    """Create one real GitHub session against the configured test provider."""
+    connector_app_service.create_app(
+        test_db,
+        ConnectorAppWrite.model_validate(
+            {
+                "slug": "github",
+                "name": "GitHub",
+                "mcp_url": "https://api.github.com",
+                "auth_type": "oauth2",
+            }
+        ),
+        test_user,
+    )
+    session = await ConnectorOAuthService.create_session(
+        test_db, slug="github", user_id=test_user.id
+    )
+    state = parse_qs(urlsplit(session.authorize_url).query)["state"][0]
+    return session, state
+
+
+def _async_value(values: dict):
+    async def read(key, *_args, **_kwargs):
+        return values.get(key)
+
+    return read
+
+
+def _async_append(values: list[str]):
+    async def delete(value: str) -> bool:
+        values.append(value)
+        return True
+
+    return delete
+
+
+@pytest.mark.asyncio
+async def test_successful_authorization_result_is_claimed_once(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two pollers cannot both claim one completed authorization."""
+    sessions: dict[str, dict] = {}
+    claims: set[str] = set()
+
+    async def cache_set(key: str, value: dict, expire: int) -> bool:
+        sessions[key] = dict(value)
+        return True
+
+    async def cache_setnx(key: str, value: dict, expire: int) -> bool:
+        if key in claims:
+            return False
+        claims.add(key)
+        return True
+
+    monkeypatch.setattr(settings, "GITHUB_OAUTH_CLIENT_ID", "github-client")
+    monkeypatch.setattr(settings, "GITHUB_OAUTH_CLIENT_SECRET", "github-secret")
+    monkeypatch.setattr(settings, "CONNECTOR_OAUTH_STATE_SECRET", "state-secret")
+    monkeypatch.setattr(cache_manager, "get", _async_value(sessions))
+    monkeypatch.setattr(cache_manager, "set", cache_set)
+    monkeypatch.setattr(cache_manager, "setnx", cache_setnx)
+    monkeypatch.setattr(
+        ConnectorOAuthService,
+        "_exchange_code",
+        AsyncMock(return_value={"access_token": "access", "token_type": "bearer"}),
+    )
+    monkeypatch.setattr(
+        ConnectorOAuthService, "_fetch_github_login", AsyncMock(return_value="octocat")
+    )
+    session, state = await _github_session(test_db, test_user)
+    await ConnectorOAuthService.complete_callback(
+        test_db, code="code", state_token=state
+    )
+
+    result = await ConnectorOAuthService.poll_session(
+        test_db,
+        session_id=session.session_id,
+        poll_token=session.poll_token,
+        user_id=test_user.id,
+    )
+    assert result.status == "success"
+    with pytest.raises(HTTPException) as error:
+        await ConnectorOAuthService.poll_session(
+            test_db,
+            session_id=session.session_id,
+            poll_token=session.poll_token,
+            user_id=test_user.id,
+        )
+    assert error.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_declined_authorization_invalidates_the_consent_url(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A consumed refusal cannot later be replayed with an authorization code."""
+    sessions: dict[str, dict] = {}
+    deleted: list[str] = []
+
+    async def cache_set(key: str, value: dict, expire: int) -> bool:
+        sessions[key] = dict(value)
+        return True
+
+    monkeypatch.setattr(settings, "GITHUB_OAUTH_CLIENT_ID", "github-client")
+    monkeypatch.setattr(settings, "GITHUB_OAUTH_CLIENT_SECRET", "github-secret")
+    monkeypatch.setattr(settings, "CONNECTOR_OAUTH_STATE_SECRET", "state-secret")
+    monkeypatch.setattr(cache_manager, "get", _async_value(sessions))
+    monkeypatch.setattr(cache_manager, "set", cache_set)
+    monkeypatch.setattr(cache_manager, "delete", _async_append(deleted))
+
+    async def delete_session(key: str) -> bool:
+        sessions.pop(key, None)
+        deleted.append(key)
+        return True
+
+    monkeypatch.setattr(cache_manager, "delete", delete_session)
+    session, state = await _github_session(test_db, test_user)
+
+    await ConnectorOAuthService.complete_callback(
+        test_db, code=None, state_token=state, provider_error="access_denied"
+    )
+    assert deleted == []
+    result = await ConnectorOAuthService.poll_session(
+        test_db,
+        session_id=session.session_id,
+        poll_token=session.poll_token,
+        user_id=test_user.id,
+    )
+    assert result.status == "declined"
+    with pytest.raises(HTTPException) as error:
+        await ConnectorOAuthService.complete_callback(
+            test_db, code="replayed-code", state_token=state
+        )
+
+    assert error.value.status_code == 404
+    assert len(deleted) == 1
+
+
+@pytest.mark.asyncio
+async def test_discovery_failure_does_not_roll_back_the_committed_grant(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Discovery is separate from the successful token exchange and storage."""
+    sessions: dict[str, dict] = {}
+
+    async def cache_set(key: str, value: dict, expire: int) -> bool:
+        sessions[key] = dict(value)
+        return True
+
+    monkeypatch.setattr(settings, "GITHUB_OAUTH_CLIENT_ID", "github-client")
+    monkeypatch.setattr(settings, "GITHUB_OAUTH_CLIENT_SECRET", "github-secret")
+    monkeypatch.setattr(settings, "CONNECTOR_OAUTH_STATE_SECRET", "state-secret")
+    monkeypatch.setattr(cache_manager, "get", _async_value(sessions))
+    monkeypatch.setattr(cache_manager, "set", cache_set)
+    monkeypatch.setattr(
+        ConnectorOAuthService,
+        "_exchange_dynamic_code",
+        AsyncMock(return_value={"access_token": "access", "token_type": "bearer"}),
+    )
+    monkeypatch.setattr(
+        ConnectorOAuthService,
+        "_cache_authorized_tools",
+        AsyncMock(side_effect=ValueError("down")),
+    )
+    session, state = await _github_session(test_db, test_user)
+    sessions[session_key := next(iter(sessions))]["oauth"] = "dynamic"
+
+    with pytest.raises(HTTPException) as error:
+        await ConnectorOAuthService.complete_callback(
+            test_db, code="code", state_token=state
+        )
+
+    assert error.value.status_code == 502
+    connection = connector_connection_service.get(
+        test_db, slug="github", user_id=test_user.id
+    )
+    assert connection is not None
+    assert connection.access_token() == "access"
+    assert sessions[session_key]["status"] == "failed"
+
+
 @pytest.mark.asyncio
 async def test_github_oauth_session_persists_encrypted_user_connection(
     test_db: Session,

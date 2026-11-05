@@ -274,6 +274,7 @@ async fn discovery_does_not_overwrite_a_rotated_grant() {
                     last_error: None,
                     expired: false,
                 },
+                Some("new-access"),
             )
             .await
             .unwrap();
@@ -342,6 +343,7 @@ async fn discovery_does_not_revive_a_rejected_grant() {
                     last_error: None,
                     expired: false,
                 },
+                Some("old-access"),
             )
             .await
             .unwrap();

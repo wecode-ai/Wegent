@@ -263,6 +263,7 @@ where
                     last_error: None,
                     expired: false,
                 },
+                attempted_access.as_deref(),
             )
             .await;
         }
