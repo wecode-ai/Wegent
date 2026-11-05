@@ -1,6 +1,15 @@
 //! Source discovery and bounded reads never grant subscriptions or collect credentials.
 use super::*;
 
+pub(super) fn read_tool(bound_work: bool) -> Value {
+    let mut tool = json!({"name":"read_source","description":"Read bounded content from an exact source already connected to this identity. Discovery or a ready provider does not prove content was read. On the first page, since must be an RFC3339 timestamp within the past seven days; omit since for the past 24 hours. limit must be an integer from 1 through 20 and defaults to 20. The subscription enabledAfter is a collection boundary, not a read-window requirement; do not reuse an older boundary as since. Follow nextCursor on the same source until hasMore is false before deciding the outcome. A cursor preserves the original window and page size; omit since and limit when continuing. Returns actual read range and truncation; unsupported providers or missing connections fail explicitly. Never invent IDs or broaden scope.","inputSchema":{"type":"object","properties":{"source":{"type":"object","properties":{"providerId":{"type":"string"},"profile":{"type":"string"},"kind":{"type":"string"},"id":{"type":"string"}},"required":["providerId","profile","kind","id"]},"since":{"type":"string","format":"date-time"},"limit":{"type":"integer","minimum":1,"maximum":20},"cursor":{"type":"string","minLength":1,"maxLength":8192}},"required":["source"]}});
+    if bound_work {
+        tool["inputSchema"]["required"] = json!([]);
+        tool["description"] = json!(format!("{} In this source-bound work, omit source to read only the host-verified current work source; an explicit source must match that same resource. Use read_work for the original messages. This never grants access to the role's other connections.", tool["description"].as_str().unwrap_or_default()));
+    }
+    tool
+}
+
 fn provider_status(catalog: &Value, provider: &str, kind: &str) -> Result<Value, String> {
     let entry = catalog["items"]
         .as_array()
@@ -154,6 +163,7 @@ fn authorized_source(
         || identity.coordinator_batch.is_some()
         || identity.project.is_some()
         || identity.review
+        || identity.readonly_worker
         || settings["userId"].as_i64() != Some(identity.user)
         || settings["executionDeviceId"] != identity.device
     {
@@ -233,11 +243,20 @@ pub(super) async fn read_source(
     identity: &StandInMcpIdentity,
     arguments: Value,
 ) -> Result<Value, String> {
-    let settings = runtime
-        .stand_in_store()
-        .personal_stand_in(identity.user, &identity.device)
-        .map_err(|error| error.to_string())?;
-    let source = authorized_source(&settings, identity, &arguments["source"])?;
+    let source = if identity.work.is_some() {
+        super::super::stand_in_tasks::call(
+            identity.clone(),
+            "authorize_source_read".into(),
+            arguments["source"].clone(),
+        )
+        .await?
+    } else {
+        let settings = runtime
+            .stand_in_store()
+            .personal_stand_in(identity.user, &identity.device)
+            .map_err(|error| error.to_string())?;
+        authorized_source(&settings, identity, &arguments["source"])?
+    };
     let input = source_read_input(source, &arguments)?;
     crate::runtime_work::connection_host::call(
         "readSource",

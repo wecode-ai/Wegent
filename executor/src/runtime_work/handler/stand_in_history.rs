@@ -190,6 +190,56 @@ impl RuntimeWorkRpcHandler {
         })
     }
 
+    pub(super) fn authorize_work_source_read(
+        &self,
+        identity: &StandInMcpIdentity,
+        requested: &Value,
+    ) -> Result<Value, AppIpcError> {
+        if identity.readonly_worker
+            || identity.work.is_none()
+            || identity.coordinator_batch.is_some()
+        {
+            return Err(denied());
+        }
+        let store = LocalTaskStore::open(self.task_store_path.as_ref())
+            .map_err(super::stand_in::settings_error)?;
+        let scope = self.conversation_scope(identity, &store)?;
+        let actor = self.local_task_link(&identity.task_id).ok_or_else(denied)?;
+        if !matches!(
+            actor.runtime_handle["origin"]["type"].as_str(),
+            Some("connection_work" | "dingtalk_work")
+        ) {
+            return Err(denied());
+        }
+        let work = store
+            .stand_in_work(identity.user, identity.work.as_deref().unwrap())
+            .map_err(super::stand_in::settings_error)?;
+        if work["taskId"] != identity.task_id {
+            return Err(denied());
+        }
+        let mut source = stand_in_connection(&scope.role, &work["source"])
+            .ok_or_else(denied)?
+            .clone();
+        for key in ["id", "kind", "profile", "name"] {
+            source[key] = work["source"][key].clone();
+        }
+        source.as_object_mut().ok_or_else(denied)?.remove("scope");
+        if source["id"] == "*"
+            || (!requested.is_null()
+                && (!requested.is_object()
+                    || ["providerId", "profile", "kind", "id"]
+                        .iter()
+                        .any(|key| requested[*key] != source[*key])
+                    || requested.get("scope").is_some()
+                    || requested
+                        .get("transport")
+                        .is_some_and(|transport| transport != &source["transport"])))
+        {
+            return Err(denied());
+        }
+        Ok(source)
+    }
+
     fn validate_history_source(
         &self,
         store: &LocalTaskStore,
@@ -483,6 +533,97 @@ mod tests {
         assert!(handler
             .read_stand_in_conversations(&identity, "list_tasks", &json!({}))
             .await
+            .is_err());
+    }
+
+    #[test]
+    fn source_work_source_reads_revalidate_actor_and_only_its_original_resource() {
+        let (_root, handler, mut identity) = fixture();
+        let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+        let source = json!({"providerId":"test-provider","profile":"account","kind":"inbox","id":"selected","name":"Selected","policy":{"automatic":true,"askBeforeAct":true}});
+        let mut other = source.clone();
+        other["id"] = json!("other");
+        let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        settings["roles"][0]["connections"] = json!([source, other]);
+        store.save_personal_stand_in(7, "mac", settings).unwrap();
+        let work = store
+            .ingest_stand_in_message(
+                7,
+                "default",
+                &source,
+                &json!({"id":"event","at":"2026-01-01T00:00:00Z","text":"Question"}),
+                None,
+            )
+            .unwrap();
+        let id = work["id"].as_str().unwrap();
+        let actor = link(
+            id,
+            7,
+            json!({"type":"connection_work","userId":7,"deviceId":"mac","standInId":"default","workId":id}),
+        );
+        handler.upsert_local_task(actor.clone());
+        identity.task_id = id.into();
+        identity.work = Some(id.into());
+        let bound = handler
+            .authorize_work_source_read(&identity, &Value::Null)
+            .unwrap();
+        assert_eq!(bound["id"], "selected");
+        assert!(handler
+            .authorize_work_source_read(&identity, &source)
+            .is_ok());
+        assert!(handler
+            .authorize_work_source_read(&identity, &other)
+            .is_err());
+        for field in ["type", "userId", "deviceId", "standInId", "workId"] {
+            let mut changed = actor.clone();
+            changed.runtime_handle["origin"][field] = json!("foreign");
+            handler.upsert_local_task(changed);
+            assert!(
+                handler
+                    .authorize_work_source_read(&identity, &Value::Null)
+                    .is_err(),
+                "{field}"
+            );
+            handler.upsert_local_task(actor.clone());
+        }
+        for denied_identity in [
+            StandInMcpIdentity {
+                readonly_worker: true,
+                ..identity.clone()
+            },
+            StandInMcpIdentity {
+                user: 8,
+                ..identity.clone()
+            },
+            StandInMcpIdentity {
+                device: "other-device".into(),
+                ..identity.clone()
+            },
+        ] {
+            assert!(handler
+                .authorize_work_source_read(&denied_identity, &Value::Null)
+                .is_err());
+        }
+        let mut changed = actor.clone();
+        changed.runtime_handle["executionRequest"]["user_id"] = json!(8);
+        handler.upsert_local_task(changed);
+        assert!(handler
+            .authorize_work_source_read(&identity, &Value::Null)
+            .is_err());
+        handler.upsert_local_task(actor.clone());
+        let mut copied = actor.clone();
+        copied.local_task_id = "copied-work-context".into();
+        handler.upsert_local_task(copied);
+        let mut copied_identity = identity.clone();
+        copied_identity.task_id = "copied-work-context".into();
+        assert!(handler
+            .authorize_work_source_read(&copied_identity, &Value::Null)
+            .is_err());
+        let mut revoked = store.personal_stand_in(7, "mac").unwrap();
+        revoked["roles"][0]["connections"] = json!([other]);
+        store.save_personal_stand_in(7, "mac", revoked).unwrap();
+        assert!(handler
+            .authorize_work_source_read(&identity, &Value::Null)
             .is_err());
     }
 

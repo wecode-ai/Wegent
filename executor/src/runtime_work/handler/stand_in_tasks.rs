@@ -36,6 +36,9 @@ impl RuntimeWorkRpcHandler {
         name: &str,
         args: Value,
     ) -> Result<Value, AppIpcError> {
+        if name == "authorize_source_read" {
+            return self.authorize_work_source_read(&identity, &args);
+        }
         if name == "validate_git_binding" {
             return self.bound_git_work_args(&identity, args).await;
         }
