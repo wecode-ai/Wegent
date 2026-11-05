@@ -424,6 +424,7 @@ function RuntimeInteractionsState({
   const signature = JSON.stringify(
     source?.items.map(item => [
       item.key,
+      item.task.status,
       item.lifecycle?.interactionStatus,
       item.task.interactionStatus,
       item.task.updatedAt,
