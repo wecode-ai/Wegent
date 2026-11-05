@@ -6511,11 +6511,8 @@ fn insert_codex_runtime_permissions(
     params: &mut serde_json::Map<String, Value>,
     request: &ExecutionRequest,
 ) {
-    if external_work::applies(request) {
-        params.insert(
-            "approvalsReviewer".into(),
-            json!(external_work::reviewer(request)),
-        );
+    if let Some(reviewer) = stand_in_approval::native_reviewer(request) {
+        params.insert("approvalsReviewer".into(), json!(reviewer));
     }
     params.insert(
         "permissions".to_owned(),

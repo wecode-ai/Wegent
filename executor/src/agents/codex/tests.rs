@@ -6403,6 +6403,79 @@ fn stand_in_launch_requests_native_confirmation_without_a_chat_round_trip() {
 }
 
 #[test]
+fn owner_identity_uses_native_guardian_without_bypassing_tool_review() {
+    let _environment = environment::LaunchEnvironment::new();
+    let request: ExecutionRequest = serde_json::from_value(json!({
+        "task_id":"stand-in-chat-7-primary",
+        "origin":{"type":"stand_in_identity","initiatedBy":"stand_in_identity",
+            "userId":7,"standInId":"@primary","deviceId":"device","askBeforeAct":true}
+    }))
+    .unwrap();
+    let launch = build_codex_launch_config(&request).unwrap();
+    assert_eq!(launch.thread_config["approvals_reviewer"], "auto_review");
+    assert!(launch.thread_config["auto_review.extra_policy"]
+        .as_str()
+        .unwrap()
+        .contains(external_work::SOURCE_CONTENT_INSTRUCTIONS));
+    assert!(!codex_auto_approve_mcp_tool_calls(&request));
+    assert!(launch.config_overrides.contains(
+        &"mcp_servers.wework_stand_in.tools.schedule_task.approval_mode=\"writes\"".into()
+    ));
+    for params in [
+        thread_start_params(&request, &launch),
+        thread_resume_params("thread", &request, &launch),
+        thread_fork_params("thread", None, &request, &launch),
+        turn_start_params("thread", &request, &launch, Vec::new()),
+    ] {
+        assert_eq!(params["approvalsReviewer"], "auto_review");
+        assert_eq!(params["permissions"], CODEX_READ_ONLY_PERMISSION_PROFILE);
+        assert_eq!(
+            params["approvalPolicy"]["granular"]["mcp_elicitations"],
+            true
+        );
+    }
+    for params in [
+        json!({"mode":"url","url":"https://example.test/login"}),
+        json!({"mode":"form","requestedSchema":{"properties":{"decision":{"type":"string"}}}}),
+        json!({"mode":"form","requestedSchema":{"properties":{}},
+            "_meta":{"codex_approval_kind":"mcp_tool_call","tool_name":"schedule_task"}}),
+    ] {
+        let mut notification =
+            json!({"id":1,"method":"mcpServer/elicitation/request","params":params});
+        assert!(prepare_codex_runtime_notification(
+            &request,
+            &mut notification
+        ));
+    }
+}
+
+#[test]
+fn identity_guardian_keeps_external_source_and_delegation_review_policies() {
+    for (kind, ask, expected) in [
+        ("connection_work", true, "user"),
+        ("dingtalk_work", true, "user"),
+        ("stand_in_task", true, "user"),
+        ("connection_work", false, "auto_review"),
+    ] {
+        let request: ExecutionRequest = serde_json::from_value(json!({
+            "origin":{"type":kind,"initiatedBy":"stand_in","askBeforeAct":ask}
+        }))
+        .unwrap();
+        assert_eq!(stand_in_approval::native_reviewer(&request), Some(expected));
+    }
+    let delegated: ExecutionRequest = serde_json::from_value(json!({
+        "origin":{"type":"stand_in_identity","initiatedBy":"stand_in_identity","askBeforeAct":true},
+        "standInDelegation":{"askBeforeAct":true}
+    }))
+    .unwrap();
+    assert_eq!(stand_in_approval::native_reviewer(&delegated), Some("user"));
+    assert_eq!(
+        stand_in_approval::native_reviewer(&ExecutionRequest::default()),
+        None
+    );
+}
+
+#[test]
 fn stand_in_mcp_answers_decline_malformed_entries_without_panicking() {
     for malformed in [
         Value::Null,
