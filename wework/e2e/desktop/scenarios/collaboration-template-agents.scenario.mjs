@@ -415,7 +415,7 @@ export function createDesktopScenario({
       })
       await captureScreenshot(control, 'template-agents-07-dark-confirmation.png', CONTENT)
       // Reselecting the same template starts a fresh role configuration.
-      await control.command('click', selector('template-remove-role-main-role-1'))
+      await control.command('click', selector('template-remove-role-group-1-role-1'))
       await control.command('waitFor', selector('template-agents-summary'), {
         text: '将创建 5 个智能体',
       })
@@ -431,7 +431,7 @@ export function createDesktopScenario({
       })
       // Import a coordinator-only variant and verify removed roles and their stages stay absent.
       for (let index = 1; index < 6; index++) {
-        await control.command('click', selector(`template-remove-role-main-role-${index}`))
+        await control.command('click', selector(`template-remove-role-group-1-role-${index}`))
       }
       await control.command('waitFor', selector('template-agents-summary'), {
         text: '将创建 1 个智能体',
@@ -440,7 +440,7 @@ export function createDesktopScenario({
         Number(
           await control.command(
             'getElementCount',
-            selector('template-remove-role-main-role-0') + ':disabled'
+            selector('template-remove-role-group-1-role-0') + ':disabled'
           )
         ),
         1,
