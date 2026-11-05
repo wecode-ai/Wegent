@@ -85,6 +85,12 @@ the project creation you started earlier.
 
 The storage location cannot be changed after the project is created. The task source (built-in tasks, GitHub, or GitLab) controls where task data is read from; it does not change whether the project is stored locally or in the cloud.
 
+### Create a cloud collaboration project from a template
+
+Choose a template through **Discover templates** when creating a project. Bundled Agents use the current device and its default model. The device must be online and accessible to the signed-in account; importing into an existing project also requires a device grant for that project. Historical offline records for the same desktop neither block creation nor become execution targets.
+
+If the current execution device is unavailable, check its cloud connection and use permissions. If multiple online records match the same desktop, resolve the execution-device ambiguity before continuing.
+
 ### Configure local project collaborators
 
 Wework automatically maintains a **Current device agent** in the local space, so users do not need to create an agent first. A new local project includes **Me** and the **Current device agent** by default. You can remove the agent before creation or add it again through **Add collaborator**. Creating a project does not automatically create a collaboration group.
