@@ -658,13 +658,6 @@ for unmounted content. Cached heights must not absolutely position visible rows
 or fix the entire list height: wrapping after a column resize can cross stale
 coordinates, overlap messages and put the composer inside the transcript.
 
-复用消息行 DOM 时，原生历史或流式内容的排版签名变化也必须在布局阶段重新测量。
-DOM 已注册并不代表缓存高度有效；内容不变的行不重复测量，避免滚动时全量读布局。
-
-Retained row DOM must be remeasured in the layout phase when its native-history
-or streaming layout signature changes. Registration does not validate cached
-heights. Unchanged rows must not be remeasured on every scroll commit.
-
 跟随动画从实际滚动位置开始，持有连续位置计算下一帧；浏览器取整后的显示位置
 不能覆盖未完成的亚像素进度。内容缩短时将连续位置限制到新的实际底部，弹簧收敛后
 精确写入底部。用户输入、导航、暂停或会话切换均清除位置、速度和时钟。

@@ -367,8 +367,7 @@ export const MessageList = memo(function MessageList({
   const { measureRow, measureRows } = useMessageRowMeasurements(
     listRef,
     messageVirtualizer,
-    virtualLayoutReady,
-    measurementLayout.messages
+    virtualLayoutReady
   )
   const markdownLayoutHandlerRef = useRef<(element: HTMLElement) => void>(() => {})
   const pendingMarkdownLayoutsRef = useRef(new Set<HTMLElement>())

@@ -112,7 +112,7 @@ test.each(['reopen', 'resize'] as const)(
 )
 
 test.each([600, 24])(
-  'updates retained row positions and list height before paint at height %s',
+  'keeps retained rows in normal flow while measurements lag actual height %s',
   height => {
     const current = fixture()
     const heights = new Map<number, number>()
@@ -142,8 +142,8 @@ test.each([600, 24])(
     view.rerender(<MessageList {...current.props} messages={messages} />)
 
     expect(view.container.querySelector(`[data-index="${index}"]`)).toBe(row)
-    expect(current.engine.current!.itemSizeCache.get(message.id)).toBe(height)
-    expect(current.engine.current!.getTotalSize()).toBe(before + height - 100)
+    expect(current.engine.current!.itemSizeCache.get(message.id)).toBe(100)
+    expect(current.engine.current!.getTotalSize()).toBe(before)
     expect(row.parentElement!.style.height).toBe('')
     expect(row.style.position).toBe('')
     expect(row.style.transform).toBe('')
