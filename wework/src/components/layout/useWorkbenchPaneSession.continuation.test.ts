@@ -157,6 +157,24 @@ function expectDraftPreserved(session: ReturnType<typeof useWorkbenchPaneSession
 }
 
 describe('pane transcript reload ownership', () => {
+  test('keeps an explicit send independent of a reading scope replaced during dispatch', async () => {
+    const { result, rerender } = await renderSession()
+    act(() => result.current.clearCodeComments())
+    let request!: Promise<boolean>
+    act(() => {
+      request = result.current.send('Explicit message without conversation references')
+      rerender({ currentRuntimeTask: { ...address, threadId: 'resolved-thread' } })
+    })
+    await act(async () => expect(await request).toBe(true))
+    expect(mocks.send).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        address,
+        message: 'Explicit message without conversation references',
+      }),
+      expect.any(Object)
+    )
+  })
+
   test.each(['rejected', 'transport'] as const)(
     'rolls back a failed %s edit after its reading pane leaves',
     async outcome => {
@@ -274,6 +292,7 @@ describe('pane transcript reload ownership', () => {
     const load = vi.fn<RuntimeTranscriptLoader>().mockResolvedValue(page)
     mocks.context.loadRuntimeTranscriptForPane = load
     const { result } = await renderSession()
+    expect(result.current.transcriptBeforeCursor).toBe('older')
     load.mockImplementation((_address, options) => (options?.beforeCursor ? oldRead : reloadRead))
     const staleLoadMore = result.current.loadMoreTranscriptBefore
     let oldRequest!: Promise<void>
@@ -313,6 +332,7 @@ describe('pane transcript reload ownership', () => {
     })
     expect(result.current.transcriptLoadingMoreBefore).toBe(false)
     expect(result.current.transcriptHasMoreBefore).toBe(false)
+    expect(result.current.transcriptBeforeCursor).toBeNull()
   })
 })
 

@@ -199,6 +199,7 @@ import {
   resolveProjectWorkPreferenceScope,
 } from './projectWorkPreferences'
 import { defaultNewChatModelSelection, selectedModelExecutionFields } from './runtimeModelSelection'
+import { resolveWorkbenchOwnership } from './workbenchOwnership'
 import {
   createDefaultWorkbenchServices,
   createExecutorClientForWorkbenchServices,
@@ -232,11 +233,10 @@ function findFirstSelectableProject(
 
 export function WorkbenchProvider(props: WorkbenchProviderProps) {
   const cloudConnection = useOptionalCloudConnection()
-  const usesFallbackCloudConnection = cloudConnection.serviceKey?.startsWith('fallback:') === true
-  const workbenchIdentity = usesFallbackCloudConnection
-    ? props.user
-    : (cloudConnection.user ?? props.user)
-  const ownershipKey = JSON.stringify([cloudConnection.apiBaseUrl ?? '', workbenchIdentity.id])
+  const { user: workbenchIdentity, key: ownershipKey } = resolveWorkbenchOwnership(
+    cloudConnection,
+    props.user
+  )
   return (
     <OwnedWorkbenchProvider
       key={ownershipKey}
@@ -642,7 +642,7 @@ function OwnedWorkbenchProvider({
             : null))
 
       if (project) {
-        writeLastProjectId(user.id, project.id)
+        writeLastProjectId(ownershipKey, project.id)
         dispatch({
           type: 'project_workspace_selected',
           project,
@@ -650,7 +650,7 @@ function OwnedWorkbenchProvider({
           startFreshChat: true,
         })
       } else {
-        writeLastProjectId(user.id, null)
+        writeLastProjectId(ownershipKey, null)
         dispatch({
           type: 'project_cleared',
           standaloneDeviceId:
@@ -678,6 +678,7 @@ function OwnedWorkbenchProvider({
       state.standaloneChatKey,
       state.standaloneDeviceId,
       user,
+      ownershipKey,
     ]
   )
   const consumeQueuedPluginTrial = useCallback(() => {
@@ -1023,7 +1024,7 @@ function OwnedWorkbenchProvider({
       setDraftInputForScope(nextChatScopeKey, nextDraft)
 
       if (state.currentProject) {
-        writeLastProjectId(currentUser.id, state.currentProject.id)
+        writeLastProjectId(ownershipKey, state.currentProject.id)
         dispatch({
           type: 'project_workspace_selected',
           project: state.currentProject,
@@ -1031,7 +1032,7 @@ function OwnedWorkbenchProvider({
           startFreshChat: true,
         })
       } else {
-        writeLastProjectId(currentUser.id, null)
+        writeLastProjectId(ownershipKey, null)
         dispatch({
           type: 'project_cleared',
           standaloneDeviceId: sourceTask.deviceId || state.standaloneDeviceId,
@@ -1060,6 +1061,7 @@ function OwnedWorkbenchProvider({
       state.standaloneWorkspacePath,
       t,
       workspaceTabId,
+      ownershipKey,
     ]
   )
   const {
@@ -1287,7 +1289,7 @@ function OwnedWorkbenchProvider({
       lastProjectRestoreAttemptedRef.current = true
       return
     }
-    const lastProjectId = readLastProjectId(user.id)
+    const lastProjectId = readLastProjectId(ownershipKey)
     const candidateProjectIds =
       lastProjectId === undefined
         ? [findActiveRuntimeProjectId(state.runtimeWork)]
@@ -1305,7 +1307,7 @@ function OwnedWorkbenchProvider({
     state.projects,
     state.runtimeWork,
     state.standaloneWorkspacePath,
-    user.id,
+    ownershipKey,
   ])
 
   useEffect(() => {
@@ -1386,7 +1388,7 @@ function OwnedWorkbenchProvider({
     (projectId: number | null) => {
       projectSelectionStartedRef.current = true
       if (projectId === null) {
-        writeLastProjectId(user.id, null)
+        writeLastProjectId(ownershipKey, null)
         dispatch({
           type: 'project_cleared',
           standaloneDeviceId: getRememberedStandaloneDeviceId(
@@ -1401,12 +1403,12 @@ function OwnedWorkbenchProvider({
       }
       const project = findSelectableProject(state.projects, state.runtimeWork, projectId)
       if (project) {
-        writeLastProjectId(user.id, project.id)
+        writeLastProjectId(ownershipKey, project.id)
         dispatch({ type: 'project_selected', project })
         navigateTo('/')
       }
     },
-    [state.devices, state.projects, state.runtimeWork, state.standaloneDeviceId, user]
+    [state.devices, state.projects, state.runtimeWork, state.standaloneDeviceId, user, ownershipKey]
   )
 
   const selectProjectWorkspace = useCallback(
@@ -1414,7 +1416,7 @@ function OwnedWorkbenchProvider({
       projectSelectionStartedRef.current = true
       const project = findSelectableProject(state.projects, state.runtimeWork, projectId)
       if (!project) return
-      writeLastProjectId(user.id, project.id)
+      writeLastProjectId(ownershipKey, project.id)
       dispatch({
         type: 'project_workspace_selected',
         project,
@@ -1422,13 +1424,13 @@ function OwnedWorkbenchProvider({
       })
       navigateTo('/')
     },
-    [state.projects, state.runtimeWork, user.id]
+    [state.projects, state.runtimeWork, ownershipKey]
   )
 
   const selectStandaloneDevice = useCallback(
     (deviceId: string | null) => {
       projectSelectionStartedRef.current = true
-      writeLastProjectId(user.id, null)
+      writeLastProjectId(ownershipKey, null)
       const standaloneDeviceId = getPreferredStandaloneDeviceId(
         state.devices,
         deviceId ?? user.preferences?.default_execution_target ?? state.standaloneDeviceId
@@ -1441,7 +1443,12 @@ function OwnedWorkbenchProvider({
       })
       navigateTo('/')
     },
-    [state.devices, state.standaloneDeviceId, user.id, user.preferences?.default_execution_target]
+    [
+      state.devices,
+      state.standaloneDeviceId,
+      user.preferences?.default_execution_target,
+      ownershipKey,
+    ]
   )
 
   const openStandaloneWorkspace = useCallback(
@@ -1503,7 +1510,7 @@ function OwnedWorkbenchProvider({
           projectKey: response.projectKey,
         })
         writeLastProjectId(
-          user.id,
+          ownershipKey,
           runtimeProjectUiId({
             key: response.projectKey,
             stateDeviceId: response.deviceId,
@@ -1559,7 +1566,7 @@ function OwnedWorkbenchProvider({
         response.deviceId?.trim() ||
         requestDeviceId
 
-      writeLastProjectId(user.id, null)
+      writeLastProjectId(ownershipKey, null)
       if (launchOptions) {
         queueWorkbenchWorkspaceLaunch(openedDeviceId, openedWorkspacePath, launchOptions)
       }
@@ -1571,7 +1578,7 @@ function OwnedWorkbenchProvider({
       })
       navigateTo('/')
     },
-    [clearRemoteProjectSyncRemoval, executorClient, refreshWorkLists, state.devices, user.id]
+    [clearRemoteProjectSyncRemoval, executorClient, refreshWorkLists, state.devices, ownershipKey]
   )
 
   const startNewChat = useCallback(() => {
@@ -1584,7 +1591,7 @@ function OwnedWorkbenchProvider({
       ? findFirstSelectableProject(state.projects, state.runtimeWork, [state.currentProject.id])
       : null
     if (project) {
-      writeLastProjectId(user.id, project.id)
+      writeLastProjectId(ownershipKey, project.id)
       dispatch({
         type: 'project_workspace_selected',
         project,
@@ -1594,7 +1601,7 @@ function OwnedWorkbenchProvider({
       return
     }
 
-    writeLastProjectId(user.id, null)
+    writeLastProjectId(ownershipKey, null)
     dispatch({
       type: 'project_cleared',
       standaloneDeviceId: getRememberedStandaloneDeviceId(
@@ -1614,6 +1621,7 @@ function OwnedWorkbenchProvider({
     state.standaloneDeviceId,
     user,
     workspaceTabId,
+    ownershipKey,
   ])
 
   useEffect(() => {
@@ -1717,7 +1725,7 @@ function OwnedWorkbenchProvider({
         const input = `${references.join(' ')} `
         setDraftInputForScope(nextScopeKey, input)
       }
-      writeLastProjectId(user.id, null)
+      writeLastProjectId(ownershipKey, null)
       dispatch({
         type: 'project_cleared',
         standaloneDeviceId: getRememberedStandaloneDeviceId(
@@ -1742,11 +1750,12 @@ function OwnedWorkbenchProvider({
       state.standaloneDeviceId,
       user,
       workspaceTabId,
+      ownershipKey,
     ]
   )
 
   const startStandaloneChat = useCallback(() => {
-    writeLastProjectId(user.id, null)
+    writeLastProjectId(ownershipKey, null)
     dispatch({
       type: 'project_cleared',
       standaloneDeviceId: getRememberedStandaloneDeviceId(
@@ -1758,7 +1767,7 @@ function OwnedWorkbenchProvider({
       startFreshChat: true,
     })
     navigateTo('/')
-  }, [state.devices, state.standaloneDeviceId, user])
+  }, [state.devices, state.standaloneDeviceId, user, ownershipKey])
 
   const startNewProjectChat = useCallback(
     (projectId: number) => {
@@ -1779,7 +1788,7 @@ function OwnedWorkbenchProvider({
             blankAttachmentState.errors.size > 0)
         )
       projectSelectionStartedRef.current = true
-      writeLastProjectId(user.id, project.id)
+      writeLastProjectId(ownershipKey, project.id)
       dispatch({
         type: 'project_workspace_selected',
         project,
@@ -1796,13 +1805,13 @@ function OwnedWorkbenchProvider({
       state.projects,
       state.runtimeWork,
       state.standaloneChatKey,
-      user.id,
       workspaceTabId,
+      ownershipKey,
     ]
   )
 
   const runtimeTasks = useWorkbenchRuntimeTasks({
-    user,
+    ownershipKey,
     state,
     dispatch,
     executorClient,
@@ -1893,7 +1902,7 @@ function OwnedWorkbenchProvider({
   )
 
   const projectActions = useWorkbenchProjectActions({
-    user,
+    ownershipKey,
     state,
     dispatch,
     executorClient,

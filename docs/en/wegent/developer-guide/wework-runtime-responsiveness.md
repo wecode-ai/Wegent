@@ -84,9 +84,18 @@ flowchart LR
   receipt queries and results through their existing authorization path.
 - Normal history uses item cursors and item/byte budgets. Long turns remain
   pageable. Full export is explicit and never a prerequisite for terminal state.
+  Automatic pagination tracks the opaque `beforeCursor` directly. An unchanged
+  cached first item does not mean the cursor stopped. Stop automatic requests and
+  retain manual recovery only when neither the cursor nor the display boundary advances.
   Building a native rollout offset index initially still scans its file on a cancellable
   isolated worker. Later reads update the index incrementally and load only the
   selected page's item bodies.
+  Rollout cursors bind to source-file identity and the length and digest of a fully
+  indexed prefix, rather than an in-memory index instance. Rebuilding after cache
+  eviction or process restart validates old cursors during that scan. Appends retain
+  old boundaries; file replacement or rewriting indexed content rejects old cursors.
+  Digests advance within the existing scan without rescanning complete files for
+  ordinary pagination.
   Explicit `historyMode=legacy` threads use the shared legacy projection of their
   canonical rollout instead of the unsupported `thread/items/list` API. Ordinary
   pages retain at most 100 item bodies and 2 MiB, allowing one oversized item
@@ -139,6 +148,8 @@ flowchart LR
   so summary lookup cannot recover an old task or seed a new store from old reducer
   state. Same-owner token refresh retains them. Do not migrate old lifecycle storage
   that lacks backend/account ownership.
+  Read and write the last selected project under the complete backend/account key,
+  rather than the local login or a numeric cloud user ID that another backend can reuse.
   Global notification sources and interaction history, drafts, and acceptance records
   use that same backend/account scope, so an unchanged local login cannot retain
   the previous cloud account's counts or replies.
@@ -146,12 +157,47 @@ flowchart LR
   success publishes it with the authenticated account. Failure must not combine an
   old account with a candidate backend or unmount the connection dialog that owns
   its error and recovery actions.
+  Candidate progress is independent of the active connection: retain its token and
+  services throughout authorization and after candidate failure. Expired active
+  credentials recreate the workbench for the local owner, so cloud panes never call
+  local services under the previous cloud identity.
+  Native refresh credentials are staged as a candidate until its account is
+  validated. Failure or cancellation discards only that candidate; a successful
+  authorization poll must not overwrite or delete the active owner's credentials.
+  Every refresh carries its expected account, and native credentials must match
+  both backend and account. Older credentials without an owner require an actual
+  refresh and `/users/me` validation before binding or returning an access token.
+  Once native commit issues the atomic replacement, a later pending candidate
+  cannot revoke that owner. Publish in commit order; disconnect independently
+  invalidates old commits so delayed acknowledgements cannot restore a signed-out account.
 
 - Collaboration navigation distinguishes unsettled, settled partial, and complete
   caches. Creating a workspace or project adds its target without marking source
   discovery complete. A route change shows that target immediately and completes
   unsettled catalogs so a late local workspace can still appear. Settled partial
   caches retain covered targets when a cloud source fails.
+
+```mermaid
+sequenceDiagram
+  participant UI as Cloud connection
+  participant Native as Native credential service
+  participant Cloud as Cloud backend
+  UI->>Native: Prepare candidate authorization
+  UI->>Cloud: Create and approve authorization session
+  UI->>Native: Claim candidate authorization
+  Native->>Cloud: Poll session
+  Cloud-->>Native: Candidate access and refresh tokens
+  Native-->>UI: Access token (refresh token stays in native memory)
+  UI->>Cloud: Validate account with /users/me
+  alt Validated and authorization is current
+    UI->>Native: Commit candidate and verified account
+    Native->>Native: Atomically replace active credentials
+    Native-->>UI: Commit succeeded
+    UI->>UI: Publish workbench for the same backend and account
+  else Failed, cancelled, or superseded
+    UI->>Native: Discard candidate and retain active credentials
+  end
+```
 
 ## Verification contract
 

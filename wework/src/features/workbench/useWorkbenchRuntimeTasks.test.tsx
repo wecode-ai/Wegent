@@ -1,7 +1,7 @@
 import { act, renderHook } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import type { ExecutorClient } from '@/api/executorAccess'
-import type { RuntimeTaskAddress, RuntimeTaskSummary, User } from '@/types/api'
+import type { RuntimeTaskAddress, RuntimeTaskSummary } from '@/types/api'
 import { initialWorkbenchState } from './workbenchReducer'
 import type { WorkbenchServices } from './workbenchServices'
 import { RuntimeTaskLifecycleStore, useRuntimeTaskSummaryResolver } from './runtimeTaskLifecycle'
@@ -45,7 +45,7 @@ function setup(readTask = vi.fn().mockResolvedValue({ success: true, task })) {
     const resolveTask = useRuntimeTaskSummaryResolver(state.runtimeWork, lifecycleStore)
     return {
       actions: useWorkbenchRuntimeTasks({
-        user: { id: 7 } as User,
+        ownershipKey: JSON.stringify(['', 7]),
         state,
         dispatch,
         executorClient: {} as ExecutorClient,

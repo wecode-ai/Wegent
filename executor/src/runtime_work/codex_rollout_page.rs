@@ -11,7 +11,9 @@ use std::{
     time::SystemTime,
 };
 
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 
 use crate::local::app_ipc::AppIpcError;
 
@@ -43,13 +45,52 @@ struct Index {
     identity: Option<FileIdentity>,
     modified: Option<SystemTime>,
     observed_length: u64,
-    generation: String,
+    content_hash: Sha256,
+    versions: Vec<SourceVersion>,
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Serialize)]
 struct FileIdentity {
     created: Option<SystemTime>,
     native: Option<(u64, u64)>,
+}
+
+#[derive(Clone, Deserialize, PartialEq, Serialize)]
+struct SourceVersion {
+    source: String,
+    length: u64,
+    digest: String,
+}
+
+#[derive(Deserialize, Serialize)]
+struct RolloutCursor {
+    version: SourceVersion,
+    position: usize,
+}
+
+fn content_digest(hash: &Sha256) -> String {
+    format!("{:x}", hash.clone().finalize())
+}
+
+fn remember_version(index: &mut Index, version: &SourceVersion) {
+    if index.versions.contains(version) {
+        return;
+    }
+    if index.versions.len() >= INDEX_LIMIT {
+        index.versions.remove(0);
+    }
+    index.versions.push(version.clone());
+}
+
+fn decode_cursor(cursor: &str) -> Result<RolloutCursor, AppIpcError> {
+    cursor
+        .strip_prefix(PREFIX)
+        .and_then(|value| serde_json::from_str::<RolloutCursor>(value).ok())
+        .ok_or_else(|| failed("Invalid or expired rollout item cursor"))
+}
+
+fn encode_cursor(version: &SourceVersion, position: usize) -> String {
+    format!("{PREFIX}{}", json!({"version":version,"position":position}))
 }
 
 fn file_identity(metadata: &std::fs::Metadata) -> FileIdentity {
@@ -112,6 +153,17 @@ fn read_page(
     let length = metadata.len();
     let identity = file_identity(&metadata);
     let modified = metadata.modified().ok();
+    let source = format!(
+        "{:x}",
+        Sha256::digest(serde_json::to_vec(&identity).map_err(failed)?)
+    );
+    let cursor = cursor.map(decode_cursor).transpose()?;
+    if cursor
+        .as_ref()
+        .is_some_and(|cursor| cursor.version.source != source)
+    {
+        return Err(failed("Invalid or expired rollout item cursor"));
+    }
     let mut indexes = indexes()
         .lock()
         .map_err(|_| failed("Rollout index lock is poisoned"))?;
@@ -122,23 +174,39 @@ fn read_page(
     if index.identity.as_ref() != Some(&identity)
         || length < index.length
         || (length == index.observed_length && modified != index.modified)
+        || cursor.as_ref().is_some_and(|cursor| {
+            !index.versions.contains(&cursor.version)
+                && (cursor.version.length != index.length
+                    || cursor.version.digest != content_digest(&index.content_hash))
+        })
     {
         *index = Index::default();
         index.identity = Some(identity);
-        index.generation = uuid::Uuid::new_v4().to_string();
     }
     index.modified = modified;
     index.observed_length = length;
     let mut reader = BufReader::new(file);
-    update_index(index, &mut reader, cancellation)?;
+    let validation = cursor
+        .as_ref()
+        .map(|cursor| &cursor.version)
+        .filter(|version| !index.versions.contains(version));
+    if let Err(error) = update_index(index, &mut reader, validation, cancellation) {
+        *index = Index::default();
+        return Err(error);
+    }
+    let version = SourceVersion {
+        source,
+        length: index.length,
+        digest: content_digest(&index.content_hash),
+    };
+    if let Some(cursor) = &cursor {
+        remember_version(index, &cursor.version);
+    }
+    remember_version(index, &version);
     let ascending = direction == CodexTranscriptDirection::Ascending;
     let boundary = cursor
         .map(|cursor| {
-            cursor
-                .strip_prefix(PREFIX)
-                .and_then(|value| value.split_once(':'))
-                .filter(|(generation, _)| *generation == index.generation)
-                .and_then(|(_, offset)| offset.parse::<usize>().ok())
+            Some(cursor.position)
                 .filter(|offset| *offset <= index.items.len())
                 .ok_or_else(|| failed("Invalid or expired rollout item cursor"))
         })
@@ -203,10 +271,9 @@ fn read_page(
     if let Some(usage) = &index.context_usage {
         thread["tokenUsage"] = usage.clone();
     }
-    let before_cursor =
-        (!ascending && position > 0).then(|| format!("{PREFIX}{}:{position}", index.generation));
-    let after_cursor = (ascending && position < index.items.len())
-        .then(|| format!("{PREFIX}{}:{position}", index.generation));
+    let before_cursor = (!ascending && position > 0).then(|| encode_cursor(&version, position));
+    let after_cursor =
+        (ascending && position < index.items.len()).then(|| encode_cursor(&version, position));
     Ok(Some(CodexTranscriptPage {
         thread,
         before_cursor,
@@ -217,8 +284,13 @@ fn read_page(
 fn update_index(
     index: &mut Index,
     reader: &mut BufReader<File>,
+    validation: Option<&SourceVersion>,
     cancellation: &Cancellation,
 ) -> Result<(), AppIpcError> {
+    let mut verified = validation.is_none()
+        || validation.is_some_and(|version| {
+            version.length == index.length && version.digest == content_digest(&index.content_hash)
+        });
     reader.seek(SeekFrom::Start(index.length)).map_err(failed)?;
     loop {
         cancellation.check()?;
@@ -228,6 +300,14 @@ fn update_index(
             break;
         }
         if line.trim().is_empty() {
+            hash_record(
+                index,
+                offset,
+                &line,
+                validation,
+                &mut verified,
+                cancellation,
+            )?;
             index.length = reader.stream_position().map_err(failed)?;
             continue;
         }
@@ -237,6 +317,14 @@ fn update_index(
             Err(error) if !line.ends_with('\n') && error.is_eof() => break,
             Err(error) => return Err(failed(error)),
         };
+        hash_record(
+            index,
+            offset,
+            &line,
+            validation,
+            &mut verified,
+            cancellation,
+        )?;
         if let Some(usage) = super::codex_rollout::record_context_usage(&record) {
             index.context_usage = Some(usage);
         }
@@ -297,6 +385,40 @@ fn update_index(
             }
         }
         index.length = reader.stream_position().map_err(failed)?;
+    }
+    if !verified {
+        return Err(failed("Invalid or expired rollout item cursor"));
+    }
+    Ok(())
+}
+
+fn hash_record(
+    index: &mut Index,
+    offset: u64,
+    line: &str,
+    validation: Option<&SourceVersion>,
+    verified: &mut bool,
+    cancellation: &Cancellation,
+) -> Result<(), AppIpcError> {
+    let mut consumed = 0;
+    for chunk in line.as_bytes().chunks(64 * 1024) {
+        cancellation.check()?;
+        if let Some(version) = validation.filter(|_| !*verified) {
+            let start = offset + consumed as u64;
+            if version.length >= start && version.length <= start + chunk.len() as u64 {
+                let at = (version.length - start) as usize;
+                index.content_hash.update(&chunk[..at]);
+                if content_digest(&index.content_hash) != version.digest {
+                    return Err(failed("Invalid or expired rollout item cursor"));
+                }
+                *verified = true;
+                index.content_hash.update(&chunk[at..]);
+                consumed += chunk.len();
+                continue;
+            }
+        }
+        index.content_hash.update(chunk);
+        consumed += chunk.len();
     }
     Ok(())
 }
@@ -531,6 +653,142 @@ mod tests {
                 .unwrap()["id"],
             "item-150"
         );
+    }
+
+    #[test]
+    fn cursors_survive_index_eviction_with_and_without_appended_records() {
+        for append in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("rollout.jsonl");
+            let mut file = File::create(&path).unwrap();
+            for item in 0..151 {
+                write_item(&mut file, item, "original");
+            }
+            file.flush().unwrap();
+            let thread = json!({"id":"thread","path":path});
+            let first =
+                read_fixture_page(thread.clone(), None, CodexTranscriptDirection::Descending)
+                    .unwrap()
+                    .unwrap();
+            if append {
+                write_item(&mut file, 151, "appended after the cursor was issued");
+                file.flush().unwrap();
+            }
+            // Real reads of more than the bounded cache capacity evict this source.
+            for source in 0..INDEX_LIMIT {
+                let other = directory.path().join(format!("other-{source}.jsonl"));
+                write_item(&mut File::create(&other).unwrap(), 0, "other source");
+                read_fixture_page(
+                    json!({"id":format!("other-{source}"),"path":other}),
+                    None,
+                    CodexTranscriptDirection::Descending,
+                )
+                .unwrap()
+                .unwrap();
+            }
+            // A fresh newest-page read may rebuild a different appended version
+            // before the user resumes an older pane's persisted boundary.
+            let newest =
+                read_fixture_page(thread.clone(), None, CodexTranscriptDirection::Descending)
+                    .unwrap()
+                    .unwrap();
+            assert_eq!(
+                newest.thread["turns"][0]["items"]
+                    .as_array()
+                    .unwrap()
+                    .last()
+                    .unwrap()["id"],
+                if append { "item-151" } else { "item-150" }
+            );
+            let older = read_fixture_page(
+                thread,
+                first.before_cursor,
+                CodexTranscriptDirection::Descending,
+            )
+            .unwrap()
+            .unwrap();
+            let items = older.thread["turns"][0]["items"].as_array().unwrap();
+            assert_eq!(items.len(), 51);
+            for (position, item) in items.iter().enumerate() {
+                assert_eq!(item["id"], format!("item-{position}"));
+                assert_eq!(item["text"], "original");
+            }
+            assert!(older.before_cursor.is_none());
+        }
+    }
+
+    #[test]
+    fn rebuilding_an_index_verifies_the_full_prefix_and_rejects_same_length_rewrites() {
+        for rebuild in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("rollout.jsonl");
+            let mut file = File::create(&path).unwrap();
+            for item in 0..151 {
+                write_item(&mut file, item, &format!("original-body-{item:03}"));
+            }
+            file.flush().unwrap();
+            let thread = json!({"id":"thread","path":path});
+            let first =
+                read_fixture_page(thread.clone(), None, CodexTranscriptDirection::Descending)
+                    .unwrap()
+                    .unwrap();
+            let before = std::fs::metadata(&path).unwrap();
+            let contents = std::fs::read_to_string(&path).unwrap();
+            let at = contents.find("original-body-075").unwrap();
+            let mut writer = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+            writer.seek(SeekFrom::Start(at as u64)).unwrap();
+            writer.write_all(b"modified-body-075").unwrap();
+            writer.flush().unwrap();
+            writer
+                .set_modified(before.modified().unwrap() + std::time::Duration::from_secs(1))
+                .unwrap();
+            assert_eq!(before.len(), writer.metadata().unwrap().len());
+            assert!(file_identity(&before) == file_identity(&writer.metadata().unwrap()));
+            if rebuild {
+                // Reconstructing from no retained state also covers executor restart.
+                indexes().lock().unwrap().remove(&path);
+            }
+            let error = read_fixture_page(
+                thread,
+                first.before_cursor,
+                CodexTranscriptDirection::Descending,
+            )
+            .err()
+            .unwrap();
+            assert!(error.message.contains("expired"));
+        }
+    }
+
+    #[test]
+    fn rebuilding_after_a_partial_tail_completes_keeps_the_old_committed_prefix() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("rollout.jsonl");
+        let mut file = File::create(&path).unwrap();
+        for item in 0..151 {
+            write_item(&mut file, item, "original");
+        }
+        file.write_all(b"{\"type\":\"event_msg\",").unwrap();
+        file.flush().unwrap();
+        let thread = json!({"id":"thread","path":path});
+        let first = read_fixture_page(thread.clone(), None, CodexTranscriptDirection::Descending)
+            .unwrap()
+            .unwrap();
+        file.write_all(b"\"payload\":{\"type\":\"item_completed\",\"turn_id\":\"long-turn\",\"item\":{\"id\":\"late-item\",\"type\":\"AgentMessage\",\"text\":\"late\"}}}\n").unwrap();
+        file.flush().unwrap();
+        indexes().lock().unwrap().remove(&path);
+        let older = read_fixture_page(
+            thread,
+            first.before_cursor,
+            CodexTranscriptDirection::Descending,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            older.thread["turns"][0]["items"].as_array().unwrap().len(),
+            51
+        );
+        assert_eq!(older.thread["turns"][0]["items"][0]["id"], "item-0");
+        assert!(older.before_cursor.is_none());
     }
 
     #[cfg(unix)]

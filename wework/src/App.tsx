@@ -26,6 +26,7 @@ import { Check, Copy, Info, Minimize2, PlugZap } from 'lucide-react'
 import { AuthProvider } from '@/features/auth/AuthProvider'
 import { useAuth } from '@/features/auth/useAuth'
 import { WorkbenchProvider } from '@/features/workbench/WorkbenchProvider'
+import { resolveWorkbenchOwnership } from '@/features/workbench/workbenchOwnership'
 import {
   registerRuntimeTaskLifecycleAutomation,
   RuntimeTaskLifecycleStore,
@@ -568,9 +569,10 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
       ) ?? []
     ),
   }))
-  const usesFallbackCloudConnection = cloudConnection.serviceKey.startsWith('fallback:')
-  const workbenchIdentity = usesFallbackCloudConnection ? user : (cloudConnection.user ?? user)
-  const ownershipKey = JSON.stringify([cloudConnection.apiBaseUrl ?? '', workbenchIdentity?.id])
+  const { user: workbenchIdentity, key: ownershipKey } = resolveWorkbenchOwnership(
+    cloudConnection,
+    user
+  )
   const lifecycleStore = useMemo(() => new RuntimeTaskLifecycleStore(ownershipKey), [ownershipKey])
   useEffect(() => registerRuntimeTaskLifecycleAutomation(lifecycleStore), [lifecycleStore])
   const workbenchIdentityId = workbenchIdentity?.id
@@ -936,10 +938,7 @@ function AppShell() {
   const { pathname: path, search } = useCurrentLocation()
   const { user, isLoading } = useAuth()
   const cloudConnection = useCloudConnection()
-  const workbenchIdentity = cloudConnection.serviceKey.startsWith('fallback:')
-    ? user
-    : (cloudConnection.user ?? user)
-  const ownershipKey = JSON.stringify([cloudConnection.apiBaseUrl ?? '', workbenchIdentity?.id])
+  const { key: ownershipKey } = resolveWorkbenchOwnership(cloudConnection, user)
   const initialCloudConnection = {
     apiBaseUrl: cloudConnection.apiBaseUrl,
     backendUrl: cloudConnection.backendUrl,

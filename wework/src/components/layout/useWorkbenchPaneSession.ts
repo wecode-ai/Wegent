@@ -1983,8 +1983,6 @@ export function useWorkbenchPaneSession({
           setError(i18n.t('workbench.mention_conversation_load_failed'))
           return false
         }
-        if (!isTranscriptScopeCurrent()) return false
-
         // Do not keep an earlier action error visible once the user sends a new message.
         setError(null)
         const visibleSubmittedInput =
@@ -2857,6 +2855,7 @@ export function useWorkbenchPaneSession({
     transcriptError,
     reloadRuntimeTranscript,
     transcriptHasMoreBefore,
+    transcriptBeforeCursor,
     transcriptLoadingMoreBefore,
     transcriptFullContent,
     loadedTranscriptRanges,

@@ -401,6 +401,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 !isCreatingWorktree && paneSession.status.isWaitingForAssistantIndicator
               }
               hasMoreBefore={paneSession.transcriptHasMoreBefore}
+              beforeCursor={paneSession.transcriptBeforeCursor}
               onSearchTranscript={paneSession.searchTranscript}
               onEnsureSearchMatch={paneSession.ensureSearchMatch}
               searchPage={paneSession.searchPage}

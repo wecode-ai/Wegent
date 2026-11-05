@@ -123,6 +123,25 @@ function setup() {
 }
 
 describe('workbench lifecycle ownership', () => {
+  test('rebuilds the local workbench when cloud credentials expire with reconnect metadata retained', async () => {
+    const fixture = setup()
+    const active = connection(7, 'https://backend-a.example/api')
+    const view = render(fixture.tree(active, fixture.firstServices))
+    await waitFor(() => expect(screen.getByTestId('owner-ready')).toHaveTextContent('7:ready:1'))
+    expect(screen.getByTestId('owner-summary')).toHaveTextContent('Owner A private task')
+
+    view.rerender(
+      fixture.tree(
+        { ...active, status: 'expired', isConnected: false, token: null, serviceKey: 'expired' },
+        fixture.nextServices
+      )
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('owner-ready')).toHaveTextContent(`${LOCAL_USER.id}:ready:0`)
+    )
+    expect(screen.getByTestId('owner-summary')).toHaveTextContent(/^none$/)
+  })
+
   test.each([
     ['account', 8, 'https://backend-a.example/api'],
     ['backend', 7, 'https://backend-b.example/api'],

@@ -3364,7 +3364,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('automation-task-options')).toHaveTextContent('none')
   })
 
-  test('keeps the runtime event subscription across connected user preference updates', async () => {
+  test('keeps the runtime event subscription across local user preference updates', async () => {
     setElectronRuntime()
     window.__WEWORK_RUNTIME_CONFIG__ = {
       desktopHost: 'electron',
@@ -3385,9 +3385,9 @@ describe('WorkbenchProvider runtime tasks', () => {
       refreshUser: vi.fn(),
       disconnect: vi.fn(),
     })
-    const renderTree = (connectedUser: User) => (
-      <CloudConnectionContext.Provider value={cloudConnectionValue(connectedUser)}>
-        <WorkbenchProvider user={LOCAL_USER}>
+    const renderTree = (localUser: User) => (
+      <CloudConnectionContext.Provider value={cloudConnectionValue(localUser)}>
+        <WorkbenchProvider user={localUser}>
           <WorkbenchProbeSessionProvider>
             <BootstrapProbe />
           </WorkbenchProbeSessionProvider>
@@ -6303,6 +6303,58 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
+  test('restores and writes project selection for the current backend and cloud owner', async () => {
+    const firstBackend = 'https://first.example/api'
+    const secondBackend = 'https://second.example/api'
+    const firstOwner = JSON.stringify([firstBackend, 7])
+    const secondOwner = JSON.stringify([secondBackend, 7])
+    const localOwner = JSON.stringify(['', LOCAL_USER.id])
+    writeLastProjectId(firstOwner, 7)
+    writeLastProjectId(secondOwner, null)
+    writeLastProjectId(localOwner, null)
+    const services = createWorkbenchServices()
+    const tree = (apiBaseUrl: string) => (
+      <CloudConnectionContext.Provider
+        value={{
+          ...DISCONNECTED_STATE,
+          status: 'connected',
+          user: { id: 7, user_name: 'cloud-owner', email: 'cloud@example.com' },
+          apiBaseUrl,
+          isConnected: true,
+          serviceKey: apiBaseUrl,
+          connectWithAuthorization: vi.fn(),
+          refreshUser: vi.fn(),
+          disconnect: vi.fn(),
+        }}
+      >
+        <WorkbenchProvider user={LOCAL_USER} services={services}>
+          <WorkbenchProbeSessionProvider>
+            <ProjectSendProbe />
+          </WorkbenchProbeSessionProvider>
+        </WorkbenchProvider>
+      </CloudConnectionContext.Provider>
+    )
+    const view = render(tree(firstBackend))
+    await waitFor(() =>
+      expect(screen.getByTestId('current-project-name')).toHaveTextContent('Wegent')
+    )
+    view.rerender(tree(secondBackend))
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-project-order')).toHaveTextContent('Wegent')
+    )
+    expect(screen.getByTestId('current-project-name')).toHaveTextContent('none')
+    await userEvent.click(screen.getByText('select project'))
+    expect(readLastProjectId(secondOwner)).toBe(7)
+    await userEvent.click(screen.getByText('start standalone chat'))
+    expect(readLastProjectId(secondOwner)).toBeNull()
+    expect(readLastProjectId(firstOwner)).toBe(7)
+    expect(readLastProjectId(localOwner)).toBeNull()
+    view.rerender(tree(firstBackend))
+    await waitFor(() =>
+      expect(screen.getByTestId('current-project-name')).toHaveTextContent('Wegent')
+    )
+  })
+
   test('keeps the connected owner and selected model throughout navigation refresh', async () => {
     const models: UnifiedModel[] = [
       {
@@ -7292,7 +7344,7 @@ describe('WorkbenchProvider runtime tasks', () => {
   })
 
   test('restores the last used project before starting a new task', async () => {
-    writeLastProjectId(1, 7)
+    writeLastProjectId(JSON.stringify(['', 1]), 7)
     renderWorkbench(<ProjectSendProbe />)
 
     await waitFor(() =>
@@ -7376,7 +7428,7 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await userEvent.click(screen.getByText('start standalone chat'))
     expect(screen.getByTestId('current-project-name')).toHaveTextContent('none')
-    expect(readLastProjectId(1)).toBeNull()
+    expect(readLastProjectId(JSON.stringify(['', 1]))).toBeNull()
 
     await userEvent.click(screen.getByText('start new chat'))
     expect(screen.getByTestId('current-project-name')).toHaveTextContent('none')
@@ -10273,7 +10325,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() =>
       expect(screen.getByTestId('current-project-name')).toHaveTextContent(/^Product$/)
     )
-    expect(readLastProjectId(1)).toBe(
+    expect(readLastProjectId(JSON.stringify(['', 1]))).toBe(
       runtimeProjectUiId({
         key: 'multi-project',
         stateDeviceId: 'device-1',

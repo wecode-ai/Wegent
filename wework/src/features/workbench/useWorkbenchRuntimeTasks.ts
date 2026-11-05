@@ -23,7 +23,6 @@ import type {
   RuntimeTranscriptSearchResponse,
   RuntimeWorkSearchRequest,
   ModelSelectionConfig,
-  User,
 } from '@/types/api'
 import type {
   RuntimePaneTranscript,
@@ -68,7 +67,7 @@ import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
 import { projectRuntimePaneTranscript } from './runtimeTaskLifecycle/projection'
 
 interface UseWorkbenchRuntimeTasksOptions {
-  user: User
+  ownershipKey: string
   state: WorkbenchState
   dispatch: Dispatch<WorkbenchAction>
   executorClient: ExecutorClient
@@ -81,7 +80,7 @@ interface UseWorkbenchRuntimeTasksOptions {
 }
 
 export function useWorkbenchRuntimeTasks({
-  user,
+  ownershipKey,
   state,
   dispatch,
   executorClient,
@@ -100,7 +99,7 @@ export function useWorkbenchRuntimeTasks({
     () => () => {
       openGeneration.current += 1
     },
-    [user.id]
+    [ownershipKey]
   )
 
   useEffect(() => {
@@ -231,7 +230,7 @@ export function useWorkbenchRuntimeTasks({
       const listed = findRuntimeTask(state.runtimeWork, address)
       const cached = listed ?? lifecycleStore.getTask(address)?.task
 
-      writeLastProjectId(user.id, project?.id ?? null)
+      writeLastProjectId(ownershipKey, project?.id ?? null)
       openRuntimeTaskView(
         !listed && cached ? taskAddressWithMetadata(address, cached) : address,
         project,
@@ -280,7 +279,7 @@ export function useWorkbenchRuntimeTasks({
       state.projects,
       state.runtimeWork,
       t,
-      user.id,
+      ownershipKey,
     ]
   )
 

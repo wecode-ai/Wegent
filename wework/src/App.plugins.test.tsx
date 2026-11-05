@@ -1348,6 +1348,35 @@ describe('App plugins route', () => {
     expect(pendingInteractionStorageKeys()).toEqual(previousKeys)
   })
 
+  test('rebuilds AppShell for the local owner when retained cloud credentials expire', async () => {
+    appOwnerFixture.user = LOCAL_USER
+    appOwnerFixture.connection = connectedAppOwner()
+    appOwnerFixture.source = appOwnerTaskSource(true)
+    window.history.pushState({}, '', '/test-app-owner')
+    const view = await renderApp()
+    await waitFor(() =>
+      expect(screen.getByTestId('app-owner-pending-count')).toHaveTextContent('1')
+    )
+    await userEvent.click(screen.getByTestId('app-owner-edit-draft'))
+    const previousKeys = pendingInteractionStorageKeys()
+
+    appOwnerFixture.connection = {
+      ...connectedAppOwner(),
+      status: 'expired',
+      isConnected: false,
+      token: null,
+      serviceKey: 'expired',
+    }
+    appOwnerFixture.source = { ...appOwnerTaskSource(false), userId: LOCAL_USER.id }
+    await act(async () => view.rerenderApp())
+
+    expect(screen.getByTestId('app-owner-pending-count')).toHaveTextContent('0')
+    expect(screen.getByTestId('app-owner-drafts')).toBeEmptyDOMElement()
+    expect(screen.getByTestId('app-owner-mount-state')).toHaveTextContent('0')
+    expect(pendingInteractionStorageKeys()).toHaveLength(2)
+    expect(localStorage.getItem(previousKeys[0])).toContain('Order review')
+  })
+
   test('renders an isolated extension child without the global navigation shell', async () => {
     window.history.pushState({}, '', '/test-isolated-surface?isolated=1')
 
@@ -1543,7 +1572,9 @@ describe('App plugins route', () => {
       })
     )
     window.weworkElectronCloudCredentials = {
-      getDevicePublicKey: vi.fn(),
+      prepareAuthorization: vi.fn(),
+      commitAuthorization: vi.fn(),
+      discardAuthorization: vi.fn(),
       claimAuthorization: vi.fn(),
       refreshAccessToken: vi.fn().mockResolvedValue({
         ok: true,
