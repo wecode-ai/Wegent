@@ -1195,6 +1195,11 @@ export function createElectronCapabilityRouter(
     } catch {
       throw new HostCapabilityError('invalid_external_url', 'Local file URL is invalid')
     }
+    if (process.platform === 'linux') {
+      // Electron 43's Linux openPath never settles (electron/electron#53738).
+      await shell.openExternal(url.toString())
+      return
+    }
     const error = await shell.openPath(path)
     if (error) throw new HostCapabilityError('open_path_failed', error)
   })

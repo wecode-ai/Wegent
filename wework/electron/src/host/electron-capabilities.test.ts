@@ -1,6 +1,7 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { clipboard, type WebContents } from 'electron'
-import { resolve } from 'node:path'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { EventEmitter } from 'node:events'
 import { acquireDebuggerSession } from './debugger-session.js'
@@ -491,20 +492,60 @@ describe('Process explorer capabilities', () => {
 })
 
 describe('Local file URL capabilities', () => {
+  const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', originalPlatform)
+  })
+
   test('opens a file URL through the system file handler', async () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' })
     electronMocks.shellOpenPath.mockClear()
+    electronMocks.shellOpenExternal.mockClear()
     const { router } = createIsolatedClipboardRouter()
-    const url = pathToFileURL('/tmp/readme with space.md').href
+    const filePath = join(tmpdir(), 'readme with space.md')
+    const url = pathToFileURL(filePath).href
 
     await expect(
       router.invoke(WEWORK_APP_PRINCIPAL, 'shell.openLocalFileUrl', { url })
     ).resolves.toBeUndefined()
 
-    expect(electronMocks.shellOpenPath).toHaveBeenCalledWith('/tmp/readme with space.md')
+    expect(electronMocks.shellOpenPath).toHaveBeenCalledWith(filePath)
+    expect(electronMocks.shellOpenExternal).not.toHaveBeenCalled()
+  })
+
+  test('uses the Linux URL opener because openPath never settles', async () => {
+    Object.defineProperty(process, 'platform', { value: 'linux' })
+    electronMocks.shellOpenPath.mockClear()
+    electronMocks.shellOpenExternal.mockClear()
+    const { router } = createIsolatedClipboardRouter()
+    const url = pathToFileURL(join(tmpdir(), 'readme with space.md')).href
+
+    await expect(
+      router.invoke(WEWORK_APP_PRINCIPAL, 'shell.openLocalFileUrl', { url })
+    ).resolves.toBeUndefined()
+
+    expect(electronMocks.shellOpenExternal).toHaveBeenCalledWith(url)
+    expect(electronMocks.shellOpenPath).not.toHaveBeenCalled()
+  })
+
+  test('propagates a Linux URL opener failure', async () => {
+    Object.defineProperty(process, 'platform', { value: 'linux' })
+    electronMocks.shellOpenPath.mockClear()
+    electronMocks.shellOpenExternal.mockRejectedValueOnce(new Error('no handler'))
+    const { router } = createIsolatedClipboardRouter()
+
+    await expect(
+      router.invoke(WEWORK_APP_PRINCIPAL, 'shell.openLocalFileUrl', {
+        url: pathToFileURL(join(tmpdir(), 'readme with space.md')).href,
+      })
+    ).rejects.toThrow('no handler')
+    expect(electronMocks.shellOpenPath).not.toHaveBeenCalled()
   })
 
   test('rejects non-file URLs', async () => {
     electronMocks.shellOpenPath.mockClear()
+    electronMocks.shellOpenExternal.mockClear()
     const { router } = createIsolatedClipboardRouter()
 
     await expect(
