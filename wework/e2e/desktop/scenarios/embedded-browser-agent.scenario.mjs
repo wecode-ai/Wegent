@@ -1811,6 +1811,12 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs, wo
       )
 
       const nestedDirectoryUrl = `${pathToFileURL(join(localDirectoryPath, 'nested')).href}/`
+      const nestedLinkReady = await bridgeCall({
+        action: 'waitFor',
+        selector: 'a[href$="nested/"]',
+        timeoutMs: 5_000,
+      })
+      assert.equal(nestedLinkReady.ok, true, 'The nested directory link did not become ready')
       const nestedDirectoryState = await clickBridgeNavigation(
         bridgeIdentity,
         'a[href$="nested/"]',
@@ -1831,6 +1837,12 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs, wo
       )
 
       const parentDirectoryUrl = `${pathToFileURL(localDirectoryPath).href}/`
+      const parentLinkReady = await bridgeCall({
+        action: 'waitFor',
+        selector: '[data-testid="embedded-browser-directory-parent"]',
+        timeoutMs: 5_000,
+      })
+      assert.equal(parentLinkReady.ok, true, 'The parent directory link did not become ready')
       const parentDirectoryState = await clickBridgeNavigation(
         bridgeIdentity,
         '[data-testid="embedded-browser-directory-parent"]',
