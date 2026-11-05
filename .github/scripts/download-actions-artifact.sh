@@ -49,7 +49,17 @@ const fs = require("node:fs")
 const payload = JSON.parse(fs.readFileSync(0, "utf8"))
 if (!Array.isArray(payload.jobs)) throw new Error("Invalid workflow jobs response")
 const job = payload.jobs.find(job => job.name === process.argv[1])
-console.log(job ? job.conclusion || job.status : "absent")
+if (!job) console.log("absent")
+else if (job.conclusion) console.log(job.conclusion)
+else {
+  const steps = job.steps ?? []
+  const failed = steps.find(step => step.status === "completed" &&
+    !["success", "skipped"].includes(step.conclusion))
+  const finished = steps.at(-1)?.name === "Complete job" && steps.every(step =>
+    step.status === "completed" && ["success", "skipped"].includes(step.conclusion))
+  // GitHub can publish terminal steps before updating the enclosing job status.
+  console.log(failed?.conclusion || (finished ? "steps_completed" : job.status))
+}
 ' "$source_job" <<<"$jobs_json"
 }
 
@@ -105,7 +115,7 @@ for (const run of runs) console.log(run.id, run.status)
   elif [[ -n "$source_job" ]]; then
     producer_state="$(producer_state_for "$run_id")"
     case "$producer_state" in
-      success) ;;
+      success|steps_completed) ;;
       absent|queued|in_progress|waiting|pending|requested) producer_ready=false ;;
       *)
         echo "Producer $source_job in run $run_id ended with $producer_state" >&2

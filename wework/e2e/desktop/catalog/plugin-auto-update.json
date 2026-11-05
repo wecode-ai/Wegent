@@ -1,0 +1,11 @@
+{
+  "order": 100000,
+  "cloudOnly": true,
+  "ci": {
+    "cloud": {
+      "order": 27000,
+      "shard": 3,
+      "position": 1000
+    }
+  }
+}

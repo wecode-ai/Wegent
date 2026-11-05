@@ -3,6 +3,7 @@ import { pluginTelemetryIdentityFromParts } from '@/telemetry/pluginIdentity'
 import { observeOperation } from '@/telemetry/observeOperation'
 import { createHttpClient } from '@/api/http'
 import type { CloudAuthorizationHandle } from '@/features/cloud-connection/CloudConnectionContext'
+import i18n from '@/i18n'
 
 export interface WegentConnectorToken {
   access_token: string
@@ -230,21 +231,21 @@ export async function authorizeWegentConnector(
       if (result.status === 'pending') {
         if (windowClosed) {
           attempt.cancel()
-          throw new Error('GitHub 授权窗口已关闭')
+          throw new Error(i18n.t('workbench.plugins_connector_auth_window_closed'))
         }
         continue
       }
       if (result.status === 'declined') {
         attempt.cancel()
-        throw new Error('GitHub 授权已取消')
+        throw new Error(i18n.t('workbench.plugins_connector_auth_declined'))
       }
       if (result.status === 'failed') {
         attempt.fail('confirm')
-        throw new Error(result.error || 'GitHub 授权失败')
+        throw new Error(result.error || i18n.t('workbench.plugins_connector_auth_request_failed'))
       }
       if (!result.connection) {
         attempt.fail('confirm')
-        throw new Error('GitHub 授权状态缺失')
+        throw new Error(i18n.t('workbench.plugins_connector_auth_state_missing'))
       }
       if (result.connection.status === 'connected') attempt.succeed()
       else attempt.fail('confirm')
@@ -252,7 +253,7 @@ export async function authorizeWegentConnector(
       return result.connection
     }
     attempt.fail('confirm')
-    throw new Error('GitHub 授权已超时')
+    throw new Error(i18n.t('workbench.plugins_connector_auth_request_timeout'))
   } catch (error) {
     attempt.fail('request')
     throw error

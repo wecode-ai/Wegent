@@ -169,9 +169,6 @@ describe('unified human response', () => {
   )
 
   it('settles a stale response without an error after its acceptance marker has been cleaned', async () => {
-    // Keep the initial refresh from clearing the acceptance marker before the
-    // test can exercise the independent archived-history deduplication path.
-    vi.spyOn(window, 'setInterval').mockReturnValue(0)
     view()
     await waitFor(() => expect(context!.pending).toHaveLength(1))
     const item = context!.pending[0]
@@ -179,7 +176,7 @@ describe('unified human response', () => {
       expect(await context!.respond(item, 'first answer')).toBe(true)
     })
     const marker = `wework.interactions:test:1:accepted:${item.id}`
-    expect(localStorage.getItem(marker)).not.toBeNull()
+    expect(localStorage.getItem(marker)).toBe('true')
     localStorage.removeItem(marker)
     act(() => context!.setDraft(item.id, 'stale second answer'))
     await act(async () => {

@@ -3371,6 +3371,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
             responseStart: timing.responseStart,
             responseEnd: timing.responseEnd,
             nextHopProtocol: timing.nextHopProtocol,
+            serverTiming: timing.serverTiming.map(({ name, description }) => ({
+              name,
+              description,
+            })),
           }
         }),
         ...(command.value

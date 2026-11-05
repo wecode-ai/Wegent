@@ -193,7 +193,13 @@ export async function verifyPluginScopeBoundaries({
       timeoutMs
     )
     await control.command('fill', testId('composer-plugin-picker-search'), { value: slug })
+    await control.command('waitFor', testId(`composer-plugin-picker-item-plugin:${slug}`), {
+      visible: present,
+      stableMs: 250,
+      timeoutMs,
+    })
     const picker = JSON.parse(await control.command('snapshot', testId('composer-plugin-picker')))
+    observation.picker = picker
     assert.equal(
       picker.testIds.includes(`composer-plugin-picker-item-plugin:${slug}`),
       present,
@@ -670,23 +676,24 @@ export async function verifyPluginScopeBoundaries({
       apiProxy.rule = entry => {
         if (!claimed && entry.method === 'GET' && entry.path === '/api/plugins/installed') {
           claimed = true
+          entry.responseTimingId = randomUUID()
           return 'hold-response'
         }
         return originalRule(entry)
       }
-      const heldStartedAt = Date.now()
       await refreshCatalog()
       const pending = await until(
         () => apiProxy.requests.slice(requestStart).find(entry => entry.committedResponseHeld),
         Boolean,
         'The real account A inventory response was not fully received and held'
       )
-      const heldReadyAt = Date.now()
       assert.equal(pending.status, 200)
+      assert.equal(typeof pending.responseTimingId, 'string')
       result.heldResponse = {
         requestIndex: apiProxy.requests.indexOf(pending),
         status: pending.status,
         fullyReceived: pending.committedResponseHeld,
+        responseTimingId: pending.responseTimingId,
       }
       accountMayHaveChanged = true
       await authorizeAccount(accountB, login.access_token)
@@ -708,15 +715,12 @@ export async function verifyPluginScopeBoundaries({
             await completedApiResourceTimings(control, '/api/plugins/installed')
           ).filter(
             entry =>
-              entry.startedAt >= heldStartedAt &&
-              entry.startedAt <= heldReadyAt &&
-              entry.completedAt >= releasedAt
+              entry.responseTimingId === pending.responseTimingId && entry.completedAt >= releasedAt
           )
-          assert.ok(
-            matching.length <= 1,
-            'A parallel slow request makes old-response timing ambiguous'
-          )
-          return matching[0]
+          // Chromium may reuse one HTTP response for multiple fetch consumers.
+          // The response marker binds every match to the exact held upstream bytes.
+          result.heldResponse.rendererCompletions = matching
+          return matching.at(-1)
         },
         Boolean,
         'The renderer never finished consuming the actual released old-account response'
@@ -761,6 +765,8 @@ export async function verifyPluginScopeBoundaries({
           status: pending.status,
           fullyReceived: pending.committedResponseHeld,
           released: pending.released,
+          responseTimingId: pending.responseTimingId,
+          rendererCompletions: result.heldResponse.rendererCompletions,
           rendererCompleted: consumed,
           stableInventorySamples: stability,
         },

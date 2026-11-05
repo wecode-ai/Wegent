@@ -456,6 +456,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Verify Windows executor installer release selection
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .github/scripts/test-local-executor-installer.ps1
+
       - name: Set up shared Rust toolchain and cache
         uses: ./.github/actions/setup-rust-cache
         with:

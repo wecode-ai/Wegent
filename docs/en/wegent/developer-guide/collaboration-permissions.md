@@ -104,6 +104,8 @@ Plugins without MCP can reuse existing `localAuth.tool` declarations through the
 
 ## Management surfaces
 
+Subtree archive and restore authorize every descendant for content editing before any Issue mutation, upstream close, or execution cancellation, preserving CP13/CP14. An editable parent grants no authority over private descendants. Denial returns a uniform 404 without descendant details and preserves versions and queued work. Administrators retain access to all descendants. `test_loop_item_archive_permissions.py` covers native projects and GitHub/GitLab protocols; the web `collaboration-project-views.spec.ts` checks real-member denial, unchanged persistence, and administrator archive/restore. Existing CP invariants remain unchanged.
+
 Each cloud Runtime transcript packet checks current project access, Issue visibility
 and durable session binding in an independent short transaction, preserving CP14 and
 CP15. The authorization Session closes before device RPC and leaves the caller's
