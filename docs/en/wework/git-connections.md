@@ -33,6 +33,8 @@ Comments, PR/MR creation, pushes and other external writes retain native approva
 
 `git_write` uses stable request IDs and local receipts to prevent duplicate sends. Unknown outcomes cannot be retried automatically. Definitely unsent or explicitly rejected requests can be retried through native approval; the same request ID still cannot change its contents. Confirmed comment receipts suppress the exact outgoing comment version's echo. This does not guarantee global exactly-once effects across providers or devices, and later human edits are still received. Timestamps are normalized to milliseconds. If a legacy GitLab webhook has already lost fractional seconds present in the REST response, the event is retained rather than incorrectly filtered by truncating timestamps.
 
+For a connected repository, use the declared `read_source` capability and inspect its query schema in the source catalog first. Read a selected CI job log with `{entityKind:"job",number:<job ID>,view:"logs"}` through the same repository-bound native account route, without switching to shell network commands. GitHub returns failed-step logs for that job; GitLab returns its trace. An empty log does not establish check success or satisfied merge gates. Native timeouts, size limits and errors remain intact, without changing accounts or repositories.
+
 ## Authentication and failures
 
 GitHub reuses native GitHub CLI login. GitLab uses an instance-specific native device login card. Self-managed instances need device authorization support and a configured OAuth client; existing device-side `glab` authentication can be used for older instances. Credentials remain in the execution device's CLI credential system rather than role settings.

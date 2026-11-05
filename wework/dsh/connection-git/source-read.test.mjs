@@ -240,7 +240,9 @@ test('both provider manifests expose schemas through the unchanged connection re
   const manifest = JSON.parse(await readFile(new URL('./package.json', import.meta.url), 'utf8'))
   const parsed = parseConnections(manifest)
   for (const platform of ['github', 'gitlab']) {
-    const f = fixture(platform, () => []),
+    const f = fixture(platform, input =>
+        input.operation === 'job_log' ? { jobId: String(input.jobId), text: '' } : []
+      ),
       registry = new ConnectionRegistry({
         inventory: async () => [],
         satisfies: () => true,
@@ -255,17 +257,27 @@ test('both provider manifests expose schemas through the unchanged connection re
     const capability = (await registry.catalog()).find(x => x.id === f.source.providerId).read
     assert.deepEqual(capability.inputSchema.required, ['entityKind', 'number', 'view'])
     assert.ok(capability.inputSchema.properties.view.enum.includes('statuses'))
+    assert.ok(capability.inputSchema.properties.entityKind.enum.includes('job'))
+    assert.ok(capability.inputSchema.properties.view.enum.includes('logs'))
     assert.equal(parsed.providers.find(x => x.id === platform).read.pagination, 'cursor')
     await registry.call(f.source.providerId, 'readSource', {
       source: f.source,
       query: query('details'),
     })
+    const job = await registry.call(f.source.providerId, 'readSource', {
+      source: f.source,
+      query: { entityKind: 'job', number: 912, view: 'logs' },
+    })
+    assert.equal(job.items[0].data.jobId, '912')
     for (const bad of [
       query('checks', { sha: 'invalid' }),
       query('comments', { repository: 'other/repo' }),
       query('comments', { sha: HEAD }),
       { entityKind: 'issue', number: 17, view: 'checks' },
       { entityKind: 'issue', number: 0, view: 'details' },
+      { entityKind: 'job', number: 1, view: 'details' },
+      { entityKind: 'change_request', number: 17, view: 'logs' },
+      { entityKind: 'job', number: 1, view: 'logs', sha: HEAD },
     ])
       await assert.rejects(
         registry.call(f.source.providerId, 'readSource', { source: f.source, query: bad }),
@@ -315,3 +327,85 @@ test('missing pipeline commit or foreign check-run commit cannot become a succes
     )
   }
 })
+
+for (const platform of ['github', 'gitlab']) {
+  test(
+    platform + ' exposes selected CI job logs through the exact native repository account',
+    async () => {
+      const f = fixture(platform, input => {
+        assert.deepEqual(
+          { operation: input.operation, jobId: input.jobId },
+          { operation: 'job_log', jobId: 912 }
+        )
+        return { jobId: '912', text: 'Actual native CI log' }
+      })
+      const result = await f.provider.readSource(f.ctx, {
+        source: f.source,
+        query: { entityKind: 'job', number: 912, view: 'logs' },
+      })
+      assert.deepEqual(
+        f.calls.map(call => call.operation),
+        ['repository', 'job_log']
+      )
+      assert.ok(
+        f.calls.every(
+          call => call.repository === f.source.name && call.profile === f.source.profile
+        )
+      )
+      assert.equal(result.items[0].data.text, 'Actual native CI log')
+      assert.equal(result.items[0].data.jobId, '912')
+      assert.equal(result.hasMore, false)
+      assert.equal(result.nextCursor, undefined)
+      assert.equal(result.nextCheckpoint, undefined)
+      assert.equal(result.readOnly, true)
+      assert.ok(result.items[0].id.includes('912'))
+      f.state.repoId = 43
+      const before = f.calls.length
+      await assert.rejects(
+        f.provider.readSource(f.ctx, {
+          source: f.source,
+          query: { entityKind: 'job', number: 912, view: 'logs' },
+        }),
+        /repository identity changed/
+      )
+      assert.equal(f.calls.length, before + 1)
+    }
+  )
+
+  test(
+    platform + ' rejects mismatched logs and preserves native failures without another route',
+    async () => {
+      for (const reply of [
+        { jobId: '913', text: 'Foreign job' },
+        { jobId: '912' },
+        { jobId: 912, text: 'Wrong shape' },
+      ]) {
+        const f = fixture(platform, () => reply)
+        await assert.rejects(
+          f.provider.readSource(f.ctx, {
+            source: f.source,
+            query: { entityKind: 'job', number: 912, view: 'logs' },
+          }),
+          /does not match the requested job/
+        )
+      }
+      const failure = Object.assign(new Error('CI log read timed out'), {
+        code: 'git_connection_invalid',
+      })
+      const f = fixture(platform, () => {
+        throw failure
+      })
+      await assert.rejects(
+        f.provider.readSource(f.ctx, {
+          source: f.source,
+          query: { entityKind: 'job', number: 912, view: 'logs' },
+        }),
+        error => error === failure
+      )
+      assert.deepEqual(
+        f.calls.map(call => call.operation),
+        ['repository', 'job_log']
+      )
+    }
+  )
+}

@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 const PAGE_SIZE = 100
 const TTL_MS = 30 * 60 * 1000
 const SHA = /^[a-fA-F0-9]{40}$/
-const VIEWS = ['details', 'comments', 'checks', 'statuses', 'reviews']
+const VIEWS = ['details', 'comments', 'checks', 'statuses', 'reviews', 'logs']
 const invalid = message => Object.assign(new Error(message), { code: 'git_connection_invalid' })
 const cursorInvalid = () =>
   Object.assign(
@@ -108,7 +108,7 @@ export function createGitSourceReader(platform, parseProfile) {
         query.entityKind,
         query.number,
         query.view,
-        rowId(row),
+        query.view === 'logs' ? row.jobId : rowId(row),
       ]),
       data: row,
     }))
@@ -153,13 +153,16 @@ function validateQuery(query) {
     typeof query !== 'object' ||
     Array.isArray(query) ||
     Object.keys(query).some(key => !['entityKind', 'number', 'view', 'sha'].includes(key)) ||
-    !['issue', 'change_request'].includes(query.entityKind) ||
+    !['issue', 'change_request', 'job'].includes(query.entityKind) ||
     !Number.isSafeInteger(query.number) ||
     query.number < 1 ||
     !VIEWS.includes(query.view) ||
-    (query.view !== 'details' &&
-      query.view !== 'comments' &&
-      query.entityKind !== 'change_request') ||
+    (query.entityKind === 'job'
+      ? query.view !== 'logs'
+      : query.view === 'logs' ||
+        (query.view !== 'details' &&
+          query.view !== 'comments' &&
+          query.entityKind !== 'change_request')) ||
     (query.sha !== undefined &&
       (typeof query.sha !== 'string' ||
         !SHA.test(query.sha) ||
@@ -177,6 +180,7 @@ function headSha(platform, data) {
 }
 
 function readArguments(platform, query, state) {
+  if (query.view === 'logs') return { operation: 'job_log', jobId: query.number }
   const common = { entityKind: query.entityKind, number: query.number, page: state.page }
   if (query.view === 'statuses')
     return {
@@ -205,13 +209,18 @@ function readArguments(platform, query, state) {
 }
 
 function isList(platform, view) {
-  return view !== 'details' && !(platform === 'gitlab' && view === 'reviews')
+  return !['details', 'logs'].includes(view) && !(platform === 'gitlab' && view === 'reviews')
 }
 
 function readRows(platform, query, data) {
   if (!isList(platform, query.view)) {
     if (!data || typeof data !== 'object' || Array.isArray(data))
       throw invalid('Invalid native Git object response')
+    if (
+      query.view === 'logs' &&
+      (typeof data.text !== 'string' || data.jobId !== String(query.number))
+    )
+      throw invalid('Native Git log does not match the requested job')
     return [data]
   }
   const rows = platform === 'github' && query.view === 'checks' ? data?.check_runs : data
