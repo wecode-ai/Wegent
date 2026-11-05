@@ -14,7 +14,9 @@ export async function verifyWindowsComponentPublication({ resources, environment
     `
 param([string]$Path, [int]$ReleaseAfterMs = 0)
 $ErrorActionPreference = 'Stop'
-if ([System.IO.Directory]::Exists($Path)) {
+$prefix = [string]::Concat([char]92, [char]92, '?', [char]92)
+$nativePath = if ($Path.StartsWith($prefix)) { $Path } else { $prefix + $Path }
+if ([System.IO.Directory]::Exists($nativePath)) {
   Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
@@ -26,9 +28,8 @@ public static class NativeDirectoryHolder {
 }
 '@
   # Lock the directory being renamed; a child file handle does not fence its parent.
-  $nativePath = [string]::Concat([char]92, [char]92, '?', [char]92, $Path)
   $handle = [NativeDirectoryHolder]::CreateFile(
-    $nativePath, 0x80000000, 3, [IntPtr]::Zero, 3, 0x02000000, [IntPtr]::Zero
+    $nativePath, [uint32]2147483648, 3, [IntPtr]::Zero, 3, 0x02000000, [IntPtr]::Zero
   )
   if ($handle.IsInvalid) {
     throw [System.ComponentModel.Win32Exception]::new(
@@ -36,7 +37,7 @@ public static class NativeDirectoryHolder {
     )
   }
 } else {
-  $handle = [System.IO.File]::Open($Path, 'Open', 'Read', 'ReadWrite')
+  $handle = [System.IO.File]::Open($nativePath, 'Open', 'Read', 'ReadWrite')
 }
 try {
   [Console]::Out.WriteLine('held')
@@ -61,6 +62,8 @@ import { pathToFileURL } from 'node:url'
 const input = JSON.parse(process.argv[2])
 app.setPath('userData', join(input.root, 'electron'))
 const originalSymlink = fs.symlink
+const compositionRoot = join(input.root, 'data', 'managed-components', 'composed', 'wework-core-plugins')
+const runtimeRoot = join(input.root, 'runtimes')
 let child
 let closed
 let occupiedPublications = 0
@@ -68,15 +71,23 @@ async function holdFile(file, releaseAfterMs = 0) {
   child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-File', input.holder,
     '-Path', file, '-ReleaseAfterMs', String(releaseAfterMs)],
     { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
+  let stderr = ''
+  child.stderr.on('data', data => { stderr = (stderr + data.toString()).slice(-8000) })
   closed = new Promise((accept, reject) => {
     child.once('error', reject)
-    child.once('close', code => code === 0 ? accept(code) : reject(new Error('Native holder failed')))
+    child.once('close', code => code === 0 ? accept(code) :
+      reject(new Error('Native holder failed (' + code + '): ' + stderr)))
   })
-  child.stderr.resume()
+  // Publication workers can fail before anyone awaits the eventual close receipt.
+  closed.catch(() => {})
   await new Promise((accept, reject) => {
     let output = ''
     const timer = setTimeout(() => reject(new Error('Native file holder did not start')), 10000)
     child.once('error', error => { clearTimeout(timer); reject(error) })
+    child.once('close', code => {
+      clearTimeout(timer)
+      reject(new Error('Native holder exited before release (' + code + '): ' + stderr))
+    })
     child.stdout.on('data', data => {
       output += data.toString()
       if (!output.includes(String.fromCharCode(10))) return
@@ -86,8 +97,12 @@ async function holdFile(file, releaseAfterMs = 0) {
   })
 }
 fs.symlink = async (source, target, type) => {
-  if (basename(source).startsWith('.content-')) {
-    const file = basename(dirname(target)) === 'wework-core-plugins'
+  const parent = dirname(target)
+  // Archive extraction also publishes immutable trees in parallel. This checkpoint
+  // occupies the composed plugin tree and the requested runtime, not those inputs.
+  if (basename(source).startsWith('.content-') &&
+      (parent === compositionRoot || parent === runtimeRoot)) {
+    const file = parent === compositionRoot
       ? join('wework-app', 'client.js') : 'runtime.json'
     await holdFile(source)
     await assert.rejects(fs.rename(source, source + '.blocked'), error =>
@@ -119,7 +134,6 @@ try {
   assert.deepEqual(await fs.readdir(join(input.root, 'data', 'managed-components', 'composed', 'wework-core-plugins')), entries)
   const { materializeBundledRuntimes } = await import(pathToFileURL(join(input.resources,
     'app.asar/dist/runtime/bundled-runtime-materializer.js')).href)
-  const runtimeRoot = join(input.root, 'runtimes')
   await materializeBundledRuntimes(join(input.resources, 'harness-runtime'), runtimeRoot, ['core'])
   assert.equal(occupiedPublications, 2)
   await materializeBundledRuntimes(join(input.resources, 'harness-runtime'), runtimeRoot, ['core'])
