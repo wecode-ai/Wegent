@@ -390,7 +390,9 @@ test('source reads use only the selected account and group or sender without col
     assert.equal(result.items[0].senderId, 'alice')
     assert.equal(result.items[0].conversationId, direct ? 'dm-a' : 'selected')
     assert.equal(result.readOnly, true)
-    assert.equal(result.hasMore, false)
+    assert.equal(result.hasMore, true)
+    assert.equal(result.readPhase, 'mentions')
+    assert.equal(typeof result.nextCursor, 'string')
     assert.equal(result.range.since, since)
     assert.ok(Date.parse(result.range.until) >= Date.parse(since))
     assert.equal(result.nextCheckpoint, undefined)
@@ -438,6 +440,7 @@ test('invalid or wildcard read scopes and unbounded ranges fail before any CLI o
     { source: { ...source, providerId: 'other' } },
     { source: { ...source, scope: 'all', id: '*' } },
     { source: { ...source, id: '*' } },
+    { source: { ...source, id: 'selected,other' } },
     { source: { ...source, kind: 'other' } },
     { source: { ...source, profile: '' } },
     { source, since: '' },
@@ -520,4 +523,105 @@ test('source reads reject invalid message or pagination results and accept an em
   await assert.rejects(createProvider().readSource(fixture.ctx, { source: readSource() }), {
     code: 'dingtalk_response_invalid',
   })
+})
+
+test('source read cursors finish mention pages then the same conversation including own replies', async () => {
+  const calls = []
+  const source = readSource()
+  const first = conversation('selected', false, 'alice')
+  const followup = conversation('selected', false, 'own')
+  followup.messages[0].content = 'I have handled this question.'
+  followup.messages[0].quotedMessage = { openMessageId: 'selected:alice', content: 'Review this' }
+  const ctx = {
+    cli: {
+      async callTool(_alias, input) {
+        calls.push(structuredClone(input))
+        if (input.tool === 'listProfiles')
+          return { profiles: [{ profile: 'corp:user', userName: 'Me', userId: 'me' }] }
+        if (input.tool === 'searchUsers')
+          return { result: [{ userId: 'me', openDingTalkId: 'own' }] }
+        if (input.tool === 'listMentions')
+          return { result: { conversationMessagesList: [first], hasMore: false, nextCursor: '0' } }
+        assert.equal(input.tool, 'searchMessages')
+        assert.equal(input.arguments.conversationIds, source.id)
+        assert.equal(input.arguments.senderIds, undefined)
+        return {
+          result: {
+            conversationMessagesList: [
+              input.arguments.cursor === '0' ? first : followup,
+              conversation('other', false, 'own'),
+            ],
+            hasMore: input.arguments.cursor === '0',
+            nextCursor: input.arguments.cursor === '0' ? 'next' : '0',
+          },
+        }
+      },
+    },
+  }
+  const provider = createProvider()
+  const firstPage = await provider.readSource(ctx, { source, limit: 1 })
+  assert.equal(firstPage.contextComplete, false)
+  const context = await provider.readSource(ctx, { source, cursor: firstPage.nextCursor })
+  assert.equal(context.readPhase, 'conversation')
+  assert.equal(context.items.length, 1)
+  assert.equal(context.hasMore, true)
+  const last = await provider.readSource(ctx, { source, cursor: context.nextCursor })
+  assert.equal(last.hasMore, false)
+  assert.equal(last.contextComplete, true)
+  assert.equal(last.nextCursor, undefined)
+  assert.equal(last.items[0].senderId, 'own')
+  assert.equal(last.items[0].isOwn, true)
+  assert.match(last.items[0].text, /handled/)
+  assert.match(last.items[0].quotedMessage.text, /selected:alice/)
+  assert.ok(last.items.every(item => item.conversationId === source.id))
+  assert.deepEqual(last.range, firstPage.range)
+  assert.ok(
+    calls
+      .filter(call => call.tool === 'searchMessages')
+      .every(
+        call =>
+          call.arguments.start === firstPage.range.since &&
+          call.arguments.end === firstPage.range.until
+      )
+  )
+})
+
+test('source read cursors retain overflow from a provider page without dropping messages', async () => {
+  const { ctx } = readFixture([
+    conversation('selected', false, 'alice'),
+    conversation('selected', false, 'bob'),
+  ])
+  const provider = createProvider()
+  const source = readSource()
+  let page = await provider.readSource(ctx, { source, limit: 1 })
+  const phases = [page.readPhase]
+  const ids = [page.items[0].id]
+  for (let count = 0; page.hasMore && count < 5; count++) {
+    page = await provider.readSource(ctx, { source, cursor: page.nextCursor })
+    phases.push(page.readPhase)
+    ids.push(...page.items.map(item => item.id))
+  }
+  assert.equal(page.hasMore, false)
+  assert.deepEqual(phases, ['mentions', 'mentions', 'conversation', 'conversation'])
+  assert.deepEqual(ids, ['selected:alice', 'selected:bob', 'selected:alice', 'selected:bob'])
+})
+
+test('read cursors reject changed sources, windows, limits, tampering and another provider instance before CLI access', async () => {
+  const { ctx, calls } = readFixture([conversation('selected', false, 'alice')])
+  const provider = createProvider()
+  const source = readSource()
+  const first = await provider.readSource(ctx, { source, limit: 2 })
+  const before = calls.length
+  for (const input of [
+    { source: { ...source, id: 'other' }, cursor: first.nextCursor },
+    { source: { ...source, profile: 'another-account' }, cursor: first.nextCursor },
+    { source, cursor: `${first.nextCursor}x` },
+    { source, cursor: first.nextCursor, since: new Date(Date.now() - 3600000).toISOString() },
+    { source, cursor: first.nextCursor, limit: 3 },
+  ])
+    await assert.rejects(provider.readSource(ctx, input), { code: 'source_read_cursor_invalid' })
+  await assert.rejects(createProvider().readSource(ctx, { source, cursor: first.nextCursor }), {
+    code: 'source_read_cursor_invalid',
+  })
+  assert.equal(calls.length, before)
 })

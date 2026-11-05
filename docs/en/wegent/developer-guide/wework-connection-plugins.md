@@ -81,6 +81,14 @@ The DSH host publishes guidance only for currently registered plugins. On every 
 
 Connecting only makes the guidance available; it does not create a business reminder. Subsequent mail, mentions, PR changes and pipeline failures trigger assessment through the existing event protocol. Read-only preparation and useful findings remain distinct from external actions and ongoing responsibilities. Plugin guidance never expands existing authorization.
 
+## Read pagination is separate from collection progress
+
+Providers that support continuations declare `readPagination: "cursor"`, accept optional `cursor` in `readSource`, and return a nonempty `nextCursor` whenever `hasMore` is true. The framework validates and forwards an opaque string of at most 8192 UTF-8 bytes, rechecking the current user, role and exact source authorization on every page. Providers without this capability reject read cursors instead of silently ignoring them.
+
+The first read uses `since` and a `limit` of 1–20; continuation only needs the same `source` and `cursor`. The framework does not inject a new default start time or page size into continuations. Providers must bind cursors to the source/account, fixed initial time window and page size, rejecting changed explicit windows, tampering and cross-source replay. Cursors expire; an in-memory signing key can invalidate them across plugin restarts without reading or moving account credentials.
+
+Read cursors carry query position only. They must not update processing state, collection checkpoints or intake events. The model should finish available necessary pages and follow-up context before deciding whether action is still needed. Unfinished retrieval, `hasMore` and implementation limitations are not ordinary user deliverables.
+
 ## Provider contract
 
 | Method                          | Behavior                                                                                         |

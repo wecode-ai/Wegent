@@ -28,6 +28,8 @@ export interface ConnectionDescriptor {
   eventTypes: string[]
   /** Mutable event types must identify the object and its opaque source version. */
   versionedEventTypes: string[]
+  /** Opaque source-bound read cursors, separate from collection checkpoints. */
+  readPagination?: 'cursor'
   /** Domain guidance, scoped to current connections; never permissions or global instructions. */
   assistance?: {
     observe: string[]
@@ -190,7 +192,7 @@ export interface ConnectionProvider {
   ): Promise<unknown>
   readSource?(
     context: ConnectionContext,
-    input: { source: ConnectionSource; since?: string; limit?: number }
+    input: { source: ConnectionSource; since?: string; limit?: number; cursor?: string }
   ): Promise<{
     items: Array<{
       id: string
@@ -202,6 +204,7 @@ export interface ConnectionProvider {
       truncated?: boolean
     }>
     hasMore: boolean
+    nextCursor?: string
     range?: { since: string; until: string }
     readOnly?: true
   }>

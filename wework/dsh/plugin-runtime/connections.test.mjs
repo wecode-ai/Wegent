@@ -645,3 +645,82 @@ test('every bundled external connection declares useful assistance for the unifi
     }
   }
 })
+
+test('read pagination is an explicit capability and never silently consumes unsupported cursors', async () => {
+  for (const pagination of [undefined, 'cursor']) {
+    const root = await mkdtemp(join(tmpdir(), 'connection-read-pagination-'))
+    const manifest = declaration()
+    const descriptor = manifest.wework.connections.providers[0]
+    descriptor.readPagination = pagination
+    const path = join(root, 'package.json')
+    await writeFile(path, JSON.stringify(manifest))
+    const registry = new ConnectionRegistry({
+      inventory: async () => [installed()],
+      satisfies,
+      context: value => value,
+    })
+    let reads = 0
+    let validations = 0
+    let result = { items: [], hasMore: true, nextCursor: 'opaque-read-page-2' }
+    try {
+      await registry.register({ effect() {} }, pathToFileURL(path), {
+        inbox: {
+          check: async () => ({ status: 'ready' }),
+          listResources: async () => ({ items: [] }),
+          validate: async () => {
+            validations++
+          },
+          initialize: async () =>
+            assert.fail('Read pagination must not initialize a collection checkpoint'),
+          collect: async () => assert.fail('Read pagination must not collect events'),
+          readSource: async () => {
+            reads++
+            return result
+          },
+        },
+      })
+      const source = {
+        providerId: '@test/mail/inbox',
+        profile: 'account',
+        kind: 'folder',
+        id: 'selected',
+      }
+      if (!pagination) {
+        await assert.rejects(
+          registry.call(source.providerId, 'readSource', { source, cursor: 'page' }),
+          { code: 'source_read_cursor_unsupported' }
+        )
+        assert.equal(reads, 0)
+        continue
+      }
+      assert.equal(
+        (await registry.call(source.providerId, 'readSource', { source })).nextCursor,
+        result.nextCursor
+      )
+      result = { items: [], hasMore: false }
+      await registry.call(source.providerId, 'readSource', { source, cursor: 'opaque-read-page-2' })
+      assert.equal(validations, 2)
+      assert.equal(reads, 2)
+      const before = reads
+      for (const cursor of ['', null, 'x'.repeat(8193), '文'.repeat(3000)]) {
+        await assert.rejects(registry.call(source.providerId, 'readSource', { source, cursor }), {
+          code: 'invalid_connection',
+        })
+      }
+      assert.equal(reads, before)
+      for (const invalid of [
+        { items: [], hasMore: true },
+        { items: [], hasMore: true, nextCursor: '' },
+        { items: [], hasMore: false, nextCursor: 'unexpected' },
+      ]) {
+        result = invalid
+        await assert.rejects(registry.call(source.providerId, 'readSource', { source }), {
+          code: 'invalid_connection',
+        })
+      }
+    } finally {
+      registry.dispose()
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+})

@@ -128,6 +128,10 @@ export function parseConnections(manifest) {
       JSON.stringify(provider.collectionModes) === '["poll"]',
       'Only poll collection is supported'
     )
+    requireValue(
+      provider.readPagination === undefined || provider.readPagination === 'cursor',
+      'Unsupported source read pagination'
+    )
     if (provider.assistance !== undefined) {
       const fields = ['observe', 'prepare', 'notifyWhen', 'confirmBefore']
       requireValue(
@@ -293,6 +297,10 @@ export class ConnectionRegistry {
         !provider.actions?.length || typeof implementation.executeAction === 'function',
         `Missing connection action implementation: ${id}`
       )
+      requireValue(
+        !provider.readPagination || typeof implementation.readSource === 'function',
+        `Missing paginated source read implementation: ${id}`
+      )
       return { id, definition, provider, implementation, controller: new AbortController() }
     })
     for (const entry of entries) this.entries.set(entry.id, entry)
@@ -396,6 +404,14 @@ export class ConnectionRegistry {
       throw new ConnectionError('connection_unavailable', 'Connection plugin was stopped')
     const context = this.contextFor(entry, dependencies)
     const params = structuredClone(input)
+    if (method === 'readSource' && params.cursor !== undefined) {
+      if (entry.provider.readPagination !== 'cursor')
+        throw new ConnectionError(
+          'source_read_cursor_unsupported',
+          'This provider does not support read cursors'
+        )
+      requireValue(validReadCursor(params.cursor), 'Invalid source read cursor')
+    }
     if (method === 'listResources' && params.scope === 'all') {
       requireValue(
         entry.provider.allResourceKinds?.includes(params.kind),
@@ -508,6 +524,17 @@ function validateProviderResult(provider, method, result) {
         typeof result.hasMore === 'boolean',
       'Invalid source read result'
     )
+    requireValue(
+      result.nextCursor === undefined ||
+        (provider.readPagination === 'cursor' &&
+          result.hasMore &&
+          validReadCursor(result.nextCursor)),
+      'Invalid source read continuation'
+    )
+    requireValue(
+      provider.readPagination !== 'cursor' || !result.hasMore || validReadCursor(result.nextCursor),
+      'Missing source read continuation'
+    )
   }
   if (method === 'collect') {
     requireValue(
@@ -573,6 +600,12 @@ function validateProviderResult(provider, method, result) {
       'Missing resource pagination cursor'
     )
   }
+}
+
+function validReadCursor(value) {
+  return (
+    typeof value === 'string' && value.trim().length > 0 && Buffer.byteLength(value, 'utf8') <= 8192
+  )
 }
 
 function validEventVersion(provider, event) {

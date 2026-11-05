@@ -186,6 +186,28 @@ fn authorized_source(
 }
 
 fn source_read_input(source: Value, arguments: &Value) -> Result<Value, String> {
+    if let Some(cursor) = arguments.get("cursor") {
+        let cursor = cursor
+            .as_str()
+            .filter(|value| !value.trim().is_empty() && value.len() <= 8192)
+            .ok_or("source_read_cursor_invalid: Supply a bounded opaque read cursor")?;
+        let mut input = json!({"source":source,"cursor":cursor});
+        if let Some(limit) = arguments.get("limit") {
+            let limit = limit
+                .as_u64()
+                .filter(|limit| (1..=20).contains(limit))
+                .ok_or("source_read_range_invalid: limit must be an integer from 1 to 20")?;
+            input["limit"] = json!(limit);
+        }
+        if let Some(since) = arguments.get("since") {
+            let since = since
+                .as_str()
+                .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+                .ok_or("source_read_range_invalid: since must be an RFC3339 timestamp")?;
+            input["since"] = json!(since.to_rfc3339());
+        }
+        return Ok(input);
+    }
     let now = chrono::Utc::now();
     let since = match arguments.get("since") {
         None => now - chrono::Duration::days(1),
@@ -429,5 +451,32 @@ mod tests {
         ] {
             assert!(source_read_input(source.clone(), &arguments).is_err());
         }
+    }
+
+    #[test]
+    fn source_read_cursor_continuations_do_not_invent_a_new_window_or_bypass_current_scope() {
+        let source = json!({"providerId":"@company/events/source","profile":"account","kind":"folder","id":"selected","boundary":{"cursor":"collection"}});
+        let input =
+            source_read_input(source.clone(), &json!({"cursor":"opaque-read-page"})).unwrap();
+        assert_eq!(input, json!({"source":source,"cursor":"opaque-read-page"}));
+        assert!(input.get("since").is_none());
+        assert!(input.get("limit").is_none());
+        for arguments in [
+            json!({"cursor":""}),
+            json!({"cursor":null}),
+            json!({"cursor":"x".repeat(8193)}),
+            json!({"cursor":"page","limit":21}),
+            json!({"cursor":"page","since":"invalid"}),
+        ] {
+            assert!(source_read_input(source.clone(), &arguments).is_err());
+        }
+        let mut settings = json!({"userId":7,"executionDeviceId":"mac","primary":{"connections":[source]},"roles":[]});
+        assert!(authorized_source(&settings, &identity(None), &input["source"]).is_ok());
+        settings["primary"]["connections"] = json!([]);
+        assert!(authorized_source(&settings, &identity(None), &input["source"]).is_err());
+        settings["roles"] = json!([{"id":"other","connections":[source]}]);
+        assert!(authorized_source(&settings, &identity(None), &input["source"]).is_err());
+        assert!(authorized_source(&settings, &identity(Some("other")), &input["source"]).is_ok());
+        assert_eq!(input["source"]["boundary"]["cursor"], "collection");
     }
 }

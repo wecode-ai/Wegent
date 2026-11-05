@@ -1,7 +1,10 @@
+import { createReadCursor } from './read-cursor.js'
+
 const PROVIDER_ID = '@wegent/dsh-connection-dingtalk/dingtalk'
 
 export function createProvider() {
   const identities = new Map()
+  const readCursors = createReadCursor()
   return {
     async check(ctx) {
       let authTarget
@@ -76,24 +79,43 @@ export function createProvider() {
         source?.providerId !== PROVIDER_ID ||
         !['group', 'direct'].includes(source.kind) ||
         source.scope !== undefined ||
-        required(source, 'id') === '*'
+        required(source, 'id') === '*' ||
+        /[,\r\n]/.test(source.id)
       )
         throw invalid('Read an exact connected conversation')
-      const window = readWindow(input)
+      const state =
+        input.cursor === undefined
+          ? {
+              ...readWindow(input),
+              phase: 'mentions',
+              offset: 0,
+              issuedAt: Date.now(),
+              hasTargets: false,
+              topicsPending: false,
+            }
+          : readCursors.decode(source, input)
       const selfId = await ownIdentity(ctx, required(source, 'profile'), identities)
-      const page = await readMessagePage(ctx, source, window, selfId)
-      const items = page.events.slice(0, window.limit).map(event => {
-        if (!Number.isFinite(Date.parse(event.at))) throw invalid('Invalid message time')
-        return {
-          ...event,
-          text: event.text.slice(0, 20000),
-          truncated: event.text.length > 20000,
-        }
-      })
+      const page =
+        state.phase === 'mentions'
+          ? await readMessagePage(ctx, source, pageWindow(state), selfId)
+          : await readConversationPage(ctx, source, state, selfId)
+      if (page.events.length > 1000 || state.offset > page.events.length)
+        throw invalid('Invalid message page bounds')
+      const selected = page.events.slice(state.offset, state.offset + state.limit)
+      const items = selected.map(event => boundedMessage(event, selfId, state.limit))
+      const next = nextReadState(source, state, page, selected)
       return {
         items,
-        range: { since: window.start, until: window.end },
-        hasMore: page.hasMore || page.events.length > window.limit,
+        readPhase: state.phase,
+        range: { since: state.start, until: state.end },
+        hasMore: next !== null,
+        ...(next ? { nextCursor: readCursors.encode(source, next) } : {}),
+        contextComplete:
+          next === null &&
+          !(
+            state.topicsPending ||
+            (state.phase === 'mentions' && selected.some(event => event.topicId))
+          ),
         readOnly: true,
       }
     },
@@ -134,6 +156,60 @@ export function createProvider() {
   }
 }
 
+function pageWindow(state) {
+  return { start: state.start, end: state.end, limit: state.limit, cursor: state.cursor }
+}
+
+async function readConversationPage(ctx, source, state, ownId) {
+  const conversation = source.kind === 'group' ? source.id : required(state, 'conversationId')
+  if (/[,\r\n]/.test(conversation)) throw invalid('Read one exact conversation')
+  const response = await readTool(ctx, 'searchMessages', {
+    ...pageWindow(state),
+    limit: String(state.limit),
+    profile: required(source, 'profile'),
+    conversationIds: conversation,
+  })
+  return messagePage(source, response, ownId, state.cursor, true, conversation)
+}
+
+function nextReadState(source, state, page, selected) {
+  const next = {
+    ...state,
+    hasTargets: state.hasTargets || (state.phase === 'mentions' && selected.length > 0),
+    topicsPending:
+      state.topicsPending || (state.phase === 'mentions' && selected.some(event => event.topicId)),
+    conversationId: state.conversationId ?? selected[0]?.conversationId,
+    offset: state.offset + selected.length,
+  }
+  if (next.offset < page.events.length) return next
+  if (page.hasMore) return { ...next, offset: 0, cursor: page.nextCursor }
+  if (state.phase === 'mentions' && next.hasTargets)
+    return {
+      ...next,
+      phase: 'conversation',
+      offset: 0,
+      cursor: '0',
+      conversationId: source.kind === 'group' ? source.id : next.conversationId,
+    }
+  return null
+}
+
+function boundedMessage(event, ownId, limit = 20) {
+  if (!Number.isFinite(Date.parse(event.at))) throw invalid('Invalid message time')
+  const budget = Math.min(20000, Math.floor(24000 / limit))
+  return {
+    ...event,
+    text: event.text.slice(0, budget),
+    truncated: event.text.length > budget,
+    isOwn: event.senderId === ownId,
+  }
+}
+
+function boundedQuote(value) {
+  const json = JSON.stringify(value)
+  return { text: json.slice(0, 2000), truncated: json.length > 2000 }
+}
+
 function readWindow(input) {
   const now = Date.now()
   const start = input.since === undefined ? new Date(now - 86400000).toISOString() : input.since
@@ -162,15 +238,19 @@ async function readMessagePage(ctx, source, window, ownId) {
     source.kind === 'group' ? 'listMentions' : 'searchMessages',
     args
   )
-  const events = normalizeMessages(source, response, ownId)
+  return messagePage(source, response, ownId, window.cursor)
+}
+
+function messagePage(source, response, ownId, cursor, context = false, conversation) {
+  const events = normalizeMessages(source, response, ownId, context, conversation)
   if (typeof response.result?.hasMore !== 'boolean') throw invalid('Missing pagination state')
   const hasMore = response.result.hasMore
   const nextCursor = hasMore ? required(response.result, 'nextCursor') : '0'
-  if (hasMore && nextCursor === window.cursor) throw invalid('Pagination cursor did not advance')
+  if (hasMore && nextCursor === cursor) throw invalid('Pagination cursor did not advance')
   return { events, hasMore, nextCursor }
 }
 
-export function normalizeMessages(source, response, ownId) {
+export function normalizeMessages(source, response, ownId, context = false, expectedConversation) {
   if (
     response.success === true &&
     response.result?.hasMore === false &&
@@ -187,14 +267,15 @@ export function normalizeMessages(source, response, ownId) {
     if (direct !== (source.kind === 'direct')) continue
     const conversationId = required(conversation, 'openConversationId')
     if (!direct && source.scope !== 'all' && conversationId !== source.id) continue
+    if (expectedConversation && conversationId !== expectedConversation) continue
     if (!Array.isArray(conversation.messages)) throw invalid('Missing messages')
     for (const message of conversation.messages) {
       const sender = required(message, 'senderOpenDingTalkId')
       const manualSelfMention =
         !direct && message.sendType === 'user' && message.messageAiSendFlag === undefined
       if (
-        (sender === ownId && !manualSelfMention) ||
-        (direct && source.scope !== 'all' && sender !== source.id)
+        (sender === ownId && !manualSelfMention && !context) ||
+        (direct && source.scope !== 'all' && sender !== source.id && !(context && sender === ownId))
       )
         continue
       events.push({
@@ -207,6 +288,9 @@ export function normalizeMessages(source, response, ownId) {
         conversationId,
         quotedMessageId: message.quotedMessage?.openMessageId ?? null,
         topicId: message.openConvThreadId ?? null,
+        ...(context && message.quotedMessage
+          ? { quotedMessage: boundedQuote(message.quotedMessage) }
+          : {}),
         ...(source.scope === 'all'
           ? {
               resource: {
