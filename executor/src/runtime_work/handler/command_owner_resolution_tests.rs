@@ -68,7 +68,10 @@ async fn cleanup(handler: &RuntimeWorkRpcHandler, root: PathBuf) {
 async fn owner_abandonment_is_durable_idempotent_and_never_replays_unknown_execution() {
     let (handler, root, turn, resolve) = fixture("owner-resolution-durable");
     let review = handler
-        .command_receipt(json!({"taskId":"task-1","commandId":"command","userId":7}))
+        .dispatch_method(
+            "runtime.tasks.commands.get",
+            json!({"taskId":"task-1","commandId":"command","userId":7}),
+        )
         .await
         .unwrap();
     assert_eq!(review["state"], "recovery_required");

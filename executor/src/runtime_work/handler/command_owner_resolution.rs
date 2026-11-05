@@ -21,6 +21,30 @@ fn conflict() -> AppIpcError {
 }
 
 impl RuntimeWorkRpcHandler {
+    pub(in crate::runtime_work::handler) async fn review_command_receipt(
+        &self,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        let receipt = self.command_receipt(payload).await?;
+        if receipt["state"] == "recovery_required" {
+            let task = receipt["taskId"].as_str().unwrap_or_default();
+            let thread = receipt["native"][1]
+                .as_str()
+                .map(str::to_owned)
+                .or_else(|| self.local_task_link(task).and_then(|link| link.thread_id));
+            let native = if let Some(thread) = thread {
+                self.read_codex_recent_turns(&thread)
+                    .await
+                    .ok()
+                    .map(|snapshot| snapshot.diagnostic_summary())
+            } else {
+                None
+            };
+            self.log_command_resolution_control(task, "owner-review", native);
+        }
+        Ok(receipt)
+    }
+
     pub(in crate::runtime_work::handler) async fn resolve_command_owner(
         &self,
         payload: Value,
@@ -67,7 +91,7 @@ impl RuntimeWorkRpcHandler {
             return Err(conflict());
         }
         if self.command_resolution_is_busy(&task) {
-            return Err(active());
+            return Err(self.command_resolution_active(&task, "local-before-native", None));
         }
         let thread = command
             .native
@@ -78,12 +102,16 @@ impl RuntimeWorkRpcHandler {
             let state = self.read_codex_recent_turns(&thread).await.map_err(|_| AppIpcError::new(
                 "command_resolution_unavailable", "The original native execution could not be checked. It has not been retried or abandoned."))?;
             if !state.is_idle() {
-                return Err(active());
+                return Err(self.command_resolution_active(
+                    &task,
+                    "native-control",
+                    Some(state.diagnostic_summary()),
+                ));
             }
         }
         let _operation = self.turn_queue_operation.lock().await;
         if self.command_resolution_is_busy(&task) {
-            return Err(active());
+            return Err(self.command_resolution_active(&task, "local-before-commit", None));
         }
         self.check_command_resolution_owner(&command, user)?;
         let previous = self
@@ -134,6 +162,40 @@ impl RuntimeWorkRpcHandler {
             .map(|link| json!(link.title))
             .unwrap_or(Value::Null);
         Ok(receipt)
+    }
+
+    fn command_resolution_active(
+        &self,
+        task: &str,
+        stage: &str,
+        native: Option<Value>,
+    ) -> AppIpcError {
+        self.log_command_resolution_control(task, stage, native);
+        active()
+    }
+
+    fn log_command_resolution_control(&self, task: &str, stage: &str, native: Option<Value>) {
+        let preparing = self
+            .preparing_worktree_turns
+            .lock()
+            .expect("preparation map poisoned")
+            .contains_key(task);
+        let goal = self
+            .active_goal_turns
+            .lock()
+            .expect("active goal map poisoned")
+            .contains_key(task);
+        log_executor_event(
+            "Runtime owner resolution control",
+            &[
+                ("stage", stage.to_owned()),
+                ("local_active", self.is_active_local_task(task).to_string()),
+                ("local_queued", self.is_queued_local_task(task).to_string()),
+                ("local_preparing", preparing.to_string()),
+                ("local_goal", goal.to_string()),
+                ("native_control", native.unwrap_or(Value::Null).to_string()),
+            ],
+        );
     }
 
     fn command_resolution_is_busy(&self, task: &str) -> bool {
