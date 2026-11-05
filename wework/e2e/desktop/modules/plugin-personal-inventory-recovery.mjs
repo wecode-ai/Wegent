@@ -36,7 +36,17 @@ async function installFixture(control, resultDir) {
       name: NAME,
       version: '1.0.0',
       description: 'Verify personal membership survives stale Codex recovery.',
+      author: { name: 'Wework Desktop E2E' },
       skills: './skills/',
+      interface: {
+        displayName: 'Personal Inventory Recovery',
+        shortDescription: 'Verifies authoritative personal membership',
+        longDescription: 'Verifies removed personal plugins stay absent after runtime recovery.',
+        developerName: 'Wework Desktop E2E',
+        category: 'Developer Tools',
+        capabilities: ['Skills'],
+        defaultPrompt: 'Verify personal inventory recovery.',
+      },
     }),
     'skills/recovery/SKILL.md':
       '---\nname: recovery\ndescription: Verify personal inventory recovery.\n---\n',
@@ -95,6 +105,7 @@ export async function verifyPersonalInventoryRecovery({
   try {
     fixture = await installFixture(control, resultDir)
     await catalog()
+    await control.command('click', testId('new-chat-button'))
     await openComposerPluginPicker(control)
     await assertInventory(control, NAME, true)
     await control.command('click', testId('composer-plugin-picker-button'), { visible: true })
@@ -139,8 +150,12 @@ export async function verifyPersonalInventoryRecovery({
       timeoutMs: workbenchReadyTimeoutMs,
     })
     await catalog()
+    await control.command('click', testId('new-chat-button'))
+    await openComposerPluginPicker(control)
     report.afterReload = await inventory(control)
     assertMembership(report.afterReload, false)
+    await assertInventory(control, NAME, false)
+    await control.command('click', testId('composer-plugin-picker-button'), { visible: true })
     await control.command('click', testId('plugins-button'))
     await refreshPluginInventory(control)
     await assertInventory(control, NAME, false)
