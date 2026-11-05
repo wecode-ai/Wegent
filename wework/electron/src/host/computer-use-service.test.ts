@@ -29,6 +29,7 @@ vi.mock('@trycua/cua-driver/electron', () => ({
 const directories: string[] = []
 const services: ComputerUseService[] = []
 
+/** Start a private HTTP bridge with an injectable deadline and automatic cleanup. */
 async function openBridge(timeoutMs = 90_000) {
   const executorHome = await mkdtemp(join(tmpdir(), 'wework-computer-use-cancellation-'))
   directories.push(executorHome)
@@ -385,6 +386,10 @@ describe('ComputerUseService', () => {
       ok: false,
       error: 'Computer use service stopped',
     })
-    await expect(service.status()).resolves.toMatchObject({ enabled: false, running: false })
+    await expect(service.status()).resolves.toMatchObject({
+      enabled: false,
+      running: false,
+      error: null,
+    })
   })
 })

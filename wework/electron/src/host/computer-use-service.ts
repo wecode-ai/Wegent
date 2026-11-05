@@ -36,6 +36,7 @@ export class ComputerUseService {
   private operation = Promise.resolve()
   private nextOperationId = 0
 
+  /** Keep the host deadline below the MCP client's 120-second HTTP budget. */
   constructor(
     private readonly executorHome: string,
     private readonly platform: NodeJS.Platform = process.platform,
@@ -87,6 +88,7 @@ export class ComputerUseService {
     await openMacOSScreenRecordingSettings()
   }
 
+  /** Cancel the action without clearing admission before its driver call settles. */
   async stopCurrentAction(): Promise<ComputerUseStatus> {
     this.currentActionController?.abort(new Error('Computer use action stopped by user'))
     return this.snapshot()
@@ -155,6 +157,7 @@ export class ComputerUseService {
     }
   }
 
+  /** Close admission and cancel both tool execution and discovery before shutdown. */
   private async stopInternal(): Promise<void> {
     const driver = this.driver
     const server = this.server
@@ -188,6 +191,7 @@ export class ComputerUseService {
     }
   }
 
+  /** Authenticate bridge operations and retain single-action admission through cancellation. */
   private async handleRequest(
     request: import('node:http').IncomingMessage,
     response: import('node:http').ServerResponse,
@@ -245,12 +249,14 @@ export class ComputerUseService {
     }
   }
 
+  /** Bind a driver operation to its HTTP connection, deadline, and owning generation. */
   private async runOperation<Result>(
     name: string,
     response: import('node:http').ServerResponse,
     operation: (signal: AbortSignal) => Promise<Result>,
     controller = new AbortController()
   ): Promise<Result> {
+    const driver = this.driver
     const startedAt = Date.now()
     const operationId = ++this.nextOperationId
     this.operationControllers.add(controller)
@@ -258,21 +264,24 @@ export class ComputerUseService {
       console.info('[computer-use]', {
         operationId,
         pid: process.pid,
-        nativePid: this.driver?.pid,
+        nativePid: driver?.pid,
         tool: name,
         stage,
         elapsedMs: Date.now() - startedAt,
       })
     }
+    /** A normally completed response must not cancel the completed driver call. */
     const disconnected = (): void => {
       if (!response.writableFinished) {
         controller.abort(new Error('Computer use client disconnected'))
       }
     }
+    /** Reply promptly while keeping shutdown errors out of a newer driver generation. */
     const aborted = (): void => {
       log('cancelled')
-      this.error = errorMessage(controller.signal.reason)
-      writeResponse(response, 200, { ok: false, error: this.error })
+      const message = errorMessage(controller.signal.reason)
+      if (this.driver === driver) this.error = message
+      writeResponse(response, 200, { ok: false, error: message })
     }
     response.once('close', disconnected)
     controller.signal.addEventListener('abort', aborted, { once: true })

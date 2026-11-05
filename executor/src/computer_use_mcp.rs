@@ -13,6 +13,7 @@ pub fn is_computer_use_mcp_command() -> bool {
     env::args().nth(1).as_deref() == Some("computer-use-mcp-server")
 }
 
+/// Bind the private host bridge and serve the authenticated stdio transport.
 pub async fn run() -> Result<(), String> {
     let client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(5))
@@ -35,6 +36,7 @@ pub async fn run() -> Result<(), String> {
     .await
 }
 
+/// Keep transport input responsive while HTTP calls run, and cancel them on EOF.
 async fn run_with_io(
     bridge: BridgeClient,
     input: impl AsyncBufRead + Unpin,
@@ -84,6 +86,18 @@ async fn run_with_io(
             }
         };
         if request.get("method").and_then(Value::as_str) == Some("notifications/cancelled") {
+            if let Some(id) = request.get("id") {
+                write_response(
+                    &mut output,
+                    error_response(
+                        id.clone(),
+                        -32600,
+                        "notifications/cancelled must not have an id",
+                    ),
+                )
+                .await?;
+                continue;
+            }
             if let Some(id) = request.pointer("/params/requestId") {
                 if let Some(handle) = cancellations.remove(&id.to_string()) {
                     // Dropping the HTTP future closes the request. The host then aborts the SDK call.
@@ -117,6 +131,7 @@ async fn run_with_io(
     Ok(())
 }
 
+/// Serialize and flush one complete JSON-RPC frame without interleaved output.
 async fn write_response(
     output: &mut (impl AsyncWrite + Unpin),
     response: Value,
@@ -137,6 +152,7 @@ struct BridgeClient {
     token: String,
 }
 
+/// Dispatch an MCP message, omitting replies for notifications.
 async fn handle_request(client: &BridgeClient, request: &Value) -> Option<Value> {
     let id = request.get("id").cloned();
     let method = request
@@ -197,6 +213,7 @@ async fn handle_request(client: &BridgeClient, request: &Value) -> Option<Value>
     }
 }
 
+/// Forward one operation through the token-protected loopback bridge.
 async fn bridge_request(bridge: &BridgeClient, payload: Value) -> Result<Value, String> {
     let client = &bridge.client;
     let response = client
@@ -319,6 +336,20 @@ mod tests {
                 .await
                 .unwrap()
                 .unwrap();
+            let invalid_cancel = json!({"id":99,"method":"notifications/cancelled",
+                "params":{"requestId":request_id}});
+            writer
+                .write_all(format!("{invalid_cancel}\n").as_bytes())
+                .await
+                .unwrap();
+            let response = timeout(Duration::from_secs(2), reader.next_line())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+            assert_eq!(response["id"], 99);
+            assert_eq!(response["error"]["code"], -32600);
             writer
                 .write_all(b"{\"id\":2,\"method\":\"ping\"}\n")
                 .await
