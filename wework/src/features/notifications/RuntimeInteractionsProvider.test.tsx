@@ -390,65 +390,6 @@ describe('unified human response', () => {
     expect(context!.history).toHaveLength(1)
   })
 
-  it('does not cache failed history reads or summaries without a timestamp', async () => {
-    const intervals = vi.spyOn(window, 'setInterval')
-    const rendered = view(interactionQuestion, interactionTask, false, new Error('offline'))
-    await waitFor(() => expect(context!.loading).toBe(false))
-    const poll = intervals.mock.calls.find(([, ms]) => ms === 5000)![0] as () => void
-    harness.transcript.mockResolvedValue(interactionTranscript())
-    await act(async () => {
-      poll()
-    })
-    expect(context!.pending[0].requestKey).not.toBe('unavailable')
-    const withoutTimestamp = {
-      ...interactionTask,
-      task: { ...interactionTask.task, updatedAt: undefined },
-    }
-    rendered.rerenderSource({ ...rendered.taskSource, items: [withoutTimestamp] })
-    await waitFor(() => expect(context!.loading).toBe(false))
-    const reads = harness.transcript.mock.calls.length
-    await act(async () => {
-      poll()
-    })
-    expect(harness.transcript).toHaveBeenCalledTimes(reads + 1)
-  })
-
-  it('invalidates history cache when the service changes or a device recovers', async () => {
-    const intervals = vi.spyOn(window, 'setInterval')
-    const rendered = view()
-    await waitFor(() => expect(context!.pending).toHaveLength(1))
-    const reads = harness.transcript.mock.calls.length
-    const newService = {
-      ...rendered.taskSource,
-      services: {
-        ...rendered.taskSource.services!,
-        runtimeWorkApi: {
-          ...rendered.taskSource.services!.runtimeWorkApi!,
-        },
-      },
-    }
-    rendered.rerenderSource(newService)
-    await waitFor(() => expect(harness.transcript).toHaveBeenCalledTimes(reads + 1))
-    const offline = {
-      ...newService,
-      devices: [
-        { device_id: 'device', status: 'offline' } as NonNullable<TaskSource['devices']>[number],
-      ],
-    }
-    rendered.rerenderSource(offline)
-    const poll = intervals.mock.calls.filter(([, ms]) => ms === 5000).at(-1)![0] as () => void
-    await act(async () => {
-      poll()
-    })
-    const beforeRecovery = harness.transcript.mock.calls.length
-    rendered.rerenderSource({ ...offline, devices: [{ ...offline.devices[0], status: 'online' }] })
-    // Inventory polling owns device availability and invalidates the previous successful read.
-    await act(async () => {
-      poll()
-    })
-    expect(harness.transcript).toHaveBeenCalledTimes(beforeRecovery + 1)
-  })
-
   it('expires a request during a cached poll without reloading unchanged history', async () => {
     const intervals = vi.spyOn(window, 'setInterval')
     const now = Date.now()

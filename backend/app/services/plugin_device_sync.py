@@ -305,6 +305,8 @@ async def sync_installed_plugin_on_device(
     previous: DeviceCapabilitySyncResponse | None = None,
 ) -> DeviceCapabilitySyncResponse | None:
     """Finish the requesting device's sync with a persisted, current ACK."""
+    if not device_id:
+        return previous
     result = previous
     for attempt in range(1, DESIRED_STATE_SYNC_ATTEMPTS + 1):
         result = await _sync_installed_plugin_once(
@@ -314,7 +316,7 @@ async def sync_installed_plugin_on_device(
             installed_id=installed_id,
             previous=previous,
         )
-        if not device_id or result is None or not result.success:
+        if result is None or not result.success:
             return result
         try:
             superseded = await run_plugin_operation(
@@ -342,8 +344,9 @@ async def sync_installed_plugin_on_device(
             installed_id,
             attempt,
         )
+        previous = result
     return deferred_plugin_sync(
-        PluginWriteError("plugin_sync_superseded"),
+        PluginWriteError("plugin_write_conflict"),
         user_id=user_id,
         device_id=device_id,
         stage="plugin_ack",
@@ -380,98 +383,6 @@ def _plugin_ack_needs_reconciliation(
         generation = snapshot["plugin_sync"]["generation"]
         return generation < plugin_snapshot_watermark(state, canonical_id, installed_id)
     return False
-
-
-async def _sync_installed_plugin_once(
-    db: Session,
-    *,
-    user_id: int,
-    device_id: str | None,
-    installed_id: int,
-    previous: DeviceCapabilitySyncResponse | None,
-) -> DeviceCapabilitySyncResponse | None:
-    """Send current plugin state even when its package is already installed."""
-    if not device_id:
-        return previous
-    for attempt in range(1, DESIRED_STATE_SYNC_ATTEMPTS + 1):
-        result = await _sync_installed_plugin_once(
-            db,
-            user_id=user_id,
-            device_id=device_id,
-            installed_id=installed_id,
-            previous=previous,
-        )
-        if result is None or not result.success:
-            return result
-        try:
-            superseded = await run_plugin_operation(
-                _unconfirmed_plugin_ack_is_superseded,
-                user_id=user_id,
-                device_id=device_id,
-                installed_id=installed_id,
-                response=result,
-            )
-        except PluginWriteError as exc:
-            return deferred_plugin_sync(
-                exc,
-                user_id=user_id,
-                device_id=device_id,
-                previous=result,
-                stage="plugin_ack",
-            )
-        if not superseded:
-            return result
-        logger.info(
-            "Plugin acknowledgement superseded before persistence: "
-            "user_id=%s device_id=%s installed_id=%s attempt=%s",
-            user_id,
-            device_id,
-            installed_id,
-            attempt,
-        )
-        previous = result
-    return deferred_plugin_sync(
-        PluginWriteError("plugin_write_conflict"),
-        user_id=user_id,
-        device_id=device_id,
-        previous=previous,
-        stage="plugin_ack",
-    )
-
-
-def _unconfirmed_plugin_ack_is_superseded(
-    db: Session,
-    *,
-    user_id: int,
-    device_id: str,
-    installed_id: int,
-    response: DeviceCapabilitySyncResponse,
-) -> bool:
-    """A successful RPC cannot confirm an install fenced by a newer dispatch."""
-    if not any(item.desired_plugin_snapshot is not None for item in response.results):
-        return False
-    state = lock_plugin_sync_state(db, user_id)
-    installed = db.get(Kind, installed_id)
-    if (
-        installed is None
-        or not installed.is_active
-        or not _needs_device_install(
-            db,
-            user_id=user_id,
-            device_id=device_id,
-            installed_id=installed_id,
-            manual_retry=False,
-        )
-    ):
-        return False
-    target = plugin_device_id(db, user_id, device_id)
-    watermark = plugin_snapshot_watermark(state, target, installed_id)
-    return any(
-        item.desired_plugin_snapshot is not None
-        and plugin_device_id(db, user_id, item.device_id) == target
-        and item.desired_plugin_snapshot["plugin_sync"]["generation"] < watermark
-        for item in response.results
-    )
 
 
 async def _sync_installed_plugin_once(

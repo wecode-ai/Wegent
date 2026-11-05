@@ -18,6 +18,35 @@ Sidebar priority filtering also reads explicit `interactionStatus` through the
 lifecycle Store projection. A stale task-list snapshot must not override an
 accepted user reply in the view layer.
 
+## Pending Interaction Membership and Error Cleanup
+
+After successful archival, remove the task through the shared lifecycle Store before updating
+the initiating view's task list. This confirmed user action is independent of background snapshot
+ownership. Removing through a non-owner's read-only view leaves embedded inbox conversations
+able to restore the old question from shared lifecycle state. Background write guards remain intact.
+After persisting archival, the executor emits the existing `runtime.work.changed` event so other
+subscribed views refresh their own task inventories. Updating only the initiating view cannot
+invalidate an embedded inbox conversation's stale inventory.
+
+Pending scans use current task sources and device pending inventories. Cached questions must
+not reintroduce archived or removed tasks. After a successful inventory read, remove questions,
+successful-read markers, and related errors for tasks outside the candidate set. Failed or
+offline devices retain their previous inventory; a connection failure is not an empty list.
+Tasks hidden from the sidebar remain discoverable through the device pending inventory.
+Confirmed archive markers in the existing conversation cache override offline inventory retention,
+even after the shared lifecycle entry is removed. Unarchival uses the existing marker cleanup.
+
+Failures during local identity discovery, inventory reads, transcript reads, and answered-question
+archival use the existing diagnostic channel in `runtime-launch.log`. Search for
+`pending-interaction-load-failed`. Entries include the operation, device and task identifiers,
+exception message, stack, error code, and status. Requests and conversation contents are not
+serialized; the log writer applies its existing credential redaction. An offline device that
+makes pending work unavailable is logged once per state transition.
+
+The desktop `human-interactions` checkpoint archives a real task after caching an unanswered
+question. It checks that background polling and renderer reload leave no pending item or load
+error and never restore the archived task.
+
 ## Needs Your Input Answer Drafts
 
 `RuntimeInteractionsProvider` directly owns and synchronously exposes account-scoped

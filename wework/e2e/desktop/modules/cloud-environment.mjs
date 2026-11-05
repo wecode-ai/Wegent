@@ -200,6 +200,8 @@ async function resolveBackendRsBinary() {
 }
 async function waitForRedisReady(redis, logPath, fromOffset) {
   let spawnError = null
+  let lastOutput = ''
+  let logReadError = null
   const captureSpawnError = error => {
     spawnError = error
   }
@@ -207,8 +209,13 @@ async function waitForRedisReady(redis, logPath, fromOffset) {
   const startedAt = Date.now()
   try {
     while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
-      const content = await readFile(logPath, 'utf8').catch(() => '')
+      logReadError = null
+      const content = await readFile(logPath, 'utf8').catch(error => {
+        logReadError = error.code ?? error.message
+        return ''
+      })
       const attemptOutput = content.slice(fromOffset)
+      lastOutput = attemptOutput.slice(-8192)
       if (REDIS_READY_PATTERN.test(attemptOutput)) return attemptOutput
       if (spawnError) throw spawnError
       if (redis.exitCode !== null || redis.signalCode !== null) {
@@ -221,7 +228,16 @@ async function waitForRedisReady(redis, logPath, fromOffset) {
   } finally {
     redis.off('error', captureSpawnError)
   }
-  throw new Error(`Timed out waiting for Redis readiness in ${logPath}`)
+  throw new Error(
+    `Timed out waiting for Redis readiness in ${logPath}: ` +
+      JSON.stringify({
+        pid: redis.pid,
+        exitCode: redis.exitCode,
+        signalCode: redis.signalCode,
+        logReadError,
+        output: lastOutput,
+      })
+  )
 }
 
 async function startRedisServer(

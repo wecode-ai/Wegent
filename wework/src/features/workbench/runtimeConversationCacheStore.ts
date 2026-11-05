@@ -348,6 +348,10 @@ export function markRuntimeConversationArchived(key: string): void {
   archivedConversationKeys.add(key)
 }
 
+export function isRuntimeConversationArchived(address: RuntimeTaskAddress): boolean {
+  return archivedConversationKeys.has(runtimeConversationKey(address))
+}
+
 export function unmarkRuntimeConversationArchived(key: string): void {
   archivedConversationKeys.delete(key)
 }
