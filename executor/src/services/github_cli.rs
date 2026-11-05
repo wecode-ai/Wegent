@@ -73,9 +73,17 @@ pub(crate) async fn health(
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(cause) => {
+            crate::logging::log_executor_event(
+                "github_cli.command_spawn_failed",
+                &[
+                    ("entry", entry.into()),
+                    ("error_kind", format!("{:?}", cause.kind())),
+                    ("os_error", format!("{:?}", cause.raw_os_error())),
+                ],
+            );
             return json!({"status":"error", "errorCode": if cause.kind() == std::io::ErrorKind::NotFound {
             "gh_missing"
-        } else { "gh_start_failed" }})
+        } else { "gh_start_failed" }});
         }
     };
     let result = match tokio::time::timeout(timeout, probe(&mut child)).await {

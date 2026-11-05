@@ -37,6 +37,10 @@ impl RuntimeWorkRpcHandler {
                 let mut settings = store
                     .stand_in_proposal_settings(user, id)
                     .map_err(settings_error)?;
+                store
+                    .validate_personal_stand_in_settings(user, &self.device_id, settings.clone())
+                    .map_err(settings_error)?;
+                self.preflight_git_connections(&settings, &previous).await?;
                 self.prepare_connection_boundaries(&mut settings, &previous)
                     .await?;
                 Some(settings)

@@ -127,6 +127,12 @@ export function getStandInErrorMessage(
 ): string {
   const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined
   const message = getErrorMessage(error, '').replace(/^Error: /, '')
+  if (
+    typeof code === 'string' &&
+    !i18n.exists('common:standIn.errors.' + code) &&
+    i18n.exists('common:standIn.git.errors.' + code)
+  )
+    return i18n.t('common:standIn.git.errors.' + code)
   const knownCode = (value: unknown): value is string =>
     typeof value === 'string' && i18n.exists('common:standIn.errors.' + value)
   const status = error && typeof error === 'object' && 'status' in error ? error.status : undefined

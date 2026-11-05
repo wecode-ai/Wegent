@@ -36,6 +36,26 @@ export async function apply(ctx) {
     context: identity =>
       Object.freeze({
         ...identity,
+        git: Object.freeze({
+          read: input =>
+            client.request('runtime.connections.git.read', {
+              ...input,
+              providerId: identity.providerId,
+            }),
+          inbox: input => {
+            if (
+              !['@wegent/dsh-connection-git/github', '@wegent/dsh-connection-git/gitlab'].includes(
+                identity.providerId
+              ) ||
+              !['events', 'ack', 'boundary'].includes(input.operation)
+            )
+              throw new ConnectionError(
+                'connection_tool_denied',
+                'Only Git inbox reads and durable acknowledgements are available'
+              )
+            return client.request('runtime.connections.git.webhooks', input)
+          },
+        }),
         ...connectionTools(
           identity,
           dependencies,

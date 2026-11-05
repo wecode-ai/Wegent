@@ -21,6 +21,7 @@ const CORE_PLUGIN_PACKAGES = [
   ['@wegent/dsh-connection-runtime', 'wework-connection-runtime'],
   ['@wegent/dsh-coordination-runtime', 'wework-coordination-runtime'],
   ['@wegent/dsh-connection-dingtalk', 'wework-connection-dingtalk'],
+  ['@wegent/dsh-connection-git', 'wework-connection-git'],
   ['@wegent/dsh-conversation-export', 'wework-conversation-export'],
   ['@wegent/dsh-ui-core-apps', 'wework-ui-core-apps'],
   ['@wegent/dsh-ui-core-settings', 'wework-ui-core-settings'],
@@ -47,6 +48,7 @@ const CORE_HOST_BUNDLES = [
   '@wegent/dsh-connection-runtime',
   '@wegent/dsh-coordination-runtime',
   '@wegent/dsh-connection-dingtalk',
+  '@wegent/dsh-connection-git',
   '@wegent/dsh-app-wework',
   '@deepseek-ai/dsh-web-app',
   '@wegent/dsh-executor-runtime',
@@ -70,7 +72,10 @@ const CORE_UI_BUNDLES = [
 ] as const
 const CORE_BUNDLES = [...CORE_HOST_BUNDLES, ...CORE_UI_BUNDLES] as const
 const CORE_UI_DEPENDENCIES: readonly string[] = CORE_UI_BUNDLES
-const OPTIONAL_CORE_BUNDLES = new Set(['@wegent/dsh-connection-dingtalk'])
+const OPTIONAL_CORE_BUNDLES = new Set([
+  '@wegent/dsh-connection-dingtalk',
+  '@wegent/dsh-connection-git',
+])
 
 // User plugin packages and their manifests must survive a runtime-only reset.
 export async function resetCoreDshRuntime(dataDirectory: string): Promise<void> {

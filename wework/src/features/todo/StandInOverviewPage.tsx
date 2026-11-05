@@ -197,6 +197,7 @@ export function StandInOverviewPage({
       setChatting(false)
       setProfile(null)
     })
+  const overviewError = (profile === 'primary' ? null : state.error) || proposalError || inbox.error
   const content = (
     <section
       className="relative flex h-full min-h-0 min-w-0 text-base text-text-primary"
@@ -351,10 +352,10 @@ export function StandInOverviewPage({
                 }
               />
             )}
-            {(state.error || proposalError || inbox.error) && (
+            {overviewError && (
               <div role="alert" className="flex items-center gap-3 px-5 py-2 text-sm text-error">
-                <span className="flex-1">{state.error || proposalError || inbox.error}</span>
-                {state.error && (
+                <span className="flex-1">{overviewError}</span>
+                {state.error && profile !== 'primary' && (
                   <button
                     type="button"
                     data-testid="stand-in-overview-inline-retry"

@@ -176,6 +176,7 @@ export type StandInTelemetryFact = {
 }[keyof StandInGeneratedEventMap]
 
 export interface StandInExecutorApi {
+  gitConnection(deviceId: string, input: Record<string, unknown>): Promise<Record<string, unknown>>
   onboarding(userId: number, deviceId: string, language: string): Promise<StandInOnboardingResult>
   completeOnboarding(
     userId: number,
@@ -363,6 +364,24 @@ export function createStandInExecutorApi(
     }
   }
   return {
+    gitConnection: (deviceId, input) => {
+      const { channel, ...payload } = input
+      if (channel === 'auth') {
+        const { authOperation, ...target } = payload
+        if (!['start', 'poll', 'cancel'].includes(String(authOperation)))
+          throw new Error('Invalid authorization operation')
+        return request(`runtime.local_connector_auth.${String(authOperation)}`, target, deviceId)
+      }
+      return request(
+        channel === 'webhooks'
+          ? 'runtime.connections.git.webhooks'
+          : channel === 'authTarget'
+            ? 'runtime.connections.git.authTarget'
+            : 'runtime.connections.git.read',
+        payload,
+        deviceId
+      )
+    },
     onboarding: (userId, deviceId, language) =>
       request('runtime.stand_in.onboarding.get', { userId, language }, deviceId),
     completeOnboarding: async (userId, deviceId, weeklyReview, time, language) => {

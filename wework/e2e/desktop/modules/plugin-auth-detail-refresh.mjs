@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { waitForWindowState } from './native-window-state.mjs'
+import { waitForSnapshot } from './conversation-layout.mjs'
 
 export async function verifyPluginAuthDetailRefresh({
   control,
@@ -65,7 +66,14 @@ export async function verifyPluginAuthDetailRefresh({
       await rm(failure)
       // Repeated logout emits a fresh event after the real provider recovers.
       assert.equal((await auth('logout')).status, 'ok')
-      await control.command('waitFor', manage, { text: '登录' })
+      // A substring wait also matches the previous "退出登录" action.
+      await waitForSnapshot(
+        control,
+        snapshot => snapshot.text.trim() === '登录',
+        'Plugin detail did not show login after logout',
+        5_000,
+        manage
+      )
       assert.equal((await control.command('getText', manage)).trim(), '登录')
       await control.command('waitFor', '[data-testid="plugin-detail-action-error"]', {
         visible: false,

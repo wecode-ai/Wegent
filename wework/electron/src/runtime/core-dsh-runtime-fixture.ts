@@ -30,6 +30,7 @@ export async function writeRuntime(
       ['@wegent/dsh-connection-runtime', 'wework-connection-runtime'],
       ['@wegent/dsh-coordination-runtime', 'wework-coordination-runtime'],
       ['@wegent/dsh-connection-dingtalk', 'wework-connection-dingtalk'],
+      ['@wegent/dsh-connection-git', 'wework-connection-git'],
       ['@wegent/dsh-ui-core-apps', 'wework-ui-core-apps'],
       ['@wegent/dsh-ui-core-settings', 'wework-ui-core-settings'],
       ['@wegent/dsh-ui-plugin-center', 'wework-ui-plugin-center'],

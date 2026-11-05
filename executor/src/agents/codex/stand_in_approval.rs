@@ -114,11 +114,19 @@ pub(super) fn stand_in_mcp_approval_overrides(
         .get("origin")
         .is_some_and(|origin| origin["type"] == "stand_in_identity")
     {
-        for tool in ["schedule_task", "cancel_schedule"] {
+        for tool in ["schedule_task", "cancel_schedule", "configure_git_webhook"] {
             result.push(format!(
                 "mcp_servers.wework_stand_in.tools.{tool}.approval_mode=\"writes\""
             ));
         }
+    }
+    if super::external_work::git_work(request) {
+        result.push(
+            "mcp_servers.wework_stand_in.tools.prepare_git_workspace.approval_mode=\"approve\""
+                .into(),
+        );
+        result.push("mcp_servers.wework_stand_in.tools.git_read.approval_mode=\"approve\"".into());
+        result.push("mcp_servers.wework_stand_in.tools.git_write.approval_mode=\"prompt\"".into());
     }
     Ok(result)
 }

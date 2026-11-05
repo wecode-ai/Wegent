@@ -136,6 +136,79 @@ mod tests {
     use super::*;
 
     #[test]
+    fn git_removal_preserves_each_generation_for_shared_receivers() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        let source = json!({"providerId":"@wegent/dsh-connection-git/github","profile":"account","id":"42","kind":"repository","name":"org/repo","subscriptionId":"receiver","generation":"old-generation","policy":{"automatic":true,"askBeforeAct":true}});
+        settings["roles"][0]["connections"] = json!([source.clone()]);
+        let mut current = source;
+        current["generation"] = json!("current-generation");
+        settings["primary"] =
+            json!({"enabled":false,"prompt":"","preferences":"","connections":[current]});
+        let mut settings = store.save_personal_stand_in(7, "mac", settings).unwrap();
+        settings["roles"][0]["connections"] = json!([]);
+        settings["primary"]["connections"] = json!([]);
+        store.save_personal_stand_in(7, "mac", settings).unwrap();
+        let pending = store.pending_git_disconnects(7).unwrap();
+        assert_eq!(pending.len(), 2);
+        assert!(pending
+            .iter()
+            .any(|row| row["generation"] == "current-generation"));
+        assert!(pending
+            .iter()
+            .any(|row| row["generation"] == "old-generation"));
+        assert!(pending
+            .iter()
+            .all(|row| row["subscriptionId"] == "receiver"));
+    }
+
+    #[test]
+    fn git_proposals_revoke_only_the_last_binding_after_acceptance() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        let source = json!({"providerId":"@wegent/dsh-connection-git/github","profile":"account","id":"42","kind":"repository","name":"org/repo","subscriptionId":"receiver","generation":"old-device-generation","policy":{"automatic":true,"askBeforeAct":true}});
+        settings["roles"][0]["connections"] = json!([source.clone()]);
+        settings["primary"] =
+            json!({"enabled":false,"prompt":"","preferences":"","connections":[source]});
+        let mut settings = store.save_personal_stand_in(7, "mac", settings).unwrap();
+        settings["roles"][0]["connections"] = json!([]);
+        let proposal = store
+            .propose_stand_in_settings(7, "mac", None, "Remove role source", settings)
+            .unwrap();
+        let mut saved = store
+            .resolve_stand_in_proposal(7, "mac", proposal["id"].as_str().unwrap(), true, None)
+            .unwrap();
+        assert!(store.pending_git_disconnects(7).unwrap().is_empty());
+        saved["primary"]["connections"] = json!([]);
+        store
+            .validate_personal_stand_in_settings(7, "mac", saved.clone())
+            .unwrap();
+        assert!(store.pending_git_disconnects(7).unwrap().is_empty());
+        let proposal = store
+            .propose_stand_in_settings(7, "mac", None, "Remove final source", saved.clone())
+            .unwrap();
+        assert!(store.pending_git_disconnects(7).unwrap().is_empty());
+        store
+            .resolve_stand_in_proposal(7, "mac", proposal["id"].as_str().unwrap(), false, None)
+            .unwrap();
+        assert!(store.pending_git_disconnects(7).unwrap().is_empty());
+        let proposal = store
+            .propose_stand_in_settings(7, "mac", None, "Remove final source", saved)
+            .unwrap();
+        let result = store
+            .resolve_stand_in_proposal(7, "mac", proposal["id"].as_str().unwrap(), true, None)
+            .unwrap();
+        assert_eq!(result["primary"]["connections"], json!([]));
+        let pending = store.pending_git_disconnects(7).unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0]["subscriptionId"], "receiver");
+        assert_eq!(pending[0]["generation"], "old-device-generation");
+        assert!(store.pending_git_disconnects(8).unwrap().is_empty());
+    }
+
+    #[test]
     fn role_proposals_cannot_change_primary_preferences() {
         let root = tempfile::tempdir().unwrap();
         let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();

@@ -99,6 +99,11 @@ export interface ConnectionAvailability {
 }
 
 export interface ConnectionContext {
+  /** Host-owned Git reads; commands, credentials and arbitrary URLs are not exposed. */
+  git: {
+    read(input: Record<string, unknown>): Promise<Record<string, unknown>>
+    inbox(input: Record<string, unknown>): Promise<Record<string, unknown>>
+  }
   providerId: string
   signal: AbortSignal
   dependencies: ReadonlyArray<ConnectionDependencyResolution>

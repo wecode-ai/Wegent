@@ -1725,6 +1725,9 @@ export function createHybridWorkbenchServices(
     deviceApi: hybridDeviceApi,
     runtimeWorkApi: hybridRuntimeWorkApi,
     standInApi: {
+      async gitConnection(deviceId, input) {
+        return (await standInApiForDevice(deviceId)).gitConnection(deviceId, input)
+      },
       async onboarding(userId, deviceId, language) {
         return (await standInApiForDevice(deviceId)).onboarding(userId, deviceId, language)
       },

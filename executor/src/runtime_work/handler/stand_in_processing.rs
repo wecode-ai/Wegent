@@ -721,6 +721,33 @@ impl RuntimeWorkRpcHandler {
         work_id: Option<&str>,
         title: Option<&str>,
     ) -> Result<Value, AppIpcError> {
+        let echoes = events
+            .iter()
+            .map(|event| {
+                if event["kind"] == "connection" {
+                    super::stand_in_ingress::git_message_is_echo(
+                        store,
+                        user,
+                        &event["source"],
+                        &event["message"],
+                    )
+                } else {
+                    Ok(false)
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let filtered = echoes.iter().any(|echo| *echo).then(|| {
+            events
+                .iter()
+                .zip(echoes.iter())
+                .filter(|(_, echo)| !**echo)
+                .map(|(event, _)| event.clone())
+                .collect::<Vec<_>>()
+        });
+        let events = filtered.as_deref().unwrap_or(events);
+        if events.is_empty() {
+            return Ok(json!({"ignored":true}));
+        }
         for event in events {
             self.validate_intake_role(role, event)?;
         }

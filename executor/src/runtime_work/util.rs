@@ -357,6 +357,19 @@ pub(crate) fn external_work_kind(request: &ExecutionRequest) -> Option<ExternalW
 pub(crate) fn stand_in_requires_confirmation(request: &ExecutionRequest) -> bool {
     if request
         .extra
+        .get("origin")
+        .and_then(|o| o["sourceProvider"].as_str())
+        .is_some_and(|id| {
+            matches!(
+                id,
+                "@wegent/dsh-connection-git/github" | "@wegent/dsh-connection-git/gitlab"
+            )
+        })
+    {
+        return true;
+    }
+    if request
+        .extra
         .get("standInDelegation")
         .is_some_and(|value| value["askBeforeAct"] == true)
     {
