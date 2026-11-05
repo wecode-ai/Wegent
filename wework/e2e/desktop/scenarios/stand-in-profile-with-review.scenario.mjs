@@ -64,6 +64,22 @@ async function openCalendarReviewTemplate(control) {
 export function createDesktopScenario(options) {
   const original = createProfile(options)
   let readEvidence = false
+  let reviewCall
+  let reviewSequence = 0
+  const reviewTaskIds = new Set()
+  const pendingReviewReads = []
+  const requestReviewRead = (body, name, args) => {
+    reviewCall = { name, args, id: `review-call-${++reviewSequence}` }
+    return emitReviewRead(body)
+  }
+  const emitReviewRead = body =>
+    mcpToolRequestEvents(body, {
+      toolName: reviewCall.name,
+      directToolName: `mcp__wework_stand_in__${reviewCall.name}`,
+      argumentsValue: reviewCall.args,
+      searchCallId: `${reviewCall.id}-search`,
+      toolCallId: reviewCall.id,
+    }).events
   return {
     ...original,
     verifiesStandInOnboarding: true,
@@ -72,33 +88,57 @@ export function createDesktopScenario(options) {
         const body = await readRequestBody(req)
         if (
           !isReplyPredictionRequest(body) &&
-          JSON.stringify(body.input ?? []).includes('Use read_review_history')
+          JSON.stringify(body.input ?? []).includes('The host fixes the read window')
         ) {
           let events
-          if (requestContainsToolOutput(body, 'review-read')) {
-            const page = JSON.parse(readMcpToolOutput(body, 'review-read'))
-            assert.equal(page.success, true)
-            assert.ok(page.messages.length > 0, 'The real transcript must contain review evidence')
-            readEvidence = true
-            events = [assistantMessage('WEEKLY_REVIEW_VERIFIED：已根据工作对话给出改进建议。')]
-          } else if (requestContainsToolOutput(body, 'review-list')) {
-            const page = JSON.parse(readMcpToolOutput(body, 'review-list'))
-            assert.ok(page.items.some(item => item.taskId === `stand-in-chat-${USER}-primary`))
-            events = mcpToolRequestEvents(body, {
-              toolName: 'read_review_history',
-              directToolName: 'mcp__wework_stand_in__read_review_history',
-              argumentsValue: { taskId: `stand-in-chat-${USER}-primary` },
-              searchCallId: 'review-read-search',
-              toolCallId: 'review-read',
-            }).events
+          if (!reviewCall) {
+            events = requestReviewRead(body, 'list_tasks', {})
+          } else if (!requestContainsToolOutput(body, reviewCall.id)) {
+            events = emitReviewRead(body)
           } else {
-            events = mcpToolRequestEvents(body, {
-              toolName: 'read_review_history',
-              directToolName: 'mcp__wework_stand_in__read_review_history',
-              argumentsValue: {},
-              searchCallId: 'review-list-search',
-              toolCallId: 'review-list',
-            }).events
+            const page = JSON.parse(readMcpToolOutput(body, reviewCall.id))
+            if (reviewCall.name === 'list_tasks') {
+              for (const item of page.items) reviewTaskIds.add(item.taskId)
+              if (page.hasMore) {
+                assert.equal(typeof page.nextCursor, 'string')
+                events = requestReviewRead(body, 'list_tasks', { cursor: page.nextCursor })
+              } else {
+                assert.ok(reviewTaskIds.has(`stand-in-chat-${USER}-primary`))
+                events = requestReviewRead(body, 'read_task', {
+                  taskId: `stand-in-chat-${USER}-primary`,
+                })
+              }
+            } else {
+              assert.equal(page.success, true)
+              if (Array.isArray(page.messages)) {
+                readEvidence ||= page.messages.length > 0
+                for (const message of page.messages) {
+                  if (message.contentComplete === false) {
+                    assert.equal(typeof message.messageContentCursor, 'string')
+                    pendingReviewReads.push({ messageContentCursor: message.messageContentCursor })
+                  }
+                }
+                if (page.hasMoreBefore) {
+                  assert.equal(typeof page.beforeCursor, 'string')
+                  pendingReviewReads.push({ beforeCursor: page.beforeCursor })
+                }
+              } else {
+                assert.equal(typeof page.content, 'string')
+                if (page.contentComplete === false) {
+                  assert.equal(typeof page.messageContentCursor, 'string')
+                  pendingReviewReads.unshift({ messageContentCursor: page.messageContentCursor })
+                }
+              }
+              if (pendingReviewReads.length) {
+                events = requestReviewRead(body, 'read_task', {
+                  taskId: `stand-in-chat-${USER}-primary`,
+                  ...pendingReviewReads.shift(),
+                })
+              } else {
+                assert.ok(readEvidence, 'The real transcript must contain review evidence')
+                events = [assistantMessage('WEEKLY_REVIEW_VERIFIED：已根据工作对话给出改进建议。')]
+              }
+            }
           }
           const id = `review-${Date.now()}`
           response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })

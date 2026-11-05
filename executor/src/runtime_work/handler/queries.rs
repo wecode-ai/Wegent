@@ -400,15 +400,16 @@ impl RuntimeWorkRpcHandler {
         let include_full_content = bool_field(&payload, "includeFullContent")
             .or_else(|| bool_field(&payload, "include_full_content"))
             .unwrap_or(false);
+        let conversation_context_only = bool_field(&payload, "conversationContextOnly")
+            .or_else(|| bool_field(&payload, "conversation_context_only"))
+            .unwrap_or(false);
         let full_item_content = search_match_requested
             || include_full_content
+            || conversation_context_only
             || payload
                 .get("transcriptProtocolVersion")
                 .and_then(Value::as_u64)
                 == Some(2);
-        let conversation_context_only = bool_field(&payload, "conversationContextOnly")
-            .or_else(|| bool_field(&payload, "conversation_context_only"))
-            .unwrap_or(false);
         let navigation_only = bool_field(&payload, "navigationOnly")
             .or_else(|| bool_field(&payload, "navigation_only"))
             .unwrap_or(false);

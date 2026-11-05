@@ -279,6 +279,9 @@ impl RuntimeWorkRpcHandler {
             turn_navigation,
         });
         response["threadId"] = json!(thread_id);
+        if conversation_context_only {
+            response["fullItemContent"] = json!(full_item_content);
+        }
         if let Some(link) = local_link.as_ref().filter(|_| !direct_thread_override) {
             if let Some(runtime_turns) = runtime_turns {
                 response["runtimeTurns"] = json!(runtime_turns);

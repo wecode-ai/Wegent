@@ -58,6 +58,7 @@ fn binding(identity: &StandInMcpIdentity, target: &RuntimeTaskLink) -> String {
                 identity.project,
                 identity.coordinator_batch,
                 identity.readonly_worker,
+                identity.review,
                 target.local_task_id,
                 target.thread_id
             ])
@@ -159,6 +160,23 @@ impl RuntimeWorkRpcHandler {
         since: Option<i64>,
         until: Option<i64>,
     ) -> Result<Value, AppIpcError> {
+        let read = self.bounded_history_response(identity, link, args, limit, since, until);
+        #[cfg(test)]
+        if let Some(workers) = self.transcript_test_workers.clone() {
+            return super::super::transcript_work::with_test_workers(workers, read).await;
+        }
+        read.await
+    }
+
+    async fn bounded_history_response(
+        &self,
+        identity: &StandInMcpIdentity,
+        link: &RuntimeTaskLink,
+        args: &Value,
+        limit: usize,
+        since: Option<i64>,
+        until: Option<i64>,
+    ) -> Result<Value, AppIpcError> {
         let cursor = requested_cursor(args)?;
         let bound = binding(identity, link);
         let mut native = None;
@@ -207,7 +225,8 @@ impl RuntimeWorkRpcHandler {
                 }
             }
         }
-        let mut payload = json!({"taskId":link.local_task_id,"limit":limit,"includeFullContent":true,"conversationContextOnly":true});
+        let mut payload =
+            json!({"taskId":link.local_task_id,"limit":limit,"conversationContextOnly":true});
         if let Some((key, value)) = native.as_ref() {
             payload[*key] = json!(value);
         }
@@ -229,7 +248,8 @@ impl RuntimeWorkRpcHandler {
             since: window.0,
             until: window.1,
             unknown_timestamps: value["unknownTimestamps"] == true,
-            source_may_be_incomplete: value["fullContent"] != true,
+            source_may_be_incomplete: value["fullContent"] != true
+                && value["fullItemContent"] != true,
         };
         let id = save(directory(self, &current), &snapshot).await?;
         if native
@@ -399,6 +419,7 @@ mod tests {
     ) -> (tempfile::TempDir, RuntimeWorkRpcHandler, StandInMcpIdentity) {
         let root = tempfile::tempdir().unwrap();
         let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+        handler.transcript_test_workers = Some(Arc::new(tokio::sync::Semaphore::new(2)));
         handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
         handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
         let settings = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();

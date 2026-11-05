@@ -226,6 +226,7 @@ impl RuntimeWorkRpcHandler {
                 .await;
         }
         let mut payload = payload;
+        payload["title"] = json!(automation.name);
         payload["origin"] = json!({"type":"stand_in_schedule","initiatedBy":"stand_in","userId":user,"standInId":role_id,"automationId":automation.id,"deviceId":self.device_id,"askBeforeAct":true});
         let review = role_id == "@primary"
             && automation.task_request["standInCalendar"]["template"]
@@ -351,6 +352,17 @@ mod tests {
             json!({})
         );
         assert_eq!(saved["automation"]["conversationMode"], "independent");
+        let entry: Automation = serde_json::from_value(saved["automation"].clone()).unwrap();
+        let prepared = handler
+            .prepare_stand_in_schedule(&entry, json!({"message":entry.prompt}))
+            .await
+            .unwrap();
+        assert_eq!(prepared["title"], "Review");
+        assert_eq!(prepared["message"], "Review outstanding items");
+        assert_eq!(
+            prepared["executionRequest"]["prompt"],
+            "Review outstanding items"
+        );
         assert!(handler.local_task_links(true).is_empty());
         let mut conflicting = args;
         conflicting["requestId"] = json!("conflicting");

@@ -255,6 +255,13 @@ async fn manual_calendar_run_routes_immediately_and_reuses_its_original_receipt(
     handler.automation_store.create(entry).unwrap();
     let (_, run) = handler.automation_store.start_manual_run("once").unwrap();
     assert_eq!(run.trigger, "manual");
+    let entry = handler.automation_store.get("once").unwrap();
+    let prepared = handler
+        .prepare_stand_in_schedule(&entry, json!({"message":entry.prompt}))
+        .await
+        .unwrap();
+    assert_eq!(prepared["title"], "Review");
+    assert_eq!(prepared["message"], "Review progress");
     assert_eq!(run.status, AutomationRunStatus::Pending);
     assert_eq!(
         handler
@@ -327,6 +334,13 @@ async fn calendar_due_enters_personal_intake_with_contents_and_saved_route_polic
             .pop()
             .unwrap()
             .1;
+        let entry = handler.automation_store.get("once").unwrap();
+        let prepared = handler
+            .prepare_stand_in_schedule(&entry, json!({"message":entry.prompt}))
+            .await
+            .unwrap();
+        assert_eq!(prepared["title"], "Review");
+        assert_eq!(prepared["message"], "Review progress");
         assert!(handler.arrangement_contexts(&store).unwrap().is_empty());
         handler.arrangement_contexts(&store).unwrap();
         let events = store.stand_in_events(7).unwrap();

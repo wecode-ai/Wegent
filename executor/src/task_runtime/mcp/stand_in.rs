@@ -186,7 +186,7 @@ pub(super) fn tools(context: &SpaceMcpRequestContext) -> Vec<Value> {
         .as_ref()
         .is_some_and(|identity| identity.review)
     {
-        return super::stand_in_tasks::review_tools();
+        return super::stand_in_tasks::read_tools();
     }
     if context
         .stand_in
@@ -255,7 +255,6 @@ pub(super) fn tools(context: &SpaceMcpRequestContext) -> Vec<Value> {
     }) {
         tools.extend(super::stand_in_tasks::tools());
         tools.extend(super::stand_in_tasks::schedule_tools());
-        tools.extend(super::stand_in_tasks::review_tools());
     }
     for read in super::stand_in_tasks::read_tools() {
         if !tools.iter().any(|tool| tool["name"] == read["name"]) {
@@ -278,7 +277,6 @@ pub(super) async fn call(
         && super::stand_in_tasks::tools()
             .into_iter()
             .chain(super::stand_in_tasks::schedule_tools())
-            .chain(super::stand_in_tasks::review_tools())
             .any(|tool| tool["name"] == name)
     {
         return match super::stand_in_tasks::call(identity.clone(), name.to_owned(), arguments).await
@@ -811,8 +809,8 @@ mod memory_tests {
         )));
     }
 
-    #[test]
-    fn stand_in_review_has_only_read_history_and_other_schedules_have_no_identity() {
+    #[tokio::test]
+    async fn stand_in_review_has_only_generic_read_tools_and_other_schedules_have_no_identity() {
         let mut request: ExecutionRequest = serde_json::from_value(json!({"task_id":"review","origin":{"type":"stand_in_schedule","userId":7,"deviceId":"mac","standInId":"@primary"}})).unwrap();
         assert!(stand_in_identity(&request).is_none());
         request.extra.get_mut("origin").unwrap()["weeklyReview"] = json!(true);
@@ -823,7 +821,26 @@ mod memory_tests {
             .into_iter()
             .map(|tool| tool["name"].as_str().unwrap().to_owned())
             .collect();
-        assert_eq!(names, vec!["read_review_history"]);
+        assert_eq!(names, vec!["list_tasks", "read_task"]);
+        let directory = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+        let runtime = TaskRuntime::new(store).unwrap();
+        for name in [
+            "read_review_history",
+            "create_task",
+            "continue_task",
+            "propose_profile",
+            "reply",
+            "send_email",
+            "remember",
+        ] {
+            let rejected = call(&runtime, name, json!({}), &context).await;
+            assert_eq!(rejected["isError"], true, "{name}");
+            assert!(rejected["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("Unknown"));
+        }
     }
 
     #[test]

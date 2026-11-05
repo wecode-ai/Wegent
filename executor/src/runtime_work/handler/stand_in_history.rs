@@ -57,6 +57,7 @@ pub(super) fn filter_history_page(page: &mut Value, since: Option<i64>, until: O
                     | "taskId"
                     | "messages"
                     | "fullContent"
+                    | "fullItemContent"
                     | "beforeCursor"
                     | "afterCursor"
                     | "hasMoreBefore"
@@ -65,7 +66,8 @@ pub(super) fn filter_history_page(page: &mut Value, since: Option<i64>, until: O
         });
     }
     page["unknownTimestamps"] = json!(unknown);
-    page["contentMayBeTruncated"] = json!(page["fullContent"] != true);
+    page["contentMayBeTruncated"] =
+        json!(page["fullContent"] != true && page["fullItemContent"] != true);
 }
 
 fn source_scope(source: &Value) -> Value {
@@ -79,6 +81,7 @@ struct ReadScope {
     role: Value,
     coordinator: bool,
     can_orchestrate: bool,
+    window: Option<(i64, i64)>,
 }
 
 impl RuntimeWorkRpcHandler {
@@ -87,7 +90,7 @@ impl RuntimeWorkRpcHandler {
         identity: &StandInMcpIdentity,
         store: &LocalTaskStore,
     ) -> Result<ReadScope, AppIpcError> {
-        if identity.device != self.device_id || identity.project.is_some() || identity.review {
+        if identity.device != self.device_id || identity.project.is_some() {
             return Err(denied());
         }
         let actor = self.local_task_link(&identity.task_id).ok_or_else(denied)?;
@@ -118,6 +121,26 @@ impl RuntimeWorkRpcHandler {
             None => &settings["primary"],
         };
         let coordinator = identity.coordinator_batch.is_some();
+        if identity.review {
+            if identity.work.is_some()
+                || coordinator
+                || identity.readonly_worker
+                || !matches!(identity.role.as_deref(), None | Some("@primary"))
+            {
+                return Err(denied());
+            }
+            let end = self.review_run_end(&actor, identity.user)?;
+            return Ok(ReadScope {
+                source: None,
+                role: role.clone(),
+                coordinator: false,
+                can_orchestrate: false,
+                window: Some((
+                    (end - chrono::Duration::days(7)).timestamp_millis(),
+                    end.timestamp_millis(),
+                )),
+            });
+        }
         if coordinator {
             let state = store
                 .stand_in_processing_state(identity.user)
@@ -184,6 +207,7 @@ impl RuntimeWorkRpcHandler {
             source,
             role: role.clone(),
             coordinator,
+            window: None,
             can_orchestrate: !identity.readonly_worker
                 && identity.work.is_none()
                 && matches!(identity.role.as_deref(), None | Some("@primary")),
@@ -270,7 +294,10 @@ impl RuntimeWorkRpcHandler {
         scope: &ReadScope,
         store: &LocalTaskStore,
     ) -> bool {
-        if !history_owned(link, identity.user) || self.archived_link_is_deleted(link) {
+        if (identity.review && link.local_task_id == identity.task_id)
+            || !history_owned(link, identity.user)
+            || self.archived_link_is_deleted(link)
+        {
             return false;
         }
         if scope.coordinator && link.runtime_handle["origin"]["type"] == "stand_in_identity" {
@@ -322,8 +349,17 @@ impl RuntimeWorkRpcHandler {
                 ));
             }
         }
-        let since = time(args, "since")?;
-        let until = time(args, "until")?;
+        let mut since = time(args, "since")?;
+        let mut until = time(args, "until")?;
+        if let Some((start, end)) = scope.window {
+            if since.is_some_and(|at| at < start || at >= end)
+                || until.is_some_and(|at| at > end || at <= start)
+            {
+                return Err(denied());
+            }
+            since = Some(since.unwrap_or(start));
+            until = Some(until.unwrap_or(end));
+        }
         if since.zip(until).is_some_and(|(start, end)| start >= end) {
             return Err(AppIpcError::new("bad_request", "since must precede until"));
         }
@@ -341,9 +377,17 @@ impl RuntimeWorkRpcHandler {
                 .local_task_link(id)
                 .filter(|link| self.conversation_visible(link, identity, &scope, &store))
                 .ok_or_else(denied)?;
-            return self
+            let mut page = self
                 .read_bounded_history(identity, &link, args, limit, since, until)
-                .await;
+                .await?;
+            if let Some((start, end)) = scope.window {
+                page["windowStart"] = json!(
+                    chrono::DateTime::<chrono::Utc>::from_timestamp_millis(start)
+                );
+                page["windowEnd"] =
+                    json!(chrono::DateTime::<chrono::Utc>::from_timestamp_millis(end));
+            }
+            return Ok(page);
         }
         let mut links: Vec<_> = self
             .local_task_links(true)
@@ -369,7 +413,7 @@ impl RuntimeWorkRpcHandler {
         Ok(
             json!({"items":page.iter().map(|link|json!({"taskId":link.local_task_id,"title":link.title,"status":link.status,
             "interactionStatus":link.interaction_status,"createdAt":link.created_at,"updatedAt":link.updated_at,"kind":if link.runtime_handle["origin"]["type"]=="stand_in_identity" {"identity"} else {"task"},
-            "canContinue":scope.can_orchestrate && super::stand_in_tasks::owns_task(link,identity.user) && link.status!="archived" && link.interaction_status.is_none() && is_codex_runtime(&link.runtime)})).collect::<Vec<_>>(),"hasMore":has_more,"nextCursor":next}),
+            "canContinue":scope.can_orchestrate && super::stand_in_tasks::owns_task(link,identity.user) && link.status!="archived" && link.interaction_status.is_none() && is_codex_runtime(&link.runtime)})).collect::<Vec<_>>(),"hasMore":has_more,"nextCursor":next,"windowStart":scope.window.and_then(|(start,_)|chrono::DateTime::<chrono::Utc>::from_timestamp_millis(start)),"windowEnd":scope.window.and_then(|(_,end)|chrono::DateTime::<chrono::Utc>::from_timestamp_millis(end))}),
         )
     }
 }
