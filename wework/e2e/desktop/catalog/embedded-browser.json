@@ -1,0 +1,16 @@
+{
+  "order": 205000,
+  "scenario": "./scenarios/embedded-browser-agent.scenario.mjs",
+  "ci": {
+    "core": {
+      "order": 151000,
+      "shard": 3,
+      "position": 13000
+    },
+    "cloud": {
+      "order": 13000,
+      "shard": 1,
+      "position": 5000
+    }
+  }
+}

@@ -7,6 +7,7 @@ import { AutomationsPage } from './AutomationsPage'
 
 const mocks = vi.hoisted(() => ({
   listAutomations: vi.fn(async (): Promise<{ items: Automation[] }> => ({ items: [] })),
+  onboarding: vi.fn(),
 }))
 vi.mock('@/features/auth/useAuth', () => ({ useAuth: () => ({ logout: vi.fn() }) }))
 vi.mock('@/hooks/useIsMobile', () => ({ useIsMobile: () => false }))
@@ -19,7 +20,10 @@ vi.mock('@/features/workbench/useWorkbench', () => {
       runtimeWork: { projects: [], chats: [] },
       currentRuntimeTask: null,
     },
-    services: { automationApi: { listAutomations: mocks.listAutomations } },
+    services: {
+      automationApi: { listAutomations: mocks.listAutomations },
+      standInApi: { onboarding: mocks.onboarding },
+    },
     projectChat: { models: [], selectedModel: null, selectedModelOptions: {} },
     refreshWorkLists: vi.fn(),
   }
@@ -48,6 +52,51 @@ const entry = (id: string, roleId: string): Automation => ({
   },
   createdAt: '2026-11-03T00:00:00Z',
   updatedAt: '2026-11-03T00:00:00Z',
+})
+
+it('opens the shared weekly review template as an unsaved Monday draft', async () => {
+  mocks.onboarding.mockResolvedValueOnce({
+    state: { completed: true },
+    reviewTemplate: {
+      ...entry('template', '@primary'),
+      name: '每周工作复盘',
+      prompt: 'Review evidence',
+      schedule: { type: 'cron', expression: '0 9 * * 1' },
+      taskRequest: {
+        ...entry('template', '@primary').taskRequest!,
+        standInCalendar: { template: 'weekly_review' },
+      },
+      timezone: 'Asia/Shanghai',
+    },
+  })
+  render(
+    <AutomationsPage
+      embedded
+      standInOwner={{ userId: 7, roleId: '@primary' }}
+      standInDeviceId="local"
+    />
+  )
+  await userEvent.click(await screen.findByTestId('stand-in-weekly-review-template'))
+  expect(await screen.findByTestId('automation-name-input')).toHaveValue('每周工作复盘')
+  expect(screen.getByTestId('automation-prompt-input')).toHaveValue('Review evidence')
+  expect(mocks.onboarding).toHaveBeenCalledWith(7, 'local', expect.any(String))
+})
+
+it('opens an existing review rather than preparing a duplicate', async () => {
+  const review = entry('existing-review', '@primary')
+  review.taskRequest!.standInCalendar = { template: 'weekly_review' }
+  mocks.listAutomations.mockResolvedValueOnce({ items: [review] })
+  mocks.onboarding.mockClear()
+  render(
+    <AutomationsPage
+      embedded
+      standInOwner={{ userId: 7, roleId: '@primary' }}
+      standInDeviceId="local"
+    />
+  )
+  await userEvent.click(await screen.findByTestId('stand-in-weekly-review-template'))
+  expect(await screen.findByTestId('automation-name-input')).toHaveValue('existing-review')
+  expect(mocks.onboarding).not.toHaveBeenCalled()
 })
 
 it('uses a single embedded pane on desktop and protects a schedule draft before returning to the list', async () => {

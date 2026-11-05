@@ -249,6 +249,22 @@ impl From<UserEntityRow> for UserRecord {
     }
 }
 
+/// `db.get(User, user_id)`: the primary-key read
+/// `_find_model_with_namespace`'s public-Model branch issues directly through
+/// the session (`app/services/chat/config/model_lookup.py:376`), not through
+/// `userReader`. It keeps the bare entity projection and no `LIMIT`, so a
+/// caller must not substitute the `db.query(User)...first()` shape that other
+/// adapters use.
+pub async fn user_entity_by_id<M: brz_mysql::Mysql>(
+    mysql: &M,
+    user_id: i64,
+) -> brz_mysql::MysqlResult<Option<UserRecord>> {
+    let row: Option<UserEntityRow> = mysql
+        .fetch_optional(USER_ENTITY_BY_ID_QUERY, (user_id,))
+        .await?;
+    Ok(row.map(UserRecord::from))
+}
+
 /// The by-id ORM statement SQLAlchemy renders for `UserReader.get_by_id`'s
 /// `db.query(User).filter(User.id == user_id).first()`: every mapped
 /// column, aliased `users_<column>`.

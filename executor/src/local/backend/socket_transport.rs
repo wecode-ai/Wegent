@@ -29,6 +29,10 @@ use super::{
 const NAMESPACE: &str = "/local-executor";
 const NAMESPACE_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
+mod completed_event_budget;
+
+#[cfg(test)]
+mod completed_event_tests;
 #[cfg(test)]
 mod correlation_tests;
 
@@ -310,6 +314,7 @@ impl LocalBackendTransport for SocketIoTransport {
     fn emit<'a>(&'a self, event: &'a str, payload: Value) -> TransportFuture<'a, ()> {
         Box::pin(async move {
             let connected = self.connected_socket().await?;
+            let (event, payload) = completed_event_budget::fit_completed_event(event, payload)?;
             if let Err(error) = connected.client.emit(event.to_owned(), payload).await {
                 self.invalidate_generation(connected.generation).await;
                 return Err(format_socket_error("emit", Some(event), &error));

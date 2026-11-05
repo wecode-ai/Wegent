@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir } from 'node:fs/promises'
+import { mkdir, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createDesktopScenario as createNativeLifecycle } from './native-lifecycle.scenario.mjs'
 import {
@@ -31,6 +31,7 @@ export function createDesktopScenario(options) {
   let held
   let finish
   let releaseInitial
+  let codexHome
   const initial = new Promise(resolve => {
     releaseInitial = resolve
   })
@@ -39,6 +40,10 @@ export function createDesktopScenario(options) {
   })
   return {
     ...existing,
+    async prepareApp(context) {
+      codexHome = context.codexHome
+      await existing.prepareApp?.(context)
+    },
     cleanup() {
       releaseInitial()
       finish()
@@ -76,6 +81,8 @@ export function createDesktopScenario(options) {
       await existing.verify(control)
       active = true
       let address
+      assert.equal(typeof codexHome, 'string', 'The native runtime Home was not prepared')
+      const connectorSkill = join(codexHome, 'skills', 'wegent-connector-native-guidance')
       const origin = await control.command('getLocationOrigin', 'body')
       const rpc = async (method, params) => {
         const response = await fetchLocalRuntime(control, `${origin}/wework/executor/v1/rpc`, {
@@ -90,6 +97,12 @@ export function createDesktopScenario(options) {
         return payload.result
       }
       try {
+        await mkdir(connectorSkill, { recursive: true })
+        await writeFile(
+          join(connectorSkill, 'SKILL.md'),
+          '---\nname: wegent-connector-native-guidance\ndescription: Native guidance capability fixture\n---\n\nThis connector is no longer installed.\n'
+        )
+        await writeFile(join(connectorSkill, '.wegent-connector'), 'managed\n')
         await control.command('click', '[data-testid="new-chat-button"]')
         const workspace = join(options.workspacePath, 'native-guidance')
         await mkdir(workspace, { recursive: true })
@@ -127,6 +140,15 @@ export function createDesktopScenario(options) {
           'The original local request did not release its execution control',
           options.uiTimeoutMs
         )
+        const publication = JSON.parse(
+          await control.command('clearLocalExecutorConnectors', 'body')
+        )
+        assert.equal(
+          publication.changed,
+          true,
+          'Connector removal did not publish capability changes'
+        )
+        await assert.rejects(stat(connectorSkill), { code: 'ENOENT' })
         await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: GUIDANCE })
         await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
         await control.command('waitFor', '[data-testid="conversation-queue-panel"]', {
@@ -152,6 +174,7 @@ export function createDesktopScenario(options) {
         assert.equal(rejected.accepted, false)
         assert.equal(rejected.code, 'no_active_turn')
       } finally {
+        await rm(connectorSkill, { recursive: true, force: true })
         if (address) await rpc('runtime.tasks.goal.clear', { address })
         releaseInitial()
         finish()

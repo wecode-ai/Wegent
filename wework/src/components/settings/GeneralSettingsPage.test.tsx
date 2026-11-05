@@ -5,6 +5,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { GeneralSettingsPage } from './GeneralSettingsPage'
+import { RuntimeConcurrencySettings } from './RuntimeConcurrencySettings'
 
 const defaultPreferences: AppPreferences = {
   workbenchMode: 'developer',
@@ -25,6 +26,7 @@ const defaultPreferences: AppPreferences = {
   experimentalFeaturesEnabled: false,
   telemetryConsentAsked: true,
   telemetryEnabled: true,
+  performanceRecordingEnabled: false,
   trayUnreadEnabled: true,
   trayRunningEnabled: true,
   trayUsageEnabled: true,
@@ -90,6 +92,7 @@ vi.mock('@/desktop/appPreferences', () => ({
     experimentalFeaturesEnabled: false,
     telemetryConsentAsked: true,
     telemetryEnabled: true,
+    performanceRecordingEnabled: false,
     trayUnreadEnabled: true,
     trayRunningEnabled: true,
     trayUsageEnabled: true,
@@ -180,7 +183,11 @@ describe('GeneralSettingsPage', () => {
       importedEntries: ['config.toml'],
     })
     getAppPreferencesMock.mockResolvedValue(defaultPreferences)
-    getRuntimeSettingsMock.mockResolvedValue({ maxConcurrentTasks: 3 })
+    getRuntimeSettingsMock.mockResolvedValue({
+      maxConcurrentTasks: 3,
+      maxConcurrentStandInTasks: 4,
+      maxConcurrentAgentTasks: 6,
+    })
     updateRuntimeSettingsMock.mockImplementation(settings => Promise.resolve(settings))
     refreshWorkListsMock.mockResolvedValue(undefined)
     updateAppPreferencesMock.mockImplementation(patch =>
@@ -267,8 +274,16 @@ describe('GeneralSettingsPage', () => {
     )
   })
 
-  test('loads and updates the maximum parallel task count', async () => {
-    getRuntimeSettingsMock.mockResolvedValue({ maxConcurrentTasks: 5 })
+  test.each([
+    ['general-max-concurrent-tasks-select', 'maxConcurrentTasks', 5],
+    ['general-max-concurrent-stand-in-tasks-select', 'maxConcurrentStandInTasks', 7],
+    ['general-max-concurrent-agent-tasks-select', 'maxConcurrentAgentTasks', 9],
+  ])('loads and updates the independent limit %s', async (testId, key, initial) => {
+    getRuntimeSettingsMock.mockResolvedValue({
+      maxConcurrentTasks: 5,
+      maxConcurrentStandInTasks: 7,
+      maxConcurrentAgentTasks: 9,
+    })
     render(
       <WorkbenchContext.Provider
         value={
@@ -288,17 +303,65 @@ describe('GeneralSettingsPage', () => {
       </WorkbenchContext.Provider>
     )
 
-    const select = await screen.findByTestId('general-max-concurrent-tasks-select')
+    const select = await screen.findByTestId(testId)
     await waitFor(() => expect(select).toBeEnabled())
-    expect(select).toHaveValue('5')
+    expect(select).toHaveValue(String(initial))
 
     await userEvent.selectOptions(select, '2')
 
     await waitFor(() => {
-      expect(updateRuntimeSettingsMock).toHaveBeenCalledWith({ maxConcurrentTasks: 2 })
+      expect(updateRuntimeSettingsMock).toHaveBeenCalledWith({ [key]: 2 })
     })
     expect(refreshWorkListsMock).toHaveBeenCalledOnce()
     expect(select).toHaveValue('2')
+    for (const [otherTestId, otherKey, otherValue] of [
+      ['general-max-concurrent-tasks-select', 'maxConcurrentTasks', 5],
+      ['general-max-concurrent-stand-in-tasks-select', 'maxConcurrentStandInTasks', 7],
+      ['general-max-concurrent-agent-tasks-select', 'maxConcurrentAgentTasks', 9],
+    ] as const) {
+      if (otherKey !== key) expect(screen.getByTestId(otherTestId)).toHaveValue(String(otherValue))
+    }
+    updateRuntimeSettingsMock.mockRejectedValueOnce(new Error('persist failed'))
+    await userEvent.selectOptions(select, '4')
+    await waitFor(() => expect(select).toBeEnabled())
+    expect(select).toHaveValue('2')
+  })
+
+  test('isolates runtime loading and supports recovery without blocking other settings', async () => {
+    getRuntimeSettingsMock.mockRejectedValueOnce(new Error('runtime unavailable'))
+    render(
+      <WorkbenchContext.Provider
+        value={
+          {
+            services: {
+              runtimeWorkApi: {
+                getRuntimeSettings: getRuntimeSettingsMock,
+                updateRuntimeSettings: updateRuntimeSettingsMock,
+              },
+            },
+          } as unknown as WorkbenchContextValue
+        }
+      >
+        <GeneralSettingsPage />
+      </WorkbenchContext.Provider>
+    )
+    const retry = await screen.findByTestId('general-concurrency-retry-button')
+    expect(screen.getByTestId('general-max-concurrent-tasks-select')).toBeDisabled()
+    expect(screen.getByTestId('general-workbench-mode-developer-button')).toBeEnabled()
+    await userEvent.click(retry)
+    await waitFor(() =>
+      expect(screen.getByTestId('general-max-concurrent-agent-tasks-select')).toBeEnabled()
+    )
+    expect(screen.getByTestId('general-max-concurrent-agent-tasks-select')).toHaveValue('6')
+    expect(screen.queryByTestId('general-concurrency-retry-button')).not.toBeInTheDocument()
+  })
+
+  test('does not offer a concurrency save without a Runtime API', async () => {
+    render(<RuntimeConcurrencySettings />)
+    await waitFor(() =>
+      expect(screen.getByTestId('general-max-concurrent-tasks-select')).toBeDisabled()
+    )
+    expect(updateRuntimeSettingsMock).not.toHaveBeenCalled()
   })
 
   test('saves the message send shortcut as a user preference', async () => {
@@ -450,6 +513,56 @@ describe('GeneralSettingsPage', () => {
       expect(updateAppPreferencesMock).toHaveBeenCalledWith({
         preventSleepWhileTasksRunning: false,
       })
+    })
+  })
+
+  test('keeps performance recording off by default and persists enabling it', async () => {
+    render(<GeneralSettingsPage />)
+
+    const toggle = await screen.findByTestId('general-performance-recording-toggle')
+    await waitFor(() => expect(toggle).toBeEnabled())
+    expect(toggle).toHaveAttribute('aria-checked', 'false')
+
+    await userEvent.click(toggle)
+
+    await waitFor(() => {
+      expect(updateAppPreferencesMock).toHaveBeenCalledWith({ performanceRecordingEnabled: true })
+      expect(toggle).toHaveAttribute('aria-checked', 'true')
+    })
+  })
+
+  test('shows a saved performance recording preference and persists disabling it', async () => {
+    getAppPreferencesMock.mockResolvedValue({
+      ...defaultPreferences,
+      performanceRecordingEnabled: true,
+    })
+    render(<GeneralSettingsPage />)
+
+    const toggle = await screen.findByTestId('general-performance-recording-toggle')
+    await waitFor(() => expect(toggle).toBeEnabled())
+    expect(toggle).toHaveAttribute('aria-checked', 'true')
+
+    await userEvent.click(toggle)
+
+    await waitFor(() => {
+      expect(updateAppPreferencesMock).toHaveBeenCalledWith({ performanceRecordingEnabled: false })
+      expect(toggle).toHaveAttribute('aria-checked', 'false')
+    })
+  })
+
+  test('restores the performance recording toggle when saving fails', async () => {
+    updateAppPreferencesMock.mockRejectedValue(new Error('save failed'))
+    render(<GeneralSettingsPage />)
+
+    const toggle = await screen.findByTestId('general-performance-recording-toggle')
+    await waitFor(() => expect(toggle).toBeEnabled())
+    await userEvent.click(toggle)
+
+    await waitFor(() => {
+      expect(toggle).toHaveAttribute('aria-checked', 'false')
+      expect(screen.getByTestId('general-settings-status')).toHaveTextContent(
+        'workbench.general_settings_save_failed'
+      )
     })
   })
 

@@ -169,6 +169,7 @@ fn migration_recalculates_existing_cron_next_run() {
         version: 1,
         automations: HashMap::from([(automation.id.clone(), automation)]),
         runs: Vec::new(),
+        stand_in_onboarding: HashMap::new(),
     };
 
     assert!(migrate_automation_state(&mut state, now));
@@ -190,6 +191,7 @@ fn loading_old_state_persists_migration() {
             version: 1,
             automations: HashMap::new(),
             runs: Vec::new(),
+            stand_in_onboarding: HashMap::new(),
         })
         .unwrap(),
     )

@@ -28,8 +28,7 @@ use chrono::Local;
 use serde_json::Value;
 
 use crate::device_identity::{
-    DeviceKindRow, PluginDeviceInstallationRow, plugin_device_id_on,
-    reconcile_plugin_device_rows_on,
+    PluginDeviceInstallationRow, plugin_device_id_on, reconcile_plugin_device_rows_on,
 };
 use crate::http_compat::FastApiError;
 use crate::plugins_marketplace::query::PluginQuery;
@@ -40,6 +39,7 @@ use super::catalog_reconcile::reconcile_stale_installed_catalog_refs;
 use super::desired_capabilities::{
     BuildError, build_desired_capabilities, build_desired_plugins, capability_snapshot,
 };
+use super::online_route::{OnlineRouteResolution, resolve_online_route};
 use super::record_sync_result::{SyncResult, record_device_sync_result};
 use super::report::{DESIRED_INSTALLS_QUERY, DEVICE_ROW_QUERY, INSERT_INSTALLATION_QUERY};
 
@@ -141,7 +141,8 @@ async fn sync_device(
                 user.id,
             )
             .await?;
-            let pending_count = ensure_pending_for_device(&mut session, user.id, device_id).await?;
+            let pending_count =
+                ensure_pending_for_device(&mut session, user.id, device_id, None).await?;
             Ok(SessionOutcome::Applied {
                 user_id: user.id,
                 pending_count,
@@ -186,7 +187,7 @@ async fn record_sync_result(
         .mysql
         .with_transaction(async |transaction| {
             let mut session = &mut *transaction;
-            record_device_sync_result(&mut session, user_id, result).await
+            record_device_sync_result(&mut session, user_id, result, None).await
         })
         .await
         .map_err(|error| {
@@ -253,7 +254,7 @@ pub(super) async fn build_payload(
         })
 }
 
-fn log_build_error(user_id: i64, error: &BuildError) {
+pub(super) fn log_build_error(user_id: i64, error: &BuildError) {
     tracing::error!(%error, user_id, "sync-device desired-state build failed");
 }
 
@@ -267,55 +268,20 @@ pub(super) async fn sync_device_payload(
     live_socket_id: Option<&str>,
     timeout: std::time::Duration,
 ) -> Result<SyncResult, FastApiError> {
-    let device =
-        crate::device_identity::resolve_owned_device_alias(&state.mysql, user_id, device_id)
-            .await
-            .map_err(|error| {
-                tracing::error!(%error, user_id, "sync-device route identity read failed");
-                FastApiError::unhandled()
-            })?;
-    let Some(device) = device else {
-        return Ok(SyncResult::failure(
-            device_id,
-            None,
-            "device not found or access denied",
-        ));
+    let resolution = resolve_online_route(state, user_id, device_id).await?;
+    let route = match resolution {
+        OnlineRouteResolution::Ready(route) => route,
+        OnlineRouteResolution::Unavailable(reason) => {
+            return Ok(SyncResult::failure(device_id, None, reason));
+        }
     };
-    let runtime_device_id = runtime_device_route_id(&device);
-    if runtime_device_id.is_empty() {
-        return Ok(SyncResult::failure(
-            device_id,
-            None,
-            "device not found or access denied",
-        ));
-    }
-    let online: Option<Value> = crate::devices::cache_manager_get(
-        state,
-        &format!("device:online:{user_id}:{runtime_device_id}"),
-    )
-    .await;
-    let Some(online) = online.filter(Value::is_object) else {
-        return Ok(SyncResult::failure(device_id, None, "device is offline"));
-    };
-    let recorded_socket_id = online
-        .get("socket_id")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|socket_id| !socket_id.is_empty());
-    // The source requires a stored socket id before dispatching, so a document
-    // without one is still "device is offline". The register-time caller then
-    // addresses the session that just wrote the document instead of the value
-    // read back from it.
-    let Some(recorded_socket_id) = recorded_socket_id else {
-        return Ok(SyncResult::failure(device_id, None, "device is offline"));
-    };
+    let runtime_device_id = route.runtime_device_id;
+    // The register-time caller addresses the session that just wrote the online
+    // document instead of the value read back from it.
     let socket_id = live_socket_id
         .map(str::trim)
         .filter(|socket_id| !socket_id.is_empty())
-        .unwrap_or(recorded_socket_id);
-    if !runtime_instance_matches(&device, &online) {
-        return Ok(SyncResult::failure(device_id, None, "device is offline"));
-    }
+        .unwrap_or(&route.socket_id);
     let mut dispatch = payload.clone();
     if let Value::Object(object) = &mut dispatch {
         object.insert(
@@ -371,7 +337,7 @@ pub(super) async fn sync_device_payload(
 }
 
 /// `sio.call`'s return value: the single positional ack argument.
-fn ack_argument(args: &Value) -> &Value {
+pub(super) fn ack_argument(args: &Value) -> &Value {
     match args {
         Value::Array(items) if items.len() == 1 => &items[0],
         other => other,
@@ -385,53 +351,6 @@ fn error_text(error: &crate::socketio_rpc::RpcError) -> &'static str {
         crate::socketio_rpc::RpcError::Closed => "connection closed",
         crate::socketio_rpc::RpcError::Unavailable(_) => "Socket.IO Redis adapter is unavailable",
     }
-}
-
-/// Source `runtime_route.runtime_device_route_id`.
-fn runtime_device_route_id(device: &DeviceKindRow) -> String {
-    let spec = device.json.get("spec");
-    let device_type = spec
-        .and_then(|spec| spec.get("deviceType"))
-        .and_then(Value::as_str)
-        .unwrap_or("local");
-    if device_type == "app" {
-        return format!("app-record-{}", device.id);
-    }
-    spec.and_then(|spec| spec.get("deviceId"))
-        .and_then(Value::as_str)
-        .filter(|id| !id.trim().is_empty())
-        .map(str::trim)
-        .map(str::to_string)
-        .or_else(|| {
-            spec.and_then(|spec| spec.get("cloudConfig"))
-                .and_then(|cloud| cloud.get("deviceId"))
-                .and_then(Value::as_str)
-                .filter(|id| !id.trim().is_empty())
-                .map(str::trim)
-                .map(str::to_string)
-        })
-        .filter(|id| !id.is_empty())
-        .unwrap_or_else(|| device.name.trim().to_string())
-}
-
-/// `RuntimeRouteResolver.resolve`'s stale-instance guard.
-fn runtime_instance_matches(device: &DeviceKindRow, online: &Value) -> bool {
-    let expected = device
-        .json
-        .get("spec")
-        .and_then(|spec| spec.get("runtimeInstanceId"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|id| !id.is_empty());
-    let Some(expected) = expected else {
-        return true;
-    };
-    let reported = online
-        .get("runtime_instance_id")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .unwrap_or_default();
-    !reported.is_empty() && reported == expected
 }
 
 /// Source `reconcile_device_plugins`: dispatch the plugins-only payload and
@@ -640,12 +559,14 @@ pub(super) async fn ensure_pending_for_device<Q>(
     session: &mut Q,
     user_id: i64,
     device_id: &str,
+    guard: Option<&dyn crate::device_identity::LeaseCheck>,
 ) -> MysqlResult<usize>
 where
     Q: PluginQuery,
 {
     let identity_map =
-        reconcile_plugin_device_rows_on::<_, PluginDeviceInstallationRow>(session, user_id).await?;
+        reconcile_plugin_device_rows_on::<_, PluginDeviceInstallationRow>(session, user_id, guard)
+            .await?;
     let normalized_device_id = plugin_device_id_on(session, user_id, device_id).await?;
     if normalized_device_id.is_empty() {
         return Ok(0);
@@ -655,7 +576,7 @@ where
         .await?;
     let mut changed = 0usize;
     // The session's identity map is seeded by `reconcile_plugin_device_rows`'s
-    // `FOR UPDATE` read (primary-key ascending), so the flush emits the UPDATE
+    // leading read (primary-key ascending), so the flush emits the UPDATE
     // statements in that load order, not in the iteration order of the desired
     // installs even when iteration visits a later identity-map row first.
     let mut identity_map = identity_map;
@@ -671,7 +592,12 @@ where
         )
         .await?;
     }
-    flush.emit(session, &identity_map).await?;
+    // The pending row mutations flush (`before_flush` -> `_Lease.check()`)
+    // before they reach the database, including rows mutated on an early
+    // `return 0` branch and new-row INSERTs.
+    flush
+        .flush_with_guard(session, &identity_map, guard)
+        .await?;
     Ok(changed)
 }
 
@@ -679,6 +605,10 @@ where
 /// and emitted at the source's `db.commit()` flush.
 #[derive(Default)]
 struct PendingFlush {
+    /// `autoflush=False`: the guard runs once for the session's flush, which
+    /// happens whenever a row was assigned (even to an equal value) or a row
+    /// was added, regardless of whether any SQL is emitted.
+    assigned: bool,
     /// `db.add(...)` INSERTs in iteration order; SQLAlchemy's unit of work
     /// processes one mapper's INSERTs before its UPDATEs.
     inserts: Vec<DesiredInsert>,
@@ -700,7 +630,26 @@ impl PendingFlush {
     /// order, primary key ascending), then the caller's COMMIT. The UPDATE
     /// collection is sorted by identity-map position first: the iteration may
     /// visit rows in any order, but the source's flush follows the identity
-    /// map populated by the `FOR UPDATE` read.
+    /// map populated by the leading read.
+    /// Run the source's flush boundary: guard first (when the session is
+    /// dirty), then emit the recorded INSERT/UPDATE statements.
+    async fn flush_with_guard<Q>(
+        &mut self,
+        session: &mut Q,
+        identity_map: &[PluginDeviceInstallationRow],
+        guard: Option<&dyn crate::device_identity::LeaseCheck>,
+    ) -> MysqlResult<()>
+    where
+        Q: PluginQuery,
+    {
+        if let Some(guard) = guard
+            && self.assigned
+        {
+            guard.check().await?;
+        }
+        self.emit(session, identity_map).await
+    }
+
     async fn emit<Q>(
         &mut self,
         session: &mut Q,
@@ -778,6 +727,7 @@ where
         .await?;
     let Some(row) = row else {
         // `db.add(...)`: the INSERT reaches MySQL only at the flush.
+        flush.assigned = true;
         flush.inserts.push(DesiredInsert {
             installed_kind_id: installed.id,
             user_id,
@@ -789,8 +739,11 @@ where
     };
 
     // The row is already in the session's identity map (materialized by the
-    // `FOR UPDATE` read); locate it so the flush orders its UPDATE by the
+    // read); locate it so the flush orders its UPDATE by the
     // identity-map position rather than the visit order.
+    // Assigning `desired_release_id` marks the ORM object dirty even when the
+    // value is unchanged, so the flush boundary exists regardless of `assigns`.
+    flush.assigned = true;
     let index = match identity_map.iter().position(|known| known.id == row.id) {
         Some(index) => index,
         None => {
@@ -896,11 +849,11 @@ mod tests {
         // The recorded sync-device cases prove the source's flush order: the
         // iteration visits the desired installs in `_desired_installs` result
         // order. Each UPDATE is emitted at `db.commit()` in identity-map
-        // order: the `FOR UPDATE` load order, primary key ascending.
+        // order: the load order, primary key ascending.
         // The flush must therefore sort by identity-map position.
         let mut identity_map = Vec::new();
         let mut flush = PendingFlush::default();
-        // FOR UPDATE load order: row 101 (kind 201) before 102 (kind 202).
+        // load order: row 101 (kind 201) before 102 (kind 202).
         for (id, kind) in [(101_i64, 201_i64), (102, 202)] {
             identity_map.push(PluginDeviceInstallationRow {
                 id,
@@ -966,26 +919,38 @@ mod tests {
         assert!(mysql.queries()[0].sql.contains("WHERE user_name = ?"));
     }
 
-    /// Source `ensure_pending_for_device` starts with the user's `FOR UPDATE`
-    /// read and keeps every later read and flush on the same session handle;
-    /// the pending refresh must therefore reach the caller's transaction
-    /// rather than the pool.
+    /// Source `ensure_pending_for_device` starts with the user's read and keeps
+    /// every later read and flush on the same session handle; the pending
+    /// refresh must therefore reach the caller's transaction rather than the
+    /// pool.
     #[tokio::test]
-    async fn pending_refresh_locks_on_the_caller_session_first() {
+    async fn pending_refresh_reads_on_the_caller_session_first() {
         let mysql = crate::sql_test_support::KindQueryCapture::writing();
         let mut session = &mysql;
         assert_eq!(
-            ensure_pending_for_device(&mut session, 3, "app-record-266867")
+            ensure_pending_for_device(&mut session, 3, "app-record-266867", None)
                 .await
                 .unwrap(),
             0
         );
         let queries = mysql.queries();
-        assert_eq!(queries.len(), 3, "lock, alias read, then desired installs");
+        assert_eq!(
+            queries.len(),
+            3,
+            "row read, alias read, then desired installs"
+        );
         assert!(queries[0].sql.contains(
-            "FROM plugin_device_installations WHERE plugin_device_installations.user_id = ? FOR UPDATE"
+            "FROM plugin_device_installations WHERE plugin_device_installations.user_id = ?"
         ));
+        assert!(
+            !queries[0].sql.contains("FOR UPDATE"),
+            "the source reconcile read does not lock"
+        );
         assert!(queries[1].sql.contains("kinds.kind = 'Device'"));
         assert!(queries[2].sql.contains("kinds.kind = 'InstalledPlugin'"));
     }
 }
+
+#[cfg(test)]
+#[path = "sync_device_guard_tests.rs"]
+mod guard_tests;

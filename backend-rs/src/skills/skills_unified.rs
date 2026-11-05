@@ -583,15 +583,16 @@ where
 
 /// `get_user_groups`: sorted group names where the user has an effective
 /// role. Shared with the download path's `list_user_group_skill_ids`.
-pub(crate) async fn get_user_groups<M>(
+pub(crate) async fn get_user_groups<M, R: brz_redis::Redis>(
     mysql: &M,
-    erp: &ErpContext<'_>,
+    erp: &ErpContext<'_, R>,
+    resolvers: &crate::permissions::EntityResolvers<R>,
     user_id: i32,
 ) -> MysqlResult<Vec<String>>
 where
     M: Mysql,
 {
-    let resolved = user_group_memberships(mysql, erp, user_id as i64).await?;
+    let resolved = user_group_memberships(mysql, erp, resolvers, user_id as i64).await?;
     let roles = effective_roles(&resolved.memberships, &resolved.active_names);
     let mut groups: Vec<String> = roles.into_keys().collect();
     groups.sort();
@@ -706,10 +707,11 @@ async fn unified_skills(
     let mut group_namespaces: Vec<String> = Vec::new();
     let mut group_shared_skill_ids: HashSet<i32> = HashSet::new();
     if scope != "group" || group_name.is_none() {
-        group_namespaces = match get_user_groups(mysql, &erp, user.id).await {
-            Ok(groups) => groups,
-            Err(error) => return Err(dependency_error(error)),
-        };
+        group_namespaces =
+            match get_user_groups(mysql, &erp, &state.entity_resolvers, user.id).await {
+                Ok(groups) => groups,
+                Err(error) => return Err(dependency_error(error)),
+            };
         group_namespaces.retain(|group| group != "default");
         if !group_namespaces.is_empty() {
             group_shared_skill_ids =

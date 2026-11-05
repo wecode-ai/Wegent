@@ -21,6 +21,13 @@ fn assert_denied(error: HttpError) {
     assert_eq!(response.validation_detail(), r#""Group access denied""#);
 }
 
+fn test_resolvers() -> crate::permissions::EntityResolvers<brz_redis::RedisService> {
+    crate::permissions::EntityResolvers::public(
+        brz_mysql::MysqlService::connect_lazy("mysql://test:test@127.0.0.1:1/test")
+            .expect("lazy mysql"),
+    )
+}
+
 #[tokio::test]
 async fn default_group_request_is_denied_before_any_private_team_lookup() {
     let mysql = KindQueryCapture::default();
@@ -31,8 +38,15 @@ async fn default_group_request_is_denied_before_any_private_team_lookup() {
     // Different authenticated users must both be denied access to the group
     // branch, regardless of which user owns a personal team in `default`.
     for user_id in [7, 229] {
-        let result =
-            resolve_namespace_context(&mysql, &erp, user_id, "group", Some("default")).await;
+        let result = resolve_namespace_context(
+            &mysql,
+            &erp,
+            &test_resolvers(),
+            user_id,
+            "group",
+            Some("default"),
+        )
+        .await;
         assert_denied(result.err().expect("default is not a group"));
     }
     assert!(mysql.queries().is_empty());
@@ -45,10 +59,36 @@ async fn non_member_group_request_is_denied_before_team_queries() {
         erp: &NoopErpProvider,
         redis: None,
     };
-    let result = resolve_namespace_context(&mysql, &erp, 7, "group", Some("private-group")).await;
+    let result = resolve_namespace_context(
+        &mysql,
+        &erp,
+        &test_resolvers(),
+        7,
+        "group",
+        Some("private-group"),
+    )
+    .await;
     assert_denied(result.err().expect("the user has no group memberships"));
     let queries = mysql.queries();
-    assert!(!queries.is_empty(), "membership must be checked");
+    // `get_user_group_roles` always loads the active namespace names first;
+    // the empty result then makes `get_effective_roles_in_groups` return
+    // before the membership batch. `KindQueryCapture` returns no rows, so the
+    // only recorded statement is that namespace-name read.
+    assert_eq!(
+        queries
+            .iter()
+            .filter(|query| query.sql.contains("FROM namespace"))
+            .count(),
+        1,
+        "the active namespace-name read still runs: {queries:?}"
+    );
+    assert!(
+        queries
+            .iter()
+            .all(|query| !query.sql.contains("resource_members")
+                && !query.sql.contains("FROM kinds")),
+        "an empty active-namespace set skips the membership batch and team queries: {queries:?}"
+    );
     assert!(
         queries
             .iter()

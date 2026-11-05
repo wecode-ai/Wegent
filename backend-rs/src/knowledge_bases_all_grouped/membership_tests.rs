@@ -9,51 +9,6 @@
 
 use super::*;
 
-/// `[... for b in all_dept_bindings if b.entity_id]` drops falsy entity
-/// ids, so a binding set of only empty ids becomes empty and the caller's
-/// `if bindings.is_empty()` mirrors the source's `if not dept_ids:
-/// return []` branch: no membership check, no namespace-entity query.
-#[test]
-fn entity_id_bindings_drop_falsy_values_like_the_source() {
-    assert_eq!(
-        non_empty_entity_ids(vec![
-            "100430".to_string(),
-            String::new(),
-            "Z02333".to_string(),
-        ]),
-        vec!["100430".to_string(), "Z02333".to_string()]
-    );
-    assert!(non_empty_entity_ids(vec![String::new(), String::new()]).is_empty());
-    // The query's distinct row order and any duplicates are preserved.
-    assert_eq!(
-        non_empty_entity_ids(vec!["b".to_string(), "a".to_string(), "b".to_string()]),
-        vec!["b".to_string(), "a".to_string(), "b".to_string()]
-    );
-}
-
-/// Both group-membership call sites must request the with-fallback
-/// membership path.
-///
-/// The provider maps `ResolutionPurpose::CachedResourceAccess` to
-/// `ErpProvider::cached_membership`, which returns no membership on a
-/// cache miss or a failed read and performs no cache write, while the
-/// source's single membership path falls back to
-/// `batch_check_membership` and stores the rebuilt map. Reverting
-/// `GROUP_ENTITY_PURPOSE` to the cache-only variant silently drops
-/// entity-derived groups and the ERP requests the source performs.
-///
-/// A behavioural test would have to drive `user_group_role_map` past the
-/// binding queries, and `brz_mysql` exposes no way to construct result
-/// rows (`MysqlRow::new` is crate-private) for a fake `Mysql`, so this
-/// test pins the purpose itself.
-#[test]
-fn group_entity_calls_use_the_with_fallback_membership_purpose() {
-    assert!(matches!(
-        GROUP_ENTITY_PURPOSE,
-        ResolutionPurpose::ResourceAccess
-    ));
-}
-
 /// Collapse the template line continuations into the single line
 /// SQLAlchemy renders, so the expected text below is the recorded source
 /// SQL verbatim.
@@ -87,17 +42,6 @@ fn resolver_contract_queries_render_recorded_source_sql() {
          FROM resource_members WHERE resource_members.resource_type = 'KnowledgeBase' \
          AND resource_members.entity_type = 'org_department' \
          AND resource_members.entity_id IN ('101178') \
-         AND resource_members.status = 'approved'"
-    );
-    assert_eq!(
-        rendered(&namespace_ids_for_external_ids_sql(
-            "org_department",
-            "'101597'"
-        )),
-        "SELECT DISTINCT resource_members.resource_id AS resource_members_resource_id \
-         FROM resource_members WHERE resource_members.resource_type = 'Namespace' \
-         AND resource_members.entity_type = 'org_department' \
-         AND resource_members.entity_id IN ('101597') \
          AND resource_members.status = 'approved'"
     );
 }

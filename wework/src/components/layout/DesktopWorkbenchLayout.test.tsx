@@ -2202,16 +2202,18 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('request-user-input-submit-button'))
 
-    expect(onRequestUserInputSubmit).toHaveBeenCalledWith(
-      {
-        requestId: 42,
-        itemId: undefined,
-        answers: {
-          implement: { answers: ['是的，执行此计划'] },
-        },
+    const response = {
+      requestId: 42,
+      itemId: undefined,
+      answers: {
+        implement: { answers: ['是的，执行此计划'] },
       },
-      { appendUserMessage: true, forceDefaultCollaborationMode: true }
-    )
+    }
+    expect(onRequestUserInputSubmit).toHaveBeenCalledWith(response, {
+      requestUserInputResponses: [response],
+      appendUserMessage: true,
+      forceDefaultCollaborationMode: true,
+    })
   })
 
   test('keeps plan mode when submitting implementation plan adjustments', async () => {
@@ -2237,16 +2239,18 @@ describe('DesktopWorkbenchLayout', () => {
     await user.type(screen.getByTestId('request-user-input-custom-adjustment'), '先缩小范围')
     await user.click(screen.getByTestId('request-user-input-submit-button'))
 
-    expect(onRequestUserInputSubmit).toHaveBeenCalledWith(
-      {
-        requestId: 42,
-        itemId: undefined,
-        answers: {
-          adjustment: { answers: ['先缩小范围'] },
-        },
+    const response = {
+      requestId: 42,
+      itemId: undefined,
+      answers: {
+        adjustment: { answers: ['先缩小范围'] },
       },
-      { appendUserMessage: true, forceDefaultCollaborationMode: false }
-    )
+    }
+    expect(onRequestUserInputSubmit).toHaveBeenCalledWith(response, {
+      requestUserInputResponses: [response],
+      appendUserMessage: true,
+      forceDefaultCollaborationMode: false,
+    })
   })
 
   test('keeps the right workspace plan panel synced with the opened streaming plan block', async () => {
@@ -4106,6 +4110,105 @@ describe('DesktopWorkbenchLayout', () => {
     )
   }, 15_000)
 
+  test.each(['confirm', 'cancel'] as const)(
+    'recovers a missing clone executor with an explicit device selection: %s',
+    async action => {
+      const diagnostic = vi.spyOn(console, 'info').mockImplementation(() => {})
+      const onCloneGitRepository = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('executor-not-found:old-device'))
+        .mockResolvedValueOnce(undefined)
+      const onOpenStandaloneWorkspace = vi.fn().mockResolvedValue(undefined)
+      const oldDevice = {
+        id: 1,
+        device_id: 'old-device',
+        name: 'Old remote device',
+        status: 'online' as const,
+        is_default: true,
+        bind_shell: 'claudecode',
+        device_type: 'remote' as const,
+        executor_version: '1.8.5',
+      }
+      const renderLayout = (devices: (typeof oldDevice)[]) => (
+        <DesktopWorkbenchLayout
+          {...baseProps}
+          onCloneGitRepository={onCloneGitRepository}
+          onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
+          state={{ ...baseProps.state, devices }}
+        />
+      )
+      const { rerender } = render(renderLayout([oldDevice]))
+      await userEvent.click(screen.getByTestId('projects-create-button'))
+      await userEvent.click(screen.getByTestId('project-create-remote-option'))
+      await userEvent.click(screen.getByTestId('remote-project-source-git'))
+      await waitFor(() =>
+        expect(screen.getByTestId('remote-project-git-parent-input')).toHaveValue('/home/ubuntu')
+      )
+      await userEvent.clear(screen.getByTestId('remote-project-git-parent-input'))
+      await userEvent.type(
+        screen.getByTestId('remote-project-git-parent-input'),
+        '/custom/projects'
+      )
+      await userEvent.type(
+        screen.getByTestId('remote-project-git-url-input'),
+        'https://git.example/owner/repository.git'
+      )
+      await userEvent.click(screen.getByTestId('remote-project-git-advanced-toggle'))
+      await userEvent.type(screen.getByTestId('remote-project-git-branch-input'), 'develop')
+      await userEvent.click(screen.getByTestId('remote-project-git-submit'))
+      await waitFor(() =>
+        expect(screen.getByTestId('git-clone-project-operations')).toHaveTextContent('设备不可用')
+      )
+      expect(
+        diagnostic.mock.calls.some(
+          ([prefix, entry]) =>
+            prefix === '[Wework] Runtime task create diagnostic' &&
+            JSON.parse(String(entry)).stage === 'git-project-operation-failed' &&
+            JSON.parse(String(entry)).deviceId === 'old-device' &&
+            JSON.parse(String(entry)).failureReason === 'executor-not-found'
+        )
+      ).toBe(true)
+      diagnostic.mockRestore()
+      const newDevice = { ...oldDevice, id: 2, device_id: 'new-device', name: 'New remote device' }
+      rerender(renderLayout([newDevice]))
+      await userEvent.click(screen.getByRole('button', { name: '重新选择设备' }))
+      expect(screen.getByTestId('standalone-remote-device-select')).toHaveValue('new-device')
+      expect(screen.getByTestId('remote-project-git-url-input')).toHaveValue(
+        'https://git.example/owner/repository.git'
+      )
+      expect(screen.getByTestId('remote-project-git-parent-input')).toHaveValue('/custom/projects')
+      expect(screen.getByTestId('remote-project-git-branch-input')).toHaveValue('develop')
+      expect(onCloneGitRepository).toHaveBeenCalledTimes(1)
+      expect(onOpenStandaloneWorkspace).not.toHaveBeenCalled()
+
+      if (action === 'cancel') {
+        await userEvent.click(screen.getByRole('button', { name: '取消' }))
+        expect(screen.getByTestId('git-clone-project-operations')).toHaveTextContent('设备不可用')
+        expect(onCloneGitRepository).toHaveBeenCalledTimes(1)
+        return
+      }
+      await userEvent.click(screen.getByTestId('remote-project-git-submit'))
+      await waitFor(() =>
+        expect(onCloneGitRepository).toHaveBeenNthCalledWith(2, 'new-device', {
+          url: 'https://git.example/owner/repository.git',
+          branch: 'develop',
+          targetPath: '/custom/projects/repository',
+        })
+      )
+      await waitFor(() =>
+        expect(onOpenStandaloneWorkspace).toHaveBeenCalledWith(
+          'new-device',
+          '/custom/projects/repository',
+          'repository'
+        )
+      )
+      await waitFor(() =>
+        expect(screen.queryByTestId('git-clone-project-operations')).not.toBeInTheDocument()
+      )
+    },
+    15_000
+  )
+
   test('rejects embedded HTTP Git credentials without cloning', async () => {
     const onCloneGitRepository = vi.fn().mockResolvedValue(undefined)
 
@@ -4411,15 +4514,17 @@ describe('DesktopWorkbenchLayout', () => {
 
       await userEvent.click(screen.getByTestId('request-user-input-option-decision-0'))
 
-      expect(baseProps.onRequestUserInputSubmit).toHaveBeenCalledWith(
-        {
-          requestId: 0,
-          interactionScope: 'publish-turn',
-          itemId: 'mcp_server_elicitation',
-          answers: { decision: { answers: ['确认发布'] } },
-        },
-        { appendUserMessage: false, forceDefaultCollaborationMode: false }
-      )
+      const response = {
+        requestId: 0,
+        interactionScope: 'publish-turn',
+        itemId: 'mcp_server_elicitation',
+        answers: { decision: { answers: ['确认发布'] } },
+      }
+      expect(baseProps.onRequestUserInputSubmit).toHaveBeenCalledWith(response, {
+        requestUserInputResponses: [response],
+        appendUserMessage: false,
+        forceDefaultCollaborationMode: false,
+      })
     }
   )
 
