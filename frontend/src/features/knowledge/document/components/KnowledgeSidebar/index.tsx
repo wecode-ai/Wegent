@@ -163,7 +163,7 @@ export function KnowledgeSidebar({
       data-testid="knowledge-sidebar"
     >
       {/* Search trigger with collapse button */}
-      <div className="p-3 border-b border-border flex items-center gap-2">
+      <div className="px-3 py-2 border-b border-border flex items-center gap-2">
         <div className="flex-1">
           <SearchTrigger onOpen={handleOpenSearch} />
         </div>
@@ -172,7 +172,7 @@ export function KnowledgeSidebar({
             variant="ghost"
             size="sm"
             onClick={onCollapse}
-            className="min-h-11 min-w-11 p-0 flex-shrink-0"
+            className="min-h-11 min-w-11 md:min-h-9 md:min-w-9 p-0 flex-shrink-0"
             title={t('document.tree.collapseTree')}
             data-testid="knowledge-sidebar-collapse-button"
           >

@@ -101,7 +101,7 @@ export function NavigationSection({
       onClick={onClick}
       aria-current={selected ? 'page' : undefined}
       className={cn(
-        'w-full min-h-11 flex items-center gap-2 px-3 py-2 rounded-md text-sm hover:bg-surface-hover',
+        'w-full min-h-11 md:min-h-9 flex items-center gap-2 px-3 py-2 rounded-md text-sm hover:bg-surface-hover',
         selected && 'bg-primary/10 text-primary font-medium'
       )}
     >
@@ -111,7 +111,7 @@ export function NavigationSection({
     </button>
   )
   return (
-    <div className="py-2 space-y-0.5" data-testid="navigation-section">
+    <div className="py-1 space-y-0.5" data-testid="navigation-section">
       {item(
         'nav-all-item',
         t('document.sidebar.all'),

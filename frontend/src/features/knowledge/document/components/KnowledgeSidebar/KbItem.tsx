@@ -43,13 +43,13 @@ export function KbItem({
   return (
     <div
       className={cn(
-        'group flex items-center gap-2 px-3 py-1.5 cursor-pointer transition-colors text-sm',
+        'group flex items-center gap-2 px-3 cursor-pointer transition-colors text-sm',
         isSelected ? 'bg-primary/10 text-primary font-medium' : 'hover:bg-muted text-text-primary'
       )}
     >
       <button
         type="button"
-        className="flex min-h-11 min-w-11 flex-1 items-center gap-2 text-left"
+        className="flex min-h-11 min-w-0 flex-1 items-center gap-2 text-left md:min-h-8"
         onClick={onSelect}
         data-testid={`kb-item-${kb.id}`}
       >
@@ -79,7 +79,7 @@ export function KbItem({
       {/* Remove button (for favorites) */}
       {onRemove && (
         <button
-          className="min-h-11 min-w-11 flex-shrink-0 rounded md:opacity-0 group-hover:opacity-100
+          className="min-h-11 min-w-11 md:min-h-8 md:min-w-8 flex-shrink-0 rounded md:opacity-0 group-hover:opacity-100
                      hover:bg-muted text-text-muted hover:text-text-primary transition-all"
           onClick={e => {
             e.stopPropagation()

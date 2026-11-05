@@ -296,14 +296,14 @@ function AddNamespaceSession({
               {selectedGroups.length > 0 && (
                 <div className="flex flex-wrap gap-2">
                   {selectedGroups.map(group => (
-                    <Badge key={group.id} variant="secondary" className="pr-1">
+                    <Badge key={group.id} variant="secondary" className="py-0 pr-1">
                       <span className="truncate max-w-[120px]">
                         {group.display_name || group.name}
                       </span>
                       <button
                         type="button"
                         aria-label={t('document.permission.remove')}
-                        className="ml-1 min-h-11 min-w-11 flex items-center justify-center hover:bg-accent rounded-full"
+                        className="ml-1 min-h-11 min-w-11 md:min-h-8 md:min-w-8 flex items-center justify-center hover:bg-accent rounded-full"
                         onClick={() => handleRemoveGroup(group.id)}
                       >
                         <X className="h-3 w-3" />

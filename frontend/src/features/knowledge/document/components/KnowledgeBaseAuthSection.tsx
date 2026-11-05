@@ -120,14 +120,14 @@ export function KnowledgeBaseAuthSection({
                   {entries.map(entry => (
                     <div
                       key={JSON.stringify([entry.entityType, entry.entityId])}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-muted/70 border border-border text-sm"
+                      className="inline-flex items-center gap-1.5 pl-2.5 pr-1 rounded-full bg-muted/70 border border-border text-sm"
                     >
                       <span className="truncate max-w-[120px]">{entry.label}</span>
                       <Button
                         type="button"
                         variant="ghost"
                         size="icon"
-                        className="min-h-11 min-w-11 text-text-muted hover:text-error flex-shrink-0 p-0"
+                        className="min-h-11 min-w-11 md:h-8 md:w-8 md:min-h-8 md:min-w-8 text-text-muted hover:text-error flex-shrink-0 p-0"
                         data-testid={`remove-auth-${entry.entityType}-${entry.entityId}`}
                         aria-label={t('document.permission.remove')}
                         onClick={() => removeEntry(entry)}
