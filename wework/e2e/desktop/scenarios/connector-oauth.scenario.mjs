@@ -148,6 +148,16 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         timeoutMs: workbenchReadyTimeoutMs,
       })
       await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: PROMPT })
+      // Mounting the composer does not imply its asynchronous model selection
+      // is ready. Submit only once the product enables its real send action.
+      await control.command(
+        'waitFor',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`,
+        {
+          enabled: true,
+          timeoutMs: workbenchReadyTimeoutMs,
+        }
+      )
       await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
 
       await control.command('waitFor', '[data-testid="cloud-connector-auth-card"]', {
