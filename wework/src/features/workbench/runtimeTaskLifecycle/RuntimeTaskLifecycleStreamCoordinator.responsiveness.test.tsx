@@ -213,14 +213,18 @@ test('releases a terminal history subscriber when its coordinator is disposed', 
   await waitFor(() => expect(providerSignal?.aborted).toBe(true))
 })
 
-test.each([
-  { accepted: ['accepted-before-tail'], expected: [] },
-  { accepted: [], expected: [expect.objectContaining({ status: 'queued' })] },
-  { accepted: undefined, expected: [expect.objectContaining({ status: 'sending' })] },
-  { accepted: ['unqueried-id'], expected: [expect.objectContaining({ status: 'sending' })] },
-])(
-  'replacement uses explicit message receipts when the tail has no user item: $accepted',
-  async ({ accepted, expected }) => {
+test.each(
+  [
+    { accepted: ['accepted-before-tail'], expected: [] },
+    { accepted: [], expected: [expect.objectContaining({ status: 'sending' })] },
+    { accepted: undefined, expected: [expect.objectContaining({ status: 'sending' })] },
+    { accepted: ['unqueried-id'], expected: [expect.objectContaining({ status: 'sending' })] },
+  ].flatMap(testCase =>
+    ['event_lagged', 'runtime_replaced'].map(reason => ({ ...testCase, reason }))
+  )
+)(
+  '$reason uses explicit message receipts when the tail has no user item: $accepted',
+  async ({ accepted, expected, reason }) => {
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     try {
       const store = new RuntimeTaskLifecycleStore('replacement-receipts')
@@ -256,10 +260,14 @@ test.each([
       } as unknown as WorkbenchServices
       render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
       await act(async () => {
-        handlers.onRuntimeTransportReplaced?.({
-          previousRuntimeInstanceId: 'old',
-          runtimeInstanceId: 'new',
-        })
+        if (reason === 'event_lagged') {
+          handlers.onRuntimeEventLagged?.({ skipped: 1 })
+        } else {
+          handlers.onRuntimeTransportReplaced?.({
+            previousRuntimeInstanceId: 'old',
+            runtimeInstanceId: 'new',
+          })
+        }
       })
       await waitFor(() =>
         expect(getRuntimeTranscript).toHaveBeenCalledWith(
@@ -273,7 +281,7 @@ test.each([
       )
       await waitFor(() => expect(store.getTask(address('fast'))?.turn.latestId).toBe('fast-turn'))
       expect(getRuntimeConversationQueuedMessages(address('fast'))).toEqual(expected)
-      if (accepted === undefined || accepted.includes('unqueried-id')) {
+      if (!accepted?.length || accepted.includes('unqueried-id')) {
         expect(warning).toHaveBeenCalledWith(
           '[Wework] Runtime message receipt confirmation unavailable',
           expect.objectContaining({ taskId: 'fast' })

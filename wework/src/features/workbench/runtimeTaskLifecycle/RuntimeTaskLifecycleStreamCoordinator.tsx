@@ -136,12 +136,9 @@ export function RuntimeTaskLifecycleStreamCoordinator({
               while (!disposed && nextAddress < addresses.length) {
                 const address = addresses[nextAddress++]
                 try {
-                  const queriedClientUserMessageIds =
-                    reconciliationReason === 'runtime_replaced'
-                      ? getRuntimeConversationQueuedMessages(address)
-                          .filter(message => message.status === 'sending')
-                          .map(message => message.id)
-                      : []
+                  const queriedClientUserMessageIds = getRuntimeConversationQueuedMessages(address)
+                    .filter(message => message.status === 'sending')
+                    .map(message => message.id)
                   const transcript = await synchronizeRuntimeConversation(
                     (request, options) =>
                       executorClient.runtime.getRuntimeTranscript(request, options),
@@ -157,23 +154,25 @@ export function RuntimeTaskLifecycleStreamCoordinator({
                   if (disposed) return
                   const turns = transcript.turns
                   store.syncTranscript(address, transcript)
-                  if (reconciliationReason === 'runtime_replaced') {
-                    const acceptedClientUserMessageIds = queriedClientUserMessageIds.length
-                      ? transcript.acceptedClientUserMessageIds
-                      : []
+                  if (queriedClientUserMessageIds.length) {
+                    const acceptedClientUserMessageIds = transcript.acceptedClientUserMessageIds
                     const queried = new Set(queriedClientUserMessageIds)
-                    if (
-                      !Array.isArray(acceptedClientUserMessageIds) ||
-                      !acceptedClientUserMessageIds.every(id => queried.has(id))
-                    ) {
+                    const receiptsValid =
+                      Array.isArray(acceptedClientUserMessageIds) &&
+                      acceptedClientUserMessageIds.every(id => queried.has(id))
+                    if (receiptsValid) {
+                      reconcileRuntimeConversationQueueAfterTransportReplacement(address, turns, {
+                        acceptedClientUserMessageIds,
+                      })
+                    }
+                    const unconfirmed = getRuntimeConversationQueuedMessages(address).filter(
+                      message => message.status === 'sending' && queried.has(message.id)
+                    )
+                    if (!receiptsValid || unconfirmed.length) {
                       console.warn('[Wework] Runtime message receipt confirmation unavailable', {
                         taskId: address.taskId,
                         reason: 'Incomplete acceptance evidence; pending sends remain unconfirmed',
-                      })
-                    } else {
-                      reconcileRuntimeConversationQueueAfterTransportReplacement(address, turns, {
-                        queriedClientUserMessageIds,
-                        acceptedClientUserMessageIds,
+                        pendingCount: unconfirmed.length,
                       })
                     }
                   }

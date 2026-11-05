@@ -26,6 +26,8 @@ import { DatabaseSync } from 'node:sqlite'
 
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { runtimeTransportGates } from '../modules/runtime-transport-gates.mjs'
+import { verifyOlderHistoryReadCancellation } from '../modules/history-read-cancellation.mjs'
+import { verifyRuntimeReceiptRecovery } from '../modules/runtime-receipt-recovery.mjs'
 import {
   LEGACY_PROMPT,
   LEGACY_ATTACHMENT_PREVIEW,
@@ -63,6 +65,8 @@ const SWITCH_PROMPT = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_SWITCH'
 const SWITCH_COMPLETION = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_SWITCH_COMPLETE'
 const SECOND_PROMPT = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_SECOND'
 const SECOND_COMPLETION = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_SECOND_COMPLETE'
+const RECOVERY_PROMPT = 'WEWORK_DESKTOP_E2E_HISTORY_RECEIPT_RECOVERY'
+const RECOVERY_COMPLETION = 'WEWORK_DESKTOP_E2E_HISTORY_RECEIPT_RECOVERED'
 const PAGED_PROMPT = 'WEWORK-DESKTOP-E2E-RUNNING-HISTORY-PAGED'
 const PAGED_SEARCH_TERM = 'foo bar & baz'
 const PAGED_REQUEST = `${PAGED_PROMPT} foo **bar** &amp; baz`
@@ -343,6 +347,17 @@ export function createDesktopScenario({
         'Content-Type': 'text/event-stream; charset=utf-8',
       })
 
+      if (body.includes(RECOVERY_PROMPT)) {
+        response.end(
+          sse([
+            responseCreated(responseId),
+            assistantMessage(responseId, RECOVERY_COMPLETION),
+            responseCompleted(responseId),
+          ])
+        )
+        return true
+      }
+
       if (body.includes(PAGED_PROMPT)) {
         response.flushHeaders()
         response.write(sse([responseCreated(responseId)]))
@@ -582,35 +597,53 @@ export function createDesktopScenario({
         await writeFile(indexPath, `${JSON.stringify(index)}\n`, 'utf8')
       })
       await control.command('waitFor', switchTaskRow, { timeoutMs: uiTimeoutMs })
+      await gates.arm({
+        id: 'cancellation-initial-history',
+        kind: 'response',
+        name: 'runtime.tasks.transcript',
+        where: [{ path: 'params.taskId', equals: switchTaskId }],
+      })
       await control.command('clickWhenEnabled', switchTaskRow, { timeoutMs: uiTimeoutMs })
-      await verifyNativeTerminalHistorySearch(
-        control,
-        await waitForTaskAddress(control, switchTaskId, uiTimeoutMs),
-        uiTimeoutMs
-      )
-      await restartDesktopApp(async () => {
-        const indexPath = join(executorHome, 'runtime-work', 'index.json')
-        const index = JSON.parse(await readFile(indexPath, 'utf8'))
-        const task = Object.values(index.tasks ?? {}).find(
-          candidate => candidate.local_task_id === taskId
-        )
-        assert.ok(task, 'The running-history task was missing from the persisted runtime index')
-        delete task.runtime_handle?.completedTranscriptMessages
-        delete task.runtime_handle?.completedTranscriptThreadId
-        const threadId = task.thread_id
-        assert.equal(typeof threadId, 'string', 'The running-history task has no Codex thread')
-        const threadPath = await findRolloutPath(join(executorHome, 'codex', 'sessions'), threadId)
-        assert.ok(threadPath, 'The running-history Codex rollout was not found')
-        const rollout = await readFile(threadPath, 'utf8')
-        const longHistory = appendLongRunningHistory(rollout, threadId)
-        await appendFile(threadPath, `${longHistory}\n`, 'utf8')
-        task.runtime_handle.cloudTranscript ??= {}
-        const legacyTask = Object.values(index.tasks ?? {}).find(
-          candidate => candidate.local_task_id === switchTaskId
-        )
-        assert.ok(legacyTask, 'The legacy search task was missing from the runtime index')
-        await seedLegacySearchHistory(executorHome, codexSqliteHome, legacyTask)
-        await writeFile(indexPath, `${JSON.stringify(index)}\n`, 'utf8')
+      await gates.wait('cancellation-initial-history', undefined, uiTimeoutMs)
+      const nativeSearchAddress = await waitForTaskAddress(control, switchTaskId, uiTimeoutMs)
+      await verifyOlderHistoryReadCancellation(control, {
+        address: nativeSearchAddress,
+        otherTaskId: taskId,
+        resultDir,
+        timeoutMs: uiTimeoutMs,
+      })
+      await verifyNativeTerminalHistorySearch(control, nativeSearchAddress, uiTimeoutMs)
+      await restartDesktopApp({
+        // The physical in-flight cancellation has been verified. All remaining
+        // races use transport gates, so paging need not repeat the artificial delay.
+        appEnvironmentOverrides: { WEWORK_E2E_RUNTIME_TRANSCRIPT_DELAY_MS: '0' },
+        afterStop: async () => {
+          const indexPath = join(executorHome, 'runtime-work', 'index.json')
+          const index = JSON.parse(await readFile(indexPath, 'utf8'))
+          const task = Object.values(index.tasks ?? {}).find(
+            candidate => candidate.local_task_id === taskId
+          )
+          assert.ok(task, 'The running-history task was missing from the persisted runtime index')
+          delete task.runtime_handle?.completedTranscriptMessages
+          delete task.runtime_handle?.completedTranscriptThreadId
+          const threadId = task.thread_id
+          assert.equal(typeof threadId, 'string', 'The running-history task has no Codex thread')
+          const threadPath = await findRolloutPath(
+            join(executorHome, 'codex', 'sessions'),
+            threadId
+          )
+          assert.ok(threadPath, 'The running-history Codex rollout was not found')
+          const rollout = await readFile(threadPath, 'utf8')
+          const longHistory = appendLongRunningHistory(rollout, threadId)
+          await appendFile(threadPath, `${longHistory}\n`, 'utf8')
+          task.runtime_handle.cloudTranscript ??= {}
+          const legacyTask = Object.values(index.tasks ?? {}).find(
+            candidate => candidate.local_task_id === switchTaskId
+          )
+          assert.ok(legacyTask, 'The legacy search task was missing from the runtime index')
+          await seedLegacySearchHistory(executorHome, codexSqliteHome, legacyTask)
+          await writeFile(indexPath, `${JSON.stringify(index)}\n`, 'utf8')
+        },
       })
       await control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
         timeoutMs: uiTimeoutMs,
@@ -994,6 +1027,13 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await assertMovedProject(control, moved.projectKey, moved.address, uiTimeoutMs)
+      await verifyRuntimeReceiptRecovery(control, {
+        address: moved.address,
+        prompt: RECOVERY_PROMPT,
+        completion: RECOVERY_COMPLETION,
+        resultDir,
+        timeoutMs: uiTimeoutMs,
+      })
       active = false
     },
 

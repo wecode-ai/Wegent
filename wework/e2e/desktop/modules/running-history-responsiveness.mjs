@@ -48,6 +48,11 @@ export async function verifyHistoryReadResponsiveness(
         params => requestExecutor(control, 'runtime.tasks.transcript', params, timeoutMs)
       )
     ),
+    measured('full-history', () =>
+      readRuntimeTranscript({ address, includeFullContent: true }, params =>
+        requestExecutor(control, 'runtime.tasks.transcript', params, timeoutMs)
+      )
+    ),
     ...[
       ['executor.health', {}],
       ['runtime.tasks.get', { address }],
@@ -88,7 +93,11 @@ export async function verifyHistoryReadResponsiveness(
     [accepted],
     'A bounded tail must confirm off-page acceptance without inventing an unaccepted send'
   )
-  for (const timing of timings.filter(timing => timing.operation !== 'paged-history')) {
+  assert.ok(
+    results[1].value.turns.flatMap(turn => turn.items).length >= LONG_HISTORY_ITEM_COUNT,
+    'The concurrent full read must materialize the real long tool history'
+  )
+  for (const timing of timings.filter(timing => !timing.operation.endsWith('-history'))) {
     assert.ok(
       timing.elapsedMs < RESPONSIVENESS_TIMEOUT_MS,
       `${timing.operation} exceeded its responsiveness budget: ${timing.elapsedMs}ms`

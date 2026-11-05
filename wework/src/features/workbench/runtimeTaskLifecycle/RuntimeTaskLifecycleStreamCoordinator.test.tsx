@@ -202,7 +202,7 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
     expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(false)
   })
 
-  test('refreshes the transcript and requeues an interrupted send after runtime replacement', async () => {
+  test('refreshes the transcript and retains an unconfirmed send after runtime replacement', async () => {
     const store = new RuntimeTaskLifecycleStore('test')
     const address = runtimeTaskAddress()
     store.syncRuntimeWork(runtimeWork(true))
@@ -272,8 +272,8 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
       expect(getRuntimeConversationQueuedMessages(address)).toEqual([
         expect.objectContaining({
           id: 'queued-follow-up',
-          status: 'queued',
-          awaitingTurnStart: undefined,
+          status: 'sending',
+          awaitingTurnStart: false,
         }),
       ])
     })

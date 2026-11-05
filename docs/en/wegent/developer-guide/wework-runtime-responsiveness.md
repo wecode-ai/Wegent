@@ -71,11 +71,16 @@ flowchart LR
   thread's synthetic historical `interrupted` status cannot establish completion.
 - Publish reconnect task state before content recovery. Recover tasks
   independently with bounded concurrency.
-- Reconcile only the currently unconfirmed message IDs against explicit native
-  turn bindings, including accepted messages outside the loaded tail. Missing
+- Event-gap, reconnect, and system-resume recovery reconcile only the currently
+  unconfirmed message IDs against explicit native turn bindings, including
+  accepted messages outside the loaded tail. Missing
   bodies do not establish non-acceptance. Missing receipts retain unconfirmed
-  sends with a diagnostic instead of automatically resending them. A query cannot
-  requeue a newer send created after it started. Project and cloud sessions pass
+  sends with a diagnostic instead of automatically resending them. An empty receipt
+  list cannot prove rejection: accepted executor work may still be queued without
+  a turn binding. A query cannot requeue a newer send created after it started.
+  After an executor restart, cursors earlier than the new journal's starting
+  boundary trigger event-gap recovery instead of entering its replay window.
+  Project and cloud sessions pass
   receipt queries and results through their existing authorization path.
 - Normal history uses item cursors and item/byte budgets. Long turns remain
   pageable. Full export is explicit and never a prerequisite for terminal state.
@@ -150,17 +155,17 @@ flowchart LR
 
 ## Verification contract
 
-| Scenario                                    | Required result                                                                     |
-| ------------------------------------------- | ----------------------------------------------------------------------------------- |
-| One turn with 7,000+ tool items             | Bounded normal reads; cursor traversal preserves all items and their order          |
-| Status during heavy history work            | Control requests proceed without waiting for projection                             |
-| Transcript deadline, disconnect, view exit  | Transcript work cancels; permits release after actual computation exit              |
-| Two shared viewers, one exits               | The remaining viewer receives its complete result                                   |
-| Old completion overlaps a new send          | The old result cannot settle or overwrite the new turn                              |
-| Initial/refresh list failure                | Local error and retry; no false empty state or discarded valid data                 |
-| Refresh overlaps account switch             | Independent results publish promptly; old responses cannot cross scopes             |
-| Same-account reconnect overlaps preferences | Retain project, conversation, and new model selection; reject old transport results |
-| Create and open a cloud project or empty workspace during navigation | Show the target immediately and include the local catalog when it arrives |
+| Scenario                                                             | Required result                                                                     |
+| -------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| One turn with 7,000+ tool items                                      | Bounded normal reads; cursor traversal preserves all items and their order          |
+| Status during heavy history work                                     | Control requests proceed without waiting for projection                             |
+| Transcript deadline, disconnect, view exit                           | Transcript work cancels; permits release after actual computation exit              |
+| Two shared viewers, one exits                                        | The remaining viewer receives its complete result                                   |
+| Old completion overlaps a new send                                   | The old result cannot settle or overwrite the new turn                              |
+| Initial/refresh list failure                                         | Local error and retry; no false empty state or discarded valid data                 |
+| Refresh overlaps account switch                                      | Independent results publish promptly; old responses cannot cross scopes             |
+| Same-account reconnect overlaps preferences                          | Retain project, conversation, and new model selection; reject old transport results |
+| Create and open a cloud project or empty workspace during navigation | Show the target immediately and include the local catalog when it arrives           |
 
 Run focused Rust, component, and protocol tests locally. Desktop regression
 coverage uses the existing CI checkpoint runner. Repository policy requires an

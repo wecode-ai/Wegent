@@ -102,6 +102,7 @@ import type {
 } from '@/types/workbench'
 import type { CodeCommentContext } from '@/types/workspace-files'
 import type { BrowserAnnotationCommand, BrowserAnnotationScope } from '@/types/browser-annotation'
+import { useRuntimePaneTranscriptReader } from './useRuntimePaneTranscriptReader'
 import {
   hasBrowserAnnotationScope,
   isBrowserAnnotationContext,
@@ -226,7 +227,7 @@ export function useWorkbenchPaneSession({
   const {
     state: workbenchState,
     projectChat,
-    loadRuntimeTranscriptForPane,
+    loadRuntimeTranscriptForPane: readRuntimeTranscriptForPane,
     searchRuntimeTranscriptForPane,
     getRuntimeGoal,
     setRuntimeGoal,
@@ -448,7 +449,6 @@ export function useWorkbenchPaneSession({
   const [pendingGoalState, setPendingGoalState] = useState<PendingRuntimeGoalState | null>(null)
   const [goalDraftActive, setGoalDraftActive] = useState(false)
   const loadedRuntimeTranscriptKeyRef = useRef<string | null>(null)
-  const loadRuntimeTranscriptForPaneRef = useRef(loadRuntimeTranscriptForPane)
   const refreshWorkListsRef = useRef(refreshWorkLists)
   const currentRuntimeTaskRef = useRef(currentRuntimeTask)
   const runtimeTaskLoadTargetRef = useRef<RuntimeTaskLoadTarget | null>(null)
@@ -469,6 +469,12 @@ export function useWorkbenchPaneSession({
     currentRuntimeTaskLoadTarget?.key === retainedRuntimeTaskLoadTarget?.key
       ? retainedRuntimeTaskLoadTarget
       : (currentRuntimeTaskLoadTarget ?? retainedRuntimeTaskLoadTarget)
+  const { read: loadRuntimeTranscriptForPane, isCurrent: isTranscriptScopeCurrent } =
+    useRuntimePaneTranscriptReader(
+      readRuntimeTranscriptForPane,
+      runtimeTaskLoadTarget?.key ?? null,
+      transcriptReloadVersion
+    )
   const transcriptLoading =
     runtimeTaskLoadTarget !== null && transcriptLoadingKey === runtimeTaskLoadTarget.key
   const transcriptLoadingMoreBefore =
@@ -680,10 +686,6 @@ export function useWorkbenchPaneSession({
   }, [loadedTranscriptRanges])
 
   useEffect(() => {
-    loadRuntimeTranscriptForPaneRef.current = loadRuntimeTranscriptForPane
-  }, [loadRuntimeTranscriptForPane])
-
-  useEffect(() => {
     refreshWorkListsRef.current = refreshWorkLists
   }, [refreshWorkLists])
 
@@ -769,7 +771,6 @@ export function useWorkbenchPaneSession({
     }
 
     let cancelled = false
-    const transcriptRead = new AbortController()
     let cancelNavigationLoad = () => {}
     const cachedSeededMessages = getRuntimeConversationMessages(address)
     const seededMessages =
@@ -796,9 +797,8 @@ export function useWorkbenchPaneSession({
     const turnsAtLoadStart = getRuntimeConversationTurns(address)
     void Promise.resolve()
       .then(() =>
-        loadRuntimeTranscriptForPaneRef.current(address, {
+        loadRuntimeTranscriptForPane(address, {
           limit: runtimeTranscriptPageSize,
-          signal: transcriptRead.signal,
         })
       )
       .then(transcript => {
@@ -809,7 +809,7 @@ export function useWorkbenchPaneSession({
           messageCount: transcript.messages.length,
           turnCount: transcript.turns.length,
         })
-        if (!cancelled) {
+        if (!cancelled && isTranscriptScopeCurrent()) {
           const preserveActiveTurn =
             getRuntimeConversationTurns(address) !== turnsAtLoadStart &&
             (lifecycleStore.getTask(address)?.derived.isRunning ?? false) &&
@@ -837,15 +837,18 @@ export function useWorkbenchPaneSession({
             (!transcript.turnNavigation || transcript.turnNavigation.length === 0)
           ) {
             cancelNavigationLoad = scheduleRuntimeTurnNavigationLoad(() => {
-              void loadRuntimeTranscriptForPaneRef
-                .current(address, { navigationOnly: true })
+              void loadRuntimeTranscriptForPane(address, { navigationOnly: true })
                 .then(navigationTranscript => {
-                  if (!cancelled && navigationTranscript.turnNavigation) {
+                  if (
+                    !cancelled &&
+                    isTranscriptScopeCurrent() &&
+                    navigationTranscript.turnNavigation
+                  ) {
                     setTurnNavigation(navigationTranscript.turnNavigation)
                   }
                 })
                 .catch(error => {
-                  if (!cancelled) {
+                  if (!cancelled && isTranscriptScopeCurrent()) {
                     console.error('[Wework] Runtime turn navigation load failed', {
                       address,
                       error,
@@ -858,7 +861,7 @@ export function useWorkbenchPaneSession({
       })
       .catch(error => {
         if (error instanceof SupersededConversationRead) return
-        if (!cancelled) {
+        if (!cancelled && isTranscriptScopeCurrent()) {
           loadedRuntimeTranscriptKeyRef.current = null
           setTranscriptFullContent(false)
           setTranscriptHasMoreBefore(false)
@@ -879,7 +882,7 @@ export function useWorkbenchPaneSession({
           cancelled,
           activeKey: runtimeTaskLoadTargetRef.current?.key,
         })
-        if (!cancelled) {
+        if (!cancelled && isTranscriptScopeCurrent()) {
           setTranscriptLoadingKey(current => (current === loadKey ? null : current))
         }
       })
@@ -890,10 +893,16 @@ export function useWorkbenchPaneSession({
         activeKey: runtimeTaskLoadTargetRef.current?.key,
       })
       cancelled = true
-      transcriptRead.abort()
       cancelNavigationLoad()
     }
-  }, [lifecycleStore, runtimeTaskLoadTarget, runtimeTranscriptPageSize, transcriptReloadVersion])
+  }, [
+    lifecycleStore,
+    isTranscriptScopeCurrent,
+    loadRuntimeTranscriptForPane,
+    runtimeTaskLoadTarget,
+    runtimeTranscriptPageSize,
+    transcriptReloadVersion,
+  ])
   const reloadRuntimeTranscript = useCallback(() => {
     loadedRuntimeTranscriptKeyRef.current = null
     setTranscriptError(null)
@@ -902,6 +911,7 @@ export function useWorkbenchPaneSession({
 
   const loadMoreTranscriptBefore = useCallback(async () => {
     if (
+      !isTranscriptScopeCurrent() ||
       !runtimeTaskLoadTarget ||
       !transcriptBeforeCursor ||
       transcriptLoadingMoreBefore ||
@@ -913,11 +923,11 @@ export function useWorkbenchPaneSession({
     const beforeCursor = transcriptBeforeCursor
     setTranscriptLoadingMoreBeforeKey(loadKey)
     try {
-      const transcript = await loadRuntimeTranscriptForPaneRef.current(address, {
+      const transcript = await loadRuntimeTranscriptForPane(address, {
         limit: runtimeTranscriptPageSize,
         beforeCursor,
       })
-      if (runtimeTaskLoadTargetRef.current?.key !== loadKey) return
+      if (!isTranscriptScopeCurrent()) return
       setTranscriptError(null)
       const nextRanges = mergeTranscriptRanges(
         loadedTranscriptRangesRef.current,
@@ -932,7 +942,7 @@ export function useWorkbenchPaneSession({
           : current
       )
     } catch (error) {
-      if (runtimeTaskLoadTargetRef.current?.key !== loadKey) return
+      if (!isTranscriptScopeCurrent()) return
       setTranscriptError(error instanceof Error ? error.message : String(error))
       console.error('[Wework] Runtime pane older transcript load failed', {
         key: loadKey,
@@ -941,9 +951,13 @@ export function useWorkbenchPaneSession({
         error,
       })
     } finally {
-      setTranscriptLoadingMoreBeforeKey(current => (current === loadKey ? null : current))
+      if (isTranscriptScopeCurrent()) {
+        setTranscriptLoadingMoreBeforeKey(current => (current === loadKey ? null : current))
+      }
     }
   }, [
+    isTranscriptScopeCurrent,
+    loadRuntimeTranscriptForPane,
     runtimeTaskLoadTarget,
     runtimeTranscriptPageSize,
     transcriptBeforeCursor,
@@ -953,7 +967,7 @@ export function useWorkbenchPaneSession({
 
   const loadTranscriptTurnNavigationItem = useCallback(
     async (item: RuntimeTurnNavigationItem) => {
-      if (!runtimeTaskLoadTarget || !item.cursor) {
+      if (!isTranscriptScopeCurrent() || !runtimeTaskLoadTarget || !item.cursor) {
         return
       }
       if (transcriptFullContent) {
@@ -963,14 +977,14 @@ export function useWorkbenchPaneSession({
         return
       }
 
-      const { key: loadKey, address } = runtimeTaskLoadTarget
+      const { address } = runtimeTaskLoadTarget
       const loadOptions = runtimeTurnNavigationLoadOptions(
         item,
         loadedTranscriptRangesRef.current,
         runtimeTranscriptPageSize
       )
-      const transcript = await loadRuntimeTranscriptForPaneRef.current(address, loadOptions)
-      if (runtimeTaskLoadTargetRef.current?.key !== loadKey) return
+      const transcript = await loadRuntimeTranscriptForPane(address, loadOptions)
+      if (!isTranscriptScopeCurrent()) return
       const nextHasMoreBefore =
         loadOptions.beforeCursor === undefined
           ? transcriptHasMoreBefore
@@ -993,6 +1007,8 @@ export function useWorkbenchPaneSession({
       )
     },
     [
+      isTranscriptScopeCurrent,
+      loadRuntimeTranscriptForPane,
       runtimeTaskLoadTarget,
       runtimeTranscriptPageSize,
       transcriptBeforeCursor,
@@ -1003,16 +1019,22 @@ export function useWorkbenchPaneSession({
 
   const loadTranscriptGap = useCallback(
     async (gap: LoadedTranscriptRange) => {
-      if (!runtimeTaskLoadTarget || transcriptFullContent || gap.end <= gap.start) return
+      if (
+        !isTranscriptScopeCurrent() ||
+        !runtimeTaskLoadTarget ||
+        transcriptFullContent ||
+        gap.end <= gap.start
+      )
+        return
 
-      const { key: loadKey, address } = runtimeTaskLoadTarget
+      const { address } = runtimeTaskLoadTarget
       const limit = Math.min(runtimeTranscriptPageSize, gap.end - gap.start)
       const loadOptions = {
         limit,
         afterCursor: `offset:${gap.start}`,
       }
-      const transcript = await loadRuntimeTranscriptForPaneRef.current(address, loadOptions)
-      if (runtimeTaskLoadTargetRef.current?.key !== loadKey) return
+      const transcript = await loadRuntimeTranscriptForPane(address, loadOptions)
+      if (!isTranscriptScopeCurrent()) return
       const nextRanges = mergeTranscriptRanges(
         loadedTranscriptRangesRef.current,
         transcriptRangeFromPage(transcript)
@@ -1024,7 +1046,13 @@ export function useWorkbenchPaneSession({
           : current
       )
     },
-    [runtimeTaskLoadTarget, runtimeTranscriptPageSize, transcriptFullContent]
+    [
+      isTranscriptScopeCurrent,
+      loadRuntimeTranscriptForPane,
+      runtimeTaskLoadTarget,
+      runtimeTranscriptPageSize,
+      transcriptFullContent,
+    ]
   )
 
   const conversationSearch = useRuntimeConversationSearch({
@@ -1032,6 +1060,7 @@ export function useWorkbenchPaneSession({
     targetRef: runtimeTaskLoadTargetRef,
     searchTranscript: searchRuntimeTranscriptForPane,
     loadTranscript: loadRuntimeTranscriptForPane,
+    reloadRevision: transcriptReloadVersion,
   })
 
   const getRuntimeModelFields = useCallback(
@@ -1357,7 +1386,7 @@ export function useWorkbenchPaneSession({
           markRuntimeTerminalAdditionalContextDelivered(additionalContext)
           return true
         }
-        await loadRuntimeTranscriptForPaneRef.current(currentRuntimeTask, {
+        await loadRuntimeTranscriptForPane(currentRuntimeTask, {
           limit: runtimeTranscriptPageSize,
           refresh: true,
         })
@@ -1366,24 +1395,24 @@ export function useWorkbenchPaneSession({
         })
         return false
       } catch (error) {
-        const transcript = await loadRuntimeTranscriptForPaneRef
-          .current(currentRuntimeTask, {
-            limit: runtimeTranscriptPageSize,
-            refresh: true,
-          })
-          .catch(() => null)
+        const transcript = await loadRuntimeTranscriptForPane(currentRuntimeTask, {
+          limit: runtimeTranscriptPageSize,
+          refresh: true,
+        }).catch(() => null)
         removeRuntimeConversationTurn(currentRuntimeTask, {
           clientUserMessageId: editedMessage.id,
         })
         if (!transcript) {
           replaceRuntimeConversationSnapshot(currentRuntimeTask, previousTurns)
         }
-        console.error('[Wework] Runtime last user message edit failed', {
-          address: runtimeAddressDebug(currentRuntimeTask),
-          messageId: message.id,
-          error,
-        })
-        setError('编辑失败')
+        if (isTranscriptScopeCurrent()) {
+          console.error('[Wework] Runtime last user message edit failed', {
+            address: runtimeAddressDebug(currentRuntimeTask),
+            messageId: message.id,
+            error,
+          })
+          setError('编辑失败')
+        }
         return false
       }
     },
@@ -1391,6 +1420,8 @@ export function useWorkbenchPaneSession({
       currentRuntimeTask,
       editLastUserMessage,
       getRuntimeModelFields,
+      isTranscriptScopeCurrent,
+      loadRuntimeTranscriptForPane,
       paneStatus.isBusy,
       runtimeTranscriptPageSize,
       setError,
@@ -1438,18 +1469,15 @@ export function useWorkbenchPaneSession({
   const loadFullTranscriptForExport = useCallback(async () => {
     if (!runtimeTaskLoadTarget) return messagesRef.current
 
-    const transcript = await loadRuntimeTranscriptForPaneRef.current(
-      runtimeTaskLoadTarget.address,
-      {
-        includeFullContent: true,
-        refresh: true,
-      }
-    )
+    const transcript = await loadRuntimeTranscriptForPane(runtimeTaskLoadTarget.address, {
+      includeFullContent: true,
+      refresh: true,
+    })
     if (transcript.fullContent !== true) {
       throw new Error('The complete task transcript is unavailable')
     }
     return transcript.messages.length > 0 ? transcript.messages : messagesRef.current
-  }, [runtimeTaskLoadTarget])
+  }, [loadRuntimeTranscriptForPane, runtimeTaskLoadTarget])
 
   const sendQueuedMessageAsGuidance = useCallback(
     async (queuedMessage: RuntimePaneQueuedMessage, forceActiveTurn = false): Promise<boolean> => {
@@ -1950,10 +1978,12 @@ export function useWorkbenchPaneSession({
             loadRuntimeTranscriptForPane
           )
         } catch (cause) {
+          if (!isTranscriptScopeCurrent()) return false
           console.warn('[Wework composer] failed to load referenced conversation', cause)
           setError(i18n.t('workbench.mention_conversation_load_failed'))
           return false
         }
+        if (!isTranscriptScopeCurrent()) return false
 
         // Do not keep an earlier action error visible once the user sends a new message.
         setError(null)
@@ -2217,6 +2247,7 @@ export function useWorkbenchPaneSession({
         getInputRevisionForScope,
         inputScopeKey,
         interruptAndSendQueuedMessage,
+        isTranscriptScopeCurrent,
         lifecycleStore,
         loadRuntimeTranscriptForPane,
         pendingGoalState,
