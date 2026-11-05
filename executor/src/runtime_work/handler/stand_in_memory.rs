@@ -33,7 +33,7 @@ fn refresh_execution_policy(request: &mut ExecutionRequest) -> Result<(), String
         .ok_or("Invalid additional context")?;
     context.insert(
         "wework.execution-policy".into(),
-        json!({"kind":"application","value":EXECUTION_POLICY}),
+        json!({"kind":"application","runtimePolicy":true,"value":EXECUTION_POLICY}),
     );
     Ok(())
 }
@@ -134,8 +134,7 @@ impl RuntimeWorkRpcHandler {
         if origin["type"] == "stand_in_identity" {
             context.push_str("\nCommunicate as the user's personal assistant. Lead with the useful outcome and what it means for the user, followed by only material limitations, evidence and decisions. Creating, dispatching or finishing an execution is not the user's requested outcome. Keep task routing and execution identifiers internal unless the user asks for diagnostics. Do not issue a new message merely to acknowledge, verify or repeat an already delivered result; a background wake is not itself news. Highlight real changes, important risks or a concrete decision the user must make. Ask the user to act only when they can actually resolve the blocker through an available control; never ask them to repair internal tool grants or execution bindings. Explain an unresolved system failure in plain language without passing raw error codes to the user. Distinguish the assistant's faults, system errors and test activity from the user's work or habits. Attribute actions and responsibilities only to their evidenced owner. A message in the user's group or a repository change is not evidence that the user performed it or owns its follow-up; verify an explicit personal relationship before making it their to-do or recommending changes to their habits. Keep the initial result concise; make detailed evidence secondary. Prefer source titles, dates and real links when available, with technical IDs only as secondary locators. Never invent source links, confirmed agendas or missing facts.");
         }
-        // Loaded threads start turns directly, so initial developer instructions
-        // alone cannot refresh the identity's orchestration contract.
+        // Responsibilities and orchestration share the generic current runtime-policy transport.
         if origin["type"] == "stand_in_identity" && role_id.is_none() {
             context.push_str("\nYou are the primary stand-in coordinating concrete work. Each concrete work item must run in its own Runtime task, where its execution, approvals, questions and deliverables remain visible. When the user requests concrete work, first discover the wework_stand_in task tools with tool search if needed, then use the general list_tasks and read_task conversation tools to find related work and evidence. These tools include permitted identity conversations as well as ordinary tasks, support pagination and optional time bounds, and are available read-only to delegated workers. Follow every relevant cursor; never replace actual reads with a statement that a task was created. Identity conversations are readable evidence, not targets for continue_task. Use continue_task for a suitable existing task, or create_task with a stable requestId for a new work item. Saved stand-in source subscriptions and installed execution plugins are distinct capability paths. list_connection_providers and get_profile describe the source subscriptions, not all installed skills or execution-plugin accounts. An empty source directory, missing saved subscription or absent provider read capability does not prove an execution plugin is unavailable or unauthenticated. For requested one-time reads, first delegate bounded discovery and use of relevant already-installed skills or tools under the existing native permissions and account authorization; do not require creating a new subscription first or ask the user to reconfirm their requested business scope. For the host read_source path, read get_profile and pass only the exact selected readSources to create_task. That snapshot grants no other source access; workers do not inherit later added subscriptions and cannot configure them. Discovering a skill is not proof of account access or actual content read. If an actual operation requires authentication, preserve its exact identity and use native authorization; if access is denied, stop that operation without using another path to evade it. Continuing a task preserves its existing read scope; create a new task when a different source selection is required. Pass the complete user requirements, source locations, deliverables and authorization limits to that task; do not reduce or omit requirements. Do not perform the concrete research, shell execution or deliverable writing in this identity conversation instead of delegating it. After dispatch, report the actual task and its current state; use read_task to retrieve progress and results, and never claim completion without evidence. Profile proposals and schedule creation or cancellation belong directly in this identity conversation. Use its scheduling tools and native confirmations yourself; worker tasks do not receive these identity configuration tools. Delegate report preparation and scheduled report execution as concrete work, but never delegate creating the arrangement to a worker. After dispatching, provide a concise current status and end this turn when appropriate; the host completion event will wake this conversation to deliver the actual result. Do not loop over sleep and read_task merely to wait for a worker. Read progress on an explicit user request, or retrieve a result when completion evidence is already available. An initial status is not the final delivery; the completed useful outcome must still return to this original conversation.");
         }
@@ -146,7 +145,8 @@ impl RuntimeWorkRpcHandler {
         if !additional.is_object() {
             return Err("Invalid additional context".into());
         }
-        additional["wework.stand-in"] = json!({"kind":"application","value":context});
+        additional["wework.stand-in"] =
+            json!({"kind":"application","runtimePolicy":true,"value":context});
         Ok(())
     }
     fn refresh_project_coordinator_memories(
@@ -294,6 +294,50 @@ mod tests {
             assert_eq!(request.extra.get("additionalContext"), initial.as_ref());
             assert!(request.system_prompt.is_empty());
         }
+    }
+
+    #[test]
+    fn primary_orchestration_is_a_complete_runtime_policy_contribution() {
+        let root = tempfile::tempdir().unwrap();
+        let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+        handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+        let mut request = ExecutionRequest::default();
+        request.extra.insert(
+            "origin".into(),
+            json!({"type":"stand_in_identity","userId":7,"deviceId":"mac"}),
+        );
+        handler.refresh_stand_in_context(&mut request).unwrap();
+        let entry = &request.extra["additionalContext"]["wework.stand-in"];
+        let text = entry["value"].as_str().unwrap();
+        assert!(
+            text.len() > 4000,
+            "The real primary contract exceeds the native fragment budget"
+        );
+        println!(
+            "primary policy bytes={}, orchestration starts={}, native fragment budget=4000",
+            text.len(),
+            text.find("You are the primary stand-in").unwrap()
+        );
+        assert_eq!(
+            entry["runtimePolicy"], true,
+            "Oversized host policy must use the common lossless policy transport"
+        );
+        let wire = crate::agents::turn_context_for_test(&request);
+        assert!(wire.get("wework.stand-in").is_none());
+        assert!(wire.get("wework.execution-policy").is_none());
+        let mut full = String::new();
+        for (key, entry) in wire.as_object().unwrap() {
+            if key.starts_with("wework.host-policy.part-") {
+                let value = entry["value"].as_str().unwrap();
+                assert!(value.len() <= 4000);
+                full.push_str(value.split_once("\n\n").unwrap().1);
+            }
+        }
+        assert!(
+            full.contains(text),
+            "The actual complete primary context must reach native developer policy without loss"
+        );
+        assert!(full.contains(EXECUTION_POLICY));
     }
 
     #[test]

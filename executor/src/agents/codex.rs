@@ -169,6 +169,8 @@ use home::{prepare_wework_codex_home, read_wework_codex_user_instructions, CODEX
 use plugin_skills::PluginSkillResolver;
 mod effective_instructions;
 #[cfg(test)]
+pub(crate) use effective_instructions::turn_context_for_test;
+#[cfg(test)]
 #[path = "codex/effective_instructions_tests.rs"]
 mod effective_instructions_tests;
 mod github_cli;

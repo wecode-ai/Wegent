@@ -83,7 +83,7 @@ fn install_guidance(request: &mut ExecutionRequest, guidance: &[Value]) -> Resul
         .remove("wework.connection-guidance-policy");
     if !guidance.is_empty() {
         additional["wework.connection-guidance-policy"] =
-            json!({"kind":"application","value":GUIDANCE_POLICY});
+            json!({"kind":"application","runtimePolicy":true,"value":GUIDANCE_POLICY});
         additional["wework.connection-guidance"] =
             json!({"kind":"untrusted","value":json!(guidance).to_string()});
     }

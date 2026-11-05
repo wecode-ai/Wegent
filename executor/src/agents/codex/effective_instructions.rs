@@ -19,10 +19,37 @@ pub(super) fn text(request: &ExecutionRequest, launch_config: &CodexLaunchConfig
             &request.system_prompt,
         )
     };
+    if request.extra.get("enable_tools").and_then(Value::as_bool) != Some(false) {
+        let mut contributions: Vec<_> = runtime_context(request)
+            .into_iter()
+            .flatten()
+            .filter(|(key, entry)| !key.starts_with(PREFIX) && is_runtime_policy(entry))
+            .collect();
+        contributions.sort_by_key(|(key, _)| *key);
+        for (key, entry) in contributions {
+            instructions.push_str(&format!(
+                "\n\nWework runtime policy contribution {}:\n{}",
+                json!(key),
+                entry["value"].as_str().unwrap()
+            ));
+        }
+    }
     if crate::runtime_work::stand_in_requires_confirmation(request) {
         instructions.push_str("\n\nWework stand-in action confirmation:\nWework collects one-time execution approval through native tool approval controls in the original conversation. The shared pending inbox links to that authorization context. Prepare the exact action and invoke its tool so Wework can display that approval. Do not ask the user to type yes, confirm, or equivalent in chat before invoking the tool, and do not replace native approval with a prose question. A chat reply never grants execution permission. For a genuine business ambiguity, use request_user_input_async when available, otherwise request_user_input, with explicit choices. Explain proposed replies in plain language without exposing internal policy field names. Keep all existing tool approval requirements in force.");
     }
     instructions
+}
+
+fn runtime_context(request: &ExecutionRequest) -> Option<&Map<String, Value>> {
+    request
+        .extra
+        .get("additionalContext")
+        .or_else(|| request.extra.get("additional_context"))
+        .and_then(Value::as_object)
+}
+
+fn is_runtime_policy(entry: &Value) -> bool {
+    entry["kind"] == "application" && entry["runtimePolicy"] == true && entry["value"].is_string()
 }
 
 pub(super) fn without_reserved_context(value: Value) -> Value {
@@ -38,7 +65,7 @@ pub(super) fn additional_context(
     let mut context = super::stand_in_plugin_cli::additional_context(request)
         .and_then(|value| value.as_object().cloned())
         .unwrap_or_default();
-    context.retain(|key, _| !key.starts_with(PREFIX));
+    context.retain(|key, entry| !key.starts_with(PREFIX) && !is_runtime_policy(entry));
     append_policy(&mut context, &text(request, launch_config));
     Value::Object(context)
 }
@@ -63,11 +90,22 @@ fn append_policy(context: &mut Map<String, Value>, policy: &str) {
         context.insert(key, json!({"kind":"application","value":value}));
     }
     let manifest = json!({"revision":revision,"parts":parts.len(),"semantics":
-        "This is the complete current Wework runtime developer policy manifest. It replaces earlier Wework runtime instructions, including the initial flat developerInstructions and all earlier manifests in this namespace. It does not replace higher-priority system instructions, independent application contexts or native permissions. Only parts with this revision and indices 0 through parts-1 are current; older revisions and absent or excess parts are historical and inactive. Join current part bodies in numeric order without added characters to recover the complete policy. Other application contexts and native permissions remain independently authoritative."});
+        "This is the complete current Wework runtime developer policy manifest. It replaces earlier Wework runtime instructions, including the initial flat developerInstructions and all earlier manifests in this namespace. Explicit runtimePolicy application contributions are included only in the current policy parts. Their earlier standalone application entries are historical and inactive. Contributions removed from the complete current policy withdraw their earlier directives. It does not replace higher-priority system instructions, unmarked independent application contexts or native permissions. Only parts with this revision and indices 0 through parts-1 are current; older revisions and absent or excess parts are historical and inactive. Join current part bodies in numeric order without added characters to recover the complete policy. Other application contexts and native permissions remain independently authoritative."});
     context.insert(
         MANIFEST_KEY.into(),
         json!({"kind":"application","value":manifest.to_string()}),
     );
+}
+
+#[cfg(test)]
+pub(crate) fn turn_context_for_test(request: &ExecutionRequest) -> Value {
+    super::turn_start_params(
+        "test-thread",
+        request,
+        &CodexLaunchConfig::default(),
+        vec![],
+    )["additionalContext"]
+        .clone()
 }
 
 #[cfg(test)]

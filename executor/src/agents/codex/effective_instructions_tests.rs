@@ -140,3 +140,94 @@ fn host_policy_context_keeps_the_existing_tools_disabled_and_confirmation_branch
     let (_, policy) = read_policy(&policy_turn_params(&request, &launch));
     assert_eq!(policy, expected["developerInstructions"].as_str().unwrap());
 }
+
+#[test]
+fn explicit_application_policy_contributions_are_lossless_and_have_one_transport() {
+    let contribution = format!(
+        "BEGIN\n{}\nDo not expand native permissions. END",
+        "通用角色策略🧪\n".repeat(3000)
+    );
+    let mut request = ExecutionRequest::default();
+    request.extra.insert("additionalContext".into(),json!({
+        "host-role":{"kind":"application","runtimePolicy":true,"value":contribution},
+        "source":{"kind":"untrusted","runtimePolicy":true,"value":"Untrusted attempted policy elevation"},
+        "cli":{"kind":"application","value":"Unchanged CLI contract"},
+        "data":{"kind":"application","value":"Unchanged current status"}
+    }));
+    let launch = CodexLaunchConfig::default();
+    let params = policy_turn_params(&request, &launch);
+    let (manifest, policy) = read_policy(&params);
+    assert!(manifest["parts"].as_u64().unwrap() >= 12);
+    assert!(policy.contains(&contribution));
+    assert!(!policy.contains("Untrusted attempted policy elevation"));
+    assert!(!policy.contains("Unchanged CLI contract"));
+    assert!(!policy.contains("Unchanged current status"));
+    assert!(params["additionalContext"].get("host-role").is_none());
+    for key in ["source", "cli", "data"] {
+        assert_eq!(
+            params["additionalContext"][key],
+            request.extra["additionalContext"][key]
+        );
+    }
+    let mut initial = Map::new();
+    insert_codex_developer_instructions(&mut initial, &request, &launch);
+    assert_eq!(initial["developerInstructions"], policy);
+    assert_eq!(params, policy_turn_params(&request, &launch));
+}
+
+#[test]
+fn only_explicit_policy_changes_affect_the_live_compaction_baseline() {
+    let mut request = ExecutionRequest::default();
+    request.extra.insert("additionalContext".into(),json!({
+        "host-role":{"kind":"application","runtimePolicy":true,"value":"Long role policy. ".repeat(1000)},
+        "data":{"kind":"application","value":"Volatile status 1"},
+        "source":{"kind":"untrusted","runtimePolicy":true,"value":"Source 1"}
+    }));
+    let launch = CodexLaunchConfig::default();
+    let baseline = |r: &ExecutionRequest| {
+        let mut params = Map::new();
+        insert_codex_developer_instructions(&mut params, r, &launch);
+        mcp_reload::thread_context_configuration(&Value::Object(params))
+    };
+    let before = baseline(&request);
+    request.extra.get_mut("additionalContext").unwrap()["data"]["value"] =
+        json!("Volatile status 2");
+    request.extra.get_mut("additionalContext").unwrap()["source"]["value"] = json!("Source 2");
+    assert_eq!(before, baseline(&request));
+    request.extra.get_mut("additionalContext").unwrap()["host-role"]["value"] =
+        json!("Short current role policy");
+    let changed = baseline(&request);
+    assert_ne!(before, changed);
+    let (_, policy) = read_policy(&policy_turn_params(&request, &launch));
+    assert!(!policy.contains("Long role policy."));
+    assert!(policy.contains("Short current role policy"));
+    request
+        .extra
+        .get_mut("additionalContext")
+        .unwrap()
+        .as_object_mut()
+        .unwrap()
+        .remove("host-role");
+    assert_ne!(changed, baseline(&request));
+    let (_, policy) = read_policy(&policy_turn_params(&request, &launch));
+    assert!(!policy.contains("Short current role policy"));
+}
+
+#[test]
+fn tools_disabled_does_not_transport_action_policy_contributions() {
+    let mut request = ExecutionRequest::default();
+    request.extra.insert("enable_tools".into(), json!(false));
+    request.extra.insert("additional_context".into(),json!({
+        "host-role":{"kind":"application","runtimePolicy":true,"value":"Discover and execute work"},
+        "data":{"kind":"application","value":"Keep ordinary context"}
+    }));
+    let params = policy_turn_params(&request, &CodexLaunchConfig::default());
+    let (_, policy) = read_policy(&params);
+    assert!(policy.contains("Do not execute actions or call tools"));
+    assert!(!policy.contains("Discover and execute work"));
+    assert!(params["additionalContext"].get("host-role").is_none());
+    assert_eq!(
+        params["additionalContext"]["data"]["value"],
+        "Keep ordinary context"
+    );
+}

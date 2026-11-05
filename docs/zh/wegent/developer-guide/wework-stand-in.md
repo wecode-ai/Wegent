@@ -175,6 +175,8 @@ Executor 在每轮实际执行前重新读取最新职责、偏好和适用记�
 
 仅更新 `thread/resume.developerInstructions` 或本地保存的系统提示词，不保证已有历史中的模型上下文同步更新。宿主通过已有 `turn/start.additionalContext` 的 `application` 类型，在同一轮原子提交完整有效 developer 策略；用户草稿和业务消息保持原文。策略按 UTF-8 边界分段，每段正文不超过 3,000 字节，连同版本、序号和包装仍低于原生单值 4,000 字节预算。宿主清理调用方伪造的保留命名空间，最后写入完整 SHA、分段数和当前 manifest。当前版本明确替代先前的 Wework 运行策略，包括最初的平铺 developer 指令；旧版本及多余历史分段不再有效，这不表示物理删除历史，也不覆盖更高优先级系统指令或独立原生权限。相同策略生成相同完整上下文值，复用原生按键和值的合并机制。
 
+宿主可在 `additionalContext` 中用 `{ kind: "application", runtimePolicy: true, value: "..." }` 声明显式运行策略贡献。通用 Codex 适配器按稳定键序，将这些贡献和原 user/system developer 策略组合为同一有效文本、分段运输和 live 配置 SHA；已经合并的独立条目不再重复运输。变更或删除贡献更新当前策略，恢复与压缩沿既有配置刷新门禁使用同一基线。`runtimePolicy` 不授予权限，只对 application 条目有效；untrusted 来源指导不能借此提升。未标记的 application 数据和 CLI 上下文保留原路径，不进入策略 SHA；禁工具请求不合入要求执行操作的策略贡献。
+
 恢复会话的配置身份同时包含 MCP 配置和有效 developer 策略 SHA。策略变化复用现有关闭、重新加载门禁，更新 live config，使压缩重建也使用当前策略。已知临时直连会话的策略发生变化时明确停止，保留历史并要求新建临时会话，不自动重建或降级。实时 steer 不改运行策略，并过滤调用方的保留策略命名空间。协调器 `tools/list` 诊断只记录工具名、schema 字段名及 schema/description 指纹，不记录策略、事件正文、认证信息或路径。
 
 ## 合并与拆分工作
