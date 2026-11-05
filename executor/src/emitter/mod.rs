@@ -2,7 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    sync::{Arc, Mutex},
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -36,6 +39,9 @@ pub struct ResponsesEventBuilder {
     executor_namespace: Option<String>,
     executor_session: Option<Value>,
     validation_id: Option<String>,
+    // Clones belong to one execution; the prepared engine publishes data for
+    // the runner's final callback without sharing state between requests.
+    completed_file_change_fields: Arc<Mutex<Option<Value>>>,
 }
 
 impl ResponsesEventBuilder {
@@ -58,6 +64,7 @@ impl ResponsesEventBuilder {
             executor_namespace: None,
             executor_session: None,
             validation_id: None,
+            completed_file_change_fields: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -120,10 +127,21 @@ impl ResponsesEventBuilder {
         let mut response = self.response_payload("completed", output);
         response["usage"] = Value::Null;
         response["stop_reason"] = json!("end_turn");
+        if let Some(fields) = self.completed_file_change_fields.lock().unwrap().as_ref() {
+            for key in ["file_changes", "task_file_changes"] {
+                if let Some(value) = fields.get(key) {
+                    response[key] = value.clone();
+                }
+            }
+        }
         self.envelope(
             "response.completed",
             json!({"type": "response.completed", "response": response}),
         )
+    }
+
+    pub fn record_completed_file_change_fields(&self, fields: Value) {
+        *self.completed_file_change_fields.lock().unwrap() = Some(fields);
     }
 
     pub fn response_text_delta(&self, delta: &str, offset: usize) -> EventEnvelope {
