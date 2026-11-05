@@ -32,6 +32,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
   const wait = (control, name, text) =>
     control.command('waitFor', testId(name), { text, timeoutMs: uiTimeoutMs })
   const fillRoles = async (control, count) => {
+    await wait(control, 'template-role-main-role-0', '当前设备智能体')
     // This scenario covers an explicit human coordinator; lifecycle coverage uses the agent default.
     const human = await control.command(
       'getAttribute',

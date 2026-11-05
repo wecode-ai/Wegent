@@ -70,10 +70,8 @@ pub(crate) fn uuid() -> String {
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn create_on(
     tx: &mut impl MysqlTransaction,
-    _state: &AppState,
     user: i64,
     actor: i64,
     kind: &str,
@@ -122,7 +120,6 @@ pub(crate) async fn create_on(
 /// Create follower inbox entries in the same transaction as the Issue change.
 pub(crate) async fn followers_on(
     tx: &mut impl MysqlTransaction,
-    state: &AppState,
     project: &Node,
     issue: &Node,
     actor: i64,
@@ -134,7 +131,7 @@ pub(crate) async fn followers_on(
     ) {
         return Ok(Vec::new());
     }
-    followers_for_event_on(tx, state, project, issue, actor, event, None).await
+    followers_for_event_on(tx, project, issue, actor, event, None).await
 }
 
 pub(crate) struct ExternalFollowEvent<'a> {
@@ -144,7 +141,6 @@ pub(crate) struct ExternalFollowEvent<'a> {
 
 pub(crate) async fn followers_for_event_on(
     tx: &mut impl MysqlTransaction,
-    state: &AppState,
     project: &Node,
     issue: &Node,
     actor: i64,
@@ -251,7 +247,6 @@ pub(crate) async fn followers_for_event_on(
         pending.push(
             create_on(
                 tx,
-                state,
                 user_id.into(),
                 actor,
                 "issue_follow",
@@ -343,10 +338,8 @@ fn direct_human_id(issue: &str, assignment: &str) -> String {
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn direct_human_on(
     tx: &mut impl MysqlTransaction,
-    state: &AppState,
     project: &Node,
     issue: &Node,
     user: i64,
@@ -398,7 +391,6 @@ pub(super) async fn direct_human_on(
     Ok(Some(
         create_on(
             tx,
-            state,
             user,
             actor,
             "issue_dispatch_assignment",
@@ -410,10 +402,8 @@ pub(super) async fn direct_human_on(
     ))
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn execution_on(
     tx: &mut impl MysqlTransaction,
-    state: &AppState,
     project: &Node,
     issue: &Node,
     execution_id: i64,
@@ -465,7 +455,6 @@ pub(crate) async fn execution_on(
     Ok(Some(
         create_on(
             tx,
-            state,
             recipient,
             if owner == 0 { recipient } else { owner },
             "execution",

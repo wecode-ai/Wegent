@@ -244,7 +244,6 @@ async fn poll(state: &AppState, candidate: &Candidate) -> Result<usize> {
                     pending.extend(
                         notifications::followers_for_event_on(
                             tx,
-                            state,
                             &project,
                             &current,
                             0,

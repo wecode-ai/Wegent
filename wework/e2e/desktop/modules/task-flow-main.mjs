@@ -4,7 +4,7 @@ import {
 } from './cloud-environment.mjs'
 
 import { tmpdir } from 'node:os'
-import { UPGRADE_PACKAGE_CHECKPOINTS } from '../upgrade-suite.mjs'
+import { UPGRADE_DIAGNOSTIC_CHECKPOINTS } from '../upgrade-suite.mjs'
 import { waitForColdPackageStartup } from './cold-package-startup.mjs'
 
 import { verifyCloudCheckpoint } from './cloud-checkpoint-flows.mjs'
@@ -1102,7 +1102,7 @@ async function main() {
   const workspacePath = join(resultDir, 'workspace')
   const secondaryProjectPath = join(resultDir, 'Codex', 'secondary-project-root')
   const composerProjectPath = join(resultDir, 'composer-project')
-  const usesDefaultUserData = UPGRADE_PACKAGE_CHECKPOINTS.includes(DESKTOP_SEGMENT)
+  const usesDefaultUserData = UPGRADE_DIAGNOSTIC_CHECKPOINTS.includes(DESKTOP_SEGMENT)
   const nativeApplicationData = usesDefaultUserData ? desktopApplicationDataDirectory() : null
   if (nativeApplicationData) await mkdir(nativeApplicationData, { recursive: true })
   const upgradeHome = nativeApplicationData

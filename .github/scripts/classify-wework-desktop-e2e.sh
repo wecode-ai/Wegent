@@ -169,6 +169,7 @@ plugin_segments=(
 )
 formal_release_segments=(
   app-update-full
+  app-update-refresh
 )
 cloud_worktree_segments=(
   cloud-worktree-capability
@@ -1601,6 +1602,35 @@ classify_path() {
   local path="$1"
 
   case "$path" in
+    wework/src/features/todo/ProjectCoordinatorConversation*|wework/src/features/todo/ProjectCoordinatorPublication*|wework/src/features/todo/ProjectCoordinationPanel*|executor/src/runtime_work/handler/project_coordinator.rs|executor/src/runtime_work/handler/project_router*|executor/src/task_runtime/project_router_store.rs|executor/src/task_runtime/store/project_coordinator.rs|wework/e2e/desktop/scenarios/project-coordinator-publication.scenario.mjs|wework/e2e/desktop/scenarios/project-coordination.scenario.mjs)
+      select_target "core:stand-in-profile"
+      select_target "core:stand-in-permissions"
+      return
+      ;;
+    wework/dsh/coordination-runtime/*|executor/src/runtime_work/handler/coordination_rpc.rs|executor/src/runtime_work/handler/stand_in_arrangements*|executor/src/task_runtime/coordination_arrangements.rs|wework/e2e/desktop/scenarios/coordination-runtime.scenario.mjs|wework/e2e/desktop/scenarios/coordination-arrangements.scenario.mjs)
+      select_target "core:stand-in-permissions"
+      select_collaboration_dispatch_checkpoints
+      case "$path" in
+        wework/dsh/coordination-runtime/index.js|wework/dsh/coordination-runtime/package.json|wework/dsh/coordination-runtime/cordis.patch.yml)
+          select_target "core:release-package-startup"
+          select_target "core:core-dsh-plugin-management"
+          ;;
+      esac
+      return
+      ;;
+    executor/src/task_runtime/coordination_store.rs)
+      select_target "core:stand-in-profile"
+      select_target "core:stand-in-permissions"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/stand-in-processing.scenario.mjs|wework/src/features/todo/StandInProcessing*|wework/src/features/todo/useStandInProcessingStatus*|executor/src/runtime_work/handler/stand_in_processing*|executor/src/task_runtime/stand_in_processing.rs|executor/src/task_runtime/mcp/stand_in_processing.rs)
+      select_target "core:stand-in-profile"
+      select_target "core:stand-in-permissions"
+      if [[ "$path" == executor/src/runtime_work/handler/stand_in_processing* ]]; then
+        select_collaboration_dispatch_checkpoints
+      fi
+      return
+      ;;
     wework/e2e/desktop/scenarios/plugin-runtime-route-refresh.scenario.mjs | \
       wework/e2e/desktop/modules/plugin-composer-route-messaging.mjs)
       select_target "cloud:plugin-runtime-route-refresh"
@@ -1643,6 +1673,7 @@ classify_path() {
       ;;
     wework/e2e/desktop/scenarios/plugin-runtime-path-recovery.scenario.mjs | \
       wework/e2e/desktop/modules/plugin-runtime-path-fixture.mjs | \
+      wework/e2e/desktop/fixtures/historical-plugin-revision.py | \
       wework/scripts/plugin-runtime-path-fixture.test.mjs)
       select_target "cloud:plugin-runtime-path-recovery"
       return

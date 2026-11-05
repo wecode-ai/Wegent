@@ -17,6 +17,22 @@ pub(super) fn turn_cursor(turn_id: &str) -> String {
     format!("{TURN_CURSOR_PREFIX}{turn_id}")
 }
 
+pub(super) fn next_open_timeline_turn_id(thread: &Value, previous_turn_id: &str) -> Option<String> {
+    if thread["timeline"] != true {
+        return None;
+    }
+    let turns = thread["turns"].as_array()?;
+    let previous = turns.iter().find(|turn| turn["id"] == previous_turn_id)?;
+    let latest = turns.last()?;
+    if latest["timelineCompleted"] == true
+        || latest["ownsUserPresentation"] != true
+        || latest["position"].as_u64()? <= previous["position"].as_u64()?
+    {
+        return None;
+    }
+    string_field(latest, "id")
+}
+
 pub(super) const CURSOR_PREFIX: &str = "wework-codex-timeline:";
 
 #[derive(Deserialize, Serialize)]
@@ -142,10 +158,20 @@ fn timeline_entry_turn_id(entry: &Value) -> Option<String> {
 }
 
 fn timeline_turns(page: &Value, metadata: Vec<Value>) -> Result<Vec<Value>, String> {
-    let metadata: HashMap<_, _> = metadata
-        .into_iter()
-        .filter_map(|turn| Some((string_field(&turn, "id")?, turn)))
-        .collect();
+    let mut metadata_by_id = HashMap::<String, Value>::new();
+    for turn in metadata {
+        let Some(id) = string_field(&turn, "id") else {
+            continue;
+        };
+        // Fresh turn-list metadata must not replace a completion boundary
+        // carried from a newer timeline page.
+        if metadata_by_id.get(&id).is_some_and(|previous| {
+            previous["timelineCompleted"] == true && turn["timelineCompleted"] != true
+        }) {
+            continue;
+        }
+        metadata_by_id.insert(id, turn);
+    }
     let entries = page["data"].as_array().ok_or("timeline page has no data")?;
     let mut turns: Vec<Value> = Vec::new();
     let mut indexes = HashMap::new();
@@ -162,7 +188,7 @@ fn timeline_turns(page: &Value, metadata: Vec<Value>) -> Result<Vec<Value>, Stri
             continue;
         };
         let index = *indexes.entry(turn_id.clone()).or_insert_with(|| {
-            let mut turn = metadata
+            let mut turn = metadata_by_id
                 .get(&turn_id)
                 .cloned()
                 .unwrap_or_else(|| json!({"id": turn_id, "status": "inProgress"}));
@@ -219,6 +245,63 @@ mod tests {
         ]}), vec![]).unwrap();
         assert_eq!(turns[0]["status"], "inProgress");
         assert_eq!(turns[0]["startedAt"], 123);
+    }
+
+    #[test]
+    fn an_abandoned_historical_turn_keeps_its_inferred_interruption() {
+        let turns = timeline_turns(
+            &json!({"data":[
+                {"type":"turnStarted","position":10,"turnId":"recovered","startedAt":123}
+            ]}),
+            vec![json!({
+                "id":"recovered", "status":"interrupted", "items":[],
+                "completedAt":null, "durationMs":null, "error":null
+            })],
+        )
+        .unwrap();
+        assert_eq!(turns[0]["status"], "interrupted");
+        assert_eq!(turns[0]["startedAt"], 123);
+        assert_eq!(turns[0]["completedAt"], Value::Null);
+        assert_ne!(turns[0]["timelineCompleted"], true);
+        assert_eq!(
+            super::super::transcript::turn_assistant_status(&turns[0]),
+            "cancelled"
+        );
+        let projection = super::super::transcript::project_transcript(
+            &json!({"id":"thread","timeline":true,"turns":turns}),
+            "test-device",
+            false,
+        );
+        assert_eq!(projection.turns[0]["status"], "cancelled");
+        assert_eq!(projection.turns[0]["items"], json!([]));
+    }
+
+    #[test]
+    fn an_older_opening_boundary_preserves_native_terminal_outcomes_from_later_pages() {
+        for status in ["completed", "interrupted", "failed"] {
+            let later = timeline_turns(
+                &json!({"data":[
+                    {"type":"turnCompleted","position":20,"turnId":"old",
+                     "status":status,"completedAt":124,"durationMs":1000}
+                ]}),
+                vec![],
+            )
+            .unwrap();
+            let mut metadata = later;
+            // A new page reads turn-list metadata after the carried timeline boundary.
+            metadata.push(json!({"id":"old","status":status}));
+            let earlier = timeline_turns(
+                &json!({"data":[
+                    {"type":"turnStarted","position":10,"turnId":"old","startedAt":123}
+                ]}),
+                metadata,
+            )
+            .unwrap();
+            assert_eq!(earlier[0]["status"], status);
+            assert_eq!(earlier[0]["timelineCompleted"], true);
+            assert_eq!(earlier[0]["completedAt"], 124);
+            assert_eq!(earlier[0]["durationMs"], 1000);
+        }
     }
 
     #[test]

@@ -2,6 +2,7 @@ import { fetchLocalRuntimeJson } from '../modules/runtime-request.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { accountCommandResult } from '../modules/account-auth-command.mjs'
+import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 import {
   shellCommandResponse,
   shellCommandPollResponse,
@@ -185,8 +186,12 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
       await assertRedactedTask(control)
       // Make prediction the first reader to restore this parent after a native restart.
       // The following real shell call must retain task identity even in this ordering.
-      const restarted = JSON.parse(
-        await control.command('restartLocalCodexAppServerIfIdle', 'body')
+      // Sidebar reads may still be in flight after the prediction has completed.
+      const restarted = await waitForValue(
+        async () => JSON.parse(await control.command('restartLocalCodexAppServerIfIdle', 'body')),
+        result => result.restarted === true,
+        'The native app server did not become idle before prediction',
+        10_000
       )
       assert.equal(restarted.restarted, true, 'The parent must be unloaded before prediction')
       const predicted = await requestExecutor(

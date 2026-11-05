@@ -36,6 +36,7 @@ export const IMMUTABLE_CORE_DSH_PLUGINS = new Set([
   '@wegent/dsh-terminal-runtime',
   '@wegent/dsh-plugin-runtime',
   '@wegent/dsh-connection-runtime',
+  '@wegent/dsh-coordination-runtime',
   '@wegent/dsh-wework-plugin-developer',
 ])
 

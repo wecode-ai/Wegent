@@ -82,10 +82,8 @@ pub(super) async fn linked(
         .find(|message| message.metadata.0["execution_id"].as_i64() == Some(row.id)))
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn terminal_on(
     tx: &mut impl MysqlTransaction,
-    app: &AppState,
     row: &Execution,
     status: &str,
     detail: &str,
@@ -130,7 +128,7 @@ pub(super) async fn terminal_on(
         tx.execute("UPDATE loop_items SET status=?,description=?,completed_at=?,version=version+1,updated_at=UTC_TIMESTAMP(6) WHERE id=? AND resource_type='automation_run' AND (status<>? OR description<>? OR NOT(completed_at<=>?))",(run_status,description.as_str(),at,row.automation_run_id.as_str(),run_status,description.as_str(),at)).await?;
     }
     let mut effects = Effects::from(output);
-    if notify && let Some(notice) = notify_on(tx, app, row, status, detail).await? {
+    if notify && let Some(notice) = notify_on(tx, row, status, detail).await? {
         effects.notices.push(notice);
     }
     Ok(effects)
@@ -205,7 +203,6 @@ pub(super) async fn publish(state: &AppState, effects: Effects) -> Result<()> {
 
 pub(super) async fn notify_on(
     tx: &mut impl MysqlTransaction,
-    app: &AppState,
     row: &Execution,
     status: &str,
     detail: &str,
@@ -235,7 +232,6 @@ pub(super) async fn notify_on(
         .await?;
     let result = notifications::execution_on(
         tx,
-        app,
         &project,
         &issue,
         row.id,
@@ -292,7 +288,6 @@ pub(super) async fn repair_terminal(state: &AppState) -> Result<usize> {
                 };
                 terminal_on(
                     tx,
-                    state,
                     &current,
                     &current.status,
                     detail,

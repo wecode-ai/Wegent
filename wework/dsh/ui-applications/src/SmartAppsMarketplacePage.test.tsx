@@ -682,6 +682,100 @@ describe('SmartAppsMarketplacePage', () => {
     }
   )
 
+  test.each(['success', 'failure'])(
+    'retains unrelated model controls while a stopped app refresh ends in %s',
+    async outcome => {
+      const running = {
+        ...importedInstallation,
+        id: 'running-app',
+        state: 'running' as const,
+        webUrl: 'http://127.0.0.1:3080',
+      }
+      listInstalled
+        .mockResolvedValueOnce([importedInstallation, running])
+        .mockResolvedValue([importedInstallation, { ...running, state: 'installed', webUrl: null }])
+      const smartAppsApi = api([])
+      let resolveRefresh!: (value: { items: SmartAppMarketplaceItem[] }) => void
+      let rejectRefresh!: (error: Error) => void
+      vi.mocked(smartAppsApi.listOwned).mockReturnValueOnce(Promise.resolve({ items: [] }))
+      vi.mocked(smartAppsApi.listOwned).mockReturnValueOnce(
+        new Promise((resolve, reject) => {
+          resolveRefresh = resolve
+          rejectRefresh = reject
+        })
+      )
+      render(<SmartAppsMarketplacePage api={smartAppsApi} mode="owned" />)
+      const model = await screen.findByTestId('harness-app-model-research-desk')
+
+      fireEvent.click(screen.getByTestId('smart-app-actions-running-app'))
+      fireEvent.pointerDown(screen.getByTestId('smart-app-stop-menu-running-app'))
+      await waitFor(() => expect(smartAppsApi.listOwned).toHaveBeenCalledTimes(2))
+
+      expect(screen.getByTestId('harness-app-model-research-desk')).toBe(model)
+      expect(screen.getByTestId('harness-app-start-running-app')).toBeInTheDocument()
+      await act(async () => {
+        if (outcome === 'success') resolveRefresh({ items: [] })
+        else rejectRefresh(new Error('Cloud refresh unavailable'))
+      })
+      expect(screen.getByTestId('harness-app-model-research-desk')).toBe(model)
+      if (outcome === 'failure') expect(screen.getByRole('alert')).toBeInTheDocument()
+    }
+  )
+
+  test('an API change never exposes the previous catalog while loading or after failure', async () => {
+    listInstalled.mockResolvedValue([importedInstallation])
+    const previousApi = api([item({ displayName: 'Previous account workbench' })])
+    const replacementApi = api([])
+    let rejectRefresh!: (error: Error) => void
+    vi.mocked(replacementApi.listOwned).mockReturnValue(
+      new Promise((_resolve, reject) => {
+        rejectRefresh = reject
+      })
+    )
+    const { rerender } = render(<SmartAppsMarketplacePage api={previousApi} mode="owned" />)
+    expect(await screen.findByText('Previous account workbench')).toBeInTheDocument()
+
+    rerender(<SmartAppsMarketplacePage api={replacementApi} mode="owned" />)
+
+    expect(screen.queryByText('Previous account workbench')).not.toBeInTheDocument()
+    await waitFor(() => expect(replacementApi.listOwned).toHaveBeenCalledOnce())
+    await act(async () => rejectRefresh(new Error('Replacement catalog unavailable')))
+    expect(screen.queryByText('Previous account workbench')).not.toBeInTheDocument()
+    expect(screen.getByRole('alert')).toBeInTheDocument()
+  })
+
+  test('a mode round trip does not reuse readiness from its discarded catalog', async () => {
+    listInstalled.mockResolvedValue([importedInstallation])
+    const smartAppsApi = api([item({ displayName: 'Previous owned' })])
+    let resolveOwned!: (value: { items: SmartAppMarketplaceItem[] }) => void
+    let resolveMarketplace!: (value: { items: SmartAppMarketplaceItem[] }) => void
+    const { rerender } = render(<SmartAppsMarketplacePage api={smartAppsApi} mode="owned" />)
+    await screen.findByText('Previous owned')
+    vi.mocked(smartAppsApi.listMarketplace).mockReturnValueOnce(
+      new Promise(resolve => {
+        resolveMarketplace = resolve
+      })
+    )
+
+    rerender(<SmartAppsMarketplacePage api={smartAppsApi} mode="marketplace" />)
+    await waitFor(() => expect(smartAppsApi.listMarketplace).toHaveBeenCalledTimes(2))
+    vi.mocked(smartAppsApi.listOwned).mockReturnValueOnce(
+      new Promise(resolve => {
+        resolveOwned = resolve
+      })
+    )
+    rerender(<SmartAppsMarketplacePage api={smartAppsApi} mode="owned" />)
+    await waitFor(() => expect(smartAppsApi.listOwned).toHaveBeenCalledTimes(2))
+
+    expect(screen.queryByText('Previous owned')).not.toBeInTheDocument()
+    await act(async () => resolveMarketplace({ items: [item({ displayName: 'Stale market' })] }))
+    expect(screen.queryByText('Previous owned')).not.toBeInTheDocument()
+    expect(screen.queryByText('Stale market')).not.toBeInTheDocument()
+    await act(async () => resolveOwned({ items: [item({ displayName: 'Current owned' })] }))
+    expect(screen.getByText('Current owned')).toBeInTheDocument()
+    expect(screen.getByTestId('harness-app-model-research-desk')).toBeInTheDocument()
+  })
+
   test.each(['pending', 'failed'])(
     'shows local model controls while the initial cloud catalog is %s',
     async cloudState => {
@@ -1252,9 +1346,12 @@ describe('SmartAppsMarketplacePage', () => {
     rerender(<SmartAppsMarketplacePage api={refreshedApi} mode="owned" />)
     await waitFor(() => expect(listInstalled).toHaveBeenCalledTimes(2))
     await act(async () => resolveDelete())
+    // A device-owned mutation refreshes the current account, never the previous one.
     await waitFor(() => expect(listInstalled).toHaveBeenCalledTimes(3))
+    expect(initialApi.listOwned).toHaveBeenCalledOnce()
     await waitFor(() => expect(screen.queryByText('研究工作台')).not.toBeInTheDocument())
     await act(async () => resolveStaleRefresh([publishedImport]))
+    expect(refreshedApi.listOwned).toHaveBeenCalledTimes(2)
     expect(screen.queryByTestId('smart-app-owned-item-7')).not.toBeInTheDocument()
     expect(screen.queryByText('研究工作台')).not.toBeInTheDocument()
   })

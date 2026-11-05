@@ -13,6 +13,7 @@ pub mod mcp;
 pub(crate) mod mcp_http;
 mod model;
 pub use store::personal_stand_in;
+pub(crate) use store::project_router_store;
 pub(crate) use store::stand_in_telemetry;
 mod router;
 pub(crate) mod runner_routing;

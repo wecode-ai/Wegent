@@ -63,6 +63,13 @@ async fn require(app: &AppState, row: &Execution) -> Result<()> {
         .context("Project unavailable")?;
     let issue = issues::load(app, &project, &row.loop_item_id, row.assigner_user_id).await?;
     authority::require_issue(app, &project, &issue, row.assigner_user_id).await?;
+    crate::project_coordination::require_execution_binding(
+        app,
+        &row.cloud_project_id,
+        row.assigner_user_id,
+        &row.context(),
+    )
+    .await?;
     group(app, row).await?;
     agent_use(app, row, &row.agent_id, row.team_id).await?;
     if row.execution_environment != "wegent" {

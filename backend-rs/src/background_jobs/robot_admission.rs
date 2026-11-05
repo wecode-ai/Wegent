@@ -37,7 +37,7 @@ pub(super) async fn prepare(app: &AppState) -> Result<usize> {
                     let Some(current)=current.filter(|current|current.version==row.version&&current.assignment_pending())else{return Ok(projection::Effects::default());};
                     let mut update=current;
                     if let Some(runtime)=plan.runtime_device.as_ref(){update.runtime_device_id=runtime.clone();}
-                    let message=state::prepared_on(tx,app,&update,&plan.status,&plan.payload,plan.owner,plan.team,&plan.environment,&plan.device).await?;
+                    let message=state::prepared_on(tx,&update,&plan.status,&plan.payload,plan.owner,plan.team,&plan.environment,&plan.device).await?;
                     Ok(message)
                 }).await?;
                 projection::publish(app, messages).await?;
