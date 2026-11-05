@@ -1,0 +1,21 @@
+{
+  "revision": "d4e5f6a7b809",
+  "parents": [
+    "d1e2f3a4b5c6"
+  ],
+  "source": "20260513_d4e5f6a7b809_add_project_config.py",
+  "upgrade": [
+    {
+      "sql": [
+        "ALTER TABLE projects ADD COLUMN config JSON COMMENT 'Workspace project configuration. Empty means legacy task group.'"
+      ]
+    }
+  ],
+  "downgrade": [
+    {
+      "sql": [
+        "ALTER TABLE projects DROP COLUMN config"
+      ]
+    }
+  ]
+}

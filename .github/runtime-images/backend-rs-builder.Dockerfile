@@ -21,6 +21,7 @@ RUN mkdir -p src && printf 'pub fn placeholder() {}\n' > src/lib.rs \
 FROM ${DEPS_IMAGE} AS build
 COPY backend-rs/src ./src
 COPY backend-rs/examples ./examples
+COPY backend-rs/migrations ./migrations
 RUN find src examples -type f -exec touch {} + \
     && cargo build --release --locked --bin wegent-backend-rs \
       --example attachment_s3_e2e --example attachment_hosting_e2e

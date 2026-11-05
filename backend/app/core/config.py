@@ -5,7 +5,7 @@
 import json
 import os
 from pathlib import Path
-from typing import Any, Mapping, Optional, Tuple, Type
+from typing import Any, Literal, Mapping, Optional, Tuple, Type
 
 from dotenv import dotenv_values
 from pydantic import Field, SecretStr, field_validator
@@ -112,6 +112,7 @@ class Settings(BaseSettings):
 
     # Database auto-migration configuration (only in development)
     DB_AUTO_MIGRATE: bool = True
+    DB_INITIALIZATION_OWNER: Literal["python", "rust"] = "python"
 
     # Database connection pool configuration. Each Backend or Celery process owns
     # its own pool, so deployment capacity must account for every process.

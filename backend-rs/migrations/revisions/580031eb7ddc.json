@@ -1,0 +1,10 @@
+{
+  "revision": "580031eb7ddc",
+  "parents": [
+    "b7d0e2f5a4c3",
+    "f7b8c9d0e1a2"
+  ],
+  "source": "20260908_580031eb7ddc_merge_notification_and_transcript_.py",
+  "upgrade": [],
+  "downgrade": []
+}

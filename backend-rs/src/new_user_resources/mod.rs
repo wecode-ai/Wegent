@@ -14,7 +14,7 @@ pub mod tasks;
 #[cfg(test)]
 mod tests;
 mod validation;
-mod yaml;
+pub(crate) mod yaml;
 
 const MAX_FILE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_FILES: usize = 4096;
@@ -22,19 +22,7 @@ static FILE_READS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4)
 
 /// Source chooses INIT_DATA_DIR and only then its new_user child directory.
 pub fn resource_directory() -> PathBuf {
-    let configured = PathBuf::from(
-        crate::config::env_or_dotenv("INIT_DATA_DIR").unwrap_or_else(|| "/app/init_data".into()),
-    );
-    let local = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap_or(Path::new("."))
-        .join("backend/init_data");
-    let root = if !configured.exists() && configured.is_absolute() && local.exists() {
-        local
-    } else {
-        configured
-    };
-    root.join("new_user")
+    crate::initialization::resource_directory().join("new_user")
 }
 
 /// Apply defaults with the same best-effort per-resource failure boundary.
