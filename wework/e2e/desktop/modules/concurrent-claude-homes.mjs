@@ -46,13 +46,17 @@ export function createConcurrentClaudeHomes({
     if (!turn) return false
     assert.equal(
       serialized.includes('CHAT_ONLY_BROWSER_FIXTURE'),
-      false,
-      'A Chat-only default leaked into the native runtime'
+      true,
+      'Real Claude did not discover the configured Chat-bound Skill'
     )
     const output = (body.input ?? []).find(
       item => item.type === 'function_call_output' && item.call_id === turn.callId
     )
     if (output) {
+      assert.ok(
+        JSON.stringify(output).includes('CHAT_ONLY_BROWSER_FIXTURE'),
+        'Real Claude did not consume the configured Chat-bound Skill'
+      )
       assert.ok(
         JSON.stringify(output).includes(`CONCURRENT_SKILL_${turn.version}`),
         "A running task read another execution's Skill version"
@@ -291,8 +295,8 @@ export function createConcurrentClaudeHomes({
       )
       assert.equal(
         (await readdir(join(snapshot, 'skills'))).includes('browser'),
-        false,
-        'A Chat-only default was distributed into a native execution snapshot'
+        true,
+        'The configured Chat-bound Skill is missing from the native execution snapshot'
       )
       packages.push(await realpath(join(snapshot, 'skills', NAME)))
       for (const format of formats) {
@@ -319,7 +323,7 @@ export function createConcurrentClaudeHomes({
         response,
         `${turn.callId}-read`,
         turn.callId,
-        `cat "$CLAUDE_CONFIG_DIR/skills/${NAME}/SKILL.md" && cat "$CLAUDE_CONFIG_DIR/skills/docx/SKILL.md" "$CLAUDE_CONFIG_DIR/skills/docx/scripts/resource.txt" && cat "$CLAUDE_CONFIG_DIR/skills/xlsx/SKILL.md" "$CLAUDE_CONFIG_DIR/skills/xlsx/scripts/resource.txt" && cat "$CLAUDE_CONFIG_DIR/skills/pptx/SKILL.md" "$CLAUDE_CONFIG_DIR/skills/pptx/scripts/resource.txt" && cat "$CLAUDE_CONFIG_DIR/skills/pdf/SKILL.md" "$CLAUDE_CONFIG_DIR/skills/pdf/scripts/resource.txt"`
+        `cat "$CLAUDE_CONFIG_DIR/skills/${NAME}/SKILL.md" "$CLAUDE_CONFIG_DIR/skills/browser/SKILL.md" && cat "$CLAUDE_CONFIG_DIR/skills/docx/SKILL.md" "$CLAUDE_CONFIG_DIR/skills/docx/scripts/resource.txt" && cat "$CLAUDE_CONFIG_DIR/skills/xlsx/SKILL.md" "$CLAUDE_CONFIG_DIR/skills/xlsx/scripts/resource.txt" && cat "$CLAUDE_CONFIG_DIR/skills/pptx/SKILL.md" "$CLAUDE_CONFIG_DIR/skills/pptx/scripts/resource.txt" && cat "$CLAUDE_CONFIG_DIR/skills/pdf/SKILL.md" "$CLAUDE_CONFIG_DIR/skills/pdf/scripts/resource.txt"`
       )
     }
     pending.clear()

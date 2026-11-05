@@ -204,6 +204,20 @@ function validateMigrationPaths(options: EntryMigration): void {
   }
 }
 
+// Remove only a dangling desktop bridge; the normal startup path creates the directory.
+export function resetMissingWorkbenchDirectory(options: EntryMigration): void {
+  if (!stat(options.source)?.isSymbolicLink()) return
+  const destination = resolve(dirname(options.source), fs.readlinkSync(options.source))
+  if (destination !== resolve(options.target) || stat(options.target)) return
+  validateMigrationPaths(options)
+  const journal = readJournal(options)
+  if (journal && !journal.directory)
+    throw new Error('Application data migration directory journal required')
+  // Clear the stale identity first so interruption can safely retry the same path.
+  if (journal) fs.unlinkSync(options.journal)
+  fs.unlinkSync(options.source)
+}
+
 // Synchronous by design: userData/sessionData must move before Electron's ready event.
 // Caller owns the app single-instance lock (or the executor migration lock).
 // Rename preserves the complete SQLite/WAL/SHM set and credentials without copying.

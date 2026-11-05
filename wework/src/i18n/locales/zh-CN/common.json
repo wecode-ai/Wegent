@@ -4667,6 +4667,8 @@
     "copied": "已复制",
     "subscribe": "订阅",
     "copy_link": "复制链接",
+    "copy_web_link": "复制网页链接",
+    "copy_web_link_failed": "复制失败，请重试",
     "created_by": "由 {{name}} 创建",
     "description": "描述",
     "runtime_task_description": "该工作空间包含 Wework 原任务。打开原任务页可查看完整执行上下文与历史消息。",
