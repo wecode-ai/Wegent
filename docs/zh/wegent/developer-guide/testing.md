@@ -397,6 +397,8 @@ CI 稳定性依赖以下约束：
   build cache tag，不占用 GitHub Actions dependency cache 配额。
 - 非 Wework E2E 的 Executor 和 Electron 系统依赖安装前先检查 runner 已安装的软件包；
   APT 下载缓存只有 `main` 写入，PR 只恢复。
+- Linux 上的真实 Electron 更新传输探针同时隔离 Xvfb 和 D-Bus 会话，避免继承无效的
+  会话总线地址干扰原生启动或退出。保留原有启动次数、生命周期断言和超时。
 
 `.github/workflows/ci-cache-warmup.yml` 在相关源码、依赖锁文件或缓存实现合入
 `main` 后运行，并拒绝非 `main` 的手动预热。它只下载依赖或编译缓存，不重复执行

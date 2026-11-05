@@ -437,6 +437,9 @@ runs may restore the default-branch cache, but they do not save another copy:
 - Outside Wework E2E, Executor and Electron system dependency installers first
   check packages already present on the runner. Only `main` writes the APT
   download cache; PRs restore it read-only.
+- The real Electron update-transport probe on Linux isolates both Xvfb and D-Bus
+  sessions so an invalid inherited session-bus address cannot interfere with native
+  startup or exit. Keep its startup count, lifecycle assertions, and timeouts unchanged.
 
 `.github/workflows/ci-cache-warmup.yml` runs after related source, dependency
 lockfile, or cache implementation changes enter `main`, and rejects manual
