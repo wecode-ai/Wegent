@@ -259,6 +259,10 @@ const sharedMessages: Record<
   Readonly<Record<string, string>>
 > = {
   "zh-CN": {
+    "todo.milestone": "里程碑",
+    "todo.no_milestone": "未设置里程碑",
+    "todo.milestone_error": "里程碑操作失败，请重试",
+    "todo.milestone_retry": "重试",
     "todo.permission_owner": "所有者",
     "todo.project_members_intro": "管理项目访问权限与成员职责。",
     "todo.project_membership_inherit_hint":
@@ -803,6 +807,10 @@ const sharedMessages: Record<
     "workbench.quick_view_conversation": "查看对话",
   },
   en: {
+    "todo.milestone": "Milestone",
+    "todo.no_milestone": "No milestone",
+    "todo.milestone_error": "Milestone operation failed. Try again",
+    "todo.milestone_retry": "Retry",
     "todo.permission_owner": "Owner",
     "todo.project_members_intro":
       "Manage project access and member responsibilities.",

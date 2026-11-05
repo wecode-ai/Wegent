@@ -38,7 +38,9 @@ export function IssueActivityTools({
 }: IssueActivityToolsProps) {
   const status = task.execution_state ?? task.ai_state?.status
   const awaitingApproval = task.execution_state === 'waiting_approval'
-  const review = task.status === 'in_review' || ['completed', 'succeeded'].includes(status ?? '')
+  const review =
+    task.status === 'in_review' ||
+    ['completed', 'succeeded'].includes(status ?? '')
   const rerun =
     assignedAgent && onRun ? (
       <button
@@ -91,9 +93,13 @@ export function IssueActivityTools({
           approvalLabel={
             awaitingApproval && !canApprove
               ? assignedAgent?.createdByUserName
-                ? t('workbench.task_activity_awaiting_approval_with_creator', undefined, {
-                    name: assignedAgent.createdByUserName,
-                  })
+                ? t(
+                    'workbench.task_activity_awaiting_approval_with_creator',
+                    undefined,
+                    {
+                      name: assignedAgent.createdByUserName,
+                    },
+                  )
                 : t('workbench.task_activity_awaiting_approval')
               : undefined
           }
@@ -101,7 +107,9 @@ export function IssueActivityTools({
       ) : null}
       {assignedAgent &&
       onRun &&
-      ['queued', 'starting', 'waiting_runtime'].includes(task.execution_state ?? '') &&
+      ['queued', 'starting', 'waiting_runtime'].includes(
+        task.execution_state ?? '',
+      ) &&
       task.status !== 'in_review' ? (
         <button
           type="button"
@@ -112,7 +120,9 @@ export function IssueActivityTools({
           className="task-detail-activity-icon-button"
         >
           <LoaderCircle className="h-4 w-4" />
-          <span className="sr-only">{t('workbench.task_activity_run_now')}</span>
+          <span className="sr-only">
+            {t('workbench.task_activity_run_now')}
+          </span>
         </button>
       ) : null}
       {review ? (
@@ -125,6 +135,7 @@ export function IssueActivityTools({
             <button
               type="button"
               data-testid={`cloud-task-activity-accept-${task.id}`}
+              title={t('workbench.task_activity_accept_hint')}
               disabled={running}
               onClick={onAccept}
               className="max-md:min-h-11 max-md:min-w-11 rounded-lg bg-text-primary px-3 py-1.5 text-xs font-medium text-background"

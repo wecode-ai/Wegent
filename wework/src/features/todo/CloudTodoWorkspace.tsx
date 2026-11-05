@@ -4284,7 +4284,7 @@ export function CloudTodoWorkspace({
                   ) : null
                 }
                 embedded={embedded}
-                hasCreateAction={canCreateBoardTask}
+                hasCreateAction={projectView === 'board' && canCreateBoardTask}
                 renderRightActions={({ actionRefs, level, showLabels }) => (
                   <>
                     {projectView === 'board' && level < 2 ? (

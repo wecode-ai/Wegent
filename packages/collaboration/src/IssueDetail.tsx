@@ -1,5 +1,5 @@
 import { BrowserTaskDrafts } from "./issue-detail/BrowserTaskDrafts";
-import type { BoardIssueCreateDefaults } from './project-board/projectBoardViews'
+import type { BoardIssueCreateDefaults } from "./project-board/projectBoardViews";
 import { isIssueVersionConflict } from "./issue-detail/issueVersionConflict";
 import { RuntimeConversationScope } from "./conversation/RuntimeConversationScope";
 import { IssueTaskConversation } from "./issue-detail/IssueTaskConversation";
@@ -210,6 +210,7 @@ export function IssueCreate({
           defaults?.status ?? project.board_config?.statuses?.[0]?.id ?? "inbox"
         }
         initialTags={defaults?.tags}
+        initialMilestoneId={defaults?.milestoneId}
         draftScope={defaults?.draftScope}
         onClose={onClose}
         onCreated={onCreated}
@@ -353,7 +354,11 @@ function BrowserIssueDetail({
             extensions={{
               ...browserDueDateExtensions,
               openAttachment: async (attachmentId, filename) => {
-                setAttachmentPreview({ issueId: issue.id, attachmentId, filename });
+                setAttachmentPreview({
+                  issueId: issue.id,
+                  attachmentId,
+                  filename,
+                });
               },
               renderActivity: ({ tasks, commentAssignment }) => (
                 <IssueActivityPanel

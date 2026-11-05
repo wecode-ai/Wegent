@@ -19,7 +19,7 @@ import {
 const USER = 9001
 const GUIDE = '[data-testid="stand-in-onboarding"]'
 
-async function verifyGuideExamples(control) {
+async function verifyGuideExamples(control, completed = false) {
   for (const example of [
     'daily_brief',
     'meeting_prep',
@@ -44,6 +44,11 @@ async function verifyGuideExamples(control) {
   ]) {
     assert.equal(await control.command('getElementCount', selector), '0')
   }
+  assert.equal(
+    await control.command('getElementCount', '[data-testid="stand-in-onboarding-complete"]'),
+    completed ? '0' : '1',
+    'Only first-run onboarding has a completion action; reopened examples do not repeat setup'
+  )
 }
 
 async function openCalendarReviewTemplate(control) {
@@ -144,13 +149,20 @@ export function createDesktopScenario(options) {
       await control.command('navigate', 'body', { value: '/stand-in' })
       await verifyGuideExamples(control)
       await control.command('click', '[data-testid="stand-in-onboarding-close"]')
+      await control.command('waitFor', GUIDE, { visible: false })
       assert.equal(
         (await rpc('runtime.stand_in.onboarding.get', { userId: USER })).state.completed,
         false
       )
+      assert.deepEqual(
+        (await rpc('runtime.automations.list', {})).items.map(item => item.id).sort(),
+        initialScheduleIds,
+        'Closing the introduction must not create any arrangement'
+      )
       await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
       await verifyGuideExamples(control)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-onboarding-complete"]')
+      await control.command('waitFor', GUIDE, { visible: false })
       await control.command('waitFor', '[data-testid="stand-in-settings-open"]')
       assert.equal(
         (await rpc('runtime.stand_in.onboarding.get', { userId: USER })).state.completed,
@@ -162,7 +174,21 @@ export function createDesktopScenario(options) {
         'Completing the guide must not create any arrangement'
       )
       await control.command('clickWhenEnabled', '[data-testid="stand-in-guide-open"]')
-      await verifyGuideExamples(control)
+      await verifyGuideExamples(control, true)
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-onboarding-close"]')
+      await control.command('waitFor', GUIDE, { visible: false })
+      assert.equal(
+        (await rpc('runtime.stand_in.onboarding.get', { userId: USER })).state.completed,
+        true,
+        'Closing usage examples must preserve completed onboarding'
+      )
+      assert.deepEqual(
+        (await rpc('runtime.automations.list', {})).items.map(item => item.id).sort(),
+        initialScheduleIds,
+        'Closing usage examples must not create any arrangement'
+      )
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-guide-open"]')
+      await verifyGuideExamples(control, true)
       await control.command(
         'nativePress',
         '[data-testid="stand-in-onboarding-example-weekly_review"]',
