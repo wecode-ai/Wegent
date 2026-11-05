@@ -11,7 +11,6 @@ import {
   createCollaborationTranslator,
   boardDropHint,
   saveProjectBoardViews,
-  matchesBoardView,
 } from '@wegent/collaboration'
 import { useAssignmentNotificationChoice } from '@/features/notifications/useAssignmentNotificationChoice'
 import { runtimeTaskBindingAddress } from './runtimeTaskBindingAddress'
@@ -2067,8 +2066,8 @@ export function CloudTodoWorkspace({
     resetProjectViewState()
   }, [activeProjectKey, resetProjectViewState])
 
-  const boardLayerCount = boardItems.filter(
-    item => item.parent_id === boardParentId && matchesBoardView(item, savedViews.view)
+  const boardLayerCount = standardBoardController.filteredItems.filter(
+    item => item.parent_id === boardParentId
   ).length
   const rootBoardItems = boardItems.filter(item => item.parent_id === null)
   const firstRootBoardItem = rootBoardItems[0] ?? null

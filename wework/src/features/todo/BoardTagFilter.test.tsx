@@ -67,6 +67,7 @@ function Harness({
           .map(item => item.id)
           .join(',')}
       </output>
+      <output data-testid="count">{controller.filteredItems.length}</output>
       <output data-testid="group">{controller.state.groupBy}</output>
     </>
   )
@@ -81,8 +82,10 @@ describe('quick board tag filtering', () => {
     await user.click(screen.getByTestId('cloud-board-tag-filter'))
     await user.click(screen.getByRole('checkbox', { name: 'bug' }))
     expect(screen.getByTestId('results')).toHaveTextContent(/^issue-0$/)
+    expect(screen.getByTestId('count')).toHaveTextContent('1')
     await user.click(screen.getByRole('checkbox', { name: 'feature' }))
     expect(screen.getByTestId('results')).toHaveTextContent(/^issue-0,issue-1$/)
+    expect(screen.getByTestId('count')).toHaveTextContent('2')
     expect(screen.getByTestId('group')).toHaveTextContent('status')
     await user.click(screen.getByRole('checkbox', { name: 'bug' }))
     expect(screen.getByTestId('results')).toHaveTextContent(/^issue-1$/)
@@ -111,6 +114,7 @@ describe('quick board tag filtering', () => {
     expect(screen.getByTestId('results')).toBeEmptyDOMElement()
     rerender(<Harness query="crash" />)
     expect(screen.getByTestId('results')).toHaveTextContent(/^issue-0$/)
+    expect(screen.getByTestId('count')).toHaveTextContent('2')
   })
 
   it('searches candidates without changing selections and supports empty search results', async () => {
@@ -126,6 +130,7 @@ describe('quick board tag filtering', () => {
     await user.type(screen.getByRole('searchbox'), 'missing')
     expect(screen.getByText('没有匹配的标签')).toBeVisible()
     expect(screen.getByTestId('results')).toHaveTextContent(/^issue-0$/)
+    expect(screen.getByTestId('count')).toHaveTextContent('1')
     await user.keyboard('{Escape}')
     expect(screen.getByTestId('cloud-board-tag-filter')).toHaveFocus()
   })

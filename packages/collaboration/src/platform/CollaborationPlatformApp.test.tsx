@@ -5865,7 +5865,6 @@ describe("CollaborationPlatformApp real component flow", () => {
         '[data-testid="wework-assignment-notify-confirm"]',
       ),
     ).toBeNull();
-    await click(byTestId("cloud-todo-save"));
     expect(api.issues.assign).toHaveBeenLastCalledWith(project.id, issue.id, {
       version: issue.version,
       assigneeType: "user",
@@ -5890,7 +5889,6 @@ describe("CollaborationPlatformApp real component flow", () => {
         `cloud-todo-detail-assignee-option-user:${member.user_id}`,
       ),
     );
-    await click(byTestId("cloud-todo-save"));
     expect(
       container.querySelector('[data-testid="cloud-todo-save"]'),
     ).toBeNull();
@@ -5913,7 +5911,6 @@ describe("CollaborationPlatformApp real component flow", () => {
     await click(
       portalByTestId(`cloud-todo-detail-assignee-option-agent:${agent.id}`),
     );
-    await click(byTestId("cloud-todo-save"));
     expect(api.issues.assign).toHaveBeenLastCalledWith(project.id, issue.id, {
       version: issue.version,
       assigneeType: "agent",
@@ -5923,6 +5920,12 @@ describe("CollaborationPlatformApp real component flow", () => {
 
   it("assigns a collaboration group and displays its name", async () => {
     const api = await renderIssueWithCollaborationGroup();
+    api.issues.update.mockResolvedValueOnce({
+      ...issue,
+      version: issue.version + 1,
+      assignee_group_id: collaborationGroup.id,
+      assignee_group_name: collaborationGroup.name,
+    });
     await click(byTestId("cloud-todo-detail-assignee"));
     await click(
       portalByTestId(
@@ -5935,7 +5938,6 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(byTestId("cloud-todo-state-assignee").textContent).not.toContain(
       "未指派",
     );
-    await click(byTestId("cloud-todo-save"));
     expect(api.issues.update).toHaveBeenLastCalledWith(issue.id, {
       version: issue.version,
       assigneeGroupId: collaborationGroup.id,

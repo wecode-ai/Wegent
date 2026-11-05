@@ -938,6 +938,7 @@ export function useStandardCloudBoardController<
     columns,
     currentParent,
     currentParentId,
+    filteredItems: visibleItems,
     getColumnItems,
     moveItem,
     moveDroppedItem,

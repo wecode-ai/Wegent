@@ -231,7 +231,6 @@ test.describe('Collaboration agent execution', () => {
     await capture(page, testInfo, 'wegent-02-issue-created')
     await page.getByTestId('cloud-todo-detail-assignee').click()
     await page.getByTestId(`cloud-todo-detail-assignee-option-agent:${agentCase.agent.id}`).click()
-    await page.getByTestId('cloud-todo-save').click()
     await expect(page.getByTestId('cloud-todo-save')).toHaveCount(0)
     await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute(
       'data-value',

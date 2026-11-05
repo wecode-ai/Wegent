@@ -802,9 +802,19 @@ export function TodoEditor(props: TodoEditorProps) {
     )
       return;
     if (field === "assigneeTarget") {
-      void fieldSaves.save(field, (source) =>
-        persistAssignee(source, next as IssueAssigneeTarget, notifyAssignee),
-      );
+      void fieldSaves.save(field, async (source) => {
+        const updated = await persistAssignee(
+          source,
+          next as IssueAssigneeTarget,
+          notifyAssignee,
+        );
+        if (latestItemRef.current?.id === source.id) {
+          setIssueDraftField("assigneeTarget", (current) =>
+            current === next ? issueAssigneeTarget(updated) : current,
+          );
+        }
+        return updated;
+      });
       return;
     }
     if (field === "startDate" || field === "dueDate") {
@@ -2794,9 +2804,7 @@ export function TodoEditor(props: TodoEditorProps) {
           ) : null}
           {twoColumn && !isCreate && !workspacePanel ? (
             <>
-              {(editable || canAssign) &&
-              (descriptionDirty || saving) &&
-              !assigneeChanged ? (
+              {(editable || canAssign) && (descriptionDirty || saving) ? (
                 <button
                   type="button"
                   data-testid="cloud-todo-save"

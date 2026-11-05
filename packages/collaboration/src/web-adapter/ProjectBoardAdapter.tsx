@@ -44,7 +44,6 @@ import {
   BoardViewNotice,
   collectProjectTags,
   boardDropHint,
-  matchesBoardView,
   type ProjectBoardViews,
   type ProjectBoardColumn,
   type ProjectBoardGroupBy,
@@ -554,10 +553,8 @@ export function ProjectBoardAdapter({
         isExternalBoard={false}
         isMyTasksBoard={false}
         layerCount={
-          issues.filter(
-            (issue) =>
-              issue.parent_id === controller.currentParentId &&
-              matchesBoardView(issue, savedViews.view),
+          controller.filteredItems.filter(
+            (issue) => issue.parent_id === controller.currentParentId,
           ).length
         }
         onBreadcrumbSelect={controller.setCurrentParentId}

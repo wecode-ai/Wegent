@@ -62,6 +62,8 @@ test('uploads, reopens and removes a Chinese-named Issue image with decoded prev
     await page.getByTestId('cloud-todo-detail-title').click()
     await expect(page.getByTestId('cloud-todo-detail-title')).toBeEditable()
 
+    await page.getByTestId('cloud-todo-detail-description').click()
+
     // Observe the real thumbnail request, rather than accepting an upload badge.
     const contentResponse = page.waitForResponse(response =>
       /\/loop-item-attachments\/[^/]+\/content$/.test(new URL(response.url()).pathname)

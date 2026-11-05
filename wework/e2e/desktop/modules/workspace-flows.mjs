@@ -1177,6 +1177,10 @@ async function verifyWorkspaceIssueCreation(control) {
     'pending',
     'The Issue did not enter pending before returning to its board'
   )
+  await control.command(
+    'clickWhenEnabled',
+    `${boardContentSelector} [data-testid="cloud-todo-save"]`
+  )
   await control.command('waitFor', `${boardContentSelector} [data-testid="cloud-todo-save"]`, {
     visible: false,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,

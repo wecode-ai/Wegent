@@ -48,7 +48,7 @@ const project = {
   access_role: 'Owner',
 } as CloudProject
 
-function setup() {
+function setup(assignmentError?: Error) {
   let persisted = initial
   const updateLoopItem = vi.fn(async (_id: string, values: Partial<CloudLoopItem>) => {
     persisted = { ...persisted, ...values, version: persisted.version + 1 }
@@ -59,7 +59,13 @@ function setup() {
     listTaskBindings: vi.fn(async () => []),
     listLoopItemAttachments: vi.fn(async () => []),
     listLoopItemCollaborators: vi.fn(async () => []),
-    listCloudProjectMembers: vi.fn(async () => []),
+    listCloudProjectMembers: vi.fn(async () => [
+      { id: 8, user_id: 8, user_name: 'Member', role: 'Developer' },
+    ]),
+    assignLoopItem: vi.fn(async () => {
+      if (assignmentError) throw assignmentError
+      return { ...persisted, assignee_user_id: 8, version: persisted.version + 1 }
+    }),
     listMilestones: vi.fn(async () => [
       { id: 'ms-release', project_id: '11', title: 'Release target', state: 'open', version: 1 },
       { id: 'ms-other', project_id: '11', title: 'Other milestone', state: 'open', version: 1 },
@@ -118,6 +124,25 @@ describe('immediate Issue properties', () => {
       priority: 'urgent',
       description: 'Unsubmitted description',
     })
+  })
+
+  it('keeps description Save available after assignment fails', async () => {
+    const user = userEvent.setup()
+    const { updateLoopItem } = setup(new Error('Assignment rejected'))
+    fireEvent.change(screen.getByTestId('test-description'), {
+      target: { value: 'Independent description' },
+    })
+    await user.click(screen.getByTestId('cloud-todo-detail-assignee'))
+    await user.click(await screen.findByTestId('cloud-todo-detail-assignee-option-user:8'))
+    expect(await screen.findByText('Assignment rejected')).toBeVisible()
+    expect(screen.getByTestId('cloud-todo-save')).toBeEnabled()
+    await user.click(screen.getByTestId('cloud-todo-save'))
+    await waitFor(() =>
+      expect(updateLoopItem).toHaveBeenLastCalledWith(initial.id, {
+        version: 1,
+        description: 'Independent description',
+      })
+    )
   })
 
   it('searches milestone choices, saves immediately and can clear the selection', async () => {
