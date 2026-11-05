@@ -100,7 +100,13 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/tests/workbench.spec.ts"
 
 assert_desktop_case "cloud files select only the cloud suite" \
-  "$(printf '%s\n' "$full_desktop_expected" | sed 's/^wework_desktop_core_e2e=true$/wework_desktop_core_e2e=false/; s/^wework_desktop_core_e2e_matrix=.*/wework_desktop_core_e2e_matrix={"include":[]}/; s/^wework_desktop_macos_inspector_e2e=true$/wework_desktop_macos_inspector_e2e=false/')" \
+  "wework_desktop_e2e=true
+wework_desktop_core_e2e=false
+wework_desktop_core_e2e_matrix={\"include\":[]}
+${full_cloud_expected}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={\"include\":[]}
+wework_desktop_macos_inspector_e2e=false" \
   "wework/src/features/cloud-connection/CloudConnectionProvider.tsx"
 
 assert_desktop_case "cloud device lifecycle files select managed restart coverage" \

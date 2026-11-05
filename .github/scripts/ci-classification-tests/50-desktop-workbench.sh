@@ -140,6 +140,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 
 # Keep full-selection expectations independent of the classifier implementation.
 full_desktop_expected="$(node "$script_dir/ci-classification-tests/expected-desktop-matrix.mjs" "$repo_root")"
+full_cloud_expected="$(printf '%s\n' "$full_desktop_expected" | sed -n '/^wework_desktop_cloud_e2e=/p;/^wework_desktop_cloud_e2e_matrix=/p')"
 
 for path in \
   executor/src/agents/codex.rs \
@@ -406,5 +407,11 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/features/todo/ProjectAutomationRulesSection.tsx"
 
 assert_desktop_case "project automation E2E changes select core and cloud coverage" \
-  "$full_desktop_expected" \
+  "wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={\"include\":[{\"id\":\"core-2\",\"name\":\"Core / shard 2\",\"segments\":\"project-automation\"},{\"id\":\"core-3\",\"name\":\"Core / shard 3\",\"segments\":\"automation-lifecycle\"}]}
+${full_cloud_expected}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={\"include\":[]}
+wework_desktop_macos_inspector_e2e=false" \
   "wework/e2e/desktop/scenarios/project-automation.scenario.mjs"
