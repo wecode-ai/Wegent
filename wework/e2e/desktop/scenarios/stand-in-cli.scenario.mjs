@@ -26,6 +26,7 @@ export function createDesktopScenario(options) {
       assert.deepEqual(Object.keys(declaration.operations).sort(), [
         'listMentions',
         'listProfiles',
+        'listTopicReplies',
         'searchGroups',
         'searchMessages',
         'searchUsers',

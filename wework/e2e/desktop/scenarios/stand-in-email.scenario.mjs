@@ -11,6 +11,7 @@ import { openConnectionTypePicker } from '../modules/stand-in-flows.mjs'
 import {
   assistantMessage,
   createSse,
+  delegatedTaskResultEvents,
   isReplyPredictionRequest,
   mcpToolRequestEvents,
   readRequestBody,
@@ -82,6 +83,13 @@ export function createDesktopScenario({
         return false
       const body = await readRequestBody(req)
       if (isReplyPredictionRequest(body)) return false
+      const resultEvents = delegatedTaskResultEvents(body)
+      if (resultEvents) {
+        const id = `email-result-${Date.now()}`
+        response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
+        response.end(createSse([responseCreated(id), ...resultEvents, responseCompleted(id)]))
+        return true
+      }
       const input = JSON.stringify(body.input ?? [])
       if (input.includes('Review this silent intake batch')) {
         const readId = `email-intake-${coordinatorRound}`

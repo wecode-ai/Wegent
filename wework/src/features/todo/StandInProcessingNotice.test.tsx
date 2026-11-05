@@ -71,14 +71,19 @@ it('an unconfirmed execution offers its original task without authorizing a retr
   expect(screen.getByRole('alert').textContent).not.toContain('Internal diagnostic detail')
 })
 
-it('a terminal failure retries only after an explicit click on the native check action', async () => {
-  const { checkProcessing } = fixture('coordination_stopped')
-  const check = await screen.findByTestId('stand-in-processing-check')
-  expect(checkProcessing).not.toHaveBeenCalled()
-  await userEvent.click(check)
-  await waitFor(() => expect(checkProcessing).toHaveBeenCalledWith(7, 'mac'))
-  await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
-})
+it.each(['coordination_stopped', 'coordinator_failed'])(
+  '%s keeps its original execution available before an explicit retry',
+  async code => {
+    const { checkProcessing, onOpenTask } = fixture(code)
+    await userEvent.click(await screen.findByTestId('stand-in-processing-open-task'))
+    expect(onOpenTask).toHaveBeenCalledWith('stand-in-coordinator-7')
+    const check = await screen.findByTestId('stand-in-processing-check')
+    expect(checkProcessing).not.toHaveBeenCalled()
+    await userEvent.click(check)
+    await waitFor(() => expect(checkProcessing).toHaveBeenCalledWith(7, 'mac'))
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
+  }
+)
 
 it('distinguishes a background model configuration error from the conversation model', async () => {
   fixture('model_unavailable')

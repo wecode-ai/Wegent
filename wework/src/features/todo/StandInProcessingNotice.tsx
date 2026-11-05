@@ -26,7 +26,10 @@ export function StandInProcessingNotice({
   const [checking, setChecking] = useState(false)
   const backgroundModelUnavailable = status?.error?.code === 'model_unavailable'
   const recovery = status?.error?.code === 'coordination_recovery_required'
-  const review = recovery || status?.error?.code === 'coordination_stopped'
+  const review =
+    recovery ||
+    status?.error?.code === 'coordination_stopped' ||
+    status?.error?.code === 'coordinator_failed'
   const check = async () => {
     if (!api || checking) return
     setChecking(true)

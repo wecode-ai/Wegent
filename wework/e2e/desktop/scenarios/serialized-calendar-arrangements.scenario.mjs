@@ -33,8 +33,9 @@ export function createDesktopScenario(options) {
       if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
       const body = await readRequestBody(request)
+      if (await existing.handleHttp(request, response, url)) return true
       if (isReplyPredictionRequest(body) || !JSON.stringify(body.input ?? []).includes(MARKER))
-        return existing.handleHttp(request, response, url)
+        return false
       calls++
       const id = `serialized-calendar-${calls}`
       response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
