@@ -38,7 +38,6 @@ async function handleRequest(request: Exclude<DriverRequest, { method: 'abort' }
     return
   }
   if (!driver) throw new Error('Computer use driver is not running')
-  if (request.method === 'listTools') return driver.listToolsJson()
   if (request.method === 'shutdown') {
     for (const controller of actions.values()) controller.abort()
     await driver.shutdown()
@@ -49,6 +48,8 @@ async function handleRequest(request: Exclude<DriverRequest, { method: 'abort' }
   const controller = new AbortController()
   actions.set(request.id, controller)
   try {
+    if (request.method === 'listTools')
+      return await driver.listToolsJson({ signal: controller.signal })
     return await driver.callTool(request.name, request.argumentsJson, { signal: controller.signal })
   } finally {
     actions.delete(request.id)

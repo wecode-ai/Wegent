@@ -69,6 +69,28 @@ Escape, Electron cancels the active Driver call through an `AbortSignal`.
 Hiding the activity indicator while leaving the underlying action running is
 not sufficient.
 
+MCP continues reading input while tools run, including `notifications/cancelled`
+and ping. Cancellation or stdio EOF drops the corresponding HTTP request;
+Electron aborts the SDK call when the response connection closes prematurely.
+Tool execution and discovery have a 90-second host deadline, below the HTTP
+client's 120-second deadline. Timeouts return an error and abort the SDK call.
+Action admission stays occupied until that SDK call settles, and late results
+cannot replace timeout errors.
+Discovery and tool calls share cancellation handling. If the worker has not
+replied within five seconds of cancellation, the host forcibly terminates it
+and reports an unknown action outcome. Recovery follows the existing worker
+failure flow: the user disables and re-enables computer use, without automatic
+action replay.
+
+The main-process `[computer-use]` log records an operation ID, host and native
+worker PIDs, tool name, start, completion, cancellation, failure, and elapsed
+time without arguments, screenshots, session content, or tokens. Check these
+stages before sampling that operation's `nativePid`. An aggregate call's display
+name does not identify the blocked operation. CUA 0.22.1 bounds AX traversal at
+20 seconds, but cancelling a Rust
+Future cannot forcibly stop already running `spawn_blocking` native work.
+Successful SDK cancellation alone therefore does not prove native-thread exit.
+
 ## Permissions and settings
 
 On macOS, the actual Wework application process requires:

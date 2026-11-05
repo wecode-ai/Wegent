@@ -3,6 +3,7 @@ import { afterEach, expect, test, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
   create: vi.fn(),
   callTool: vi.fn(),
+  listToolsJson: vi.fn(),
   shutdown: vi.fn(),
   destroy: vi.fn(),
 }))
@@ -71,4 +72,34 @@ test('terminates native work when the host IPC channel disappears', async () => 
     .find(listener => !originalDisconnects.includes(listener))!
   disconnected()
   expect(exit).toHaveBeenCalledWith(0)
+})
+
+test('forwards discovery cancellation to the SDK', async () => {
+  const send = vi.fn()
+  Object.defineProperty(process, 'send', { configurable: true, value: send })
+  let signal: AbortSignal | undefined
+  mocks.listToolsJson.mockImplementation((options: { signal: AbortSignal }) => {
+    signal = options.signal
+    return new Promise((_, reject) => {
+      signal!.addEventListener('abort', () => reject(new Error('aborted')), { once: true })
+    })
+  })
+  mocks.create.mockReturnValue({
+    listToolsJson: mocks.listToolsJson,
+    shutdown: mocks.shutdown,
+    uniffiDestroy: mocks.destroy,
+  })
+  await import('./computer-use-driver-worker.js')
+  const receive = process
+    .listeners('message')
+    .find(listener => !originalMessages.includes(listener))!
+  receive({ id: 1, method: 'start' })
+  receive({ id: 2, method: 'listTools' })
+  receive({ id: 2, method: 'abort' })
+  expect(signal?.aborted).toBe(true)
+  await vi.waitFor(() =>
+    expect(send).toHaveBeenCalledWith({ id: 2, ok: false, error: 'aborted' }, expect.any(Function))
+  )
+  receive({ id: 3, method: 'shutdown' })
+  await vi.waitFor(() => expect(mocks.destroy).toHaveBeenCalledOnce())
 })

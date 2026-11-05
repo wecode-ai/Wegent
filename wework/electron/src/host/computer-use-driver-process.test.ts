@@ -82,6 +82,50 @@ describe('ComputerUseDriverProcess', () => {
     await driver.shutdown()
   })
 
+  test.each(['callTool', 'listTools'] as const)(
+    'terminates an unresponsive worker when %s cancellation is not acknowledged',
+    async method => {
+      vi.useFakeTimers()
+      const onExit = vi.fn()
+      const driver = await ComputerUseDriverProcess.create(onExit)
+      const controller = new AbortController()
+      const action =
+        method === 'callTool'
+          ? driver.callTool('start_session', '{}', { signal: controller.signal })
+          : driver.listToolsJson({ signal: controller.signal })
+      const rejected = expect(action).rejects.toThrow(
+        'cancellation timed out; action outcome is unknown'
+      )
+      const { id } = child.send.mock.lastCall![0]
+      controller.abort()
+      expect(child.send).toHaveBeenLastCalledWith({ id, method: 'abort' }, expect.any(Function))
+      await vi.advanceTimersByTimeAsync(4_999)
+      expect(child.kill).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(1)
+      await rejected
+      expect(child.kill).toHaveBeenCalledWith('SIGKILL')
+      expect(onExit).toHaveBeenCalledOnce()
+      child.emit('message', { id, ok: true, result: 'late result' })
+      await expect(driver.listToolsJson()).rejects.toThrow('action outcome is unknown')
+      await driver.shutdown()
+    }
+  )
+
+  test('clears the cancellation deadline when the worker acknowledges it', async () => {
+    vi.useFakeTimers()
+    const driver = await ComputerUseDriverProcess.create(vi.fn())
+    const controller = new AbortController()
+    const catalog = driver.listToolsJson({ signal: controller.signal })
+    const rejected = expect(catalog).rejects.toThrow('aborted')
+    const { id } = child.send.mock.lastCall![0]
+    controller.abort()
+    child.emit('message', { id, ok: false, error: 'aborted' })
+    await rejected
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(child.kill).not.toHaveBeenCalled()
+    await driver.shutdown()
+  })
+
   test('rejects all pending requests on native crash without replaying actions', async () => {
     const onExit = vi.fn()
     const driver = await ComputerUseDriverProcess.create(onExit)

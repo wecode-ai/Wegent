@@ -4,6 +4,7 @@ import type { ToolResult } from '@trycua/cua-driver'
 import type { DriverRequest, DriverResponse } from './computer-use-driver-protocol.js'
 
 const LIFECYCLE_TIMEOUT_MS = 10_000
+const CANCELLATION_TIMEOUT_MS = 5_000
 type Result = string | ToolResult | undefined
 
 // Native AX calls against this app must cross a process boundary so AppKit
@@ -67,8 +68,11 @@ export class ComputerUseDriverProcess {
   }
 
   /** Read the SDK catalog without maintaining a second tool registry. */
-  async listToolsJson(): Promise<string> {
-    return (await this.request({ id: ++this.nextId, method: 'listTools' })) as string
+  async listToolsJson(options?: { signal?: AbortSignal }): Promise<string> {
+    return (await this.requestWithSignal(
+      { id: ++this.nextId, method: 'listTools' },
+      options?.signal
+    )) as string
   }
 
   /** Forward cancellation to this request and await the native call's result. */
@@ -77,17 +81,35 @@ export class ComputerUseDriverProcess {
     argumentsJson: string,
     options?: { signal?: AbortSignal }
   ): Promise<ToolResult> {
-    const signal = options?.signal
+    return (await this.requestWithSignal(
+      { id: ++this.nextId, method: 'callTool', name, argumentsJson },
+      options?.signal
+    )) as ToolResult
+  }
+
+  get pid(): number | undefined {
+    return this.child.pid
+  }
+
+  /** A blocked native worker must not keep cancellation pending indefinitely. */
+  private async requestWithSignal(message: DriverRequest, signal?: AbortSignal): Promise<Result> {
     signal?.throwIfAborted()
-    const id = ++this.nextId
+    let cancellationTimer: ReturnType<typeof setTimeout> | undefined
     const abort = () => {
       if (this.failure) return
-      this.send({ id, method: 'abort' })
+      cancellationTimer = setTimeout(() => {
+        this.fail(
+          new Error('Computer use driver cancellation timed out; action outcome is unknown')
+        )
+        this.child.kill('SIGKILL')
+      }, CANCELLATION_TIMEOUT_MS)
+      this.send({ id: message.id, method: 'abort' })
     }
     signal?.addEventListener('abort', abort, { once: true })
     try {
-      return (await this.request({ id, method: 'callTool', name, argumentsJson })) as ToolResult
+      return await this.request(message)
     } finally {
+      clearTimeout(cancellationTimer)
       signal?.removeEventListener('abort', abort)
     }
   }

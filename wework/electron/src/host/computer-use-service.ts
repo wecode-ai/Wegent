@@ -30,13 +30,16 @@ export class ComputerUseService {
   private runtimePath: string | null = null
   private currentTool: string | null = null
   private currentActionController: AbortController | null = null
+  private readonly operationControllers = new Set<AbortController>()
   private error: string | null = null
   private enabled = false
   private operation = Promise.resolve()
+  private nextOperationId = 0
 
   constructor(
     private readonly executorHome: string,
-    private readonly platform: NodeJS.Platform = process.platform
+    private readonly platform: NodeJS.Platform = process.platform,
+    private readonly operationTimeoutMs = 90_000
   ) {}
 
   async status(): Promise<ComputerUseStatus> {
@@ -85,8 +88,7 @@ export class ComputerUseService {
   }
 
   async stopCurrentAction(): Promise<ComputerUseStatus> {
-    this.currentActionController?.abort()
-    this.currentTool = null
+    this.currentActionController?.abort(new Error('Computer use action stopped by user'))
     return this.snapshot()
   }
 
@@ -161,7 +163,9 @@ export class ComputerUseService {
     this.server = null
     this.runtimePath = null
     this.currentTool = null
-    this.currentActionController?.abort()
+    for (const controller of this.operationControllers) {
+      controller.abort(new Error('Computer use service stopped'))
+    }
     this.currentActionController = null
     await Promise.allSettled([
       runtimePath ? rm(runtimePath, { force: true }) : Promise.resolve(),
@@ -203,7 +207,9 @@ export class ComputerUseService {
     try {
       const body = await readJsonBody(request)
       if (body.action === 'listTools') {
-        const catalog = JSON.parse(await driver.listToolsJson()) as { tools?: unknown }
+        const catalog = JSON.parse(
+          await this.runOperation('listTools', response, signal => driver.listToolsJson({ signal }))
+        ) as { tools?: unknown }
         if (!Array.isArray(catalog.tools)) throw new Error('CUA tool catalog is invalid')
         writeResponse(response, 200, { ok: true, data: catalog.tools })
         return
@@ -215,21 +221,83 @@ export class ComputerUseService {
         throw new Error('Another computer use action is already running')
       }
       this.currentTool = body.name
+      this.error = null
       const controller = new AbortController()
       actionController = controller
       this.currentActionController = controller
-      const result = await driver.callTool(body.name, JSON.stringify(body.arguments ?? {}), {
-        signal: controller.signal,
-      })
+      const result = await this.runOperation(
+        body.name,
+        response,
+        signal =>
+          driver.callTool(body.name as string, JSON.stringify(body.arguments ?? {}), { signal }),
+        controller
+      )
       writeResponse(response, 200, { ok: true, data: result })
     } catch (error) {
-      this.error = errorMessage(error)
-      writeResponse(response, 200, { ok: false, error: this.error })
+      const message = errorMessage(error)
+      if (this.driver === driver) this.error = message
+      writeResponse(response, 200, { ok: false, error: message })
     } finally {
       if (actionController && this.currentActionController === actionController) {
         this.currentActionController = null
         this.currentTool = null
       }
+    }
+  }
+
+  private async runOperation<Result>(
+    name: string,
+    response: import('node:http').ServerResponse,
+    operation: (signal: AbortSignal) => Promise<Result>,
+    controller = new AbortController()
+  ): Promise<Result> {
+    const startedAt = Date.now()
+    const operationId = ++this.nextOperationId
+    this.operationControllers.add(controller)
+    const log = (stage: string): void => {
+      console.info('[computer-use]', {
+        operationId,
+        pid: process.pid,
+        nativePid: this.driver?.pid,
+        tool: name,
+        stage,
+        elapsedMs: Date.now() - startedAt,
+      })
+    }
+    const disconnected = (): void => {
+      if (!response.writableFinished) {
+        controller.abort(new Error('Computer use client disconnected'))
+      }
+    }
+    const aborted = (): void => {
+      log('cancelled')
+      this.error = errorMessage(controller.signal.reason)
+      writeResponse(response, 200, { ok: false, error: this.error })
+    }
+    response.once('close', disconnected)
+    controller.signal.addEventListener('abort', aborted, { once: true })
+    const timeout = setTimeout(() => {
+      controller.abort(
+        new Error(`Computer use ${name} timed out after ${this.operationTimeoutMs}ms`)
+      )
+    }, this.operationTimeoutMs)
+    timeout.unref()
+    log('started')
+    try {
+      if (response.destroyed) disconnected()
+      controller.signal.throwIfAborted()
+      const result = await operation(controller.signal)
+      controller.signal.throwIfAborted()
+      log('completed')
+      return result
+    } catch (error) {
+      log('failed')
+      throw controller.signal.aborted ? controller.signal.reason : error
+    } finally {
+      this.operationControllers.delete(controller)
+      clearTimeout(timeout)
+      response.off('close', disconnected)
+      controller.signal.removeEventListener('abort', aborted)
     }
   }
 
@@ -282,6 +350,7 @@ function writeResponse(
   status: number,
   body: Record<string, unknown>
 ): void {
+  if (response.destroyed || response.writableEnded) return
   response.statusCode = status
   response.end(JSON.stringify(body))
 }
