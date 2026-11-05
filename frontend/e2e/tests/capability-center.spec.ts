@@ -207,7 +207,7 @@ test.describe('Capability Center', () => {
       sandboxSkill!.name,
       sandboxSkill!.id,
       promptSkill!.id,
-      () => page.getByTestId('resource-library-header-search-button').click()
+      () => page.getByTestId('resource-library-header-search-input').press('Enter')
     )
     await expectSkillKeywordResults(
       page,
