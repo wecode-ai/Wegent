@@ -69,9 +69,13 @@ export async function verifyArchivedTaskInteractionCleanup(control, timeoutMs) {
   })
   await control.command('click', '[data-testid="workspace-tab-select-pending-interactions"]')
   await control.command('click', `${PAGE} [data-testid="interactions-refresh"]`)
-  // Cross a full background poll so a stale cached candidate cannot silently return.
   await control.command('waitFor', `${PAGE} [data-testid="interactions-empty"]`, {
     visible: true,
+    timeoutMs,
+  })
+  // The empty placeholder changes during loading; the count spans a full background poll.
+  await control.command('waitFor', `${PAGE} [data-testid="interactions-pending-count"]`, {
+    text: '0',
     stableMs: 6_000,
     timeoutMs,
   })
