@@ -13,6 +13,7 @@ import { saveLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 import {
   readCachedRemoteRuntimeWork,
   writeCachedRemoteRuntimeWork,
+  workbenchCacheScope,
 } from '@/features/workbench/remoteRuntimeWorkCache'
 import { mergeRuntimeWorkLists } from '@/features/workbench/runtimeWorkMerge'
 import {
@@ -5548,10 +5549,11 @@ describe('createLocalAppServices', () => {
     })
     const switched = (await mirror.runtimeWorkApi!.listRuntimeWork())!
     expect(switched.projects[0].project.id).toBe(liveWork.projects[0].project.id)
-    writeCachedRemoteRuntimeWork(99, switched)
-    expect(readCachedRemoteRuntimeWork(99).projects[0].project.id).toBe(
-      liveWork.projects[0].project.id
-    )
+    writeCachedRemoteRuntimeWork(workbenchCacheScope('https://backend.example/api', 99), switched)
+    expect(
+      readCachedRemoteRuntimeWork(workbenchCacheScope('https://backend.example/api', 99))
+        .projects[0].project.id
+    ).toBe(liveWork.projects[0].project.id)
   })
 
   test('routes local project archive requests with decoded workspace path', async () => {

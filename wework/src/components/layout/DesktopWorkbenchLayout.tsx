@@ -1040,6 +1040,8 @@ export function DesktopWorkbenchLayout({
       devices={state.devices}
       cloudWorkStatus={cloudWorkStatus}
       runtimeWork={state.runtimeWork}
+      runtimeWorkLoad={state.runtimeWorkLoad}
+      onRetryRuntimeWork={refreshWorkLists}
       gitCloneOperations={gitCloneOperations}
       currentRuntimeTask={activeLocalHarnessSessionId ? null : state.currentRuntimeTask}
       splitGroupMemberships={splitGroups.memberships}

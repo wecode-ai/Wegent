@@ -670,6 +670,33 @@ describe('workbenchReducer', () => {
     expect(updated.runtimeWork?.chats).toEqual([])
   })
 
+  test.each(['bootstrapped', 'devices_refreshed'] as const)(
+    '%s preserves the current account preferences and identity during navigation refresh',
+    type => {
+      const staleUser = { id: 7, user_name: 'Alice', email: 'alice@example.com' }
+      const currentUser = {
+        ...staleUser,
+        preferences: {
+          wework_new_chat_model_selection: {
+            modelName: 'selected-model',
+            modelType: 'runtime' as const,
+          },
+        },
+      }
+      const state = { ...initialWorkbenchState, user: currentUser, isBootstrapping: false }
+      const refreshed = workbenchReducer(
+        state,
+        type === 'bootstrapped'
+          ? { type, user: staleUser, devices: [], projects: [] }
+          : { type, user: staleUser, devices: [] }
+      )
+      expect(refreshed.user?.preferences?.wework_new_chat_model_selection?.modelName).toBe(
+        'selected-model'
+      )
+      expect(refreshed.user).toBe(currentUser)
+    }
+  )
+
   test.each(['device-uuid'])(
     'reconciles %s current task to the hydrated ready task address',
     currentDeviceId => {

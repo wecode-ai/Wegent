@@ -6,13 +6,13 @@
 use std::{
     collections::HashMap,
     fs::{self, File},
-    io::{BufWriter, Read, Seek, SeekFrom, Write},
+    io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     time::{Duration, Instant, SystemTime},
 };
 
 use base64::{engine::general_purpose::STANDARD, Engine};
-use flate2::{write::GzEncoder, Compression};
+use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
@@ -50,30 +50,128 @@ pub(super) fn snapshot_directory(root: &Path, payload: &Value) -> PathBuf {
     ))
 }
 
+pub(super) fn native_page_directory(thread_id: &str) -> PathBuf {
+    snapshot_directory(
+        &crate::agents::executor_home().join("data"),
+        &json!({"taskId":thread_id,"threadId":thread_id}),
+    )
+}
+
+pub(super) fn store_native_page(
+    directory: &Path,
+    page: &Value,
+    cancellation: &super::transcript_work::Cancellation,
+) -> Result<String, AppIpcError> {
+    let checkpoint = || cancellation.check();
+    let encoder = GzEncoder::new(Vec::new(), Compression::fast());
+    let writer = write_packed_json(
+        CheckedWriter {
+            inner: encoder,
+            checkpoint: &checkpoint,
+        },
+        page,
+    )?;
+    cancellation.check()?;
+    let bytes = writer.inner.finish().map_err(transport_error)?;
+    let id = format!("{:x}", Sha256::digest(&bytes));
+    publish_snapshot(directory, &format!("{id}.native.gz"), &bytes)?;
+    Ok(id)
+}
+
+pub(super) fn read_native_page(
+    directory: &Path,
+    id: &str,
+    cancellation: &super::transcript_work::Cancellation,
+) -> Result<Value, AppIpcError> {
+    if id.len() != 64 || !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(AppIpcError::new(
+            "bad_request",
+            "Invalid native page snapshot",
+        ));
+    }
+    cancellation.check()?;
+    let file = File::open(directory.join(format!("{id}.native.gz"))).map_err(transport_error)?;
+    if expired(&file.metadata().map_err(transport_error)?) {
+        return Err(AppIpcError::new(
+            "transcript_page_expired",
+            "History page expired; refresh the conversation",
+        ));
+    }
+    let reader = CheckedReader {
+        inner: file,
+        cancellation,
+    };
+    serde_json::from_reader(BufReader::new(GzDecoder::new(reader))).map_err(transport_error)
+}
+
+struct CheckedReader<'a, R> {
+    inner: R,
+    cancellation: &'a super::transcript_work::Cancellation,
+}
+
+impl<R: Read> Read for CheckedReader<'_, R> {
+    fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+        self.cancellation
+            .check()
+            .map_err(|error| std::io::Error::other(error.message))?;
+        self.inner.read(bytes)
+    }
+}
+
+fn publish_snapshot(directory: &Path, name: &str, bytes: &[u8]) -> Result<(), AppIpcError> {
+    fs::create_dir_all(directory).map_err(transport_error)?;
+    let directory = directory.canonicalize().map_err(transport_error)?;
+    remove_expired_snapshots(&directory)?;
+    let mut file = tempfile::NamedTempFile::new_in(&directory).map_err(transport_error)?;
+    file.write_all(bytes).map_err(transport_error)?;
+    if let Err(error) = file.persist_noclobber(directory.join(name)) {
+        if error.error.kind() != std::io::ErrorKind::AlreadyExists {
+            return Err(transport_error(error));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
 pub(super) fn encode(directory: &Path, response: Value) -> Result<Value, AppIpcError> {
+    encode_checked(directory, response, &|| Ok(()))
+}
+
+pub(super) fn encode_cancellable(
+    directory: &Path,
+    response: Value,
+    cancellation: &super::transcript_work::Cancellation,
+) -> Result<Value, AppIpcError> {
+    encode_checked(directory, response, &|| cancellation.check())
+}
+
+fn encode_checked(
+    directory: &Path,
+    response: Value,
+    checkpoint: &dyn Fn() -> Result<(), AppIpcError>,
+) -> Result<Value, AppIpcError> {
     let started_at = Instant::now();
-    let packed = pack(response);
+    let packed = pack_checked(response, checkpoint)?;
     let packed_at = Instant::now();
     let encoder = GzEncoder::new(Vec::new(), Compression::fast());
-    let encoder = write_packed_json(encoder, &packed)?;
-    let bytes = encoder.finish().map_err(transport_error)?;
+    let encoder = write_packed_json(
+        CheckedWriter {
+            inner: encoder,
+            checkpoint,
+        },
+        &packed,
+    )?;
+    checkpoint()?;
+    let bytes = encoder.inner.finish().map_err(transport_error)?;
     let compressed_at = Instant::now();
     let id = format!("{:x}", Sha256::digest(&bytes));
     if bytes.len() > CHUNK_BYTES {
-        fs::create_dir_all(directory).map_err(transport_error)?;
+        checkpoint()?;
         // tempfile passes paths directly to Win32 when publishing. Canonicalize
         // the existing directory so long snapshot paths retain the verbatim prefix.
-        let directory = directory.canonicalize().map_err(transport_error)?;
-        remove_expired_snapshots(&directory)?;
         // Content-addressed snapshots are immutable. Reuse an existing publication
         // instead of replacing a file another request may already be reading.
-        let mut file = tempfile::NamedTempFile::new_in(&directory).map_err(transport_error)?;
-        file.write_all(&bytes).map_err(transport_error)?;
-        if let Err(error) = file.persist_noclobber(directory.join(format!("{id}.gz"))) {
-            if error.error.kind() != std::io::ErrorKind::AlreadyExists {
-                return Err(transport_error(error));
-            }
-        }
+        publish_snapshot(directory, &format!("{id}.gz"), &bytes)?;
     }
     log_snapshot_encoding(started_at, packed_at, compressed_at, bytes.len());
     Ok(chunk(
@@ -82,6 +180,22 @@ pub(super) fn encode(directory: &Path, response: Value) -> Result<Value, AppIpcE
         bytes.len(),
         &bytes[..bytes.len().min(CHUNK_BYTES)],
     ))
+}
+
+struct CheckedWriter<'a, W> {
+    inner: W,
+    checkpoint: &'a dyn Fn() -> Result<(), AppIpcError>,
+}
+
+impl<W: Write> Write for CheckedWriter<'_, W> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        (self.checkpoint)().map_err(|error| std::io::Error::other(error.message))?;
+        self.inner.write(bytes)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
 }
 
 fn log_snapshot_encoding(
@@ -183,7 +297,15 @@ fn chunk(id: &str, offset: usize, total: usize, bytes: &[u8]) -> Value {
     })
 }
 
-fn pack(mut transcript: Value) -> Value {
+#[cfg(test)]
+fn pack(transcript: Value) -> Value {
+    pack_checked(transcript, &|| Ok(())).expect("uncancelled transcript packing cannot fail")
+}
+
+fn pack_checked(
+    mut transcript: Value,
+    checkpoint: &dyn Fn() -> Result<(), AppIpcError>,
+) -> Result<Value, AppIpcError> {
     let mut strings = Vec::new();
     let mut references = Vec::new();
     intern_strings(
@@ -192,8 +314,9 @@ fn pack(mut transcript: Value) -> Value {
         &mut HashMap::new(),
         &mut strings,
         &mut references,
-    );
-    json!({"transcript": transcript, "strings": strings, "references": references})
+        checkpoint,
+    )?;
+    Ok(json!({"transcript": transcript, "strings": strings, "references": references}))
 }
 
 fn intern_strings(
@@ -202,7 +325,9 @@ fn intern_strings(
     indexes: &mut HashMap<[u8; 32], usize>,
     strings: &mut Vec<String>,
     references: &mut Vec<Value>,
-) {
+    checkpoint: &dyn Fn() -> Result<(), AppIpcError>,
+) -> Result<(), AppIpcError> {
+    checkpoint()?;
     match value {
         Value::String(text) if text.len() >= STRING_BYTES => {
             let hash: [u8; 32] = Sha256::digest(text.as_bytes()).into();
@@ -216,19 +341,20 @@ fn intern_strings(
         Value::Array(items) => {
             for (index, item) in items.iter_mut().enumerate() {
                 path.push(json!(index));
-                intern_strings(item, path, indexes, strings, references);
+                intern_strings(item, path, indexes, strings, references, checkpoint)?;
                 path.pop();
             }
         }
         Value::Object(fields) => {
             for (key, item) in fields.iter_mut() {
                 path.push(json!(key));
-                intern_strings(item, path, indexes, strings, references);
+                intern_strings(item, path, indexes, strings, references, checkpoint)?;
                 path.pop();
             }
         }
         _ => {}
     }
+    Ok(())
 }
 
 fn expired(metadata: &fs::Metadata) -> bool {

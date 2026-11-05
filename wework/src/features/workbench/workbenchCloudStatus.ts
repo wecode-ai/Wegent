@@ -19,7 +19,7 @@ import type {
   SyncCheckState,
 } from '@/types/workbench'
 
-const DEVICE_LIST_CACHE_KEY = 'wework.workbench.lastNonEmptyDevices'
+const DEVICE_LIST_CACHE_KEY_PREFIX = 'wework.workbench.lastNonEmptyDevices.v2'
 const DEVICE_LIST_CACHE_TTL_MS = 5 * 60 * 1000
 const CLOUD_WORK_CHECK_KEYS: CloudWorkCheckKey[] = ['teams', 'devices', 'runtimeWork']
 
@@ -389,9 +389,13 @@ export function filterDisconnectedRemoteRuntimeWork(
   }
 }
 
-export function readCachedDeviceList(): DeviceInfo[] {
+function deviceListCacheKey(ownershipKey: string): string {
+  return `${DEVICE_LIST_CACHE_KEY_PREFIX}.${encodeURIComponent(ownershipKey)}`
+}
+
+export function readCachedDeviceList(ownershipKey: string): DeviceInfo[] {
   try {
-    const value = window.sessionStorage.getItem(DEVICE_LIST_CACHE_KEY)
+    const value = window.sessionStorage.getItem(deviceListCacheKey(ownershipKey))
     if (!value) return []
     const parsed = JSON.parse(value)
     if (!parsed || !Array.isArray(parsed.devices) || typeof parsed.updatedAt !== 'number') {
@@ -404,12 +408,12 @@ export function readCachedDeviceList(): DeviceInfo[] {
   }
 }
 
-function writeCachedDeviceList(devices: DeviceInfo[]) {
+function writeCachedDeviceList(ownershipKey: string, devices: DeviceInfo[]) {
   const claudeCodeDevices = filterClaudeCodeDevices(devices)
   if (claudeCodeDevices.length === 0) return
   try {
     window.sessionStorage.setItem(
-      DEVICE_LIST_CACHE_KEY,
+      deviceListCacheKey(ownershipKey),
       JSON.stringify({ devices: claudeCodeDevices, updatedAt: Date.now() })
     )
   } catch {
@@ -418,25 +422,26 @@ function writeCachedDeviceList(devices: DeviceInfo[]) {
 }
 
 export function resolveDeviceListWithCache(
+  ownershipKey: string,
   devices: DeviceInfo[],
   options: { useCacheFallback?: boolean } = {}
 ): DeviceInfo[] {
   const claudeCodeDevices = filterClaudeCodeDevices(devices)
   if (claudeCodeDevices.length > 0) {
-    writeCachedDeviceList(claudeCodeDevices)
+    writeCachedDeviceList(ownershipKey, claudeCodeDevices)
     return claudeCodeDevices
   }
 
   if (options.useCacheFallback === false) {
     try {
-      window.sessionStorage.removeItem(DEVICE_LIST_CACHE_KEY)
+      window.sessionStorage.removeItem(deviceListCacheKey(ownershipKey))
     } catch {
       // The authoritative empty result still applies when storage is unavailable.
     }
     return devices
   }
 
-  const cachedDevices = readCachedDeviceList()
+  const cachedDevices = readCachedDeviceList(ownershipKey)
   if (cachedDevices.length > 0) {
     return cachedDevices
   }

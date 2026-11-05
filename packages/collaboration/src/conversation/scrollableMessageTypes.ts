@@ -53,6 +53,7 @@ export interface ScrollableMessageAreaProps extends Pick<
   historyError?: ReactNode
   isWaitingForAssistant?: boolean
   hasMoreBefore?: boolean
+  beforeCursor?: string | null
   loadingMoreBefore?: boolean
   historyLoadingMode?: 'automatic' | 'manual'
   turnNavigation?: RuntimeTurnNavigationItem[]

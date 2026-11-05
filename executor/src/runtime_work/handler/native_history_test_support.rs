@@ -75,6 +75,7 @@ pub(super) fn install_native_history(
             r#"#!/bin/sh
 cd /
 while IFS= read -r line; do
+  printf '%s\n' "$line" >> {directory}/requests.jsonl
   id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
   [ -n "$id" ] || continue
   method=$(printf '%s\n' "$line" | sed -n 's/.*"method":"\([^"]*\)".*/\1/p' | tr '/' '_')
@@ -106,6 +107,7 @@ done
         fs::write(
             script,
             r#"while ($null -ne ($line = [Console]::ReadLine())) {
+  [IO.File]::AppendAllText((Join-Path $PSScriptRoot 'requests.jsonl'), $line + [Environment]::NewLine)
   $request = ConvertFrom-Json $line
   if ($null -eq $request.id) { continue }
   if ($request.method -eq 'test/stop') {
