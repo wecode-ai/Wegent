@@ -701,6 +701,38 @@ describe('WorkspaceTabsProvider routing', () => {
     window.removeEventListener('popstate', onPopState)
   })
 
+  test('retains late project navigation in its owning tab without changing the active task', () => {
+    window.history.replaceState({}, '', '/todo?workspaceTab=fixed-board')
+    let context: WorkspaceTabsContextValue | undefined
+    render(
+      <RoutingHarness
+        onContextValue={value => {
+          context = value
+        }}
+      />
+    )
+    const board = context!.activeTab
+    act(() => {
+      context!.openTab('task')
+    })
+    const taskId = context!.activeTabId
+    const taskUrl = window.location.href
+    const projectRoute = '/todo?projectStore=local&projectId=late-project'
+
+    act(() => context!.updateTab(board.id, { title: 'Late project', contentRoute: projectRoute }))
+
+    expect(context!.activeTabId).toBe(taskId)
+    expect(window.location.href).toBe(taskUrl)
+    expect(context!.tabs.find(tab => tab.id === board.id)?.contentRoute).toBe(projectRoute)
+    act(() => context!.selectTab(board.id))
+    expect(new URLSearchParams(window.location.search).get('projectId')).toBe('late-project')
+    act(() => context!.closeTab(board.id))
+    const remainingIds = context!.tabs.map(tab => tab.id)
+    expect(remainingIds).not.toContain(board.id)
+    act(() => context!.updateTab(board.id, { contentRoute: '/todo?projectId=closed-project' }))
+    expect(context!.tabs.map(tab => tab.id)).toEqual(remainingIds)
+  })
+
   test('does not restore a stale route when route labels change after active-tab navigation', () => {
     window.history.replaceState(
       {},

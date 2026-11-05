@@ -7346,6 +7346,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       closeOtherTabs: vi.fn(),
       restoreClosedTab: vi.fn(),
       moveTab: vi.fn(),
+      updateTab: vi.fn(),
       updateActiveTab: vi.fn(),
     }
     const view = render(
