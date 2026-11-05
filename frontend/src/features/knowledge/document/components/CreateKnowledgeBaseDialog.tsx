@@ -5,7 +5,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { BookOpen, Code2, Database, User, Building2, Users, FileText } from 'lucide-react'
+import { BookOpen, Code2, Database, FileText } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -14,7 +14,6 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Input } from '@/components/ui/input'
@@ -48,6 +47,7 @@ import { GenerationTaskRow } from '@/features/knowledge/code-wiki/GenerationTask
 import { GenerationStrategySelect } from '@/features/knowledge/code-wiki/GenerationStrategySelect'
 import { getKnowledgeBaseRetrievalProfile } from '@/apis/knowledge'
 import { KnowledgeBaseForm } from './KnowledgeBaseForm'
+import { KnowledgeCreateSpaceSelect } from './KnowledgeCreateSpaceSelect'
 import { DingtalkAutoSyncSetting } from './DingtalkAutoSyncSetting'
 import { createDefaultRetrievalConfig } from './retrievalConfig'
 import { useMultimodalKBConfig } from '@/features/knowledge/multimodal/hooks/useMultimodalKBConfig'
@@ -85,19 +85,6 @@ interface CreateKnowledgeBaseDialogProps {
   defaultGroupId?: string
   /** Whether to show group selector (true when creating from "All" page) */
   showGroupSelector?: boolean
-}
-
-/** Get icon for group type */
-function GroupTypeIcon({ type }: { type: 'personal' | 'group' | 'organization' }) {
-  switch (type) {
-    case 'personal':
-      return <User className="w-4 h-4" />
-    case 'organization':
-      return <Building2 className="w-4 h-4" />
-    case 'group':
-    default:
-      return <Users className="w-4 h-4" />
-  }
 }
 
 /** Documents are uploaded and organised; code is generated from a repository. */
@@ -190,9 +177,6 @@ export function CreateKnowledgeBaseDialog({
   const [maxCalls, setMaxCalls] = useState(10)
   const [exemptCalls, setExemptCalls] = useState(5)
   // Selected group for creating KB (used when showGroupSelector is true)
-  const [spaceSettingsOpen, setSpaceSettingsOpen] = useState(
-    Boolean(defaultGroupId && defaultGroupId !== 'personal')
-  )
   const [selectedGroupId, setSelectedGroupId] = useState<string>(defaultGroupId || 'personal')
 
   // Get the selected group for retrieval scope
@@ -218,7 +202,6 @@ export function CreateKnowledgeBaseDialog({
       setInitialTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone)
       setInitialRunner([])
       setSelectedGroupId(defaultGroupId || 'personal')
-      setSpaceSettingsOpen(Boolean(defaultGroupId && defaultGroupId !== 'personal'))
       setDirectAccessRequirement('read')
       setAllowDocumentDownload(true)
       setRetrievalConfig(createDefaultRetrievalConfig())
@@ -514,7 +497,6 @@ export function CreateKnowledgeBaseDialog({
                 data-testid="create-in-personal-space"
                 onClick={() => {
                   setSelectedGroupId('personal')
-                  setSpaceSettingsOpen(true)
                 }}
               >
                 {t('knowledge:document.creation.choosePersonal')}
@@ -753,57 +735,27 @@ export function CreateKnowledgeBaseDialog({
                 )}
                 {/* Group selector - only show when showGroupSelector is true */}
                 {showGroupSelector && availableGroups && availableGroups.length > 0 && (
-                  <Collapsible open={spaceSettingsOpen} onOpenChange={setSpaceSettingsOpen}>
-                    <CollapsibleTrigger asChild>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="min-h-11 min-w-11"
-                        data-testid="create-space-settings"
-                      >
-                        {t('knowledge:document.creation.moreSettings')}
-                      </Button>
-                    </CollapsibleTrigger>
-                    <CollapsibleContent className="pt-3 space-y-2">
-                      <SimpleConfigRow
-                        label={
-                          <>
-                            {t('knowledge:document.navigation.space')}{' '}
-                            <span className="text-red-400">*</span>
-                          </>
-                        }
-                      >
-                        <Select value={selectedGroupId} onValueChange={setSelectedGroupId}>
-                          <SelectTrigger
-                            data-testid="group-selector"
-                            className="bg-base min-h-11 min-w-11"
-                          >
-                            <SelectValue
-                              placeholder={t(
-                                'knowledge:document.knowledgeBase.selectGroup',
-                                '选择分组'
-                              )}
-                            />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {availableGroups
-                              .filter(g => g.canCreate)
-                              .map(group => (
-                                <SelectItem key={group.id} value={group.id}>
-                                  <div className="flex items-center gap-2">
-                                    <GroupTypeIcon type={group.type} />
-                                    <span>{group.displayName}</span>
-                                  </div>
-                                </SelectItem>
-                              ))}
-                          </SelectContent>
-                        </Select>
-                      </SimpleConfigRow>
+                  <SimpleConfigRow
+                    label={
+                      <>
+                        {t('knowledge:document.navigation.space')}{' '}
+                        <span className="text-red-400">*</span>
+                      </>
+                    }
+                  >
+                    <div className="min-w-0 w-full space-y-2">
+                      <KnowledgeCreateSpaceSelect
+                        spaces={availableGroups}
+                        value={selectedGroupId}
+                        onValueChange={setSelectedGroupId}
+                      />
                       {selectedGroup?.type === 'group' && selectedGroup.canCreate && (
-                        <p role="status">{t('knowledge:document.creation.inheritsTeam')}</p>
+                        <p role="status" className="text-xs text-text-muted">
+                          {t('knowledge:document.creation.inheritsTeam')}
+                        </p>
                       )}
-                    </CollapsibleContent>
-                  </Collapsible>
+                    </div>
+                  </SimpleConfigRow>
                 )}
               </>
             }

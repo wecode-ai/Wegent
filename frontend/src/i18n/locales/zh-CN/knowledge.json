@@ -1023,12 +1023,12 @@
       "notSubmitted": "尚未提交",
       "invalidTarget": "请选择有效对象及可分配的角色。",
       "verifyAndRetry": "核验并重试",
-      "moreSettings": "更多设置：所在空间",
       "inheritsTeam": "创建后继承团队权限",
       "spaceUnavailable": "当前空间不可创建，请明确选择有权创建的空间。",
       "choosePersonal": "选择个人空间",
       "selectTargets": "选择人员或团队，失败时只重试未成功项。",
-      "retryFailed": "重试失败项"
+      "retryFailed": "重试失败项",
+      "noMatchingSpaces": "没有匹配的空间"
     }
   },
   "add_repository": "添加仓库",

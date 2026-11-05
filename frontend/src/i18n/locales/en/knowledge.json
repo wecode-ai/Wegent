@@ -1023,12 +1023,12 @@
       "notSubmitted": "Not submitted yet",
       "invalidTarget": "Choose a valid target and an assignable role.",
       "verifyAndRetry": "Verify and retry",
-      "moreSettings": "More settings: space",
       "inheritsTeam": "Inherits team permissions after creation",
       "spaceUnavailable": "You cannot create in this space. Choose an authorized space explicitly.",
       "choosePersonal": "Choose personal space",
       "selectTargets": "Select people or teams. Only failed authorizations will be retried.",
-      "retryFailed": "Retry failed targets"
+      "retryFailed": "Retry failed targets",
+      "noMatchingSpaces": "No matching spaces"
     }
   },
   "add_repository": "Add Repository",

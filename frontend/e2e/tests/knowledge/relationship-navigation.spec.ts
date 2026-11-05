@@ -335,7 +335,7 @@ creationTest(
     await page.goto('/knowledge?type=document')
     await selectKnowledgeTeam(page, 'group-' + name)
     await page.getByTestId('create-kb-button').click()
-    await expect(page.getByTestId('create-space-settings')).toHaveAttribute('aria-expanded', 'true')
+    await expect(page.getByTestId('group-selector')).toBeVisible()
     await expect(page.getByTestId('group-selector')).toContainText(name)
     expect((await createLibraryInDialog(page, creation)).namespace).toBe(name)
     await page.getByTestId('finish-created-authorization').click()

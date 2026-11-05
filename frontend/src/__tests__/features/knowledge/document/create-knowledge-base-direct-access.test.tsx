@@ -198,7 +198,7 @@ it('creates with automatic DingTalk updates enabled and resets it after success'
   await waitFor(() => expect(toggle).not.toBeChecked())
 })
 
-it('defaults to a filtered team and expands its space settings with inheritance stated', async () => {
+it('defaults to a filtered team and shows its space selector with inheritance stated', async () => {
   const submit = jest.fn().mockResolvedValue(undefined)
   render(
     <CreateKnowledgeBaseDialog
@@ -219,7 +219,7 @@ it('defaults to a filtered team and expands its space settings with inheritance 
       ]}
     />
   )
-  expect(screen.getByTestId('create-space-settings')).toHaveAttribute('aria-expanded', 'true')
+  expect(screen.getByTestId('group-selector')).toHaveTextContent('Team')
   expect(screen.getByText('knowledge:document.creation.inheritsTeam')).toBeInTheDocument()
   fireEvent.click(screen.getByText('set name'))
   fireEvent.click(screen.getByText('disable summary'))
