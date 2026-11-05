@@ -4,6 +4,7 @@ import { createDispatchIssueBoundaryRegression } from '../modules/dispatch-issue
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { verifyExecutionActivityOrder } from '../modules/issue-execution-activity-order.mjs'
 import { readProjectChatMessages } from '../modules/project-chat-snapshot.mjs'
+import { verifyUnconfiguredAssignment } from '../modules/unconfigured-issue-archive.mjs'
 import {
   createSharedWorkspaceAgent,
   assertCreatedWorkspaceIssueAgent,
@@ -117,55 +118,6 @@ async function waitForPromise(promise, message, timeoutMs) {
   } finally {
     clearTimeout(timer)
   }
-}
-
-async function verifyUnconfiguredAssignment(
-  control,
-  request,
-  projectId,
-  timeoutMs,
-  captureScreenshot
-) {
-  const agent = await request(`/api/v1/cloud-projects/${projectId}/chat-agents`, {
-    method: 'POST',
-    body: JSON.stringify({
-      name: `缺少配置的执行者-${process.pid}`,
-      capability_mode: 'manual',
-      visibility: 'public',
-    }),
-  })
-  const issue = await createAndAssignCloudIssue(control, request, {
-    contentSelector: CONTENT,
-    projectId,
-    title: UNCONFIGURED_ISSUE,
-    description: `${MARKER}。由单个智能体在远程 Executor 上完成并提交待确认。`,
-    assigneeTarget: `agent:${agent.id}`,
-    timeoutMs,
-  })
-  await waitForValue(
-    () => request(`/api/v1/loop-items/${issue.id}`),
-    item => item.status === 'in_progress' && item.execution_state === 'waiting_runtime',
-    'An assigned robot without configuration did not expose its blocked Run',
-    timeoutMs
-  )
-  await control.command('waitFor', scoped('[data-testid="cloud-todo-detail-status"]'), {
-    value: 'in_progress',
-    timeoutMs,
-  })
-  await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
-  await control.command(
-    'waitFor',
-    scoped(
-      `[data-testid="cloud-todo-column-in_progress"] [data-testid="collaboration-issue-${issue.id}"]`
-    ),
-    { visible: true, timeoutMs }
-  )
-  await control.command(
-    'waitFor',
-    scoped(`[data-testid="cloud-todo-card-needs-execution-config-${issue.id}"]`),
-    { text: '待配置', visible: true, timeoutMs }
-  )
-  await captureScreenshot(control, 'remote-agent-dispatch-00-waiting-configuration.png', CONTENT)
 }
 
 async function createAutoTaggedIssue(control, request, projectId, agent, timeoutMs) {
@@ -769,13 +721,16 @@ export function createDesktopScenario({
         projectName: PROJECT,
         timeoutMs: uiTimeoutMs,
       })
-      await verifyUnconfiguredAssignment(
-        control,
-        request,
-        project.id,
-        modelResponseTimeoutMs,
-        captureScreenshot
-      )
+      await verifyUnconfiguredAssignment(control, request, {
+        projectId: project.id,
+        contentSelector: CONTENT,
+        title: UNCONFIGURED_ISSUE,
+        description: `${MARKER}。由单个智能体在远程 Executor 上完成并提交待确认。`,
+        cloud: { backendUrl, authToken },
+        modelRequests: () => modelRequests,
+        timeoutMs: modelResponseTimeoutMs,
+        captureScreenshot,
+      })
       await configureFirstProjectExecutionEnvironment(
         control,
         CONTENT,

@@ -1,5 +1,6 @@
 import { createConversationSwitchingChecks } from '../modules/streaming-conversation-switching.mjs'
 import { createConversationScrollbarChecks } from '../modules/streaming-text-scrollbar.mjs'
+import { createRichTaskSwitchChecks } from '../modules/streaming-text-rich-task-switch.mjs'
 import { createFileCitationChecks } from '../modules/streaming-file-citations.mjs'
 import { handleEmptyReplyPrediction } from '../modules/response-protocol.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
@@ -103,6 +104,7 @@ import { createVisualizationScrollChecks } from '../modules/streaming-visualizat
 
 export function createDesktopScenario({
   checkpoint,
+  codexSqliteHome,
   captureScreenshot,
   resultDir,
   standalone,
@@ -115,7 +117,8 @@ export function createDesktopScenario({
   const fileCitations = createFileCitationChecks({ workspacePath, uiTimeoutMs })
   const transcriptIdentity = createStreamingTranscriptIdentityChecks({ uiTimeoutMs })
   const conversationSwitching = createConversationSwitchingChecks({ uiTimeoutMs })
-  const conversationScrollbar = createConversationScrollbarChecks({ uiTimeoutMs })
+  const conversationScrollbar = createConversationScrollbarChecks({ resultDir, uiTimeoutMs })
+  const richTaskSwitch = createRichTaskSwitchChecks({ resultDir, uiTimeoutMs, codexSqliteHome })
   const interactiveVisualization = createInteractiveVisualizationChecks({
     workspacePath,
     uiTimeoutMs,
@@ -341,6 +344,7 @@ export function createDesktopScenario({
       if (await transcriptIdentity.handleModelRequest(body, response, responseId)) return true
       if (await conversationSwitching.handleModelRequest(body, response, responseId)) return true
       if (await conversationScrollbar.handleModelRequest(body, response, responseId)) return true
+      if (await richTaskSwitch.handleModelRequest(body, response, responseId)) return true
       if (await fileCitations.handleModelRequest(body, response, responseId)) return true
       if (await interactiveVisualization.handleModelRequest(body, response, responseId)) return true
       if (await visualizationScroll.handleModelRequest(body, response, responseId)) return true
@@ -926,6 +930,7 @@ export function createDesktopScenario({
           async control => {
             await conversationSwitching.verify(control)
             await conversationScrollbar.verify(control)
+            await richTaskSwitch.verify(control)
           },
         ],
         ['streaming-subagents', verifySubagentStreamingPanel],

@@ -1,0 +1,12 @@
+{
+  "order": 156000,
+  "scenario": "./scenarios/running-sidebar-state.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 102000,
+      "shard": 6,
+      "position": 6000
+    }
+  }
+}

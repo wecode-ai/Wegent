@@ -73,6 +73,11 @@ export function StandInPrimaryProfile({
     preferences: [saved.prompt, saved.preferences].filter(Boolean).join('\n\n'),
   }
   const [draft, setDraft] = useState(original)
+  const [baseline, setBaseline] = useState(original)
+  if (!dequal(baseline, original)) {
+    setBaseline(original)
+    if (dequal(draft, baseline)) setDraft(original)
+  }
   const [connections, setConnections] = useState(initialCalendar)
   const [calendarEntry, setCalendarEntry] = useState(initialCalendar)
   const [calendarOpen, setCalendarOpen] = useState(initialCalendar)

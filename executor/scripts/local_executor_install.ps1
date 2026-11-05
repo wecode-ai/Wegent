@@ -6,10 +6,10 @@
 # Wegent Executor Installation Script for Windows
 #
 # Usage:
-#   irm https://github.com/wecode-ai/Wegent/releases/latest/download/local_executor_install.ps1 | iex
+#   irm https://raw.githubusercontent.com/wecode-ai/Wegent/main/executor/scripts/local_executor_install.ps1 | iex
 #
 # Or with a specific version:
-#   $env:WEGENT_VERSION='v1.0.0'; irm https://github.com/wecode-ai/Wegent/releases/latest/download/local_executor_install.ps1 | iex
+#   $env:WEGENT_VERSION='v1.0.0'; irm https://raw.githubusercontent.com/wecode-ai/Wegent/main/executor/scripts/local_executor_install.ps1 | iex
 
 [CmdletBinding()]
 param(
@@ -310,18 +310,39 @@ function Get-Platform {
     return "windows-$arch"
 }
 
+function Get-LatestPlatformVersion {
+    param([string]$Platform)
+
+    $page = 1
+    while ($true) {
+        $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$GitHubRepo/releases?per_page=100&page=$page" -Headers @{ Accept = "application/vnd.github+json" }
+        foreach ($release in $releases) {
+            if ($release.draft -or $release.prerelease -or $release.tag_name -notmatch '^v\d+\.\d+\.\d+$') {
+                continue
+            }
+            $assetName = "wegent-executor-$Platform.exe"
+            if (-not ($release.assets | Where-Object { $_.name -eq $assetName })) {
+                throw "Platform release $($release.tag_name) has no $assetName"
+            }
+            return $release.tag_name
+        }
+        if (-not $releases -or @($releases).Count -lt 100) {
+            throw "No stable Wegent platform release was found."
+        }
+        $page++
+    }
+}
+
 # Download and install binary
 function Install-WegentExecutor {
     param([string]$Platform)
 
     $baseUrl = "https://github.com/$GitHubRepo/releases"
 
-    if ($Version) {
-        $downloadUrl = "$baseUrl/download/$Version/wegent-executor-$Platform.exe"
+    if (-not $Version) {
+        $Version = Get-LatestPlatformVersion -Platform $Platform
     }
-    else {
-        $downloadUrl = "$baseUrl/latest/download/wegent-executor-$Platform.exe"
-    }
+    $downloadUrl = "$baseUrl/download/$Version/wegent-executor-$Platform.exe"
 
     Write-ColorOutput "Download URL: $downloadUrl" "INFO"
 

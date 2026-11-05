@@ -1,0 +1,6 @@
+{
+  "order": 29500,
+  "scenario": "./scenarios/collaboration-local-status-automation.scenario.mjs",
+  "scenarioOnly": true,
+  "ciHost": "collaboration-local-agent-dispatch"
+}

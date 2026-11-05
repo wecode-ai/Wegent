@@ -67,7 +67,7 @@ impl RuntimeWorkRpcHandler {
             let mut changed = false;
             self.store.update_task(&task_id, |link| {
                 let before = native_execution_state(link);
-                if active.contains(&task_id) {
+                if active.contains_key(&task_id) {
                     if before
                         .as_ref()
                         .is_some_and(|state| state.awaits_admission())

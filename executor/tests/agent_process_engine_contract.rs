@@ -27,6 +27,8 @@ use wegent_executor::{
 
 #[path = "agent_process_engine_contract/claude_capabilities.rs"]
 mod claude_capabilities;
+#[path = "agent_process_engine_contract/file_changes.rs"]
+mod file_changes;
 
 #[path = "agent_process_engine_contract/claude_concurrency.rs"]
 mod claude_concurrency;

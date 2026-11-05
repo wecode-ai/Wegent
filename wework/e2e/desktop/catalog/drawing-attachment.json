@@ -1,0 +1,12 @@
+{
+  "order": 139000,
+  "scenario": "./scenarios/drawing-attachment.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 89000,
+      "shard": 7,
+      "position": 12000
+    }
+  }
+}

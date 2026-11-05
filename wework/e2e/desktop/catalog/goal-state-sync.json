@@ -1,0 +1,12 @@
+{
+  "order": 176000,
+  "scenario": "./scenarios/goal-stopped-state.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 92000,
+      "shard": 1,
+      "position": 7000
+    }
+  }
+}

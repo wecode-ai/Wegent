@@ -20,6 +20,7 @@ fn turn_with_setup(id: &str, command: &str) -> SpawnTurnRequest {
     )
     .unwrap();
     SpawnTurnRequest {
+        task_kind: None,
         local_task_id: id.into(),
         runtime: "codex".into(),
         request,
