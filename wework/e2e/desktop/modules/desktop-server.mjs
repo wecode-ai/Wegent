@@ -19,6 +19,7 @@ import {
   codexRequestKind,
   cors,
   createSse,
+  delegatedTaskResultEvents,
   customToolCall,
   encryptedReasoningItem,
   functionCall,
@@ -2190,6 +2191,15 @@ class DesktopE2EServer {
     if (isReplyPredictionRequest(body)) {
       this.writeLocalAssistantMessage(response, { protocol }, JSON.stringify({ suggestion: null }))
       return
+    }
+
+    if (protocol === 'responses') {
+      const resultEvents = delegatedTaskResultEvents(body)
+      if (resultEvents) {
+        const id = `delegated-result-${this.modelRequests.length}`
+        this.writeSse(response, [responseCreated(id), ...resultEvents, responseCompleted(id)])
+        return
+      }
     }
 
     if (this.scenario === 'harness_app_models') {

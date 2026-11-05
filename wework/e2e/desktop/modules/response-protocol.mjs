@@ -1,4 +1,6 @@
 import { gunzipSync, zstdDecompressSync } from 'node:zlib'
+import { createHash } from 'node:crypto'
+import { readMcpToolOutput } from './mcp-tool-results.mjs'
 
 import {
   ARTIFACT_CONTENT,
@@ -53,6 +55,39 @@ function createSse(events) {
       return `event: ${normalizedEvent.type}\ndata: ${JSON.stringify(normalizedEvent)}\n\n`
     })
     .join('')
+}
+
+// Script only the model: task-result delivery and its history read stay native.
+function delegatedTaskResultEvents(body) {
+  const latestUser = (Array.isArray(body.input) ? body.input : [])
+    .filter(item => item.role === 'user')
+    .at(-1)
+  const message = modelMessageText(latestUser)
+  const match = message.match(
+    /^Wework delegated task result: resultId=([^,\s]+), taskId=([^,\s]+), status=([^,\s]+),/
+  )
+  if (!match) return null
+  const [, resultId, taskId, status] = match
+  const callId = `delegated-result-${createHash('sha256').update(resultId).digest('hex').slice(0, 16)}`
+  if (!requestContainsToolOutput(body, callId)) {
+    return mcpToolRequestEvents(body, {
+      toolName: 'read_task',
+      directToolName: 'mcp__wework_stand_in__read_task',
+      argumentsValue: { taskId },
+      searchCallId: `${callId}-search`,
+      toolCallId: callId,
+    }).events
+  }
+  const history = JSON.parse(readMcpToolOutput(body, callId))
+  assert.equal(history.taskId, taskId, 'Completion reporting must read the exact child task')
+  assert.ok(Array.isArray(history.messages), 'Completion reporting requires a real transcript')
+  const answer = history.messages
+    .filter(item => item.role === 'assistant')
+    .map(item => (typeof item.content === 'string' ? item.content : JSON.stringify(item.content)))
+    .filter(Boolean)
+    .at(-1)
+  if (status === 'done') assert.ok(answer, 'A completed task must provide its actual result')
+  return [assistantMessage(`任务 ${taskId}（${status}）：${answer ?? '本次执行未产出回答。'}`)]
 }
 
 function codexRequestMetadata(body) {
@@ -871,6 +906,7 @@ function snapshotHasAssistantActivity(snapshot) {
 
 export {
   createSse,
+  delegatedTaskResultEvents,
   codexRequestMetadata,
   codexRequestKind,
   latestModelInputText,

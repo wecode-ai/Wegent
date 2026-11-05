@@ -301,9 +301,11 @@ export function createDesktopScenario({
           uiTimeoutMs
         )
         assert.equal(scheduled.running, false)
-        await control.command('waitFor', '[data-testid="stand-in-processing-notice"]', {
-          timeoutMs: 20000,
-        })
+        assert.equal(
+          await control.command('getElementCount', '[data-testid="stand-in-processing-notice"]'),
+          '0',
+          'Scheduled background feedback without a question or failure must not interrupt the user'
+        )
         await captureScreenshot(control, 'silent-02-feedback-without-extra-work.png')
         // Collaboration executions belong to the stand-in work list, not the ordinary task sidebar.
         const workCard = `[data-testid="stand-in-activity-task-${taskId}"]`
