@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type ReactNode,
+  type Ref,
+} from "react";
 import type { CollaborationTranslate } from "../i18n";
 import type {
   AutomationConnectionProvider,
@@ -10,9 +17,27 @@ import type {
 } from "./connectionRules";
 import { ConnectionRuleDialog } from "./ConnectionRuleDialog";
 import { DialogForm } from "../controls/DialogForm";
+import { ArrowLeft, X } from "lucide-react";
+import {
+  ConnectionResourcePicker,
+  ConnectionSetupHeader,
+  connectionProviderIcon,
+  connectionResourceKey,
+} from "./ConnectionSetup";
+import { RuleTargetPicker } from "./RuleTargetPicker";
 import { ConnectionRuleFields } from "./ConnectionRuleFields";
 
+export interface ConnectionRulesPanelHandle {
+  reset(): void;
+  create(
+    provider: AutomationConnectionProvider,
+    returnFocus: HTMLElement | null,
+    onBack: () => void,
+  ): void;
+}
+
 export interface ConnectionRulesPanelProps {
+  ref?: Ref<ConnectionRulesPanelHandle>;
   api: ConnectionRulesApi;
   project: ConnectionProjectTarget;
   targets: Array<{
@@ -24,6 +49,7 @@ export interface ConnectionRulesPanelProps {
   disabled?: boolean;
   canConfigureProject?: boolean;
   className?: string;
+  embedded?: boolean;
   onRulesChange?(rules: ConnectionAutomationRule[]): void;
   onMutation?(): void;
   renderRunnerSelection?(
@@ -53,24 +79,38 @@ function ConnectionRulesWorkspace({
   translate,
   disabled = false,
   canConfigureProject = true,
+  embedded = false,
   className = "mt-6 space-y-3 border-t border-border pt-4",
   onRulesChange,
   onMutation,
   renderRunnerSelection,
   onOpenIssue,
+  ref,
 }: ConnectionRulesPanelProps) {
   const [rules, setRules] = useState<ConnectionAutomationRule[]>([]);
   const [providers, setProviders] = useState<AutomationConnectionProvider[]>(
     [],
   );
-  const [providerId, setProviderId] = useState("");
   const [kind, setKind] = useState("");
   const [query, setQuery] = useState("");
   const [resources, setResources] = useState<AutomationConnectionResource[]>(
     [],
   );
   const [returnFocus, setReturnFocus] = useState<HTMLElement | null>(null);
+  const [step, setStep] = useState<"connection" | "rule">("connection");
+  const backToConnections = useRef<(() => void) | null>(null);
   const [draft, setDraft] = useState<ConnectionAutomationRule | null>(null);
+  const suspendedDrafts = useRef(
+    new Map<
+      string,
+      {
+        rule: ConnectionAutomationRule;
+        resources: AutomationConnectionResource[];
+        query: string;
+        kind: string;
+      }
+    >(),
+  );
   const [historyRuleId, setHistoryRuleId] = useState<string | null>(null);
   const [runs, setRuns] = useState<ConnectionRuleRun[]>([]);
   const [error, setError] = useState("");
@@ -78,6 +118,7 @@ function ConnectionRulesWorkspace({
   const [loading, setLoading] = useState(true);
   const [reload, setReload] = useState(0);
   const generation = useRef(0);
+  const searchSequence = useRef(0);
   const configurationDisabled = disabled || !canConfigureProject;
   useEffect(() => {
     if (!loading) onRulesChange?.(rules);
@@ -151,7 +192,58 @@ function ConnectionRulesWorkspace({
     setLoading(true);
     setReload((value) => value + 1);
   }
-  const provider = providers.find((item) => item.id === providerId);
+  useImperativeHandle(ref, () => ({
+    reset() {
+      suspendedDrafts.current.clear();
+      setDraft(null);
+    },
+    create(provider, focusTarget, onBack) {
+      if (configurationDisabled || busy) return;
+      setReturnFocus(focusTarget);
+      backToConnections.current = onBack;
+      setProviders([provider]);
+      const suspended = suspendedDrafts.current.get(provider.id);
+      if (suspended) {
+        setKind(suspended.kind);
+        setQuery(suspended.query);
+        setResources(suspended.resources);
+        setDraft(suspended.rule);
+        setStep("connection");
+        setError("");
+        return;
+      }
+      setKind(provider.resourceKinds[0] ?? "");
+      setQuery("");
+      setResources([]);
+      setError("");
+      setHistoryRuleId(null);
+      setRuns([]);
+      setStep("connection");
+      const target =
+        targets.find((item) => item.kind === "agent") ?? targets[0];
+      setDraft({
+        id: "connection-rule-" + crypto.randomUUID(),
+        version: 0,
+        name: "",
+        enabled: true,
+        source: {
+          providerId: provider.id,
+          id: "",
+          profile: "",
+          kind: provider.resourceKinds[0] ?? "",
+          name: "",
+        },
+        eventType: provider.eventTypes?.[0] ?? "",
+        project,
+        targetKind: target?.kind ?? "agent",
+        targetId: target?.id ?? "",
+        publication: { title: "", instruction: "" },
+      });
+    },
+  }));
+  const provider = providers.find(
+    (item) => item.id === draft?.source.providerId,
+  );
   const selectableResources =
     draft?.source.id &&
     !resources.some(
@@ -161,62 +253,21 @@ function ConnectionRulesWorkspace({
       : resources;
   return (
     <section className={className} data-testid="connection-automation-rules">
-      <div className="flex items-center justify-between gap-2">
-        <h3 className="text-sm font-medium">
-          {translate("automation_rules.external_rules", "外部数据源规则")}
-        </h3>
-        {canConfigureProject && (
-          <button
-            type="button"
-            className="min-h-11 px-2 text-sm underline md:min-h-8"
-            data-testid="connection-rule-create"
-            disabled={configurationDisabled || busy || loading}
-            onClick={(event) => {
-              setReturnFocus(event.currentTarget);
-              void perform(async (active) => {
-                const items = await api.providers();
-                if (!active()) return;
-                setProviders(items);
-                const first = items.find(
-                  (item) => item.availability.status === "ready",
-                );
-                setProviderId(first?.id ?? "");
-                setKind(first?.resourceKinds[0] ?? "");
-                setResources([]);
-                setHistoryRuleId(null);
-                setRuns([]);
-                const target = targets[0];
-                setDraft({
-                  id: `connection-rule-${crypto.randomUUID()}`,
-                  version: 0,
-                  name: "",
-                  enabled: true,
-                  source: {
-                    providerId: "",
-                    id: "",
-                    profile: "",
-                    kind: "",
-                    name: "",
-                  },
-                  eventType: first?.eventTypes?.[0] ?? "",
-                  project,
-                  targetKind: target?.kind ?? "agent",
-                  targetId: target?.id ?? "",
-                  publication: { title: "", instruction: "" },
-                });
-              });
-            }}
-          >
-            {translate("automation_rules.create", "新建来源规则")}
-          </button>
-        )}
-      </div>
-      <p className="text-xs text-text-secondary">
-        {translate(
-          "automation_rules.private_notice",
-          "原始消息和账号保持私有。只有配置的发布结果会进入项目。来源设置仅在采集设备上由本人管理。",
-        )}
-      </p>
+      {!embedded && (
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="text-sm font-medium">
+            {translate("automation_rules.external_rules", "外部数据源规则")}
+          </h3>
+        </div>
+      )}
+      {(!embedded || rules.length > 0) && (
+        <p className="text-xs text-text-secondary">
+          {translate(
+            "automation_rules.private_notice",
+            "原始消息和账号保持私有。只有配置的发布结果会进入项目。来源设置仅在采集设备上由本人管理。",
+          )}
+        </p>
+      )}
       {!canConfigureProject && (
         <p
           className="text-xs text-text-secondary"
@@ -253,7 +304,7 @@ function ConnectionRulesWorkspace({
           {translate("automation_rules.loading", "正在加载规则…")}
         </p>
       )}
-      {!loading && !error && rules.length === 0 && (
+      {!embedded && !loading && !error && rules.length === 0 && (
         <p className="text-sm text-text-secondary">
           {translate("automation_rules.empty", "暂无外部数据源规则")}
         </p>
@@ -272,7 +323,9 @@ function ConnectionRulesWorkspace({
                   const items = await api.providers();
                   if (!active()) return;
                   setProviders(items);
-                  setProviderId(rule.source.providerId);
+                  setStep("rule");
+                  backToConnections.current = null;
+                  setQuery("");
                   setKind(rule.source.kind);
                   setResources([rule.source]);
                   setDraft(rule);
@@ -460,7 +513,7 @@ function ConnectionRulesWorkspace({
       )}
       {draft && (
         <ConnectionRuleDialog
-          label={translate("automation_rules.editor", "来源规则")}
+          label={translate("automation_rules.editor", "连接规则")}
           returnFocus={returnFocus}
         >
           <DialogForm
@@ -471,20 +524,75 @@ function ConnectionRulesWorkspace({
             data-testid="connection-rule-editor"
             onSubmit={(event) => {
               event.preventDefault();
-              if (configurationDisabled || busy) return;
+              if (configurationDisabled || busy || step !== "rule") return;
               void perform(async (active) => {
                 await api.save(draft);
                 onMutation?.();
                 const items = await api.list(project);
                 if (!active()) return;
                 setRules(items);
+                suspendedDrafts.current.clear();
                 setDraft(null);
               });
             }}
           >
-            <div className="shrink-0 border-b border-border px-5 py-4 font-medium">
-              {translate("automation_rules.editor", "来源规则")}
-            </div>
+            <header className="flex shrink-0 items-center gap-2 border-b border-border px-5 py-4">
+              <button
+                type="button"
+                data-testid="connection-rule-back"
+                disabled={busy}
+                aria-label={translate("automation_rules.back", "返回")}
+                className="flex h-8 w-8 items-center justify-center rounded-md hover:bg-muted"
+                onClick={() => {
+                  if (step === "rule") setStep("connection");
+                  else {
+                    if (backToConnections.current && provider)
+                      suspendedDrafts.current.set(provider.id, {
+                        rule: draft,
+                        resources,
+                        query,
+                        kind,
+                      });
+                    setDraft(null);
+                    backToConnections.current?.();
+                  }
+                }}
+              >
+                <ArrowLeft aria-hidden="true" className="h-4 w-4" />
+              </button>
+              <div className="min-w-0 flex-1">
+                <h2
+                  className="truncate text-base font-medium"
+                  title={
+                    step === "rule" ? draft.source.name : provider?.displayName
+                  }
+                  data-testid="connection-rule-selected-source"
+                >
+                  {step === "rule"
+                    ? draft.source.name
+                    : (provider?.displayName ?? draft.source.name)}
+                </h2>
+                {step === "rule" && (
+                  <p className="truncate text-xs text-text-secondary">
+                    {provider?.displayName} ·{" "}
+                    {translate(
+                      "automation_rules.trigger_and_action",
+                      "触发与动作",
+                    )}
+                  </p>
+                )}
+              </div>
+              <button
+                type="button"
+                data-testid="connection-rule-close"
+                disabled={busy}
+                aria-label={translate("common.close", "关闭")}
+                onClick={() => setDraft(null)}
+                className="flex h-8 w-8 items-center justify-center rounded-md hover:bg-muted"
+              >
+                <X aria-hidden="true" className="h-4 w-4" />
+              </button>
+            </header>
             {error && (
               <div
                 role="alert"
@@ -506,14 +614,70 @@ function ConnectionRulesWorkspace({
                 </button>
               </div>
             )}
-            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-              <fieldset
-                disabled={busy || configurationDisabled}
-                className="space-y-4"
-              >
-                {!providers.some(
-                  (item) => item.availability.status === "ready",
-                ) && (
+            {step === "connection" ? (
+              <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">
+                <ConnectionSetupHeader
+                  icon={connectionProviderIcon(provider?.id ?? "")}
+                  title={translate(
+                    "automation_rules.select_resource",
+                    "选择连接",
+                  )}
+                  description={translate(
+                    "automation_rules.select_connection_help",
+                    "搜索并选择要监听的连接，原始内容和账号保持私有。",
+                  )}
+                />
+                <ConnectionResourcePicker
+                  kinds={(provider?.resourceKinds ?? []).map((id) => ({
+                    id,
+                    name: provider?.resourceLabels?.[id] ?? label(id),
+                  }))}
+                  kind={kind}
+                  onKindChange={(value) => {
+                    searchSequence.current += 1;
+                    setKind(value);
+                    setResources([]);
+                    setDraft({
+                      ...draft,
+                      source: {
+                        ...draft.source,
+                        id: "",
+                        profile: "",
+                        name: "",
+                        kind: value,
+                      },
+                    });
+                  }}
+                  query={query}
+                  onQueryChange={(value) => {
+                    searchSequence.current += 1;
+                    setQuery(value);
+                    setResources([]);
+                  }}
+                  onSearch={() =>
+                    void perform(async (active) => {
+                      const sequence = ++searchSequence.current;
+                      const items = await api.resources(
+                        provider!.id,
+                        kind,
+                        query,
+                      );
+                      if (active() && sequence === searchSequence.current)
+                        setResources(items);
+                    })
+                  }
+                  resources={selectableResources}
+                  selected={
+                    draft.source.id ? [connectionResourceKey(draft.source)] : []
+                  }
+                  onSelect={(source) => setDraft({ ...draft, source })}
+                  translate={translate}
+                  testId="connection-rule"
+                  requireQuery={false}
+                  disabled={configurationDisabled || !provider}
+                  busy={busy}
+                />
+                {!provider && (
                   <p role="status">
                     {translate(
                       "automation_rules.no_providers",
@@ -521,204 +685,43 @@ function ConnectionRulesWorkspace({
                     )}
                   </p>
                 )}
-                <label className="block space-y-1 text-sm">
-                  <span>{translate("automation_rules.name", "规则名称")}</span>
-                  <input
-                    className={fieldClass}
-                    required
-                    maxLength={100}
-                    autoFocus
-                    data-testid="connection-rule-name"
-                    value={draft.name}
-                    onChange={(event) =>
-                      setDraft({ ...draft, name: event.target.value })
-                    }
-                  />
-                </label>
-                <fieldset className="space-y-2">
-                  <legend className="mb-2 text-sm font-medium">
-                    {translate("automation_rules.when", "当发生什么")}
-                  </legend>
-                  <label className="block space-y-1 text-sm">
-                    <span>
-                      {translate("automation_rules.provider", "数据源")}
-                    </span>
-                    <select
-                      className={fieldClass}
-                      aria-label={translate(
-                        "automation_rules.provider",
-                        "数据源",
+              </div>
+            ) : (
+              <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+                <fieldset
+                  disabled={busy || configurationDisabled}
+                  className="space-y-4"
+                >
+                  {!providers.some(
+                    (item) => item.availability.status === "ready",
+                  ) && (
+                    <p role="status">
+                      {translate(
+                        "automation_rules.no_providers",
+                        "没有可用数据源，请先在个人分身中连接账号并完成授权。",
                       )}
-                      data-testid="connection-rule-provider"
-                      value={providerId}
-                      onChange={(event) => {
-                        const next = providers.find(
-                          (item) => item.id === event.target.value,
-                        );
-                        setProviderId(event.target.value);
-                        setKind(next?.resourceKinds[0] ?? "");
-                        setResources([]);
-                        setDraft({
-                          ...draft,
-                          source: {
-                            providerId: "",
-                            id: "",
-                            profile: "",
-                            kind: "",
-                            name: "",
-                          },
-                          eventType: next?.eventTypes?.[0] ?? "",
-                        });
-                      }}
-                    >
-                      <option value="" disabled>
-                        {translate(
-                          "automation_rules.select_provider",
-                          "选择数据源",
-                        )}
-                      </option>
-                      {providers.map((item) => (
-                        <option
-                          key={item.id}
-                          value={item.id}
-                          disabled={item.availability.status !== "ready"}
-                        >
-                          {item.displayName} · {label(item.availability.status)}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                    </p>
+                  )}
                   <label className="block space-y-1 text-sm">
                     <span>
-                      {translate("automation_rules.resource_kind", "资源类型")}
+                      {translate("automation_rules.name", "规则名称")}
                     </span>
-                    <select
-                      className={fieldClass}
-                      aria-label={translate(
-                        "automation_rules.resource_kind",
-                        "资源类型",
-                      )}
-                      data-testid="connection-rule-kind"
-                      value={kind}
-                      onChange={(event) => {
-                        setKind(event.target.value);
-                        setResources([]);
-                        setDraft({
-                          ...draft,
-                          source: {
-                            providerId: "",
-                            id: "",
-                            profile: "",
-                            kind: "",
-                            name: "",
-                          },
-                        });
-                      }}
-                    >
-                      {provider?.resourceKinds.map((value) => (
-                        <option key={value} value={value}>
-                          {provider?.resourceLabels?.[value] ?? label(value)}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="block space-y-1 text-sm">
-                    <span>
-                      {translate("automation_rules.query", "搜索资源")}
-                    </span>
-                    <div className="flex gap-2">
-                      <input
-                        className={fieldClass}
-                        aria-label={translate(
-                          "automation_rules.query",
-                          "搜索资源",
-                        )}
-                        placeholder={translate(
-                          "automation_rules.query_placeholder",
-                          "输入关键词，或留空列出资源",
-                        )}
-                        data-testid="connection-rule-query"
-                        value={query}
-                        onChange={(event) => setQuery(event.target.value)}
-                      />
-                      <button
-                        type="button"
-                        className="min-h-11 shrink-0 px-2 text-sm underline"
-                        disabled={!providerId || !kind}
-                        data-testid="connection-rule-search"
-                        onClick={() =>
-                          void perform(async (active) => {
-                            const items = await api.resources(
-                              providerId,
-                              kind,
-                              query,
-                            );
-                            if (active()) setResources(items);
-                          })
-                        }
-                      >
-                        {translate("automation_rules.search", "搜索")}
-                      </button>
-                    </div>
-                  </label>
-                  <label className="block space-y-1 text-sm">
-                    <span>
-                      {translate("automation_rules.resource", "监听资源")}
-                    </span>
-                    <select
+                    <input
                       className={fieldClass}
                       required
-                      aria-label={translate(
-                        "automation_rules.resource",
-                        "监听资源",
-                      )}
-                      data-testid="connection-rule-resource"
-                      value={JSON.stringify(draft.source)}
+                      maxLength={100}
+                      autoFocus
+                      data-testid="connection-rule-name"
+                      value={draft.name}
                       onChange={(event) =>
-                        setDraft({
-                          ...draft,
-                          source: JSON.parse(
-                            event.target.value,
-                          ) as AutomationConnectionResource,
-                        })
+                        setDraft({ ...draft, name: event.target.value })
                       }
-                    >
-                      <option
-                        value={JSON.stringify({
-                          providerId: "",
-                          id: "",
-                          profile: "",
-                          kind: "",
-                          name: "",
-                        })}
-                        disabled
-                      >
-                        {translate(
-                          "automation_rules.select_resource",
-                          "选择资源",
-                        )}
-                      </option>
-                      {selectableResources.map((resource) => (
-                        <option
-                          key={JSON.stringify(resource)}
-                          value={JSON.stringify(resource)}
-                        >
-                          {resource.name}
-                        </option>
-                      ))}
-                    </select>
+                    />
                   </label>
                   <label className="block space-y-1 text-sm">
-                    <span>
-                      {translate("automation_rules.event", "触发事件")}
-                    </span>
+                    <span>{translate("automation_rules.when", "当发生")}</span>
                     <select
                       className={fieldClass}
-                      required
-                      aria-label={translate(
-                        "automation_rules.event",
-                        "触发事件",
-                      )}
                       data-testid="connection-rule-event"
                       value={draft.eventType}
                       onChange={(event) =>
@@ -732,141 +735,144 @@ function ConnectionRulesWorkspace({
                       ))}
                     </select>
                   </label>
-                </fieldset>
-                <ConnectionRuleFields
-                  sharedInstruction
-                  testId="connection-rule-processing"
-                  translate={translate}
-                  value={draft}
-                  onChange={(value) => setDraft({ ...draft, ...value })}
-                />
-                <fieldset className="space-y-2">
-                  <legend className="mb-2 text-sm font-medium">
-                    {translate(
-                      "automation_rules.publish",
-                      "执行：发布 Issue 并交给处理对象",
-                    )}
-                  </legend>
-                  <label className="block space-y-1 text-sm">
-                    <span>
-                      {translate("automation_rules.target", "处理对象")}
-                    </span>
-                    <select
-                      className={fieldClass}
-                      required
-                      aria-label={translate(
-                        "automation_rules.target",
-                        "处理对象",
+                  <ConnectionRuleFields
+                    sharedInstruction
+                    testId="connection-rule-processing"
+                    translate={translate}
+                    value={draft}
+                    onChange={(value) => setDraft({ ...draft, ...value })}
+                  />
+                  <fieldset className="space-y-2">
+                    <legend className="mb-2 text-sm font-medium">
+                      {translate(
+                        "automation_rules.publish",
+                        "执行：发布 Issue 并交给处理对象",
                       )}
-                      data-testid="connection-rule-target"
-                      value={`${draft.targetKind}:${draft.targetId}`}
-                      onChange={(event) => {
-                        const target = targets.find(
-                          (target) =>
-                            `${target.kind}:${target.id}` ===
-                            event.target.value,
-                        );
-                        if (target)
+                    </legend>
+                    <RuleTargetPicker
+                      value={{ kind: draft.targetKind, id: draft.targetId }}
+                      options={{
+                        human: targets.filter(
+                          (target) => target.kind === "human",
+                        ),
+                        agent: targets.filter(
+                          (target) => target.kind === "agent",
+                        ),
+                        collaboration_group: targets.filter(
+                          (target) => target.kind === "collaboration_group",
+                        ),
+                      }}
+                      onChange={(value) =>
+                        setDraft({
+                          ...draft,
+                          targetKind: value.kind,
+                          targetId: value.id,
+                          runnerSelection: undefined,
+                        })
+                      }
+                      translate={translate}
+                      testId="connection-rule"
+                    />
+                    {draft.targetKind !== "human" &&
+                      renderRunnerSelection?.(draft, (runnerSelection) =>
+                        setDraft((current) =>
+                          current ? { ...current, runnerSelection } : current,
+                        ),
+                      )}
+                    <label className="block space-y-1 text-sm">
+                      <span>
+                        {translate(
+                          "automation_rules.issue_title",
+                          "发布的 Issue 标题",
+                        )}
+                      </span>
+                      <input
+                        className={fieldClass}
+                        required
+                        maxLength={255}
+                        data-testid="connection-rule-title"
+                        value={draft.publication.title}
+                        onChange={(event) =>
                           setDraft({
                             ...draft,
-                            targetKind: target.kind,
-                            targetId: target.id,
-                            runnerSelection: undefined,
-                          });
-                      }}
+                            publication: {
+                              ...draft.publication,
+                              title: event.target.value,
+                            },
+                          })
+                        }
+                      />
+                    </label>
+                    <label className="block space-y-1 text-sm">
+                      <span>
+                        {translate(
+                          "automation_rules.publication_instruction",
+                          "发布要求（仅你可见）",
+                        )}
+                      </span>
+                      <textarea
+                        className={fieldClass}
+                        required
+                        rows={3}
+                        aria-describedby="connection-publication-visibility"
+                        data-testid="connection-rule-publication"
+                        value={draft.publication.instruction}
+                        onChange={(event) =>
+                          setDraft({
+                            ...draft,
+                            publication: {
+                              ...draft.publication,
+                              instruction: event.target.value,
+                            },
+                          })
+                        }
+                      />
+                    </label>
+                    <p
+                      id="connection-publication-visibility"
+                      className="text-xs text-text-secondary"
                     >
-                      {targets.map((target) => (
-                        <option
-                          key={`${target.kind}:${target.id}`}
-                          value={`${target.kind}:${target.id}`}
-                        >
-                          {target.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  {draft.targetKind !== "human" &&
-                    renderRunnerSelection?.(draft, (runnerSelection) =>
-                      setDraft((current) =>
-                        current ? { ...current, runnerSelection } : current,
-                      ),
-                    )}
-                  <label className="block space-y-1 text-sm">
-                    <span>
                       {translate(
-                        "automation_rules.issue_title",
-                        "发布的 Issue 标题",
+                        "automation_rules.publication_visibility",
+                        "按此要求生成的 Issue 内容将对项目成员可见。",
                       )}
-                    </span>
-                    <input
-                      className={fieldClass}
-                      required
-                      maxLength={255}
-                      data-testid="connection-rule-title"
-                      value={draft.publication.title}
-                      onChange={(event) =>
-                        setDraft({
-                          ...draft,
-                          publication: {
-                            ...draft.publication,
-                            title: event.target.value,
-                          },
-                        })
-                      }
-                    />
-                  </label>
-                  <label className="block space-y-1 text-sm">
-                    <span>
-                      {translate(
-                        "automation_rules.publication_instruction",
-                        "发布要求（仅你可见）",
-                      )}
-                    </span>
-                    <textarea
-                      className={fieldClass}
-                      required
-                      rows={3}
-                      aria-describedby="connection-publication-visibility"
-                      data-testid="connection-rule-publication"
-                      value={draft.publication.instruction}
-                      onChange={(event) =>
-                        setDraft({
-                          ...draft,
-                          publication: {
-                            ...draft.publication,
-                            instruction: event.target.value,
-                          },
-                        })
-                      }
-                    />
-                  </label>
-                  <p
-                    id="connection-publication-visibility"
-                    className="text-xs text-text-secondary"
-                  >
-                    {translate(
-                      "automation_rules.publication_visibility",
-                      "按此要求生成的 Issue 内容将对项目成员可见。",
-                    )}
-                  </p>
+                    </p>
+                  </fieldset>
                 </fieldset>
-              </fieldset>
-            </div>
+              </div>
+            )}
             <div className="flex shrink-0 gap-2 border-t border-border px-5 py-3">
-              <button
-                type="submit"
-                className="collaboration-primary-button min-h-11"
-                disabled={
-                  busy ||
-                  configurationDisabled ||
-                  !draft.source.id ||
-                  !draft.targetId ||
-                  !draft.eventType
-                }
-                data-testid="connection-rule-save"
-              >
-                {translate("automation_rules.save", "保存规则")}
-              </button>
+              {step === "connection" ? (
+                <button
+                  type="button"
+                  data-testid="connection-rule-next"
+                  className="collaboration-primary-button"
+                  disabled={
+                    busy ||
+                    configurationDisabled ||
+                    !draft.source.id ||
+                    !provider
+                  }
+                  onClick={() => setStep("rule")}
+                >
+                  {translate("automation_rules.next", "下一步：触发与动作")}
+                </button>
+              ) : (
+                <button
+                  type="submit"
+                  className="collaboration-primary-button min-h-11"
+                  disabled={
+                    busy ||
+                    configurationDisabled ||
+                    !draft.source.id ||
+                    !draft.targetId ||
+                    !draft.eventType
+                  }
+                  data-testid="connection-rule-save"
+                >
+                  {translate("automation_rules.save", "保存规则")}
+                </button>
+              )}
               <button
                 type="button"
                 className="min-h-11 px-3 text-sm"

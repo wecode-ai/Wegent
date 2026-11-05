@@ -2,8 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useCallback, useState } from "react";
-import { ConnectionRulesPanel } from "../automation/ConnectionRulesPanel";
+import { useCallback, useRef, useState } from "react";
+import {
+  ConnectionRulesPanel,
+  type ConnectionRulesPanelHandle,
+} from "../automation/ConnectionRulesPanel";
 import type {
   ConnectionRulesApi,
   ConnectionProjectTarget,
@@ -40,6 +43,7 @@ export function useProjectConnectionRules({
   disabled: boolean;
   onMutation(): void;
 }) {
+  const panelRef = useRef<ConnectionRulesPanelHandle>(null);
   const sourceProjectKey = JSON.stringify([
     connectionRules?.ownerScope,
     connectionProject?.store,
@@ -67,11 +71,16 @@ export function useProjectConnectionRules({
     privateRules?.project === sourceProjectKey ? privateRules.ids : [];
 
   return {
+    connectionRulesRef: panelRef,
+    privateRuleCount: privateRuleIds.length,
     visibleRules: rules.filter((rule) => !privateRuleIds.includes(rule.id)),
     sourcesLoading,
     connectionRulesPanel:
       connectionRules && connectionProject ? (
         <ConnectionRulesPanel
+          ref={panelRef}
+          embedded
+          className="space-y-3"
           api={connectionRules}
           renderRunnerSelection={renderConnectionRunnerSelection}
           onOpenIssue={onOpenConnectionIssue}

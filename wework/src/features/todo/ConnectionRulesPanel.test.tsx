@@ -41,6 +41,35 @@ function fixture() {
   } satisfies ConnectionRulesApi
 }
 
+function sharedFixture() {
+  return {
+    projects: {},
+    agents: { list: vi.fn().mockResolvedValue([]) },
+    members: {
+      list: vi.fn().mockResolvedValue([{ id: 'agent', user_id: 7, user_name: 'Processor' }]),
+    },
+    automations: { list: vi.fn().mockResolvedValue([]) },
+  } as unknown as SharedWorkspaceApi
+}
+function projectView(
+  api: ConnectionRulesApi,
+  sharedApi = sharedFixture(),
+  target: typeof project | { id: string; store: 'cloud' } = project
+) {
+  return (
+    <ProjectAutomaticProcessing
+      api={sharedApi}
+      project={{ ...target, access_role: 'Owner', statuses: [] } as unknown as CollaborationProject}
+      members={[]}
+      agents={[]}
+      locale="zh-CN"
+      translate={translate}
+      connectionRules={api}
+      connectionProject={target}
+    />
+  )
+}
+
 describe('Connection rules', () => {
   const privateRule = {
     id: 'private-rule',
@@ -205,28 +234,34 @@ describe('Connection rules', () => {
     )
   })
 
-  it('discovers sources only when creating a rule and saves an explicit publication boundary', async () => {
+  it('uses one project entry and the personal connection picker before configuring a publication', async () => {
     const api = fixture()
-    render(
-      <ConnectionRulesPanel api={api} project={project} targets={targets} translate={translate} />
-    )
-    await waitFor(() => expect(screen.getByTestId('connection-rule-create')).toBeEnabled())
+    render(projectView(api))
+    await waitFor(() => expect(screen.getByTestId('automatic-processing-create')).toBeEnabled())
     expect(api.providers).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByTestId('connection-rule-create'))
-    expect(await screen.findByTestId('connection-rule-editor')).toBeInTheDocument()
-    fireEvent.change(screen.getByTestId('connection-rule-name'), {
-      target: { value: 'Customer failures' },
-    })
+    expect(screen.queryByTestId('connection-rule-create')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('automatic-processing-create'))
+    fireEvent.click(await screen.findByTestId('project-rule-connection-test/mail'))
+    expect(await screen.findByTestId('connection-rule-resource-picker')).toBeInTheDocument()
+    expect(screen.queryByTestId('connection-rule-name')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('connection-rule-provider')).not.toBeInTheDocument()
+    expect(screen.getByTestId('connection-rule-next')).toBeDisabled()
     fireEvent.click(screen.getByTestId('connection-rule-search'))
-    await screen.findByText('Private mailbox')
-    fireEvent.change(screen.getByTestId('connection-rule-resource'), {
-      target: { value: JSON.stringify(source) },
-    })
+    fireEvent.click(await screen.findByTestId('connection-rule-result-inbox'))
     api.resources.mockResolvedValue([{ ...source, id: 'other-inbox', name: 'Other mailbox' }])
     fireEvent.change(screen.getByTestId('connection-rule-query'), { target: { value: 'other' } })
     fireEvent.click(screen.getByTestId('connection-rule-search'))
     await screen.findByText('Other mailbox')
-    expect(screen.getByRole('option', { name: 'Private mailbox' })).toHaveProperty('selected', true)
+    expect(screen.getByTestId('connection-rule-result-inbox')).toHaveAttribute(
+      'aria-checked',
+      'true'
+    )
+    fireEvent.click(screen.getByTestId('connection-rule-next'))
+    expect(screen.getByTestId('connection-rule-selected-source')).toHaveTextContent(source.name)
+    fireEvent.change(screen.getByTestId('connection-rule-name'), {
+      target: { value: 'Customer failures' },
+    })
+    fireEvent.click(screen.getByTestId('connection-rule-processing-conditions'))
     fireEvent.change(screen.getByTestId('connection-rule-processing-contains'), {
       target: { value: 'failure' },
     })
@@ -245,14 +280,101 @@ describe('Connection rules', () => {
           project,
           condition: { contains: 'failure' },
           publication: { title: 'Reported failure', instruction: 'Publish an anonymized summary' },
-          targetKind: 'agent',
-          targetId: 'agent',
+          targetKind: 'human',
+          targetId: '7',
         })
       )
     )
     await waitFor(() =>
       expect(screen.queryByTestId('connection-rule-editor')).not.toBeInTheDocument()
     )
+  })
+
+  it.each([
+    ['projects', 'created'],
+    ['time', 'schedule'],
+  ] as const)(
+    'configures the %s connection and returns to connection choices',
+    async (connection, trigger) => {
+      const api = fixture()
+      render(projectView(api))
+      fireEvent.click(await screen.findByTestId('automatic-processing-create'))
+      fireEvent.click(await screen.findByTestId('project-rule-connection-' + connection))
+      expect(await screen.findByTestId('automatic-processing-trigger-' + trigger)).toBeChecked()
+      expect(
+        screen.queryByTestId(
+          'automatic-processing-trigger-' + (connection === 'time' ? 'created' : 'schedule')
+        )
+      ).not.toBeInTheDocument()
+      fireEvent.click(screen.getByTestId('automatic-processing-back'))
+      expect(await screen.findByTestId('project-rule-connection-picker')).toBeInTheDocument()
+      fireEvent.click(screen.getByTestId('project-rule-connection-close'))
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(api.save).not.toHaveBeenCalled()
+    }
+  )
+
+  it('keeps project and time connections usable while source discovery fails and recovers on retry', async () => {
+    const api = fixture()
+    api.providers.mockRejectedValueOnce(new Error('Device disconnected'))
+    render(projectView(api))
+    fireEvent.click(await screen.findByTestId('automatic-processing-create'))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Device disconnected')
+    expect(screen.getByTestId('project-rule-connection-projects')).toBeEnabled()
+    expect(screen.getByTestId('project-rule-connection-time')).toBeEnabled()
+    fireEvent.click(screen.getByTestId('project-rule-connection-retry'))
+    fireEvent.click(await screen.findByTestId('project-rule-connection-test/mail'))
+    fireEvent.click(await screen.findByTestId('connection-rule-back'))
+    expect(await screen.findByTestId('project-rule-connection-picker')).toBeInTheDocument()
+    expect(screen.queryByTestId('connection-rule-editor')).not.toBeInTheDocument()
+    expect(api.save).not.toHaveBeenCalled()
+  })
+
+  it('preserves an unsaved source draft when returning to the connection list, and discards it when starting a new rule', async () => {
+    const api = fixture()
+    render(projectView(api))
+    fireEvent.click(await screen.findByTestId('automatic-processing-create'))
+    fireEvent.click(await screen.findByTestId('project-rule-connection-test/mail'))
+    fireEvent.click(await screen.findByTestId('connection-rule-search'))
+    fireEvent.click(await screen.findByTestId('connection-rule-result-inbox'))
+    fireEvent.click(screen.getByTestId('connection-rule-next'))
+    fireEvent.change(screen.getByTestId('connection-rule-name'), {
+      target: { value: 'Keep this draft' },
+    })
+    fireEvent.change(screen.getByTestId('connection-rule-publication'), {
+      target: { value: 'PRIVATE UNSAVED REQUIREMENT' },
+    })
+    fireEvent.click(screen.getByTestId('connection-rule-back'))
+    fireEvent.click(screen.getByTestId('connection-rule-back'))
+    fireEvent.click(await screen.findByTestId('project-rule-connection-test/mail'))
+    expect(screen.getByTestId('connection-rule-result-inbox')).toHaveAttribute(
+      'aria-checked',
+      'true'
+    )
+    fireEvent.click(screen.getByTestId('connection-rule-next'))
+    expect(screen.getByTestId('connection-rule-name')).toHaveValue('Keep this draft')
+    expect(screen.getByTestId('connection-rule-publication')).toHaveValue(
+      'PRIVATE UNSAVED REQUIREMENT'
+    )
+    fireEvent.click(screen.getByTestId('connection-rule-cancel'))
+    fireEvent.click(screen.getByTestId('automatic-processing-create'))
+    fireEvent.click(await screen.findByTestId('project-rule-connection-test/mail'))
+    expect(screen.getByTestId('connection-rule-next')).toBeDisabled()
+    expect(screen.queryByDisplayValue('PRIVATE UNSAVED REQUIREMENT')).not.toBeInTheDocument()
+    expect(api.save).not.toHaveBeenCalled()
+  })
+
+  it('keeps optional conditions expanded while clearing the final filter', async () => {
+    const api = fixture()
+    api.list.mockResolvedValue([{ ...privateRule, condition: { contains: 'Clear this filter' } }])
+    render(
+      <ConnectionRulesPanel api={api} project={project} targets={targets} translate={translate} />
+    )
+    fireEvent.click(await screen.findByTestId('connection-rule-edit-private-rule'))
+    const input = await screen.findByTestId('connection-rule-processing-contains')
+    expect(input.closest('details')).toHaveAttribute('open')
+    fireEvent.change(input, { target: { value: '' } })
+    expect(input.closest('details')).toHaveAttribute('open')
   })
 
   it('isolates private lists when switching projects and ignores a late source request', async () => {
@@ -263,19 +385,11 @@ describe('Connection rules', () => {
         resolve = done
       })
     )
-    const view = render(
-      <ConnectionRulesPanel api={api} project={project} targets={targets} translate={translate} />
-    )
-    await waitFor(() => expect(screen.getByTestId('connection-rule-create')).toBeEnabled())
-    fireEvent.click(screen.getByTestId('connection-rule-create'))
-    view.rerender(
-      <ConnectionRulesPanel
-        api={api}
-        project={{ id: 'other', store: 'cloud' }}
-        targets={targets}
-        translate={translate}
-      />
-    )
+    const sharedApi = sharedFixture()
+    const view = render(projectView(api, sharedApi))
+    await waitFor(() => expect(screen.getByTestId('automatic-processing-create')).toBeEnabled())
+    fireEvent.click(screen.getByTestId('automatic-processing-create'))
+    view.rerender(projectView(api, sharedApi, { id: 'other', store: 'cloud' }))
     await act(async () =>
       resolve([
         {

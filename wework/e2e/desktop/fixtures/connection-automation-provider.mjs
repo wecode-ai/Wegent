@@ -17,7 +17,7 @@ export async function apply(ctx) {
               id: 'private-source',
               profile: 'private-account',
               kind: 'record',
-              name: 'Private records',
+              name: 'Release review feed',
             },
           ],
           hasMore: false,

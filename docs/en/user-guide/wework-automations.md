@@ -10,12 +10,13 @@ the entry is available without enabling experimental features.
 
 ## Source rules in collaboration and My stand-in
 
-In a project's **Automatic processing** settings, add an **External source rule**.
-Choose an authorized source, resource and event on the current device, optionally
-filter by message text or sender, then configure the published Issue title, the
-result authorized for publication, and its project assignee. Source filters and
-publication instructions remain private on the collection device. The project
-stores only the rule name, assignee, Issue handling instructions and published results.
+Project **Automatic processing** has one **New rule** entry. It follows the personal stand-in
+connection flow: choose email, messages, a project, or time; choose the specific connection;
+then configure its trigger and action. Email and message sources reuse the personal connection
+search and selection list rather than a separate provider/resource form. After selecting a source,
+configure the event, optional message conditions, published Issue title, authorized result and
+project handler. Source conditions and publication requirements remain private on the collection
+device. The project stores the rule name, assignment, Issue instructions and published results.
 
 My stand-in keeps its **Connections** entry. **Edit handling rule** exposes the
 same message conditions and handling instructions while preserving immediate

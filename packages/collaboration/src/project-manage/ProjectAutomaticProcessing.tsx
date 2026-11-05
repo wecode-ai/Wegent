@@ -2,17 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  Check,
-  ChevronDown,
-  Pencil,
-  Plus,
-  Search,
-  Trash2,
-  X,
-} from "lucide-react";
+import { ArrowLeft, Pencil, Plus, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { RuleTargetPicker } from "../automation/RuleTargetPicker";
+import { ConnectionRuleDialog } from "../automation/ConnectionRuleDialog";
 import { AutomationInstructionField } from "../automation/AutomationInstructionField";
 import { collaborationMessages, type CollaborationTranslate } from "../i18n";
 import { projectStatuses } from "../board";
@@ -28,6 +22,7 @@ import type {
   CollaborationMember,
   CollaborationProject,
 } from "../types";
+import { ProjectRuleConnectionPicker } from "./ProjectRuleConnectionPicker";
 import { AutomaticProcessingSwitch } from "./AutomaticProcessingSwitch";
 import {
   useProjectConnectionRules,
@@ -87,8 +82,12 @@ export function ProjectAutomaticProcessing({
   );
   const [draft, setDraft] = useState<AutomaticProcessingDraft>(EMPTY_DRAFT);
   const [editing, setEditing] = useState(false);
-  const [targetPickerOpen, setTargetPickerOpen] = useState(false);
-  const [targetQuery, setTargetQuery] = useState("");
+  const [choosingConnection, setChoosingConnection] = useState(false);
+  const [changingConnection, setChangingConnection] = useState(false);
+  const [connectionKind, setConnectionKind] = useState<
+    "projects" | "time" | "webhook"
+  >("projects");
+  const createButtonRef = useRef<HTMLButtonElement>(null);
   const [hooksLoading, setHooksLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [actionError, setError] = useState("");
@@ -117,10 +116,11 @@ export function ProjectAutomaticProcessing({
   useEffect(() => {
     setDraft(EMPTY_DRAFT);
     setEditing(false);
+    setChoosingConnection(false);
     setHooks([]);
     setHooksError("");
     setError("");
-  }, [api, project.id]);
+  }, [api, project.id, connectionRules?.ownerScope]);
 
   useEffect(() => {
     let active = true;
@@ -221,10 +221,6 @@ export function ProjectAutomaticProcessing({
     targetOptions[draft.targetKind].find(
       (option) => option.id === draft.targetId,
     )?.name ?? translate("common.select", "请选择");
-  const normalizedTargetQuery = targetQuery.trim().toLocaleLowerCase();
-  const filteredTargets = targetOptions[draft.targetKind].filter((option) =>
-    option.name.toLocaleLowerCase().includes(normalizedTargetQuery),
-  );
   const targetKinds = (["human", "agent", "collaboration_group"] as const).map(
     (kind) => ({
       kind,
@@ -233,7 +229,6 @@ export function ProjectAutomaticProcessing({
       options: targetOptions[kind],
     }),
   );
-  const SelectedTargetIcon = TARGET_ICONS[draft.targetKind];
   const statuses = projectStatuses(
     project,
     collaborationMessages[locale],
@@ -292,7 +287,11 @@ export function ProjectAutomaticProcessing({
     }));
   }
 
-  function openCreate() {
+  function openCreate(
+    connection: "projects" | "time" | "webhook" = "projects",
+  ) {
+    setConnectionKind(connection);
+    setChoosingConnection(false);
     const firstAgent = targetOptions.agent[0];
     const firstHuman = targetOptions.human[0];
     const firstGroup = targetOptions.collaboration_group[0];
@@ -306,11 +305,15 @@ export function ProjectAutomaticProcessing({
       firstGroup ?? { id: "", name: "" };
     setDraft({
       ...EMPTY_DRAFT,
+      trigger:
+        connection === "time"
+          ? "schedule"
+          : connection === "webhook"
+            ? "external"
+            : "created",
       targetKind,
       targetId: target.id,
     });
-    setTargetPickerOpen(false);
-    setTargetQuery("");
     setEditing(true);
     setError("");
   }
@@ -476,18 +479,23 @@ export function ProjectAutomaticProcessing({
     }
   }
 
-  const { visibleRules, sourcesLoading, connectionRulesPanel } =
-    useProjectConnectionRules({
-      connectionRules,
-      connectionProject,
-      renderConnectionRunnerSelection,
-      onOpenConnectionIssue,
-      rules,
-      targetKinds,
-      translate,
-      disabled: !canManage || optionsLoading || Boolean(optionsError),
-      onMutation: () => void load(),
-    });
+  const {
+    visibleRules,
+    sourcesLoading,
+    connectionRulesPanel,
+    connectionRulesRef,
+    privateRuleCount,
+  } = useProjectConnectionRules({
+    connectionRules,
+    connectionProject,
+    renderConnectionRunnerSelection,
+    onOpenConnectionIssue,
+    rules,
+    targetKinds,
+    translate,
+    disabled: !canManage || optionsLoading || Boolean(optionsError),
+    onMutation: () => void load(),
+  });
 
   return (
     <ProjectSettingsPage
@@ -499,7 +507,13 @@ export function ProjectAutomaticProcessing({
               className="collaboration-primary-button inline-flex shrink-0 items-center gap-1.5"
               data-testid="automatic-processing-create"
               disabled={optionsLoading || Boolean(optionsError)}
-              onClick={openCreate}
+              ref={createButtonRef}
+              onClick={() => {
+                connectionRulesRef.current?.reset();
+                setDraft(EMPTY_DRAFT);
+                setChangingConnection(false);
+                setChoosingConnection(true);
+              }}
             >
               <Plus aria-hidden="true" className="h-4 w-4" />
               {translate("todo.create_automatic_processing", "新建规则")}
@@ -554,6 +568,13 @@ export function ProjectAutomaticProcessing({
                       <button
                         className="min-w-0 flex-1 text-left"
                         onClick={() => {
+                          setConnectionKind(
+                            ruleDraft.trigger === "schedule"
+                              ? "time"
+                              : ruleDraft.trigger === "external"
+                                ? "webhook"
+                                : "projects",
+                          );
                           setDraft(ruleDraft);
                           setEditing(true);
                           setError("");
@@ -581,6 +602,13 @@ export function ProjectAutomaticProcessing({
                             className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted"
                             data-testid={`automatic-processing-edit-${rule.id}`}
                             onClick={() => {
+                              setConnectionKind(
+                                ruleDraft.trigger === "schedule"
+                                  ? "time"
+                                  : ruleDraft.trigger === "external"
+                                    ? "webhook"
+                                    : "projects",
+                              );
                               setDraft(ruleDraft);
                               setEditing(true);
                               setError("");
@@ -605,7 +633,7 @@ export function ProjectAutomaticProcessing({
                   );
                 })}
               </div>
-            ) : !editing && !error ? (
+            ) : !editing && !error && !privateRuleCount ? (
               <div className="py-12 text-center text-sm text-text-secondary">
                 {translate(
                   "automation_rules.no_issue_rules",
@@ -618,22 +646,59 @@ export function ProjectAutomaticProcessing({
       </div>
 
       {connectionRulesPanel}
+      {choosingConnection && canManage && (
+        <ProjectRuleConnectionPicker
+          key={JSON.stringify([connectionRules?.ownerScope, project.id])}
+          api={changingConnection && draft.id ? undefined : connectionRules}
+          translate={translate}
+          returnFocus={createButtonRef.current}
+          hasIncomingHooks={Boolean(api.incomingHooks)}
+          onClose={() => {
+            connectionRulesRef.current?.reset();
+            setChoosingConnection(false);
+            setChangingConnection(false);
+            setEditing(false);
+            setDraft(EMPTY_DRAFT);
+          }}
+          onSelect={(connection) => {
+            if (typeof connection === "string") {
+              if (changingConnection) {
+                setChoosingConnection(false);
+                setEditing(true);
+                if (connection !== connectionKind) {
+                  setConnectionKind(connection);
+                  selectTrigger(
+                    connection === "time"
+                      ? "schedule"
+                      : connection === "webhook"
+                        ? "external"
+                        : "created",
+                  );
+                }
+              } else openCreate(connection);
+            } else {
+              setChoosingConnection(false);
+              connectionRulesRef.current?.create(
+                connection,
+                createButtonRef.current,
+                () => setChoosingConnection(true),
+              );
+            }
+          }}
+        />
+      )}
 
       {editing ? (
-        <div className="collaboration-dialog-backdrop !bg-black/20">
+        <ConnectionRuleDialog
+          label={translate("todo.automatic_processing", "自动处理")}
+          returnFocus={createButtonRef.current}
+        >
           <form
             aria-labelledby="automatic-processing-dialog-title"
-            aria-modal="true"
-            className="collaboration-dialog flex max-h-[calc(100vh-48px)] w-full max-w-[600px] flex-col overflow-hidden !rounded-2xl !p-0 !shadow-lg"
+            className="flex min-h-0 flex-1 flex-col overflow-hidden"
             data-testid="automatic-processing-form"
             onKeyDown={(event) => {
               if (event.key === "Escape" && !saving) {
-                if (targetPickerOpen) {
-                  event.stopPropagation();
-                  setTargetPickerOpen(false);
-                  setTargetQuery("");
-                  return;
-                }
                 setEditing(false);
                 setDraft(EMPTY_DRAFT);
               }
@@ -642,11 +707,24 @@ export function ProjectAutomaticProcessing({
               event.preventDefault();
               void save();
             }}
-            role="dialog"
           >
             <header className="flex h-14 shrink-0 items-center justify-between border-b border-border px-5">
+              <button
+                type="button"
+                data-testid="automatic-processing-back"
+                disabled={saving}
+                aria-label={translate("automation_rules.back", "返回")}
+                className="mr-2 flex h-8 w-8 items-center justify-center rounded-md hover:bg-muted"
+                onClick={() => {
+                  setEditing(false);
+                  setChangingConnection(true);
+                  setChoosingConnection(true);
+                }}
+              >
+                <ArrowLeft aria-hidden="true" className="h-4 w-4" />
+              </button>
               <h2
-                className="heading-small !m-0"
+                className="heading-small !m-0 flex-1"
                 id="automatic-processing-dialog-title"
               >
                 {draft.id
@@ -661,8 +739,6 @@ export function ProjectAutomaticProcessing({
                 className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted"
                 disabled={saving}
                 onClick={() => {
-                  setTargetPickerOpen(false);
-                  setTargetQuery("");
                   setEditing(false);
                   setDraft(EMPTY_DRAFT);
                 }}
@@ -691,6 +767,7 @@ export function ProjectAutomaticProcessing({
               </div>
 
               <AutomaticProcessingTriggerFields
+                connectionKind={connectionKind}
                 sourceCatalog={sourceCatalog}
                 draft={draft}
                 updateDraft={updateDraft}
@@ -703,193 +780,15 @@ export function ProjectAutomaticProcessing({
                 statuses={statuses}
               />
 
-              <section className="space-y-2">
-                <h3 className="text-sm font-medium text-text-primary">
-                  {translate("todo.assign_to", "交给")}
-                </h3>
-                <div
-                  className="grid grid-cols-3 gap-2"
-                  data-testid="automatic-processing-target-kinds"
-                >
-                  {targetKinds.map((targetKind) => {
-                    const selected = draft.targetKind === targetKind.kind;
-                    const available = targetKind.options.length > 0;
-                    const Icon = targetKind.icon;
-                    return (
-                      <button
-                        aria-pressed={selected}
-                        className={`flex min-w-0 items-center gap-2 rounded-xl border px-3 py-2.5 text-left transition-colors ${
-                          selected
-                            ? "automatic-processing-selected-soft"
-                            : available
-                              ? "border-border hover:bg-muted/60"
-                              : "cursor-not-allowed border-border/60"
-                        }`}
-                        data-testid={`automatic-processing-target-kind-${targetKind.kind}`}
-                        disabled={!available}
-                        key={targetKind.kind}
-                        onClick={() => {
-                          const firstTarget = targetKind.options[0];
-                          updateDraft({
-                            targetKind: targetKind.kind,
-                            targetId: firstTarget?.id ?? "",
-                          });
-                          setTargetPickerOpen(false);
-                          setTargetQuery("");
-                        }}
-                        type="button"
-                      >
-                        <Icon
-                          aria-hidden="true"
-                          className={`h-4 w-4 shrink-0 ${
-                            selected
-                              ? "automatic-processing-selected-icon"
-                              : "text-text-secondary"
-                          }`}
-                        />
-                        <span className="min-w-0">
-                          <strong
-                            className={`block truncate text-sm font-medium ${
-                              available
-                                ? "text-text-primary"
-                                : "text-text-muted"
-                            }`}
-                          >
-                            {targetKind.label}
-                          </strong>
-                          <span
-                            className={`block text-xs ${
-                              available
-                                ? "text-text-secondary"
-                                : "text-text-muted"
-                            }`}
-                          >
-                            {available
-                              ? locale === "zh-CN"
-                                ? `${targetKind.options.length} 个可用`
-                                : `${targetKind.options.length} available`
-                              : translate("common.not_configured", "未配置")}
-                          </span>
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-                <div className="relative">
-                  <button
-                    aria-expanded={targetPickerOpen}
-                    aria-haspopup="listbox"
-                    className={`automatic-processing-selected flex min-h-[68px] w-full items-center gap-3 rounded-xl border px-4 py-3 text-left transition-shadow ${
-                      targetPickerOpen ? "automatic-processing-picker-open" : ""
-                    }`}
-                    data-testid="automatic-processing-target"
-                    onClick={() => {
-                      setTargetPickerOpen((open) => !open);
-                      setTargetQuery("");
-                    }}
-                    type="button"
-                  >
-                    <span className="automatic-processing-selected-avatar flex h-9 w-9 shrink-0 items-center justify-center rounded-lg">
-                      <SelectedTargetIcon
-                        aria-hidden="true"
-                        className="h-4 w-4"
-                      />
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <strong className="block truncate text-sm font-medium text-text-primary">
-                        {selectedTargetName}
-                      </strong>
-                      <span className="mt-0.5 block text-xs text-text-secondary">
-                        {targetKindLabel[draft.targetKind]}
-                      </span>
-                    </span>
-                    <ChevronDown
-                      aria-hidden="true"
-                      className={`h-4 w-4 shrink-0 text-text-muted transition-transform ${
-                        targetPickerOpen ? "rotate-180" : ""
-                      }`}
-                    />
-                  </button>
-
-                  {targetPickerOpen ? (
-                    <div
-                      className="absolute inset-x-0 bottom-full z-20 mb-2 overflow-hidden rounded-xl border border-border bg-surface shadow-lg"
-                      data-testid="automatic-processing-target-picker"
-                    >
-                      <div className="border-b border-border p-2">
-                        <label className="!flex h-8 items-center gap-2 rounded-lg border border-border bg-background px-3 keyboard:focus-within:border-focus">
-                          <Search
-                            aria-hidden="true"
-                            className="h-4 w-4 shrink-0 text-text-muted"
-                          />
-                          <input
-                            autoFocus
-                            className="!h-auto !min-h-0 min-w-0 flex-1 !border-0 !bg-transparent !p-0 text-sm text-text-primary outline-none placeholder:text-text-muted"
-                            data-testid="automatic-processing-target-search"
-                            onChange={(event) =>
-                              setTargetQuery(event.target.value)
-                            }
-                            placeholder={translate(
-                              "todo.search_processing_target",
-                              `搜索${targetKindLabel[draft.targetKind]}`,
-                            )}
-                            value={targetQuery}
-                          />
-                        </label>
-                      </div>
-                      <div
-                        aria-label={translate(
-                          "todo.processing_target",
-                          "处理对象",
-                        )}
-                        className="max-h-52 overflow-y-auto p-2"
-                        role="listbox"
-                      >
-                        {filteredTargets.map((option) => {
-                          const selected = draft.targetId === option.id;
-                          return (
-                            <button
-                              aria-selected={selected}
-                              className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left hover:bg-muted"
-                              data-testid={`automatic-processing-target-option-${draft.targetKind}-${option.id}`}
-                              key={option.id}
-                              onClick={() => {
-                                updateDraft({ targetId: option.id });
-                                setTargetPickerOpen(false);
-                                setTargetQuery("");
-                              }}
-                              role="option"
-                              type="button"
-                            >
-                              <SelectedTargetIcon
-                                aria-hidden="true"
-                                className="h-4 w-4 shrink-0 text-text-secondary"
-                              />
-                              <span className="min-w-0 flex-1 truncate text-sm text-text-primary">
-                                {option.name}
-                              </span>
-                              {selected ? (
-                                <Check
-                                  aria-hidden="true"
-                                  className="automatic-processing-selected-icon h-4 w-4 shrink-0"
-                                />
-                              ) : null}
-                            </button>
-                          );
-                        })}
-                        {!filteredTargets.length ? (
-                          <p className="px-3 py-6 text-center text-sm text-text-secondary">
-                            {translate(
-                              "todo.no_matching_processing_target",
-                              "没有匹配的处理对象",
-                            )}
-                          </p>
-                        ) : null}
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-              </section>
+              <RuleTargetPicker
+                value={{ kind: draft.targetKind, id: draft.targetId }}
+                options={targetOptions}
+                onChange={(value) =>
+                  updateDraft({ targetKind: value.kind, targetId: value.id })
+                }
+                translate={translate}
+                testId="automatic-processing"
+              />
 
               <div className="space-y-2">
                 <label
@@ -983,7 +882,7 @@ export function ProjectAutomaticProcessing({
               </div>
             </footer>
           </form>
-        </div>
+        </ConnectionRuleDialog>
       ) : null}
     </ProjectSettingsPage>
   );

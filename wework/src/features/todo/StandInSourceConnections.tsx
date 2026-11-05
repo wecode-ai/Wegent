@@ -1,7 +1,8 @@
+import { ConnectionResourcePicker } from '@wegent/collaboration/automation'
 import { Button } from '@/components/ui/button'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useEffect, useRef, useState } from 'react'
-import { Plus, Search, X } from 'lucide-react'
+import { Plus, X } from 'lucide-react'
 import type { StandInRole, StandInSourceConnection } from '@/api/personalStandIn'
 import type { StandInExecutorApi, ConnectionProviderDescriptor } from '@/api/standIn'
 import { LocalConnectorAuthDialog } from '@/components/plugins/LocalConnectorAuthDialog'
@@ -285,58 +286,47 @@ export function StandInSourceConnections({
           }}
           className="space-y-3"
         >
-          <div className="flex flex-wrap gap-2">
-            {scope === 'selected' && (
-              <select
-                aria-label={t('standIn.workspace.message_kind')}
-                data-testid={`${prefix}-kind`}
-                value={kind}
-                disabled={busy}
-                onChange={event => {
-                  searchSequence.current += 1
-                  setKind(event.target.value)
-                  setScope('selected')
-                  setResults([])
-                  setNextCursor(undefined)
-                  setSearched(false)
-                }}
-                className="min-h-9 rounded-md border border-border bg-background px-2 text-sm"
-              >
-                {provider.resourceKinds.map(resourceKind => (
-                  <option key={resourceKind} value={resourceKind}>
-                    {provider.resourceLabels?.[resourceKind] ?? resourceKind}
-                  </option>
-                ))}
-              </select>
-            )}
-            {scope === 'selected' && (
-              <>
-                <input
-                  aria-label={t('standIn.workspace.search_connections')}
-                  data-testid={`${prefix}-query`}
-                  value={query}
-                  onChange={event => {
-                    searchSequence.current += 1
-                    setQuery(event.target.value)
-                    setResults([])
-                    setNextCursor(undefined)
-                    setSearched(false)
-                  }}
-                  className="min-h-9 min-w-0 flex-1 rounded-md border border-border bg-transparent px-3 text-sm"
-                  placeholder={t('standIn.workspace.search_connections')}
-                />
-                <button
-                  type="submit"
-                  data-testid={`${prefix}-search`}
-                  disabled={disabled || busy || !query.trim()}
-                  className="flex min-h-9 items-center gap-1 rounded-md border border-border px-3 text-sm disabled:opacity-50"
-                >
-                  <Search className="h-4 w-4" />
-                  {t('standIn.workspace.search')}
-                </button>
-              </>
-            )}
-          </div>
+          {scope === 'selected' && (
+            <ConnectionResourcePicker
+              kinds={provider.resourceKinds.map(id => ({
+                id,
+                name: provider.resourceLabels?.[id] ?? id,
+              }))}
+              kind={kind}
+              onKindChange={value => {
+                searchSequence.current += 1
+                setKind(value)
+                setScope('selected')
+                setResults([])
+                setNextCursor(undefined)
+                setSearched(false)
+              }}
+              query={query}
+              onQueryChange={value => {
+                searchSequence.current += 1
+                setQuery(value)
+                setResults([])
+                setNextCursor(undefined)
+                setSearched(false)
+              }}
+              onSearch={() => void search()}
+              resources={results}
+              selected={selection.map(identity)}
+              connected={rows.map(identity)}
+              onSelect={row =>
+                setSelection(previous =>
+                  previous.some(value => identity(value) === identity(row))
+                    ? previous.filter(value => identity(value) !== identity(row))
+                    : [...previous, row]
+                )
+              }
+              translate={(key, fallback) => t(key, fallback ?? key)}
+              testId={prefix}
+              multiple
+              disabled={disabled}
+              busy={busy}
+            />
+          )}
           {Boolean(provider.allResourceKinds?.length) && (
             <fieldset className="flex flex-wrap gap-4" disabled={disabled || busy}>
               <legend className="mb-2 w-full text-sm font-medium">
@@ -422,41 +412,6 @@ export function StandInSourceConnections({
                   {t('standIn.workspace.select_results')}
                 </button>
               )}
-              <div className="max-h-52 overflow-y-auto">
-                {results.map(row => {
-                  const connected = isConnected(row)
-                  const selected = selection.some(value => identity(value) === identity(row))
-                  return (
-                    <button
-                      key={identity(row)}
-                      type="button"
-                      role="checkbox"
-                      aria-checked={connected || selected}
-                      data-testid={`${prefix}-result-${row.id}`}
-                      disabled={disabled || connected}
-                      onClick={() =>
-                        setSelection(previous =>
-                          selected
-                            ? previous.filter(value => identity(value) !== identity(row))
-                            : [...previous, row]
-                        )
-                      }
-                      className="flex min-h-9 w-full items-center justify-between gap-3 rounded-md px-2 text-left text-sm hover:bg-muted disabled:text-text-muted"
-                    >
-                      <span>{row.name}</span>
-                      <span>
-                        {t(
-                          connected
-                            ? 'standIn.workspace.connected'
-                            : selected
-                              ? 'standIn.workspace.resource_selected'
-                              : 'standIn.workspace.select_resource'
-                        )}
-                      </span>
-                    </button>
-                  )
-                })}
-              </div>
               {nextCursor && (
                 <button
                   type="button"

@@ -456,6 +456,10 @@ async function verifyAutomaticProcessingControls(
     { timeoutMs }
   )
   await control.command('clickWhenEnabled', scoped('[data-testid="automatic-processing-create"]'))
+  await control.command(
+    'clickWhenEnabled',
+    scoped('[data-testid="project-rule-connection-projects"]')
+  )
   const form = scoped('[data-testid="automatic-processing-form"]')
   await control.command('waitFor', form, { visible: true, timeoutMs })
   assert.equal(

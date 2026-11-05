@@ -185,6 +185,8 @@ rules retain their priority in `.github/scripts/desktop-ci/`. Classifier contrac
 live in `.github/scripts/ci-classification-tests/`, whose `.sh` files are discovered
 by the existing test entry point.
 
+Project automation and personal connections share connection rows, source search/selection, and condition/instruction components. `connection-automations` first checks that the project has one creation entry, then exercises connection choice → resource choice → trigger/action in real Electron at 1280×720, retaining publication, deduplication, privacy and native Tab/Shift+Tab/Escape assertions. Existing status-automation and remote-dispatch scenarios add only the connection-choice prerequisite; business assertions stay unchanged. Web coverage includes that step. Focused component tests cover draft back/cancel, identity switches and source-discovery recovery.
+
 `stand-in-connection-rule-layout` independently verifies personal connection rules
 in a 1280×720 window. Run
 `pnpm --filter wework run e2e:desktop --segment stand-in-connection-rule-layout`

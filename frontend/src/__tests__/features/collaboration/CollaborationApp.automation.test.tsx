@@ -304,7 +304,7 @@ describe('CollaborationApp project collaboration groups', () => {
       fireEvent.click(screen.getByTestId('collaboration-project-settings-automatic-processing'))
     })
     fireEvent.click(await screen.findByTestId('automatic-processing-create'))
-    fireEvent.click(screen.getByTestId('automatic-processing-trigger-schedule'))
+    fireEvent.click(screen.getByTestId('project-rule-connection-time'))
 
     expect(screen.getByTestId('automatic-processing-schedule-frequency')).toHaveValue('weekdays')
     expect(screen.getByTestId('automatic-processing-schedule-time')).toHaveValue('09:00')

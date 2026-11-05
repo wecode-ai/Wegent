@@ -804,6 +804,7 @@ test.describe('Collaboration cloud capabilities', () => {
         page.getByTestId('collaboration-project-automatic-processing-page')
       ).toBeVisible()
       await page.getByTestId('automatic-processing-create').click()
+      await page.getByTestId('project-rule-connection-projects').click()
       await expect(page.getByTestId('automatic-processing-form')).toBeVisible()
       await expect(page.getByTestId('automatic-processing-trigger-created')).toBeChecked()
       await expect(page.getByTestId('automatic-processing-target-kind-human')).toHaveAttribute(

@@ -3,6 +3,23 @@ export const automationRuleMessages: Record<
   Record<string, string>
 > = {
   "zh-CN": {
+    "automation_rules.trigger_and_action": "触发与动作",
+    "automation_rules.choose_connection": "选择连接",
+    "automation_rules.choose_connection_help":
+      "先选择连接，再设置何时触发、如何处理。",
+    "automation_rules.connect_personal_first":
+      "请先在个人分身连接此账号并完成授权。",
+    "automation_rules.incoming_events": "已接入的外部事件",
+    "automation_rules.select_connection_help":
+      "搜索并选择要监听的连接，原始内容和账号保持私有。",
+    "automation_rules.next": "下一步：触发与动作",
+    "automation_rules.back": "返回",
+    "automation_rules.available": "可用",
+    "automation_rules.projects": "协作项目",
+    "automation_rules.time": "时间",
+    "automation_rules.connected": "已连接",
+    "automation_rules.selected": "已选择",
+    "automation_rules.select": "选择",
     "automation_rules.conditions": "满足条件时",
     "automation_rules.contains": "消息包含（可选）",
     "automation_rules.sender": "发件人 ID（可选）",
@@ -20,11 +37,11 @@ export const automationRuleMessages: Record<
     "automation_rules.when": "当发生什么",
     "automation_rules.provider": "数据源",
     "automation_rules.select_provider": "选择数据源",
-    "automation_rules.resource_kind": "资源类型",
-    "automation_rules.query": "搜索资源",
+    "automation_rules.resource_kind": "连接类型",
+    "automation_rules.query": "搜索连接",
     "automation_rules.search": "搜索",
-    "automation_rules.resource": "监听资源",
-    "automation_rules.select_resource": "选择资源",
+    "automation_rules.resource": "选择连接",
+    "automation_rules.select_resource": "选择连接",
     "automation_rules.event": "触发事件",
     "automation_rules.publish": "执行：发布 Issue 并交给处理对象",
     "automation_rules.target": "处理对象",
@@ -89,13 +106,31 @@ export const automationRuleMessages: Record<
     "automation_rules.discard_reload": "放弃未保存修改并重新加载",
     "automation_rules.history": "运行记录",
     "automation_rules.no_runs": "暂无运行记录",
-    "automation_rules.editor": "来源规则",
-    "automation_rules.query_placeholder": "输入关键词，或留空列出资源",
+    "automation_rules.editor": "连接规则",
+    "automation_rules.query_placeholder": "搜索连接，或留空查看可选项",
     "automation_rules.publication_visibility":
       "按此要求生成的 Issue 内容将对项目成员可见。",
-    "automation_rules.no_issue_rules": "暂无自动处理规则（Issue / 定时）",
+    "automation_rules.no_issue_rules":
+      "暂无自动处理规则。添加连接，设置触发与动作。",
   },
   en: {
+    "automation_rules.trigger_and_action": "Trigger and action",
+    "automation_rules.choose_connection": "Choose a connection",
+    "automation_rules.choose_connection_help":
+      "Choose a connection, then set its trigger and action.",
+    "automation_rules.connect_personal_first":
+      "Connect and authorize this account in your personal stand-in first.",
+    "automation_rules.incoming_events": "Connected external events",
+    "automation_rules.select_connection_help":
+      "Search and choose a connection. Original content and accounts stay private.",
+    "automation_rules.next": "Next: trigger and action",
+    "automation_rules.back": "Back",
+    "automation_rules.available": "available",
+    "automation_rules.projects": "Project spaces",
+    "automation_rules.time": "Time",
+    "automation_rules.connected": "Connected",
+    "automation_rules.selected": "Selected",
+    "automation_rules.select": "Select",
     "automation_rules.conditions": "When conditions match",
     "automation_rules.contains": "Message contains (optional)",
     "automation_rules.sender": "Sender ID (optional)",
@@ -114,10 +149,10 @@ export const automationRuleMessages: Record<
     "automation_rules.provider": "Source",
     "automation_rules.select_provider": "Choose source",
     "automation_rules.resource_kind": "Resource kind",
-    "automation_rules.query": "Search resources",
+    "automation_rules.query": "Search connections",
     "automation_rules.search": "Search",
     "automation_rules.resource": "Observed resource",
-    "automation_rules.select_resource": "Choose resource",
+    "automation_rules.select_resource": "Choose a connection",
     "automation_rules.event": "Trigger event",
     "automation_rules.publish": "Then: publish an Issue and assign it",
     "automation_rules.target": "Assign to",
@@ -190,11 +225,12 @@ export const automationRuleMessages: Record<
     "automation_rules.discard_reload": "Discard unsaved changes and reload",
     "automation_rules.history": "Run history",
     "automation_rules.no_runs": "No runs yet",
-    "automation_rules.editor": "Source rule",
+    "automation_rules.editor": "Connection rule",
     "automation_rules.query_placeholder":
       "Enter keywords, or leave blank to list resources",
     "automation_rules.publication_visibility":
       "Issue content generated from these requirements is visible to project members.",
-    "automation_rules.no_issue_rules": "No Issue or scheduled rules yet",
+    "automation_rules.no_issue_rules":
+      "No automation rules yet. Add a connection to set its trigger and action.",
   },
 };

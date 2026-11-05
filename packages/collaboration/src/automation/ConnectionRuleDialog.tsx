@@ -49,6 +49,8 @@ export function ConnectionRuleDialog({
         (event.shiftKey ? (last ?? dialog) : (first ?? dialog)).focus();
       }
     };
+    if (!dialog.contains(document.activeElement))
+      (controls()[0] ?? dialog).focus();
     document.addEventListener("focusin", constrainFocus);
     dialog.addEventListener("keydown", cycleFocus);
     return () => {

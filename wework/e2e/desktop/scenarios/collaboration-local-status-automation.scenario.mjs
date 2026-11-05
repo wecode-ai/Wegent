@@ -200,6 +200,7 @@ function createStatusAutomation({ uiTimeoutMs, workbenchReadyTimeoutMs, modelRes
 
       await openRules()
       await control.command('clickWhenEnabled', scoped('automatic-processing-create'))
+      await control.command('clickWhenEnabled', scoped('project-rule-connection-projects'))
       await control.command(
         'click',
         `${CONTENT} label:has(> [data-testid="automatic-processing-trigger-status_changed"])`

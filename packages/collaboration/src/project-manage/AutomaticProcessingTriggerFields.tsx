@@ -24,6 +24,7 @@ import type {
 } from "./automaticProcessing";
 
 interface AutomaticProcessingTriggerFieldsProps {
+  connectionKind: "projects" | "time" | "webhook";
   draft: AutomaticProcessingDraft;
   updateDraft(patch: Partial<AutomaticProcessingDraft>): void;
   selectTrigger(trigger: TriggerKind): void;
@@ -37,6 +38,7 @@ interface AutomaticProcessingTriggerFieldsProps {
 }
 
 export function AutomaticProcessingTriggerFields({
+  connectionKind,
   draft,
   updateDraft,
   selectTrigger,
@@ -63,8 +65,12 @@ export function AutomaticProcessingTriggerFields({
         <legend className="mb-2 text-sm font-medium text-text-primary">
           {translate("todo.when", "当发生")}
         </legend>
-        {TRIGGER_OPTIONS.filter(
-          (option) => option.kind !== "external" || hasIncomingHooks,
+        {TRIGGER_OPTIONS.filter((option) =>
+          connectionKind === "time"
+            ? option.kind === "schedule"
+            : connectionKind === "webhook"
+              ? option.kind === "external" && hasIncomingHooks
+              : option.kind !== "schedule" && option.kind !== "external",
         ).map((option, index) => {
           const selected = draft.trigger === option.kind;
           const Icon = option.icon;
