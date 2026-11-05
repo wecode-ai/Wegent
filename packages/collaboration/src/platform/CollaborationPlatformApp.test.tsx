@@ -3501,6 +3501,50 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(api.assignments?.list).toHaveBeenCalledExactlyOnceWith(issue.id);
   });
 
+  it('shows the parent layout toggle and groups child issues on the Web project board', async () => {
+    const child = {
+      ...issue,
+      id: 'child-issue',
+      sequence_number: 2,
+      parent_id: issue.id,
+      title: '实现子事项',
+    }
+    const { api } = createApi({ initialIssues: [issue, child] })
+
+    await render(
+      <PlatformHarness
+        api={api}
+        start={{
+          ...initialLocation,
+          workspaceId: workspace.id,
+          projectId: project.id,
+        }}
+      />
+    )
+
+    const toggle = byTestId('cloud-board-parent-layout')
+    expect(toggle.textContent).toContain('按父事项')
+    expect(toggle.getAttribute('aria-pressed')).toBe('false')
+    expect(
+      container.querySelector(`[data-testid="cloud-todo-card-${child.id}"]`)
+    ).toBeNull()
+
+    await click(toggle)
+
+    expect(toggle.getAttribute('aria-pressed')).toBe('true')
+    expect(byTestId(`cloud-board-parent-row-${issue.id}`).textContent).toContain(
+      child.title
+    )
+
+    await click(toggle)
+
+    expect(toggle.getAttribute('aria-pressed')).toBe('false')
+    expect(
+      container.querySelector('[data-testid="cloud-board-parent-rows"]')
+    ).toBeNull()
+    expect(byTestId(`cloud-todo-card-${issue.id}`)).toBeTruthy()
+  })
+
   it("keeps the loaded board when its workspace catalog arrives later", async () => {
     const target = {
       ...project,
