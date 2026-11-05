@@ -4,6 +4,8 @@
 
 """Static contract tests for the Backend Docker image."""
 
+import re
+import shutil
 from pathlib import Path
 
 REPO_ROOT: Path = Path(__file__).resolve().parents[3]
@@ -43,3 +45,35 @@ def test_build_context_excludes_private_env_and_local_rust_outputs() -> None:
 
     assert "**/.env" in ignored
     assert "**/target" in ignored
+
+
+def test_rust_builder_contains_embedded_migration_assets(tmp_path: Path) -> None:
+    """Resolve actual Rust include paths against the builder's copied inputs."""
+    dockerfile = BACKEND_DOCKERFILE.read_text(encoding="utf-8")
+    builder = dockerfile.split("FROM rust-builder-deps AS rust-builder\n", 1)[1]
+    builder = builder.split("\nFROM ", 1)[0]
+    image_root = tmp_path / "backend-rs"
+    for source, destination in re.findall(r"^COPY (\S+) (\S+)$", builder, re.M):
+        source_path = REPO_ROOT / source
+        if source_path.is_dir():
+            shutil.copytree(source_path, image_root / destination, dirs_exist_ok=True)
+        else:
+            target = image_root / destination
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source_path, target)
+
+    migration_sources = REPO_ROOT / "backend-rs/src/migrations"
+    includes = [
+        (source, asset)
+        for source in migration_sources.rglob("*.rs")
+        for asset in re.findall(
+            r'include_str!\(\s*"([^"\n]+)"\s*\)', source.read_text()
+        )
+    ]
+    assert includes, "The migration module must declare its embedded assets"
+    for source, asset in includes:
+        source_in_image = image_root / source.relative_to(REPO_ROOT / "backend-rs")
+        embedded_asset = source_in_image.parent / asset
+        assert (
+            embedded_asset.is_file()
+        ), f"Rust builder is missing {asset} for {source.name}"

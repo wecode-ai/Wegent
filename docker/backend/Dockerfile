@@ -25,6 +25,7 @@ RUN mkdir src \
 
 FROM rust-builder-deps AS rust-builder
 COPY backend-rs/src ./src
+COPY backend-rs/migrations ./migrations
 RUN find src -type f -exec touch {} + \
     && cargo build --release --locked --bin wegent-backend-rs
 
