@@ -86,6 +86,8 @@ export interface UseKnowledgeSidebarReturn {
   selectedGroupId: string | null
   selectedSourceViewId: string | null
   selectedKb: KnowledgeBase | null
+  detailRequest: { kbId: number; status: 'loading' | 'ready' | 'error' } | null
+  retrySelectedKb: () => void
   selectKb: (kb: KnowledgeBase) => void
   syncKnowledgeBase: (kb: KnowledgeBase) => void
   syncConvertedKnowledgeBase: (kb: KnowledgeBase) => void
@@ -229,12 +231,20 @@ export function useKnowledgeSidebar({
   const [selectedSourceViewId, setSelectedSourceViewId] = useState<string | null>(null)
   const [selectedKb, setSelectedKb] = useState<KnowledgeBase | null>(null)
 
+  const [detailRequest, setDetailRequest] = useState<{
+    kbId: number
+    status: 'loading' | 'ready' | 'error'
+  } | null>(null)
+  const detailVersion = useRef(0)
+
   // View mode state
   const [viewMode, setViewMode] = useState<ViewMode>('all')
   const [filterGroupId, setFilterGroupId] = useState<string | null>(null)
 
   if (stateScope !== scope) {
     latestSelectedKbIdRef.current = null
+    setDetailRequest(null)
+    detailVersion.current++
     setStateScope(scope)
     setAllGroupedData(null)
     setSelectedKbId(null)
@@ -510,6 +520,14 @@ export function useKnowledgeSidebar({
   const selectKb = useCallback(
     (kb: KnowledgeBase) => {
       // Record the intended selection before starting any async work
+      if (
+        latestSelectedKbIdRef.current === kb.id &&
+        detailRequest?.kbId === kb.id &&
+        detailRequest.status === 'ready'
+      )
+        return
+      const version = ++detailVersion.current
+      setDetailRequest({ kbId: kb.id, status: 'loading' })
       latestSelectedKbIdRef.current = kb.id
       setSelectedKbId(kb.id)
       setSelectedGroupId(null)
@@ -523,6 +541,13 @@ export function useKnowledgeSidebar({
       const selectedScope = scope
       getKnowledgeBase(kb.id)
         .then(fullKb => {
+          if (
+            scopeRef.current !== selectedScope ||
+            latestSelectedKbIdRef.current !== kb.id ||
+            detailVersion.current !== version
+          )
+            return
+          setDetailRequest({ kbId: kb.id, status: 'ready' })
           setSelectedKb(prev => {
             if (scopeRef.current !== selectedScope || latestSelectedKbIdRef.current !== kb.id)
               return prev
@@ -530,7 +555,13 @@ export function useKnowledgeSidebar({
           })
         })
         .catch(error => {
-          if (scopeRef.current !== selectedScope || latestSelectedKbIdRef.current !== kb.id) return
+          if (
+            scopeRef.current !== selectedScope ||
+            latestSelectedKbIdRef.current !== kb.id ||
+            detailVersion.current !== version
+          )
+            return
+          setDetailRequest({ kbId: kb.id, status: 'error' })
           if (error instanceof ApiError && (error.status === 403 || error.status === 404)) {
             latestSelectedKbIdRef.current = null
             setSelectedKb(null)
@@ -539,7 +570,7 @@ export function useKnowledgeSidebar({
           console.error('Failed to fetch full knowledge base data:', error)
         })
     },
-    [addRecentAccess, scope]
+    [addRecentAccess, scope, detailRequest]
   )
 
   const syncConvertedKnowledgeBase = useCallback(
@@ -718,6 +749,11 @@ export function useKnowledgeSidebar({
     selectedGroupId,
     selectedSourceViewId,
     selectedKb,
+    detailRequest,
+    retrySelectedKb: () => {
+      const kb = allKnowledgeBases.find(item => item.id === detailRequest?.kbId)
+      if (kb) selectKb(kb)
+    },
     selectKb,
     syncKnowledgeBase,
     syncConvertedKnowledgeBase,

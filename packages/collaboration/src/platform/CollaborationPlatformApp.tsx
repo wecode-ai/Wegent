@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { templateMessages } from "../templates/messages";
+import { TemplateConfigurationError } from "../templates/apply";
 import { applyWorkspaceTemplate } from "../templates/workspaceConfiguration";
 import {
   readTemplateAgents,
@@ -2010,6 +2011,12 @@ function CollaborationPlatformAppContent({
     CollaborationGroup[]
   >([]);
   const [projectResourceRefreshKey, setProjectResourceRefreshKey] = useState(0);
+  const [projectCreationResources, setProjectCreationResources] = useState<
+    import("../types").CollaborationPlatformResources
+  >({ agents: [], execution_environments: [] });
+  const [projectEnvironmentLoading, setProjectEnvironmentLoading] =
+    useState(false);
+  const [projectEnvironmentError, setProjectEnvironmentError] = useState(false);
   const [workspacePickerOpen, setWorkspacePickerOpen] = useState(false);
   const [pendingProjectMode, setPendingProjectMode] = useState<
     "blank" | "folder" | "existing"
@@ -2078,22 +2085,36 @@ function CollaborationPlatformAppContent({
       setProjectWorkspaceMembers([]);
       setProjectWorkspaceAgents([]);
       setProjectWorkspaceGroups([]);
+      setProjectCreationResources({ agents: [], execution_environments: [] });
+      setProjectEnvironmentLoading(false);
+      setProjectEnvironmentError(false);
       return;
     }
     let active = true;
+    setProjectCreationResources({ agents: [], execution_environments: [] });
+    setProjectEnvironmentLoading(Boolean(api.resources));
+    setProjectEnvironmentError(false);
+    if (api.resources)
+      void api.resources
+        .list()
+        .then((resources) => {
+          if (active) setProjectCreationResources(resources);
+        })
+        .catch(() => {
+          if (active) setProjectEnvironmentError(true);
+        })
+        .finally(() => {
+          if (active) setProjectEnvironmentLoading(false);
+        });
     void Promise.all([
       api.workspaces.listMembers(projectWorkspaceId),
       api.workspaces.listAgents(projectWorkspaceId),
       api.workspaces.listCollaborationGroups(projectWorkspaceId),
-      api.resources?.list() ?? {
-        agents: [],
-        execution_environments: [],
-      },
     ])
-      .then(([members, agents, groups, resources]) => {
+      .then(([members, agents, groups]) => {
         if (!active) return;
         setProjectWorkspaceMembers(members);
-        setProjectWorkspaceAgents([...resources.agents, ...agents]);
+        setProjectWorkspaceAgents(agents);
         setProjectWorkspaceGroups(groups);
       })
       .catch(() => {
@@ -2190,11 +2211,17 @@ function CollaborationPlatformAppContent({
       ...state.resources.agents,
       ...state.agents,
       ...projectWorkspaceAgents,
+      ...projectCreationResources.agents,
     ]) {
       agents.set(agent.id, agent);
     }
     return [...agents.values()];
-  }, [projectWorkspaceAgents, state.agents, state.resources.agents]);
+  }, [
+    projectWorkspaceAgents,
+    projectCreationResources.agents,
+    state.agents,
+    state.resources.agents,
+  ]);
   const selectedProjectResourceAgents = projectResourceAgents;
   const defaultProjectAgentResourceIds = useMemo(
     () =>
@@ -2261,6 +2288,21 @@ function CollaborationPlatformAppContent({
     setPendingProjectMode(mode);
     setWorkspacePickerOpen(true);
   };
+  const handledTemplateRequest = useRef<string | null>(null);
+  useEffect(() => {
+    const request = host.projectTemplateRequest;
+    if (
+      !request ||
+      state.loading ||
+      state.error ||
+      handledTemplateRequest.current === request.key
+    )
+      return;
+    handledTemplateRequest.current = request.key;
+    setProjectTemplate(request.document);
+    startProjectCreation("blank");
+    request.onHandled();
+  }, [host.projectTemplateRequest, state.loading, state.error]);
   const startRootIssueCreation = async (
     content: string,
     owner: IssueHomeOwner | null,
@@ -2531,6 +2573,7 @@ function CollaborationPlatformAppContent({
         renderProject({ project: selectedProject, workspace: workspaceContext })
       ) : (
         <CollaborationApp
+          parentGroupingEnabled
           api={scopedApi}
           initialProject={selectedProject ?? undefined}
           issueArchiveEnabled
@@ -3315,14 +3358,24 @@ function CollaborationPlatformAppContent({
                   agents: selectedProjectResourceAgents,
                   defaultAgentResourceIds: defaultProjectAgentResourceIds,
                   groups: projectWorkspaceGroups,
-                  executionEnvironments: state.resources.execution_environments,
+                  executionEnvironments:
+                    projectCreationResources.execution_environments,
+                  executionEnvironmentLoading: projectEnvironmentLoading,
+                  executionEnvironmentError: projectEnvironmentError
+                    ? templateMessages[locale].failed
+                    : undefined,
+                  retryExecutionEnvironments: () =>
+                    setProjectResourceRefreshKey((value) => value + 1),
+                  requiresTemplateEnvironmentSelection:
+                    host.projectAgentConfiguration
+                      ?.requiresTemplateEnvironmentSelection,
                   loadCollaborationGroupGenerationModels:
                     host.loadProjectCollaborationGroupGenerationModels,
                   generateCollaborationGroupDraft:
                     host.generateProjectCollaborationGroupDraft,
                   validate: async (selection) => {
                     if (!selection.template) return;
-                    await validateTemplateAgentRouting(
+                    const routings = await validateTemplateAgentRouting(
                       selection.template,
                       selection.collaborationGroupDrafts,
                       templateRoutingResolver(
@@ -3332,6 +3385,24 @@ function CollaborationPlatformAppContent({
                         locale,
                       ),
                     );
+                    if (
+                      host.projectAgentConfiguration
+                        ?.requiresTemplateEnvironmentSelection
+                    ) {
+                      for (const { executionPolicy } of routings.values()) {
+                        if (
+                          executionPolicy.mode === "fixed" &&
+                          !selection.executionEnvironmentDeviceIds.some(
+                            (id) =>
+                              String(id) === executionPolicy.environment_id,
+                          )
+                        ) {
+                          throw new TemplateConfigurationError(
+                            templateMessages[locale].selectExecutionEnvironment,
+                          );
+                        }
+                      }
+                    }
                   },
                   configure: async (project, selection) => {
                     if (selection.template) {
@@ -3369,22 +3440,21 @@ function CollaborationPlatformAppContent({
                         .map((userId) =>
                           api.members.add(project.id, userId, "Developer"),
                         ),
-                      ...selection.executionEnvironmentDeviceIds.map(
-                        async (deviceId) => {
-                          if (projectWorkspace.location === "cloud") {
-                            await ensureWorkspaceEnvironmentSharing(
-                              api,
-                              projectWorkspace.id,
-                              deviceId,
-                              sharedDeviceIds,
-                            );
-                          }
-                          return api.projects.addExecutionEnvironment(
-                            project.id,
-                            deviceId,
-                          );
-                        },
-                      ),
+                      ...(projectWorkspace.location === "cloud"
+                        ? selection.executionEnvironmentDeviceIds
+                        : []
+                      ).map(async (deviceId) => {
+                        await ensureWorkspaceEnvironmentSharing(
+                          api,
+                          projectWorkspace.id,
+                          deviceId,
+                          sharedDeviceIds,
+                        );
+                        return api.projects.addExecutionEnvironment(
+                          project.id,
+                          deviceId,
+                        );
+                      }),
                     ]);
                     const selectedDefaultAgent = selectedAgents.find(
                       isCurrentDeviceCollaborationAgent,

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { DEFAULT_STEP_TIMEOUT_MS } from './shared.mjs'
@@ -10,6 +10,10 @@ const shellQuote = value => `'${value.replaceAll("'", "'\\''")}'`
 export function createCodexProtocolGate({ resultDir, kind = 'model-list' }) {
   const directory = join(resultDir, `codex-${kind}-gate`)
   const arm = async () => {
+    // Reuse a completed barrier without admitting its previous release marker.
+    await Promise.all(
+      ['released', 'held.json', 'claimed'].map(name => rm(join(directory, name), { force: true }))
+    )
     await writeFile(join(directory, 'armed.tmp'), JSON.stringify({ kind }))
     await rename(join(directory, 'armed.tmp'), join(directory, 'armed'))
   }

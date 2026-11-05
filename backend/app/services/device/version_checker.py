@@ -6,6 +6,7 @@
 
 import asyncio
 import logging
+import re
 from abc import ABC, abstractmethod
 from typing import Optional
 
@@ -46,23 +47,41 @@ class GithubVersionChecker(VersionChecker):
         self.token = token
 
     def _fetch_latest_version(self) -> Optional[VersionInfo]:
-        api_url = f"{self.API_BASE}/repos/{self.GITHUB_REPO}/releases/latest"
-        headers = {"Accept": "application/vnd.github+json"}
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "wegent-backend",
+        }
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
 
         try:
             session = traced_session()
-            logger.debug(f"Fetching version from GitHub: {api_url}")
-            response = session.get(api_url, headers=headers, timeout=self.API_TIMEOUT)
-            response.raise_for_status()
-
-            data = response.json()
-            tag_name = data.get("tag_name", "")
-            latest_version = tag_name.lstrip("v")
-            logger.info(f"Fetched version from GitHub ({api_url}): {latest_version}")
-            # For backend, we don't need download URL, just version
-            return VersionInfo(version=latest_version, download_url="")
+            page = 1
+            while True:
+                api_url = (
+                    f"{self.API_BASE}/repos/{self.GITHUB_REPO}/releases"
+                    f"?per_page=100&page={page}"
+                )
+                response = session.get(
+                    api_url, headers=headers, timeout=self.API_TIMEOUT
+                )
+                response.raise_for_status()
+                releases = response.json()
+                if not isinstance(releases, list):
+                    raise ValueError("Invalid GitHub releases response")
+                for release in releases:
+                    tag = release.get("tag_name", "")
+                    if (
+                        not release.get("draft")
+                        and not release.get("prerelease")
+                        and re.fullmatch(r"v?[0-9]+\.[0-9]+\.[0-9]+", tag)
+                    ):
+                        version = tag.removeprefix("v")
+                        logger.info("Fetched executor platform version: %s", version)
+                        return VersionInfo(version=version, download_url="")
+                if len(releases) < 100:
+                    return None
+                page += 1
         except Exception as e:
             logger.warning(f"Failed to fetch version from GitHub: {e}")
             return None

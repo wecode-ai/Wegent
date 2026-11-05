@@ -35,6 +35,7 @@ export async function createDesktopScenario({
   const evidence = []
   const composerMessaging = createPluginComposerRouteMessaging({
     executorHome,
+    executorLogPath: join(resultDir, 'executor.log'),
     timeoutMs: workbenchReadyTimeoutMs,
   })
   const objectStorage = await startRealObjectStorage(resultDir, workbenchReadyTimeoutMs)
@@ -163,8 +164,10 @@ export async function createDesktopScenario({
     })
     const fixture = { ...release, slug }
     await openPlugin(control, fixture)
-    await refreshPluginInventory(control, workbenchReadyTimeoutMs)
-    await control.command('waitFor', testId(`plugin-marketplace-install-${release.pluginId}`))
+    await composerMessaging.assertLocalRefreshDoesNotReadOfficialCatalog(async () => {
+      await refreshPluginInventory(control, workbenchReadyTimeoutMs)
+      await control.command('waitFor', testId(`plugin-marketplace-install-${release.pluginId}`))
+    })
     return fixture
   }
 

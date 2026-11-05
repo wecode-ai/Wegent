@@ -2,6 +2,7 @@ import { verifyNativeMcpCloudRouting } from './mcp-app-cloud-routing.mjs'
 import { packagedComponentRoots } from './packaged-component-resources.mjs'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
+import { extractRuntimeArchive } from '../../../scripts/lib/extract-runtime-archive.mjs'
 
 import {
   closeBottomWorkspacePanel,
@@ -472,7 +473,7 @@ function codexCacheRoot() {
   )
 }
 
-async function prepareHarnessRuntimeRoots(appBinary) {
+async function prepareHarnessRuntimeRoots(appBinary, destinationRoot = resultDir) {
   const packagedResourcesRoot = join(
     dirname(appBinary),
     ...(process.platform === 'darwin' ? ['..', 'Resources'] : ['resources'])
@@ -480,7 +481,7 @@ async function prepareHarnessRuntimeRoots(appBinary) {
   const packagedResources = join(packagedResourcesRoot, 'harness-runtime')
   const catalogPath = join(packagedResources, 'runtimes.json')
   const catalog = JSON.parse(await readFile(catalogPath, 'utf8'))
-  const runtimeRoot = join(resultDir, 'harness-runtime')
+  const runtimeRoot = join(destinationRoot, 'harness-runtime')
   await rm(runtimeRoot, { recursive: true, force: true })
   await mkdir(runtimeRoot, { recursive: true })
   const runtimes = new Map(catalog.runtimes.map(runtime => [runtime.sourceFingerprint, runtime]))
@@ -488,7 +489,8 @@ async function prepareHarnessRuntimeRoots(appBinary) {
     const archivePath = join(packagedResources, runtime.assetName)
     const extracted = join(runtimeRoot, runtime.sourceFingerprint)
     await mkdir(extracted, { recursive: true })
-    await runChecked('tar', ['-xzf', archivePath, '-C', extracted], { cwd: weworkDir })
+    // Keep native Windows paths out of tar arguments; stream the archive via stdin.
+    await extractRuntimeArchive(archivePath, extracted)
     const dshEntry = join(extracted, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
     await readFile(dshEntry)
   }
@@ -500,7 +502,7 @@ async function prepareHarnessRuntimeRoots(appBinary) {
     appBinary,
     resourcesRoot: packagedResourcesRoot,
     components: components.components,
-    resultDir,
+    resultDir: destinationRoot,
   })
   return {
     corePluginsRoot: componentRoots.weworkCorePlugins,

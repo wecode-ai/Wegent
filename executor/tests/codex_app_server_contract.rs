@@ -38,6 +38,10 @@ macro_rules! shared_runtime_tests {
     };
 }
 
+#[cfg(unix)]
+#[path = "codex_app_server_contract/skill_membership.rs"]
+mod skill_membership;
+
 shared_runtime_tests! {
 async fn codex_named_home_persists_mcp_and_rebinds_followup_credentials() {
     let _lock = env_lock().await;
@@ -579,6 +583,18 @@ async fn codex_app_server_engine_uses_user_runtime_proxy_without_provider_overri
 
 async fn codex_auxiliary_rpc_and_task_share_one_proxy_configured_app_server() {
     let _lock = env_lock().await;
+    let root = tempfile::tempdir().unwrap();
+    let _workbench = EnvGuard::set("WEGENT_WORKBENCH_HOME", root.path().to_str().unwrap());
+    let _device = EnvGuard::set("DEVICE_TYPE", "local");
+    let git_environment = [
+        ("GH_CONFIG_DIR", "/native/github"),
+        ("GLAB_CONFIG_DIR", "/native/gitlab"),
+        ("GIT_CONFIG_GLOBAL", "/native/gitconfig"),
+    ];
+    let _git_environment = git_environment
+        .iter()
+        .map(|(key, value)| EnvGuard::set(key, value))
+        .collect::<Vec<_>>();
     let _debug = EnvGuard::set("WEGENT_DEBUG_CLAUDE_STDOUT", "1");
     let stdout_path = std::env::temp_dir().join(format!(
         "wegent-codex-stdout-{}.jsonl",
@@ -632,6 +648,11 @@ async fn codex_auxiliary_rpc_and_task_share_one_proxy_configured_app_server() {
     let messages = read_json_lines(&log_path);
     assert_eq!(messages[0]["env"]["HTTP_PROXY"], "http://127.0.0.1:7890");
     assert_eq!(messages[0]["env"]["HTTPS_PROXY"], "http://127.0.0.1:7890");
+    let thread = messages.iter().find(|message| message["method"] == "thread/start").unwrap();
+    for (key, value) in git_environment {
+        assert_eq!(messages[0]["env"][key], value);
+        assert_eq!(thread["params"]["config"][format!("shell_environment_policy.set.{key}")], value);
+    }
     assert_eq!(
         messages
             .iter()
@@ -1176,19 +1197,24 @@ async fn codex_shared_app_server_corrects_compaction_turn_from_matching_user_mes
         Value::String("runtime-local-pane-1".to_owned()),
     );
 
-    let turn = tokio::time::timeout(
-        std::time::Duration::from_secs(2),
-        client.run_turn_with_cancel(
+    let running_client = client.clone();
+    let mut running = tokio::task::JoinSet::new();
+    running.spawn(async move {
+        running_client.run_turn_with_cancel(
             request,
             CodexAppServerTurnOptions {
                 resume_thread_id: Some("thread-1".to_owned()),
                 ..CodexAppServerTurnOptions::default()
             },
-        ),
-    )
-    .await
-    .expect("the real user turn should settle after context compaction")
-    .expect("the corrected turn should complete");
+        ).await
+    });
+    wait_for_fixture_events(&fake_codex, "turn/start", 1).await;
+    let turn = tokio::time::timeout(std::time::Duration::from_secs(2), running.join_next())
+        .await
+        .expect("the real user turn should settle after context compaction")
+        .expect("the turn task should remain registered")
+        .expect("the turn task should not panic")
+        .expect("the corrected turn should complete");
 
     assert_eq!(
         turn.outcome,
@@ -1441,7 +1467,7 @@ fn write_fake_codex_for_auxiliary_rpc_then_turn(log_path: &Path) -> PathBuf {
 LOG_PATH='{}'
 http_proxy=$(printenv HTTP_PROXY)
 https_proxy=$(printenv HTTPS_PROXY)
-printf '{{"env":{{"HTTP_PROXY":"%s","HTTPS_PROXY":"%s"}}}}\n' "$http_proxy" "$https_proxy" >> "$LOG_PATH"
+printf '{{"env":{{"HTTP_PROXY":"%s","HTTPS_PROXY":"%s","GH_CONFIG_DIR":"%s","GLAB_CONFIG_DIR":"%s","GIT_CONFIG_GLOBAL":"%s"}}}}\n' "$http_proxy" "$https_proxy" "$GH_CONFIG_DIR" "$GLAB_CONFIG_DIR" "$GIT_CONFIG_GLOBAL" >> "$LOG_PATH"
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$LOG_PATH"
   request_id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
@@ -1757,6 +1783,33 @@ done
     path
 }
 
+async fn wait_for_fixture_events(binary: &Path, event: &str, count: usize) {
+    let path = PathBuf::from(format!("{}.events", binary.display()));
+    let mut poll = tokio::time::interval(std::time::Duration::from_millis(10));
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            poll.tick().await;
+            let events = fs::read_to_string(&path).unwrap_or_else(|error| {
+                if error.kind() == std::io::ErrorKind::NotFound {
+                    String::new()
+                } else {
+                    panic!("could not read fixture events: {error}")
+                }
+            });
+            if events.lines().filter(|line| *line == event).count() >= count {
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|error| {
+        panic!(
+            "fixture did not publish {count} {event} events: {error}; events={:?}",
+            fs::read_to_string(path)
+        )
+    });
+}
+
 fn write_fake_codex_compaction_turn_correction() -> PathBuf {
     let path = std::env::temp_dir().join(format!(
         "fake-codex-compaction-turn-correction-{}-{}",
@@ -1767,6 +1820,9 @@ fn write_fake_codex_compaction_turn_correction() -> PathBuf {
         &path,
         r#"#!/bin/sh
 while IFS= read -r line; do
+  method=${line#*'"method":"'}
+  method=${method%%'"'*}
+  printf '%s\n' "$method" >> "$0.events"
   request_id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
   case "$line" in
     *'"method":"initialize"'*)

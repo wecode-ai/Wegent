@@ -19,7 +19,7 @@ export function ActivityShimmerText({
     if (!text) return;
 
     const updateWidth = () => {
-      const width = text.clientWidth;
+      const width = text.getBoundingClientRect().width;
       text.style.setProperty(SHIMMER_TEXT_WIDTH, `${width}px`);
       text.style.setProperty(SHIMMER_TEXT_OFFSET, `${-width}px`);
     };

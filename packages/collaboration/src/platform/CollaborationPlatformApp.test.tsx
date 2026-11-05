@@ -779,6 +779,7 @@ async function change(
 
 function PlatformHarness({
   templateStore,
+  projectTemplateRequest,
   refreshKey,
   cloudAccess,
   api,
@@ -802,6 +803,7 @@ function PlatformHarness({
   capabilities = { automation: false, dingtalkAitable: false },
 }: {
   templateStore?: CollaborationPlatformHostAdapter["templateStore"];
+  projectTemplateRequest?: CollaborationPlatformHostAdapter["projectTemplateRequest"];
   refreshKey?: string;
   renderIssueComposer?: CollaborationPlatformHostAdapter["renderIssueComposer"];
   renderStandInPage?: CollaborationPlatformHostAdapter["renderStandInPage"];
@@ -827,6 +829,7 @@ function PlatformHarness({
   const [location, setLocation] = useState(start);
   const host: CollaborationPlatformHostAdapter = {
     templateStore,
+    projectTemplateRequest,
     cloudAccess,
     renderIssueComposer,
     renderStandInPage,
@@ -3498,6 +3501,50 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(api.assignments?.list).toHaveBeenCalledExactlyOnceWith(issue.id);
   });
 
+  it('shows the parent layout toggle and groups child issues on the Web project board', async () => {
+    const child = {
+      ...issue,
+      id: 'child-issue',
+      sequence_number: 2,
+      parent_id: issue.id,
+      title: '实现子事项',
+    }
+    const { api } = createApi({ initialIssues: [issue, child] })
+
+    await render(
+      <PlatformHarness
+        api={api}
+        start={{
+          ...initialLocation,
+          workspaceId: workspace.id,
+          projectId: project.id,
+        }}
+      />
+    )
+
+    const toggle = byTestId('cloud-board-parent-layout')
+    expect(toggle.textContent).toContain('按父事项')
+    expect(toggle.getAttribute('aria-pressed')).toBe('false')
+    expect(
+      container.querySelector(`[data-testid="cloud-todo-card-${child.id}"]`)
+    ).toBeNull()
+
+    await click(toggle)
+
+    expect(toggle.getAttribute('aria-pressed')).toBe('true')
+    expect(byTestId(`cloud-board-parent-row-${issue.id}`).textContent).toContain(
+      child.title
+    )
+
+    await click(toggle)
+
+    expect(toggle.getAttribute('aria-pressed')).toBe('false')
+    expect(
+      container.querySelector('[data-testid="cloud-board-parent-rows"]')
+    ).toBeNull()
+    expect(byTestId(`cloud-todo-card-${issue.id}`)).toBeTruthy()
+  })
+
   it("keeps the loaded board when its workspace catalog arrives later", async () => {
     const target = {
       ...project,
@@ -3906,6 +3953,40 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(leader?.textContent).toBe(agent.name);
   });
 
+  it("opens project creation with a requested marketplace template only once", async () => {
+    const { api } = createApi({ initialProjects: [] });
+    const templateStore = new CollaborationTemplateStore({
+      scope: "marketplace-request",
+      ownerId: 7,
+      persistence: { read: async () => [], write: async () => {} },
+    });
+    const document = builtinCollaborationTemplates()[0].document;
+    const onHandled = vi.fn();
+    await render(
+      <PlatformHarness
+        api={api}
+        templateStore={templateStore}
+        projectTemplateRequest={{ key: "requested", document, onHandled }}
+      />,
+    );
+    expect(onHandled).toHaveBeenCalledOnce();
+    expect(
+      (byTestId("collaboration-project-name-input") as HTMLInputElement).value,
+    ).toBe(document.spec.resources.collaboration.project.name);
+    expect(container.textContent).toContain(document.spec.displayName);
+    await click(
+      container.querySelector<HTMLButtonElement>(
+        ".collaboration-project-create-footer-actions button",
+      )!,
+    );
+    expect(onHandled).toHaveBeenCalledOnce();
+    expect(
+      container.querySelector(
+        '[data-testid="collaboration-project-name-input"]',
+      ),
+    ).toBeNull();
+  });
+
   it.each([
     ["template_model_default_unavailable", "请先为当前执行环境设置默认模型"],
     ["template_environment_unavailable", "当前执行设备暂不可用"],
@@ -4021,6 +4102,112 @@ describe("CollaborationPlatformApp real component flow", () => {
     );
     expect(api.projects.create).not.toHaveBeenCalled();
     expect(container.textContent).toContain("请先为当前执行环境设置默认模型");
+  });
+
+  it("creates a local template project without invoking cloud environment grants", async () => {
+    const { api } = createApi({
+      initialProjects: [],
+      initialWorkspaces: [localWorkspace],
+      initialResources: {
+        agents: [],
+        execution_environments: [{ ...environment, is_current_device: true }],
+      },
+    });
+    api.projects.addExecutionEnvironment = vi.fn(async () => {
+      throw new Error("Local space does not support cloud grants");
+    });
+    api.agents.create = vi.fn(async (_projectId, input) => ({
+      ...agent,
+      id: `template-agent-${input.name}`,
+      team_id: undefined,
+      name: input.name,
+    }));
+    const templateStore = new CollaborationTemplateStore({
+      scope: "local-template",
+      ownerId: 7,
+      persistence: { read: async () => [], write: async () => {} },
+    });
+    await render(
+      <PlatformHarness
+        api={api}
+        templateStore={templateStore}
+        start={{
+          ...initialLocation,
+          collaborationDomain: "local",
+          rootView: "templates",
+        }}
+        projectAgentConfiguration={{
+          resolveTemplateAgentRouting: async () => ({
+            executionPolicy: { mode: "fixed", environment_id: environment.id },
+            modelPolicy: {
+              mode: "fixed",
+              model: {
+                runtime: "codex",
+                provider: "openai",
+                model_id: "default",
+              },
+            },
+          }),
+        }}
+      />,
+    );
+    await click(byTestId("template-details-product-lifecycle"));
+    await click(byTestId("template-use"));
+    await click(byTestId("collaboration-project-create-confirm"));
+    expect(api.projects.create).toHaveBeenCalledOnce();
+    expect(api.projects.addExecutionEnvironment).not.toHaveBeenCalled();
+    expect(api.workspaces!.addExecutionEnvironment).not.toHaveBeenCalled();
+    expect(api.agents.create).toHaveBeenCalledTimes(6);
+    expect(api.projects.createCollaborationGroup).toHaveBeenCalledOnce();
+    expect(
+      container.querySelector(".collaboration-project-create-error"),
+    ).toBeNull();
+  });
+
+  it("requires explicit environment authorization before creating a web template project", async () => {
+    const { api } = createApi({ initialProjects: [] });
+    const templateStore = new CollaborationTemplateStore({
+      scope: "web-environment",
+      ownerId: 7,
+      persistence: { read: async () => [], write: async () => {} },
+    });
+    await render(
+      <PlatformHarness
+        api={api}
+        templateStore={templateStore}
+        projectAgentConfiguration={{
+          requiresTemplateEnvironmentSelection: true,
+          resolveTemplateAgentRouting: async () => ({
+            executionPolicy: {
+              mode: "fixed",
+              environment_id: String(environment.device_id),
+            },
+            modelPolicy: {
+              mode: "fixed",
+              model: {
+                runtime: "codex",
+                provider: "openai",
+                model_id: "default",
+              },
+            },
+          }),
+        }}
+        start={{ ...initialLocation, rootView: "templates" }}
+      />,
+    );
+    await click(byTestId("template-details-product-lifecycle"));
+    await click(byTestId("template-use"));
+    await click(byTestId("collaboration-project-create-confirm"));
+    expect(container.textContent).toContain("请先选择要授权的默认执行环境");
+    expect(api.projects.create).not.toHaveBeenCalled();
+    expect(api.projects.addExecutionEnvironment).not.toHaveBeenCalled();
+    await click(byTestId("template-authorize-environment-21"));
+    await click(byTestId("collaboration-project-create-confirm"));
+    expect(api.projects.create).toHaveBeenCalledOnce();
+    expect(api.projects.addExecutionEnvironment).toHaveBeenCalledWith(
+      expect.any(String),
+      21,
+    );
   });
 
   it("locks template selection after a project has been partially configured", async () => {

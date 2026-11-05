@@ -1,3 +1,4 @@
+import { LOCAL_CONNECTOR_AUTH_CHANGED_EVENT } from '@/api/local/localConnectorAuthEvents'
 import {
   recordPluginInstallationAccepted,
   reconcilePluginInstallation,
@@ -459,10 +460,11 @@ export function PluginsWorkspace({
   const [localConnectorAuthBySlug, setLocalConnectorAuthBySlug] = useState<
     Record<string, 'connected' | 'disconnected'>
   >({})
+  const localConnectorAuthDetailRef = useRef<string | null>(null)
   const [pluginDetailActionError, setPluginDetailActionError] = useState<{
     pluginId: string | number
     message: string
-    source?: 'detail-read'
+    source?: 'detail-read' | 'auth-health'
   } | null>(null)
   const [marketplaceDetailLoadError, setMarketplaceDetailLoadError] = useState<string | null>(null)
   const [marketplaceDetailRevision, setMarketplaceDetailRevision] = useState(0)
@@ -654,6 +656,16 @@ export function PluginsWorkspace({
         ?.id ?? null
   )
   const activeConnectorDetailRef = useRef<string | number | null>(null)
+  const [localAuthRevision, setLocalAuthRevision] = useState(0)
+  useEffect(() => {
+    const refresh = () => setLocalAuthRevision(value => value + 1)
+    window.addEventListener(LOCAL_CONNECTOR_AUTH_CHANGED_EVENT, refresh)
+    window.addEventListener('focus', refresh)
+    return () => {
+      window.removeEventListener(LOCAL_CONNECTOR_AUTH_CHANGED_EVENT, refresh)
+      window.removeEventListener('focus', refresh)
+    }
+  }, [])
   const connectorAuthRevisionRef = useRef(0)
   activeConnectorDetailRef.current = selectedMarketplacePluginId ?? selectedPluginId
   useEffect(
@@ -1955,7 +1967,7 @@ export function PluginsWorkspace({
     for (const key of autoUpdateAttemptKeysRef.current) {
       if (key.startsWith(attemptScope)) autoUpdateAttemptKeysRef.current.delete(key)
     }
-    openAiCatalog.refresh()
+    clearLocalCodexPluginsReadStateCache()
     manualReconciliationTickRef.current = {
       tick: marketplaceRefreshTick + 1,
       accountKey: marketplaceCacheKeyValue,
@@ -2668,13 +2680,17 @@ export function PluginsWorkspace({
           t('workbench.plugins_install_failed', '安装失败，请稍后重试')
         )
         const errorMessage = humanizeMarketplaceInstallError(rawErrorMessage, t)
-        console.error('[Wework plugins] install failed', {
-          pluginId: item.id,
-          pluginName: item.name,
-          marketplaceId: localMarketplaceIdFromItem(item),
-          installFromLocal,
-          error: rawErrorMessage,
-        })
+        console.error(
+          '[Wework plugins] install failed',
+          JSON.stringify({
+            pluginId: item.id,
+            pluginName: item.name,
+            marketplaceId: localMarketplaceIdFromItem(item),
+            installFromLocal,
+            installPersonalSource,
+            error: rawErrorMessage,
+          })
+        )
         const syncSettled =
           /failed to synchronize/i.test(rawErrorMessage) ||
           /PLUGIN_DEVICE_SYNC_FAILED/i.test(rawErrorMessage) ||
@@ -3466,7 +3482,6 @@ export function PluginsWorkspace({
     const membershipPromise = localPluginApi
       .listInstalledPlugins({
         refresh: true,
-        shareInflight: !isExplicitRefresh,
       })
       .then(result => {
         if (!inventoryReadIsCurrent()) return result
@@ -4597,6 +4612,7 @@ export function PluginsWorkspace({
         mergeAllMarketplaces: true,
         marketplaceKinds: ['local'],
         refresh: true,
+        reuseInstalledInventory: true,
       })
       .then(localState => {
         const trace = (reason: string) => {
@@ -4836,6 +4852,12 @@ export function PluginsWorkspace({
     const marketplaceId =
       detailPlugin?.raw.spec.source.marketplace ||
       String(detailPlugin?.raw.metadata.namespace ?? '')
+    const detailId = selectedMarketplacePluginId ?? selectedPluginId
+    const detailKey = JSON.stringify([detailId, marketplaceId, pluginKey])
+    if (localConnectorAuthDetailRef.current !== detailKey) {
+      localConnectorAuthDetailRef.current = detailKey
+      setLocalConnectorAuthBySlug({})
+    }
     const localConnectors = connectors.flatMap(connector => {
       const target = pluginLocalConnectorAuthTarget(pluginKey, marketplaceId, connector)
       return target ? [{ connector, target }] : []
@@ -4851,24 +4873,61 @@ export function PluginsWorkspace({
       localConnectors.map(async ({ connector, target }) => {
         try {
           const health = await localConnectorAuthHealth(target)
-          if (health.status === 'error') return null
+          if (health.status === 'error') {
+            throw new Error(
+              isGithubCliTarget(target)
+                ? t(`workbench.${health.errorCode || 'gh_health_failed'}`, {
+                    defaultValue: t('workbench.gh_health_failed'),
+                  })
+                : t('workbench.plugins_local_auth_health_failed')
+            )
+          }
           return [
             connector.slug,
             localQrManageActionFromHealth(health) === 'logout' ? 'connected' : 'disconnected',
+            null,
           ] as const
-        } catch {
-          return null
+        } catch (error) {
+          return [
+            connector.slug,
+            null,
+            getErrorMessage(error, t('workbench.plugins_local_auth_health_failed')),
+          ] as const
         }
       })
     ).then(entries => {
       if (cancelled || revision !== connectorAuthRevisionRef.current) return
-      setLocalConnectorAuthBySlug(Object.fromEntries(entries.filter(entry => entry !== null)))
+      setLocalConnectorAuthBySlug(previous =>
+        Object.fromEntries(
+          entries.flatMap(([slug, state]) => {
+            const known = state ?? previous[slug]
+            return known ? [[slug, known]] : []
+          })
+        )
+      )
+      const message = entries.find(([, , error]) => error)?.[2]
+      setPluginDetailActionError(previous =>
+        message && detailId != null
+          ? { pluginId: detailId, message, source: 'auth-health' }
+          : previous?.source === 'auth-health'
+            ? null
+            : previous
+      )
     })
 
     return () => {
       cancelled = true
     }
-  }, [installedPlugins, selectedMarketplacePlugin, selectedMarketplacePluginDetail, selectedPlugin])
+  }, [
+    installedPlugins,
+    localAuthRevision,
+    selectedMarketplacePlugin,
+    selectedMarketplacePluginDetail,
+    selectedMarketplacePluginId,
+    selectedPlugin,
+    selectedPluginId,
+    t,
+  ])
 
   const selectedMarketplacePluginRef = useRef(selectedMarketplacePlugin)
   selectedMarketplacePluginRef.current = selectedMarketplacePlugin

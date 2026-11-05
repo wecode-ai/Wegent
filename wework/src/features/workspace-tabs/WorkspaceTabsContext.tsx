@@ -465,9 +465,13 @@ export function WorkspaceTabsProvider({
   }, [labels, pathname, search])
 
   useEffect(() => {
-    if (startupTabApplied.current || (!startupTabKind && !startupTabId)) return
+    if (startupTabApplied.current) return
     const location = parseWorkspaceLocation(pathname, search)
-    if (pathname !== '/' || location.tabId || location.contentRoute !== '/') return
+    if (pathname !== '/' || location.tabId || location.contentRoute !== '/') {
+      startupTabApplied.current = true
+      return
+    }
+    if (!startupTabKind && !startupTabId) return
     if (
       startupTabId &&
       fixedTabs.some(tab => tab.id === startupTabId) &&

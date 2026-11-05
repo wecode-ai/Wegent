@@ -530,6 +530,57 @@ async fn existing_matching_role_does_not_revalidate_unrelated_roles() {
 }
 
 #[tokio::test]
+async fn only_validated_intake_can_start_a_same_device_reserved_binding() {
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.store = RuntimeWorkStore::new(root.path().join("runtime-index.json"));
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    handler.backend_connection = Arc::new(Mutex::new(None));
+    let mut config =
+        json!({"id":"default","projectId":"project","projectStore":"cloud","userId":7});
+    let issue = json!({"id":"issue"});
+    let binding = json!({"humanAssignmentId":"human","assignmentId":"event"});
+    let existing = json!([{"human_assignment_id":"human","task_id":"stand-in-human-default","device_id":"mac"}]);
+    handler
+        .dispatch_cloud_stand_in_role(&config, &issue, &binding, &existing)
+        .await
+        .unwrap();
+    assert!(handler.local_task_links(true).is_empty());
+    config["intakeRouted"] = json!(true);
+    let error = handler
+        .dispatch_cloud_stand_in_role(&config, &issue, &binding, &existing)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.code, "cloud_unavailable",
+        "Routed work must revalidate cloud authority before preparing execution"
+    );
+    assert!(handler.local_task_links(true).is_empty());
+    config["intakeRouted"] = json!(false);
+    config["manual"] = json!(true);
+    handler
+        .dispatch_cloud_stand_in_role(&config, &issue, &binding, &existing)
+        .await
+        .unwrap();
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    store
+        .enqueue_stand_in_event(
+            7,
+            json!("queued-assignment"),
+            json!({
+                "kind":"assignment","projectId":"project","projectStore":"cloud",
+                "issueId":"issue","assignmentId":"event","roleIds":["default"]
+            }),
+        )
+        .unwrap();
+    let error = handler
+        .dispatch_cloud_stand_in_role(&config, &issue, &binding, &existing)
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "cloud_unavailable", "Explicit delegation of pending intake must revalidate authority instead of being discarded as duplicate work");
+}
+
+#[tokio::test]
 async fn manual_cloud_retry_reaches_preparation_without_mutating_an_existing_binding() {
     let mutations = Arc::new(AtomicUsize::new(0));
     let writes = mutations.clone();

@@ -13,6 +13,7 @@ import { verifyPluginScopeBoundaries } from '../modules/plugin-scope-boundaries.
 import { verifyPluginWriteCoordination } from '../modules/plugin-write-coordination.mjs'
 import { verifyPluginRegistrationCoordination } from '../modules/plugin-registration-coordination.mjs'
 import { verifyPluginSyncDisconnect } from '../modules/plugin-sync-disconnect.mjs'
+import { verifyPluginReinstallStatus } from '../modules/plugin-reinstall-status.mjs'
 import { startRealObjectStorage } from '../modules/real-object-storage.mjs'
 import {
   accountPlugin,
@@ -522,6 +523,7 @@ export async function createDesktopScenario({
             control =>
               verifyBoundaryGroups(control, [
                 ['sync-disconnect', verifyPluginSyncDisconnect],
+                ['reinstall-status', verifyPluginReinstallStatus],
                 ['write-coordination', verifyPluginWriteCoordination],
                 ['install-and-update', verifyPluginInstallUpdateResilience],
               ]),

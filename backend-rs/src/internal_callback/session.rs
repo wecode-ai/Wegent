@@ -683,6 +683,26 @@ pub(crate) async fn get_streaming_content<R: Redis>(redis: &R, subtask_id: i64) 
     std::str::from_utf8(&bytes).ok().map(str::to_string)
 }
 
+/// `get_context_metrics`: the latest cached snapshot, when the stored value is
+/// a JSON object (`session_manager.get_context_metrics`).
+///
+/// A missing key, an undecodable value, and a non-object value all yield
+/// `None`, exactly like the source's `isinstance(value, dict)` guard.
+pub(crate) async fn get_context_metrics<R: Redis>(
+    redis: &R,
+    subtask_id: i64,
+) -> Option<serde_json::Value> {
+    let bytes = redis
+        .get::<_, brz_redis::RedisBytes>(&context_metrics_key(subtask_id))
+        .await
+        .ok()
+        .flatten()?;
+    match serde_json::from_slice::<serde_json::Value>(bytes.as_ref()) {
+        Ok(value) if value.is_object() => Some(value),
+        _ => None,
+    }
+}
+
 /// `get_accumulated_content`: the streaming text, or an empty string.
 pub(crate) async fn get_accumulated_content<R: Redis>(redis: &R, subtask_id: i64) -> String {
     get_streaming_content(redis, subtask_id)
@@ -752,7 +772,9 @@ pub(crate) async fn cleanup_streaming_state<R: Redis>(
     Ok(())
 }
 
-/// Return each block's internal content key and its replay-offset key for cleanup.
+/// Return each block's internal content key for cleanup
+/// (`_extract_block_content_keys`). The Source deletes only the recorded
+/// content keys; it has no per-key `:offset` companion.
 fn extract_block_content_keys(blocks_raw: &[String]) -> Vec<String> {
     let mut keys = Vec::new();
     for entry in blocks_raw {
@@ -761,7 +783,6 @@ fn extract_block_content_keys(blocks_raw: &[String]) -> Vec<String> {
         };
         if let Some(Value::String(content_key)) = block.get(BLOCK_CONTENT_KEY_FIELD) {
             keys.push(content_key.clone());
-            keys.push(format!("{content_key}:offset"));
         }
     }
     keys
@@ -786,4 +807,29 @@ fn short_uuid() -> String {
     std::hash::Hash::hash(&std::process::id(), &mut hasher);
     let value = std::hash::Hasher::finish(&hasher);
     format!("{value:012x}")[..12].to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extract_block_content_keys;
+
+    /// `_extract_block_content_keys` deletes only the content key recorded in
+    /// each block, never an appended `:offset` companion key.
+    #[test]
+    fn cleanup_deletes_only_the_content_keys() {
+        let blocks = vec![
+            r#"{"id":"text-1","_content_key":"chat:streaming:block_content:5:text-1"}"#.to_string(),
+            r#"{"id":"thinking-abc","_content_key":"chat:streaming:block_content:5:thinking-abc"}"#
+                .to_string(),
+            r#"{"id":"tool-1"}"#.to_string(),
+            "not json".to_string(),
+        ];
+        assert_eq!(
+            extract_block_content_keys(&blocks),
+            vec![
+                "chat:streaming:block_content:5:text-1".to_string(),
+                "chat:streaming:block_content:5:thinking-abc".to_string(),
+            ]
+        );
+    }
 }

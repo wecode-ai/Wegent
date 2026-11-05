@@ -1833,6 +1833,12 @@ async function verifyExistingTaskBoardAssociation(
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command('click', '[data-testid="work-item-change-board"]')
+  await control.command('waitFor', '[data-testid="work-item-context-menu"]', {
+    text: targetProjectName,
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('click', '[data-testid="work-item-open-board-menu"]')
   const movedBoardContentSelector = await requireActiveCollaborationTab(
     control,
@@ -1853,6 +1859,20 @@ async function verifyExistingTaskBoardAssociation(
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command(
+    'waitFor',
+    `${movedBoardContentSelector} [data-testid="collaboration-issue-detail"]`,
+    {
+      text: 'WEWORK_DESKTOP_E2E_TASK',
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  assert.equal(
+    Number(await control.command('getElementCount', '[data-testid="work-item-context-menu"]')),
+    0,
+    'Opening the linked Issue board must unmount the project-space picker'
+  )
   if (captureScreenshots) {
     await captureVerificationScreenshot(
       control,

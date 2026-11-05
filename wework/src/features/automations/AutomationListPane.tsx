@@ -32,6 +32,7 @@ export function AutomationListPane({
   onSelect,
   onCreate,
   onClearError,
+  onReviewTemplate,
   calendar = false,
 }: {
   automations: Automation[]
@@ -51,6 +52,7 @@ export function AutomationListPane({
     template?: Pick<AutomationDraft, 'name' | 'prompt' | 'cronExpression' | 'cronTime'>
   ) => void
   onClearError: () => void
+  onReviewTemplate?: () => void
   calendar?: boolean
 }) {
   const { t } = useTranslation('common')
@@ -140,6 +142,15 @@ export function AutomationListPane({
             )}
           </p>
         )}
+        {onReviewTemplate ? (
+          <Button
+            variant="ghost"
+            data-testid="stand-in-weekly-review-template"
+            onClick={onReviewTemplate}
+          >
+            {t('standIn.onboarding.review')}
+          </Button>
+        ) : null}
         {!calendar && statusFilter === 'all' && !query && allAutomations.length > 0 ? (
           <>
             <div className="my-4 border-t border-border" />
@@ -158,6 +169,7 @@ export function AutomationEmptyState({
   onQueryChange,
   onCreate,
   onClearError,
+  onReviewTemplate,
   calendar = false,
 }: {
   loading: boolean
@@ -168,6 +180,7 @@ export function AutomationEmptyState({
     template?: Pick<AutomationDraft, 'name' | 'prompt' | 'cronExpression' | 'cronTime'>
   ) => void
   onClearError: () => void
+  onReviewTemplate?: () => void
   calendar?: boolean
 }) {
   const { t } = useTranslation('common')
@@ -184,6 +197,15 @@ export function AutomationEmptyState({
           <Plus aria-hidden="true" className="h-4 w-4" />
           {t('standIn.workspace.calendar_create')}
         </Button>
+        {onReviewTemplate ? (
+          <Button
+            variant="ghost"
+            data-testid="stand-in-weekly-review-template"
+            onClick={onReviewTemplate}
+          >
+            {t('standIn.onboarding.review')}
+          </Button>
+        ) : null}
         {error ? <AutomationError error={error} onClear={onClearError} /> : null}
         {loading ? (
           <p role="status" className="py-5 text-sm text-text-muted">
@@ -379,8 +401,7 @@ function AutomationRow({
           <span className="block truncate text-xs text-text-tertiary">
             {formatScheduleSummary(automation.schedule, locale)}
             {' · '}
-            {t('todo.automation_next_run', '下次运行')}{' '}
-            {formatRelativeDate(automation.nextRunAt)}
+            {t('todo.automation_next_run', '下次运行')} {formatRelativeDate(automation.nextRunAt)}
           </span>
         </span>
       </button>

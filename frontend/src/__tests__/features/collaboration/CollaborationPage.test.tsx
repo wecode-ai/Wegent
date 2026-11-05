@@ -9,6 +9,8 @@ import type {
   CollaborationPlatformLocation,
 } from '@wegent/collaboration'
 
+import { CollaborationTemplateStore, templateIdentity } from '@wegent/collaboration/templates'
+
 import { CollaborationPage } from '@/features/collaboration/CollaborationPage'
 import { collaborationLocationPath } from '@/features/collaboration/routes'
 
@@ -19,6 +21,10 @@ let mockSearchParams = new URLSearchParams()
 let capturedHost: CollaborationPlatformHostAdapter | null = null
 const mockGetProject = jest.fn()
 const mockListGroups = jest.fn()
+let mockTemplateStore: CollaborationTemplateStore | null = null
+jest.mock('@/features/resource-library/useCollaborationTemplates', () => ({
+  useCollaborationTemplates: () => mockTemplateStore,
+}))
 
 jest.mock('next/navigation', () => ({
   usePathname: () => mockPathname,
@@ -88,6 +94,7 @@ jest.mock('sonner', () => ({
 
 describe('CollaborationPage platform routing', () => {
   beforeEach(() => {
+    mockTemplateStore = null
     mockPush.mockReset()
     mockReplace.mockReset()
     mockPathname = '/collaboration'
@@ -396,4 +403,36 @@ describe('CollaborationPage platform routing', () => {
       expect(capturedHost?.location.platformView).toBe('spaces')
     }
   )
+  it('resolves the marketplace template in the current account and consumes its URL request', async () => {
+    mockTemplateStore = new CollaborationTemplateStore({
+      scope: 'web-7',
+      ownerId: 7,
+      persistence: { read: async () => [], write: async () => {} },
+    })
+    const record = mockTemplateStore.getSnapshot().records[0]
+    mockSearchParams = new URLSearchParams({ template: templateIdentity(record) })
+    render(<CollaborationPage />)
+    await waitFor(() =>
+      expect(capturedHost?.projectTemplateRequest?.document).toEqual(record.document)
+    )
+    capturedHost!.projectTemplateRequest!.onHandled()
+    expect(mockReplace).toHaveBeenCalledWith('/collaboration', { scroll: false })
+  })
+
+  it('allows retry when the selected template cannot be loaded', async () => {
+    mockTemplateStore = new CollaborationTemplateStore({
+      scope: 'web-7',
+      ownerId: 7,
+      persistence: { read: async () => [], write: async () => {} },
+    })
+    const record = mockTemplateStore.getSnapshot().records[0]
+    jest.spyOn(mockTemplateStore, 'load').mockRejectedValueOnce(new Error('storage failure'))
+    mockSearchParams = new URLSearchParams({ template: templateIdentity(record) })
+    render(<CollaborationPage />)
+    fireEvent.click(await screen.findByTestId('template-request-retry'))
+    await waitFor(() =>
+      expect(capturedHost?.projectTemplateRequest?.document).toEqual(record.document)
+    )
+    expect(screen.queryByTestId('template-request-retry')).not.toBeInTheDocument()
+  })
 })

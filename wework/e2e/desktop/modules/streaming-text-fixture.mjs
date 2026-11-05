@@ -666,6 +666,37 @@ export function toolDurationSeconds(text) {
   return Number(text.match(/(\d+(?:\.\d+)?)s/)?.[1] ?? 0)
 }
 
+async function readPixelValue(control, selector, property) {
+  const raw = await control.command('getComputedStyleValue', selector, { value: property })
+  const value = Number.parseFloat(raw)
+  assert.ok(Number.isFinite(value), `${property} on "${selector}" was not a pixel value: "${raw}"`)
+  return value
+}
+
+export async function assertShimmerCopyTracksText(control, shimmerSelector, description) {
+  const bandSelector = `${shimmerSelector} .activity-shimmer-band`
+  const textMetrics = await getSingleElementMetrics(control, shimmerSelector, description)
+  const shimmerWidth = await readPixelValue(
+    control,
+    shimmerSelector,
+    '--activity-shimmer-text-width'
+  )
+  assert.ok(
+    Math.abs(shimmerWidth - textMetrics.width) <= 0.05,
+    `${description} shimmer width ${shimmerWidth} drifted from the text width ${textMetrics.width}`
+  )
+  const bandWidth = await readPixelValue(control, bandSelector, 'width')
+  assert.ok(
+    Math.abs(bandWidth - textMetrics.width) <= 0.05,
+    `${description} highlight copy width ${bandWidth} drifted from the text width ${textMetrics.width}`
+  )
+  assert.equal(
+    await control.command('getComputedStyleValue', shimmerSelector, { value: 'text-overflow' }),
+    'ellipsis',
+    `${description} base text lost its own truncation ellipsis`
+  )
+}
+
 export async function assertComposerDocked(control, scrollerMetrics, description) {
   const composerMetrics = await getSingleElementMetrics(
     control,

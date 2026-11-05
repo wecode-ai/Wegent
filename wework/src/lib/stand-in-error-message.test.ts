@@ -14,7 +14,7 @@ afterEach(async () => {
 
 describe('stand-in error localization', () => {
   it('records the failing operation and transport code without logging error contents', () => {
-    const log = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const log = vi.spyOn(console, 'info').mockImplementation(() => {})
     try {
       reportStandInError(
         'load_environment',
@@ -26,9 +26,11 @@ describe('stand-in error localization', () => {
         },
         'device'
       )
-      expect(log).toHaveBeenCalledWith(
-        '[Stand-in] Operation failed',
+      expect(log).toHaveBeenCalledOnce()
+      expect(log.mock.calls[0][0]).toBe('[Wework] Runtime task create diagnostic')
+      expect(JSON.parse(log.mock.calls[0][1])).toEqual(
         expect.objectContaining({
+          stage: 'stand-in-operation-failed',
           operation: 'load_environment',
           deviceId: 'device',
           code: 'executor_disconnected',
@@ -46,6 +48,7 @@ describe('stand-in error localization', () => {
       [{ code: 'executor_disconnected' }, 'executor_unavailable'],
       [new Error('local-sidebar-runtime-changed'), 'executor_restarted'],
       [{ code: 'protocol_mismatch' }, 'executor_update_required'],
+      [{ code: 'unsupported_method' }, 'executor_update_required'],
       [{ status: 401 }, 'authentication_required'],
       [{ code: 'http_503' }, 'service_unavailable'],
       [{ status: 403 }, 'permission_denied'],

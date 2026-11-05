@@ -1,0 +1,12 @@
+{
+  "order": 53000,
+  "scenario": "./scenarios/stand-in-workspace.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 42000,
+      "shard": 7,
+      "position": 11000
+    }
+  }
+}

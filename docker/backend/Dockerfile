@@ -48,6 +48,7 @@ RUN cd /app/backend && uv pip install --system --no-cache -r pyproject.toml
 
 # Copy application code
 COPY backend /app
+COPY backend-rs/migrations/reference/versions /backend-rs/migrations/reference/versions
 
 COPY --from=rust-builder /app/backend-rs/target/release/wegent-backend-rs /usr/local/bin/wegent-backend-rs
 COPY backend-rs/config /app/backend-rs/config
@@ -63,7 +64,7 @@ RUN chmod 0755 /usr/local/bin/wegent-backend-rs /app/backend-rs/scripts/start-hy
 # - 01-default-resources.yaml: Default Ghost, Model, Shell, Bot, Team resources
 # - 02-public-shells.yaml: Public shell configurations
 # - skills/: Skill packages (mermaid-diagram, wiki_submit, sandbox)
-COPY backend/init_data /app/init_data
+COPY backend-rs/init_data /app/init_data
 
 # Create .env file (if it doesn't exist)
 RUN if [ ! -f .env ]; then cp .env.example .env; fi

@@ -21,6 +21,7 @@ import {
 } from './browser-history-store.js'
 import { BrowserAgentApprovals, type BrowserApprovalDecision } from './browser-agent-approvals.js'
 import { prepareLocalFileNavigation } from './local-file-preview.js'
+import { withDebuggerSession } from './debugger-session.js'
 import {
   captureWebContentsDataUrl,
   type WebContentsCaptureOptions,
@@ -636,7 +637,20 @@ export class EmbeddedBrowserManager {
   }
 
   async evaluate(label: string, expression: string): Promise<unknown> {
-    return this.required(label).contents.executeJavaScript(expression, true)
+    // Hidden guests can execute Electron's script while leaving its isolated-world
+    // reply Promise pending. Return the main-world result through Chromium instead.
+    return withDebuggerSession(this.required(label).contents, async target => {
+      const { result, exceptionDetails } = await target.sendCommand('Runtime.evaluate', {
+        expression,
+        returnByValue: true,
+        awaitPromise: true,
+        userGesture: true,
+      })
+      if (exceptionDetails) {
+        throw new Error(exceptionDetails.exception?.description ?? exceptionDetails.text)
+      }
+      return result.value
+    })
   }
 
   async uploadFiles(

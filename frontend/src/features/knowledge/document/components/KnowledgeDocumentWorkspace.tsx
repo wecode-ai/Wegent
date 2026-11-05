@@ -36,6 +36,7 @@ import { useKnowledgeBaseDialogs } from '../hooks/useKnowledgeBaseDialogs'
 import { getDefaultKnowledgeView, useKnowledgeViewMode } from '../hooks/useKnowledgeViewMode'
 import { KnowledgeSidebar } from './KnowledgeSidebar'
 import { CodeWikiWorkspace } from '@/features/knowledge/code-wiki/CodeWikiWorkspace'
+import { KnowledgeUrlStatus } from './KnowledgeUrlStatus'
 import { KnowledgeDetailPanel } from './KnowledgeDetailPanel'
 import { KnowledgeGroupListPage, type KbDataItem } from './KnowledgeGroupListPage'
 import { useKnowledgeSourceViews } from '@/features/knowledge/knowledgeSourceViewRegistry'
@@ -269,23 +270,28 @@ function KnowledgeDocumentSession({
   const knowledgeDefaultTeamId = knowledgeTeamInfo.id
   const knowledgeBindModel = knowledgeTeamInfo.bindModel
 
-  const organizationNamespaces = useMemo(
-    () => [
-      ...new Set(
-        sidebar.allKnowledgeBasesWithGroupInfo
-          .filter(kb => kb.namespace_level === 'organization')
-          .map(kb => kb.namespace)
-      ),
-    ],
-    [sidebar.allKnowledgeBasesWithGroupInfo]
-  )
+  const organizationKnowledgeBases = useMemo(() => {
+    const namespaces = new Set(
+      sidebar.allKnowledgeBasesWithGroupInfo
+        .filter(kb => kb.namespace_level === 'organization')
+        .map(kb => kb.namespace)
+    )
+    return sidebar.allKnowledgeBases.filter(kb => namespaces.has(kb.namespace))
+  }, [sidebar.allKnowledgeBases, sidebar.allKnowledgeBasesWithGroupInfo])
 
   // URL sync and navigation
-  const { initialUrlSyncDone, updateUrlParams, navigateToKbViaHistory } = useKnowledgeUrlSync({
+  const {
+    initialUrlSyncDone,
+    kbResolution,
+    retainedKbId,
+    updateUrlParams,
+    navigateToKbViaHistory,
+  } = useKnowledgeUrlSync({
     initialKbNamespace,
     initialKbName,
     scopeKey: sidebar.scopeKey,
-    organizationNamespaces,
+    organizationKnowledgeBases,
+    hasLoadError: Boolean(sidebar.loadError),
     allKnowledgeBases: sidebar.allKnowledgeBases,
     isGroupsLoading: sidebar.isGroupsLoading,
     selectKb: sidebar.selectKb,
@@ -494,7 +500,36 @@ function KnowledgeDocumentSession({
     [sidebar, dialogs]
   )
 
+  const retainsDetail =
+    sidebar.selectedKb?.id === retainedKbId &&
+    retainedKbId !== undefined &&
+    (kbResolution?.status === 'loading' || kbResolution?.status === 'error')
   const renderMainContent = () => {
+    if (kbResolution && kbResolution.status !== 'resolved' && !retainsDetail) {
+      return <KnowledgeUrlStatus status={kbResolution.status} onRetry={sidebar.refreshAll} />
+    }
+    const expectedKbId =
+      kbResolution?.status === 'resolved'
+        ? kbResolution.knowledgeBase.id
+        : sidebar.detailRequest?.kbId
+    if (
+      sidebar.viewMode === 'kb' &&
+      sidebar.detailRequest?.kbId === expectedKbId &&
+      sidebar.detailRequest?.status !== 'ready'
+    ) {
+      return (
+        <KnowledgeUrlStatus
+          status={sidebar.detailRequest?.status === 'error' ? 'error' : 'loading'}
+          onRetry={sidebar.retrySelectedKb}
+        />
+      )
+    }
+    if (
+      kbResolution?.status === 'resolved' &&
+      sidebar.selectedKb?.id !== kbResolution.knowledgeBase.id
+    ) {
+      return <KnowledgeUrlStatus status="loading" onRetry={sidebar.refreshAll} />
+    }
     // When navigating to a specific KB via URL, show loading until the URL sync
     // completes and selectedKb is set, to avoid flashing the list page
     if (initialKbName && !sidebar.selectedKb && !initialUrlSyncDone) {
@@ -695,7 +730,7 @@ function KnowledgeDocumentSession({
       )}
 
       <div className="flex-1 min-w-0 flex flex-col bg-base relative">
-        {sidebar.loadError && (
+        {sidebar.loadError && !kbResolution && (
           <div role="alert" className="p-3 text-error">
             {t('document.navigation.loadFailed')}
             <button
@@ -708,7 +743,10 @@ function KnowledgeDocumentSession({
             </button>
           </div>
         )}
-        {sidebar.loadError && !sidebar.hasLoaded ? null : renderMainContent()}
+        {retainsDetail && kbResolution?.status === 'error' && (
+          <KnowledgeUrlStatus status="error" onRetry={sidebar.refreshAll} compact />
+        )}
+        {sidebar.loadError && !sidebar.hasLoaded && !kbResolution ? null : renderMainContent()}
       </div>
 
       {permissionKb && (

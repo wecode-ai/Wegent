@@ -1,13 +1,16 @@
+// Register provider mocks before importing modules that consume them.
+import {
+  context,
+  harness,
+  probe,
+  unrelatedForm,
+  view,
+} from './runtimeInteractionsProvider.fixtures'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { useEffect, useState } from 'react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import { NotificationTaskContext, type TaskSource } from './NotificationTaskSourceContext'
+import { describe, expect, it, vi } from 'vitest'
+import { RuntimeTaskMachine } from '@/features/workbench/runtimeTaskLifecycle/RuntimeTaskMachine'
 import { RuntimeInteractionsProvider } from './RuntimeInteractionsProvider'
-import { RuntimeInteractionNotice } from './RuntimeInteractionNotice'
-import { RuntimeInteractionsPage } from './RuntimeInteractionsPage'
 import { canReplyToInteraction } from './runtimeInteractions'
-import { useRuntimeInteractions } from './RuntimeInteractionsContext'
 import {
   cacheNotificationPreferences,
   defaultNotificationPreferences,
@@ -17,146 +20,127 @@ import {
   interactionTask,
   interactionTranscript,
 } from './runtimeInteractions.fixtures'
-
-vi.mock('./NotificationEntitySurface', () => ({
-  NotificationEntitySurface: () => <div data-testid="original-notification-entity" />,
-}))
-
-const harness = vi.hoisted(() => ({
-  t: (key: string) => key,
-  tabs: {
-    tabs: [],
-    activeTab: { kind: 'board', contentRoute: '/todo' },
-    openTab: vi.fn(),
-    selectTab: vi.fn(),
-  },
-  locks: new Map<string, Promise<unknown>>(),
-  desktop: false,
-  focused: true,
-  focusListeners: new Set<(focused: boolean) => void>(),
-  host: vi.fn(),
-  hostListeners: new Set<(event: { type: string }) => void>(),
-  transcript: vi.fn(),
-  send: vi.fn(),
-  guide: vi.fn(),
-  read: vi.fn(),
-  refresh: vi.fn(),
-  list: vi.fn(),
-}))
-vi.mock('@/hooks/useTranslation', () => ({ useTranslation: () => ({ t: harness.t }) }))
-vi.mock('@/features/workspace-tabs/workspaceTabsContextValue', () => ({
-  useWorkspaceTabs: () => harness.tabs,
-}))
-vi.mock('@/desktop/windowFocus', () => ({
-  isMainWindowFocused: () => harness.focused,
-  subscribeMainWindowFocus: (listener: (focused: boolean) => void) => {
-    harness.focusListeners.add(listener)
-    return () => harness.focusListeners.delete(listener)
-  },
-}))
-vi.mock('@/lib/runtime-environment', () => ({
-  isElectronRuntime: () => harness.desktop,
-  getDesktopWindowLabel: () => 'main',
-}))
-
-vi.mock('@/api/dsh/desktopHost', () => ({
-  invokeDesktopHost: harness.host,
-  subscribeDesktopHostEvents: (listener: (event: { type: string }) => void) => {
-    harness.hostListeners.add(listener)
-    return () => harness.hostListeners.delete(listener)
-  },
-}))
-
-let context: ReturnType<typeof useRuntimeInteractions>
-function Probe() {
-  const value = useRuntimeInteractions()
-  useEffect(() => {
-    context = value
-  }, [value])
-  return null
-}
-
-function UnrelatedForm() {
-  const [value, setValue] = useState('')
-  return (
-    <input aria-label="Connection address" value={value} onChange={e => setValue(e.target.value)} />
-  )
-}
-function view(
-  payload = interactionQuestion,
-  task = interactionTask,
-  active = false,
-  initialError?: Error,
-  listed = true,
-  running = false
-) {
-  if (initialError) harness.transcript.mockRejectedValue(initialError)
-  else harness.transcript.mockResolvedValue({ ...interactionTranscript(payload), running })
-  const services = {
-    runtimeWorkApi: {
-      getRuntimeTranscript: harness.transcript,
-      sendRuntimeMessage: harness.send,
-      guideRuntimeTask: harness.guide,
-      listRuntimeWork: harness.list,
-    },
-  } as unknown as WorkbenchServices
-  const taskSource: TaskSource = {
-    items: listed ? [task] : [],
-    services,
-    unreadTaskKeys: new Set(),
-    markRuntimeTaskRead: harness.read,
-    refresh: harness.refresh,
-  }
-  const tree = (taskSource: TaskSource, accountKey = 'test:1') => (
-    <NotificationTaskContext.Provider value={{ taskSource, registerTaskSource: () => {} }}>
-      <RuntimeInteractionsProvider accountKey={accountKey}>
-        <Probe />
-        <RuntimeInteractionNotice />
-        <RuntimeInteractionsPage active={active} />
-      </RuntimeInteractionsProvider>
-    </NotificationTaskContext.Provider>
-  )
-  const rendered = render(tree(taskSource))
-  return {
-    ...rendered,
-    taskSource,
-    rerenderSource: (source: TaskSource, accountKey?: string) =>
-      rendered.rerender(tree(source, accountKey)),
-  }
-}
-
-beforeEach(() => {
-  vi.clearAllMocks()
-  harness.locks.clear()
-  Object.defineProperty(navigator, 'locks', {
-    configurable: true,
-    value: {
-      request: (name: string, callback: () => unknown) => {
-        const previous = harness.locks.get(name) ?? Promise.resolve()
-        const next = previous.catch(() => undefined).then(callback)
-        harness.locks.set(name, next)
-        return next
-      },
-    },
-  })
-  harness.focused = true
-  harness.focusListeners.clear()
-  harness.desktop = false
-  harness.hostListeners.clear()
-  harness.host.mockReset()
-  localStorage.clear()
-  harness.send.mockResolvedValue({ accepted: true })
-  harness.guide.mockResolvedValue({ accepted: true })
-  harness.refresh.mockResolvedValue(undefined)
-  harness.list.mockResolvedValue({ projects: [], chats: [], totalTasks: 0 })
-})
-
-afterEach(() => {
-  vi.restoreAllMocks()
-  Reflect.deleteProperty(navigator, 'locks')
-})
-
 describe('unified human response', () => {
+  it('aggregates a discovered task question despite a stale sidebar summary and shows its in-app reminder', async () => {
+    harness.list.mockResolvedValue({
+      projects: [],
+      chats: [{ ...interactionTask.workspace, tasks: [interactionTask.task] }],
+      totalTasks: 1,
+    })
+    view(interactionQuestion, {
+      ...interactionTask,
+      task: { ...interactionTask.task, interactionStatus: null },
+    })
+    await waitFor(() => expect(context!.pending).toHaveLength(1))
+    expect(context!.pending[0].task.task.interactionStatus).toBe('awaitingUserReply')
+    expect(await screen.findByTestId('runtime-interaction-notice')).toHaveTextContent(
+      interactionQuestion.questions![0].question!
+    )
+  })
+
+  it('keeps the reminder until manually closed, including after opening its destination', async () => {
+    view()
+    await screen.findByTestId('runtime-interaction-notice')
+    vi.useFakeTimers()
+    try {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000)
+      })
+      expect(screen.getByTestId('runtime-interaction-notice')).toBeInTheDocument()
+      fireEvent.click(screen.getByTestId('interaction-notice-open'))
+      expect(harness.tabs.openTab).toHaveBeenCalled()
+      expect(screen.getByTestId('runtime-interaction-notice')).toBeInTheDocument()
+      act(() => context!.open())
+      expect(screen.getByTestId('runtime-interaction-notice')).toBeInTheDocument()
+      act(() => context!.registerView('pending-page', context!.pending[0].id))
+      expect(screen.getByTestId('runtime-interaction-notice')).toBeInTheDocument()
+      fireEvent.click(screen.getByTestId('interaction-notice-dismiss'))
+      expect(screen.queryByTestId('runtime-interaction-notice')).not.toBeInTheDocument()
+      expect(context!.pending).toHaveLength(1)
+      expect(harness.send).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('preserves the expanded reminder and draft when native window focus changes', async () => {
+    view()
+    await screen.findByTestId('runtime-interaction-notice')
+    fireEvent.click(screen.getByTestId('interaction-notice-reply'))
+    fireEvent.click(screen.getByTestId('interaction-other-answer'))
+    const input = screen.getByTestId('interaction-reply-input')
+    fireEvent.change(input, { target: { value: 'unfinished reply' } })
+    act(() => harness.focusListeners.forEach(listener => listener(false)))
+    expect(screen.getByTestId('interaction-reply-input')).toBe(input)
+    expect(input).toHaveValue('unfinished reply')
+    act(() => harness.focusListeners.forEach(listener => listener(true)))
+    expect(screen.getByTestId('interaction-reply-input')).toBe(input)
+    expect(input).toHaveValue('unfinished reply')
+    expect(harness.send).not.toHaveBeenCalled()
+  })
+
+  it('dismisses one request durably without sending a runtime answer or hiding later requests', async () => {
+    const first = view()
+    await waitFor(() => expect(context!.pending).toHaveLength(1))
+    const item = context!.pending[0]
+    act(() => context!.setDraft(item.id, 'unfinished'))
+    fireEvent.click(screen.getByTestId('interaction-dismiss'))
+    await waitFor(() => expect(context!.pending).toHaveLength(0))
+    expect(context!.history[0].id).toBe(item.id)
+    expect(context!.drafts[item.id]).toBeUndefined()
+    expect(context!.notice).toBeNull()
+    expect(harness.send).not.toHaveBeenCalled()
+    expect(harness.guide).not.toHaveBeenCalled()
+    first.unmount()
+    view()
+    await waitFor(() => expect(context!.loading).toBe(false))
+    expect(context!.pending).toHaveLength(0)
+    harness.transcript.mockResolvedValue(
+      interactionTranscript({ ...interactionQuestion, itemId: 'next-question' })
+    )
+    await act(async () => {
+      await context!.refresh()
+    })
+    expect(context!.pending).toHaveLength(1)
+    expect(context!.pending[0].id).not.toBe(item.id)
+  })
+
+  it.each(['answered', 'cancelled', 'expired'] as const)(
+    'automatically archives a request settled elsewhere as %s',
+    async interactionStatus => {
+      view()
+      await waitFor(() => expect(context!.pending).toHaveLength(1))
+      await screen.findByTestId('runtime-interaction-notice')
+      const id = context!.pending[0].id
+      harness.transcript.mockResolvedValue(
+        interactionTranscript({ ...interactionQuestion, interactionStatus })
+      )
+      await act(async () => {
+        await context!.refresh()
+      })
+      expect(context!.pending).toHaveLength(0)
+      expect(context!.history[0].id).toBe(id)
+      expect(screen.queryByTestId('runtime-interaction-notice')).not.toBeInTheDocument()
+      expect(harness.send).not.toHaveBeenCalled()
+    }
+  )
+
+  it('keeps a dismissed question suppressed after bounded handled history evicts its row', async () => {
+    const rendered = view()
+    await waitFor(() => expect(context!.pending).toHaveLength(1))
+    await act(async () => {
+      await context!.dismiss(context!.pending[0])
+    })
+    localStorage.setItem('wework.interactions:test:1:history', '[]')
+    rendered.unmount()
+    view()
+    await waitFor(() => expect(context!.loading).toBe(false))
+    expect(context!.history).toHaveLength(0)
+    expect(context!.pending).toHaveLength(0)
+    expect(screen.queryByTestId('runtime-interaction-notice')).not.toBeInTheDocument()
+    expect(harness.send).not.toHaveBeenCalled()
+  })
+
   it('locks and revalidates an entity-owned send, then prevents a duplicate native submission', async () => {
     view()
     await waitFor(() => expect(context!.pending).toHaveLength(1))
@@ -234,8 +218,8 @@ describe('unified human response', () => {
     await act(async () => {
       expect(await context!.respond(item, 'first answer')).toBe(true)
     })
-    const marker = Object.keys(localStorage).find(key => key.includes(':accepted:'))!
-    expect(marker).toBeTruthy()
+    const marker = `wework.interactions:test:1:accepted:${item.id}`
+    expect(localStorage.getItem(marker)).toBe('true')
     localStorage.removeItem(marker)
     act(() => context!.setDraft(item.id, 'stale second answer'))
     await act(async () => {
@@ -276,6 +260,52 @@ describe('unified human response', () => {
       poll()
     })
     expect(harness.transcript).toHaveBeenCalledTimes(initialReads + 3)
+  })
+
+  it('archives an answer from the original conversation when its task summary changes', async () => {
+    const rendered = view()
+    await waitFor(() => expect(context!.pending).toHaveLength(1))
+    const id = context!.pending[0].id
+    harness.transcript.mockResolvedValue({
+      ...interactionTranscript(),
+      messages: [
+        ...interactionTranscript().messages,
+        { id: 'external-answer', role: 'user', content: 'Keep old behavior', status: 'done' },
+      ],
+    })
+    rendered.rerenderSource({
+      ...rendered.taskSource,
+      items: [{ ...interactionTask, task: { ...interactionTask.task, interactionStatus: null } }],
+    })
+    await waitFor(() => expect(context!.pending).toHaveLength(0))
+    expect(context!.history[0].id).toBe(id)
+    expect(harness.send).not.toHaveBeenCalled()
+  })
+
+  it('refreshes a changed conversation turn even when summary time and interaction status stay unchanged', async () => {
+    harness.list.mockResolvedValue({
+      projects: [],
+      chats: [{ ...interactionTask.workspace, tasks: [interactionTask.task] }],
+      totalTasks: 1,
+    })
+    const lifecycle = new RuntimeTaskMachine(interactionTask.address).getSnapshot()
+    const task = { ...interactionTask, lifecycle }
+    const rendered = view(interactionQuestion, task)
+    await waitFor(() => expect(context!.pending).toHaveLength(1))
+    harness.transcript.mockResolvedValue(
+      interactionTranscript({ ...interactionQuestion, interactionStatus: 'answered' })
+    )
+    rendered.rerenderSource({
+      ...rendered.taskSource,
+      items: [
+        {
+          ...task,
+          lifecycle: { ...lifecycle, turn: { ...lifecycle.turn, latestId: 'reply-turn' } },
+        },
+      ],
+    })
+    await waitFor(() => expect(context!.pending).toHaveLength(0))
+    expect(context!.history).toHaveLength(1)
   })
 
   it('does not cache failed history reads or summaries without a timestamp', async () => {
@@ -548,8 +578,8 @@ describe('unified human response', () => {
   it('isolates account drafts without remounting unrelated application UI', async () => {
     const tree = (accountKey: string) => (
       <RuntimeInteractionsProvider accountKey={accountKey}>
-        <Probe />
-        <UnrelatedForm />
+        {probe}
+        {unrelatedForm}
       </RuntimeInteractionsProvider>
     )
     const rendered = render(tree('cloud-a:1'))
@@ -706,10 +736,10 @@ describe('unified human response', () => {
     })
     expect(harness.read).not.toHaveBeenCalled()
   })
-  it('suppresses a reminder only when its exact question is already visible', async () => {
+  it('keeps a delivered reminder when its question becomes visible in the pending page', async () => {
     view(interactionQuestion, interactionTask, true)
     await waitFor(() => expect(context!.pending).toHaveLength(1))
-    expect(screen.queryByTestId('runtime-interaction-notice')).not.toBeInTheDocument()
+    expect(await screen.findByTestId('runtime-interaction-notice')).toBeInTheDocument()
     act(() => context!.registerView('other-pane', 'another-question'))
     expect(context!.pending).toHaveLength(1)
   })

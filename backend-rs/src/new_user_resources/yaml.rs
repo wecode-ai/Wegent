@@ -53,7 +53,7 @@ struct Loader {
     error: Option<anyhow::Error>,
 }
 
-pub(super) fn documents(source: &str) -> Result<Vec<Value>> {
+pub(crate) fn documents(source: &str) -> Result<Vec<Value>> {
     let mut loader = Loader::default();
     Parser::new(source.chars()).load(&mut loader, true)?;
     if let Some(error) = loader.error {

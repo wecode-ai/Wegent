@@ -3,6 +3,7 @@
 
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { KnowledgeDocumentPageDesktop } from '@/features/knowledge/document/components/KnowledgeDocumentPageDesktop'
 import { KnowledgeDocumentPageMobile } from '@/features/knowledge/document/components/KnowledgeDocumentPageMobile'
 import { knowledgeBaseApi } from '@/apis/knowledge-base'
 import { createKnowledgeBase, getKnowledgeBase } from '@/apis/knowledge'
@@ -66,13 +67,18 @@ jest.mock('@/features/knowledge/document/components/KnowledgeDetailPanel', () =>
   KnowledgeDetailPanel: ({
     selectedKb,
     initialDocPath,
+    onPermissionsChanged,
   }: {
     selectedKb: KnowledgeBase
     initialDocPath?: string
+    onPermissionsChanged?: () => void
   }) => (
     <div data-testid="mock-detail-panel">
       {selectedKb.name}
       <span>{initialDocPath}</span>
+      <button data-testid="refresh-detail-permissions" onClick={onPermissionsChanged}>
+        Refresh
+      </button>
     </div>
   ),
 }))
@@ -277,7 +283,7 @@ it('keeps the code reader and existing configuration dialog', async () => {
   mockPathname = '/knowledge/default/Docs'
   render(<KnowledgeDocumentPageMobile initialKbNamespace="default" initialKbName="Docs" />)
   expect(await screen.findByTestId('mock-code-wiki-reader')).toHaveTextContent('Docs')
-  await userEvent.setup().click(screen.getByTestId('open-code-wiki-config'))
+  await userEvent.setup().click(await screen.findByTestId('open-code-wiki-config'))
   expect(screen.getByTestId('mock-edit-knowledge-base-dialog')).toBeInTheDocument()
 })
 
@@ -482,3 +488,92 @@ it('keeps company libraries only in all and company entries and filters the dedu
   await user.click(screen.getByTestId('create-kb-button'))
   expect(screen.getByTestId('create-kb-dialog')).toBeInTheDocument()
 })
+
+it.each([false, true])(
+  'resolves renamed same-name links by ID in the shared workspace (mobile=%s)',
+  async mobile => {
+    const renamed = { ...baseKb, id: 81, name: 'Renamed library', user_id: 2 }
+    data.personal.shared_with_me = [row(renamed)]
+    mockPathname = '/knowledge/default/Old%20name/folder/readme.md'
+    mockParams = new URLSearchParams({ kb: '81', taskId: 'task-one' })
+    jest.mocked(getKnowledgeBase).mockResolvedValue(renamed)
+    const replace = jest.spyOn(window.history, 'replaceState')
+    const Component = mobile ? KnowledgeDocumentPageMobile : KnowledgeDocumentPageDesktop
+    render(<Component initialKbNamespace="default" initialKbName="Old name" />)
+    expect(await screen.findByTestId('mock-detail-panel')).toHaveTextContent('Renamed library')
+    expect(getKnowledgeBase).toHaveBeenCalledWith(81)
+    expect(getKnowledgeBase).not.toHaveBeenCalledWith(7)
+    expect(replace).toHaveBeenCalledWith(
+      {},
+      '',
+      '/knowledge/default/Renamed%20library/folder/readme.md?kb=81&taskId=task-one'
+    )
+    replace.mockRestore()
+  }
+)
+
+it.each([false, true])(
+  'reports an ambiguous link instead of choosing the first library (mobile=%s)',
+  async mobile => {
+    data.personal.shared_with_me = [row({ ...baseKb, id: 82, user_id: 2 })]
+    mockPathname = '/knowledge/default/Docs'
+    const Component = mobile ? KnowledgeDocumentPageMobile : KnowledgeDocumentPageDesktop
+    render(<Component initialKbNamespace="default" initialKbName="Docs" />)
+    expect(await screen.findByTestId('knowledge-url-ambiguous')).toBeInTheDocument()
+    expect(screen.queryByTestId('mock-detail-panel')).not.toBeInTheDocument()
+    expect(getKnowledgeBase).not.toHaveBeenCalled()
+  }
+)
+
+it('retries a failed initial link lookup and recovers the requested detail', async () => {
+  mockPathname = '/knowledge/default/Docs'
+  mockParams = new URLSearchParams({ kb: '7' })
+  jest.mocked(knowledgeBaseApi.getAllGrouped).mockRejectedValueOnce(new Error('offline'))
+  render(<KnowledgeDocumentPageMobile initialKbNamespace="default" initialKbName="Docs" />)
+  expect(await screen.findByTestId('knowledge-url-error')).toBeInTheDocument()
+  await userEvent.setup().click(screen.getByTestId('knowledge-url-retry'))
+  expect(await screen.findByTestId('mock-detail-panel')).toHaveTextContent('Docs')
+})
+
+it('retains the mounted detail through a same-scope refresh failure and retries', async () => {
+  mockPathname = '/knowledge/default/Docs'
+  mockParams = new URLSearchParams({ kb: '7' })
+  render(<KnowledgeDocumentPageMobile initialKbNamespace="default" initialKbName="Docs" />)
+  const detail = await screen.findByTestId('mock-detail-panel')
+  const calls = jest.mocked(getKnowledgeBase).mock.calls.length
+  let reject!: (reason: Error) => void
+  jest.mocked(knowledgeBaseApi.getAllGrouped).mockImplementationOnce(
+    () =>
+      new Promise((_, fail) => {
+        reject = fail
+      })
+  )
+  await userEvent.setup().click(screen.getByTestId('refresh-detail-permissions'))
+  expect(screen.getByTestId('mock-detail-panel')).toBe(detail)
+  await act(async () => reject(new Error('offline')))
+  expect(await screen.findByTestId('knowledge-url-error')).toBeInTheDocument()
+  expect(screen.getByTestId('mock-detail-panel')).toBe(detail)
+  await userEvent.setup().click(screen.getByTestId('knowledge-url-retry'))
+  await waitFor(() => expect(screen.queryByTestId('knowledge-url-error')).not.toBeInTheDocument())
+  expect(screen.getByTestId('mock-detail-panel')).toBe(detail)
+  expect(getKnowledgeBase).toHaveBeenCalledTimes(calls)
+})
+
+it.each([500, 403, 404])(
+  'terminates failed detail loading and retries the selected ID (%s)',
+  async status => {
+    mockPathname = '/knowledge/default/Docs'
+    mockParams = new URLSearchParams({ kb: '7' })
+    const { ApiError } = jest.requireMock('@/apis/client')
+    const error = Object.assign(new ApiError('detail unavailable'), { status })
+    jest.mocked(getKnowledgeBase).mockRejectedValueOnce(error)
+    const log = jest.spyOn(console, 'error').mockImplementation(() => {})
+    render(<KnowledgeDocumentPageMobile initialKbNamespace="default" initialKbName="Docs" />)
+    expect(await screen.findByTestId('knowledge-url-error')).toBeInTheDocument()
+    expect(screen.queryByTestId('mock-detail-panel')).not.toBeInTheDocument()
+    await userEvent.setup().click(screen.getByTestId('knowledge-url-retry'))
+    expect(await screen.findByTestId('mock-detail-panel')).toHaveTextContent('Docs')
+    expect(getKnowledgeBase).toHaveBeenLastCalledWith(7)
+    log.mockRestore()
+  }
+)

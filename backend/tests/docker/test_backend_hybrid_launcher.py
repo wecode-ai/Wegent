@@ -31,6 +31,7 @@ Path(os.environ['FIXTURE_RECORDS'], role + '.json').write_text(json.dumps({
     'upstream': os.environ.get('WEGENT_PYTHON_UPSTREAM_URL'),
     'routes': os.environ.get('WEGENT_RS_ROUTES_FILE'),
     'dotenv': os.environ.get('WEGENT_BACKEND_RS_ENV_FILE'),
+    'db_owner': os.environ.get('DB_INITIALIZATION_OWNER'),
 }))
 signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
 with socket.socket() as server:
@@ -94,12 +95,16 @@ def _wait_ready(process: subprocess.Popen, env: dict[str, str]) -> dict[str, str
             state = dict(
                 line.split("=", 1) for line in state_path.read_text().splitlines()
             )
-            if state.get("rust"):
+            if state.get("rust") and state.get("python"):
                 try:
                     with socket.create_connection(
                         ("127.0.0.1", int(env["WEGENT_RS_LISTEN_PORT"])), timeout=0.1
                     ):
-                        return state
+                        with socket.create_connection(
+                            ("127.0.0.1", int(env["WEGENT_PYTHON_UPSTREAM_PORT"])),
+                            timeout=0.1,
+                        ):
+                            return state
                 except OSError:
                     pass
         time.sleep(0.02)
@@ -140,6 +145,7 @@ def test_launcher_preserves_layout_modes_and_stops_both_children(
     with _launch(tmp_path, production=production) as (process, env, state):
         python = json.loads((tmp_path / "python.json").read_text())
         rust = json.loads((tmp_path / "rust.json").read_text())
+        assert python["db_owner"] == "rust"
         args = python["args"]
         assert ("--reload" in args) is not production
         assert args[args.index("--host") + 1] == "127.0.0.1"

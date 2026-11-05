@@ -711,6 +711,7 @@ if grep -Fq 'warm-wework-desktop-target:' "$warmup_workflow" ||
 fi
 
 node --test "$script_dir/runtime-artifact.test.mjs"
+node --test "$script_dir/builtin-plugin-staging.test.mjs"
 node --test "$script_dir/wework-core-e2e-transport.test.mjs"
 node --test "$script_dir/frontend-e2e-build.test.mjs"
 node --test "$script_dir/macos-e2e-build.test.mjs"

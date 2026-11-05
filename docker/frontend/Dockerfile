@@ -49,6 +49,7 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages ./packages
 COPY shared/data ./shared/data
 COPY shared/assets/codex-models ./shared/assets/codex-models
+COPY shared/data ./shared/data
 COPY frontend ./frontend
 
 # Disable Next.js telemetry to speed up build

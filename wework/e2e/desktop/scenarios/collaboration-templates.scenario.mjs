@@ -63,6 +63,21 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
   const click = (control, name) => control.command('click', testId(name))
   const wait = (control, name, text) =>
     control.command('waitFor', testId(name), { text, timeoutMs: uiTimeoutMs })
+  const openTemplateProject = async (control, text) => {
+    await click(control, 'template-use')
+    const workspace = testId('collaboration-project-workspace-wework-local-workspace')
+    const templateSection = testId('project-create-template-section')
+    await control.command('waitFor', `${workspace}, ${templateSection}`, {
+      timeoutMs: uiTimeoutMs,
+    })
+    if (Number(await control.command('getElementCount', workspace)) > 0) {
+      await control.command('clickWhenEnabled', workspace, { timeoutMs: uiTimeoutMs })
+    }
+    await control.command('waitFor', templateSection, {
+      ...(text ? { text } : {}),
+      timeoutMs: uiTimeoutMs,
+    })
+  }
 
   const applyBindings = async control => {
     await control.command('clickWhenEnabled', testId('template-bindings-apply'), {
@@ -296,12 +311,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       )
       await capture(control, '00-account-available')
       await click(control, `template-details-${accountTemplate.id}`)
-      await click(control, 'template-use')
-      await wait(
-        control,
-        'project-create-template-section',
-        accountTemplate.document.spec.displayName
-      )
+      // Singleton workspace routing requires the independently loaded local catalog.
+      await wait(control, 'collaboration-workspace-wework-local-workspace')
+      await openTemplateProject(control, accountTemplate.document.spec.displayName)
       await capture(control, '00-account-download')
       await control.command(
         'click',
@@ -320,8 +332,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await click(control, 'template-details-product-lifecycle')
       await wait(control, 'collaboration-template-preview', '发布交付')
       await capture(control, '02-preview')
-      await click(control, 'template-use')
-      await wait(control, 'project-create-template-section')
+      await openTemplateProject(control)
       assert.equal(
         Number(
           await control.command(

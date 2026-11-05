@@ -1,4 +1,10 @@
 {
+  "urlResolution": {
+    "not-found": "Knowledge base not found in this scope",
+    "ambiguous": "Multiple knowledge bases have this name. This link cannot identify a unique knowledge base.",
+    "error": "Unable to load this knowledge base. Please retry.",
+    "retry": "Retry"
+  },
   "title": "Knowledge Base",
   "add_context": "Add Context",
   "tooltip": "Knowledge Base",
@@ -526,6 +532,8 @@
         },
         "linkPreview": {
           "previewOnly": "Preview only",
+          "watermarkLoading": "Preparing preview watermark...",
+          "watermarkUnavailable": "The preview watermark could not be generated. Content is unavailable.",
           "loading": "Loading the file safely...",
           "viewOnline": "Click to view online",
           "coverUnavailable": "Cover preview is unavailable. Click to try the online preview.",

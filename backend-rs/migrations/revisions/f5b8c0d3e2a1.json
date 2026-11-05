@@ -1,0 +1,26 @@
+{
+  "revision": "f5b8c0d3e2a1",
+  "parents": [
+    "e4a7b9c2d1f0"
+  ],
+  "source": "20260907_f5b8c0d3e2a1_add_wework_notifications.py",
+  "upgrade": [
+    {
+      "sql": [
+        "CREATE TABLE wework_notifications (\n    id VARCHAR(36) NOT NULL, \n    user_id INTEGER NOT NULL, \n    actor_user_id INTEGER NOT NULL, \n    kind VARCHAR(64) NOT NULL, \n    title VARCHAR(256) NOT NULL, \n    body TEXT NOT NULL, \n    url VARCHAR(2048) NOT NULL, \n    payload JSON NOT NULL, \n    created_at DATETIME NOT NULL, \n    read_at DATETIME, \n    PRIMARY KEY (id)\n)"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX ix_wework_notifications_inbox ON wework_notifications (user_id, created_at, id)"
+      ]
+    }
+  ],
+  "downgrade": [
+    {
+      "sql": [
+        "DROP TABLE wework_notifications"
+      ]
+    }
+  ]
+}

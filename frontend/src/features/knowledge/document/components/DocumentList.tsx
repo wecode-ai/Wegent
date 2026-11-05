@@ -93,7 +93,7 @@ export { shouldDisableDocumentBatchActions } from '../hooks/useKnowledgeResource
 
 const failClosedDocumentProtection: DocumentProtection = {
   original_download_allowed: false,
-  watermark_text: null,
+  watermark_text: '',
 }
 
 interface DocumentProtectionState {

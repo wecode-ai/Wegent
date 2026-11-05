@@ -27,7 +27,7 @@ import {
   type SaveDialogOptions,
 } from 'electron'
 import { stat, writeFile } from 'node:fs/promises'
-import { cpus } from 'node:os'
+import { cpuLoadRatioBetween, cpuTimeSample } from './system-cpu.js'
 import { availableMemoryRatio } from './maintenance-memory.js'
 import { basename, join, resolve } from 'node:path'
 import {
@@ -1582,34 +1582,6 @@ function unavailableOwnerCapture(): HostCapabilityError {
     'capability_unavailable',
     'Smart App owner-view capture is unavailable in this environment'
   )
-}
-
-interface CpuTimeSample {
-  idle: number
-  total: number
-}
-
-function cpuTimeSample(): CpuTimeSample {
-  return cpus().reduce<CpuTimeSample>(
-    (sample, cpu) => ({
-      idle: sample.idle + cpu.times.idle,
-      total:
-        sample.total +
-        cpu.times.user +
-        cpu.times.nice +
-        cpu.times.sys +
-        cpu.times.idle +
-        cpu.times.irq,
-    }),
-    { idle: 0, total: 0 }
-  )
-}
-
-export function cpuLoadRatioBetween(before: CpuTimeSample, after: CpuTimeSample): number {
-  const totalDelta = after.total - before.total
-  if (totalDelta <= 0) return 0
-  const idleDelta = Math.max(0, after.idle - before.idle)
-  return Math.min(1, Math.max(0, 1 - idleDelta / totalDelta))
 }
 
 export function e2eSystemPressureOverride(environment: NodeJS.ProcessEnv = process.env) {

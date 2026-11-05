@@ -336,23 +336,36 @@ pub async fn record_device_sync_result<Q>(
     session: &mut Q,
     user_id: i64,
     result: &SyncResult,
+    guard: Option<&dyn crate::device_identity::LeaseCheck>,
 ) -> MysqlResult<()>
 where
     Q: PluginQuery,
 {
-    reconcile_plugin_device_rows_on::<_, PluginDeviceInstallationRow>(session, user_id).await?;
+    // `reconcile_plugin_device_rows` owns the first flush boundaries: the
+    // superseded alias DELETE batch and the selected canonical `device_id`
+    // assignment (dirty even when the value is unchanged).
+    reconcile_plugin_device_rows_on::<_, PluginDeviceInstallationRow>(session, user_id, guard)
+        .await?;
     let canonical_id = plugin_device_id_on(session, user_id, &result.device_id).await?;
     let installs: Vec<InstalledKindRow> = session
         .fetch_all(DESIRED_INSTALLS_QUERY, (user_id,))
         .await?;
     let desired_ids: Vec<i64> = installs.iter().map(|installed| installed.id).collect();
-    record_removed_installs(session, user_id, &canonical_id, result, &desired_ids).await?;
+    let mut flush = PendingFlush::default();
+    record_removed_installs(
+        session,
+        user_id,
+        &canonical_id,
+        result,
+        &desired_ids,
+        &mut flush,
+    )
+    .await?;
     let plugin_results: Vec<(i64, SyncItem)> = result
         .plugins
         .iter()
         .filter_map(|item| item.id.as_i64().map(|id| (id, item.clone())))
         .collect();
-    let mut flush = PendingFlush::default();
     for installed in &installs {
         let item = plugin_results
             .iter()
@@ -369,7 +382,11 @@ where
         )
         .await?;
     }
-    flush.emit(session).await
+    // Source `before_flush`: one ownership check covers the session's single
+    // dirty flush, before any of the collected DELETE/UPDATE/INSERT statements
+    // reaches the database. `before_commit` checks again from the caller's
+    // `commit_revision`.
+    flush.flush_with_guard(session, guard).await
 }
 
 /// `_record_removed_installs`.
@@ -379,6 +396,7 @@ async fn record_removed_installs<Q>(
     device_id: &str,
     result: &SyncResult,
     desired_ids: &[i64],
+    flush: &mut PendingFlush,
 ) -> MysqlResult<()>
 where
     Q: PluginQuery,
@@ -392,65 +410,159 @@ where
             continue;
         }
         if result.success {
-            session
-                .execute(
-                    "DELETE FROM plugin_device_installations WHERE plugin_device_installations.id = ?",
-                    (row.id,),
-                )
-                .await?;
+            // `db.delete(row)`: the DELETE waits for the session's dirty flush.
+            flush.push_delete(row.id);
             continue;
         }
         let error = result
             .error
             .as_deref()
             .unwrap_or("Device rejected plugin removal");
-        let statement = format!(
-            "UPDATE plugin_device_installations SET state='failed', error_code='PLUGIN_SYNC_FAILED', \
-             error_message='{}', attempt_count={}, last_sync_at='{}', updated_at='{}' WHERE \
-             plugin_device_installations.id = {}",
-            escape_sql(error),
-            row.attempt_count + 1,
-            format_datetime(now),
-            format_datetime(now),
-            row.id
+        flush.push_update(
+            row.id,
+            vec![
+                "state='failed'".to_string(),
+                "error_code='PLUGIN_SYNC_FAILED'".to_string(),
+                format!("error_message='{}'", escape_sql(error)),
+                format!("attempt_count={}", row.attempt_count + 1),
+                format!("last_sync_at='{}'", format_datetime(now)),
+                format!("updated_at='{}'", format_datetime(now)),
+            ],
         );
-        session.execute(statement, ()).await?;
     }
     Ok(())
 }
 
-/// One deferred UPDATE collected by `_record_desired_install`.
+/// One deferred write collected by the result recording.
+enum PendingWrite {
+    /// `db.delete(row)`.
+    Delete(i64),
+    /// One dirty row's UPDATE assignments.
+    Update { id: i64, assigns: Vec<String> },
+    /// `db.add(PluginDeviceInstallation(...))`.
+    Insert(DesiredInsert),
+}
+
+/// One pending `db.add` row.
+struct DesiredInsert {
+    installed_kind_id: i64,
+    user_id: i64,
+    device_id: String,
+    release_id: i64,
+    state: String,
+    error_code: String,
+    error_message: String,
+    attempt_count: i64,
+    now: chrono::NaiveDateTime,
+}
+
+/// The result recording's single deferred flush.
+///
+/// The source's session uses `autoflush=False`; the DELETE / UPDATE / INSERT
+/// statements only reach the database when the commit flush runs. `assigned`
+/// tracks that the session carries pending work (an equal-value assignment is
+/// still dirty), which is exactly when the source's `before_flush` ownership
+/// check runs.
 #[derive(Default)]
 struct PendingFlush {
-    updates: Vec<(i64, Vec<String>)>,
+    assigned: bool,
+    writes: Vec<PendingWrite>,
 }
 
 impl PendingFlush {
-    /// Emit one UPDATE per dirty row in identity-map order (primary key
-    /// ascending), like SQLAlchemy's unit of work.
-    async fn emit<Q>(&mut self, session: &mut Q) -> MysqlResult<()>
+    /// Guard first (when the session is dirty), then emit the collected
+    /// statements in SQLAlchemy's single-mapper unit-of-work order: dirty
+    /// UPDATEs by primary key, then INSERTs in insertion order, then DELETEs
+    /// by primary key (`save_obj` emits updates before inserts; `_sort_states`
+    /// orders existing states by mapper primary key and new states by
+    /// insertion order). A failed guard emits none of them.
+    async fn flush_with_guard<Q>(
+        &mut self,
+        session: &mut Q,
+        guard: Option<&dyn crate::device_identity::LeaseCheck>,
+    ) -> MysqlResult<()>
     where
         Q: PluginQuery,
     {
-        self.updates.sort_by_key(|(id, _)| *id);
-        for (id, assigns) in &self.updates {
-            let statement = format!(
-                "UPDATE plugin_device_installations SET {} WHERE \
-                 plugin_device_installations.id = {}",
-                assigns.join(", "),
-                id
-            );
-            session.execute(statement, ()).await?;
+        if self.assigned
+            && let Some(guard) = guard
+        {
+            guard.check().await?;
+        }
+        self.writes.sort_by_key(|write| match write {
+            PendingWrite::Update { id, .. } => (0_u8, *id),
+            // Stable sort: new rows keep SQLAlchemy's insertion order.
+            PendingWrite::Insert(_) => (1, 0),
+            PendingWrite::Delete(id) => (2, *id),
+        });
+        for write in &self.writes {
+            match write {
+                PendingWrite::Delete(id) => {
+                    session
+                        .execute(
+                            "DELETE FROM plugin_device_installations WHERE \
+                             plugin_device_installations.id = ?",
+                            (*id,),
+                        )
+                        .await?;
+                }
+                PendingWrite::Update { id, assigns } => {
+                    let statement = format!(
+                        "UPDATE plugin_device_installations SET {} WHERE \
+                         plugin_device_installations.id = {}",
+                        assigns.join(", "),
+                        id
+                    );
+                    session.execute(statement, ()).await?;
+                }
+                PendingWrite::Insert(insert) => {
+                    session
+                        .execute(
+                            INSERT_INSTALLATION_QUERY,
+                            (
+                                insert.installed_kind_id,
+                                insert.user_id,
+                                insert.device_id.as_str(),
+                                insert.release_id,
+                                0_i64,
+                                insert.state.as_str(),
+                                insert.error_code.as_str(),
+                                insert.error_message.as_str(),
+                                insert.attempt_count,
+                                insert.now,
+                                insert.now,
+                            ),
+                        )
+                        .await?;
+                }
+            }
         }
         Ok(())
     }
 
-    fn push(&mut self, id: i64, assigns: Vec<String>) {
-        if let Some(existing) = self.updates.iter_mut().find(|(row, _)| *row == id) {
-            existing.1 = assigns;
+    fn push_update(&mut self, id: i64, assigns: Vec<String>) {
+        self.assigned = true;
+        if let Some(PendingWrite::Update {
+            assigns: existing, ..
+        }) = self
+            .writes
+            .iter_mut()
+            .find(|write| matches!(write, PendingWrite::Update { id: row, .. } if *row == id))
+        {
+            *existing = assigns;
         } else {
-            self.updates.push((id, assigns));
+            self.writes.push(PendingWrite::Update { id, assigns });
         }
+    }
+
+    fn push_delete(&mut self, id: i64) {
+        self.assigned = true;
+        self.writes.push(PendingWrite::Delete(id));
+    }
+
+    fn push_insert(&mut self, insert: DesiredInsert) {
+        self.assigned = true;
+        self.writes.push(PendingWrite::Insert(insert));
     }
 }
 
@@ -489,34 +601,28 @@ where
         return Ok(());
     }
     let Some(row) = row else {
-        // `PluginDeviceInstallation(...)` plus `db.add`; the insert is flushed
-        // at commit with the model defaults.
+        // `PluginDeviceInstallation(...)` plus `db.add`; the INSERT waits for
+        // the session's dirty flush and keeps the model defaults.
         let now = Local::now().naive_local();
-        session
-            .execute(
-                INSERT_INSTALLATION_QUERY,
-                (
-                    installed.id,
-                    user_id,
-                    device_id,
-                    release_id,
-                    0_i64,
-                    state,
-                    if state == "failed" {
-                        item.as_ref()
-                            .and_then(|item| item.error_code.as_str())
-                            .filter(|code| !code.is_empty())
-                            .unwrap_or("PLUGIN_SYNC_FAILED")
-                    } else {
-                        ""
-                    },
-                    error_message.as_deref().unwrap_or(""),
-                    if state == "failed" { 1_i64 } else { 0_i64 },
-                    now,
-                    now,
-                ),
-            )
-            .await?;
+        flush.push_insert(DesiredInsert {
+            installed_kind_id: installed.id,
+            user_id,
+            device_id: device_id.to_string(),
+            release_id,
+            state: state.to_string(),
+            error_code: if state == "failed" {
+                item.as_ref()
+                    .and_then(|item| item.error_code.as_str())
+                    .filter(|code| !code.is_empty())
+                    .unwrap_or("PLUGIN_SYNC_FAILED")
+                    .to_string()
+            } else {
+                String::new()
+            },
+            error_message: error_message.unwrap_or_default(),
+            attempt_count: if state == "failed" { 1 } else { 0 },
+            now,
+        });
         return Ok(());
     };
     let desired_changed = row.desired_release_id != release_id;
@@ -568,7 +674,7 @@ where
     }
     assigns.push(format!("last_sync_at='{}'", format_datetime(now)));
     assigns.push(format!("updated_at='{}'", format_datetime(now)));
-    flush.push(row.id, assigns);
+    flush.push_update(row.id, assigns);
     Ok(())
 }
 
@@ -634,6 +740,7 @@ fn escape_sql(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use brz_mysql::MysqlError;
     use serde_json::json;
 
     #[test]
@@ -705,13 +812,156 @@ mod tests {
     }
 
     #[test]
-    fn updates_are_emitted_in_primary_key_order() {
+    fn deferred_writes_follow_the_unit_of_work_order() {
         let mut flush = PendingFlush::default();
-        flush.push(20, vec!["state='failed'".to_string()]);
-        flush.push(10, vec!["state='installed'".to_string()]);
-        flush.updates.sort_by_key(|(id, _)| *id);
-        assert_eq!(flush.updates[0].0, 10);
-        assert_eq!(flush.updates[1].0, 20);
+        flush.push_update(20, vec!["state='failed'".to_string()]);
+        flush.push_delete(5);
+        flush.push_insert(DesiredInsert {
+            installed_kind_id: 1,
+            user_id: 7,
+            device_id: "d".into(),
+            release_id: 2,
+            state: "pending".into(),
+            error_code: String::new(),
+            error_message: String::new(),
+            attempt_count: 0,
+            now: Local::now().naive_local(),
+        });
+        flush.push_update(10, vec!["state='installed'".to_string()]);
+        flush.writes.sort_by_key(|write| match write {
+            PendingWrite::Update { id, .. } => (0_u8, *id),
+            PendingWrite::Insert(_) => (1, 0),
+            PendingWrite::Delete(id) => (2, *id),
+        });
+        let order: Vec<&str> = flush
+            .writes
+            .iter()
+            .map(|write| match write {
+                PendingWrite::Insert(_) => "insert",
+                PendingWrite::Update { .. } => "update",
+                PendingWrite::Delete(_) => "delete",
+            })
+            .collect();
+        assert_eq!(order, vec!["update", "update", "insert", "delete"]);
+    }
+
+    #[tokio::test]
+    async fn updates_keep_the_source_primary_key_order() {
+        // The installed list order is not the installation primary-key order;
+        // the flush must still emit the smaller id first.
+        let capture = crate::sql_test_support::KindQueryCapture::writing();
+        let mut session = &capture;
+        let guard = FailingGuard::new(usize::MAX);
+        let mut flush = PendingFlush::default();
+        flush.push_update(9, vec!["state='failed'".to_string()]);
+        flush.push_update(2, vec!["state='installed'".to_string()]);
+        flush
+            .flush_with_guard(&mut session, Some(&guard))
+            .await
+            .unwrap();
+        let writes = capture.writes();
+        assert_eq!(writes.len(), 2);
+        assert!(
+            writes[0].sql.contains("id = 2"),
+            "smaller id first: {}",
+            writes[0].sql
+        );
+        assert!(writes[1].sql.contains("id = 9"), "{}", writes[1].sql);
+    }
+
+    /// A guard that fails on the requested call.
+    struct FailingGuard {
+        calls: std::sync::atomic::AtomicUsize,
+        fail_on: usize,
+    }
+
+    impl FailingGuard {
+        fn new(fail_on: usize) -> Self {
+            Self {
+                calls: std::sync::atomic::AtomicUsize::new(0),
+                fail_on,
+            }
+        }
+
+        fn calls(&self) -> usize {
+            self.calls.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    impl crate::device_identity::LeaseCheck for FailingGuard {
+        fn check<'a>(
+            &'a self,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = MysqlResult<()>> + Send + 'a>>
+        {
+            let call = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+            Box::pin(async move {
+                if call == self.fail_on {
+                    Err(MysqlError::InvalidQuery {
+                        reason: "plugin_write_lease_lost".into(),
+                    })
+                } else {
+                    Ok(())
+                }
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failed_record_flush_guard_emits_no_insert_delete_or_update() {
+        let capture = crate::sql_test_support::KindQueryCapture::writing();
+        let mut session = &capture;
+        let guard = FailingGuard::new(1);
+        let mut flush = PendingFlush::default();
+        flush.push_delete(5);
+        flush.push_update(10, vec!["state='failed'".to_string()]);
+        flush.push_insert(DesiredInsert {
+            installed_kind_id: 1,
+            user_id: 7,
+            device_id: "d".into(),
+            release_id: 2,
+            state: "pending".into(),
+            error_code: String::new(),
+            error_message: String::new(),
+            attempt_count: 0,
+            now: Local::now().naive_local(),
+        });
+        let error = flush
+            .flush_with_guard(&mut session, Some(&guard))
+            .await
+            .unwrap_err();
+        assert!(matches!(error, MysqlError::InvalidQuery { .. }));
+        assert_eq!(guard.calls(), 1, "one ownership check gates the flush");
+        assert!(capture.writes().is_empty(), "a failed guard emits no write");
+    }
+
+    #[tokio::test]
+    async fn an_assigned_record_flush_checks_once_and_emits() {
+        let capture = crate::sql_test_support::KindQueryCapture::writing();
+        let mut session = &capture;
+        let guard = FailingGuard::new(usize::MAX);
+        let mut flush = PendingFlush::default();
+        // An equal-value assignment still marks the session dirty.
+        flush.push_update(10, vec!["state='failed'".to_string()]);
+        flush
+            .flush_with_guard(&mut session, Some(&guard))
+            .await
+            .unwrap();
+        assert_eq!(guard.calls(), 1);
+        assert_eq!(capture.writes().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn an_empty_record_flush_checks_and_emits_nothing() {
+        let capture = crate::sql_test_support::KindQueryCapture::writing();
+        let mut session = &capture;
+        let guard = FailingGuard::new(1);
+        let mut flush = PendingFlush::default();
+        flush
+            .flush_with_guard(&mut session, Some(&guard))
+            .await
+            .unwrap();
+        assert_eq!(guard.calls(), 0);
+        assert!(capture.writes().is_empty());
     }
 
     #[test]

@@ -57,14 +57,20 @@ sidebar_position: 10
 **macOS / Linux：**
 
 ```bash
-curl -fsSL https://github.com/wecode-ai/Wegent/releases/latest/download/local_executor_install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/executor/scripts/local_executor_install.sh | bash
 ```
 
 **Windows (PowerShell)：**
 
 ```powershell
-irm https://github.com/wecode-ai/Wegent/releases/latest/download/local_executor_install.ps1 | iex
+irm https://raw.githubusercontent.com/wecode-ai/Wegent/main/executor/scripts/local_executor_install.ps1 | iex
 ```
+
+安装器默认选择稳定的 `vX.Y.Z` Wegent 平台 Release，与 Wework 桌面应用发布通道独立。显式版本参数继续使用指定版本；GitHub 元数据请求失败或最新平台 Release 缺少当前平台文件时会报错并停止。
+
+执行器内置的 GitHub 升级检查也使用平台发布通道，并按当前操作系统匹配资产（Windows 使用 `.exe` 文件）。最新平台版本缺少匹配文件时不会退回安装旧版本。
+
+服务端设备版本提示同样查询平台通道；远程进程启动命令和根安装脚本使用上述安装入口。
 
 安装脚本将会：
 
@@ -239,7 +245,7 @@ curl -fsSL https://github.com/wecode-ai/Wegent/releases/download/v1.0.0/local_ex
 **Windows (PowerShell)：**
 
 ```powershell
-$env:WEGENT_VERSION='v1.0.0'; irm https://github.com/wecode-ai/Wegent/releases/latest/download/local_executor_install.ps1 | iex
+$env:WEGENT_VERSION='v1.0.0'; irm https://raw.githubusercontent.com/wecode-ai/Wegent/main/executor/scripts/local_executor_install.ps1 | iex
 ```
 
 #### 手动安装（开发环境）
