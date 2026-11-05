@@ -971,3 +971,43 @@ def test_count_by_task_for_user_uses_group_membership(test_db: Session) -> None:
 
     assert member_count == 3
     assert non_member_count == 2
+
+
+def test_latest_queries_break_message_id_ties_by_subtask_id_desc(
+    test_db: Session,
+) -> None:
+    store = SqlAlchemySubtaskStore()
+    test_db.add(_task(26, owner_id=10))
+    # USER 261/264 and ASSISTANT 262/263 all share message_id 2.
+    user_ids = (261, 264)
+    for subtask_id in (261, 262, 263, 264):
+        role = SubtaskRole.USER if subtask_id in user_ids else SubtaskRole.ASSISTANT
+        test_db.add(
+            _subtask(
+                subtask_id=subtask_id,
+                task_id=26,
+                user_id=10,
+                message_id=2,
+                role=role,
+                status=SubtaskStatus.FAILED,
+            )
+        )
+    test_db.commit()
+
+    subtasks = store.list_by_task_desc(test_db, task_id=26, owner_user_id=10)
+    assert [subtask.id for subtask in subtasks] == [264, 263, 262, 261]
+
+    # USER 264 is newer but not an assistant, so 263 wins the id tie with 262.
+    latest = store.get_latest_assistant_by_statuses(
+        test_db, task_id=26, statuses=[SubtaskStatus.FAILED], owner_user_id=10
+    )
+    assert latest is not None
+    assert latest.id == 263
+
+    for statuses in ([], [SubtaskStatus.DELETE]):
+        assert (
+            store.get_latest_assistant_by_statuses(
+                test_db, task_id=26, statuses=statuses, owner_user_id=10
+            )
+            is None
+        )
