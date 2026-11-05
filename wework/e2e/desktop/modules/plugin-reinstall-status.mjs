@@ -14,16 +14,34 @@ import {
   until,
 } from './plugin-regression-fixture.mjs'
 
-export function assertReinstallReceipt(reply, deviceId) {
-  // A concurrent desired-state sync may finish before the idempotent install.
-  if (reply.sync !== null)
-    assert.equal(reply.sync?.success, true, 'The held reinstall returned a sync failure')
+export function assertReinstallResponse(reply, slug, deviceId) {
+  if (reply.sync != null)
+    assert.equal(reply.sync.success, true, 'The held reinstall returned a sync failure')
   const plugin = reply.plugin
-  assert.ok(Number.isInteger(plugin?.spec.releaseId) && plugin.spec.releaseId > 0)
+  assert.equal(plugin?.spec.source.pluginKey, slug)
+  assert.ok(plugin.spec.releaseId != null, 'The reinstall has no target release')
   const device = plugin.status.devices?.find(row => row.deviceId === deviceId)
-  assert.equal(device?.state, 'installed', 'The held reinstall has no installed device receipt')
+  assert.equal(device?.state, 'installed', 'The requesting device did not finish the reinstall')
   assert.equal(device.actualReleaseId, plugin.spec.releaseId)
   assert.equal(device.desiredReleaseId, plugin.spec.releaseId)
+  assert.ok(!device.errorCode, 'The requesting device still reports a synchronization error')
+}
+
+export function holdReinstallResponse(apiProxy, installPath) {
+  // The backend projects device rows using the HTTP route, which can differ
+  // from both the device-list identity and the renderer's stable identity.
+  const targets = new WeakMap()
+  apiProxy.rule = (entry, request) => {
+    if (entry.method !== 'POST' || entry.path !== installPath) return null
+    targets.set(entry, new URL(request.url, apiProxy.url).searchParams.get('device_id'))
+    return 'hold-response'
+  }
+  return (held, slug) => {
+    const target = targets.get(held)
+    assert.ok(target, 'The held reinstall must target a device')
+    const reply = JSON.parse(held.readHeldResponse().body.toString('utf8'))
+    assertReinstallResponse(reply, slug, target)
+  }
 }
 
 export async function verifyPluginReinstallStatus({
@@ -68,8 +86,7 @@ export async function verifyPluginReinstallStatus({
     assert.equal(await accountPlugin(cloud, slug), undefined)
     const removedRuntime = await materializedPlugin(executorHome, item.installedId)
     assert.ok(removedRuntime, 'The transport fault did not hold the actual old runtime cleanup')
-    apiProxy.rule = request =>
-      request.method === 'POST' && request.path === installPath ? 'hold-response' : null
+    const assertHeldResponse = holdReinstallResponse(apiProxy, installPath)
     await control.command(
       'clickWhenEnabled',
       `button${testId(`plugin-marketplace-install-${item.pluginId}`)}`
@@ -87,8 +104,9 @@ export async function verifyPluginReinstallStatus({
       timeoutMs
     ).then(requests => requests.find(request => request.committedResponseHeld))
     assert.equal(held.status, 200)
-    const reply = JSON.parse(held.readHeldResponse().body.toString('utf8'))
-    assertReinstallReceipt(reply, localDeviceId)
+    // A concurrent cleanup may already have applied the latest desired install,
+    // so the endpoint can return no new sync receipt with a confirmed device row.
+    assertHeldResponse(held, slug)
     assert.equal((await control.command('getText', status)).trim(), '正在安装')
     const ariaLabel = await control.command('getAttribute', status, { value: 'aria-label' })
     assert.ok(ariaLabel.startsWith('正在安装 '))

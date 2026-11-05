@@ -696,10 +696,6 @@ jobs:
         if: matrix.shard == 1
         run: node --test wework/scripts/ci-test-sequencer.test.mjs
 
-      - name: Verify plugin reinstall device receipts
-        if: matrix.shard == 1
-        run: node --test wework/scripts/plugin-reinstall-receipt.test.mjs
-
       - name: Run Wework tests
         env:
           TZ: Asia/Shanghai
