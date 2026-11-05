@@ -99,6 +99,8 @@ Read cursors, collection checkpoints, and action receipts are separate state. Re
 
 GitHub and GitLab repository sources implement this same read interface. Queries specify `entityKind` (`issue` or `change_request`), `number`, and `view`. Both provide details and comments; change requests additionally provide checks, commit statuses, and reviews. GitHub checks and legacy commit statuses are separate views. GitLab reviews return an approval-state object. No single view represents all merge requirements. Checks and statuses may select a commit SHA; the initially resolved commit remains fixed across continuation pages, while a new query resolves the current commit again. Every page verifies repository identity and preserves permission errors. Reading does not create a repository subscription.
 
+When creating a read-only delegate, the primary stand-in can explicitly select concrete, currently connected sources through `create_task.readSources`. Omitting it inherits no sources. The host stores a read snapshot that cannot expand; `continue_task` preserves and revalidates it without adding later connections. The delegate receives only the selected source catalog and read capabilities. Every page rechecks parent and child ownership, device, primary identity, and current connections. Wildcards, other identities' connections, and revoked sources are rejected. Delegation grants neither configuration nor external actions.
+
 ## Provider contract
 
 | Method                          | Behavior                                                                                                                                                             |
