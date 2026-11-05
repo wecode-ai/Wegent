@@ -18,6 +18,23 @@ Sidebar priority filtering also reads explicit `interactionStatus` through the
 lifecycle Store projection. A stale task-list snapshot must not override an
 accepted user reply in the view layer.
 
+## Needs Your Input Answer Drafts
+
+`RuntimeInteractionsProvider` directly owns and synchronously exposes account-scoped
+answer drafts. Every controlled input edit must update that state directly, rather
+than updating child state and publishing a snapshot through an effect. That extra
+publication step writes the previous draft back into the DOM at the end of the
+input event. Even if the new value returns immediately afterward, the write
+interrupts Chinese IME composition. Persistence may use effects; input values must
+not wait for persistence or snapshot publication. After an account switch, callbacks
+from the previous account must not update the current account's drafts.
+
+Regression tests inspect every application-side `value` write during composition,
+not only the final text. The desktop `human-interactions` checkpoint reuses a real
+question and answer submission flow to check that DOM composition events cause no
+stale value writes, focus loss, or input remounts. This automation does not verify
+the operating system's candidate window.
+
 ## New Conversations and Manual Sidebar Order
 
 Standalone conversations and project tasks share one ordering rule: when a manual
