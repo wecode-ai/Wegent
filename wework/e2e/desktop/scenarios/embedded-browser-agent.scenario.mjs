@@ -1851,6 +1851,16 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs, wo
         'Clicking the parent directory did not restore the original preview'
       )
       assert.equal(parentDirectoryState.navigationError, null)
+      const parentDirectoryContentReady = await bridgeCall({
+        action: 'waitFor',
+        options: { condition: { textVisible: LOCAL_DIRECTORY_TEXT } },
+        timeoutMs: 5_000,
+      })
+      assert.equal(
+        parentDirectoryContentReady.ok,
+        true,
+        'The parent directory preview did not finish rendering'
+      )
       const parentDirectoryInspect = await bridgeCall({
         action: 'inspect',
         options: { interactiveOnly: false, includeTextBlocks: true, maxNodes: 40 },
