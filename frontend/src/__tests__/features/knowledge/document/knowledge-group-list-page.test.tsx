@@ -611,7 +611,9 @@ it('uses readable vertical mobile rows with space, role, permission and migratio
   expect(row).toHaveTextContent('Personal space')
   expect(row).toHaveTextContent('document.permission.role.Owner')
   expect(screen.getByRole('button', { name })).toHaveClass('break-words')
-  expect(screen.getByTestId('permission-kb-71')).toHaveClass('min-h-11', 'min-w-11')
+  expect(screen.queryByTestId('permission-kb-71')).not.toBeInTheDocument()
+  expect(screen.getByTestId('more-kb-71')).toHaveClass('min-h-11', 'min-w-11')
+  await userEvent.setup().click(screen.getByTestId('more-kb-71'))
   await userEvent.setup().click(screen.getByTestId('permission-kb-71'))
   expect(permission).toHaveBeenCalledWith(kb)
   expect(screen.queryByTestId('migrate-kb-71')).not.toBeInTheDocument()
@@ -758,4 +760,50 @@ it('counts company space after type filtering and deduplicates its rows on deskt
   expect(screen.getAllByTestId(/^kb-row-/)).toHaveLength(1)
   await user.click(screen.getByTestId('knowledge-team-filter'))
   expect(screen.getByTestId('knowledge-space-count-company')).toHaveTextContent('1')
+})
+
+it('shows only More on mobile and keeps read-only permission access available', async () => {
+  const permissions = jest.fn()
+  render(<KnowledgeBaseActions mobile kbId={501} onPermissions={permissions} />)
+  expect(screen.getAllByRole('button')).toHaveLength(1)
+  expect(screen.queryByTestId('permission-kb-501')).not.toBeInTheDocument()
+  await userEvent.setup().click(screen.getByTestId('more-kb-501'))
+  expect(screen.getAllByRole('menuitem')).toHaveLength(1)
+  await userEvent.setup().click(screen.getByTestId('permission-kb-501'))
+  expect(permissions).toHaveBeenCalledTimes(1)
+})
+
+it('hands off focus from the mobile menu before opening an action dialog', async () => {
+  let origin: Element | null = null
+  function MobileActions() {
+    const [open, setOpen] = useState(false)
+    return (
+      <>
+        <KnowledgeBaseActions
+          mobile
+          kbId={502}
+          onPermissions={() => {
+            origin = document.activeElement
+            setOpen(true)
+          }}
+          onEdit={jest.fn()}
+          onMigrate={jest.fn()}
+          onDelete={jest.fn()}
+        />
+        <Dialog open={open} onOpenChange={setOpen}>
+          <DialogContent aria-describedby={undefined}>
+            <DialogTitle>Permissions</DialogTitle>
+            <button onClick={() => setOpen(false)}>Done viewing</button>
+          </DialogContent>
+        </Dialog>
+      </>
+    )
+  }
+  render(<MobileActions />)
+  const user = userEvent.setup()
+  await user.click(screen.getByTestId('more-kb-502'))
+  expect(screen.getAllByRole('menuitem')).toHaveLength(4)
+  await user.click(screen.getByTestId('permission-kb-502'))
+  await user.click(await screen.findByRole('button', { name: 'Done viewing' }))
+  expect(origin).toBe(screen.getByTestId('more-kb-502'))
 })

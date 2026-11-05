@@ -5,6 +5,7 @@ import { useState } from 'react'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { PermissionManagementTab } from '@/features/knowledge/permission/components/PermissionManagementTab'
+import { KnowledgeBaseActions } from '@/features/knowledge/document/components/KnowledgeBaseActions'
 import { KnowledgeAccessDialog } from '@/features/knowledge/document/components/KnowledgeAccessDialog'
 import { knowledgePermissionApi } from '@/apis/knowledge-permission'
 
@@ -453,3 +454,23 @@ it.each(['success', 'denied'])(
     expect(denied).not.toHaveBeenCalled()
   }
 )
+
+it('returns to mobile More after closing the actual read-only permission dialog', async () => {
+  function MobilePermission() {
+    const [open, setOpen] = useState(false)
+    return (
+      <>
+        <KnowledgeBaseActions mobile kbId={27} onPermissions={() => setOpen(true)} />
+        {open && <KnowledgeAccessDialog {...props()} onClose={() => setOpen(false)} />}
+      </>
+    )
+  }
+  render(<MobilePermission />)
+  const user = userEvent.setup()
+  const more = screen.getByTestId('more-kb-27')
+  await user.click(more)
+  await user.click(screen.getByTestId('permission-kb-27'))
+  await screen.findByText('Visible source team')
+  await user.click(screen.getByTestId('close-knowledge-access'))
+  await waitFor(() => expect(more).toHaveFocus())
+})

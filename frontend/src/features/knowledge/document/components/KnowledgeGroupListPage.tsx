@@ -417,7 +417,7 @@ export function KnowledgeGroupListPage({
   ) => (
     <TableHeader className="sticky top-0 bg-surface">
       <TableRow className="text-left text-sm text-text-secondary">
-        <TableHead className="h-auto px-6 py-3 font-medium">
+        <TableHead className="h-auto px-4 py-2 font-medium">
           <button
             className="flex items-center hover:text-text-primary transition-colors"
             onClick={() => handleSort('name')}
@@ -427,7 +427,7 @@ export function KnowledgeGroupListPage({
           </button>
         </TableHead>
         {showGroupColumn && (
-          <TableHead className="h-auto px-6 py-3 font-medium w-[15%]">
+          <TableHead className="h-auto px-4 py-2 font-medium w-[15%]">
             <button
               className="flex items-center hover:text-text-primary transition-colors"
               onClick={() => handleSort('group')}
@@ -438,14 +438,14 @@ export function KnowledgeGroupListPage({
           </TableHead>
         )}
         {showFromColumn && (
-          <TableHead className="h-auto px-6 py-3 font-medium w-[12%]">
+          <TableHead className="h-auto px-4 py-2 font-medium w-[12%]">
             {t('document.table.from', '来自')}
           </TableHead>
         )}
-        <TableHead className="h-auto w-24 px-3 py-3 font-medium">
+        <TableHead className="h-auto w-24 px-3 py-2 font-medium">
           {t('document.table.permission', '权限')}
         </TableHead>
-        <TableHead className="h-auto w-28 px-3 py-3 font-medium">
+        <TableHead className="h-auto w-28 px-3 py-2 font-medium">
           <button
             className="flex items-center hover:text-text-primary transition-colors"
             onClick={() => handleSort('created')}
@@ -454,7 +454,7 @@ export function KnowledgeGroupListPage({
             <SortIcon column="created" />
           </button>
         </TableHead>
-        <TableHead className="hidden h-auto w-28 px-3 py-3 font-medium xl:table-cell">
+        <TableHead className="hidden h-auto w-28 px-3 py-2 font-medium xl:table-cell">
           <button
             className="flex items-center hover:text-text-primary transition-colors"
             onClick={() => handleSort('updated')}
@@ -463,7 +463,7 @@ export function KnowledgeGroupListPage({
             <SortIcon column="updated" />
           </button>
         </TableHead>
-        <TableHead className="h-auto w-40 px-2 py-3 font-medium text-right">
+        <TableHead className="h-auto w-28 px-2 py-2 font-medium text-right">
           {t('document.table.actions', '操作')}
         </TableHead>
       </TableRow>
@@ -552,7 +552,7 @@ export function KnowledgeGroupListPage({
       <div className="space-y-6">
         {/* Created by me section */}
         <div>
-          <h3 className="px-6 py-3 text-sm font-medium text-text-secondary bg-surface-hover border-b border-border">
+          <h3 className="px-4 py-2 text-sm font-medium text-text-secondary bg-surface-hover border-b border-border">
             {t('document.personalGroups.createdByMe', '我创建的')}
             <span className="ml-2 text-text-muted">({sortedCreatedByMe.length})</span>
           </h3>
@@ -573,7 +573,7 @@ export function KnowledgeGroupListPage({
 
         {/* Shared with me section */}
         <div>
-          <h3 className="px-6 py-3 text-sm font-medium text-text-secondary bg-surface-hover border-b border-border">
+          <h3 className="px-4 py-2 text-sm font-medium text-text-secondary bg-surface-hover border-b border-border">
             {t('document.personalGroups.sharedWithMe', '分享给我的')}
             <span className="ml-2 text-text-muted">({sortedSharedWithMe.length})</span>
           </h3>
@@ -611,7 +611,7 @@ export function KnowledgeGroupListPage({
       <div className="space-y-6">
         {/* Native group KBs section */}
         <div>
-          <h3 className="px-6 py-3 text-sm font-medium text-text-secondary bg-surface-hover border-b border-border">
+          <h3 className="px-4 py-2 text-sm font-medium text-text-secondary bg-surface-hover border-b border-border">
             {t('document.groupSections.native', '创建')}
             <span className="ml-2 text-text-muted">({sortedNative.length})</span>
           </h3>
@@ -629,7 +629,7 @@ export function KnowledgeGroupListPage({
 
         {/* Shared-into-group KBs section */}
         <div>
-          <h3 className="px-6 py-3 text-sm font-medium text-text-secondary bg-surface-hover border-b border-border">
+          <h3 className="px-4 py-2 text-sm font-medium text-text-secondary bg-surface-hover border-b border-border">
             {t('document.groupSections.shared', '分享')}
             <span className="ml-2 text-text-muted">({sortedShared.length})</span>
           </h3>
@@ -860,6 +860,7 @@ export function KnowledgeGroupListPage({
             getSpace={getKbGroupInfo}
             renderActions={kb => (
               <KnowledgeBaseActions
+                mobile
                 kbId={kb.id}
                 onPermissions={onViewPermissions ? () => onViewPermissions(kb) : undefined}
                 onMigrate={onMigrateKb && canMigrate?.(kb) ? () => onMigrateKb(kb) : undefined}
@@ -917,7 +918,7 @@ function KnowledgeBaseRow({
       data-testid={`kb-row-${kb.id}`}
     >
       {/* Name column */}
-      <TableCell className="px-6 py-3 overflow-hidden">
+      <TableCell className="px-4 py-2 overflow-hidden">
         <div className="flex items-center gap-3 min-w-0">
           <KnowledgeBaseIcon kbType={kb.kb_type} className="w-5 h-5 flex-shrink-0" />
           <span className="text-sm font-medium text-text-primary truncate" title={kb.name}>
@@ -929,14 +930,14 @@ function KnowledgeBaseRow({
 
       {/* Group column - only in "All" mode */}
       {showGroupInfo && (
-        <TableCell className="px-6 py-3 text-text-secondary overflow-hidden">
+        <TableCell className="px-4 py-2 text-text-secondary overflow-hidden">
           <span className="truncate block">{groupInfo ? groupInfo.groupName : '--'}</span>
         </TableCell>
       )}
 
       {/* From column - shows who shared the KB */}
       {showFromInfo && (
-        <TableCell className="px-6 py-3 text-text-secondary overflow-hidden">
+        <TableCell className="px-4 py-2 text-text-secondary overflow-hidden">
           <span className="truncate block">
             {'group_type' in kb ? getKbShareSourceText(kb as KnowledgeBaseWithGroupInfo) : '--'}
           </span>
@@ -944,22 +945,22 @@ function KnowledgeBaseRow({
       )}
 
       {/* Permission column */}
-      <TableCell className="px-3 py-3 text-text-secondary whitespace-nowrap">
+      <TableCell className="px-3 py-2 text-text-secondary whitespace-nowrap">
         {'my_role' in kb && kb.my_role ? t(`document.permission.role.${kb.my_role}`) : '--'}
       </TableCell>
 
       {/* Created at column */}
-      <TableCell className="px-3 py-3 text-text-secondary whitespace-nowrap">
+      <TableCell className="px-3 py-2 text-text-secondary whitespace-nowrap">
         {formatDateTime(kb.created_at, i18n.language)}
       </TableCell>
 
       {/* Updated at column */}
-      <TableCell className="hidden px-3 py-3 text-text-secondary whitespace-nowrap xl:table-cell">
+      <TableCell className="hidden px-3 py-2 text-text-secondary whitespace-nowrap xl:table-cell">
         {formatDateTime(kb.updated_at, i18n.language)}
       </TableCell>
 
       {/* Actions column - Migrate, Edit and Delete */}
-      <TableCell className="px-2 py-3">
+      <TableCell className="px-2 py-2">
         <KnowledgeBaseActions
           kbId={kb.id}
           onPermissions={onPermissions}
