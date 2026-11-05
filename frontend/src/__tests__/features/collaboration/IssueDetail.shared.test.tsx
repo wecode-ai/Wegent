@@ -374,7 +374,7 @@ describe('shared IssueDetail', () => {
     fireEvent.change(screen.getByTestId('cloud-todo-detail-title'), {
       target: { value: '修改标题' },
     })
-    fireEvent.click(screen.getByTestId('cloud-todo-save'))
+    fireEvent.blur(screen.getByTestId('cloud-todo-detail-title'))
     await waitFor(() =>
       expect(conflict ? latest.onConflict : latest.onError).toHaveBeenCalledTimes(1)
     )
@@ -615,9 +615,12 @@ describe('shared IssueDetail', () => {
   }, 30_000)
 
   it('persists content and assigns through the shared assignee control', async () => {
-    const updated = { ...issue, version: 2, description: '新描述', priority: 'high' as const }
-    const update = jest.fn().mockResolvedValue(updated)
-    const assign = jest.fn().mockResolvedValue({ ...updated, assignee_user_id: 5, version: 3 })
+    const updated = { ...issue, version: 3, description: '新描述', priority: 'high' as const }
+    const update = jest
+      .fn()
+      .mockResolvedValueOnce({ ...issue, priority: 'high', version: 2 })
+      .mockResolvedValueOnce(updated)
+    const assign = jest.fn().mockResolvedValue({ ...updated, assignee_user_id: 5, version: 4 })
     const onChange = jest.fn()
     const onAssignmentsChange = jest.fn()
     const onCommentsChange = jest.fn()
@@ -651,24 +654,30 @@ describe('shared IssueDetail', () => {
     fireEvent.change(screen.getByTestId('cloud-todo-detail-priority'), {
       target: { value: 'high' },
     })
-    await userEvent.click(screen.getByTestId('cloud-todo-save'))
-
     await waitFor(() =>
-      expect(update).toHaveBeenCalledWith('issue-1', {
+      expect(update).toHaveBeenNthCalledWith(1, 'issue-1', {
         version: 1,
-        description: '新描述',
         priority: 'high',
+      })
+    )
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ description: issue.description })
+    )
+    await userEvent.click(screen.getByTestId('cloud-todo-save'))
+    await waitFor(() =>
+      expect(update).toHaveBeenNthCalledWith(2, 'issue-1', {
+        version: 2,
+        description: '新描述',
       })
     )
     await waitFor(() => expect(screen.queryByTestId('cloud-todo-save')).not.toBeInTheDocument())
     fireEvent.click(screen.getByTestId('cloud-todo-detail-assignee'))
     fireEvent.click(await screen.findByTestId('cloud-todo-detail-assignee-option-user:5'))
     expect(screen.queryByTestId('wework-assignment-notify-confirm')).not.toBeInTheDocument()
-    expect(screen.getByTestId('cloud-todo-save')).toHaveTextContent('保存并通知')
-    await userEvent.click(screen.getByTestId('cloud-todo-save'))
+    expect(screen.queryByTestId('cloud-todo-save')).not.toBeInTheDocument()
     await waitFor(() =>
       expect(assign).toHaveBeenCalledWith(project.id, issue.id, {
-        version: 2,
+        version: 3,
         assigneeType: 'user',
         assigneeId: '5',
         notifyAssignee: true,
@@ -686,19 +695,13 @@ describe('shared IssueDetail', () => {
       const update = jest.fn()
       const api = createApi({ issues: { assign, update } })
       renderDetail(api, { issue: { ...issue, can_edit: false }, members: [member] })
-      fireEvent.click(screen.getByTestId('cloud-todo-detail-assignee'))
-      fireEvent.click(await screen.findByTestId('cloud-todo-detail-assignee-option-user:5'))
+      await userEvent.click(screen.getByTestId('cloud-todo-detail-assignee'))
+      const notify = screen.getByTestId('cloud-todo-assignee-notify')
+      expect(notify).toBeChecked()
+      if (!notifyAssignee) await userEvent.click(notify)
+      await userEvent.click(await screen.findByTestId('cloud-todo-detail-assignee-option-user:5'))
       expect(screen.queryByTestId('wework-assignment-notify-confirm')).not.toBeInTheDocument()
-      expect(screen.getByTestId('cloud-todo-save')).toHaveTextContent('保存并通知')
-      if (notifyAssignee) {
-        await userEvent.click(screen.getByTestId('cloud-todo-save'))
-      } else {
-        await userEvent.click(screen.getByTestId('cloud-todo-save-options'))
-        expect(screen.getByTestId('cloud-todo-save-without-notification')).toHaveTextContent(
-          '仅保存不通知'
-        )
-        await userEvent.click(screen.getByTestId('cloud-todo-save-without-notification'))
-      }
+      expect(screen.queryByTestId('cloud-todo-save')).not.toBeInTheDocument()
       await waitFor(() =>
         expect(assign).toHaveBeenCalledWith(project.id, issue.id, {
           version: 1,
@@ -742,9 +745,9 @@ describe('shared IssueDetail', () => {
 
     const emptyIssue = { ...issue, description: '' }
     renderDetail(api, { issue: emptyIssue, allIssues: [emptyIssue] })
-    expect(screen.queryByTestId('cloud-todo-detail-description')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-detail-description')).toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-attachment-input')).not.toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('cloud-todo-detail-title'))
+    await userEvent.click(screen.getByTestId('cloud-todo-detail-description'))
     expect(screen.getByTestId('cloud-todo-detail-title')).not.toHaveAttribute('readonly')
     expect(screen.getByTestId('cloud-todo-attachment-input')).toBeEnabled()
     fireEvent.change(screen.getByTestId('cloud-todo-attachment-input'), {
@@ -1114,7 +1117,7 @@ describe('shared IssueDetail', () => {
     fireEvent.change(screen.getByTestId('cloud-todo-detail-title'), {
       target: { value: '仅修改标题' },
     })
-    fireEvent.click(screen.getByTestId('cloud-todo-save'))
+    fireEvent.blur(screen.getByTestId('cloud-todo-detail-title'))
 
     await waitFor(() =>
       expect(update).toHaveBeenCalledWith('issue-1', {
@@ -1145,7 +1148,6 @@ describe('shared IssueDetail', () => {
     fireEvent.change(screen.getByTestId('cloud-todo-detail-due-date'), {
       target: { value: editedLocalValue },
     })
-    await userEvent.click(screen.getByTestId('cloud-todo-save'))
 
     await waitFor(() =>
       expect(update).toHaveBeenCalledWith(
