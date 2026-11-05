@@ -174,7 +174,12 @@ pub(super) fn tools(context: &SpaceMcpRequestContext) -> Vec<Value> {
         .as_ref()
         .is_some_and(|identity| identity.readonly_worker)
     {
-        return super::stand_in_tasks::read_tools();
+        let mut tools = super::stand_in_tasks::read_tools();
+        tools.push(json!({"name":"list_connection_providers","description":"List only host-captured delegated source references and their provider read schemas. This cannot discover ungranted resources or change subscriptions.","inputSchema":{"type":"object","properties":{}},"annotations":{"readOnlyHint":true,"openWorldHint":false}}));
+        let mut read = connections::read_tool(false);
+        read["annotations"] = json!({"readOnlyHint":true,"openWorldHint":true});
+        tools.push(read);
+        return tools;
     }
     if context
         .stand_in
@@ -738,7 +743,15 @@ mod memory_tests {
             .iter()
             .map(|tool| tool["name"].as_str().unwrap())
             .collect();
-        assert_eq!(names, vec!["list_tasks", "read_task"]);
+        assert_eq!(
+            names,
+            vec![
+                "list_tasks",
+                "read_task",
+                "list_connection_providers",
+                "read_source"
+            ]
+        );
         for name in [
             "read_source",
             "create_task",

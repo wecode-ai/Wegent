@@ -39,6 +39,21 @@ impl RuntimeWorkRpcHandler {
         if name == "authorize_source_read" {
             return self.authorize_work_source_read(&identity, &args);
         }
+        if name == "delegated_read_sources" || name == "authorize_delegated_source_read" {
+            let sources = self.delegated_read_sources(&identity)?;
+            if name == "delegated_read_sources" {
+                return Ok(json!({"sources":sources}));
+            }
+            return sources
+                .into_iter()
+                .find(|source| super::stand_in_read_sources::same_source(source, &args))
+                .ok_or_else(|| {
+                    AppIpcError::new(
+                        "permission_denied",
+                        "This source is outside the delegated read snapshot",
+                    )
+                });
+        }
         if name == "validate_git_binding" {
             return self.bound_git_work_args(&identity, args).await;
         }
@@ -147,6 +162,7 @@ impl RuntimeWorkRpcHandler {
         }
         self.validate_primary_task_followup(identity.user, &link)
             .await?;
+        self.validate_continued_read_sources(&identity, &link, &args)?;
         let message = required(&args, "message")?;
         let client = format!(
             "stand-in:{}:{}",
@@ -235,8 +251,10 @@ impl RuntimeWorkRpcHandler {
         let mut config = settings["primary"].clone();
         config["userId"] = json!(identity.user);
         config["handlingPolicy"] = json!({"automatic":true,"askBeforeAct":false});
+        let sources = self.capture_delegated_read_sources(identity, args)?;
         let origin = json!({"type":"stand_in_task","initiatedBy":"stand_in","standInId":"@primary","userId":identity.user,"deviceId":self.device_id,"sourceTaskId":identity.task_id,"askBeforeAct":false});
-        let payload = self.prepare_stand_in_execution(json!({"taskId":id,"title":required(args,"title")?,"message":required(args,"message")?,"origin":origin,"commandId":format!("{id}:create"),"automaticStandIn":true}), &config).await?;
+        let mut payload = self.prepare_stand_in_execution(json!({"taskId":id,"title":required(args,"title")?,"message":required(args,"message")?,"origin":origin,"commandId":format!("{id}:create"),"automaticStandIn":true}), &config).await?;
+        payload["executionRequest"]["standInDelegation"] = json!({"userId":identity.user,"sourceTaskId":identity.task_id,"askBeforeAct":false,"readSources":sources});
         Box::pin(self.create_task(payload)).await
     }
 }

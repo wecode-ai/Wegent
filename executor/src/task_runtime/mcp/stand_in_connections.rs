@@ -245,24 +245,60 @@ pub(super) fn scoped_provider_catalog(catalog: &Value, source: &Value) -> Value 
 }
 
 pub(super) async fn list_providers(identity: &StandInMcpIdentity) -> Result<Value, String> {
-    let source = if identity.work.is_some() {
-        Some(
+    let sources = if identity.readonly_worker {
+        super::super::stand_in_tasks::call(
+            identity.clone(),
+            "delegated_read_sources".into(),
+            json!({}),
+        )
+        .await?["sources"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+    } else if identity.work.is_some() {
+        vec![
             super::super::stand_in_tasks::call(
                 identity.clone(),
                 "authorize_source_read".into(),
                 Value::Null,
             )
             .await?,
-        )
+        ]
     } else {
-        None
+        Vec::new()
     };
     let catalog = crate::runtime_work::connection_host::call("catalog", None, json!({}))
         .await
         .map_err(|error| format!("{}: {}", error.code, error.message))?;
-    Ok(source.as_ref().map_or(catalog.clone(), |source| {
+    if identity.readonly_worker {
+        return Ok(delegated_provider_catalog(&catalog, &sources));
+    }
+    Ok(sources.first().map_or(catalog.clone(), |source| {
         scoped_provider_catalog(&catalog, source)
     }))
+}
+
+fn delegated_provider_catalog(catalog: &Value, sources: &[Value]) -> Value {
+    let mut items = Vec::new();
+    let mut references = Vec::new();
+    for source in sources {
+        references.push(json!({"providerId":source["providerId"],"profile":source["profile"],"kind":source["kind"],"id":source["id"]}));
+        if items
+            .iter()
+            .any(|item: &Value| item["id"] == source["providerId"])
+        {
+            continue;
+        }
+        for mut provider in scoped_provider_catalog(catalog, source)["items"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+        {
+            provider.as_object_mut().unwrap().remove("actions");
+            items.push(provider);
+        }
+    }
+    json!({"items":items,"sources":references})
 }
 
 pub(super) async fn read_source(
@@ -270,7 +306,14 @@ pub(super) async fn read_source(
     identity: &StandInMcpIdentity,
     arguments: Value,
 ) -> Result<Value, String> {
-    let source = if identity.work.is_some() {
+    let source = if identity.readonly_worker {
+        super::super::stand_in_tasks::call(
+            identity.clone(),
+            "authorize_delegated_source_read".into(),
+            arguments["source"].clone(),
+        )
+        .await?
+    } else if identity.work.is_some() {
         super::super::stand_in_tasks::call(
             identity.clone(),
             "authorize_source_read".into(),
@@ -516,6 +559,25 @@ mod tests {
         assert_eq!(
             scoped_provider_catalog(&catalog, &json!({"providerId":"missing"})),
             json!({"items":[]})
+        );
+    }
+
+    #[test]
+    fn delegated_catalog_contains_selected_refs_and_read_capabilities_only() {
+        let read = json!({"inputSchema":{"type":"object"},"itemSchema":{"type":"object"},"pagination":"cursor"});
+        let catalog = json!({"items":[{"id":"selected","read":read,"actions":[{"id":"write"}],"authTarget":{"private":"not exposed"}},{"id":"unselected","read":read}]});
+        let sources = vec![
+            json!({"providerId":"selected","profile":"account","kind":"repo","id":"one","policy":{"automatic":true}}),
+            json!({"providerId":"selected","profile":"account","kind":"repo","id":"two"}),
+        ];
+        assert_eq!(
+            delegated_provider_catalog(&catalog, &sources),
+            json!({"items":[{"id":"selected","read":read}],
+            "sources":[{"providerId":"selected","profile":"account","kind":"repo","id":"one"},{"providerId":"selected","profile":"account","kind":"repo","id":"two"}]})
+        );
+        assert_eq!(
+            delegated_provider_catalog(&catalog, &[]),
+            json!({"items":[],"sources":[]})
         );
     }
 
