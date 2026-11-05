@@ -318,3 +318,17 @@ describe('ProjectBoardBody', () => {
     ).not.toContain('[&>div]')
   })
 })
+
+it('keeps project filters beside group filtering and before search and view actions', () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+  const container = document.createElement('div')
+  const root = createRoot(container)
+  try {
+    act(() => root.render(<ProjectBoardBody {...props()} filterAction={<select data-testid="milestone-filter" />} />))
+    const group = container.querySelector('[data-testid="cloud-board-group-filter"]')!
+    const milestone = container.querySelector('[data-testid="milestone-filter"]')!
+    const search = container.querySelector('[data-testid="cloud-board-search"]')!
+    expect(group.compareDocumentPosition(milestone) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(milestone.compareDocumentPosition(search) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  } finally { act(() => root.unmount()) }
+})

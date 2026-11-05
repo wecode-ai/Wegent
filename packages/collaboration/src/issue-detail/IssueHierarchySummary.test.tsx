@@ -37,32 +37,46 @@ describe('IssueHierarchySummary', () => {
             onOpen={onOpen}
             onAddChild={onAddChild}
             translate={t}
-          />
-        )
+          />,
+        ),
       )
       expect(container.textContent).toContain('1/1 已完成')
       expect(container.textContent).not.toContain('restricted')
       expect(container.textContent).not.toContain('foreign')
       act(() =>
-        container.querySelector<HTMLButtonElement>('[data-testid="issue-parent-link"]')!.click()
+        container
+          .querySelector<HTMLButtonElement>(
+            '[data-testid="issue-parent-link"]',
+          )!
+          .click(),
       )
       expect(onOpen).toHaveBeenLastCalledWith(parent)
       act(() =>
         container
-          .querySelector<HTMLButtonElement>('[data-testid="issue-hierarchy-child-child"]')!
-          .click()
+          .querySelector<HTMLButtonElement>(
+            '[data-testid="issue-hierarchy-child-child"]',
+          )!
+          .click(),
       )
       expect(onOpen).toHaveBeenLastCalledWith(child)
       act(() =>
         container
-          .querySelector<HTMLButtonElement>('[data-testid="issue-hierarchy-add-child"]')!
-          .click()
+          .querySelector<HTMLButtonElement>(
+            '[data-testid="issue-hierarchy-add-child"]',
+          )!
+          .click(),
       )
       expect(onAddChild).toHaveBeenCalledOnce()
       act(() =>
-        container.querySelector<HTMLButtonElement>('[data-testid="issue-children-toggle"]')!.click()
+        container
+          .querySelector<HTMLButtonElement>(
+            '[data-testid="issue-children-toggle"]',
+          )!
+          .click(),
       )
-      expect(container.querySelector('[data-testid="issue-hierarchy-child-child"]')).toBeNull()
+      expect(
+        container.querySelector('[data-testid="issue-hierarchy-child-child"]'),
+      ).toBeNull()
     } finally {
       act(() => root.unmount())
     }
@@ -79,12 +93,45 @@ describe('IssueHierarchySummary', () => {
             allItems={[{ ...issue('hidden', null), can_view_detail: false }]}
             onOpen={vi.fn()}
             translate={createCollaborationTranslator('en')}
-          />
-        )
+          />,
+        ),
       )
       expect(container.innerHTML).toBe('')
     } finally {
       act(() => root.unmount())
     }
   })
+})
+
+it('keeps the creation entry without a meaningless zero-of-zero completion label', () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+  const container = document.createElement('div')
+  const root = createRoot(container)
+  const onAddChild = vi.fn()
+  try {
+    act(() =>
+      root.render(
+        <IssueHierarchySummary
+          item={issue('parent', null)}
+          allItems={[]}
+          onOpen={vi.fn()}
+          onAddChild={onAddChild}
+          translate={createCollaborationTranslator('zh-CN')}
+        />,
+      ),
+    )
+    expect(
+      container.querySelector('[data-testid="issue-children-progress"]'),
+    ).toBeNull()
+    act(() =>
+      container
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="issue-hierarchy-add-child"]',
+        )!
+        .click(),
+    )
+    expect(onAddChild).toHaveBeenCalledOnce()
+  } finally {
+    act(() => root.unmount())
+  }
 })

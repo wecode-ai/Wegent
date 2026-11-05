@@ -128,6 +128,7 @@ export interface CloudTodoBoardTaskBinding {
 }
 
 interface CloudTodoBoardCardProps {
+  metadata?: ReactNode
   childrenAction?: ReactNode
   statusNames?: Record<string, string>
   item: CloudLoopItem
@@ -165,6 +166,7 @@ interface CloudTodoBoardCardProps {
 }
 
 export function CloudTodoBoardCard({
+  metadata,
   childrenAction,
   statusNames,
   item,
@@ -239,6 +241,7 @@ export function CloudTodoBoardCard({
         : []
   return (
     <IssueBoardCard
+      metadata={metadata}
       item={item}
       unread={unread}
       reference={item.id}

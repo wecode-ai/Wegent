@@ -415,6 +415,7 @@ export interface StandardCloudBoardControllerOptions<
   supportsOrder?: boolean;
   extensions: StandardCloudBoardHostExtensions<T>;
   items: T[];
+  hierarchyItems?: T[];
   onCurrentParentIdChange?(parentId: string | null): void;
   tagLimitError: string;
   onMove(
@@ -747,6 +748,7 @@ export function useStandardCloudBoardController<
   currentParentId: controlledCurrentParentId,
   extensions,
   items,
+  hierarchyItems = items,
   onCurrentParentIdChange,
   onMove,
   supportsOrder = true,
@@ -788,10 +790,10 @@ export function useStandardCloudBoardController<
     [boardState.groupBy, createColumns],
   );
   const currentParent =
-    items.find((item) => item.id === currentParentId) ?? null;
+    hierarchyItems.find((item) => item.id === currentParentId) ?? null;
   const breadcrumb = useMemo(
-    () => buildStandardCloudBoardBreadcrumb(items, currentParentId),
-    [currentParentId, items],
+    () => buildStandardCloudBoardBreadcrumb(hierarchyItems, currentParentId),
+    [currentParentId, hierarchyItems],
   );
 
   const moveItem = useCallback(

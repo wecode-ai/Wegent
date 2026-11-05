@@ -11,7 +11,11 @@ import { RuntimeEventProxy } from '../modules/runtime-event-proxy.mjs'
 import { createRuntimeReconciliationModel } from '../modules/runtime-reconciliation-model.mjs'
 import { REMOTE_DOCKER_DEVICE_ID } from '../modules/shared.mjs'
 import { stopProcessGroup } from '../process-lifecycle.mjs'
-import { reloadMainWindow, selectCollaborationDomain } from '../modules/workspace-flows.mjs'
+import {
+  reloadMainWindow,
+  selectCollaborationDomain,
+  selectCollaborationProjectView,
+} from '../modules/workspace-flows.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const MARKER = `RUNTIME_RECONCILIATION_${process.pid}`
@@ -357,8 +361,12 @@ export async function createDesktopScenario({
     await control.command('waitFor', projectRow, { visible: true, timeoutMs: uiTimeoutMs })
     await control.command('click', projectRow, { visible: true })
     const boardTab = `${CONTENT} [data-testid="collaboration-tab-board"]`
-    await control.command('waitFor', boardTab, { visible: true, timeoutMs: uiTimeoutMs })
-    await control.command('click', boardTab, { visible: true })
+    const compactView = `${CONTENT} [data-testid="collaboration-project-view-select"]`
+    await control.command('waitFor', `${boardTab}, ${compactView}`, {
+      visible: true,
+      timeoutMs: uiTimeoutMs,
+    })
+    await selectCollaborationProjectView(control, CONTENT, 'board')
     const card = `${CONTENT} [data-testid="cloud-todo-card-${testCase.issue.id}"]`
     await control.command('waitFor', card)
     await control.command('click', card)
