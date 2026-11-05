@@ -381,11 +381,11 @@ export async function configureFirstProjectExecutionEnvironment(
   timeoutMs,
   deviceId = null
 ) {
-  await control.command('waitFor', `${contentSelector} [data-testid="collaboration-tab-manage"]`, {
+  await control.command('waitFor', `${contentSelector} [data-testid="cloud-project-header"]`, {
     visible: true,
     timeoutMs,
   })
-  await control.command('click', `${contentSelector} [data-testid="collaboration-tab-manage"]`)
+  await selectCollaborationProjectView(control, contentSelector, 'manage')
   await control.command(
     'click',
     `${contentSelector} [data-testid="collaboration-project-settings-environments"]`
@@ -554,9 +554,10 @@ export async function createLocalCollaborationProject(control, contentSelector, 
   await control.command(
     'waitFor',
     `${contentSelector} [data-testid="cloud-project-header-title"]`,
-    { text: projectName, visible: true, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+    { text: projectName, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
   )
-  await control.command('waitFor', `${contentSelector} [data-testid="collaboration-tab-board"]`, {
+  await selectCollaborationProjectView(control, contentSelector, 'board')
+  await control.command('waitFor', `${contentSelector} [data-testid="collaboration-board"]`, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })

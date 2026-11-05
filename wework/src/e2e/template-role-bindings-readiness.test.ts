@@ -1,9 +1,43 @@
+// @vitest-environment node
+
 import { expect, test, vi } from 'vitest'
 
 import { fillTemplateRoleBindings } from '../../e2e/desktop/scenarios/collaboration-templates.scenario.mjs'
+import { configureFirstProjectExecutionEnvironment } from '../../e2e/desktop/modules/workspace-flows.mjs'
 
 const role = (index: number) =>
   `[data-workspace-tab-content][aria-hidden="false"] [data-testid="template-role-main-role-${index}"]`
+
+test.each([true, false])(
+  'opens execution settings through the rendered project view switcher (compact=%s)',
+  async compact => {
+    const content = '[data-workspace-tab-content][aria-hidden="false"]'
+    const reachedSettings = new Error('Execution settings reached')
+    let selected = false
+    const command = vi.fn(
+      async (action: string, selector: string, options?: { value?: string }) => {
+        if (action === 'getElementCount') return compact ? '1' : '0'
+        if (selector.endsWith('[data-testid="collaboration-tab-manage"]')) {
+          if (compact) throw new Error('Separate project tabs are absent in compact layouts')
+          if (action === 'click' || action === 'clickWhenEnabled') selected = true
+        }
+        if (action === 'select') {
+          expect(selector).toBe(`${content} [data-testid="collaboration-project-view-select"]`)
+          expect(options?.value).toBe('manage')
+          selected = true
+        }
+        if (selector.endsWith('[data-testid="collaboration-project-settings-environments"]')) {
+          expect(selected).toBe(true)
+          throw reachedSettings
+        }
+        return ''
+      }
+    )
+    await expect(
+      configureFirstProjectExecutionEnvironment({ command }, content, 1000)
+    ).rejects.toBe(reachedSettings)
+  }
+)
 
 test('waits for the first role catalog before reading or selecting its human coordinator', async () => {
   let ready = false
