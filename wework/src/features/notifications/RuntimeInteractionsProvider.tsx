@@ -47,6 +47,7 @@ import { TransientNotice } from '@/components/common/TransientNotice'
 import { readInteractionTaskInventory } from './interactionTaskInventory'
 import { logInteractionLoadFailure } from './interactionDiagnostics'
 import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
+import { isRuntimeConversationArchived } from '@/features/workbench/runtimeConversationCacheStore'
 import {
   archiveInteraction,
   readInteractionDrafts,
@@ -267,16 +268,26 @@ function RuntimeInteractionsState({
           item => !discovered.refreshedDevices.has(item.address.deviceId)
         )
         const archivedKeys = new Set(
-          current.items.filter(item => item.task.status === 'archived').map(item => item.key)
+          current.items
+            .filter(
+              item => item.task.status === 'archived' || isRuntimeConversationArchived(item.address)
+            )
+            .map(item => item.key)
         )
+        const currentItems = current.items.filter(item => !archivedKeys.has(item.key))
         const nextInventory = [
           ...new Map([...retained, ...discovered.items].map(item => [item.key, item])).values(),
-        ].filter(item => item.task.status !== 'archived' && !archivedKeys.has(item.key))
+        ].filter(
+          item =>
+            item.task.status !== 'archived' &&
+            !archivedKeys.has(item.key) &&
+            !isRuntimeConversationArchived(item.address)
+        )
         setInventory(nextInventory)
         const failedInventoryDevices = [...discovered.failedDevices].filter(
           deviceId =>
-            inventoryRef.current.some(item => item.address.deviceId === deviceId) ||
-            current.items.some(
+            nextInventory.some(item => item.address.deviceId === deviceId) ||
+            currentItems.some(
               item => item.address.deviceId === deviceId && item.task.interactionStatus
             ) ||
             deviceId === ''
@@ -295,9 +306,7 @@ function RuntimeInteractionsState({
         reportedOfflineDevices.current = offlineDevices
         // Current sources own membership; cached questions must not resurrect archived tasks.
         const candidates = new Map(
-          [...current.items, ...nextInventory]
-            .filter(item => item.task.status !== 'archived')
-            .map(item => [item.key, item])
+          [...currentItems, ...nextInventory].map(item => [item.key, item])
         )
         const removedErrorKeys = new Set<string>()
         for (const [key, requests] of Object.entries(loadedRef.current)) {
@@ -321,7 +330,7 @@ function RuntimeInteractionsState({
           return next
         })
         // Discovery owns persisted pending state; live sources supply turn identity.
-        for (const item of current.items) {
+        for (const item of currentItems) {
           const candidate = candidates.get(item.key)
           if (!candidate) continue
           if (item.lifecycle) candidates.set(item.key, { ...candidate, lifecycle: item.lifecycle })

@@ -33,6 +33,8 @@ not reintroduce archived or removed tasks. After a successful inventory read, re
 successful-read markers, and related errors for tasks outside the candidate set. Failed or
 offline devices retain their previous inventory; a connection failure is not an empty list.
 Tasks hidden from the sidebar remain discoverable through the device pending inventory.
+Confirmed archive markers in the existing conversation cache override offline inventory retention,
+even after the shared lifecycle entry is removed. Unarchival uses the existing marker cleanup.
 
 Failures during local identity discovery, inventory reads, transcript reads, and answered-question
 archival use the existing diagnostic channel in `runtime-launch.log`. Search for

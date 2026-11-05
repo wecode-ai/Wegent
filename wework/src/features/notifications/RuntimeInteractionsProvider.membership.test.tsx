@@ -4,12 +4,55 @@ import { act, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import type { TaskSource } from './NotificationTaskSourceContext'
 import {
+  markRuntimeConversationArchived,
+  runtimeConversationKey,
+  unmarkRuntimeConversationArchived,
+} from '@/features/workbench/runtimeConversationCacheStore'
+import {
   interactionQuestion,
   interactionTask,
   interactionTranscript,
 } from './runtimeInteractions.fixtures'
 
 describe('pending interaction membership and read cache', () => {
+  it('removes confirmed archived work even when its device goes offline before inventory reconciliation', async () => {
+    harness.list.mockResolvedValue({
+      projects: [],
+      chats: [{ ...interactionTask.workspace, tasks: [interactionTask.task] }],
+      totalTasks: 1,
+    })
+    const rendered = view(interactionQuestion, interactionTask, false, undefined, false)
+    await waitFor(() => expect(context!.pending).toHaveLength(1))
+    const reads = harness.transcript.mock.calls.length
+    const key = runtimeConversationKey(interactionTask.address)
+    markRuntimeConversationArchived(key)
+    try {
+      harness.list.mockResolvedValue({ projects: [], chats: [], totalTasks: 0 })
+      rendered.rerenderSource({
+        ...rendered.taskSource,
+        devices: [
+          { device_id: 'device', status: 'offline' } as NonNullable<TaskSource['devices']>[number],
+        ],
+        services: {
+          ...rendered.taskSource.services!,
+          getLocalRuntimeSidebarIdentity: async () => ({
+            deviceId: 'local',
+            runtimeInstanceId: 'local',
+            provenance: 'local-ipc',
+          }),
+        },
+      })
+      await act(async () => {
+        await context!.refresh()
+      })
+      expect(context!.pending).toHaveLength(0)
+      expect(context!.errors).toEqual({})
+      expect(harness.transcript).toHaveBeenCalledTimes(reads)
+      expect(JSON.parse(localStorage.getItem('wework.interactions:test:1:pending')!)).toEqual([])
+    } finally {
+      unmarkRuntimeConversationArchived(key)
+    }
+  })
   it.each(['removed', 'archived', 'stale-inventory'])(
     'retires cached questions and load errors for a %s task after a healthy inventory refresh',
     async status => {
