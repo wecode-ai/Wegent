@@ -64,7 +64,7 @@ export function MilestonePicker({
   const [failed, setFailed] = useState(false)
   if (!api) return null
   return (
-    <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2 text-sm">
+    <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2 text-sm leading-normal">
       {!compact && appearance !== 'property' && !allLabel ? (
         <span className="shrink-0 text-text-secondary">{label}</span>
       ) : null}
