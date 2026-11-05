@@ -23,6 +23,7 @@ async function createProbeApp(root, index) {
     const mark = phase => {
       state.phase = phase
       state.events.push(phase)
+      state.ready = app.isReady()
       writeFileSync(${JSON.stringify(tracePath)}, JSON.stringify(state))
     }
     process.on('uncaughtExceptionMonitor', error => {
@@ -32,6 +33,8 @@ async function createProbeApp(root, index) {
     mark('entry')
     if (pauseArgument || pauseSwitch) throw new Error('The driver pause switch reached application code')
     app.setPath('userData', ${JSON.stringify(join(profile, 'user-data'))})
+    mark('profile-configured')
+    app.once('will-finish-launching', () => mark('will-finish-launching'))
     app.once('ready', () => mark('ready-event'))
     app.whenReady().then(async () => {
       mark('fetch-start')
@@ -42,6 +45,7 @@ async function createProbeApp(root, index) {
       console.log('PROBE_RESULT=' + text)
       app.quit()
     }).catch(error => {mark('fetch-error');console.error(error);app.exit(1)})
+    mark('ready-handler-registered')
     `
   )
   return { profile, appPath, tracePath, path }

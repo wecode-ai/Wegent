@@ -34,6 +34,23 @@ const checkpoints = matrix =>
 const measuredLoad = shard =>
   shard.segments.split(',').reduce((total, segment) => total + (checkpointSeconds(segment) ?? 0), 0)
 
+test('previously frozen Windows shards can use their successful checkpoint measurements', () => {
+  for (const segment of [
+    'follow-up-task-switch',
+    'stand-in-alternate-source',
+    'stand-in-email',
+    'stand-in-profile',
+    'collaboration-milestones',
+  ]) {
+    assert.notEqual(checkpointSeconds(segment), null, segment)
+  }
+  const balanced = balanceWindowsMatrix(original)
+  assert.notDeepEqual(
+    balanced.include.find(shard => shard.id === 'core-3'),
+    original.include.find(shard => shard.id === 'core-3')
+  )
+})
+
 test('measured Windows scheduling preserves every segment and expanded checkpoint exactly once', () => {
   const balanced = balanceWindowsMatrix(original)
   assert.deepEqual(segments(balanced).sort(), segments(original).sort())
@@ -105,6 +122,8 @@ test('balancing never multiplies expensive conditional preparation from the orig
   const preparationWeights = {
     'Install local harness CLIs': evidence.preparationSeconds['local-harness'],
     'Build real object storage': evidence.preparationSeconds['object-storage'],
+    'Prepare DingTalk protocol fixture for the standard account':
+      evidence.preparationSeconds['dingtalk-protocol-fixture'],
   }
   const preparationLoads = matrix => matrix.include.map(shard => measuredLoad(shard))
   const originalLoads = preparationLoads(original)
@@ -113,6 +132,7 @@ test('balancing never multiplies expensive conditional preparation from the orig
     'Install local harness CLIs',
     'Build real object storage',
     'Install Electron for native startup and schema verification',
+    'Prepare DingTalk protocol fixture for the standard account',
   ]) {
     const step = steps.find(step => step.name === name)
     assert.ok(step, name)

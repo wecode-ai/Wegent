@@ -8,6 +8,7 @@ import {
   configureFirstProjectExecutionEnvironment,
   reloadMainWindow,
   selectCollaborationDomain,
+  selectCollaborationProjectView,
 } from '../modules/workspace-flows.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -39,10 +40,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     return text ? JSON.parse(text) : null
   }
   const openMilestones = async control => {
-    await control.command('waitFor', scoped('collaboration-milestones-tab'), {
-      timeoutMs: uiTimeoutMs,
-    })
-    await control.command('click', scoped('collaboration-milestones-tab'))
+    await selectCollaborationProjectView(control, CONTENT, 'milestones', uiTimeoutMs)
     await control.command('waitFor', scoped('milestones-page'), { timeoutMs: uiTimeoutMs })
   }
   const deleteMilestone = async (control, id) => {
@@ -58,7 +56,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     })
   }
   const bulkMilestone = async (control, id) => {
-    await control.command('click', scoped('collaboration-tab-table'))
+    await selectCollaborationProjectView(control, CONTENT, 'table')
     await control.command('waitFor', scoped('collaboration-issue-table'))
     const unchecked = `${scoped('collaboration-issue-table-select-all')}:not(:checked)`
     if (Number(await control.command('getElementCount', unchecked)) > 0) {
@@ -309,9 +307,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     async verify(control) {
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('openWeworkScheme', 'body', { value: `wework://boards/${project.id}` })
-      await control.command('waitFor', scoped('collaboration-tab-board'), {
-        timeoutMs: workbenchReadyTimeoutMs,
-      })
+      await selectCollaborationProjectView(control, CONTENT, 'board', workbenchReadyTimeoutMs)
       await openMilestones(control)
       await control.command('waitFor', scoped(`milestone-${milestone.id}`), {
         text: '100%',
@@ -324,9 +320,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await control.command('click', scoped('milestones-back'))
       await request(`/api/v1/loop-items/${issue.id}/restore`, 'POST')
       await reloadMainWindow(control, 'The restored cloud fixture must be loaded by the board')
-      await control.command('clickWhenEnabled', scoped('collaboration-tab-board'), {
-        timeoutMs: workbenchReadyTimeoutMs,
-      })
+      await selectCollaborationProjectView(control, CONTENT, 'board', workbenchReadyTimeoutMs)
       await control.command('waitFor', scoped(`cloud-todo-card-milestone-${issue.id}`), {
         text: 'Cloud release',
       })
@@ -393,7 +387,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         text: '协作交付目标',
       })
       await captureScreenshot(control, 'milestones-05c-local-edited.png', 'body')
-      await control.command('click', scoped('collaboration-tab-board'))
+      await selectCollaborationProjectView(control, CONTENT, 'board')
       await control.command('clickWhenEnabled', scoped('collaboration-issue-create'))
       await control.command('waitFor', `${scoped('issue-milestone')}:enabled`)
       await selectMilestone(control, localId)
@@ -486,7 +480,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         text: '100%',
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('click', scoped('collaboration-tab-board'))
+      await selectCollaborationProjectView(control, CONTENT, 'board')
       await control.command('hover', scoped(`collaboration-issue-${localIssue}`))
       await control.command('click', scoped(`cloud-todo-card-more-${localIssue}`))
       await control.command('click', scoped(`cloud-todo-card-archive-${localIssue}`))
@@ -592,9 +586,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         uiTimeoutMs
       )
       await reloadMainWindow(control, 'The cross-milestone child must survive reopening')
-      await control.command('clickWhenEnabled', scoped('collaboration-tab-board'), {
-        timeoutMs: workbenchReadyTimeoutMs,
-      })
+      await selectCollaborationProjectView(control, CONTENT, 'board', workbenchReadyTimeoutMs)
       await control.command('waitFor', `${scoped('milestone-filter')}:enabled`)
       await selectMilestone(control, localId, 'milestone-filter')
       await control.command('waitFor', scoped(`cloud-todo-card-${localIssue}`))
@@ -670,7 +662,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await openMilestones(control)
       await deleteMilestone(control, localId)
       await captureScreenshot(control, 'milestones-09-local-deleted.png', 'body')
-      await control.command('click', scoped('collaboration-tab-board'))
+      await selectCollaborationProjectView(control, CONTENT, 'board')
       await control.command('waitFor', scoped(`cloud-todo-card-${localIssue}`), {
         text: 'Local milestone Issue',
         timeoutMs: uiTimeoutMs,

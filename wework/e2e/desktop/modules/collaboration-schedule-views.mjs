@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { selectCollaborationProjectView } from './workspace-flows.mjs'
 
 function dateKey(value) {
   const year = value.getFullYear()
@@ -240,7 +241,7 @@ export async function verifyCollaborationScheduleViews({
   )
   await capture(control, 'offline-local-project-space-03-gantt-schedule.png')
 
-  await control.command('click', scoped('[data-testid="collaboration-tab-table"]'))
+  await selectCollaborationProjectView(control, scoped('').trim(), 'table')
   await control.command('waitFor', scoped('[data-testid="collaboration-issue-table"]'), {
     text: issueTitle,
     visible: true,

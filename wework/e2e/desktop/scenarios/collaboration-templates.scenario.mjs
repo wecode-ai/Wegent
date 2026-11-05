@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { reloadMainWindow } from '../modules/workspace-flows.mjs'
+import { reloadMainWindow, selectCollaborationProjectView } from '../modules/workspace-flows.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const scoped = selector => `${CONTENT} ${selector}`
@@ -364,7 +364,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         timeoutMs: uiTimeoutMs,
       })
       await wait(control, 'cloud-project-header-title', projectName)
-      await click(control, 'collaboration-tab-manage')
+      await selectCollaborationProjectView(control, CONTENT, 'manage')
       await click(control, 'collaboration-project-settings-sharing')
       await wait(control, 'project-template-settings')
       await capture(control, '04-sharing-settings')
@@ -400,7 +400,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await capture(control, '09-imported-groups')
       await reloadMainWindow(control, 'Template-created project did not reload')
       await wait(control, 'cloud-project-header-title', projectName)
-      await click(control, 'collaboration-tab-manage')
+      await selectCollaborationProjectView(control, CONTENT, 'manage')
       await click(control, 'collaboration-project-settings-groups')
       await wait(control, 'collaboration-project-groups-page', '调研分析小组')
       await capture(control, '10-persisted')

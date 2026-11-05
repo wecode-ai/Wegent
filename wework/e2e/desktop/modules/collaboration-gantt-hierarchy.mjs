@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
-import { reloadMainWindow } from './workspace-flows.mjs'
+import { reloadMainWindow, selectCollaborationProjectView } from './workspace-flows.mjs'
 import { waitForBoardValue } from './collaboration-board-flows.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -145,7 +145,7 @@ export async function verifyGanttHierarchyAndDetailArchive(control, project, tim
   )
 
   // The existing project uses tag columns, so no Completed column is required.
-  await click('collaboration-tab-board')
+  await selectCollaborationProjectView(control, CONTENT, 'board')
   await click(`cloud-todo-card-${parent.id}`)
   await control.command('focusMainWindow', 'body')
   await click('cloud-todo-more-properties')
