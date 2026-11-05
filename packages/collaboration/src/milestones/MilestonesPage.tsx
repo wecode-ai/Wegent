@@ -263,20 +263,17 @@ export function MilestonesPage({
             <div className="my-4">
               <MilestoneProgress item={active} messages={m} />
             </div>
-            {(active.archived_issues ?? 0) > 0 ? (
-              <p className="my-3 text-sm text-text-muted">
-                {active.archived_issues} {m.archived}{" "}
-                {onOpenArchive ? (
-                  <button
-                    type="button"
-                    className={buttonClass}
-                    data-testid="milestone-view-archive"
-                    onClick={onOpenArchive}
-                  >
-                    {m.viewArchive}
-                  </button>
-                ) : null}
-              </p>
+            {(active.archived_issues ?? 0) > 0 && onOpenArchive ? (
+              <div className="my-3">
+                <button
+                  type="button"
+                  className={buttonClass}
+                  data-testid="milestone-view-archive"
+                  onClick={onOpenArchive}
+                >
+                  {m.viewArchive}
+                </button>
+              </div>
             ) : null}
             <div key={active.id}>
               {renderIssues(
