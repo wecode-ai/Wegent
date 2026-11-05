@@ -337,17 +337,21 @@ describe('workbenchRuntimeHelpers', () => {
     expect(updated?.chats[0]?.tasks.map(task => task.title)).toEqual(['解决分支冲突', '未修改'])
   })
 
-  test('stores the last project per user and ignores invalid values', () => {
-    writeLastProjectId(7, 42)
+  test('stores the last project per backend and owner and ignores invalid values', () => {
+    const owner = JSON.stringify(['https://first.example/api', 7])
+    const otherBackend = JSON.stringify(['https://second.example/api', 7])
+    const otherUser = JSON.stringify(['https://first.example/api', 8])
+    writeLastProjectId(owner, 42)
 
-    expect(readLastProjectId(7)).toBe(42)
-    expect(readLastProjectId(8)).toBeUndefined()
+    expect(readLastProjectId(owner)).toBe(42)
+    expect(readLastProjectId(otherBackend)).toBeUndefined()
+    expect(readLastProjectId(otherUser)).toBeUndefined()
 
-    writeLastProjectId(7, null)
-    expect(readLastProjectId(7)).toBeNull()
+    writeLastProjectId(owner, null)
+    expect(readLastProjectId(owner)).toBeNull()
 
-    localStorage.setItem('wework.lastProjectId.7', 'not-a-project')
-    expect(readLastProjectId(7)).toBeUndefined()
+    localStorage.setItem(`wework.lastProjectId.${owner}`, 'not-a-project')
+    expect(readLastProjectId(owner)).toBeUndefined()
   })
 
   test('keeps multi-location non-local projects explicit', () => {

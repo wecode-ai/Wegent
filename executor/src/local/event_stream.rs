@@ -225,11 +225,13 @@ impl EventJournal {
             .unwrap_or_default()
             .as_millis()
             .min(u128::from(u64::MAX / 1000)) as u64;
+        let next_sequence = epoch_millis.saturating_mul(1000).max(1);
         Self {
             events: VecDeque::new(),
             bytes: 0,
-            dropped_through: 0,
-            next_sequence: epoch_millis.saturating_mul(1000).max(1),
+            // A new process cannot replay events from an earlier journal.
+            dropped_through: next_sequence.saturating_sub(1),
+            next_sequence,
         }
     }
 
@@ -476,6 +478,94 @@ mod tests {
     };
     use serde_json::json;
     use tokio::sync::broadcast;
+
+    fn event_hub() -> ExecutorEventHub {
+        let (raw_tx, _) = broadcast::channel(8);
+        ExecutorEventHub::new(raw_tx)
+    }
+
+    #[test]
+    fn a_new_journal_reports_old_cursors_even_before_its_first_event() {
+        for has_event in [false, true] {
+            let hub = event_hub();
+            let boundary = hub.subscribe_from_now().resume_after;
+            let old_cursor = boundary.checked_sub(1).unwrap();
+            assert!(old_cursor > 0);
+            if has_event {
+                hub.publish(json!({"event":"response.created","payload":{}}));
+            }
+            let latest = hub.subscribe_from_now().resume_after;
+
+            let subscription = hub.subscribe_after(old_cursor);
+
+            assert_eq!(subscription.replay.len(), 1);
+            let recovery = &subscription.replay[0];
+            assert_eq!(recovery["event"], "executor.event_lagged");
+            assert_eq!(recovery["payload"]["reason"], "event_history_lost");
+            assert_eq!(recovery["payload"]["requestedAfter"], old_cursor);
+            assert_eq!(recovery["payload"]["latestSequence"], latest);
+            assert!(subscription.resume_after > latest);
+            assert!(hub
+                .subscribe_after(subscription.resume_after)
+                .replay
+                .is_empty());
+        }
+    }
+
+    #[test]
+    fn zero_and_the_from_now_boundary_can_subscribe_without_false_history_loss() {
+        let hub = event_hub();
+        let from_now = hub.subscribe_from_now();
+        assert!(hub.subscribe_after(0).replay.is_empty());
+        assert!(hub.subscribe_after(from_now.resume_after).replay.is_empty());
+
+        hub.publish(json!({"event":"response.created","payload":{}}));
+
+        for cursor in [0, from_now.resume_after] {
+            let resumed = hub.subscribe_after(cursor);
+            assert_eq!(resumed.replay.len(), 1);
+            assert_eq!(resumed.replay[0]["event"], "response.created");
+            assert!(resumed.resume_after > from_now.resume_after);
+            assert!(hub.subscribe_after(resumed.resume_after).replay.is_empty());
+        }
+    }
+
+    #[test]
+    fn retained_events_replay_only_after_the_same_journal_cursor() {
+        let hub = event_hub();
+        hub.publish(json!({"event":"response.created","payload":{}}));
+        let first = hub.subscribe_from_now().resume_after;
+        hub.publish(json!({"event":"response.completed","payload":{}}));
+
+        let resumed = hub.subscribe_after(first);
+
+        assert_eq!(resumed.replay.len(), 1);
+        assert_eq!(resumed.replay[0]["event"], "response.completed");
+        assert_eq!(resumed.resume_after, first + 1);
+    }
+
+    #[test]
+    fn a_truncated_journal_preserves_its_exact_replay_boundary() {
+        let hub = event_hub();
+        let initial_boundary = hub.subscribe_from_now().resume_after;
+        for _ in 0..=EVENT_JOURNAL_MAX_EVENTS {
+            hub.publish(json!({"event":"response.created","payload":{}}));
+        }
+        let first_dropped = initial_boundary + 1;
+
+        let retained = hub.subscribe_after(first_dropped);
+
+        assert_eq!(retained.replay.len(), EVENT_JOURNAL_MAX_EVENTS);
+        assert!(retained
+            .replay
+            .iter()
+            .all(|event| event["event"] == "response.created"));
+        assert_eq!(event_sequence(&retained.replay[0]), Some(first_dropped + 1));
+        let lost = hub.subscribe_after(initial_boundary);
+        assert_eq!(lost.replay.len(), 1);
+        assert_eq!(lost.replay[0]["event"], "executor.event_lagged");
+        assert_eq!(lost.replay[0]["payload"]["reason"], "event_history_lost");
+    }
 
     #[test]
     fn journal_bounds_events_and_reports_history_loss() {

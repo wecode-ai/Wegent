@@ -108,10 +108,10 @@ Backend 将 `deviceId + localTaskId` 转发给对应设备的 `runtime.tasks.tra
 Wework 的 Codex 本机会话只使用一条主读取路径，避免列表、打开、刷新各自实现一套 transcript 逻辑：
 
 1. 列表通过常驻 Codex app-server 调用 `thread/list`，使用 `recency_at` 降序、`archived` 过滤和 `useStateDbOnly` 参数读取 thread metadata，不扫描 JSONL transcript。executor 对短时间内的重复列表请求做小窗口缓存，线程管理操作或本地任务状态变化后会失效缓存，然后合并设备侧 LocalTask 索引。
-2. 打开或刷新先调用 `thread/read(includeTurns=false)` 获取 thread metadata，再调用 `thread/turns/list(itemsView=notLoaded, sortDirection=desc)` 获取一页回合。executor 不读取或解析 rollout JSONL，也不调用 `thread/read(includeTurns=true)`。
-3. 每个返回的回合都必须通过 `thread/items/list(sortDirection=asc)` 加载完整 item。executor 按 provider item ID 去重和更新运行中快照，再统一生成 message、tool block、thinking block 和文件变更。
-4. `nextCursor` 和 `backwardsCursor` 是 Codex 生成的不透明游标。普通打开只读取请求页；向前或向后翻页时原样传回对应游标。搜索、Supervisor、fork 等需要完整历史的消费者沿 `nextCursor` 读取到末尾。
-5. executor 不保留旧的本地 offset 分页或 `itemsView=full` 兼容路径。Codex app-server 不支持 `thread/turns/list` 或 `thread/items/list` 时，请求直接失败，不能回退到 rollout 文件或 `thread/read(includeTurns=true)`。
+2. 打开或刷新先调用 `thread/read(includeTurns=false)` 获取 thread metadata，并按明确的 `historyMode` 选择对应读取方式。`paginated` 会话通过轻量 turn metadata 和 `thread/timeline/list` 读取原生页面；正常 v2 读取同时限制条目数与页面字节，不必为长回合加载全部 item。
+3. 明确标为 `legacy` 的会话不支持 `thread/items/list`。正常 v2 读取直接从其规范 rollout 复用 legacy 投影与上下文窗口，在共享工作池中逐记录检查取消，保留 synthetic ID、回滚和终态。每页正文最多 100 条、2 MiB，单个不可分割的大条目可独占一页。该路径仍需扫描元数据至文件末尾，不积累全部历史正文。
+4. 原生页面与 legacy 页面分别返回所属读取方式的不透明游标；前端只原样回传，不推导全局消息位置。executor 按 item 身份合并运行中快照，再统一生成 message、tool block、thinking block 和文件变更。全文导出保持显式读取。
+5. 不通过捕获“不支持”错误切换读取方式。已选择的原生 API 或 legacy rollout 读取失败时直接返回错误，不回退到缓存正文或 `thread/read(includeTurns=true)`。
 
 列表、读取和线程管理共享同一个常驻 Codex app-server 连接，避免每次 RPC 都重新启动子进程。新建 thread 显式设置 `historyMode=paginated`；Wework 随包 Codex 版本必须支持 `thread/turns/list` 和 `thread/items/list`，否则属于不受支持的运行时版本。
 

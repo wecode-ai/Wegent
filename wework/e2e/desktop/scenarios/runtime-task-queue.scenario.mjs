@@ -301,12 +301,23 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       }
       await control.command('click', '[data-testid="settings-button"]')
       await control.command('click', '[data-testid="settings-menu-button"]')
-      await control.command('waitFor', '[data-testid="general-max-concurrent-tasks-select"]', {
-        timeoutMs: uiTimeoutMs,
-      })
+      await control.command(
+        'waitFor',
+        '[data-testid="general-max-concurrent-tasks-select"]:enabled',
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
       await control.command('select', '[data-testid="general-max-concurrent-tasks-select"]', {
         value: '1',
       })
+      await control.command(
+        'waitFor',
+        '[data-testid="general-max-concurrent-tasks-select"]:enabled',
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
       assert.equal(
         await control.command('getValue', '[data-testid="general-max-concurrent-tasks-select"]'),
         '1',

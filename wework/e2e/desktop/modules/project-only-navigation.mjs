@@ -280,6 +280,7 @@ export function createProjectOnlyNavigationRegression({ uiTimeoutMs, executorHom
         readerToken,
         creatorToken,
         restartDesktopApp,
+        uiTimeoutMs,
       })
       const afterPreferences = await request(
         readerToken,

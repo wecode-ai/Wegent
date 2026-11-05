@@ -20,8 +20,24 @@ pub(crate) fn rollout_context_usage(thread: &Value) -> Option<Value> {
             .unwrap_or(thread),
     )
     .or_else(|| {
-        string_field(thread, "path").and_then(|path| rollout_path_context_usage(Path::new(&path)))
+        if thread["rolloutContextIndexed"] == true {
+            None
+        } else {
+            string_field(thread, "path")
+                .and_then(|path| rollout_path_context_usage(Path::new(&path)))
+        }
     })
+}
+
+pub(super) fn record_context_usage(item: &Value) -> Option<Value> {
+    let payload = codex_wrapped_item_payload(item).unwrap_or(item);
+    if !matches!(item_type(payload).as_str(), "tokencount" | "token_count") {
+        return None;
+    }
+    payload
+        .get("info")
+        .and_then(normalize_token_usage_info)
+        .or_else(|| normalize_thread_token_usage(payload))
 }
 
 fn rollout_path_context_usage(path: &Path) -> Option<Value> {
@@ -30,16 +46,7 @@ fn rollout_path_context_usage(path: &Path) -> Option<Value> {
         .lines()
         .map_while(Result::ok)
         .filter_map(|line| serde_json::from_str::<Value>(&line).ok())
-        .filter_map(|item| {
-            let payload = codex_wrapped_item_payload(&item).unwrap_or(&item);
-            if !matches!(item_type(payload).as_str(), "tokencount" | "token_count") {
-                return None;
-            }
-            payload
-                .get("info")
-                .and_then(normalize_token_usage_info)
-                .or_else(|| normalize_thread_token_usage(payload))
-        })
+        .filter_map(|item| record_context_usage(&item))
         .last()
 }
 

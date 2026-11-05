@@ -656,6 +656,7 @@ export async function createDesktopScenario({
               slug,
               homePath,
               captureScreenshot,
+              waitForValue,
               uiTimeoutMs,
             })
             await verifyConversationQrAuthorization({

@@ -42,6 +42,7 @@ impl RuntimeWorkHandler for RuntimeWorkRpcHandler {
                     format!("Unsupported Codex app-server method: {method}"),
                 ));
             }
+            let _restart_guard = codex_app_server_restart_gate().lock().await;
             let params = data
                 .get("params")
                 .cloned()

@@ -5,6 +5,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { verifyPluginAuthDetailRefresh } from '../../e2e/desktop/modules/plugin-auth-detail-refresh.mjs'
+import { waitForValue as waitForFixtureValue } from '../../e2e/desktop/modules/workspace-agent-setup.mjs'
 import {
   assertInstallButton,
   completedApiResourceTimings,
@@ -53,6 +54,12 @@ test('waits for the complete login label after logout despite its matching subst
       homePath,
       captureScreenshot: vi.fn(),
       uiTimeoutMs: 1000,
+      waitForValue: (
+        read: () => Promise<string>,
+        accept: (value: string) => boolean,
+        timeoutMs: number,
+        message: string
+      ) => waitForFixtureValue(read, accept, message, timeoutMs),
     })
     expect(staleReads).toBe(2)
   } finally {
