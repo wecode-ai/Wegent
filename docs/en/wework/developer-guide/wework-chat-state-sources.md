@@ -24,6 +24,9 @@ After successful archival, remove the task through the shared lifecycle Store be
 the initiating view's task list. This confirmed user action is independent of background snapshot
 ownership. Removing through a non-owner's read-only view leaves embedded inbox conversations
 able to restore the old question from shared lifecycle state. Background write guards remain intact.
+After persisting archival, the executor emits the existing `runtime.work.changed` event so other
+subscribed views refresh their own task inventories. Updating only the initiating view cannot
+invalidate an embedded inbox conversation's stale inventory.
 
 Pending scans use current task sources and device pending inventories. Cached questions must
 not reintroduce archived or removed tasks. After a successful inventory read, remove questions,
