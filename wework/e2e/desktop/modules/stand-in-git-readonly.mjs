@@ -66,10 +66,10 @@ import { spawn } from 'node:child_process'
 const args = process.argv.slice(2)
 const expected = ['api', '--include', '--hostname', 'github.com', '--method', 'GET']
 const read = args.length === 7 && expected.every((value, i) => args[i] === value)
-  && ${JSON.stringify(['user', `repos/${repository}`])}.includes(args[6])
+  && ${JSON.stringify(['user', `repos/${repository}`, `repos/${repository}/events?per_page=100&page=1`])}.includes(args[6])
 const version = args.length === 1 && ['--version', 'version'].includes(args[0])
 if (!read && !version) {
-  console.error('Live GitHub verification permits only identity and selected-repository GET requests')
+  console.error('Live GitHub verification permits only identity, selected-repository and selected-repository activity GET requests')
   process.exit(64)
 }
 const child = spawn(${JSON.stringify(executable)}, args, {
@@ -235,7 +235,7 @@ child.on('exit', (code, signal) => {
       )
       assert.equal(repo.data.full_name, repository)
       live = { identity, repository }
-      const original = await rpc(control, 'runtime.stand_in.personal.get', { userId })
+      let original = await rpc(control, 'runtime.stand_in.personal.get', { userId })
       const catalog = await rpc(control, 'runtime.runner.catalog', {})
       const model = catalog.models.find(item => item.runtime === 'codex' && item.is_default)
       assert.ok(model, 'Readonly work requires the real Codex runtime')
@@ -246,6 +246,71 @@ child.on('exit', (code, signal) => {
         name: repository,
         kind: 'repository',
         policy: { automatic: true, askBeforeAct: true, immediate: false },
+      }
+      const activity = await rpc(
+        control,
+        'runtime.connections.git.read',
+        {
+          providerId: PROVIDER,
+          instance: identity.instance,
+          profile: identity.profile,
+          operation: 'repository_events',
+          repository,
+        },
+        90_000
+      )
+      assert.ok(
+        Array.isArray(activity.data),
+        'The real repository activity endpoint must return a page'
+      )
+      assert.equal(activity.profile, identity.profile)
+      console.log('[desktop-e2e-git] real selected-repository activity GET passed')
+      const beforeCli = await request('/v1/git-connections/subscriptions')
+      try {
+        const cliSettings = await rpc(
+          control,
+          'runtime.stand_in.personal.save',
+          {
+            userId,
+            settings: {
+              ...original,
+              primary: { ...original.primary, enabled: false, prompt: '', preferences: '', model },
+              roles: [
+                {
+                  ...original.roles[0],
+                  name: 'CLI 只读连接验证',
+                  enabled: false,
+                  prompt: '',
+                  model,
+                  connections: [{ ...source, transport: 'cli' }],
+                },
+              ],
+            },
+          },
+          180_000
+        )
+        const cli = cliSettings.roles[0].connections[0]
+        assert.equal(cli.transport, 'cli')
+        assert.equal(cli.subscriptionId, undefined)
+        assert.equal(cli.generation, undefined)
+        assert.equal(cli.boundary, undefined)
+        const afterCli = await request('/v1/git-connections/subscriptions')
+        assert.deepEqual(
+          afterCli.items.map(row => row.id).sort(),
+          beforeCli.items.map(row => row.id).sort(),
+          'A real CLI repository source must not create a cloud receiver'
+        )
+        console.log(
+          '[desktop-e2e-git] real selected-repository activity GET and CLI source save without cloud receiver passed'
+        )
+      } finally {
+        const latest = await rpc(control, 'runtime.stand_in.personal.get', { userId })
+        original = await rpc(
+          control,
+          'runtime.stand_in.personal.save',
+          { userId, settings: { ...original, version: latest.version } },
+          180_000
+        )
       }
       // Saving preflights the source and revalidates it before creating the cloud receiver.
       // Its multiple real provider requests must not use the ordinary 10s UI step budget.

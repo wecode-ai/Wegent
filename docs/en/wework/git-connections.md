@@ -45,6 +45,8 @@ Native read endpoints, providers, activation boundaries and UI tests cover CLI s
 
 The stand-in-git protocol integration retains real Backend, Redis and Executor signature, deduplication, collection and acknowledgement checks for the underlying Webhook capability. Its APIs remain available internally; the current connection UI exposes no setup entry and new CLI sources do not use them.
 
+The readonly extension using the execution device's native GitHub login verifies selected-repository activity GET and saving a CLI repository source without creating a cloud receiver. It also verifies readonly tools and native rejection of a write in the underlying protocol work conversation. Enable it explicitly with WEWORK_GIT_READONLY_REPOSITORY=owner/repository in the same checkpoint. Real gh permits only identity, the selected repository and its activity GETs, plus version queries. Test data and code workspaces remain isolated without copying credentials. Real personal activity reads, newly triggered platform events and successful external writes remain unverified.
+
 ## Implementation boundaries
 
 Rust Backend implements the new APIs and selects them in `backend-rs/config/routes.toml`, reusing existing Redis without new database tables or migrations. Redis stores subscription identity, device generation, encrypted receiver secrets and acknowledgment positions. Sorted sets order pending deliveries, hashes hold opaque payloads, and expiring delivery markers deduplicate ingress. Acknowledgments immediately delete confirmed payloads; pending events have a 30-day retention window. Subscription metadata retains the last sequence so expired or lost queues produce explicit gaps.

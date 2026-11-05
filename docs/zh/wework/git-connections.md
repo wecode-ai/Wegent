@@ -45,6 +45,8 @@ GitHub 复用原生 GitHub CLI 连接。GitLab 使用按实例隔离的原生设
 
 协议集成场景 stand-in-git 保留真实 Backend、Redis、Executor 的验签、去重、领取和确认测试，用于底层 Webhook 能力。底层接口仍保留，当前连接界面不开放配置入口；此能力不用于新的 CLI 来源。
 
+使用执行设备现有原生 GitHub 登录的只读扩展已验证指定仓库活动 GET，以及保存 CLI 仓库连接不创建云端接收器。还验证底层协议工作对话中的只读能力与原生拒绝写入。通过 WEWORK_GIT_READONLY_REPOSITORY=owner/repository 显式启用同一 checkpoint 的扩展；真实 gh 只允许身份、指定仓库及其活动 GET 和版本查询，测试数据与代码工作区保持隔离，不复制凭据。未验证真实个人活动读取、平台新事件触发或成功外部写入。
+
 ## 实现边界
 
 新 API 由 Rust Backend 实现并在 `backend-rs/config/routes.toml` 选路，复用现有 Redis，不新增数据库表或迁移。Redis 保存订阅身份、设备代次、加密验签密钥和确认位置；有序集合保存待领取位置，Hash 保存原始载荷，带 TTL 的投递标记负责去重。已确认载荷立即删除，未确认事件使用 30 天保留窗口。订阅元数据保留最后序号，队列过期或丢失后能报告缺口。
