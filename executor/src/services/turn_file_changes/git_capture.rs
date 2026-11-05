@@ -22,15 +22,19 @@ pub(super) fn git_output_vec(
         input,
         GIT_CAPTURE_TIMEOUT,
     );
-    match tokio::runtime::Handle::try_current() {
-        // Production captures run in spawn_blocking, outside the async worker.
-        Ok(handle) => handle.block_on(run),
-        Err(_) => tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|error| error.to_string())?
-            .block_on(run),
-    }
+    wait_for_capture(run)
+}
+
+fn wait_for_capture(
+    run: impl std::future::Future<Output = Result<Vec<u8>, String>>,
+) -> Result<Vec<u8>, String> {
+    // This synchronous API runs outside async workers. A borrowed Handle cannot
+    // drive a current-thread caller's I/O, so keep the capture driver independent.
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| error.to_string())?
+        .block_on(run)
 }
 
 async fn git_output_async(
@@ -120,6 +124,45 @@ async fn git_output_async(
 mod capture_tests {
     use super::*;
     use std::{fs, os::unix::fs::PermissionsExt, process::Command};
+
+    #[test]
+    fn synchronous_capture_drives_io_without_polling_the_callers_runtime() {
+        let root = tempfile::tempdir().unwrap();
+        let git = root.path().join("git");
+        fs::write(&git, "#!/bin/sh\nsleep 0.1\nprintf captured\n").unwrap();
+        fs::set_permissions(&git, fs::Permissions::from_mode(0o700)).unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let completed_without_driver = runtime.block_on(async {
+            let worker = tokio::task::spawn_blocking(move || {
+                let run = git_output_async(
+                    &git,
+                    root.path(),
+                    vec![],
+                    None,
+                    None,
+                    Duration::from_secs(10),
+                );
+                let result = wait_for_capture(run);
+                sender.send(result).unwrap();
+            });
+            // A synchronous caller must not be responsible for driving worker I/O.
+            let result = receiver.recv_timeout(Duration::from_secs(2));
+            // Resume the caller before asserting, so even the broken implementation
+            // can clean up its OS child and blocking worker without hanging teardown.
+            worker.await.unwrap();
+            result
+        });
+        assert_eq!(
+            completed_without_driver
+                .expect("Synchronous capture must drive I/O without its caller")
+                .unwrap(),
+            b"captured"
+        );
+    }
 
     async fn wait_for_child_pid(path: &Path) -> i32 {
         let started = std::time::Instant::now();
