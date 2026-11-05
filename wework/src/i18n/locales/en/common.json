@@ -4672,6 +4672,8 @@
     "copied": "Copied",
     "subscribe": "Subscribe",
     "copy_link": "Copy link",
+    "copy_web_link": "Copy web link",
+    "copy_web_link_failed": "Copy failed, try again",
     "created_by": "Created by {{name}}",
     "description": "Description",
     "runtime_task_description": "This workspace contains Wework tasks. Open an original task to see its full execution context and message history.",
