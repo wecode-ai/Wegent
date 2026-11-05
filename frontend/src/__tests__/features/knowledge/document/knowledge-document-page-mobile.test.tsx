@@ -423,3 +423,62 @@ it('keeps team filtering within each relationship and clears it when opening com
   expect(screen.getByTestId('kb-row-7')).toBeInTheDocument()
   expect(screen.getByTestId('kb-row-31')).toBeInTheDocument()
 })
+
+it('keeps company libraries only in all and company entries and filters the deduplicated company scope', async () => {
+  const ownedCompany = row(
+    { ...baseKb, id: 41, name: 'Owned company', namespace: 'company' },
+    'organization'
+  )
+  const sharedCompany = row(
+    { ...baseKb, id: 42, name: 'Shared company', namespace: 'company', user_id: 2 },
+    'organization'
+  )
+  const personal = row({ ...baseKb, id: 43, name: 'Shared personal', user_id: 2 })
+  data.personal.created_by_me.push(ownedCompany)
+  data.personal.shared_with_me = [sharedCompany, personal]
+  data.organization.knowledge_bases = [ownedCompany, sharedCompany]
+  render(<KnowledgeDocumentPageMobile />)
+  await screen.findByTestId('kb-row-41')
+  const user = userEvent.setup()
+  async function openEntry(id: string) {
+    await user.click(screen.getByTestId('knowledge-mobile-navigation-toggle'))
+    await user.click(screen.getByTestId(id))
+  }
+  expect(screen.getByTestId('knowledge-result-count')).toHaveTextContent('4')
+  expect(screen.getAllByTestId('kb-row-41')).toHaveLength(1)
+  await user.click(screen.getByTestId('knowledge-team-filter'))
+  expect(screen.getByTestId('knowledge-space-count-company')).toHaveTextContent('2')
+  await user.type(screen.getByTestId('knowledge-team-search'), 'companySpace')
+  await user.click(screen.getByTestId('knowledge-space-option-company'))
+  expect(screen.getByTestId('knowledge-result-count')).toHaveTextContent('2')
+  expect(screen.queryByTestId('kb-row-7')).not.toBeInTheDocument()
+  await user.type(screen.getByTestId('knowledge-search'), 'Owned')
+  expect(screen.getByTestId('knowledge-result-count')).toHaveTextContent('1')
+  await user.click(screen.getByTestId('knowledge-team-filter'))
+  expect(screen.getByTestId('knowledge-space-count-company')).toHaveTextContent('1')
+  await user.keyboard('{Escape}')
+  await user.clear(screen.getByTestId('knowledge-search'))
+  await openEntry('nav-personal-item')
+  expect(screen.getByTestId('kb-row-7')).toBeInTheDocument()
+  expect(screen.queryByTestId('kb-row-41')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('kb-row-42')).not.toBeInTheDocument()
+  await user.click(screen.getByTestId('knowledge-team-filter'))
+  expect(screen.queryByTestId('knowledge-space-option-company')).not.toBeInTheDocument()
+  await user.keyboard('{Escape}')
+  await openEntry('nav-shared-item')
+  expect(screen.getByTestId('kb-row-43')).toBeInTheDocument()
+  expect(screen.queryByTestId('kb-row-42')).not.toBeInTheDocument()
+  await user.click(screen.getByTestId('knowledge-team-filter'))
+  expect(screen.queryByTestId('knowledge-space-option-company')).not.toBeInTheDocument()
+  await user.keyboard('{Escape}')
+  await openEntry('nav-organization-item')
+  expect(screen.getByTestId('kb-row-41')).toBeInTheDocument()
+  expect(screen.getByTestId('kb-row-42')).toBeInTheDocument()
+  expect(screen.getByTestId('knowledge-result-count')).toHaveTextContent('2')
+  expect(screen.queryByTestId('knowledge-team-filter')).not.toBeInTheDocument()
+  await openEntry('nav-all-item')
+  await user.click(screen.getByTestId('knowledge-team-filter'))
+  await user.click(screen.getByTestId('knowledge-space-option-company'))
+  await user.click(screen.getByTestId('create-kb-button'))
+  expect(screen.getByTestId('create-kb-dialog')).toBeInTheDocument()
+})

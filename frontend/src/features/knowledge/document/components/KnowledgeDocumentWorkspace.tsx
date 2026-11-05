@@ -617,6 +617,7 @@ function KnowledgeDocumentSession({
         isFavorite={isFavorite}
         getKbGroupInfo={sidebar.getKbGroupInfo}
         isAllMode
+        showCompanySpace={sidebar.viewMode === 'all'}
         filterGroupId={sidebar.filterGroupId}
         onFilterGroupChange={sidebar.setFilterGroupId}
         availableGroups={availableGroups.filter(g => g.id.startsWith('group-'))}

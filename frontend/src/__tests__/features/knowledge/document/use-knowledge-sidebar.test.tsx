@@ -172,7 +172,7 @@ describe('relationship navigation and scoped requests', () => {
     await waitFor(() => expect(result.current.hasLoaded).toBe(true))
     expect(result.current.allKnowledgeBases.map(kb => kb.id)).toEqual([1, 2, 3, 4])
     expect(result.current.visibleKnowledgeBases.personalCreatedByMe.map(kb => kb.id)).toEqual([
-      1, 3, 4,
+      1, 3,
     ])
     expect(result.current.visibleKnowledgeBases.personalSharedWithMe.map(kb => kb.id)).toEqual([2])
     expect(result.current.allKnowledgeBasesWithGroupInfo.find(kb => kb.id === 3)?.team_ids).toEqual(
@@ -197,10 +197,10 @@ describe('relationship navigation and scoped requests', () => {
     )
     await waitFor(() => expect(result.current.hasLoaded).toBe(true))
     expect(result.current.summary?.total_count).toBe(3)
-    expect(result.current.visibleKnowledgeBases.personalCreatedByMe).toHaveLength(2)
+    expect(result.current.visibleKnowledgeBases.personalCreatedByMe).toHaveLength(1)
     rerender({ advanced: true })
     expect(result.current.summary?.total_count).toBe(4)
-    expect(result.current.visibleKnowledgeBases.personalCreatedByMe).toHaveLength(3)
+    expect(result.current.visibleKnowledgeBases.personalCreatedByMe).toHaveLength(2)
   })
   it.each(['user', 'backend', 'session'])(
     'isolates %s changes and rejects late list and detail responses',

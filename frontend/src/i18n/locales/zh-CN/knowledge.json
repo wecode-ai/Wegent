@@ -1007,7 +1007,8 @@
       "anyScope": "全部空间",
       "searchLibraryFilters": "搜索空间名称或标识",
       "noMatchingFilters": "无匹配的筛选项",
-      "typeAndSort": "类型与排序"
+      "typeAndSort": "类型与排序",
+      "companySpace": "公司空间"
     },
     "creation": {
       "created": "库已创建",

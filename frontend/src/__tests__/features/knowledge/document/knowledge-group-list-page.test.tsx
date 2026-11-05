@@ -708,3 +708,52 @@ it.each([false, true])('ignores stale space filters on the company page (mobile=
   expect(screen.getByTestId('knowledge-search')).toBeInTheDocument()
   expect(screen.queryByTestId('knowledge-clear-filters')).not.toBeInTheDocument()
 })
+
+it('counts company space after type filtering and deduplicates its rows on desktop', async () => {
+  const document = {
+    ...createKnowledgeBase(401, 'Company docs', 'notebook'),
+    namespace: 'company',
+    namespace_level: 'organization',
+  }
+  const code = {
+    ...createKnowledgeBase(402, 'Company repo', 'code_wiki'),
+    namespace: 'company',
+    namespace_level: 'organization',
+  }
+  const personal = createKnowledgeBase(403, 'Personal', 'notebook')
+  const rows = [document, document, code, personal].map(kb => ({
+    ...kb,
+    group_id: 'default',
+    group_name: 'Personal',
+    group_type: 'personal' as const,
+  }))
+  function AllPage() {
+    const [filter, setFilter] = useState<string | null>(null)
+    return (
+      <KnowledgeGroupListPage
+        groupId={null}
+        groupName="All"
+        isAllMode
+        showCompanySpace
+        showAdvancedKnowledge
+        knowledgeBases={[]}
+        knowledgeBasesWithGroupInfo={rows}
+        isLoading={false}
+        onSelectKb={jest.fn()}
+        filterGroupId={filter}
+        onFilterGroupChange={setFilter}
+      />
+    )
+  }
+  render(<AllPage />)
+  const user = userEvent.setup()
+  await user.click(screen.getByTestId('knowledge-team-filter'))
+  expect(screen.getByTestId('knowledge-space-count-company')).toHaveTextContent('2')
+  await user.click(screen.getByTestId('knowledge-space-option-company'))
+  expect(screen.getAllByTestId(/^kb-row-/)).toHaveLength(2)
+  expect(screen.queryByTestId('kb-row-403')).not.toBeInTheDocument()
+  await user.click(screen.getByTestId('knowledge-category-document-filter'))
+  expect(screen.getAllByTestId(/^kb-row-/)).toHaveLength(1)
+  await user.click(screen.getByTestId('knowledge-team-filter'))
+  expect(screen.getByTestId('knowledge-space-count-company')).toHaveTextContent('1')
+})

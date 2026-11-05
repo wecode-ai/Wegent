@@ -15,7 +15,7 @@ import {
 } from '@/components/ui/command'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useTranslation } from '@/hooks/useTranslation'
-import { PERSONAL_SPACE_FILTER } from '../navigation'
+import { COMPANY_SPACE_FILTER, PERSONAL_SPACE_FILTER } from '../navigation'
 
 export interface KnowledgeTeamOption {
   id: string
@@ -27,12 +27,14 @@ export interface KnowledgeTeamOption {
 export function KnowledgeLibraryFilter({
   groups,
   personalCount,
+  companyCount,
   value,
   onValueChange,
   mobile,
 }: {
   groups: KnowledgeTeamOption[]
   personalCount: number
+  companyCount?: number
   value: string | null
   onValueChange: (value: string | null) => void
   mobile: boolean
@@ -41,13 +43,26 @@ export function KnowledgeLibraryFilter({
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
   const query = search.trim().toLocaleLowerCase()
-  const personalLabel = t('document.navigation.personalSpace')
-  const selected =
-    value === PERSONAL_SPACE_FILTER
-      ? { displayName: personalLabel, kbCount: personalCount }
-      : groups.find(group => group.id === value)
+  const spaces = [
+    {
+      id: PERSONAL_SPACE_FILTER,
+      key: 'personal',
+      displayName: t('document.navigation.personalSpace'),
+      kbCount: personalCount,
+    },
+    ...(companyCount === undefined
+      ? []
+      : [
+          {
+            id: COMPANY_SPACE_FILTER,
+            key: 'company',
+            displayName: t('document.navigation.companySpace'),
+            kbCount: companyCount,
+          },
+        ]),
+  ]
+  const selected = [...spaces, ...groups].find(option => option.id === value)
   const anyScope = t('document.navigation.anyScope')
-  const showPersonal = !query || personalLabel.toLocaleLowerCase().includes(query)
   const visibleGroups = groups.filter(group =>
     query
       ? group.displayName.toLocaleLowerCase().includes(query) ||
@@ -120,26 +135,27 @@ export function KnowledgeLibraryFilter({
                   {anyScope}
                 </CommandItem>
               )}
-              {showPersonal && (
-                <CommandItem
-                  value={PERSONAL_SPACE_FILTER}
-                  data-testid="knowledge-space-option-personal"
-                  data-current={value === PERSONAL_SPACE_FILTER}
-                  className="min-h-11"
-                  onSelect={() => select(PERSONAL_SPACE_FILTER)}
-                >
-                  <Check
-                    className={value === PERSONAL_SPACE_FILTER ? 'text-primary' : 'opacity-0'}
-                  />
-                  <span className="min-w-0 flex-1">{personalLabel}</span>
-                  <span
-                    className="shrink-0 text-xs tabular-nums text-text-muted"
-                    data-testid="knowledge-space-count-personal"
+              {spaces
+                .filter(space => !query || space.displayName.toLocaleLowerCase().includes(query))
+                .map(space => (
+                  <CommandItem
+                    key={space.id}
+                    value={space.id}
+                    data-testid={`knowledge-space-option-${space.key}`}
+                    data-current={value === space.id}
+                    className="min-h-11"
+                    onSelect={() => select(space.id)}
                   >
-                    {personalCount}
-                  </span>
-                </CommandItem>
-              )}
+                    <Check className={value === space.id ? 'text-primary' : 'opacity-0'} />
+                    <span className="min-w-0 flex-1">{space.displayName}</span>
+                    <span
+                      className="shrink-0 text-xs tabular-nums text-text-muted"
+                      data-testid={`knowledge-space-count-${space.key}`}
+                    >
+                      {space.kbCount}
+                    </span>
+                  </CommandItem>
+                ))}
               {visibleGroups.map(group => (
                 <CommandItem
                   key={group.id}

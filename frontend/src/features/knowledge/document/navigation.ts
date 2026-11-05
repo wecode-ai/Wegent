@@ -3,6 +3,7 @@
 
 import type { AllGroupedKnowledgeResponse, KnowledgeBaseWithGroupInfo } from '@/types/knowledge'
 
+export const COMPANY_SPACE_FILTER = 'organization'
 export const PERSONAL_SPACE_FILTER = 'space:personal'
 
 /** Merge display identity without losing any effective receiving team. */

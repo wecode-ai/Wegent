@@ -292,7 +292,10 @@ export function useKnowledgeSidebar({
     [allKnowledgeBasesWithGroupInfo]
   )
   const personalCreatedByMeRaw = useMemo(
-    () => allKnowledgeBasesWithGroupInfo.filter(kb => kb.user_id === user?.id),
+    () =>
+      allKnowledgeBasesWithGroupInfo.filter(
+        kb => kb.user_id === user?.id && kb.namespace_level !== 'organization'
+      ),
     [allKnowledgeBasesWithGroupInfo, user?.id]
   )
   const personalSharedWithMeRaw = useMemo(

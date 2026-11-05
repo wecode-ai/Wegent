@@ -14,7 +14,7 @@
 'use client'
 
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
-import { PERSONAL_SPACE_FILTER } from '../navigation'
+import { COMPANY_SPACE_FILTER, PERSONAL_SPACE_FILTER } from '../navigation'
 import { Input } from '@/components/ui/input'
 import { getKbShareSourceText } from '@/features/knowledge/utils/share-source'
 import {
@@ -107,6 +107,7 @@ export interface KnowledgeGroupListPageProps {
   getKbGroupInfo?: (kb: KbDataItem) => KbGroupInfo
   /** Whether this is "All" mode */
   isAllMode?: boolean
+  showCompanySpace?: boolean
   /** Selected team identity or personal-space filter (for "All" mode). */
   filterGroupId?: string | null
   /** Set filter group ID (for "All" mode) */
@@ -178,6 +179,7 @@ function formatDateTime(dateStr: string | undefined, locale: string): string {
 
 function matchesSpaceFilter(kb: KbDataItem, spaceId: string): boolean {
   const level = 'namespace_level' in kb ? kb.namespace_level : null
+  if (spaceId === COMPANY_SPACE_FILTER) return level === 'organization'
   if (spaceId === PERSONAL_SPACE_FILTER) {
     return level ? level === 'personal' : kb.namespace === 'default'
   }
@@ -206,6 +208,7 @@ export function KnowledgeGroupListPage({
   isFavorite,
   getKbGroupInfo,
   isAllMode = false,
+  showCompanySpace = false,
   filterGroupId,
   onFilterGroupChange,
   availableGroups,
@@ -790,6 +793,11 @@ export function KnowledgeGroupListPage({
                 groups={filterGroups}
                 personalCount={
                   candidateKbs.filter(kb => matchesSpaceFilter(kb, PERSONAL_SPACE_FILTER)).length
+                }
+                companyCount={
+                  showCompanySpace
+                    ? candidateKbs.filter(kb => matchesSpaceFilter(kb, COMPANY_SPACE_FILTER)).length
+                    : undefined
                 }
                 value={spaceFilter ?? null}
                 onValueChange={onFilterGroupChange}

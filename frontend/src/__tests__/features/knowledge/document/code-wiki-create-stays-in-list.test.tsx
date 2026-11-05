@@ -287,10 +287,13 @@ it('does not send the deferred document create when its account scope has alread
   expect(result.current.createdKb).toBeNull()
 })
 
-it('opens personal creation when the list is filtered to personal space', () => {
+it.each([
+  ['space:personal', 'personal'],
+  ['organization', 'organization'],
+])('opens creation in the selected space %s', (filter, expected) => {
   const sidebar = {
     groups: [],
-    filterGroupId: 'space:personal',
+    filterGroupId: filter,
     selectedGroupId: null,
     currentUser: { id: 1 },
     selectedKbId: null,
@@ -299,6 +302,6 @@ it('opens personal creation when the list is filtered to personal space', () => 
   }
   const { result } = renderHook(() => useKnowledgeBaseDialogs({ sidebar }))
   act(() => result.current.handleCreateKbFromAll('notebook'))
-  expect(result.current.defaultCreateGroupId).toBe('personal')
+  expect(result.current.defaultCreateGroupId).toBe(expected)
   expect(result.current.showCreateDialog).toBe(true)
 })

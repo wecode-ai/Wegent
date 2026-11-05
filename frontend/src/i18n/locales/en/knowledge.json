@@ -1007,7 +1007,8 @@
       "anyScope": "All spaces",
       "searchLibraryFilters": "Search space names or identifiers",
       "noMatchingFilters": "No matching filters",
-      "typeAndSort": "Type and sort"
+      "typeAndSort": "Type and sort",
+      "companySpace": "Company space"
     },
     "creation": {
       "created": "Library created",
