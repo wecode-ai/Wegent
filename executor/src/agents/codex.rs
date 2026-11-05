@@ -147,6 +147,7 @@ mod diagnostics;
 #[path = "codex/home.rs"]
 mod home;
 mod stand_in_approval;
+mod stand_in_plugin_cli;
 use stand_in_approval::stand_in_mcp_approval_overrides;
 #[path = "codex/overload_recovery.rs"]
 mod overload_recovery;
@@ -6813,12 +6814,7 @@ fn codex_output_schema(request: &ExecutionRequest) -> Option<Value> {
 }
 
 fn codex_additional_context(request: &ExecutionRequest) -> Option<Value> {
-    request
-        .extra
-        .get("additionalContext")
-        .or_else(|| request.extra.get("additional_context"))
-        .filter(|value| value.is_object())
-        .cloned()
+    stand_in_plugin_cli::additional_context(request)
 }
 
 fn codex_collaboration_mode_payload(
