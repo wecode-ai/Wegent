@@ -5,7 +5,10 @@ import { join } from 'node:path'
 
 import { observeCommentNavigation } from '../modules/comment-navigation.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { reloadMainWindow } from '../modules/workspace-flows.mjs'
+import {
+  reloadMainWindow,
+  waitForNativeCollaborationPlatform,
+} from '../modules/workspace-flows.mjs'
 
 const PROJECT_NAME = '评论提及通知验收'
 const MENTIONER_NAME = 'desktop-e2e-mentioner'
@@ -554,6 +557,7 @@ export function createDesktopScenario({ captureScreenshot, resultDir, uiTimeoutM
       const navigation = {
         control,
         selector: commentSelectorFor(activeSurface, message.messageId),
+        prepare: () => waitForNativeCollaborationPlatform(control, activeSurface, uiTimeoutMs),
         waitForComment: startedAt =>
           waitForComment(
             control,

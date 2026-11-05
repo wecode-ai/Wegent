@@ -24,7 +24,9 @@ async function verifyCrashRecovery(control, recoveredSelector) {
   await assertTextTheme(control, ERROR_SELECTOR, '--color-text-primary')
   await assertTextTheme(control, `${ERROR_SELECTOR} p`, '--color-text-secondary')
   assert.equal(control.readyCount, readyCount, 'The error page must wait for the user to refresh')
-  await control.command('click', '[data-testid="workbench-crash-retry"]')
+  await control.command('click', '[data-testid="workbench-crash-retry"]', {
+    expectClientReplacement: true,
+  })
   await control.awaitReadyAfter(readyCount)
   await control.command('waitFor', recoveredSelector)
 }

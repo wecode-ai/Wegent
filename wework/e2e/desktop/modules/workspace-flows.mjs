@@ -2652,6 +2652,7 @@ export {
   waitForWorkbenchDebugState,
   captureVerificationScreenshot,
   reloadMainWindow,
+  waitForNativeCollaborationPlatform,
   verifyWorkspaceDocumentTabs,
   verifyDefaultWorkspaceStartupTab,
   verifyWorkspaceIssueCreation,

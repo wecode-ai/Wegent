@@ -20,11 +20,14 @@ function flashFrame(sample) {
 export async function observeCommentNavigation({
   control,
   selector,
+  prepare,
   navigate,
   waitForComment,
   timeoutMs,
   recordSample,
 }) {
+  // Control registration can precede the owner's lazy surface after a reload.
+  await prepare()
   await control.command('startElementMetricsSampling', 'body', {
     value: String(timeoutMs),
     target: selector,

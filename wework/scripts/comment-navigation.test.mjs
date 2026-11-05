@@ -52,6 +52,7 @@ function fixture(animationName = 'task-detail-comment-flash', flashTime = 200, o
     options: {
       control,
       selector: '[data-testid="active"] [data-testid="cloud-task-activity-message-42"]',
+      prepare: async () => {},
       navigate: async () => {
         assert.equal(commands[0].action, 'startElementMetricsSampling')
         navigated = true
@@ -115,4 +116,49 @@ test('propagates a failed navigation and stops its sampler', async () => {
   await assert.rejects(observeCommentNavigation(state.options), error => error === failure)
   assert.ok(state.recorded)
   assert.equal(state.commands.at(-1).action, 'stopElementMetricsSampling')
+})
+
+test.each(['ready', 'loading'])(
+  'waits for the owner surface before sampling or navigating: %s',
+  async readiness => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    const state = fixture()
+    let entered
+    const preparing = new Promise(resolve => {
+      entered = resolve
+    })
+    let ready
+    const surface = new Promise(resolve => {
+      ready = resolve
+    })
+    if (readiness === 'ready') ready()
+    state.options.prepare = async () => {
+      entered()
+      await surface
+    }
+    const verification = observeCommentNavigation(state.options)
+    assert.equal(
+      await Promise.race([preparing.then(() => 'preparing'), verification.then(() => 'navigated')]),
+      'preparing'
+    )
+    if (readiness === 'loading') {
+      assert.equal(state.navigated, false)
+      assert.deepEqual(state.commands, [])
+      vi.setSystemTime(Date.now() + 7000)
+      ready()
+    }
+    // The original controller-side timing and stability checks remain intact.
+    assert.deepEqual(await verification, { commentMs: 2500, flashMs: 200 })
+  }
+)
+
+test('propagates failed owner preparation without navigating or starting a sampler', async () => {
+  const state = fixture()
+  const failure = new Error('Collaboration surface did not become ready')
+  state.options.prepare = async () => {
+    throw failure
+  }
+  await assert.rejects(observeCommentNavigation(state.options), error => error === failure)
+  assert.equal(state.navigated, false)
+  assert.deepEqual(state.commands, [])
 })
