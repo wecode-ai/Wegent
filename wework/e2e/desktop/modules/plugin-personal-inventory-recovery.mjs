@@ -23,7 +23,7 @@ async function isolatedPath(root, candidate) {
   return resolved
 }
 
-async function installFixture(control, resultDir) {
+async function installFixture(control, resultDir, report) {
   const directory = join(resultDir, NAME)
   await mkdir(directory, { recursive: true })
   const archivePath = join(directory, `${NAME}.zip`)
@@ -57,11 +57,12 @@ async function installFixture(control, resultDir) {
     })
   )
   assert.equal(preview.valid, true, JSON.stringify(preview.issues))
-  const imported = JSON.parse(
-    await control.command('importPluginPackage', 'body', {
-      value: JSON.stringify({ preview, overwrite: false }),
-    })
-  )
+  const importedResponse = await control.command('importPluginPackage', 'body', {
+    value: JSON.stringify({ preview, overwrite: false }),
+  })
+  // Register cleanup before parsing the receipt or checking the committed source.
+  report.imported = true
+  const imported = JSON.parse(importedResponse)
   assert.equal(imported.pluginName, NAME)
   const { status, payload } = await requestPluginExecutor(
     control,
@@ -100,10 +101,11 @@ export async function verifyPersonalInventoryRecovery({
   const gates = runtimeTransportGates(control)
   let fixture
   let removed = false
+  let failure
   const catalog = () => control.command('reconcileLocalPluginCatalog', 'body')
   const disk = () => control.command('readLocalPluginDiskInventory', 'body')
   try {
-    fixture = await installFixture(control, resultDir)
+    fixture = await installFixture(control, resultDir, report)
     await catalog()
     await control.command('click', testId('new-chat-button'))
     await openComposerPluginPicker(control)
@@ -171,13 +173,14 @@ export async function verifyPersonalInventoryRecovery({
     report.passed = true
     return { reportPath }
   } catch (error) {
+    failure = error
     report.error = String(error?.stack ?? error)
     throw error
   } finally {
     try {
       await gates.reset()
       if (removed) await rename(fixture.backup, fixture.source)
-      if (fixture) {
+      if (report.imported) {
         await control.command('deleteLocalPluginPackage', 'body', {
           value: JSON.stringify({ pluginId: `${NAME}@wework-personal`, pluginName: NAME }),
         })
@@ -185,6 +188,10 @@ export async function verifyPersonalInventoryRecovery({
         await refreshPluginInventory(control)
         await assertInventory(control, NAME, false)
       }
+    } catch (error) {
+      report.passed = false
+      report.cleanupError = String(error?.stack ?? error)
+      if (!failure) throw error
     } finally {
       await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`)
     }
