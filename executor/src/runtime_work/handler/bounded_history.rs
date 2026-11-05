@@ -101,12 +101,16 @@ fn requested_cursor(args: &Value) -> Result<Option<Cursor>, AppIpcError> {
         .and_then(|text| URL_SAFE_NO_PAD.decode(text).ok())
         .and_then(|bytes| serde_json::from_slice(&bytes).ok())
         .ok_or_else(|| invalid("Invalid history cursor; refresh read_task without a cursor"))?;
-    let matches = match (field, &cursor.position) {
-        (&"beforeCursor", Position::Before { .. } | Position::NativeBefore) => true,
-        (&"afterCursor", Position::After { .. } | Position::NativeAfter) => true,
-        (&"messageContentCursor", Position::Content { .. }) => true,
-        _ => false,
-    };
+    let matches = matches!(
+        (field, &cursor.position),
+        (
+            &"beforeCursor",
+            Position::Before { .. } | Position::NativeBefore
+        ) | (
+            &"afterCursor",
+            Position::After { .. } | Position::NativeAfter
+        ) | (&"messageContentCursor", Position::Content { .. })
+    );
     if !matches {
         return Err(invalid("Cursor is for a different history operation"));
     }
