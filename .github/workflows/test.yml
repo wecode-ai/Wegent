@@ -670,6 +670,7 @@ jobs:
         uses: ./.github/actions/setup-node-workspace
 
       - name: Prepare Wework Electron dependencies
+        if: matrix.shard == 1
         run: pnpm --filter wework prepare:electron
 
       - name: Run process explorer package tests
