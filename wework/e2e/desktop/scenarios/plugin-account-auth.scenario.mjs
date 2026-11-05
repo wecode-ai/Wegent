@@ -651,7 +651,13 @@ export async function createDesktopScenario({
               '[data-testid="plugin-connection-manage-connector:conversation-qr"]:not([disabled])'
             )
 
-            await verifyPluginAuthDetailRefresh({ control, slug, homePath, captureScreenshot })
+            await verifyPluginAuthDetailRefresh({
+              control,
+              slug,
+              homePath,
+              captureScreenshot,
+              uiTimeoutMs,
+            })
             await verifyConversationQrAuthorization({
               control,
               slug,

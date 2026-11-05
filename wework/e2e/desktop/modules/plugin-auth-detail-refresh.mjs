@@ -2,12 +2,14 @@ import assert from 'node:assert/strict'
 import { readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { waitForWindowState } from './native-window-state.mjs'
+import { waitForValue } from './workspace-agent-setup.mjs'
 
 export async function verifyPluginAuthDetailRefresh({
   control,
   slug,
   homePath,
   captureScreenshot,
+  uiTimeoutMs,
 }) {
   const approval = join(homePath, 'conversation-qr-approved')
   const failure = join(homePath, 'conversation-qr-health-fail')
@@ -65,7 +67,12 @@ export async function verifyPluginAuthDetailRefresh({
       await rm(failure)
       // Repeated logout emits a fresh event after the real provider recovers.
       assert.equal((await auth('logout')).status, 'ok')
-      await control.command('waitFor', manage, { text: '登录' })
+      await waitForValue(
+        async () => (await control.command('getText', manage)).trim(),
+        text => text === '登录',
+        'Plugin details did not observe the completed logout',
+        uiTimeoutMs
+      )
       assert.equal((await control.command('getText', manage)).trim(), '登录')
       await control.command('waitFor', '[data-testid="plugin-detail-action-error"]', {
         visible: false,
