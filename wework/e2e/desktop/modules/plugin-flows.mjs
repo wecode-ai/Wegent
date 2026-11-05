@@ -1084,8 +1084,10 @@ async function verifyMarketplacePluginLifecycle({
     await control.command('setLocalProxyUrl', 'body', { value: blockingNetworkProxy.url })
     // Proxy changes restart Codex. Finish that setup before measuring local operations.
     await control.command('reconcileLocalPluginCatalog', 'body')
+    const reconciledAt = Date.now()
     blockingNetworkProxy.block()
     const blockedRequestCount = blockingNetworkProxy.requests.length
+    const blockedConnectionCount = blockingNetworkProxy.connections.length
     const importStartedAt = Date.now()
     const imported = JSON.parse(
       await control.command('importPluginPackage', 'body', {
@@ -1139,10 +1141,27 @@ async function verifyMarketplacePluginLifecycle({
       false,
       'The offline delete left the personal plugin source behind'
     )
+    const networkEvidence = {
+      reconciledAt,
+      blockedRequestCount,
+      blockedConnectionCount,
+      importStartedAt,
+      importElapsedMs,
+      deleteStartedAt,
+      deleteElapsedMs,
+      measuredAt: Date.now(),
+      baselineConnections: blockingNetworkProxy.connections.slice(
+        Math.max(0, blockedConnectionCount - 8),
+        blockedConnectionCount
+      ),
+      requests: blockingNetworkProxy.requestEvents.slice(blockedRequestCount),
+      connections: blockingNetworkProxy.connections.slice(blockedConnectionCount),
+    }
+    console.log(`[desktop-e2e-plugin-offline] ${JSON.stringify(networkEvidence)}`)
     assert.equal(
       blockingNetworkProxy.requests.length,
       blockedRequestCount,
-      'Local plugin import or deletion unexpectedly requested external network access'
+      `Local plugin import or deletion unexpectedly requested external network access: ${JSON.stringify(networkEvidence)}`
     )
   } finally {
     blockingNetworkProxy.release()
