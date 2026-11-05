@@ -57,9 +57,6 @@ export function createDesktopScenario(options) {
           timeoutMs: uiTimeoutMs,
         })
         await control.command('select', test('cloud-todo-detail-status'), { value: 'completed' })
-        await control.command('clickWhenEnabled', test('cloud-todo-save'), {
-          timeoutMs: uiTimeoutMs,
-        })
         await waitForBoardValue(
           async () =>
             (await rpc('todos.get', { project_id: project.id, task_id: child.id })).status,

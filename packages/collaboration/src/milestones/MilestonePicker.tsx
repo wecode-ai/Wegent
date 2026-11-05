@@ -78,7 +78,7 @@ export function MilestonePicker({
         className={
           appearance === 'property'
             ? 'task-detail-state-assignee'
-            : 'inline-flex min-h-8 min-w-0 max-w-full items-center gap-2 rounded-lg border border-border bg-background px-3 text-xs text-text-secondary outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-focus max-md:min-h-11'
+            : `${allLabel ? 'milestone-picker-filter ' : ''}inline-flex min-h-8 min-w-0 max-w-full items-center gap-2 rounded-lg border border-border bg-background px-3 text-xs text-text-secondary outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-focus max-md:min-h-11`
         }
         triggerContent={
           <>

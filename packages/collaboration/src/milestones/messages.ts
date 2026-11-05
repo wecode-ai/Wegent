@@ -1,6 +1,8 @@
 export const milestoneMessages = {
   "zh-CN": {
     title: "里程碑",
+    search: "搜索里程碑",
+    noMatches: "没有匹配的里程碑",
     intro: "围绕交付目标组织 Issue，跟踪范围、截止日期与完成进度。",
     emptyHint: "创建里程碑，并将相关 Issue 关联到同一个交付目标。",
     emptyClosed: "暂无已关闭的里程碑",
@@ -42,6 +44,8 @@ export const milestoneMessages = {
   },
   en: {
     title: "Milestones",
+    search: "Search milestones",
+    noMatches: "No matching milestones",
     intro:
       "Organize Issues around delivery goals and track scope, due dates, and progress.",
     emptyHint:

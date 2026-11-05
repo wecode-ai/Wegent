@@ -167,9 +167,6 @@ async function createAutoTaggedIssue(control, request, projectId, agent, timeout
     visible: false,
     timeoutMs,
   })
-  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
-    timeoutMs,
-  })
   return { issue, rule }
 }
 
