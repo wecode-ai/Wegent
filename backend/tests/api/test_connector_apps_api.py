@@ -321,11 +321,22 @@ def test_github_oauth_api_flow_connects_polls_and_disconnects(
         value = sessions.get(key)
         return dict(value) if value else None
 
+    async def cache_setnx(key: str, value: dict, expire: int) -> bool:
+        if key in sessions:
+            return False
+        sessions[key] = dict(value)
+        return True
+
+    async def cache_delete(key: str) -> bool:
+        return sessions.pop(key, None) is not None
+
     monkeypatch.setattr(settings, "GITHUB_OAUTH_CLIENT_ID", "github-client")
     monkeypatch.setattr(settings, "GITHUB_OAUTH_CLIENT_SECRET", "github-secret")
     monkeypatch.setattr(settings, "CONNECTOR_OAUTH_STATE_SECRET", "state-secret")
     monkeypatch.setattr(cache_manager, "set", cache_set)
     monkeypatch.setattr(cache_manager, "get", cache_get)
+    monkeypatch.setattr(cache_manager, "setnx", cache_setnx)
+    monkeypatch.setattr(cache_manager, "delete", cache_delete)
     monkeypatch.setattr(
         ConnectorOAuthService,
         "_exchange_code",

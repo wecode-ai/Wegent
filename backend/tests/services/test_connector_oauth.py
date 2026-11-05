@@ -17,6 +17,49 @@ from app.services.connector_oauth import ConnectorOAuthService
 from shared.utils.crypto import decrypt_sensitive_data
 
 
+async def _cache_set(
+    sessions: dict[str, dict], key: str, value: dict, expire: int
+) -> bool:
+    sessions[key] = dict(value)
+    return True
+
+
+async def _cache_get(sessions: dict[str, dict], key: str):
+    value = sessions.get(key)
+    return dict(value) if value else None
+
+
+async def _cache_setnx(
+    sessions: dict[str, dict], key: str, value: dict, expire: int
+) -> bool:
+    if key in sessions:
+        return False
+    sessions[key] = dict(value)
+    return True
+
+
+async def _cache_delete(sessions: dict[str, dict], key: str) -> bool:
+    return sessions.pop(key, None) is not None
+
+
+def _memory_cache(monkeypatch: pytest.MonkeyPatch, sessions: dict[str, dict]) -> None:
+    """Keep every OAuth cache operation on the same in-memory session store."""
+    monkeypatch.setattr(
+        cache_manager,
+        "set",
+        lambda key, value, expire: _cache_set(sessions, key, value, expire),
+    )
+    monkeypatch.setattr(cache_manager, "get", lambda key: _cache_get(sessions, key))
+    monkeypatch.setattr(
+        cache_manager,
+        "setnx",
+        lambda key, value, expire: _cache_setnx(sessions, key, value, expire),
+    )
+    monkeypatch.setattr(
+        cache_manager, "delete", lambda key: _cache_delete(sessions, key)
+    )
+
+
 async def _github_session(test_db: Session, test_user: User) -> tuple[dict, str]:
     """Create one real GitHub session against the configured test provider."""
     connector_app_service.create_app(
@@ -223,8 +266,7 @@ async def test_github_oauth_session_persists_encrypted_user_connection(
     monkeypatch.setattr(settings, "GITHUB_OAUTH_CLIENT_ID", "github-client")
     monkeypatch.setattr(settings, "GITHUB_OAUTH_CLIENT_SECRET", "github-secret")
     monkeypatch.setattr(settings, "CONNECTOR_OAUTH_STATE_SECRET", "state-secret")
-    monkeypatch.setattr(cache_manager, "set", cache_set)
-    monkeypatch.setattr(cache_manager, "get", cache_get)
+    _memory_cache(monkeypatch, sessions)
     monkeypatch.setattr(
         ConnectorOAuthService,
         "_exchange_code",
@@ -312,8 +354,7 @@ async def test_oauth_poll_is_scoped_to_the_authorizing_user(
 
     monkeypatch.setattr(settings, "GITHUB_OAUTH_CLIENT_ID", "github-client")
     monkeypatch.setattr(settings, "GITHUB_OAUTH_CLIENT_SECRET", "github-secret")
-    monkeypatch.setattr(cache_manager, "set", cache_set)
-    monkeypatch.setattr(cache_manager, "get", cache_get)
+    _memory_cache(monkeypatch, sessions)
     connector_app_service.create_app(
         test_db,
         ConnectorAppWrite.model_validate(
@@ -490,8 +531,7 @@ async def test_dynamic_connector_oauth_uses_discovery_dcr_and_resource(
         "CONNECTOR_OAUTH_REDIRECT_URI",
         "https://wegent.test/api/connector-apps/oauth/callback",
     )
-    monkeypatch.setattr(cache_manager, "set", cache_set)
-    monkeypatch.setattr(cache_manager, "get", cache_get)
+    _memory_cache(monkeypatch, sessions)
     monkeypatch.setattr(
         "app.services.connector_oauth.discover_connector_oauth",
         AsyncMock(
