@@ -1,4 +1,4 @@
-import { readFile, readdir, writeFile, mkdir, chmod, realpath } from 'node:fs/promises'
+import { readFile, readdir, writeFile, mkdir, chmod, realpath, rm } from 'node:fs/promises'
 import { join, dirname, resolve, relative, isAbsolute } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { SourceMap } from 'node:module'
@@ -21,6 +21,9 @@ export async function createDevtoolsClient(directory, timeoutMs = 30_000) {
     })
     const body = await response.json()
     if (!response.ok || !body.ok) throw new Error(body.error ?? `DevTools HTTP ${response.status}`)
+    if (input.action === 'detach' && Number.isInteger(input.target)) {
+      await rm(join(directory, `performance-${input.target}.json`), { force: true })
+    }
     return body.data
   }
 }
@@ -284,7 +287,6 @@ export function analyzeNetwork(events) {
 }
 
 export async function stopPerformanceRecording(client, directory, target, outputPath) {
-  const { rm } = await import('node:fs/promises')
   const statePath = join(directory, `performance-${target}.json`)
   const state = JSON.parse(await readFile(statePath, 'utf8'))
   const command = (method, params) => client({ action: 'command', target, method, params })

@@ -160,3 +160,7 @@ pnpm --filter wework e2e:desktop --segment devtools-performance
 ```
 
 Once CPU profiling stops successfully, trace collection, parsing or report-write failures release recording state while preserving the original error, so another recording can start. A failure to stop the profiler retains unconsumed state. The `devtools-performance` checkpoint also triggers a real output-directory write failure and verifies that a subsequent recording starts and completes.
+
+A successful explicit `detach` discards unfinished recording state for that target, allowing cancellation or recovery after an unexpected disconnect. Failed detaches retain state. The real Electron checkpoint also detaches during a recording, then starts another recording and generates its report.
+
+All desktop checkpoints use a `desktop-control` registry within their result directory for on-demand diagnosis of their isolated instance. Native macOS process snapshots read PID parent relationships first, then collect detailed metrics and command lines only for the Electron process tree, keeping unrelated process arguments out of the collection buffer.

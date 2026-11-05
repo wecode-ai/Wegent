@@ -187,7 +187,11 @@ export async function verifyDevtoolsPerformance(
     await waitForProtocolEvent(client, target, 'Debugger.paused', beforePause, timeoutMs)
     await command('Debugger.resume')
     assert.equal((await pendingPause).result.value, 42)
+    await startPerformanceRecording(client, directory, target)
     await client({ action: 'detach', target })
+    await assert.rejects(readFile(join(directory, `performance-${target}.json`)), {
+      code: 'ENOENT',
+    })
     assert.equal(
       (await client({ action: 'targets' })).find(item => item.id === target).attached,
       false
@@ -197,6 +201,13 @@ export async function verifyDevtoolsPerformance(
       (await command('Runtime.evaluate', { expression: '21 * 2', returnByValue: true })).result
         .value,
       42
+    )
+    await startPerformanceRecording(client, directory, target)
+    await stopPerformanceRecording(
+      client,
+      directory,
+      target,
+      join(directory, 'devtools-reattached-report.json')
     )
     return { devtoolsPerformance: true, report: output }
   } finally {
@@ -208,7 +219,6 @@ export async function verifyDevtoolsPerformance(
 
 export function createDesktopScenario({ resultDir, uiTimeoutMs, workbenchReadyTimeoutMs }) {
   return {
-    appEnvironment: { WEWORK_DESKTOP_CONTROL_REGISTRY_DIR: join(resultDir, 'desktop-control') },
     async handleHttp(request, response, url) {
       if (request.method !== 'GET' || url.pathname !== FIXTURE_PATH) return false
       response.writeHead(200, { 'content-type': 'text/plain', 'access-control-allow-origin': '*' })

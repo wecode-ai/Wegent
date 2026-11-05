@@ -1,6 +1,8 @@
 // @vitest-environment node
 import { describe, expect, test } from 'vitest'
 import { SourceMap } from 'node:module'
+import { createServer } from 'node:http'
+import { once } from 'node:events'
 import { mkdtemp, mkdir, readFile, writeFile, symlink, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -15,9 +17,46 @@ import {
   readLocalSourceMap,
   startPerformanceRecording,
   stopPerformanceRecording,
+  createDevtoolsClient,
 } from './ai-verify-devtools.mjs'
 
 describe('DevTools evidence analysis', () => {
+  test('discards interrupted recording state only after an authenticated detach succeeds', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'devtools-detach-'))
+    const statePath = join(directory, 'performance-1.json')
+    let rejectDetach = true
+    const server = createServer((request, response) => {
+      expect(request.headers.authorization).toBe('Bearer test-only-token')
+      response.writeHead(rejectDetach ? 500 : 200, { 'content-type': 'application/json' })
+      response.end(
+        JSON.stringify(
+          rejectDetach
+            ? { ok: false, error: 'Detach failed' }
+            : { ok: true, data: { detached: true } }
+        )
+      )
+    })
+    server.listen(0, '127.0.0.1')
+    await once(server, 'listening')
+    try {
+      await mkdir(join(directory, 'desktop-control'))
+      await writeFile(
+        join(directory, 'desktop-control', 'instance.json'),
+        JSON.stringify({ address: `127.0.0.1:${server.address().port}`, token: 'test-only-token' })
+      )
+      await writeFile(statePath, '{"target":1}')
+      const client = await createDevtoolsClient(directory)
+      await expect(client({ action: 'detach', target: 1 })).rejects.toThrow('Detach failed')
+      expect(await readFile(statePath, 'utf8')).toContain('target')
+      rejectDetach = false
+      await expect(client({ action: 'detach', target: 1 })).resolves.toEqual({ detached: true })
+      await expect(readFile(statePath)).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      server.closeAllConnections()
+      await new Promise(resolve => server.close(resolve))
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
   test.each(['trace-parse', 'report-write', 'profiler-stop'])(
     'recovers recording state after %s failure',
     async stage => {
