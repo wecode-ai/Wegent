@@ -11,6 +11,7 @@ import {
 import { sendPrompt } from './conversation-navigation.mjs'
 import { waitForBlankConversation } from './memory-tool-flows.mjs'
 import { telemetryEvents } from './response-protocol.mjs'
+import { requestExecutor } from './executor-rpc.mjs'
 
 import {
   ACTIVE_COMPOSER_SELECTOR,
@@ -40,6 +41,8 @@ import {
   PLUGIN_NAME,
   QUALIFIED_SKILL_MENTION_COMPLETION_TEXT,
   QUALIFIED_SKILL_MENTION_PROMPT,
+  STARTUP_NETWORK_PROBE_MARKETPLACE_NAME,
+  STARTUP_NETWORK_PROBE_MARKETPLACE_URL,
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
   commandOutput,
@@ -369,6 +372,21 @@ async function verifyStartupIgnoresBlockedCodexNetwork({
   // Releasing the proxy lets startup finish. Updating its runtime proxy sooner
   // terminates that app-server and cancels the marketplace initialization.
   await waitForBundledMarketplaceRegistration(codexHome, bundledMarketplacePath)
+  await requestExecutor(
+    control,
+    'codex.app_server_request',
+    {
+      method: 'marketplace/remove',
+      params: { marketplaceName: STARTUP_NETWORK_PROBE_MARKETPLACE_NAME },
+    },
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  const configAfterStartup = await readFile(join(codexHome, 'config.toml'), 'utf8')
+  assert.equal(
+    configAfterStartup.includes(STARTUP_NETWORK_PROBE_MARKETPLACE_NAME),
+    false,
+    'The startup-only network probe must not leak into later plugin operations'
+  )
   await control.command('setLocalProxyUrl', 'body', { value: '' })
   await control.command('navigate', 'body', { value: '/' })
   await control.command('waitFor', '[data-testid="projects-create-button"]', {
@@ -1081,6 +1099,7 @@ async function verifyMarketplacePluginLifecycle({
   await control.command('click', '[data-testid="plugin-import-close"]')
 
   try {
+    const setupStartedAt = Date.now()
     await control.command('setLocalProxyUrl', 'body', { value: blockingNetworkProxy.url })
     // Proxy changes restart Codex. Finish that setup before measuring local operations.
     await control.command('reconcileLocalPluginCatalog', 'body')
@@ -1141,7 +1160,15 @@ async function verifyMarketplacePluginLifecycle({
       false,
       'The offline delete left the personal plugin source behind'
     )
+    const startupProbeHost = new URL(STARTUP_NETWORK_PROBE_MARKETPLACE_URL).hostname
+    const startupProbeConnections = blockingNetworkProxy.connections.filter(
+      connection =>
+        (connection.acceptedAt >= setupStartedAt ||
+          (connection.firstDataAt ?? 0) >= setupStartedAt) &&
+        connection.host?.split(':')[0] === startupProbeHost
+    )
     const networkEvidence = {
+      setupStartedAt,
       reconciledAt,
       blockedRequestCount,
       blockedConnectionCount,
@@ -1156,8 +1183,14 @@ async function verifyMarketplacePluginLifecycle({
       ),
       requests: blockingNetworkProxy.requestEvents.slice(blockedRequestCount),
       connections: blockingNetworkProxy.connections.slice(blockedConnectionCount),
+      startupProbeConnections,
     }
     console.log(`[desktop-e2e-plugin-offline] ${JSON.stringify(networkEvidence)}`)
+    assert.equal(
+      startupProbeConnections.length,
+      0,
+      `The startup-only marketplace fixture leaked into plugin operations: ${JSON.stringify(startupProbeConnections)}`
+    )
     assert.equal(
       blockingNetworkProxy.requests.length,
       blockedRequestCount,
