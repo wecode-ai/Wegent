@@ -377,6 +377,7 @@ classify_path() {
       ;;
     wework/e2e/desktop/scenarios/collaboration-template-agents.scenario.mjs | \
     wework/e2e/desktop/scenarios/collaboration-template-app-device-routing.scenario.mjs | \
+    wework/e2e/desktop/scenarios/collaboration-template-offline-device-routing.scenario.mjs | \
     wework/e2e/desktop/scenarios/collaboration-template-lifecycle.scenario.mjs | \
     wework/e2e/desktop/scenarios/collaboration-templates.scenario.mjs | \
       packages/collaboration/src/templates/* | \
