@@ -34,18 +34,30 @@ export function StandInConversation({
   useStandInOpened('conversation', roleId ? 'role' : 'primary', active)
   const { t } = useTranslation('common')
   const [address, setAddress] = useState<RuntimeTaskAddress | null>()
-  const [error, setError] = useState<string | null>(null)
+  const [failure, setFailure] = useState<{
+    api: StandInExecutorApi
+    deviceId: string
+    taskId: string
+    message: string
+  } | null>(null)
   const [attempt, setAttempt] = useState(0)
   const taskId = standInConversationTaskId(userId, roleId)
+  const error =
+    failure?.api === api && failure.deviceId === deviceId && failure.taskId === taskId
+      ? failure.message
+      : null
   useEffect(() => {
     let active = true
     api
       .readTask(deviceId, taskId)
       .then(result => {
-        if (active) setAddress(result.task ? { deviceId, taskId } : null)
+        if (active) {
+          setAddress(result.task ? { deviceId, taskId } : null)
+          setFailure(null)
+        }
       })
       .catch(cause => {
-        if (active) setError(getStandInErrorMessage(cause))
+        if (active) setFailure({ api, deviceId, taskId, message: getStandInErrorMessage(cause) })
       })
     return () => {
       active = false
@@ -60,7 +72,7 @@ export function StandInConversation({
           data-testid="stand-in-conversation-retry"
           className="mt-2 underline"
           onClick={() => {
-            setError(null)
+            setFailure(null)
             setAddress(undefined)
             setAttempt(value => value + 1)
           }}
