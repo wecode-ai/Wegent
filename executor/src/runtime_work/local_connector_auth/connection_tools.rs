@@ -114,7 +114,55 @@ async fn run_tool_json(
     })
     .await
     .map_err(|_| AppIpcError::new("connection_cli_timeout", "Plugin tool request timed out"))??;
-    parse_connection_tool_output(&output.0, output.1.success(), plugin_key, connector_slug)
+    let result =
+        parse_connection_tool_output(&output.0, output.1.success(), plugin_key, connector_slug);
+    if result
+        .as_ref()
+        .is_err_and(|error| error.code == "connection_cli_response_invalid")
+    {
+        crate::logging::log_executor_event(
+            "Connection tool output rejected",
+            &[
+                ("plugin_key", plugin_key.to_owned()),
+                ("connector_slug", connector_slug.to_owned()),
+                (
+                    "tool",
+                    tool.file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .into_owned(),
+                ),
+                (
+                    "diagnostic",
+                    output_diagnostic(&output.0, output.1.success(), output.1.code()).to_string(),
+                ),
+            ],
+        );
+    }
+    result
+}
+
+// Only structural metadata may leave the CLI boundary; never include output or arguments.
+fn output_diagnostic(bytes: &[u8], success: bool, exit_code: Option<i32>) -> Value {
+    let first = bytes.iter().find(|byte| !byte.is_ascii_whitespace());
+    let first_kind = match first {
+        None => "empty",
+        Some(b'{') => "object",
+        Some(b'[') => "array",
+        Some(_) => "other",
+    };
+    let error = serde_json::from_slice::<Value>(bytes).err();
+    json!({
+        "stdoutBytes":bytes.len(),
+        "exitSuccess":success,
+        "exitCode":exit_code,
+        "utf8":std::str::from_utf8(bytes).is_ok(),
+        "bom":bytes.starts_with(&[0xef,0xbb,0xbf]),
+        "firstKind":first_kind,
+        "jsonError":error.as_ref().map(|error|format!("{:?}",error.classify())),
+        "line":error.as_ref().map(serde_json::Error::line),
+        "column":error.as_ref().map(serde_json::Error::column),
+    })
 }
 
 async fn read_tool_stdout(
@@ -185,6 +233,35 @@ fn parse_connection_tool_output(
 #[cfg(test)]
 mod connection_tool_tests {
     use super::*;
+
+    #[test]
+    fn malformed_output_diagnostics_never_contain_response_contents() {
+        let secret = "private-token-and-message";
+        for bytes in [
+            Vec::new(),
+            format!("\u{feff}{secret}").into_bytes(),
+            format!("{{\"token\":\"{secret}\"").into_bytes(),
+            vec![0xff, 0xfe],
+        ] {
+            let diagnostic = output_diagnostic(&bytes, false, Some(2));
+            assert_eq!(diagnostic["stdoutBytes"], bytes.len());
+            assert_eq!(diagnostic["exitSuccess"], false);
+            assert_eq!(diagnostic["exitCode"], 2);
+            assert!(!diagnostic.to_string().contains(secret));
+            assert!(diagnostic["jsonError"].is_string());
+        }
+        let bom = output_diagnostic(b"\xef\xbb\xbf{}", true, Some(0));
+        assert_eq!(bom["bom"], true);
+        assert_eq!(bom["utf8"], true);
+        assert_eq!(bom["firstKind"], "other");
+        let object = output_diagnostic(b"  {", true, Some(0));
+        assert_eq!(object["firstKind"], "object");
+        assert_eq!(object["jsonError"], "Eof");
+        assert_eq!(
+            output_diagnostic(b"\n ", true, Some(0))["firstKind"],
+            "empty"
+        );
+    }
 
     #[test]
     fn connection_tool_identity_follows_the_installed_manifest_and_rejects_ambiguity() {

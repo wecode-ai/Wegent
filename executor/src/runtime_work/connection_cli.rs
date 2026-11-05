@@ -34,7 +34,28 @@ pub(super) async fn request(
     }
     let args = read_arguments(&declaration, &payload)?;
     let slug = target["connectorSlug"].as_str().ok_or_else(denied)?;
-    super::local_connector_auth::run_connection_tool(&root, key, slug, &args).await
+    super::local_connector_auth::run_connection_tool(&root, key, slug, &args)
+        .await
+        .inspect_err(|error| {
+            if error.code == "connection_cli_response_invalid" {
+                crate::logging::log_executor_event(
+                    "Connection read output rejected",
+                    &[
+                        (
+                            "provider",
+                            payload["providerId"]
+                                .as_str()
+                                .unwrap_or_default()
+                                .to_owned(),
+                        ),
+                        (
+                            "operation",
+                            payload["tool"].as_str().unwrap_or_default().to_owned(),
+                        ),
+                    ],
+                );
+            }
+        })
 }
 
 fn denied() -> AppIpcError {
