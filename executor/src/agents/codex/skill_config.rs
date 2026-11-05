@@ -55,14 +55,17 @@ impl CodexAppServerClient {
     }
 
     pub(crate) async fn reload_user_skills(&self) -> Result<(), String> {
-        let (request_id, handle, response_rx) = self.prepare_existing_request().await?;
+        let params = json!({"edits": [], "reloadUserConfig": true});
+        let (request_id, handle, response_rx) = self
+            .prepare_request_with_process(false, None, "config/batchWrite", &params)
+            .await?;
         let _pending = PendingSkillReload {
             request_id,
             handle: handle.clone(),
         };
         Self::send_request_and_wait(
             "config/batchWrite",
-            json!({"edits": [], "reloadUserConfig": true}),
+            params,
             codex_rpc_timeout_seconds(),
             request_id,
             handle,
