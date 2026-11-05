@@ -82,6 +82,50 @@ describe('ComputerUseDriverProcess', () => {
     await driver.shutdown()
   })
 
+  test.each(['callTool', 'listTools'] as const)(
+    'terminates an unresponsive worker when %s cancellation is not acknowledged',
+    async method => {
+      vi.useFakeTimers()
+      const onExit = vi.fn()
+      const driver = await ComputerUseDriverProcess.create(onExit)
+      const controller = new AbortController()
+      const action =
+        method === 'callTool'
+          ? driver.callTool('start_session', '{}', { signal: controller.signal })
+          : driver.listToolsJson({ signal: controller.signal })
+      const rejected = expect(action).rejects.toThrow(
+        'cancellation timed out; action outcome is unknown'
+      )
+      const { id } = child.send.mock.lastCall![0]
+      controller.abort()
+      expect(child.send).toHaveBeenLastCalledWith({ id, method: 'abort' }, expect.any(Function))
+      await vi.advanceTimersByTimeAsync(4_999)
+      expect(child.kill).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(1)
+      await rejected
+      expect(child.kill).toHaveBeenCalledWith('SIGKILL')
+      expect(onExit).toHaveBeenCalledOnce()
+      child.emit('message', { id, ok: true, result: 'late result' })
+      await expect(driver.listToolsJson()).rejects.toThrow('action outcome is unknown')
+      await driver.shutdown()
+    }
+  )
+
+  test('clears the cancellation deadline when the worker acknowledges it', async () => {
+    vi.useFakeTimers()
+    const driver = await ComputerUseDriverProcess.create(vi.fn())
+    const controller = new AbortController()
+    const catalog = driver.listToolsJson({ signal: controller.signal })
+    const rejected = expect(catalog).rejects.toThrow('aborted')
+    const { id } = child.send.mock.lastCall![0]
+    controller.abort()
+    child.emit('message', { id, ok: false, error: 'aborted' })
+    await rejected
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(child.kill).not.toHaveBeenCalled()
+    await driver.shutdown()
+  })
+
   test('rejects all pending requests on native crash without replaying actions', async () => {
     const onExit = vi.fn()
     const driver = await ComputerUseDriverProcess.create(onExit)
@@ -102,6 +146,17 @@ describe('ComputerUseDriverProcess', () => {
     child.emit('exit', 5)
     await expect(startup).rejects.toThrow('exited (5)')
     expect(child.kill).toHaveBeenCalledOnce()
+  })
+
+  test('finishes startup failure cleanup when spawning closes without an exit event', async () => {
+    child.send.mockImplementation(() => true)
+    child.kill.mockImplementation(() => false)
+    const startup = ComputerUseDriverProcess.create(vi.fn())
+    const rejected = expect(startup).rejects.toThrow('Unable to spawn native worker')
+    child.emit('error', new Error('Unable to spawn native worker'))
+    child.emit('close', -2)
+    await rejected
+    expect(child.kill).toHaveBeenCalledWith('SIGKILL')
   })
 
   test('handles fatal worker errors without an unhandled host error event', async () => {
@@ -135,6 +190,22 @@ describe('ComputerUseDriverProcess', () => {
     const stopped = expect(driver.shutdown()).rejects.toThrow('shutdown timed out')
     await vi.advanceTimersByTimeAsync(10_000)
     await stopped
+    expect(child.kill).toHaveBeenCalledOnce()
+  })
+
+  test('does not finish shutdown before the native process actually exits', async () => {
+    const driver = await ComputerUseDriverProcess.create(vi.fn())
+    child.kill.mockImplementation(() => true)
+    let finished = false
+    const stopped = driver.shutdown().then(() => {
+      finished = true
+    })
+    await vi.waitFor(() => expect(child.kill).toHaveBeenCalledWith('SIGKILL'))
+    expect(finished).toBe(false)
+    child.emit('exit', 0)
+    await stopped
+    expect(finished).toBe(true)
+    await driver.shutdown()
     expect(child.kill).toHaveBeenCalledOnce()
   })
 
