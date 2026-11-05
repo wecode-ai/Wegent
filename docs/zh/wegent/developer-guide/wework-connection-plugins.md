@@ -121,6 +121,8 @@ GitHub 和 GitLab 仓库来源实现同一读取接口，查询指定 `entityKin
 
 需要实例地址等公开发现参数时，Provider 声明可选 `resourceQuerySchema`（对象型 JSON Schema）；`listResources.query` 此时编码为 JSON 对象字符串。目录保留该声明。`connect_source` 在缺少必填字段或无法解析对象时返回 `setup_required`、`querySchema` 和 `missingFields`，由 AI 使用结构化问题补齐；不猜测企业实例，不提前调用业务 CLI，也不索取凭据。这个预检只检查对象和必填字段，参数值仍由 Provider 验证；未声明该字段的插件保留原来的文本搜索语义。
 
+`ConnectionResource` 可携带插件定义的公开 opaque 配置。可选 `collectionKey` 必须是去除首尾空白后非空且 UTF-8 不超过 256 字节的字符串；可选 `configurationSummary` 是非空普通文本，UTF-8 不超过 4096 字节（Git 自身限制为 2048）。插件解释和验证配置，并生成稳定 key 与可审查说明；框架只把 key 用于跨角色采集合并、持久 checkpoint 与入站路由分区，把说明用于提案前后差异展示。同 key 可以共享采集，不同 key 各自保存进度，各角色事件仍独立去重。这些字段绝不改变 `readSource`、写操作或原生审批的资源权限；未携带字段时保留原来的订阅 key 与语义。原生设置保存不会解释插件私有字段，模型应复制发现返回的资源，插件在实际验证和采集前拒绝不一致的配置。
+
 资源发现也可返回 `availability`。仅在实际业务操作明确报告认证缺失时返回 `auth_required`，并携带原生授权服务给出的精确 `authTarget`；动态实例目标保留公开的 `instance`。`connect_source` 使用同一授权状态处理该结果，不能从网络错误、403 或空列表推断登录失效。GitHub 的目标来自其插件声明；GitLab 的目标由插件根据已选择实例请求原生授权服务取得，不猜测或自行拼装连接器标识。
 
 事件至少包含稳定的 `id`、`text` 和 `at`。`eventType` 应与清单声明一致，可携带 `senderId`、`senderName`、`quotedMessageId`、`topicId` 等业务字段。时间应使用 RFC 3339；钉钉迁移保留对原时间格式的解释。

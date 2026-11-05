@@ -1,6 +1,11 @@
 import { createHash } from 'node:crypto'
 import { createGitSourceReader } from './source-read.js'
 import { discoverOpenChanges, coverageEvents } from './repository-baseline.js'
+import {
+  monitoringMetadata,
+  validateMonitoringSource,
+  monitoringCheckpoint,
+} from './monitoring-selection.js'
 
 export const GIT_PACKAGE = '@wegent/dsh-connection-git/'
 const STREAMS = ['notifications', 'assigned', 'reviews']
@@ -41,6 +46,17 @@ export function createProvider(platform) {
       } catch {
         throw invalid('Select a Git instance')
       }
+      const selection = monitoringMetadata(platform, query.monitoredObjects, {
+        fingerprint,
+        invalid,
+      })
+      if (
+        selection &&
+        (input.kind !== 'repository' ||
+          typeof query.repository !== 'string' ||
+          !query.repository.trim())
+      )
+        throw invalid('Choose an exact repository for selected-object monitoring')
       try {
         const identity = await ctx.git.read({ operation: 'identity', instance: query.instance })
         const profile = required(identity, 'profile')
@@ -59,6 +75,52 @@ export function createProvider(platform) {
             hasMore: false,
           }
         if (input.kind !== 'repository') throw invalid('Unsupported Git resource')
+        if (query.repository !== undefined) {
+          if (typeof query.repository !== 'string' || !query.repository.trim())
+            throw invalid('Choose an exact repository')
+          const response = await ctx.git.read({
+            operation: 'repository',
+            profile,
+            instance: identity.instance,
+            repository: query.repository,
+          })
+          const row = response.data
+          const name = required(row, platform === 'github' ? 'full_name' : 'path_with_namespace')
+          if (
+            name !== query.repository ||
+            !['number', 'string'].includes(typeof row.id) ||
+            !String(row.id)
+          )
+            throw invalid('Repository discovery identity changed')
+          for (const object of selection?.monitoredObjects ?? []) {
+            const details = await ctx.git.read({
+              operation: 'object',
+              profile,
+              instance: identity.instance,
+              repository: name,
+              ...object,
+            })
+            if (
+              details.data?.[platform === 'github' ? 'number' : 'iid'] !== object.number ||
+              (platform === 'github' && object.entityKind === 'issue' && details.data.pull_request)
+            )
+              throw invalid('Selected object does not match this repository and object kind')
+          }
+          return {
+            items: [
+              {
+                providerId,
+                profile,
+                kind: 'repository',
+                transport: 'cli',
+                id: String(row.id),
+                name,
+                ...(selection ?? {}),
+              },
+            ],
+            hasMore: false,
+          }
+        }
         const page = Number(input.cursor ?? 1)
         if (!Number.isSafeInteger(page) || page < 1) throw invalid('Invalid page')
         const response = await ctx.git.read({
@@ -118,9 +180,13 @@ export function createProvider(platform) {
         if (usesWebhook(source) && (!source.subscriptionId || !source.generation))
           throw invalid('Configure the repository webhook')
       }
+      validateMonitoringSource(platform, source, { fingerprint, invalid })
       return source
     },
     async initialize(ctx, source) {
+      const selection = validateMonitoringSource(platform, source, { fingerprint, invalid })
+      if (selection)
+        return monitoringCheckpoint(platform, source, selection, { canonicalTopic, parseProfile })
       const boundary = usesWebhook(source)
         ? (source.boundary ??
           (await ctx.git.inbox({
@@ -141,8 +207,48 @@ export function createProvider(platform) {
       }
     },
     async collect(ctx, { source, checkpoint }) {
+      const selection = validateMonitoringSource(platform, source, { fingerprint, invalid })
+      if (selection && checkpoint.selectionSignature !== selection.collectionKey)
+        checkpoint = monitoringCheckpoint(platform, source, selection, {
+          canonicalTopic,
+          parseProfile,
+        })
       if (checkpoint.nextCheckAt && Date.now() < checkpoint.nextCheckAt)
         return { events: [], nextCheckpoint: checkpoint, hasMore: false }
+      if (selection) {
+        const next = structuredClone(checkpoint)
+        const chosen = new Set(
+          selection.monitoredObjects.map(object => object.entityKind + ':' + object.number)
+        )
+        if (
+          Object.values(next.tracked ?? {}).some(
+            target =>
+              !chosen.has(target.entityKind + ':' + target.number) ||
+              target.repository !== source.name ||
+              target.url !==
+                canonicalTopic(
+                  platform,
+                  parseProfile(source.profile).instance,
+                  source.name,
+                  target.entityKind,
+                  target.number
+                )
+          )
+        )
+          throw invalid('Monitoring checkpoint contains an unselected object')
+        if ((next.trackIndex ?? 0) === 0 && (next.trackStep ?? 0) === 0 && (next.page ?? 1) === 1) {
+          const repository = await ctx.git.read({
+            ...parseProfile(source.profile),
+            profile: source.profile,
+            repository: source.name,
+            operation: 'repository',
+          })
+          if (String(repository.data?.id) !== source.id)
+            throw invalid('Repository identity changed')
+        }
+        next.until ??= new Date().toISOString()
+        return collectTracked(ctx, platform, source, next)
+      }
       if (source.transport === 'cli') {
         if (
           source.kind === 'repository' &&
@@ -615,7 +721,9 @@ async function collectTracked(ctx, platform, source, next) {
   if (!target) {
     if (next.openChanges?.phase === 'compare') {
       next.tracked = Object.fromEntries(
-        Object.entries(next.tracked).filter(([, target]) => !target.finished)
+        Object.entries(next.tracked).filter(
+          ([, target]) => next.selectionSignature || !target.finished
+        )
       )
       next.trackIndex = 0
       next.trackStep = 0
@@ -625,7 +733,9 @@ async function collectTracked(ctx, platform, source, next) {
       return { events: [], nextCheckpoint: next, hasMore: true }
     }
     next.tracked = Object.fromEntries(
-      Object.entries(next.tracked).filter(([, target]) => !target.finished)
+      Object.entries(next.tracked).filter(
+        ([, target]) => next.selectionSignature || !target.finished
+      )
     )
     next.after = next.until
     delete next.until
@@ -685,6 +795,7 @@ async function collectTracked(ctx, platform, source, next) {
       response.data.head?.sha ?? response.data.sha ?? response.data.diff_refs?.head_sha
     if (response.data.state === 'closed' || response.data.state === 'merged')
       next.tracked[target.url].finished = true
+    else delete next.tracked[target.url].finished
   }
   const rows = Array.isArray(response.data)
     ? response.data
