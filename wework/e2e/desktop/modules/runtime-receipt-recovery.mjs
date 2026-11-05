@@ -11,7 +11,7 @@ import { waitForTranscriptState } from './transcript-restoration.mjs'
 
 export async function verifyRuntimeReceiptRecovery(
   control,
-  { address, prompt, completion, resultDir, timeoutMs }
+  { address, prompt, completion, releaseActiveResponse, resultDir, timeoutMs }
 ) {
   const gates = runtimeTransportGates(control)
   const send = 'recovery-undispatched-send'
@@ -25,6 +25,13 @@ export async function verifyRuntimeReceiptRecovery(
     where: [{ path: 'params.taskId', equals: address.taskId }],
   })
   try {
+    await waitForTranscriptState(
+      control,
+      snapshot =>
+        snapshot.pane?.currentRuntimeTask?.taskId === address.taskId && snapshot.pane.status.isBusy,
+      'Receipt recovery needs the original reply to remain active',
+      timeoutMs
+    )
     await control.command(
       'fill',
       `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"]`,
@@ -33,15 +40,28 @@ export async function verifyRuntimeReceiptRecovery(
       }
     )
     await control.command(
-      'press',
-      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"]`,
-      {
-        key: 'Enter',
-      }
+      'clickWhenEnabled',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-mode-menu-button"]`
     )
+    await control.command('clickWhenEnabled', '[data-testid="send-after-turn-option"]')
+    const queued = await waitForTranscriptState(
+      control,
+      snapshot =>
+        snapshot.pane?.queuedMessages.some(
+          row => row.content === prompt && row.status === 'queued' && !row.runtimeQueued
+        ),
+      'The busy conversation did not retain the UI send in its local queue',
+      timeoutMs
+    )
+    const messageId = queued.pane.queuedMessages.find(row => row.content === prompt).id
+    assert.equal(await gates.read(send), null, 'The queued send must wait for the active reply')
+    await releaseActiveResponse()
     const pending = await gates.wait(send, undefined, timeoutMs)
-    const messageId = pending.value.params.executionRequest.client_user_message_id
-    assert.ok(messageId, 'The real UI send must have a client message identity')
+    assert.equal(
+      pending.value.params.executionRequest.client_user_message_id,
+      messageId,
+      'The queue controller must dispatch the original queued message'
+    )
     assert.equal(pending.value.params.commandId, undefined)
     await waitForTranscriptState(
       control,

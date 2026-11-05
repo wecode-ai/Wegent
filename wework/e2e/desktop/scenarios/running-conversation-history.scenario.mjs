@@ -1021,16 +1021,18 @@ export function createDesktopScenario({
         'Reloading a running conversation lost the previous assistant response'
       )
 
-      releaseSecondResponseResolve()
-      await control.command('waitFor', '[data-testid="message-assistant"]', {
-        text: SECOND_COMPLETION,
-        timeoutMs: uiTimeoutMs,
-      })
-      await assertMovedProject(control, moved.projectKey, moved.address, uiTimeoutMs)
       await verifyRuntimeReceiptRecovery(control, {
         address: moved.address,
         prompt: RECOVERY_PROMPT,
         completion: RECOVERY_COMPLETION,
+        releaseActiveResponse: async () => {
+          releaseSecondResponseResolve()
+          await control.command('waitFor', '[data-testid="message-assistant"]', {
+            text: SECOND_COMPLETION,
+            timeoutMs: uiTimeoutMs,
+          })
+          await assertMovedProject(control, moved.projectKey, moved.address, uiTimeoutMs)
+        },
         resultDir,
         timeoutMs: uiTimeoutMs,
       })

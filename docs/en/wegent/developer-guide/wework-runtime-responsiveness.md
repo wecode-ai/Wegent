@@ -176,6 +176,11 @@ flowchart LR
   discovery complete. A route change shows that target immediately and completes
   unsettled catalogs so a late local workspace can still appear. Settled partial
   caches retain covered targets when a cloud source fails.
+- Built-in browser device emulation holds a shared debugger session for its entire
+  lifetime. Page reads and file uploads hold temporary sessions only for their own
+  operations; completing either must not detach CDP while emulation remains active.
+  Serialize device-metric set and clear operations, and release ownership on close
+  so concurrent operations cannot silently reset the viewport.
 
 ```mermaid
 sequenceDiagram
@@ -223,6 +228,10 @@ within three seconds. Restore full history through UI pagination while retaining
 existing large-output and content-integrity assertions. Observe the request
 boundary after completion to reject automatic full-history scans and confirm that
 the thinking indicator disappears.
+Receipt recovery reuses the existing active reply: explicitly enqueue through the
+UI, then release that reply so the real queue controller sends the message. An
+idle direct send is not a queued message. Retain the two Electron restarts and add
+one real executor SIGTERM followed by supervisor recovery.
 
 Diagnostics include request IDs and stage durations: client send, IPC receive,
 admission, provider read, projection, encoding, queue, and client receipt. Record
