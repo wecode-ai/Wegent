@@ -23,17 +23,31 @@ Codex
   -> packaged wegent-executor
   -> Bearer-authenticated loopback HTTP bridge
   -> Electron ComputerUseService
+  -> Electron utility process (private IPC)
   -> @trycua/cua-driver
   -> platform accessibility and screen-capture APIs
 ```
 
 The Electron main process owns the CUA Driver lifecycle. Once computer use is
 enabled and system permissions are ready, `ComputerUseService` creates the
-Driver, listens on a random `127.0.0.1` port, and atomically writes the PID,
+Driver in a separate Electron utility process. The main process listens on a
+random `127.0.0.1` port and atomically writes its own PID,
 address, random token, and start time to
 `runtime/computer-use-bridge.json` under the active Executor Home. Disabling
 the feature or quitting the application must cancel the current action, close
 the bridge, stop the Driver, and remove this file.
+
+Native tools must execute outside the Electron main process. On macOS,
+same-process accessibility calls can enter AppKit directly, but CUA's background
+threads cannot manipulate AppKit windows. A child process routes window calls
+through the host's main thread and isolates native crashes. It does not disclaim
+TCC responsibility; Wework still owns permission requests. Private IPC forwards
+cancellation to the corresponding native call.
+
+An unexpected Driver exit removes the bridge and reports an error while retaining
+the enabled preference. Status checks neither restart the Driver nor replay an
+action with an unknown outcome. Turning computer use off and on creates a new
+process.
 
 Executor reads this runtime record when it launches a Codex conversation. It
 does not inject `wework_computer` when the file is absent or invalid, or when

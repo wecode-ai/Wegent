@@ -17,10 +17,7 @@ import {
   isResourceExclusiveCheckpoint,
   runWithCheckpointResources,
 } from './checkpoint-scheduler.mjs'
-import {
-  UPGRADE_DIAGNOSTIC_CHECKPOINTS,
-  rejectFailedReleaseCheckpoint,
-} from './upgrade-suite.mjs'
+import { UPGRADE_DIAGNOSTIC_CHECKPOINTS, rejectFailedReleaseCheckpoint } from './upgrade-suite.mjs'
 import { rejectRecordedCheckpointFailure } from './checkpoint-result.mjs'
 import { createXvfbDisplayAllocator } from './xvfb-display.mjs'
 import { resolveDesktopCodexBinary } from './modules/desktop-build-flows.mjs'
@@ -152,6 +149,7 @@ function checkpointScenarioEnv(env, checkpoint) {
   }
   if (
     checkpoint === 'application-menu' ||
+    checkpoint === 'computer-use' ||
     checkpoint === 'native-window-chrome' ||
     checkpoint === 'window-lifecycle' ||
     checkpoint === 'window-background-policy' ||
