@@ -26,6 +26,7 @@ CI_CONSUMER_PATHS=(
   '.github/scripts/publish-macos-e2e-runtime-oci.sh|wework_e2e'
   '.github/ci/wework-linux-checkpoint-durations.json|wework_e2e'
   '.github/scripts/order-wework-linux-e2e.*|wework_e2e'
+  '.github/scripts/desktop-ci/*|wework_e2e'
   '.github/scripts/wework-core-e2e-transport.*|wework_e2e'
   '.github/scripts/verified-build-oci.mjs|platform_e2e wework_e2e'
   '.github/scripts/download-actions-artifact.sh|platform_e2e wework_e2e'
@@ -76,6 +77,7 @@ CI_POLICY_PATHS=(
   '.github/scripts/lib/ci-policy-paths.sh'
   '.github/scripts/test-ci-cache-policy.sh'
   '.github/scripts/test-classify-ci-changes.sh'
+  '.github/scripts/ci-classification-tests/*'
 )
 
 ci_consumer_targets() {

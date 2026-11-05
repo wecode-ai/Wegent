@@ -353,6 +353,10 @@ export async function createDesktopScenario({
       await control.command('click', `${CONTENT} [data-testid="collaboration-tab-board"]`)
       await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`)
       await control.command('waitFor', '[data-testid="stand-in-auto"][aria-checked="true"]')
+      // Pin the editor's version before another writer updates personal settings.
+      await control.command('fill', '[data-testid="stand-in-prompt"]', {
+        value: `${MARKER} 保留草稿`,
+      })
       const concurrentSettings = await requestExecutor(
         control,
         'runtime.stand_in.get',
@@ -374,9 +378,6 @@ export async function createDesktopScenario({
         },
         uiTimeoutMs
       )
-      await control.command('fill', '[data-testid="stand-in-prompt"]', {
-        value: `${MARKER} 保留草稿`,
-      })
       await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
       await control.command('waitFor', '[data-testid="stand-in-settings"] [role="alert"]')
       assert.equal(

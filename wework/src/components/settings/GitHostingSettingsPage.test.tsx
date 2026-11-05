@@ -1,5 +1,6 @@
 import { defaultAppPreferences } from '@/desktop/appPreferences'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
+import { notifyLocalConnectorAuthChanged } from '@/api/local/localConnectorAuthEvents'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import './../../../src/i18n'
@@ -52,6 +53,37 @@ vi.mock('@/lib/clipboard', () => ({ copyTextToClipboard }))
 vi.mock('@/lib/external-links', () => ({ openExternalUrl }))
 
 describe('GitHostingSettingsPage', () => {
+  test('refreshes after local authentication changes and external CLI changes on focus', async () => {
+    getGitHostingCliStatus.mockResolvedValue({
+      installed: true,
+      authenticated: true,
+      detectionError: null,
+    })
+    render(<GitHostingSettingsPage />)
+    await waitFor(() =>
+      expect(screen.getByTestId('git-hosting-cli-github-status')).toHaveTextContent('已就绪')
+    )
+    getGitHostingCliStatus.mockClear()
+    getGitHostingCliStatus.mockResolvedValue({
+      installed: true,
+      authenticated: false,
+      detectionError: null,
+    })
+    act(() => notifyLocalConnectorAuthChanged())
+    await waitFor(() =>
+      expect(screen.getByTestId('git-hosting-cli-github-status')).toHaveTextContent('未登录')
+    )
+    expect(getGitHostingCliStatus.mock.calls.map(([provider]) => provider)).toContain('github')
+    getGitHostingCliStatus.mockResolvedValue({
+      installed: true,
+      authenticated: true,
+      detectionError: null,
+    })
+    act(() => window.dispatchEvent(new Event('focus')))
+    await waitFor(() =>
+      expect(screen.getByTestId('git-hosting-cli-github-status')).toHaveTextContent('已就绪')
+    )
+  })
   beforeEach(() => {
     cloudConnection.isConnected = true
     cloudConnection.apiBaseUrl = 'https://cloud.example.com/api'

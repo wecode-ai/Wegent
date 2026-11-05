@@ -1,5 +1,6 @@
 import { Check, Copy, ExternalLink, GitBranch, Loader2, RefreshCw } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { LOCAL_CONNECTOR_AUTH_CHANGED_EVENT } from '@/api/local/localConnectorAuthEvents'
 import {
   getGitHostingCliStatus,
   type GitHostingCliProvider,
@@ -55,14 +56,17 @@ export function GitHostingSettingsPage() {
     Partial<Record<GitHostingCliProvider, GitHostingCliStatus>>
   >({})
   const [loading, setLoading] = useState(true)
+  const detectionRevision = useRef(0)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [copiedProvider, setCopiedProvider] = useState<GitHostingCliProvider | null>(null)
 
   const detect = useCallback(async () => {
+    const revision = ++detectionRevision.current
     setLoading(true)
     setError(null)
     const results = await Promise.allSettled(PROVIDERS.map(getGitHostingCliStatus))
+    if (revision !== detectionRevision.current) return
     const nextStatuses: Partial<Record<GitHostingCliProvider, GitHostingCliStatus>> = {}
     results.forEach((result, index) => {
       if (result.status === 'fulfilled') {
@@ -78,7 +82,15 @@ export function GitHostingSettingsPage() {
 
   useEffect(() => {
     const timeout = window.setTimeout(() => void detect(), 0)
-    return () => window.clearTimeout(timeout)
+    const refresh = () => void detect()
+    window.addEventListener(LOCAL_CONNECTOR_AUTH_CHANGED_EVENT, refresh)
+    window.addEventListener('focus', refresh)
+    return () => {
+      window.clearTimeout(timeout)
+      window.removeEventListener(LOCAL_CONNECTOR_AUTH_CHANGED_EVENT, refresh)
+      window.removeEventListener('focus', refresh)
+      detectionRevision.current += 1
+    }
   }, [detect])
 
   const updateEnabled = async (nextEnabled: boolean) => {

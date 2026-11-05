@@ -1980,6 +1980,37 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                 .map_err(task_runtime_error)?;
             Ok(json!({}))
         }
+        "projects.automation.run" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let rule_id = required_task_string(&params, "automation_id")?;
+            let issue_id = optional_nullable_task_string(&params, "issue_id")?.flatten();
+            runtime
+                .run_project_automation(project_id, rule_id, issue_id.as_deref())
+                .map_err(task_runtime_error)
+        }
+        "projects.automation.runs" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let rule_id = required_task_string(&params, "automation_id")?;
+            serialize_task_value(
+                runtime
+                    .list_project_automation_runs(project_id, rule_id)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "projects.automation.cancel" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let run_id = required_task_string(&params, "run_id")?;
+            runtime
+                .cancel_project_automation_run(project_id, run_id)
+                .map_err(task_runtime_error)
+        }
+        "projects.automation.retry" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let run_id = required_task_string(&params, "run_id")?;
+            runtime
+                .retry_project_automation_run(project_id, run_id)
+                .map_err(task_runtime_error)
+        }
         "external_projects.configure" => {
             let project = task_input::<ProjectDescriptor>(&params, "project")?;
             serialize_task_value(
@@ -3743,6 +3774,10 @@ where
     writer.write_all(&bytes).await?;
     writer.flush().await
 }
+
+#[cfg(test)]
+#[path = "app_ipc_automation_tests.rs"]
+mod automation_tests;
 
 #[cfg(test)]
 mod tests {

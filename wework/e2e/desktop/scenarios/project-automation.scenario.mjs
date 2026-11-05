@@ -224,7 +224,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           'click',
           scoped('[data-testid="collaboration-workspace-participants-tab-groups"]')
         )
-        await control.command('click', scoped('[data-testid="collaboration-group-open-create"]'))
+        await control.command(
+          'clickWhenEnabled',
+          scoped('[data-testid="collaboration-group-open-create"]')
+        )
         await control.command('waitFor', scoped('[data-testid="collaboration-group-form"]'), {
           timeoutMs: uiTimeoutMs,
         })

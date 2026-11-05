@@ -192,7 +192,9 @@ jobs:
         run: scripts/hooks/test-ai-push-gate.sh
 
       - name: Test Wegent release policy
-        run: scripts/test-publish-image-release-policy.sh
+        run: |
+          scripts/test-publish-image-release-policy.sh
+          node --test .github/scripts/local-executor-installer.test.mjs
 
       - name: Set up Python for standalone regression checks
         uses: ./.github/actions/setup-python-uv-cache

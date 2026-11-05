@@ -85,6 +85,8 @@ Wework 云端 runtime 执行使用和本地模式一致的 app IPC 协议。前�
 
 多实例 Backend 通过 Socket.IO Redis manager 把 RPC 转发到持有 executor 连接的 worker。Redis 中带 `socket_id` 的设备在线记录是转发入口；不能用当前 worker 的进程内连接表预判 executor 已断线，否则会把连接在其他 worker 上的设备误标为离线。
 
+连接断开时，客户端立即结束该连接上尚未收到确认的 RPC，并移除对应计时器和断线监听；不等待原来的确认超时，也不自动重发可能已经执行的写请求。这样远端发现请求的失联回执不会一直占用“待你处理”的刷新流程；后续刷新通过新连接重新读取。已经收到的确认结果不受随后断线影响。注册断线监听后还要核对连接状态，覆盖连接在 `ensureConnected()` 的异步返回与监听注册之间关闭的情况。
+
 ## 云端终端兼容与发布
 
 终端通过 `/terminal` → Backend → `/local-executor` 转发；协议以 attach 成功响应为准，不通过设备能力字段重复声明。

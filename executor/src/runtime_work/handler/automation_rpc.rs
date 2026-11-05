@@ -220,7 +220,7 @@ impl RuntimeWorkRpcHandler {
         }
     }
 
-    fn emit_automations_changed(&self, automation_id: &str, action: &str) {
+    pub(super) fn emit_automations_changed(&self, automation_id: &str, action: &str) {
         let Some(sender) = &self.event_tx else {
             return;
         };

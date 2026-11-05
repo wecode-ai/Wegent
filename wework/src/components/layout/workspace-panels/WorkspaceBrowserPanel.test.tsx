@@ -1106,6 +1106,32 @@ describe('WorkspaceBrowserPanel', () => {
     expect(input).toHaveValue('https://bad.invalid/')
   })
 
+  test('preserves the address draft when the window deactivates with the input still focused', async () => {
+    mockBrowserHostRect()
+    const committedUrl = 'https://example.com/'
+    embeddedBrowserMocks.readEmbeddedBrowserPageState.mockResolvedValue({
+      nativeLabel: 'workspace-browser-native-1',
+      title: 'Current page',
+      url: committedUrl,
+    })
+    render(<WorkspaceBrowserPanel active />)
+    const input = screen.getByTestId('workspace-browser-url-input') as HTMLInputElement
+    fireEvent.change(input, { target: { value: committedUrl } })
+    fireEvent.submit(input.closest('form')!)
+    await waitFor(() => expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalled())
+
+    act(() => input.focus())
+    fireEvent.change(input, { target: { value: 'localhost:6060/next' } })
+    // Native window deactivation emits blur without changing the focused DOM node.
+    fireEvent.blur(input)
+    expect(document.activeElement).toBe(input)
+    expect(input).toHaveValue('localhost:6060/next')
+
+    act(() => input.blur())
+    expect(document.activeElement).not.toBe(input)
+    expect(input).toHaveValue(committedUrl)
+  })
+
   test('preserves an unsubmitted address draft when focus leaves before navigation', () => {
     render(<WorkspaceBrowserPanel active />)
 

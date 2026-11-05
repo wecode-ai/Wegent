@@ -1,0 +1,5 @@
+{
+  "order": 37000,
+  "scenario": "./scenarios/stand-in-processing.scenario.mjs",
+  "scenarioOnly": true
+}

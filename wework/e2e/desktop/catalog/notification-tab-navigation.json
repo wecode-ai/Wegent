@@ -1,0 +1,12 @@
+{
+  "order": 5000,
+  "scenario": "./scenarios/notification-tab-navigation.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 4000,
+      "shard": 1,
+      "position": 18000
+    }
+  }
+}

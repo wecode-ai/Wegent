@@ -66,6 +66,7 @@ classify_path() {
       .github/scripts/archive-wework-core-e2e-build.sh | \
       .github/scripts/wework-core-e2e-transport.* | \
       .github/scripts/classify-wework-desktop-e2e.sh | \
+      .github/scripts/desktop-ci/* | \
       .github/scripts/restore-oci-runtime-binary.sh | \
       .github/scripts/restore-wework-core-e2e-build.sh)
       changed[wework_e2e]=true

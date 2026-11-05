@@ -1,0 +1,12 @@
+{
+  "order": 157000,
+  "scenario": "./scenarios/codex-notification-isolation.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 103000,
+      "shard": 7,
+      "position": 8000
+    }
+  }
+}

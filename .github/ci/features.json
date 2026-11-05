@@ -203,6 +203,10 @@
           "project": "chromium"
         },
         {
+          "file": "collaboration/collaboration-status-automation.spec.ts",
+          "project": "chromium"
+        },
+        {
           "file": "collaboration/collaboration-tag-changes.spec.ts",
           "project": "chromium"
         },

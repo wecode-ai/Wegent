@@ -2513,7 +2513,18 @@ pub(super) fn write_json_file(path: &Path, value: &Value) -> Result<(), String> 
     }
     let content = serde_json::to_string_pretty(value)
         .map_err(|error| format!("failed to serialize JSON: {error}"))?;
-    let parent = path.parent().ok_or("JSON file has no parent")?;
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    // tempfile calls Win32 directly, which requires a verbatim path beyond MAX_PATH.
+    #[cfg(windows)]
+    let canonical_parent = fs::canonicalize(parent)
+        .map_err(|error| format!("failed to resolve {}: {error}", parent.display()))?;
+    #[cfg(windows)]
+    let path = canonical_parent.join(path.file_name().ok_or("JSON file has no name")?);
+    #[cfg(windows)]
+    let parent = canonical_parent.as_path();
     let mut file = tempfile::NamedTempFile::new_in(parent)
         .map_err(|error| format!("failed to stage JSON: {error}"))?;
     use std::io::Write;
@@ -2522,8 +2533,8 @@ pub(super) fn write_json_file(path: &Path, value: &Value) -> Result<(), String> 
     file.as_file()
         .sync_all()
         .map_err(|error| error.to_string())?;
-    file.persist(path)
-        .map_err(|error| format!("failed to publish JSON: {}", error.error))?;
+    file.persist(&path)
+        .map_err(|error| format!("failed to publish JSON {}: {}", path.display(), error.error))?;
     Ok(())
 }
 

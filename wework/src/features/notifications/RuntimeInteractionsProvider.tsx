@@ -216,6 +216,20 @@ function RuntimeInteractionsState({
       }
       fetching.current = true
       setLoading(true)
+      let stage = 'inventory'
+      const diagnosticTimer =
+        import.meta.env.VITE_WEWORK_E2E === 'true'
+          ? window.setTimeout(() => {
+              void navigator.locks
+                .query()
+                .then(locks =>
+                  console.info(
+                    '[interaction-refresh-stalled]',
+                    JSON.stringify({ window: getDesktopWindowLabel(), stage, locks })
+                  )
+                )
+            }, 5000)
+          : undefined
       try {
         const discovered = await readInteractionTaskInventory(current)
         if (!mounted.current || sourceRef.current?.services?.runtimeWorkApi !== api) return
@@ -295,6 +309,7 @@ function RuntimeInteractionsState({
               )
                 continue
               try {
+                stage = `transcript:${item.address.taskId}`
                 const requests = await readRuntimeInteractions(item, api)
                 if (!mounted.current || sourceRef.current?.services?.runtimeWorkApi !== api) return
                 successfulReads.current.set(item.key, {
@@ -308,6 +323,7 @@ function RuntimeInteractionsState({
                   return next
                 })
                 for (const answered of requests.filter(request => request.answered)) {
+                  stage = `archive:${answered.requestKey}`
                   await archive(answered)
                   localStorage.removeItem(acceptancePrefix + answered.id)
                 }
@@ -344,6 +360,7 @@ function RuntimeInteractionsState({
           })
         )
       } finally {
+        window.clearTimeout(diagnosticTimer)
         fetching.current = false
         if (mounted.current) setLoading(false)
       }
