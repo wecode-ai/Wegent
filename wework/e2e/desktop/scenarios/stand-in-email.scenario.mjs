@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import { prepareHarnessRuntimeRoots } from '../modules/desktop-build-flows.mjs'
 import { startRealMailServer } from '../modules/real-mail-server.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { until } from '../modules/plugin-regression-fixture.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
 import { openConnectionTypePicker } from '../modules/stand-in-flows.mjs'
@@ -281,6 +282,13 @@ export function createDesktopScenario({
         '邮箱接入验证',
         `${MARKER}\n请拟定邮件回复，发送前让我确认。`,
         '<new-email@example.com>'
+      )
+      // The transport's real 30-second retry backoff precedes model processing.
+      await until(
+        () => rpc(control, 'runtime.stand_in.work.list', { userId: USER }),
+        state => state.sourceErrors.length === 0,
+        'Restored IMAP transport must complete its scheduled retry before processing new mail',
+        30000 + modelResponseTimeoutMs
       )
       await control.command('waitFor', '[data-testid="stand-in-work-attention-count"]', {
         timeoutMs: modelResponseTimeoutMs,

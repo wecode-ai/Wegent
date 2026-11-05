@@ -17,6 +17,10 @@ export function createConcurrencyExecutionVerification({ workspacePath, uiTimeou
   const taskIds = []
   const rpc = (control, method, params) => requestExecutor(control, method, params, uiTimeoutMs)
   const promptFor = (kind, index) => `${PREFIX}${kind}_${index}`
+  const taskIdFor = (kind, index) =>
+    kind === 'standIn'
+      ? `stand-in-chat-9001-role-concurrency-${index}`
+      : `owner-concurrency-${kind}-${index}`
   const release = (kind, index) => releases.get(promptFor(kind, index))?.()
   return {
     async handleBody(body, response) {
@@ -63,7 +67,7 @@ export function createConcurrencyExecutionVerification({ workspacePath, uiTimeou
         await rpc(control, 'runtime.settings.update', settings)
         for (const kind of ['personal', 'standIn', 'agent']) {
           for (const index of [1, 2]) {
-            const taskId = `owner-concurrency-${kind}-${index}`
+            const taskId = taskIdFor(kind, index)
             const prompt = promptFor(kind, index)
             const origin =
               kind === 'standIn'
@@ -71,7 +75,7 @@ export function createConcurrencyExecutionVerification({ workspacePath, uiTimeou
                     type: 'stand_in_identity',
                     initiatedBy: 'stand_in_identity',
                     userId: 9001,
-                    standInId: '@primary',
+                    standInId: `concurrency-${index}`,
                   }
                 : kind === 'agent'
                   ? { type: 'project_automation' }
@@ -146,7 +150,7 @@ export function createConcurrencyExecutionVerification({ workspacePath, uiTimeou
           uiTimeoutMs
         )
         for (const kind of ['standIn', 'agent']) {
-          const taskId = `owner-concurrency-${kind}-1`
+          const taskId = taskIdFor(kind, 1)
           const prompt = promptFor(kind, 'followup')
           const response = await rpc(control, 'runtime.tasks.send', {
             taskId,

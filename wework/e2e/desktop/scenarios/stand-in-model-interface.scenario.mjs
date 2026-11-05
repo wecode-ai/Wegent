@@ -10,6 +10,8 @@ import { reloadMainWindow } from '../modules/workspace-flows.mjs'
 import {
   assistantMessage,
   createSse,
+  delegatedTaskResultEvents,
+  handleEmptyReplyPrediction,
   mcpToolRequestEvents,
   readRequestBody,
   requestContainsToolOutput,
@@ -83,6 +85,14 @@ export function createDesktopScenario(options) {
       const body = await readRequestBody(request)
       assert.equal(request.headers.authorization, `Bearer ${MODEL_API_KEY}`)
       assert.equal(body.model, MODEL)
+      if (handleEmptyReplyPrediction(body, response)) return true
+      const resultEvents = delegatedTaskResultEvents(body)
+      if (resultEvents) {
+        const id = `interface-result-${Date.now()}`
+        response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
+        response.end(createSse([responseCreated(id), ...resultEvents, responseCompleted(id)]))
+        return true
+      }
       modelCalls++
       const input = JSON.stringify(body.input ?? [])
       // Tool output may quote primary chat markers; it cannot change the acting task.

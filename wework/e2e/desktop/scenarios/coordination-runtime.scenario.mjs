@@ -187,9 +187,11 @@ export function createDesktopScenario({
         )
         assert.equal(pending.running, false)
         assert.equal(assessments, 0)
-        await control.command('waitFor', '[data-testid="stand-in-processing-notice"]', {
-          timeoutMs: PROCESSING_NOTICE_TIMEOUT_MS,
-        })
+        assert.equal(
+          await control.command('getElementCount', '[data-testid="stand-in-processing-notice"]'),
+          '0',
+          'Routine background feedback without a question or failure must remain silent'
+        )
         await captureScreenshot(control, 'router-03-feedback-silent-intake.png')
         await rpc(control, 'runtime.stand_in.processing.check', { userId: USER })
         const failed = await until(
