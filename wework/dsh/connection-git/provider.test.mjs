@@ -455,3 +455,314 @@ test('GitLab canonical comments normalize equivalent legacy and ISO timestamp fo
   assert.equal(normalize('2026-02-01T01:00:00+01:00'), normalize('2026-02-01T00:00:00Z'))
   assert.notEqual(normalize('2026-02-01T00:00:00.001Z'), normalize('2026-02-01 00:00:00 UTC'))
 })
+
+for (const platform of ['github', 'gitlab']) {
+  test(`${platform} CLI repository collection needs no cloud and resumes without duplicate events`, async () => {
+    const cliSource = {
+      ...source,
+      transport: 'cli',
+      profile: JSON.stringify([`https://${platform}.com`, '7']),
+    }
+    delete cliSource.subscriptionId
+    delete cliSource.generation
+    const at = new Date(Date.now() - 1000).toISOString()
+    const row =
+      platform === 'github'
+        ? {
+            id: 'event-1',
+            type: 'FutureEvent',
+            created_at: at,
+            actor: { id: 7, login: 'alice' },
+            repo: { id: 42, name: 'org/repo' },
+            payload: { future_field: true },
+          }
+        : {
+            id: 1,
+            action_name: 'future action',
+            created_at: at,
+            project_id: 42,
+            author: { id: 7, username: 'alice' },
+            future_field: true,
+          }
+    const calls = []
+    const ctx = {
+      git: {
+        inbox: () => assert.fail('CLI sources must never use the cloud inbox'),
+        read: async input => {
+          calls.push(input.operation)
+          return {
+            data: input.operation === 'repository' ? { id: 42 } : [row],
+            pollIntervalSeconds: 120,
+          }
+        },
+      },
+    }
+    const provider = createProvider(platform)
+    await provider.validate(ctx, cliSource)
+    const checkpoint = await provider.initialize(ctx, cliSource)
+    assert.equal(checkpoint.partition, undefined)
+    const first = await provider.collect(ctx, { source: cliSource, checkpoint })
+    assert.equal(first.events.length, 1)
+    assert.deepEqual(first.events[0].external.payload, row)
+    assert.equal(first.events[0].external.repositoryPath, 'org/repo')
+    assert.equal(first.events[0].external.repositoryId, '42')
+    assert.equal(first.events[0].senderId, '7')
+    const finished = await provider.collect(ctx, {
+      source: cliSource,
+      checkpoint: first.nextCheckpoint,
+    })
+    assert.equal(finished.hasMore, false)
+    assert.ok(finished.nextCheckpoint.nextCheckAt >= Date.now() + 119000)
+    const idle = await provider.collect(ctx, {
+      source: cliSource,
+      checkpoint: finished.nextCheckpoint,
+    })
+    assert.equal(idle.events.length, 0)
+    assert.deepEqual(calls, ['repository', 'repository_events'])
+    const resumed = await provider.collect(ctx, {
+      source: cliSource,
+      checkpoint: { ...finished.nextCheckpoint, nextCheckAt: 0 },
+    })
+    assert.equal(resumed.events.length, 0)
+  })
+}
+
+test('CLI repository pages retain distinct events and reject a changed repository before reading its events', async () => {
+  const cliSource = { ...source, transport: 'cli' }
+  const at = new Date().toISOString()
+  const provider = createProvider('github')
+  const ctx = {
+    git: {
+      read: async input => ({
+        data:
+          input.operation === 'repository'
+            ? { id: 42 }
+            : input.page === 1
+              ? Array.from({ length: 100 }, (_, id) => ({
+                  id,
+                  type: 'FutureEvent',
+                  created_at: at,
+                  payload: {},
+                }))
+              : [{ id: 100, type: 'FutureEvent', created_at: at, payload: {} }],
+      }),
+    },
+  }
+  const first = await provider.collect(ctx, {
+    source: cliSource,
+    checkpoint: await provider.initialize(ctx, cliSource),
+  })
+  assert.equal(first.events.length, 100)
+  assert.equal(first.nextCheckpoint.activityPage, 2)
+  const second = await provider.collect(ctx, {
+    source: cliSource,
+    checkpoint: first.nextCheckpoint,
+  })
+  assert.equal(second.events.length, 1)
+  assert.equal(second.nextCheckpoint.activityComplete, true)
+  await assert.rejects(
+    provider.collect(
+      {
+        git: {
+          read: async input => {
+            assert.equal(input.operation, 'repository')
+            return { data: { id: 99 } }
+          },
+        },
+      },
+      { source: cliSource, checkpoint: {} }
+    ),
+    /Repository identity changed/
+  )
+})
+
+test('CLI personal scope collects authored and received activity plus personal work without a cloud subscription', async () => {
+  const at = new Date().toISOString()
+  const row = {
+    id: 'push',
+    type: 'PushEvent',
+    created_at: at,
+    repo: { id: 42, name: 'org/repo' },
+    payload: { head: 'sha' },
+  }
+  const cliSource = { ...personal, transport: 'cli' }
+  const calls = []
+  const ctx = {
+    git: {
+      read: async input => {
+        calls.push(input.operation)
+        return {
+          data: ['activity', 'received_activity'].includes(input.operation)
+            ? [row]
+            : input.operation === 'notifications'
+              ? []
+              : { items: [] },
+        }
+      },
+    },
+  }
+  const provider = createProvider('github')
+  let checkpoint = await provider.initialize(ctx, cliSource)
+  const events = []
+  for (let i = 0; i < 10; i++) {
+    const result = await provider.collect(ctx, { source: cliSource, checkpoint })
+    events.push(...result.events)
+    checkpoint = result.nextCheckpoint
+    if (!result.hasMore) break
+  }
+  assert.deepEqual(calls, ['activity', 'received_activity', 'notifications', 'assigned', 'reviews'])
+  assert.equal(events.length, 1)
+  assert.equal(events[0].external.eventType, 'PushEvent')
+  assert.equal(checkpoint.activityComplete, false)
+  assert.ok(checkpoint.nextCheckAt > Date.now())
+})
+
+test('CLI collection errors leave the durable checkpoint unchanged', async () => {
+  const checkpoint = { seen: {}, activityPage: 2 }
+  const before = structuredClone(checkpoint)
+  await assert.rejects(
+    createProvider('github').collect(
+      {
+        git: {
+          read: async () => {
+            throw new Error('device offline')
+          },
+        },
+      },
+      { source: { ...source, transport: 'cli' }, checkpoint }
+    ),
+    /device offline/
+  )
+  assert.deepEqual(checkpoint, before)
+})
+
+test('a full GitHub window reports unseen backlog but still accepts a previously collected last page', async () => {
+  const rows = Array.from({ length: 100 }, (_, id) => ({
+    id,
+    type: 'FutureEvent',
+    created_at: new Date().toISOString(),
+    payload: {},
+  }))
+  const ctx = { git: { read: async () => ({ data: rows }) } }
+  const provider = createProvider('github')
+  const cliSource = { ...source, transport: 'cli' }
+  await assert.rejects(
+    provider.collect(ctx, { source: cliSource, checkpoint: { activityPage: 3 } }),
+    { code: 'git_backlog_limit' }
+  )
+  const repeated = await provider.collect(ctx, {
+    source: cliSource,
+    checkpoint: {
+      activityPage: 3,
+      seen: Object.fromEntries(rows.map(row => [`activity:${row.id}`, { at: row.created_at }])),
+    },
+  })
+  assert.equal(repeated.events.length, 0)
+  assert.equal(repeated.nextCheckpoint.activityComplete, true)
+})
+
+for (const scope of ['personal', 'repository']) {
+  for (const kind of ['Issue', 'MergeRequest']) {
+    test(`GitLab ${scope} activity discovers and tracks ${kind} without a supplied URL`, async () => {
+      const at = new Date().toISOString()
+      const cliSource = {
+        ...personal,
+        kind: scope,
+        id: scope === 'repository' ? '42' : 'personal',
+        name: scope === 'repository' ? 'group/repo' : 'alice',
+        profile: JSON.stringify(['https://gitlab.com', '7']),
+        transport: 'cli',
+      }
+      const row = {
+        id: 91,
+        project_id: 42,
+        target_type: kind,
+        target_id: 301,
+        target_iid: 3,
+        target_title: 'Work',
+        action_name: 'opened',
+        created_at: at,
+        author: { id: 7 },
+      }
+      const calls = []
+      const ctx = {
+        git: {
+          read: async input => {
+            calls.push(input)
+            if (input.operation === 'repository')
+              return { data: { id: 42, path_with_namespace: 'group/repo' } }
+            if (['activity', 'repository_events'].includes(input.operation)) return { data: [row] }
+            if (input.operation === 'object')
+              return { data: { id: 301, iid: 3, state: 'opened', updated_at: at } }
+            if (input.operation === 'comments')
+              return {
+                data: [
+                  { id: 77, body: 'Follow-up', created_at: at, updated_at: at, author: { id: 8 } },
+                ],
+              }
+            return { data: [] }
+          },
+        },
+      }
+      const provider = createProvider('gitlab')
+      let checkpoint = await provider.initialize(ctx, cliSource)
+      const events = []
+      for (let i = 0; i < 15; i++) {
+        const result = await provider.collect(ctx, { source: cliSource, checkpoint })
+        events.push(...result.events)
+        checkpoint = result.nextCheckpoint
+        if (!result.hasMore) break
+      }
+      const url = `https://gitlab.com/group/repo/-/${kind === 'Issue' ? 'issues' : 'merge_requests'}/3`
+      assert.equal(events[0].external.url, url)
+      assert.equal(events[0].external.repositoryPath, 'group/repo')
+      assert.ok(events.some(event => event.external.eventType === 'tracked.comments'))
+      assert.ok(
+        calls.some(
+          input =>
+            input.operation === 'comments' &&
+            input.repository === 'group/repo' &&
+            input.number === 3
+        )
+      )
+      if (scope === 'personal')
+        assert.ok(
+          calls.some(input => input.operation === 'repository' && input.repository === '42')
+        )
+      if (kind === 'MergeRequest')
+        assert.ok(
+          calls.some(
+            input => input.operation === 'api' && input.path === 'merge_requests/3/approvals'
+          )
+        )
+    })
+  }
+}
+
+test('activity deduplication survives the generic thirty-day checkpoint cleanup', async () => {
+  const at = new Date(Date.now() - 31 * 86400000).toISOString()
+  const cliSource = {
+    ...source,
+    profile: JSON.stringify(['https://gitlab.com', '7']),
+    transport: 'cli',
+  }
+  const row = { id: 'old-activity', created_at: at, project_id: 42, action_name: 'future action' }
+  const ctx = {
+    git: { read: async input => ({ data: input.operation === 'repository' ? { id: 42 } : [row] }) },
+  }
+  const provider = createProvider('gitlab')
+  const first = await provider.collect(ctx, {
+    source: cliSource,
+    checkpoint: await provider.initialize(ctx, cliSource),
+  })
+  assert.equal(first.events.length, 1)
+  const completed = await provider.collect(ctx, {
+    source: cliSource,
+    checkpoint: first.nextCheckpoint,
+  })
+  const next = await provider.collect(ctx, {
+    source: cliSource,
+    checkpoint: { ...completed.nextCheckpoint, nextCheckAt: 0 },
+  })
+  assert.equal(next.events.length, 0)
+})

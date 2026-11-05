@@ -8,26 +8,20 @@ Select GitHub or GitLab in a role's connection settings. GitHub.com, GitLab.com 
 
 ## Accounts and scopes
 
-Select the execution device, platform and instance, then connect the account on that device. Choose personal events or search and select multiple repositories. An account is bound to its instance and stable provider user ID. Switching the active CLI account stops reads instead of silently rebinding the source. Install the CLI on the execution device beforehand.
+Select an execution device and GitHub or GitLab. A self-managed GitLab instance uses its own HTTPS URL. Connect an account on that device, then choose one of two scopes:
 
-- **Personal events** poll notifications, assigned items and review requests, then track comments, reviews and CI state for discovered items. Initial activation starts at the activation time, without importing complete history. Provider visibility, query and search limits apply; this is not a repository audit stream.
-- **Repository events** use provider Webhooks. Wework cloud verifies signatures and buffers deliveries until the selected device collects them. Original event types and JSON are preserved, including unknown types.
+- **All personal events** receives visible account activity, notifications, assignments and review requests, and tracks comments, reviews and CI state for discovered work.
+- **Follow a specific repository** receives activity from selected repositories and tracks subsequent changes to discovered work.
 
-## Repository Webhooks
+Both scopes use the execution device's existing gh / glab account. Collection begins at activation rather than importing complete history. Bindings include the instance and stable user ID; switching the CLI account stops reads instead of silently rebinding. The current UI exposes no Webhook configuration and adding a repository creates no cloud receiver.
 
-Repository additions and takeovers enter a profile draft first. Saving creates or takes over cloud receivers; discarding the draft changes nothing remotely. All new account and repository bindings are checked before mutations. After saving, use “Configure Webhook” beside the connection to reopen the callback URL and separately revealable secret. Secrets do not enter role settings or model context. Ask the stand-in to configure the Webhook, or configure it manually in the provider. Assisted configuration first reads a safe plan, then requires native approval for the exact instance, repository, callback and event selection.
-
-GitHub uses all events (`*`). For GitLab, enable all project Webhook event flags supported by the selected instance version. Unsupported flags require explicit correction; a partial subscription must not be reported as complete. “All” means events the provider allows that repository to subscribe to, not unavailable system events. The provider must reach the cloud callback; private GitLab networks may need administrator configuration.
-
-Automatic GitLab configuration reads the instance version first: milestone events are omitted before 18.2, and deploy-token events before 18.4. Plans and results list these limitations. Core and access-token events remain required; an unrecognized version stops configuration. Version eligibility does not prove delivery: deploy-token notifications in 18.4 also depend on an instance feature flag, so actual delivery still needs verification.
-
-The UI shows the last received event, pending count and retention gaps. A generated callback alone does not prove provider setup succeeded; inspect provider delivery results and receiver status. Removing a connection and saving revokes the cloud receiver. Delete the provider-side Webhook separately.
+Provider activity APIs determine event coverage, visibility, retention and latency; their events are not equivalent to all Webhook types. Unknown types retain their original JSON. GitHub returns up to 300 events from the past 30 days and may publish events late. Each collection rescans the available window with deduplication instead of advancing a receipt-time watermark that could lose delayed events. Activity deduplication IDs survive generic thirty-day cleanup; the 20,000-ID budget pauses collection explicitly instead of silently dropping or replaying old events. See [GitHub Events API](https://docs.github.com/en/rest/activity/events) and [GitLab Events API](https://docs.gitlab.com/api/events/).
 
 ## Devices and offline recovery
 
-Work follows the selected execution device. An offline computer executes nothing while cloud buffering continues for repository Webhooks. The device collects pending events in order when it returns. An online cloud device can keep running if it has the CLI, account and repository permissions. Personal polling resumes on the execution device, without cloud impersonation.
+Event reads and tasks follow the selected execution device. Offline devices read no events and execute no tasks; cloud does not impersonate them or buffer new CLI events. Reads resume when the device returns, subject to the provider's retention window. An online cloud device can keep running if it has the CLI, account and repository access.
 
-Saving a takeover replaces the consumer device and generation. The old consumer cannot fetch, acknowledge or invoke Git tools through that connection. Consumption resumes from the confirmed position. If cloud changes succeed but local saving is interrupted, the UI explicitly reports possible partial changes. Retry the draft or add an existing receiver on this device to recover. Delivery IDs deduplicate ingress, and acknowledgments advance only after local persistence. Deliveries are retained for up to 30 days, with a limit of 10,000 unconfirmed deliveries per subscription. Capacity exhaustion rejects ingress so failures remain visible at the provider. Expired pending deliveries create an explicit gap and stop automatic advancement until investigated. Inspect provider delivery records because providers may not automatically redeliver every failure.
+Read failures preserve the checkpoint and received events are deduplicated by provider event ID. Saving validates the account and repository; tools cannot switch a repository source to another repository.
 
 ## Behavior and approvals
 
@@ -47,9 +41,9 @@ Missing CLIs, required login, insufficient permissions, rate limits, network err
 
 ## Verification scope
 
-The `stand-in-git` desktop CI protocol integration scenario covers signature validation, deduplication, fetching, acknowledgment and takeover fencing through real Wework Backend, Redis and Executor services. It uses no real GitHub/GitLab account and does not establish live provider compatibility. Validate login, supported event flags, delivery and native write approval against the target instance before rollout.
+Native read endpoints, providers, activation boundaries and UI tests cover CLI sources. Live GitLab integration remains unverified. Real-account checks and internal protocol integration are reported separately.
 
-On an execution device already signed in through `gh`, explicitly setting `WEWORK_GIT_READONLY_REPOSITORY=owner/repository` enables the same scenario's live GitHub read-only extension: read the repository with the real account, submit a signed event to the internal ingress while the device is stopped, resume collection and repository reads after restart, and reject native external-write approval. Only model responses are simulated. This extension does not install a provider Webhook or verify live personal-event polling or successful writes. Live GitLab account integration requires separate verification.
+The stand-in-git protocol integration retains real Backend, Redis and Executor signature, deduplication, collection and acknowledgement checks for the underlying Webhook capability. Its APIs remain available internally; the current connection UI exposes no setup entry and new CLI sources do not use them.
 
 ## Implementation boundaries
 

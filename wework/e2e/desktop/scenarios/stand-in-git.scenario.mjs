@@ -199,49 +199,32 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, modelRes
         ])
           await control.command('clickWhenEnabled', `[data-testid="${target}"]`)
         await openGit('github')
-        await control.command('waitFor', `[data-testid="stand-in-git-takeover-${receiver.id}"]`)
-        await captureScreenshot(control, 'git-01-empty-connections-and-recoverable-receivers.png')
-        await control.command(
-          'clickWhenEnabled',
-          `[data-testid="stand-in-git-takeover-${receiver.id}"]`
-        )
-        await control.command('waitFor', '[data-testid="stand-in-git-remove-42"]')
-        await captureScreenshot(control, 'git-02-one-pending-takeover.png')
-        let remote = await request('/v1/git-connections/subscriptions')
+        const personalView = JSON.parse(await control.command('snapshot', 'body'))
+        assert.match(personalView.text, /个人全部事件/)
+        assert.match(personalView.text, /只关注某个仓库/)
+        assert.doesNotMatch(personalView.text, /Webhook|轮询/)
         assert.equal(
-          remote.items.find(row => row.id === receiver.id).deviceId,
-          'previous-computer',
-          'draft takeover must leave the previous consumer active'
+          Number(
+            await control.command('getElementCount', '[data-testid^="stand-in-git-takeover-"]')
+          ),
+          0
         )
+        await captureScreenshot(control, 'git-01-personal-scope-without-cloud-controls.png')
+        await control.command('select', '[data-testid="stand-in-git-kind"]', {
+          value: 'repository',
+        })
+        await control.command('fill', '[data-testid="stand-in-git-query"]', { value: 'wegent' })
+        await captureScreenshot(control, 'git-02-repository-scope-search-layout.png')
+        const remote = await request('/v1/git-connections/subscriptions')
+        assert.equal(remote.items.find(row => row.id === receiver.id).deviceId, 'previous-computer')
         assert.equal(
           remote.items.find(row => row.id === receiver.id).generation,
           receiver.generation
         )
-        await control.command(
-          'clickWhenEnabled',
-          `[data-testid="stand-in-git-takeover-${receiver2.id}"]`
-        )
-        await control.command('waitFor', '[data-testid="stand-in-git-remove-43"]')
-        await captureScreenshot(control, 'git-03-multiple-connections-and-long-name.png')
-        await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-save"]')
-        await control.command('waitFor', '[role="alert"]')
-        await captureScreenshot(control, 'git-04-account-preflight-failure-preserves-draft.png')
-        remote = await request('/v1/git-connections/subscriptions')
-        assert.equal(
-          remote.items.find(row => row.id === receiver.id).deviceId,
-          'previous-computer',
-          'failed preflight must not partially take over another receiver'
-        )
-        assert.equal(
-          Number(
-            await control.command('getElementCount', '[data-testid="stand-in-git-remove-42"]')
-          ),
-          1
-        )
         await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-cancel"]')
-        await control.command('waitFor', '[data-testid="stand-in-primary-discard"]')
-        await captureScreenshot(control, 'git-05-discard-staged-connections.png')
-        await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-discard"]')
+        await control.command('waitFor', '[data-testid="stand-in-primary-profile"]', {
+          visible: false,
+        })
         const persisted = await requestExecutor(
           control,
           'runtime.stand_in.personal.get',
@@ -252,6 +235,21 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, modelRes
           Boolean(persisted.primary?.connections?.some(row => row.subscriptionId === receiver.id)),
           false
         )
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+        await control.command(
+          'clickWhenEnabled',
+          '[data-testid="stand-in-primary-connections-open"]'
+        )
+        await openGit('gitlab')
+        await control.command('select', '[data-testid="stand-in-git-kind"]', {
+          value: 'repository',
+        })
+        await control.command('fill', '[data-testid="stand-in-git-query"]', { value: 'wegent' })
+        await captureScreenshot(control, 'git-03-light-gitlab-repository-search.png')
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-cancel"]')
+        await control.command('waitFor', '[data-testid="stand-in-primary-profile"]', {
+          visible: false,
+        })
         await control.command('navigate', 'body', { value: '/settings/appearance' })
         await control.command('clickWhenEnabled', '[data-testid="appearance-mode-dark"]')
         await control.command('waitFor', 'html[data-theme="dark"]')
@@ -262,16 +260,22 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, modelRes
         for (const target of ['stand-in-settings-open', 'stand-in-primary-connections-open'])
           await control.command('clickWhenEnabled', `[data-testid="${target}"]`)
         await openGit('gitlab')
-        await captureScreenshot(control, 'git-06-narrow-dark-gitlab-instance-and-scope.png')
+        await captureScreenshot(control, 'git-04-narrow-dark-gitlab-personal-scope.png')
         await control.command('select', '[data-testid="stand-in-git-kind"]', {
           value: 'repository',
         })
+        await control.command('fill', '[data-testid="stand-in-git-query"]', { value: 'wegent' })
+        await captureScreenshot(control, 'git-05-narrow-dark-gitlab-repository-search.png')
         await control.command('fill', '[data-testid="stand-in-git-instance"]', {
           value: 'http://gitlab.invalid',
         })
         await control.command('clickWhenEnabled', '[data-testid="stand-in-git-search"]')
         await control.command('waitFor', '[role="alert"]')
-        await captureScreenshot(control, 'git-07-invalid-instance-actionable-error.png')
+        await captureScreenshot(control, 'git-06-invalid-instance-actionable-error.png')
+        await control.command('fill', '[data-testid="stand-in-git-instance"]', {
+          value: 'https://gitlab.com',
+        })
+        await control.command('waitFor', '[role="alert"]', { visible: false })
       } finally {
         await request(`/v1/git-connections/subscriptions/${receiver.id}`, 'DELETE', {
           deviceId: 'previous-computer',

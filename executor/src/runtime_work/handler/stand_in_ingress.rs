@@ -2,7 +2,7 @@
 use super::stand_in::settings_error;
 use super::*;
 use crate::task_runtime::personal_stand_in::{
-    source_provider, stand_in_connection, stand_in_identities,
+    source_namespace, source_provider, stand_in_connection, stand_in_identities,
 };
 use chrono::TimeZone;
 
@@ -42,13 +42,8 @@ impl RuntimeWorkRpcHandler {
                 .filter(|identity| identity["enabled"] == true)
             {
                 for source in identity["connections"].as_array().into_iter().flatten() {
-                    let key = json!([
-                        source_provider(source),
-                        source["profile"],
-                        source["kind"],
-                        source["id"]
-                    ])
-                    .to_string();
+                    let key =
+                        json!([source_namespace(source), source["kind"], source["id"]]).to_string();
                     let entry = sources
                         .entry(key)
                         .or_insert_with(|| (source.clone(), Vec::new()));
@@ -557,7 +552,7 @@ pub(super) fn git_message_is_echo(
 pub(super) fn source_accepts_message(source: &Value, message: &Value) -> bool {
     if source_provider(source) == crate::task_runtime::personal_stand_in::EMAIL_PROVIDER
         || (source_provider(source).starts_with(super::super::git_connections::PACKAGE)
-            && source["kind"] == "repository")
+            && super::super::git_connections::uses_webhook(source))
     {
         let boundary = &source["boundary"];
         let position = &message["position"];
@@ -580,6 +575,25 @@ pub(super) fn source_accepts_message(source: &Value, message: &Value) -> bool {
 #[cfg(test)]
 mod ordered_email_tests {
     use super::*;
+
+    #[test]
+    fn git_cli_repository_intake_uses_activation_time_without_a_cloud_boundary() {
+        let source = json!({"providerId":"@wegent/dsh-connection-git/github", "kind":"repository", "transport":"cli", "enabledAfter":"2026-11-04T00:00:00Z"});
+        assert!(!source_accepts_message(
+            &source,
+            &json!({"at":"2026-11-03T23:59:59Z"})
+        ));
+        assert!(source_accepts_message(
+            &source,
+            &json!({"at":"2026-11-04T00:00:01Z"})
+        ));
+        let mut webhook = source.clone();
+        webhook.as_object_mut().unwrap().remove("transport");
+        assert!(!source_accepts_message(
+            &webhook,
+            &json!({"at":"2026-11-04T00:00:01Z"})
+        ));
+    }
 
     #[test]
     fn ordered_email_intake_uses_each_roles_uid_boundary_instead_of_timestamp_precision() {

@@ -308,7 +308,7 @@ impl RuntimeWorkRpcHandler {
                     != crate::task_runtime::personal_stand_in::EMAIL_PROVIDER
                     && !(crate::task_runtime::personal_stand_in::source_provider(source)
                         .starts_with(super::super::git_connections::PACKAGE)
-                        && source["kind"] == "repository")
+                        && super::super::git_connections::uses_webhook(source))
                 {
                     continue;
                 }

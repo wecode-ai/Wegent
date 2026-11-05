@@ -108,7 +108,12 @@ pub fn source_namespace(source: &Value) -> Value {
     if source_provider(source) == DINGTALK_PROVIDER {
         source["profile"].clone()
     } else {
-        json!({"providerId":source_provider(source),"profile":source["profile"]})
+        let mut namespace =
+            json!({"providerId":source_provider(source),"profile":source["profile"]});
+        if let Some(transport) = source.get("transport") {
+            namespace["transport"] = transport.clone();
+        }
+        namespace
     }
 }
 
@@ -406,6 +411,7 @@ pub fn stand_in_connection<'a>(identity: &'a Value, source: &Value) -> Option<&'
             && source_provider(row) == source_provider(source)
             && row["profile"] == source["profile"]
             && row["kind"] == source["kind"]
+            && row["transport"] == source["transport"]
     })
 }
 
@@ -632,6 +638,7 @@ pub(super) fn stamp_stand_in_connections(identity: &mut Value, previous: &Value)
                     && row["profile"] == source["profile"]
                     && row["generation"] == source["generation"]
                     && row["subscriptionId"] == source["subscriptionId"]
+                    && row["transport"] == source["transport"]
             })
         });
         source["enabledAfter"] = before
@@ -658,6 +665,32 @@ fn stamp_project_enabled(identity: &mut Value, previous: &Value) {
 #[cfg(test)]
 mod email_policy_tests {
     use super::*;
+
+    #[test]
+    fn git_cli_and_webhook_sources_keep_separate_checkpoints_and_bindings() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        let webhook = json!({"providerId":"@wegent/dsh-connection-git/github","kind":"repository","id":"42","profile":"account"});
+        let mut cli = webhook.clone();
+        cli["transport"] = json!("cli");
+        store
+            .save_stand_in_source(7, &webhook, &json!({"checkpoint":{"sequence":5}}))
+            .unwrap();
+        store
+            .save_stand_in_source(7, &cli, &json!({"checkpoint":{"activityPage":2}}))
+            .unwrap();
+        assert_eq!(
+            store.stand_in_source(7, &webhook).unwrap()["checkpoint"]["sequence"],
+            5
+        );
+        assert_eq!(
+            store.stand_in_source(7, &cli).unwrap()["checkpoint"]["activityPage"],
+            2
+        );
+        let role = json!({"connections":[cli.clone()]});
+        assert!(stand_in_connection(&role, &cli).is_some());
+        assert!(stand_in_connection(&role, &webhook).is_none());
+    }
 
     #[test]
     fn git_connection_save_preflight_never_commits_the_draft() {

@@ -5870,11 +5870,11 @@
       "verify_update": "Verify and update credentials"
     },
     "git": {
-      "description": "Connect personal and repository events. Your stand-in instructions decide how to handle them.",
-      "instance": "Platform instance URL",
+      "description": "Choose the personal or repository events your stand-in should follow.",
+      "instance": "GitLab URL",
       "scope": "Event scope",
-      "personal": "Personal events (polling)",
-      "repository": "All repository events (webhook)",
+      "personal": "All personal events",
+      "repository": "Follow a specific repository",
       "search": "Search repositories",
       "check_account": "Read signed-in account",
       "confirm_write": "Confirm GitHub/GitLab write",
@@ -5885,7 +5885,7 @@
       "write_preview": "Instance: {{instance}}\nAccount ID: {{accountId}}\nRepository: {{repository}}\nRequest: {{method}} {{path}}\nBody:\n{{body}}",
       "more": "Load more",
       "add": "Add connection",
-      "permissions": "Analysis and local edits run automatically. Comments, pushes and other external writes require one-time native approval. Merging requires explicit delegation. Save to begin processing new events.",
+      "permissions": "New events are received after saving. Your stand-in settings determine how they are handled.",
       "setup": "Configure a webhook for {{repository}}",
       "callback": "Callback URL",
       "secret": "Webhook secret",
@@ -5922,7 +5922,12 @@
       "pending_connection": "Pending save · add connection",
       "receiving_device": "Receiving device: {{device}}",
       "selected_device": "Selected execution device",
-      "invalid_instance": "Enter an HTTPS instance address, such as https://gitlab.com, without a username, password, path or query parameters."
+      "invalid_instance": "Enter an HTTPS instance address, such as https://gitlab.com, without a username, password, path or query parameters.",
+      "account": "Platform account",
+      "account_help": "Sign in on the selected execution device.",
+      "search_placeholder": "Repository name or owner/repo",
+      "personal_help": "Select an account to receive its related events.",
+      "repository_help": "Select a repository you have access to."
     },
     "onboarding": {
       "title": "Get started with your stand-in",

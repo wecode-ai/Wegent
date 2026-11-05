@@ -50,6 +50,16 @@ impl RuntimeWorkRpcHandler {
                         .is_some_and(|p| p.starts_with(super::super::git_connections::PACKAGE))
                 })
             {
+                if source["transport"] == "cli"
+                    && (source["subscriptionId"].is_string()
+                        || source["generation"].is_string()
+                        || source["pendingTakeover"] == true)
+                {
+                    return Err(AppIpcError::new(
+                        "git_connection_invalid",
+                        "CLI sources cannot include webhook bindings",
+                    ));
+                }
                 let unchanged = before
                     .and_then(|r| {
                         crate::task_runtime::personal_stand_in::stand_in_connection(r, source)
@@ -58,6 +68,7 @@ impl RuntimeWorkRpcHandler {
                         old["subscriptionId"] == source["subscriptionId"]
                             && old["generation"] == source["generation"]
                             && old["name"] == source["name"]
+                            && old["transport"] == source["transport"]
                     });
                 if unchanged && source["pendingTakeover"] != true {
                     continue;
@@ -184,7 +195,9 @@ impl RuntimeWorkRpcHandler {
                     "Repository identity changed",
                 ));
             }
-            self.git_connection_webhook(json!({"operation":"boundary","subscriptionId":source["subscriptionId"],"generation":source["generation"]})).await?;
+            if super::super::git_connections::uses_webhook(source) {
+                self.git_connection_webhook(json!({"operation":"boundary","subscriptionId":source["subscriptionId"],"generation":source["generation"]})).await?;
+            }
         }
         Ok(())
     }

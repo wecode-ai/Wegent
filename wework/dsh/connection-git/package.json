@@ -30,8 +30,8 @@
             "repository"
           ],
           "resourceLabels": {
-            "personal": "个人事件",
-            "repository": "仓库全部事件"
+            "personal": "个人全部事件",
+            "repository": "只关注某个仓库"
           },
           "eventTypes": [
             "git.event"
@@ -44,8 +44,8 @@
             "en": {
               "displayName": "GitHub",
               "resourceLabels": {
-                "personal": "Personal events",
-                "repository": "All repository events"
+                "personal": "All personal events",
+                "repository": "Follow a specific repository"
               }
             }
           }
@@ -62,8 +62,8 @@
             "repository"
           ],
           "resourceLabels": {
-            "personal": "个人事件",
-            "repository": "仓库全部事件"
+            "personal": "个人全部事件",
+            "repository": "只关注某个仓库"
           },
           "eventTypes": [
             "git.event"
@@ -72,8 +72,8 @@
             "en": {
               "displayName": "GitLab",
               "resourceLabels": {
-                "personal": "Personal events",
-                "repository": "All repository events"
+                "personal": "All personal events",
+                "repository": "Follow a specific repository"
               }
             }
           }

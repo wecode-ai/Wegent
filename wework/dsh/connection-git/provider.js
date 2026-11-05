@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 
 export const GIT_PACKAGE = '@wegent/dsh-connection-git/'
 const STREAMS = ['notifications', 'assigned', 'reviews']
+const usesWebhook = source => source.kind === 'repository' && source.transport !== 'cli'
 
 const invalid = message => Object.assign(new Error(message), { code: 'git_connection_invalid' })
 const required = (value, field) => {
@@ -46,6 +47,7 @@ export function createProvider(platform) {
               providerId,
               profile,
               kind: 'personal',
+              transport: 'cli',
               id: 'personal',
               name: `${identity.login} · ${identity.instance}`,
             },
@@ -74,6 +76,7 @@ export function createProvider(platform) {
           providerId,
           profile,
           kind: 'repository',
+          transport: 'cli',
           id: String(row.id),
           name: required(row, platform === 'github' ? 'full_name' : 'path_with_namespace'),
         })),
@@ -86,22 +89,21 @@ export function createProvider(platform) {
       parseProfile(required(source, 'profile'))
       if (source.kind === 'repository') {
         required(source, 'name')
-        if (!source.subscriptionId || !source.generation)
+        if (usesWebhook(source) && (!source.subscriptionId || !source.generation))
           throw invalid('Configure the repository webhook')
       }
       return source
     },
     async initialize(ctx, source) {
-      const boundary =
-        source.kind === 'repository'
-          ? (source.boundary ??
-            (await ctx.git.inbox({
-              operation: 'boundary',
-              subscriptionId: source.subscriptionId,
-              generation: source.generation,
-              resumePending: source.resumePending === true,
-            })))
-          : undefined
+      const boundary = usesWebhook(source)
+        ? (source.boundary ??
+          (await ctx.git.inbox({
+            operation: 'boundary',
+            subscriptionId: source.subscriptionId,
+            generation: source.generation,
+            resumePending: source.resumePending === true,
+          })))
+        : undefined
       return {
         after: source.enabledAfter ?? new Date().toISOString(),
         stream: 0,
@@ -115,7 +117,12 @@ export function createProvider(platform) {
     async collect(ctx, { source, checkpoint }) {
       if (checkpoint.nextCheckAt && Date.now() < checkpoint.nextCheckAt)
         return { events: [], nextCheckpoint: checkpoint, hasMore: false }
-      if (source.kind === 'repository') {
+      if (source.transport === 'cli') {
+        if (!checkpoint.activityComplete) return collectActivity(ctx, platform, source, checkpoint)
+        if (source.kind === 'repository')
+          return collectTracked(ctx, platform, source, structuredClone(checkpoint))
+      }
+      if (usesWebhook(source)) {
         const { instance } = parseProfile(source.profile)
         const identityDue =
           !checkpoint.identityCheckedAt || Date.now() - checkpoint.identityCheckedAt >= 3600000
@@ -159,6 +166,165 @@ export function createProvider(platform) {
       return collectPersonal(ctx, platform, source, checkpoint)
     },
   }
+}
+
+async function collectActivity(ctx, platform, source, checkpoint) {
+  const next = structuredClone(checkpoint)
+  next.until ??= new Date().toISOString()
+  const profile = parseProfile(source.profile)
+  const feeds =
+    source.kind === 'repository'
+      ? ['repository_events']
+      : platform === 'github'
+        ? ['activity', 'received_activity']
+        : ['activity']
+  const page = next.activityPage ?? 1
+  if (source.kind === 'repository' && page === 1 && !next.activityFeed) {
+    const repository = await ctx.git.read({
+      ...profile,
+      profile: source.profile,
+      operation: 'repository',
+      repository: source.name,
+    })
+    if (String(repository.data.id) !== source.id) throw invalid('Repository identity changed')
+  }
+  const response = await ctx.git.read({
+    ...profile,
+    profile: source.profile,
+    operation: feeds[next.activityFeed ?? 0],
+    repository: source.name,
+    page,
+  })
+  const rows = response.data
+  if (!Array.isArray(rows)) throw invalid('Invalid activity event page')
+  next.pollIntervalSeconds = Math.max(
+    next.pollIntervalSeconds ?? 60,
+    response.pollIntervalSeconds ?? 60
+  )
+  next.seen ??= {}
+  next.tracked ??= {}
+  const events = []
+  for (const row of rows) {
+    const at = row.created_at
+    if (!Number.isFinite(Date.parse(at)) || Date.parse(at) < Date.parse(source.enabledAfter))
+      continue
+    const id = String(row.id ?? '')
+    if (!id) throw invalid('Activity event ID missing')
+    const key = `activity:${id}`
+    if (next.seen[key]) continue
+    const repository = await activityRepository(ctx, platform, source, row, next)
+    const event = normalizeActivity(platform, source, row, repository)
+    next.seen[key] = { digest: fingerprint(row), at }
+    events.push(event)
+    if (['issue', 'change_request'].includes(event.external.entityKind) && event.external.url) {
+      next.tracked[event.external.url] = {
+        repository: event.external.repositoryPath,
+        number: event.external.entityId,
+        entityKind: event.external.entityKind,
+        url: event.external.url,
+      }
+    }
+  }
+  if (
+    Object.keys(next.seen).length > 20000 ||
+    Object.keys(next.tracked).length > 100 ||
+    (platform === 'github' &&
+      page >= 3 &&
+      rows.length === 100 &&
+      events.length === rows.length &&
+      rows.every(row => Date.parse(row.created_at) >= Date.parse(source.enabledAfter)))
+  )
+    throw Object.assign(new Error('Activity feed exceeds the platform collection budget'), {
+      code: 'git_backlog_limit',
+    })
+  if (rows.length === 100 && (platform !== 'github' || page < 3)) next.activityPage = page + 1
+  else {
+    next.activityPage = 1
+    next.activityFeed = (next.activityFeed ?? 0) + 1
+    if (next.activityFeed >= feeds.length) {
+      next.activityFeed = 0
+      next.activityComplete = true
+    }
+  }
+  return { events, nextCheckpoint: next, hasMore: true }
+}
+
+async function activityRepository(ctx, platform, source, row, next) {
+  if (source.kind === 'repository') return source.name
+  if (platform === 'github') return row.repo?.name ?? ''
+  if (row.project?.path_with_namespace) return row.project.path_with_namespace
+  const id = String(row.project_id ?? '')
+  if (!/^\d+$/.test(id)) return ''
+  next.activityProjects ??= {}
+  const cached = next.activityProjects[id]
+  if (cached && Date.now() - cached.checkedAt < 3600000) return cached.path
+  try {
+    const result = await ctx.git.read({
+      ...parseProfile(source.profile),
+      profile: source.profile,
+      operation: 'repository',
+      repository: id,
+    })
+    if (String(result.data.id) !== id || typeof result.data.path_with_namespace !== 'string')
+      throw invalid('Activity project identity changed')
+    next.activityProjects[id] = { path: result.data.path_with_namespace, checkedAt: Date.now() }
+    if (Object.keys(next.activityProjects).length > 1000)
+      throw Object.assign(new Error('Too many activity projects'), { code: 'git_backlog_limit' })
+    return result.data.path_with_namespace
+  } catch (error) {
+    if (['git_not_found', 'git_permission_denied'].includes(error?.code)) return ''
+    throw error
+  }
+}
+
+function normalizeActivity(platform, source, row, repository) {
+  const type =
+    row.target_type === 'MergeRequest' || row.note?.noteable_type === 'MergeRequest'
+      ? 'merge_request'
+      : row.target_type === 'Issue' || row.note?.noteable_type === 'Issue'
+        ? 'issue'
+        : row.note
+          ? 'note'
+          : row.target_type
+  const number = row.target_iid ?? row.note?.noteable_iid
+  const object = {
+    id: row.note?.noteable_id ?? row.target_id,
+    iid: number,
+    title: row.target_title,
+    web_url: canonicalTopic(
+      platform,
+      parseProfile(source.profile).instance,
+      repository,
+      type === 'merge_request' ? 'change_request' : type,
+      number
+    ),
+  }
+  const payload =
+    platform === 'github'
+      ? { ...row.payload, sender: row.actor }
+      : {
+          ...row,
+          user: row.author,
+          object_kind: row.note ? 'note' : type,
+          object_attributes: row.note ?? object,
+          ...(type === 'issue'
+            ? { issue: object }
+            : type === 'merge_request'
+              ? { merge_request: object }
+              : {}),
+        }
+  const event = normalizeWebhook(
+    platform,
+    { ...source, id: String(row.repo?.id ?? row.project_id ?? source.id), name: repository },
+    {
+      id: `activity:${row.id}`,
+      eventType: row.type ?? row.action_name ?? type ?? 'activity',
+      receivedAt: row.created_at,
+      payload,
+    }
+  )
+  event.external.payload = row
+  return event
 }
 
 async function collectPersonal(ctx, platform, source, checkpoint) {
@@ -380,13 +546,16 @@ async function collectTracked(ctx, platform, source, next) {
     next.after = next.until
     delete next.until
     next.stream = 0
+    if (source.transport === 'cli') next.activityComplete = false
     next.page = 1
     next.trackIndex = 0
     next.trackStep = 0
     next.nextCheckAt = Date.now() + Math.max(60, next.pollIntervalSeconds ?? 60) * 1000
     const cutoff = Date.now() - 30 * 86400000
     next.seen = Object.fromEntries(
-      Object.entries(next.seen).filter(([, value]) => Date.parse(value.at) >= cutoff)
+      Object.entries(next.seen).filter(
+        ([key, value]) => key.startsWith('activity:') || Date.parse(value.at) >= cutoff
+      )
     )
     return { events: [], nextCheckpoint: next, hasMore: false }
   }

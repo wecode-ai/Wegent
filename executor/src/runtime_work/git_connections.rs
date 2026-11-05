@@ -12,6 +12,10 @@ use tokio::{io::AsyncReadExt, process::Command};
 
 pub(crate) const PACKAGE: &str = "@wegent/dsh-connection-git/";
 
+pub(super) fn uses_webhook(source: &Value) -> bool {
+    source["kind"] == "repository" && source["transport"] != "cli"
+}
+
 fn invalid(message: &str) -> AppIpcError {
     AppIpcError::new("git_connection_invalid", message)
 }
@@ -78,6 +82,23 @@ fn endpoint(platform: &str, input: &Value) -> Result<String, AppIpcError> {
             )
         });
     }
+    if op == "activity" || op == "received_activity" {
+        return Ok(if platform == "github" {
+            let login = input["login"]
+                .as_str()
+                .ok_or_else(|| invalid("Missing bound account"))?;
+            let feed = if op == "received_activity" {
+                "received_events"
+            } else {
+                "events"
+            };
+            format!("users/{}/{feed}?per_page=100&page={page}", segment(login))
+        } else if op == "activity" {
+            format!("events?per_page=100&page={page}&sort=desc")
+        } else {
+            return Err(invalid("Unsupported activity feed"));
+        });
+    }
     if op == "notifications" {
         return Ok(if platform == "github" {
             format!(
@@ -138,6 +159,14 @@ fn endpoint(platform: &str, input: &Value) -> Result<String, AppIpcError> {
     } else {
         format!("projects/{}", segment(repo))
     };
+    if op == "repository_events" {
+        let order = if platform == "gitlab" {
+            "&sort=desc"
+        } else {
+            ""
+        };
+        return Ok(format!("{base}/events?per_page=100&page={page}{order}"));
+    }
     if op == "repository" {
         return Ok(base);
     }
@@ -742,6 +771,58 @@ mod tests {
             .retry_at;
         assert!(retry.unwrap() > chrono::Utc::now().timestamp_millis() + 299000);
     }
+    #[test]
+    fn cli_event_feeds_are_bound_to_the_selected_account_and_repository() {
+        assert_eq!(
+            endpoint(
+                "github",
+                &json!({"operation":"activity","login":"alice","page":2})
+            )
+            .unwrap(),
+            "users/alice/events?per_page=100&page=2"
+        );
+        assert_eq!(
+            endpoint(
+                "github",
+                &json!({"operation":"received_activity","login":"alice"})
+            )
+            .unwrap(),
+            "users/alice/received_events?per_page=100&page=1"
+        );
+        assert_eq!(
+            endpoint(
+                "github",
+                &json!({"operation":"repository_events","repository":"org/repo"})
+            )
+            .unwrap(),
+            "repos/org/repo/events?per_page=100&page=1"
+        );
+        assert_eq!(
+            endpoint(
+                "gitlab",
+                &json!({"operation":"repository_events","repository":"group/sub/repo"})
+            )
+            .unwrap(),
+            "projects/group%2Fsub%2Frepo/events?per_page=100&page=1&sort=desc"
+        );
+        assert_eq!(
+            endpoint("gitlab", &json!({"operation":"activity"})).unwrap(),
+            "events?per_page=100&page=1&sort=desc"
+        );
+        assert!(endpoint("github", &json!({"operation":"activity"})).is_err());
+        assert!(endpoint(
+            "github",
+            &json!({"operation":"repository_events","repository":"org/../other"})
+        )
+        .is_err());
+        assert!(!uses_webhook(
+            &json!({"kind":"repository","transport":"cli"})
+        ));
+        assert!(uses_webhook(
+            &json!({"kind":"repository","subscriptionId":"existing"})
+        ));
+    }
+
     #[test]
     fn reads_cannot_select_arbitrary_commands_hosts_or_api_methods() {
         assert_eq!(

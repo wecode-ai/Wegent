@@ -18,6 +18,8 @@ export interface StandInSourceConnection {
   name: string
   kind: string
   scope?: 'all'
+  /** Git event source selected by the connection UI. */
+  transport?: 'cli'
   policy: StandInHandlingPolicy
   /** Host-owned intake boundary, prepared when the subscription is enabled. */
   boundary?: { partition: string; sequence: number }
