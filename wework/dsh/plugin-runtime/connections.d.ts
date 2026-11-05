@@ -85,6 +85,10 @@ export interface ConnectionResource {
   kind: string
   name: string
   scope?: 'all'
+  /** Nonempty collection identity, at most 256 UTF-8 bytes; never read or action authority. */
+  collectionKey?: string
+  /** Complete plain-text configuration description, at most 4096 UTF-8 bytes. */
+  configurationSummary?: string
   [key: string]: unknown
 }
 

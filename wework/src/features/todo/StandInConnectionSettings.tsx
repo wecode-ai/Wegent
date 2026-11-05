@@ -398,7 +398,13 @@ function UnavailableSourceConnections({
           key={JSON.stringify([source.profile, source.kind, source.id])}
           className="flex items-center gap-2"
         >
-          <span className="min-w-0 flex-1 break-words text-sm">{source.name}</span>
+          <span className="min-w-0 flex-1 break-words text-sm">
+            {source.name}
+            <span className="block text-text-muted">
+              {source.configurationSummary ??
+                t('standIn.workspace.connection_default_configuration')}
+            </span>
+          </span>
           <button
             type="button"
             disabled={disabled}

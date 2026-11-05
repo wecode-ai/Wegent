@@ -6,6 +6,48 @@ import type { StandInExecutorApi } from '@/api/standIn'
 import '@/i18n'
 import { StandInSourceConnections } from './StandInSourceConnections'
 
+it('preserves plugin collection configuration when selecting a discovered resource', async () => {
+  const item = {
+    providerId: 'fixture',
+    id: 'resource',
+    profile: 'account',
+    kind: 'item',
+    name: 'Resource',
+    collectionKey: 'opaque-selected',
+    configurationSummary: 'Selected items #1, #2',
+    selection: { items: [1, 2] },
+  }
+  const onChange = vi.fn()
+  const user = userEvent.setup()
+  render(
+    <StandInSourceConnections
+      provider={{
+        id: 'fixture',
+        displayName: 'Provider',
+        resourceKinds: ['item'],
+        resourceLabels: { item: 'Item' },
+        dependencies: [],
+        availability: { status: 'ready' },
+      }}
+      role={newStandInRole('device', 'default')}
+      api={
+        {
+          searchConnectionResources: vi.fn().mockResolvedValue({ items: [item] }),
+        } as unknown as StandInExecutorApi
+      }
+      deviceId="device"
+      localDeviceId="device"
+      disabled={false}
+      onChange={onChange}
+    />
+  )
+  await user.type(screen.getByTestId('stand-in-connection-fixture-query'), 'resource')
+  await user.click(screen.getByTestId('stand-in-connection-fixture-search'))
+  await user.click(await screen.findByTestId('stand-in-connection-fixture-result-resource'))
+  await user.click(screen.getByTestId('stand-in-connection-fixture-add-selected'))
+  expect(onChange.mock.calls[0][0].connections[0]).toMatchObject(item)
+})
+
 it.each(['resolve', 'reject'] as const)(
   'ignores a stale search %s after the visible query changes',
   async outcome => {

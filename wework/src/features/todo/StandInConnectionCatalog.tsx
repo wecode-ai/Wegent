@@ -121,26 +121,36 @@ export function StandInConnectionCatalog({
         configured,
         active: configured && ready && !loading,
         quietStatus: ready && !loading,
-        summary: configured
-          ? selected.map((row, index) => (
+        summary: configured ? (
+          <>
+            {selected.map((row, index) => (
               <span key={JSON.stringify([row.profile, row.kind, row.id])}>
                 {index > 0 && ' · '}
                 <span
                   data-testid={`stand-in-connection-${prefix}-${row.profile}-${row.kind}-${row.id}`}
                 >
                   {row.name}
+                  {row.configurationSummary && <> · {row.configurationSummary}</>}
                 </span>
               </span>
-            ))
-          : t(
-              id === DINGTALK_PROVIDER
-                ? 'standIn.workspace.message_connection_help'
-                : id === EMAIL_PROVIDER
-                  ? 'standIn.workspace.connection_email_help'
-                  : 'standIn.workspace.connection_select_help'
-            ),
+            ))}
+            {selected.every(row => !row.configurationSummary) && (
+              <> · {t('standIn.workspace.connection_default_configuration')}</>
+            )}
+          </>
+        ) : (
+          t(
+            id === DINGTALK_PROVIDER
+              ? 'standIn.workspace.message_connection_help'
+              : id === EMAIL_PROVIDER
+                ? 'standIn.workspace.connection_email_help'
+                : 'standIn.workspace.connection_select_help'
+          )
+        ),
         status,
-        summaryLabel: selected.map(row => row.name).join(' · '),
+        summaryLabel: selected
+          .map(row => [row.name, row.configurationSummary].filter(Boolean).join(' · '))
+          .join(' · '),
         action: t(
           availability === 'dependency_missing'
             ? 'standIn.workspace.install_dependencies'

@@ -99,6 +99,89 @@ test('declares mutable event types only from the provider event contract', () =>
   }
 })
 
+test('validates and preserves plugin collection configuration without changing resource identity', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'connection-configuration-'))
+  try {
+    const path = join(root, 'package.json')
+    await writeFile(path, JSON.stringify(declaration()))
+    const registry = new ConnectionRegistry({
+      inventory: async () => [installed()],
+      satisfies,
+      context: value => value,
+    })
+    const source = {
+      providerId: '@test/mail/inbox',
+      profile: 'account',
+      kind: 'folder',
+      id: 'folder',
+      name: 'Folder',
+      collectionKey: 'selection-v1',
+      configurationSummary: 'Selected items 1 and 2',
+      selection: { items: [1, 2] },
+    }
+    let resource = source
+    let validated
+    const seen = []
+    await registry.register({ effect() {} }, pathToFileURL(path), {
+      inbox: {
+        check: async () => ({ status: 'ready' }),
+        listResources: async () => ({ items: [resource] }),
+        validate: async (_ctx, input) => {
+          seen.push(input)
+          return validated ?? input
+        },
+        initialize: async () => ({}),
+        collect: async () => ({ events: [], nextCheckpoint: {}, hasMore: false }),
+      },
+    })
+    assert.deepEqual(
+      (await registry.call(source.providerId, 'listResources', { kind: 'folder' })).items[0],
+      source
+    )
+    assert.deepEqual(await registry.call(source.providerId, 'validate', source), source)
+    await registry.call(source.providerId, 'collect', { source, checkpoint: {} })
+    assert.deepEqual(seen.at(-1), source)
+    for (const [field, invalid] of [
+      ['collectionKey', null],
+      ['collectionKey', 3],
+      ['collectionKey', '  '],
+      ['collectionKey', 'é'.repeat(129)],
+      ['configurationSummary', {}],
+      ['configurationSummary', ''],
+      ['configurationSummary', 'é'.repeat(2049)],
+    ]) {
+      resource = { ...source, [field]: invalid }
+      await assert.rejects(registry.call(source.providerId, 'listResources', { kind: 'folder' }), {
+        code: 'invalid_connection',
+      })
+      for (const method of ['validate', 'initialize', 'collect'])
+        await assert.rejects(
+          registry.call(
+            source.providerId,
+            method,
+            method === 'collect' ? { source: resource, checkpoint: {} } : resource
+          ),
+          { code: 'invalid_connection' }
+        )
+      validated = resource
+      await assert.rejects(registry.call(source.providerId, 'validate', source), {
+        code: 'invalid_connection',
+      })
+    }
+    validated = undefined
+    const boundary = {
+      ...source,
+      collectionKey: 'é'.repeat(128),
+      configurationSummary: 'é'.repeat(2048),
+    }
+    assert.deepEqual(await registry.call(source.providerId, 'validate', boundary), boundary)
+    const { collectionKey: _key, configurationSummary: _summary, ...legacy } = source
+    assert.deepEqual(await registry.call(source.providerId, 'validate', legacy), legacy)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test('enforces paired object identities and versions before returning a collected page', async () => {
   const root = await mkdtemp(join(tmpdir(), 'connection-version-'))
   let registry

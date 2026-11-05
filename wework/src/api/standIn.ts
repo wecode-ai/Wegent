@@ -261,7 +261,14 @@ export interface StandInExecutorApi {
   ): Promise<{
     items: Pick<
       StandInSourceConnection,
-      'id' | 'name' | 'kind' | 'profile' | 'providerId' | 'scope'
+      | 'id'
+      | 'name'
+      | 'kind'
+      | 'profile'
+      | 'providerId'
+      | 'scope'
+      | 'collectionKey'
+      | 'configurationSummary'
     >[]
     hasMore?: boolean
     nextCursor?: string

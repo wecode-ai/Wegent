@@ -12,7 +12,14 @@ import { StandInProcessingSettings } from './StandInProcessingSettings'
 
 type Connection = Pick<
   StandInSourceConnection,
-  'id' | 'name' | 'kind' | 'profile' | 'providerId' | 'scope'
+  | 'id'
+  | 'name'
+  | 'kind'
+  | 'profile'
+  | 'providerId'
+  | 'scope'
+  | 'collectionKey'
+  | 'configurationSummary'
 >
 
 export function StandInSourceConnections({
@@ -214,6 +221,8 @@ export function StandInSourceConnections({
             <p className="truncate text-sm">{row.name}</p>
             <p className="text-xs text-text-muted">
               {provider.resourceLabels?.[row.kind] ?? row.kind}
+              {' · '}
+              {row.configurationSummary ?? t('standIn.workspace.connection_default_configuration')}
             </p>
           </div>
           <button

@@ -35,6 +35,28 @@ const defaults = {
   onSelect: vi.fn(),
 }
 
+it('shows a plugin scope summary without displaying its opaque collection key', () => {
+  render(
+    <StandInConnectionCatalog
+      {...defaults}
+      providers={[provider('chat')]}
+      role={{
+        ...defaults.role,
+        connections: [
+          {
+            ...connection('one'),
+            collectionKey: 'opaque-selection-key',
+            configurationSummary: 'Selected item #4335',
+          },
+        ],
+      }}
+    />
+  )
+  const row = screen.getByTestId('stand-in-add-chat-connection')
+  expect(row).toHaveTextContent('Selected item #4335')
+  expect(row).not.toHaveTextContent('opaque-selection-key')
+})
+
 it('groups multiple resources under one source and keeps other sources available', async () => {
   const role = { ...defaults.role, connections: [connection('one'), connection('two')] }
   const onSelect = vi.fn()

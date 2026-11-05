@@ -455,6 +455,8 @@ export class ConnectionRegistry {
       : method === 'validate'
         ? params
         : null
+    validateCollectionConfiguration(source)
+    if (method === 'initialize') validateCollectionConfiguration(params)
     if (source?.scope === 'all') {
       requireValue(
         source.id === '*' && entry.provider.allResourceKinds?.includes(source.kind),
@@ -492,6 +494,7 @@ export class ConnectionRegistry {
     const result = await entry.implementation[method](context, params)
     entry.controller.signal.throwIfAborted()
     validateProviderResult(entry.provider, method, result, params)
+    if (method === 'validate') validateCollectionConfiguration(result)
     if (method === 'collect' && source.scope === 'all') {
       requireValue(
         result.events.every(
@@ -635,6 +638,7 @@ function validateProviderResult(provider, method, result, input) {
         )
       }
     }
+    for (const item of result.items) validateCollectionConfiguration(item)
     requireValue(
       result.items.every(
         item =>
@@ -650,6 +654,22 @@ function validateProviderResult(provider, method, result, input) {
       result.hasMore !== true ||
         (typeof result.nextCursor === 'string' && result.nextCursor.length > 0),
       'Missing resource pagination cursor'
+    )
+  }
+}
+
+function validateCollectionConfiguration(source) {
+  if (!record(source)) return
+  for (const [field, limit] of [
+    ['collectionKey', 256],
+    ['configurationSummary', 4096],
+  ]) {
+    if (source[field] === undefined) continue
+    requireValue(
+      typeof source[field] === 'string' &&
+        source[field].trim().length > 0 &&
+        Buffer.byteLength(source[field], 'utf8') <= limit,
+      `Invalid collection configuration ${field}`
     )
   }
 }

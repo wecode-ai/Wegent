@@ -5742,6 +5742,7 @@
       "all_resources_help": "Continuously receive from all sources below available to this account, including future additions. Takes effect after saving settings.",
       "connect_all": "Add all-resource scope",
       "connection_scope": "Receive scope",
+      "connection_default_configuration": "Default scope",
       "select_results": "Select current results",
       "resource_selected": "Selected",
       "select_resource": "Select",

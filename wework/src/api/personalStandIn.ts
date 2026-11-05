@@ -18,6 +18,9 @@ export interface StandInSourceConnection {
   name: string
   kind: string
   scope?: 'all'
+  /** Plugin-owned collection configuration, separate from resource access identity. */
+  collectionKey?: string
+  configurationSummary?: string
   /** Git event source selected by the connection UI. */
   transport?: 'cli'
   policy: StandInHandlingPolicy

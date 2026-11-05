@@ -5737,6 +5737,7 @@
       "all_resources_help": "持续接收当前账号可访问的以下全部来源，包括以后新增的来源。保存设置后生效。",
       "connect_all": "添加全部范围",
       "connection_scope": "接收范围",
+      "connection_default_configuration": "默认范围",
       "select_results": "全选当前结果",
       "resource_selected": "已选择",
       "select_resource": "选择",
