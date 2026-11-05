@@ -57,10 +57,14 @@ async function installFixture(control, resultDir, report) {
     })
   )
   assert.equal(preview.valid, true, JSON.stringify(preview.issues))
+  assert.equal(preview.name, NAME, 'The preview must identify the isolated fixture')
+  assert.equal(preview.existing, false, 'The personal inventory fixture already exists')
+  // Import can commit without returning a receipt. Reserve cleanup for this
+  // known absent fixture before starting the mutation; deletion is idempotent.
+  report.importAttempted = true
   const importedResponse = await control.command('importPluginPackage', 'body', {
     value: JSON.stringify({ preview, overwrite: false }),
   })
-  // Register cleanup before parsing the receipt or checking the committed source.
   report.imported = true
   const imported = JSON.parse(importedResponse)
   assert.equal(imported.pluginName, NAME)
@@ -180,7 +184,7 @@ export async function verifyPersonalInventoryRecovery({
     try {
       await gates.reset()
       if (removed) await rename(fixture.backup, fixture.source)
-      if (report.imported) {
+      if (report.importAttempted) {
         await control.command('deleteLocalPluginPackage', 'body', {
           value: JSON.stringify({ pluginId: `${NAME}@wework-personal`, pluginName: NAME }),
         })

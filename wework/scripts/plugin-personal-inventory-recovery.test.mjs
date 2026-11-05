@@ -34,7 +34,8 @@ async function fixture(importedResponse = JSON.stringify({ pluginName: name })) 
     command: vi.fn(async action => {
       if (action === 'getBundledPluginUpdates')
         return JSON.stringify({ marketplace: { path: marketplace } })
-      if (action === 'previewPluginImport') return JSON.stringify({ valid: true })
+      if (action === 'previewPluginImport')
+        return JSON.stringify({ valid: true, name, existing: false })
       if (action === 'importPluginPackage') return importedResponse
     }),
   }
@@ -58,6 +59,49 @@ test.each(['{}', '{invalid'])(
     assert.equal((await f.report()).imported, true)
   }
 )
+
+test.each([false, true])(
+  'cleans up a rejected import when the local mutation committed=%s',
+  async commits => {
+    const f = await fixture()
+    const failure = new Error('local_plugin_commit_timeout: still committing')
+    let committed = false
+    const original = f.control.command.getMockImplementation()
+    f.control.command.mockImplementation((action, ...args) => {
+      if (action === 'importPluginPackage') {
+        committed = commits
+        throw failure
+      }
+      if (action === 'deleteLocalPluginPackage') committed = false
+      return original(action, ...args)
+    })
+    await assert.rejects(f.verify(), error => error === failure)
+    assert.equal(f.deletions().length, 1)
+    assert.equal(committed, false)
+    const report = await f.report()
+    assert.equal(report.importAttempted, true)
+    assert.equal(report.imported, undefined)
+  }
+)
+
+test.each([
+  { name, existing: true },
+  { name: 'other-plugin', existing: false },
+])('does not claim cleanup ownership for an unsafe preview %j', async preview => {
+  const f = await fixture()
+  const original = f.control.command.getMockImplementation()
+  f.control.command.mockImplementation((action, ...args) =>
+    action === 'previewPluginImport'
+      ? JSON.stringify({ valid: true, ...preview })
+      : original(action, ...args)
+  )
+  await assert.rejects(f.verify())
+  assert.equal(
+    f.control.command.mock.calls.some(([action]) => action === 'importPluginPackage'),
+    false
+  )
+  assert.equal(f.deletions().length, 0)
+})
 
 test.each([false, true])(
   'retains the post-import RPC failure when cleanup fails=%s',
