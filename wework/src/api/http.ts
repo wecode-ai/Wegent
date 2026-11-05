@@ -164,7 +164,10 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
     fetchOptions: HttpFetchOptions
   ): Promise<HttpResponseDiagnostics> {
     const { token } = fetchOptions
-    const signal = fetchOptions.signal ?? options.signal
+    const signal =
+      fetchOptions.signal && options.signal && fetchOptions.signal !== options.signal
+        ? AbortSignal.any([options.signal, fetchOptions.signal])
+        : (fetchOptions.signal ?? options.signal)
     const isFormData = init.body instanceof FormData
     const method = init.method ?? 'GET'
     const startedAt = nowMs()

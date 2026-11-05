@@ -1653,6 +1653,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
         locale={locale}
         onReady={handleReady}
         host={{
+          accountScope: templateScope,
           templateStore,
           templateNavigation: true,
           renderProjectSidebarBadge: project => {

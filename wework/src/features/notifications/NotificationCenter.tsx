@@ -702,7 +702,7 @@ function ConnectedNotificationCenter({
           {unreadCount > 0 && (
             <span
               data-testid="wework-notifications-unread"
-              className="absolute -right-1 -top-1 min-w-4 rounded-full bg-text-primary px-1 text-xs text-background"
+              className="absolute right-0 top-0 min-w-4 rounded-full bg-text-primary px-1 text-xs text-background"
             >
               {unreadCount > 99 ? '99+' : unreadCount}
             </span>

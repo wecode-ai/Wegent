@@ -10,6 +10,11 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { RuntimeTaskMachine } from '@/features/workbench/runtimeTaskLifecycle/RuntimeTaskMachine'
 import { RuntimeInteractionsProvider } from './RuntimeInteractionsProvider'
+import { useRuntimeInteractions } from './RuntimeInteractionsContext'
+import {
+  ConversationTranslationProvider,
+  RequestUserInputCard,
+} from '@wegent/collaboration/conversation'
 import { canReplyToInteraction } from './runtimeInteractions'
 import {
   cacheNotificationPreferences,
@@ -21,6 +26,52 @@ import {
   interactionTranscript,
 } from './runtimeInteractions.fixtures'
 describe('unified human response', () => {
+  it('never writes a stale shared draft into the answer input during IME composition', async () => {
+    function Answer() {
+      const interactions = useRuntimeInteractions()
+      if (!interactions) return null
+      return (
+        <ConversationTranslationProvider translate={key => key}>
+          <RequestUserInputCard
+            payload={{ questions: [{ id: 'details', question: 'Details' }] }}
+            draftAnswers={{ details: interactions.drafts.ime ?? '' }}
+            onDraftAnswersChange={answers => interactions.setDraft('ime', answers.details)}
+          />
+        </ConversationTranslationProvider>
+      )
+    }
+    render(
+      <RuntimeInteractionsProvider accountKey="ime">
+        <Answer />
+      </RuntimeInteractionsProvider>
+    )
+    const input = (await screen.findByTestId(
+      'request-user-input-custom-details'
+    )) as HTMLInputElement
+    const value = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!
+    const writes: string[] = []
+    Object.defineProperty(input, 'value', {
+      configurable: true,
+      get() {
+        return value.get!.call(this)
+      },
+      set(text: string) {
+        writes.push(text)
+        value.set!.call(this, text)
+      },
+    })
+    input.focus()
+    fireEvent.compositionStart(input)
+    fireEvent.input(input, { target: { value: 'ni' }, isComposing: true })
+    expect(writes).not.toContain('')
+    expect(input).toHaveValue('ni')
+    expect(input).toHaveFocus()
+    fireEvent.input(input, { target: { value: '你好' }, isComposing: true })
+    fireEvent.compositionEnd(input, { data: '你好' })
+    expect(writes).not.toContain('ni')
+    expect(input).toHaveValue('你好')
+  })
+
   it('aggregates a discovered task question despite a stale sidebar summary and shows its in-app reminder', async () => {
     harness.list.mockResolvedValue({
       projects: [],
@@ -588,8 +639,10 @@ describe('unified human response', () => {
     })
     act(() => context!.setDraft('request-a', 'private answer'))
     expect(context!.drafts).toEqual({ 'request-a': 'private answer' })
+    const setOldAccountDraft = context!.setDraft
 
     rendered.rerender(tree('cloud-b:1'))
+    act(() => setOldAccountDraft('late-reply', 'old account response'))
     expect(context!.drafts).toEqual({})
     expect(screen.getByRole('textbox', { name: 'Connection address' })).toHaveValue(
       'http://127.0.0.1:1'

@@ -56,6 +56,8 @@ import {
   pendingInteractionCache,
 } from './interactionStorage'
 
+type RuntimeInteractionSnapshot = Omit<RuntimeInteractionsValue, 'drafts' | 'setDraft'>
+
 export function RuntimeInteractionsProvider({
   accountKey,
   children,
@@ -65,18 +67,52 @@ export function RuntimeInteractionsProvider({
 }) {
   const [snapshot, setSnapshot] = useState<{
     accountKey: string
-    value: RuntimeInteractionsValue
+    value: RuntimeInteractionSnapshot
   } | null>(null)
+  const draftKey = `wework.interactions:${accountKey}:drafts`
+  const [draftState, setDraftState] = useState(() => ({
+    key: draftKey,
+    values: readInteractionDrafts(draftKey),
+  }))
+  if (draftState.key !== draftKey) {
+    setDraftState({ key: draftKey, values: readInteractionDrafts(draftKey) })
+  }
+  // Controlled inputs must receive edits directly, without the snapshot's
+  // effect-driven publication round trip interrupting native IME composition.
+  const setDraft = useCallback(
+    (id: string, text: string) => {
+      setDraftState(current => {
+        if (current.key !== draftKey) return current
+        const values = { ...current.values }
+        if (text) values[id] = text
+        else delete values[id]
+        return { key: draftKey, values }
+      })
+    },
+    [draftKey]
+  )
+  useEffect(() => {
+    saveInteractionState(draftState.key, draftState.values)
+  }, [draftState])
   const publish = useCallback(
-    (value: RuntimeInteractionsValue) => setSnapshot({ accountKey, value }),
+    (value: RuntimeInteractionSnapshot) => setSnapshot({ accountKey, value }),
     [accountKey]
   )
   return (
     <RuntimeInteractionsContext.Provider
-      value={snapshot?.accountKey === accountKey ? snapshot.value : null}
+      value={
+        snapshot?.accountKey === accountKey
+          ? { ...snapshot.value, drafts: draftState.values, setDraft }
+          : null
+      }
     >
       {/* Reset only interaction state; connection dialogs and other application UI stay mounted. */}
-      <RuntimeInteractionsState key={accountKey} accountKey={accountKey} publish={publish} />
+      <RuntimeInteractionsState
+        key={accountKey}
+        accountKey={accountKey}
+        publish={publish}
+        setDraft={setDraft}
+      />
       {children}
     </RuntimeInteractionsContext.Provider>
   )
@@ -85,9 +121,11 @@ export function RuntimeInteractionsProvider({
 function RuntimeInteractionsState({
   accountKey,
   publish,
+  setDraft,
 }: {
   accountKey: string
-  publish: (value: RuntimeInteractionsValue) => void
+  publish: (value: RuntimeInteractionSnapshot) => void
+  setDraft: RuntimeInteractionsValue['setDraft']
 }) {
   const source = useNotificationTaskSource()
   const tabs = useWorkspaceTabs()
@@ -120,12 +158,8 @@ function RuntimeInteractionsState({
   const [replyNotice, setReplyNotice] = useState<string | null>(null)
   const acceptancePrefix = `wework.interactions:${accountKey}:accepted:`
   const historyKey = `wework.interactions:${accountKey}:history`
-  const draftKey = `wework.interactions:${accountKey}:drafts`
   const [history, setHistory] = useState<InteractionHistory[]>(() =>
     readInteractionHistory(historyKey)
-  )
-  const [drafts, setDrafts] = useState<Record<string, string>>(() =>
-    readInteractionDrafts(draftKey)
   )
   const [submitted, setSubmitted] = useState<Set<string>>(
     () => new Set(history.map(item => item.id))
@@ -161,9 +195,6 @@ function RuntimeInteractionsState({
     window.addEventListener(NOTIFICATION_PREFERENCES_CHANGED_EVENT, update)
     return () => window.removeEventListener(NOTIFICATION_PREFERENCES_CHANGED_EVENT, update)
   }, [])
-  useEffect(() => {
-    saveInteractionState(draftKey, drafts)
-  }, [draftKey, drafts])
 
   const archive = useCallback(
     async (item: RuntimeInteraction, answeredAt = item.createdAt) => {
@@ -411,14 +442,6 @@ function RuntimeInteractionsState({
     saveInteractionState(cacheKey, pendingInteractionCache(pending))
   }, [cacheKey, pending])
 
-  const setDraft = useCallback((id: string, text: string) => {
-    setDrafts(current => {
-      const next = { ...current }
-      if (text) next[id] = text
-      else delete next[id]
-      return next
-    })
-  }, [])
   const markHandled = useCallback(
     (id: string) => {
       submittedRef.current = new Set(submittedRef.current).add(id)
@@ -719,10 +742,8 @@ function RuntimeInteractionsState({
       pending,
       history,
       errors,
-      drafts,
       busy,
       loading,
-      setDraft,
       respond,
       dismiss,
       refresh,
@@ -735,10 +756,8 @@ function RuntimeInteractionsState({
       pending,
       history,
       errors,
-      drafts,
       busy,
       loading,
-      setDraft,
       respond,
       dismiss,
       refresh,

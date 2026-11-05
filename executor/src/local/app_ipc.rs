@@ -20,6 +20,7 @@ use tokio::{
 
 use super::backend::runtime_rpc_encoding::encode_app_ipc_response;
 use super::event_stream::{event_sequence, ExecutorEventHub};
+mod read_requests;
 use crate::{
     agents::resolve_codex_binary,
     local::bundled_plugins::{initialize_bundled_plugin_marketplace, BundledPluginMarketplace},
@@ -71,6 +72,9 @@ use crate::{
         TaskCreate, TaskReorder, TaskRuntime, TaskUpdate,
     },
     version::get_version,
+};
+use read_requests::{
+    is_cancellable_read, wait_for_cancellation, ConnectionReadRequests, HistoryReadAdmission,
 };
 
 const DEFAULT_DEVICE_ID: &str = "local-device";
@@ -400,6 +404,7 @@ pub struct AppIpcServer {
     event_tx: broadcast::Sender<Value>,
     event_hub: ExecutorEventHub,
     bundled_plugin_marketplace: Arc<BlockingSingleFlight<BundledPluginMarketplace>>,
+    history_read_admission: Arc<HistoryReadAdmission>,
 }
 
 impl Default for AppIpcServer {
@@ -416,6 +421,7 @@ impl Default for AppIpcServer {
             event_tx,
             event_hub,
             bundled_plugin_marketplace: Arc::new(BlockingSingleFlight::default()),
+            history_read_admission: Arc::new(HistoryReadAdmission::default()),
         }
     }
 }
@@ -1018,6 +1024,8 @@ impl AppIpcServer {
                 "structured_errors": true,
                 "compressed_responses": true,
                 "event_resume": true,
+                "request_cancellation": true,
+                "request_cancellation_methods": ["runtime.tasks.transcript"],
             },
         })
     }
@@ -1248,6 +1256,7 @@ impl AppIpcServer {
         let mut events = self.event_hub.subscribe_live();
         let mut frame = Vec::new();
         let mut bulk_backpressure_reported = false;
+        let read_requests = ConnectionReadRequests::new(self.history_read_admission.clone());
         loop {
             frame.clear();
             tokio::select! {
@@ -1274,6 +1283,9 @@ impl AppIpcServer {
                     };
                     let server = self.clone();
                     let response_tx = priority_write_tx.clone();
+                    if read_requests.handle_cancel(&request_line) {
+                        continue;
+                    }
                     let (request_id, method, command_key) =
                         app_ipc_request_metadata(&request_line);
                     if matches!(command_key.as_deref(), Some("home_dir" | "ls_dirs")) {
@@ -1286,6 +1298,21 @@ impl AppIpcServer {
                             None,
                         );
                     }
+                    let admission = if is_cancellable_read(method.as_deref()) {
+                        request_id.as_deref().map(|id| read_requests.admit(id))
+                    } else {
+                        None
+                    };
+                    let (mut read_guard, mut cancellation) = match admission {
+                        Some(Ok((guard, receiver))) => (Some(guard), Some(receiver)),
+                        Some(Err(error)) => {
+                            response_tx.send(error_message(request_id.as_deref(), &error))
+                                .await
+                                .map_err(|error| format!("failed to reject history read: {error}"))?;
+                            continue;
+                        }
+                        None => (None, None),
+                    };
                     tokio::spawn(async move {
                         let started_at = Instant::now();
                         log_app_ipc_request(
@@ -1297,14 +1324,17 @@ impl AppIpcServer {
                             None,
                         );
                         let timeout_seconds = app_ipc_request_timeout_seconds(method.as_deref());
-                        let response = match tokio::time::timeout(
-                            Duration::from_secs(timeout_seconds),
-                            server.handle_line(&request_line),
-                        )
-                        .await
-                        {
-                            Ok(response) => response,
-                            Err(_) => {
+                        let outcome = tokio::select! {
+                            biased;
+                            _ = wait_for_cancellation(&mut cancellation) => {
+                                Some(error_message(
+                                    request_id.as_deref(),
+                                    &AppIpcError::new("request_cancelled", "History read cancelled"),
+                                ))
+                            }
+                            // Expired queued reads must not enter their handler when
+                            // an active request releases its permit at the same deadline.
+                            _ = tokio::time::sleep(Duration::from_secs(timeout_seconds)) => {
                                 log_app_ipc_request(
                                     "app IPC request timed out",
                                     request_id.as_deref(),
@@ -1322,10 +1352,18 @@ impl AppIpcServer {
                                         ),
                                     ),
                                 ))
-                            }
+                            },
+                            response = async {
+                                if let Some(guard) = &mut read_guard {
+                                    if let Err(error) = guard.wait_for_admission().await {
+                                        return Some(error_message(request_id.as_deref(), &error));
+                                    }
+                                }
+                                server.handle_line(&request_line).await
+                            } => response,
                         };
 
-                        if let Some(response) = response {
+                        if let Some(response) = outcome {
                             let ok = response.get("ok").and_then(Value::as_bool);
                             let elapsed_ms = started_at.elapsed().as_millis();
                             let response_bytes =
@@ -3049,35 +3087,6 @@ async fn handle_builtin_device_command(
                 None,
             ))
         }
-        "ls_dirs" => {
-            let path = string_field(params, "path").or_else(|| string_field(params, "cwd"))?;
-            Some((
-                match std::fs::read_dir(&path) {
-                    Ok(entries) => {
-                        let mut output = String::new();
-                        for entry in entries.flatten() {
-                            if let Ok(metadata) = entry.metadata() {
-                                let name = entry.file_name().to_string_lossy().to_string();
-                                if metadata.is_dir() {
-                                    output.push_str(&name);
-                                    output.push('/');
-                                } else {
-                                    output.push_str(&name);
-                                }
-                                output.push('\n');
-                            }
-                        }
-                        CommandResult::ok(output)
-                    }
-                    Err(error) => CommandResult::error(
-                        format!("Failed to list directory {path}: {error}"),
-                        0.0,
-                        false,
-                    ),
-                },
-                Some(PostProcessor::DirectoryList),
-            ))
-        }
         "runtime_auth_status" => {
             let codex_home = crate::agents::wework_codex_home();
             let target = codex_home.join("auth.json");
@@ -3675,6 +3684,9 @@ fn error_message(request_id: Option<&str>, error: &AppIpcError) -> Value {
     });
     if let Some(delay) = error.retry_after_ms {
         response["error"]["retryAfterMs"] = json!(delay);
+    }
+    if error.code == "runtime_read_busy" {
+        response["error"]["retryable"] = json!(true);
     }
     response
 }

@@ -149,7 +149,9 @@ describe('TemporaryChatPanel executor-cache recovery', () => {
     })
 
     expect(mocks.loadTranscript).toHaveBeenCalledExactlyOnceWith(address)
-    expect(mocks.readTranscript).toHaveBeenCalledExactlyOnceWith(address)
+    expect(mocks.readTranscript).toHaveBeenCalledExactlyOnceWith(address, {
+      signal: expect.any(AbortSignal),
+    })
     expect(screen.getAllByText('Saved side question')).toHaveLength(1)
     expect(screen.getAllByText('Saved side reply')).toHaveLength(1)
     expect(mocks.lifecycleStore.syncTranscript).toHaveBeenCalledWith(
@@ -188,7 +190,10 @@ describe('TemporaryChatPanel executor-cache recovery', () => {
     expect(screen.getByTestId('temporary-conversation-loading')).toBeInTheDocument()
     await act(async () => resolveRetry(transcript()))
     expect(await screen.findByText('Saved side reply')).toBeInTheDocument()
-    expect(mocks.readTranscript.mock.calls).toEqual([[address], [address]])
+    expect(mocks.readTranscript.mock.calls).toEqual([
+      [address, { signal: expect.any(AbortSignal) }],
+      [address, { signal: expect.any(AbortSignal) }],
+    ])
   })
 
   it('keeps another task visible when an unmounted recovery finishes late', async () => {

@@ -295,14 +295,12 @@ fn transcript_response(input: TranscriptResponseInput) -> Value {
     } else {
         canonical_turns.unwrap_or_else(|| transcript_canonical_turns(&messages, turn_item_source))
     };
-    json!({
+    let mut response = json!({
         "success": true,
         "taskId": local_task_id,
         "workspacePath": workspace_path,
         "runtime": runtime,
         "running": running,
-        "messages": messages,
-        "turns": turns,
         "fullContent": full_content,
         "contextUsage": context_usage.unwrap_or(Value::Null),
         "turnNavigation": turn_navigation,
@@ -316,7 +314,10 @@ fn transcript_response(input: TranscriptResponseInput) -> Value {
         "afterCursor": after_cursor
             .map(Value::String)
             .unwrap_or(Value::Null),
-    })
+    });
+    response["messages"] = Value::Array(messages);
+    response["turns"] = Value::Array(turns);
+    response
 }
 
 fn transcript_message_turn_id(message: &Value) -> Option<String> {
