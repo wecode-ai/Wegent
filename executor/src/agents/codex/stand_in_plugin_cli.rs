@@ -179,8 +179,12 @@ mod tests {
                     INSTRUCTIONS
                 );
             } else {
-                assert!(turn.get("additionalContext").is_none());
+                assert!(turn["additionalContext"].get(CONTEXT_KEY).is_none());
             }
+            assert_eq!(
+                turn["additionalContext"]["wework.host-policy.z-manifest"]["kind"],
+                "application"
+            );
             assert_eq!(
                 turn["approvalPolicy"],
                 crate::agents::codex::codex_runtime_approval_policy(&request)

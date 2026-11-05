@@ -4445,7 +4445,6 @@ fn codex_thread_plan_selects_resume_when_fork_is_absent() {
 #[test]
 fn confirmed_stand_in_resumes_release_cached_thread_configuration() {
     let mut request = ExecutionRequest::default();
-    let loaded = Map::new();
     let plan = codex_thread_plan(
         None,
         None,
@@ -4454,6 +4453,12 @@ fn confirmed_stand_in_resumes_release_cached_thread_configuration() {
         &request,
         &CodexLaunchConfig::default(),
     );
+    let loaded = match &plan.start {
+        CodexThreadStart::Request { params, .. } => {
+            mcp_reload::thread_context_configuration(params)
+        }
+        CodexThreadStart::Direct(_) => panic!("expected a resume configuration"),
+    };
     assert_eq!(
         config_reload_resume_thread_id(&plan, &request, Some(&loaded)),
         None
