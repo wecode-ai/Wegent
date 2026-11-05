@@ -38,6 +38,8 @@ async fn process_fixture() -> (
     CodexNotificationHub,
     oneshot::Receiver<Result<Value, String>>,
 ) {
+    // Complete shared endpoint initialization before single-poll assertions.
+    ensure_codex_mcp_endpoints().await.unwrap();
     let client = shared_client();
     #[cfg(not(windows))]
     let mut child = super::super::tests::spawn_idle_app_server_child();

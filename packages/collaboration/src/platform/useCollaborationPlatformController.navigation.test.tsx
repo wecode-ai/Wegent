@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { act } from 'react'
+import { act, startTransition, Suspense } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
@@ -35,7 +35,7 @@ const location: CollaborationPlatformLocation = {
 }
 let root: Root | undefined
 let container: HTMLDivElement
-let commands: ReturnType<typeof useCollaborationPlatformController>['commands'] | undefined
+let commands: ReturnType<typeof useCollaborationPlatformController>['commands']
 
 function currentState(): CollaborationPlatformState {
   return JSON.parse(container.textContent ?? '{}')
@@ -88,44 +88,8 @@ beforeEach(() => vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true))
 afterEach(() => {
   act(() => root?.unmount())
   root = undefined
-  commands = undefined
   container?.remove()
   vi.unstubAllGlobals()
-})
-
-it('completes local navigation after creating a cloud workspace during the initial load', async () => {
-  const created = { id: 'created', project_count: 0 } as CollaborationWorkspace
-  const cloudApi = apiFor(cloudWorkspace, [])
-  cloudApi.workspaces!.create = vi.fn(async () => {
-    vi.mocked(cloudApi.workspaces!.list).mockResolvedValue([cloudWorkspace, created])
-    return created
-  })
-  cloudApi.workspaces!.get = vi.fn(async () => created)
-  cloudApi.workspaces!.listMembers = vi.fn(async () => [])
-  const localApi = apiFor(localWorkspace, [])
-  let resolveLocal!: (workspaces: CollaborationWorkspace[]) => void
-  const pendingLocal = new Promise<CollaborationWorkspace[]>(resolve => {
-    resolveLocal = resolve
-  })
-  vi.mocked(localApi.workspaces!.list).mockReturnValue(pendingLocal)
-  const sources = [cloudApi, localApi]
-  const rootLocation = {
-    ...location,
-    projectId: null,
-    workspaceId: null,
-    rootView: 'home' as const,
-  }
-  await render(sources, rootLocation)
-  await act(async () => {
-    await commands!.createWorkspace({ name: 'Created' })
-  })
-  await render(sources, { ...rootLocation, workspaceId: created.id })
-  expect(currentState().workspace?.id).toBe(created.id)
-  expect(currentState().loading).toBe(false)
-  await act(async () => resolveLocal([localWorkspace]))
-  expect(currentState().workspaces.map(workspace => workspace.id)).toContain(localWorkspace.id)
-  expect(currentState().navigationIncomplete).toBe(false)
-  expect(localApi.workspaces!.list).toHaveBeenCalledTimes(2)
 })
 
 it.each([
@@ -191,6 +155,272 @@ it('opens a cloud project while the unrelated local navigation is pending', asyn
   await act(async () => resolveLocal([]))
   expect(currentState().navigationIncomplete).toBe(false)
 })
+
+it.each(['workspace', 'project', 'archived', 'updated'])(
+  'finishes local navigation after opening newly created cloud resources: %s',
+  async target => {
+    const localResponses: Array<(workspaces: CollaborationWorkspace[]) => void> = []
+    const localApi = apiFor(localWorkspace, [])
+    vi.mocked(localApi.workspaces!.list).mockImplementation(
+      () => new Promise(resolve => localResponses.push(resolve))
+    )
+    const createdWorkspace = {
+      id: 'created',
+      project_count: 0,
+    } as CollaborationWorkspace
+    const createdProject = {
+      id: 'created-project',
+      workspace_id: 'created',
+    } as CollaborationProject
+    const cloudApi = apiFor(cloudWorkspace, [project])
+    cloudApi.workspaces!.create = vi.fn(async () => {
+      vi.mocked(cloudApi.workspaces!.list).mockResolvedValue([cloudWorkspace, createdWorkspace])
+      return createdWorkspace
+    })
+    cloudApi.workspaces!.get = vi.fn(async () => createdWorkspace)
+    cloudApi.workspaces!.update = vi.fn(async () => {
+      const updated = { ...createdWorkspace, name: 'Renamed workspace', version: 2 }
+      vi.mocked(cloudApi.workspaces!.list).mockResolvedValue([cloudWorkspace, updated])
+      vi.mocked(cloudApi.workspaces!.get).mockResolvedValue(updated)
+      return updated
+    })
+    cloudApi.projects.create = vi.fn(async () => {
+      vi.mocked(cloudApi.projects.list).mockResolvedValue([project, createdProject])
+      return createdProject
+    })
+    cloudApi.projects.archive = vi.fn(async () => {
+      vi.mocked(cloudApi.projects.list).mockResolvedValue([project])
+    })
+    const sources = [cloudApi, localApi]
+    const workspaceLocation = {
+      ...location,
+      workspaceId: createdWorkspace.id,
+      workspaceView: 'settings' as const,
+      projectId: null,
+    }
+    try {
+      await render(sources, {
+        ...location,
+        workspaceId: null,
+        projectId: null,
+      })
+      expect(currentState().workspaces).toContainEqual(cloudWorkspace)
+      await act(async () => {
+        await commands.createWorkspace({ name: 'Created workspace' })
+      })
+      await render(sources, workspaceLocation)
+      expect(currentState().workspace?.id).toBe(createdWorkspace.id)
+      expect(currentState().loading).toBe(false)
+      await act(async () => localResponses[0]([]))
+      if (target === 'project' || target === 'archived') {
+        await act(async () => {
+          await commands.createProject({ name: 'Created project' })
+        })
+        const readsAfterCreate = vi.mocked(localApi.workspaces!.list).mock.calls.length
+        await act(async () => commands.registerProject(createdProject))
+        expect(localApi.workspaces!.list).toHaveBeenCalledTimes(readsAfterCreate)
+        await render(sources, {
+          ...workspaceLocation,
+          projectId: createdProject.id,
+        })
+        expect(currentState().projects).toContainEqual(createdProject)
+        expect(currentState().loading).toBe(false)
+      }
+      if (target === 'archived') {
+        await render(sources, workspaceLocation)
+        expect(currentState().projects).toContainEqual(createdProject)
+        await act(async () => commands.archiveProject(createdProject))
+        expect(currentState().navigationProjects).not.toContainEqual(createdProject)
+      }
+      if (target === 'updated') {
+        await act(async () => commands.updateWorkspace({ version: 1, name: 'Renamed workspace' }))
+        expect(currentState().workspace?.name).toBe('Renamed workspace')
+      }
+      expect(currentState().navigationIncomplete).toBe(true)
+
+      await act(async () => localResponses.at(-1)!([localWorkspace]))
+
+      expect(currentState().workspaces).toContainEqual(localWorkspace)
+      expect(currentState().workspaces.map(workspace => workspace.id)).toContain(
+        createdWorkspace.id
+      )
+      if (target === 'project') expect(currentState().projects).toContainEqual(createdProject)
+      if (target === 'archived') {
+        expect(currentState().navigationProjects).not.toContainEqual(createdProject)
+      }
+      if (target === 'updated') expect(currentState().workspace?.name).toBe('Renamed workspace')
+      expect(currentState().navigationIncomplete).toBe(false)
+      await act(async () => {
+        for (const resolve of localResponses) resolve([])
+      })
+      expect(currentState().workspaces).toContainEqual(localWorkspace)
+      expect(currentState().navigationIncomplete).toBe(false)
+    } finally {
+      await act(async () => {
+        for (const resolve of localResponses) resolve([])
+      })
+    }
+  }
+)
+
+it('ignores an older navigation source after its replacement has completed', async () => {
+  let resolveOld!: (workspaces: CollaborationWorkspace[]) => void
+  const oldLocalApi = apiFor({ id: 'old-local' } as CollaborationWorkspace, [])
+  vi.mocked(oldLocalApi.workspaces!.list).mockReturnValue(
+    new Promise(resolve => {
+      resolveOld = resolve
+    })
+  )
+  const cloudApi = apiFor(cloudWorkspace, [project])
+  const newLocalApi = apiFor(localWorkspace, [])
+  const rootLocation = { ...location, workspaceId: null, projectId: null }
+  try {
+    await render([cloudApi, oldLocalApi], rootLocation)
+    await render([cloudApi, newLocalApi], location)
+    expect(currentState().workspaces).toContainEqual(localWorkspace)
+    expect(currentState().navigationIncomplete).toBe(false)
+
+    await act(async () => resolveOld([{ id: 'old-local' } as CollaborationWorkspace]))
+
+    expect(currentState().workspaces).toContainEqual(localWorkspace)
+    expect(currentState().workspaces.map(workspace => workspace.id)).not.toContain('old-local')
+    expect(currentState().navigationIncomplete).toBe(false)
+  } finally {
+    await act(async () => resolveOld([]))
+  }
+})
+
+it('does not retry a settled failed navigation source after registering a project', async () => {
+  const localApi = apiFor(localWorkspace, [])
+  vi.mocked(localApi.workspaces!.list).mockRejectedValue(new Error('Unavailable'))
+  const cloudApi = apiFor(cloudWorkspace, [project])
+  await render([cloudApi, localApi])
+  const updated = { ...project, name: 'Updated project', version: 2 }
+
+  await act(async () => commands.registerProject(updated))
+
+  expect(currentState().projects).toContainEqual(updated)
+  expect(localApi.workspaces!.list).toHaveBeenCalledOnce()
+  expect(currentState().navigationIncomplete).toBe(true)
+})
+
+it('keeps pending refreshes on the committed route when an uncommitted route suspends', async () => {
+  const localResponses: Array<(workspaces: CollaborationWorkspace[]) => void> = []
+  const localApi = apiFor(localWorkspace, [])
+  vi.mocked(localApi.workspaces!.list).mockImplementation(
+    () => new Promise(resolve => localResponses.push(resolve))
+  )
+  const cloudApi = apiFor(cloudWorkspace, [project])
+  const committedSources = [cloudApi, localApi]
+  const otherApi = apiFor({ id: 'other' } as CollaborationWorkspace, [])
+  let releaseSuspension!: () => void
+  const suspension = new Promise<void>(resolve => {
+    releaseSuspension = resolve
+  })
+  const suspended = vi.fn()
+  function Suspend({ active }: { active: boolean }) {
+    if (active) {
+      suspended()
+      throw suspension
+    }
+    return null
+  }
+  function Frame({ pending = false }: { pending?: boolean }) {
+    const sources = pending ? [otherApi] : committedSources
+    return (
+      <Suspense fallback={<div>Loading route</div>}>
+        <Harness
+          api={sources[0]}
+          navigationApis={sources}
+          location={pending ? { ...location, workspaceId: null, projectId: null } : location}
+        />
+        <Suspend active={pending} />
+      </Suspense>
+    )
+  }
+  container = document.createElement('div')
+  document.body.append(container)
+  root = createRoot(container)
+  try {
+    await act(async () => root!.render(<Frame />))
+    const committedCommands = commands
+    await act(async () => {
+      startTransition(() => root!.render(<Frame pending />))
+    })
+    expect(suspended).toHaveBeenCalled()
+
+    await act(async () => committedCommands.registerProject({ ...project, version: 2 }))
+
+    expect(otherApi.projects.list).not.toHaveBeenCalled()
+    expect(currentState().workspace?.id).toBe(cloudWorkspace.id)
+  } finally {
+    await act(async () => {
+      root!.unmount()
+      root = undefined
+      releaseSuspension()
+      for (const resolve of localResponses) resolve([])
+    })
+  }
+})
+
+it.each([
+  { detail: 'workspace', mutation: 'registered' },
+  { detail: 'workspace', mutation: 'archived' },
+  { detail: 'navigation context', mutation: 'registered' },
+  { detail: 'navigation context', mutation: 'archived' },
+])(
+  'preserves projects after they are $mutation while $detail details are pending',
+  async ({ detail, mutation }) => {
+    const detailResponses: Array<() => void> = []
+    const deferDetail = <T,>(value: T) =>
+      new Promise<T>(resolve => detailResponses.push(() => resolve(value)))
+    const cloudApi = apiFor(cloudWorkspace, [project])
+    cloudApi.workspaces!.get = vi.fn(() => deferDetail(cloudWorkspace))
+    if (detail === 'navigation context') {
+      vi.mocked(cloudApi.workspaces!.list).mockResolvedValue([])
+      cloudApi.workspaces!.getNavigationContext = vi.fn(() =>
+        deferDetail({ id: 'cloud', public_id: 'cloud', name: 'Cloud', location: 'cloud' as const })
+      )
+    }
+    const createdProject = { ...project, id: 'created-project', version: 1 }
+    cloudApi.projects.archive = vi.fn(async () => {
+      vi.mocked(cloudApi.projects.list).mockResolvedValue([])
+    })
+    try {
+      await render([cloudApi], {
+        ...location,
+        projectId: detail === 'workspace' ? null : project.id,
+        workspaceView: 'settings',
+      })
+      expect(detailResponses).toHaveLength(1)
+      if (mutation === 'registered') {
+        vi.mocked(cloudApi.projects.list).mockResolvedValue([project, createdProject])
+        await act(async () => commands.registerProject(createdProject))
+      } else {
+        await act(async () => commands.archiveProject(project))
+      }
+
+      expect(detailResponses).toHaveLength(2)
+      await act(async () => detailResponses[0]())
+
+      if (mutation === 'registered') {
+        expect(currentState().projects).toContainEqual(createdProject)
+      } else {
+        expect(currentState().projects).not.toContainEqual(project)
+      }
+      await act(async () => detailResponses.at(-1)!())
+      if (mutation === 'registered') {
+        expect(currentState().projects).toContainEqual(createdProject)
+      } else {
+        expect(currentState().projects).not.toContainEqual(project)
+      }
+    } finally {
+      await act(async () => {
+        for (const resolve of detailResponses) resolve()
+      })
+    }
+  }
+)
 
 it('opens an authorized project from its detail before global catalogs arrive', async () => {
   const context = { id: 'cloud', public_id: 'public', name: 'Parent' }

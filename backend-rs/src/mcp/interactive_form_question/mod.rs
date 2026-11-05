@@ -85,6 +85,21 @@ impl InteractiveFormRegistry {
             .push(normalizer);
     }
 
+    pub(crate) async fn render_payload_from_tool_input(
+        &self,
+        task_id: i64,
+        subtask_id: i64,
+        tool_input: Option<&Value>,
+    ) -> Option<Value> {
+        build_render_payload(
+            self,
+            task_id,
+            subtask_id,
+            tool_input.and_then(|input| input.get("questions")),
+        )
+        .await
+    }
+
     /// `normalize_interactive_form_questions`: apply every normalizer in
     /// registration order.
     async fn normalize(&self, task_id: i64, mut questions: Vec<Value>) -> Vec<Value> {
