@@ -43,7 +43,6 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { useToast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
 import { canEditContent } from '@/types/base-role'
-import type { Group } from '@/types/group'
 import type { Team } from '@/types/api'
 import { listSkillMarketProviders, type SkillMarketProvider } from '@/apis/skillMarketplace'
 import { DiscoverResources } from './components/DiscoverResources'
@@ -56,6 +55,7 @@ import type { ResourceCreateRequest } from './components/ResourceCreateButton'
 import { ResourceTypeFilter } from './components/ResourceTypeFilter'
 import { CollaborationTemplateMarketplace } from './CollaborationTemplateMarketplace'
 import { SkillMarketplaceSearch } from './components/SkillMarketplaceSearch'
+import { TeamSkillResources } from './components/TeamSkillResources'
 import type { ManagedResourceType, ResourceNavigationType } from './types'
 import {
   EXTERNAL_MARKETPLACE_PARAM,
@@ -63,10 +63,6 @@ import {
 } from './externalMarketplaceDeepLink'
 import { getResourceSearchPlaceholderKey } from './resourceSearch'
 import { useTeamCapabilityGroups } from './useTeamCapabilityGroups'
-import {
-  SkillListWithScope,
-  type ResourceListState,
-} from '@/features/settings/components/SkillListWithScope'
 
 type ActiveResourceNavigationType = Exclude<ResourceNavigationType, 'all' | 'template'>
 
@@ -92,63 +88,6 @@ function isMineSource(value: string | null): value is MineSource {
 
 function getGroupDisplayName(group: { name: string; display_name?: string | null }) {
   return group.display_name || group.name
-}
-
-const initialResourceListState: ResourceListState = {
-  loading: true,
-  hasItems: false,
-  hasError: false,
-}
-
-function TeamSkillResources({
-  groupName,
-  groups,
-  keyword,
-}: {
-  groupName: string
-  groups: Group[]
-  keyword: string
-}) {
-  const { t } = useTranslation('resource-library')
-  const { t: tCommon } = useTranslation('common')
-  const [listState, setListState] = useState<ResourceListState>(initialResourceListState)
-  const isLoading = !listState.hasItems && listState.loading
-  const isEmpty = !listState.hasItems && !listState.loading && !listState.hasError
-
-  return (
-    <div className="space-y-6" data-testid="team-skill-resources">
-      <SkillListWithScope
-        scope="group"
-        selectedGroup={groupName}
-        groups={groups}
-        sourceFilter="group"
-        sortMode="latest"
-        showAutoEnabledSkills={false}
-        hideCreateActions
-        hideEmptyState
-        hideLoadingState
-        compact
-        searchQuery={keyword}
-        onListStateChange={setListState}
-      />
-      {isLoading && (
-        <div
-          className="flex min-h-[260px] items-center justify-center text-text-secondary"
-          data-testid="team-skill-resources-loading"
-        >
-          {tCommon('skills.loading')}
-        </div>
-      )}
-      {isEmpty && (
-        <div
-          className="flex min-h-[260px] items-center justify-center rounded-lg border border-border bg-surface p-6 text-sm text-text-secondary"
-          data-testid="team-skill-resources-empty"
-        >
-          {t('states.empty')}
-        </div>
-      )}
-    </div>
-  )
 }
 
 /** Routes collaboration templates to their dedicated marketplace page. */
@@ -238,9 +177,10 @@ function ResourceLibraryContent() {
   const [skillMarketProvidersError, setSkillMarketProvidersError] = useState('')
   const [skillMarketProvidersLoading, setSkillMarketProvidersLoading] = useState(false)
   const [skillMarketProvidersLoaded, setSkillMarketProvidersLoaded] = useState(false)
-  const [activeSkillMarketProviderKey, setActiveSkillMarketProviderKey] = useState<string | null>(
-    null
-  )
+  const activeSkillMarketProviderKey =
+    !isMineView && resourceType === 'skill'
+      ? resolveExternalMarketplaceKey(skillMarketProviders, requestedMarketplaceParam)
+      : null
   const [createRequest, setCreateRequest] = useState<
     (ResourceCreateRequest & { type: ManagedResourceType }) | null
   >(null)
@@ -299,30 +239,24 @@ function ResourceLibraryContent() {
     setSearchInput(headerKeywordParam)
   }, [headerKeywordParam])
 
-  /**
-   * Keeps the selected external marketplace in sync with the URL. An unknown
-   * marketplace is dropped once provider discovery finishes so the normal
-   * keyword search can take over.
-   */
+  /** Removes an unknown marketplace only after successful provider discovery. */
   useEffect(() => {
-    const resolvedKey = resolveExternalMarketplaceKey(
-      skillMarketProviders,
-      requestedMarketplaceParam
-    )
-    setActiveSkillMarketProviderKey(resolvedKey)
-
     if (
+      !isMineView &&
+      resourceType === 'skill' &&
       requestedMarketplaceParam &&
-      !resolvedKey &&
+      !activeSkillMarketProviderKey &&
       skillMarketProvidersLoaded &&
       !skillMarketProvidersError
     ) {
       replaceParams({ [EXTERNAL_MARKETPLACE_PARAM]: null })
     }
   }, [
+    activeSkillMarketProviderKey,
+    isMineView,
     replaceParams,
     requestedMarketplaceParam,
-    skillMarketProviders,
+    resourceType,
     skillMarketProvidersError,
     skillMarketProvidersLoaded,
   ])
@@ -333,7 +267,6 @@ function ResourceLibraryContent() {
       setSkillMarketProvidersError('')
       setSkillMarketProvidersLoading(false)
       setSkillMarketProvidersLoaded(false)
-      setActiveSkillMarketProviderKey(null)
       return
     }
 
@@ -457,7 +390,6 @@ function ResourceLibraryContent() {
 
   /** Selects an external marketplace and persists it in the URL. */
   const handleExternalMarketplaceChange = (key: string | null) => {
-    setActiveSkillMarketProviderKey(key)
     // Leaving a marketplace through the tag row is written together with the
     // tag by DiscoverResources, so only entering a marketplace updates the URL here.
     if (key) {

@@ -26,6 +26,10 @@ interface MarketplaceTagsResponse {
   }>
 }
 
+interface McpProvidersResponse {
+  providers: Array<{ key: string }>
+}
+
 interface AdminMarketplaceResourceResponse {
   total: number
   items: Array<{
@@ -64,6 +68,38 @@ async function ensureRecommendedSystemAgent(request: APIRequestContext) {
 async function clickListingAction(page: Page, listingId: number) {
   await page.getByTestId(`resource-listing-card-${listingId}`).hover()
   await page.getByTestId(`install-resource-${listingId}-button`).click()
+}
+
+/** Verifies the real listings response and its included and excluded skill cards. */
+async function expectSkillKeywordResults(
+  page: Page,
+  keyword: string,
+  includedId: number,
+  excludedId: number,
+  action: () => Promise<unknown>
+) {
+  const resultsPromise = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return (
+      url.pathname.endsWith('/api/resource-library/listings') &&
+      url.searchParams.get('resource_type') === 'skill' &&
+      url.searchParams.get('keyword') === keyword &&
+      !url.searchParams.has('featured_only') &&
+      response.request().method() === 'GET'
+    )
+  })
+  await action()
+  const response = await resultsPromise
+  expect(response.ok()).toBe(true)
+  const results = (await response.json()) as CapabilityListingResponse
+  expect(results.items.some(item => item.id === includedId)).toBe(true)
+  expect(results.items.some(item => item.id === excludedId)).toBe(false)
+  await expect(page.getByTestId(`resource-listing-card-${includedId}`)).toBeVisible()
+  await expect(page.getByTestId(`resource-listing-card-${excludedId}`)).toHaveCount(0)
+  await expect(page.getByTestId('resource-library-header-search-input')).toHaveValue(keyword)
+  await expect(page).toHaveURL(
+    url => url.searchParams.get('keyword') === keyword && !url.searchParams.has('marketplace')
+  )
 }
 
 test.describe('Capability Center', () => {
@@ -124,6 +160,91 @@ test.describe('Capability Center', () => {
     await expect(page.getByTestId('resource-library-header-search-input')).toHaveValue('文档')
     await expect(page.getByTestId('marketplace-toolbar')).toBeVisible()
     await expect(page.getByTestId('skill-marketplace-search')).toHaveCount(0)
+  })
+
+  test('searches real skills after unknown-market cleanup and restores results on reload', async ({
+    page,
+    request,
+  }) => {
+    const apiClient = createApiClient(request)
+    expect((await apiClient.login(ADMIN_USER.username, ADMIN_USER.password)).status).toBe(200)
+    const response = await apiClient.get<AdminMarketplaceResourceResponse>(
+      '/api/admin/marketplace-resources?resource_type=skill&page=1&limit=200'
+    )
+    expect(response.status).toBe(200)
+    const promptSkill = response.data?.items.find(
+      item => item.is_system && item.name === 'conversation_to_prompt'
+    )
+    const sandboxSkill = response.data?.items.find(
+      item => item.is_system && item.name === 'sandbox'
+    )
+    expect(promptSkill, 'The conversation_to_prompt system skill must exist').toBeTruthy()
+    expect(sandboxSkill, 'The sandbox system skill must exist').toBeTruthy()
+    const query = new URLSearchParams({
+      type: 'skill',
+      marketplace: 'missing-provider',
+      keyword: promptSkill!.name,
+    })
+
+    await expectSkillKeywordResults(
+      page,
+      promptSkill!.name,
+      promptSkill!.id,
+      sandboxSkill!.id,
+      () => page.goto(`/resource-library?${query}`)
+    )
+    await expectSkillKeywordResults(
+      page,
+      promptSkill!.name,
+      promptSkill!.id,
+      sandboxSkill!.id,
+      () => page.reload()
+    )
+
+    await page.getByTestId('resource-library-header-search-input').fill(sandboxSkill!.name)
+    await expectSkillKeywordResults(
+      page,
+      sandboxSkill!.name,
+      sandboxSkill!.id,
+      promptSkill!.id,
+      () => page.getByTestId('resource-library-header-search-button').click()
+    )
+    await expectSkillKeywordResults(
+      page,
+      sandboxSkill!.name,
+      sandboxSkill!.id,
+      promptSkill!.id,
+      () => page.reload()
+    )
+  })
+
+  test('clears the MCP URL keyword when switching real registered providers', async ({ page }) => {
+    const providersPromise = page.waitForResponse(
+      response =>
+        new URL(response.url()).pathname.endsWith('/api/mcp-providers') &&
+        response.request().method() === 'GET'
+    )
+    await page.goto('/resource-library?type=mcp&keyword=商品数据对比')
+    const response = await providersPromise
+    expect(response.ok()).toBe(true)
+    const { providers } = (await response.json()) as McpProvidersResponse
+    expect(
+      providers.length,
+      'At least two built-in MCP providers must be registered'
+    ).toBeGreaterThan(1)
+    await expect(page.getByTestId('mcp-marketplace-search-input')).toHaveValue('商品数据对比')
+    await page.getByTestId(`mcp-marketplace-provider-${providers[1].key}`).click()
+
+    await expect(page.getByTestId(`mcp-marketplace-provider-${providers[1].key}`)).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    await expect(page.getByTestId('mcp-marketplace-search-input')).toHaveValue('')
+    await expect(page).toHaveURL(
+      url => url.searchParams.get('type') === 'mcp' && !url.searchParams.has('keyword')
+    )
+    await page.reload()
+    await expect(page.getByTestId('mcp-marketplace-search-input')).toHaveValue('')
   })
 
   test('filters discovery by a configured marketplace tag and restores it from the URL', async ({
