@@ -145,9 +145,6 @@ function RuntimeInteractionsState({
   const registerView = useCallback((owner: string, id: string | null) => {
     if (id) {
       views.current.set(owner, id)
-      setNoticeIds(current =>
-        current.includes(id) ? current.filter(value => value !== id) : current
-      )
     } else views.current.delete(owner)
   }, [])
 
@@ -582,7 +579,6 @@ function RuntimeInteractionsState({
     (id?: string) => {
       const contentRoute = `${INTERACTIONS_PATH}${id ? `?${new URLSearchParams({ interaction: id })}` : ''}`
       openRuntimeInteractionsTab(tabs, t('interactions.title'), contentRoute)
-      setNoticeIds(current => (id ? current.filter(value => value !== id) : []))
     },
     [tabs, t]
   )

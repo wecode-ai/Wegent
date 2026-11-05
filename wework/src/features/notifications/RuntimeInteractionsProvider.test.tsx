@@ -38,6 +38,31 @@ describe('unified human response', () => {
     )
   })
 
+  it('keeps the reminder until manually closed, including after opening its destination', async () => {
+    view()
+    await screen.findByTestId('runtime-interaction-notice')
+    vi.useFakeTimers()
+    try {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000)
+      })
+      expect(screen.getByTestId('runtime-interaction-notice')).toBeInTheDocument()
+      fireEvent.click(screen.getByTestId('interaction-notice-open'))
+      expect(harness.tabs.openTab).toHaveBeenCalled()
+      expect(screen.getByTestId('runtime-interaction-notice')).toBeInTheDocument()
+      act(() => context!.open())
+      expect(screen.getByTestId('runtime-interaction-notice')).toBeInTheDocument()
+      act(() => context!.registerView('pending-page', context!.pending[0].id))
+      expect(screen.getByTestId('runtime-interaction-notice')).toBeInTheDocument()
+      fireEvent.click(screen.getByTestId('interaction-notice-dismiss'))
+      expect(screen.queryByTestId('runtime-interaction-notice')).not.toBeInTheDocument()
+      expect(context!.pending).toHaveLength(1)
+      expect(harness.send).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('dismisses one request durably without sending a runtime answer or hiding later requests', async () => {
     const first = view()
     await waitFor(() => expect(context!.pending).toHaveLength(1))
@@ -69,6 +94,7 @@ describe('unified human response', () => {
     async interactionStatus => {
       view()
       await waitFor(() => expect(context!.pending).toHaveLength(1))
+      await screen.findByTestId('runtime-interaction-notice')
       const id = context!.pending[0].id
       harness.transcript.mockResolvedValue(
         interactionTranscript({ ...interactionQuestion, interactionStatus })
@@ -78,6 +104,7 @@ describe('unified human response', () => {
       })
       expect(context!.pending).toHaveLength(0)
       expect(context!.history[0].id).toBe(id)
+      expect(screen.queryByTestId('runtime-interaction-notice')).not.toBeInTheDocument()
       expect(harness.send).not.toHaveBeenCalled()
     }
   )
@@ -693,10 +720,10 @@ describe('unified human response', () => {
     })
     expect(harness.read).not.toHaveBeenCalled()
   })
-  it('suppresses a reminder only when its exact question is already visible', async () => {
+  it('keeps a delivered reminder when its question becomes visible in the pending page', async () => {
     view(interactionQuestion, interactionTask, true)
     await waitFor(() => expect(context!.pending).toHaveLength(1))
-    expect(screen.queryByTestId('runtime-interaction-notice')).not.toBeInTheDocument()
+    expect(await screen.findByTestId('runtime-interaction-notice')).toBeInTheDocument()
     act(() => context!.registerView('other-pane', 'another-question'))
     expect(context!.pending).toHaveLength(1)
   })
