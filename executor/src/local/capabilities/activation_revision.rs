@@ -6,8 +6,11 @@
 use super::*;
 use std::time::Instant;
 
+mod file_digests;
 mod skill_packages;
 mod skill_toggles;
+
+use file_digests::FileDigests;
 
 #[derive(Default)]
 struct Paths {
@@ -15,6 +18,53 @@ struct Paths {
     skills: BTreeMap<String, BTreeSet<PathBuf>>,
     metadata: BTreeSet<PathBuf>,
     cleanup: BTreeSet<PathBuf>,
+}
+
+impl Paths {
+    fn add_plugin(
+        &mut self,
+        store: &GlobalCapabilityStore,
+        spec: &PluginSyncSpec,
+    ) -> Result<(), CapabilitySyncError> {
+        for component in [&spec.name, &spec.marketplace, &spec.version] {
+            shared_packages::validate_component(component)?;
+        }
+        let (files, directories) = store.runtime_state_paths(spec);
+        self.metadata.extend(files);
+        self.plugins
+            .entry(spec.key.clone())
+            .or_default()
+            .extend(directories);
+        Ok(())
+    }
+
+    fn add_plugin_versions(
+        &mut self,
+        store: &GlobalCapabilityStore,
+        manifest: &Value,
+        spec: &PluginSyncSpec,
+    ) -> Result<(), CapabilitySyncError> {
+        if let Some(previous) = manifest["plugins"].get(&spec.key) {
+            self.add_plugin(
+                store,
+                &PluginSyncSpec::from_manifest_entry(&spec.key, previous),
+            )?;
+        }
+        self.add_plugin(store, spec)
+    }
+
+    fn add_skill(
+        &mut self,
+        store: &GlobalCapabilityStore,
+        name: &str,
+    ) -> Result<(), CapabilitySyncError> {
+        shared_packages::validate_component(name)?;
+        self.skills.entry(name.to_owned()).or_default().extend([
+            store.skills_dir.join(name),
+            store.codex_skills_dir.join(name),
+        ]);
+        Ok(())
+    }
 }
 
 struct Snapshot {
@@ -44,6 +94,10 @@ pub(super) struct Changes {
     pub plugins: Vec<String>,
     pub skills: Vec<String>,
     pub detection_ms: u128,
+    pub inspected_plugins: usize,
+    pub hashed_files: usize,
+    pub hashed_bytes: u64,
+    pub reused_hashes: usize,
 }
 
 pub(super) struct ActivationRevision<'a> {
@@ -51,6 +105,7 @@ pub(super) struct ActivationRevision<'a> {
     paths: Paths,
     before: Option<Result<Snapshot, CapabilitySyncError>>,
     detection_ms: u128,
+    digests: FileDigests,
 }
 
 impl<'a> ActivationRevision<'a> {
@@ -62,13 +117,63 @@ impl<'a> ActivationRevision<'a> {
         }
         let started = Instant::now();
         if let Some(Ok(before)) = &mut self.before {
-            match runtime(&BTreeSet::from([path.to_owned()]), false, None) {
+            match runtime(
+                &BTreeSet::from([path.to_owned()]),
+                false,
+                None,
+                &mut self.digests,
+            ) {
                 Ok(state) => {
                     before.cleanup.insert(path.to_owned(), state);
                 }
                 Err(error) => self.before = Some(Err(error)),
             }
         }
+        self.detection_ms += started.elapsed().as_millis();
+    }
+
+    pub fn observe_plugin(&mut self, spec: &PluginSyncSpec) -> Result<(), CapabilitySyncError> {
+        if self.paths.plugins.contains_key(&spec.key) {
+            return Ok(());
+        }
+        let mut paths = Paths::default();
+        paths.add_plugin_versions(self.store, &self.store.manifest.load()?, spec)?;
+        self.observe_paths(paths);
+        Ok(())
+    }
+
+    pub fn observe_skill(&mut self, name: &str) -> Result<(), CapabilitySyncError> {
+        if self.paths.skills.contains_key(name) {
+            return Ok(());
+        }
+        let mut paths = Paths::default();
+        paths.add_skill(self.store, name)?;
+        self.observe_paths(paths);
+        Ok(())
+    }
+
+    fn observe_paths(&mut self, mut paths: Paths) {
+        let started = Instant::now();
+        // Shared indexes retain their original baseline across multiple mutations.
+        paths
+            .metadata
+            .retain(|path| !self.paths.metadata.contains(path));
+        if matches!(self.before, Some(Ok(_))) {
+            match Snapshot::capture(self.store, &paths, &mut self.digests) {
+                Ok(extra) => {
+                    if let Some(Ok(before)) = &mut self.before {
+                        before.plugins.extend(extra.plugins);
+                        before.skills.extend(extra.skills);
+                        before.metadata.extend(extra.metadata);
+                        before.pure_skill_packages.extend(extra.pure_skill_packages);
+                    }
+                }
+                Err(error) => self.before = Some(Err(error)),
+            }
+        }
+        self.paths.plugins.extend(paths.plugins);
+        self.paths.skills.extend(paths.skills);
+        self.paths.metadata.extend(paths.metadata);
         self.detection_ms += started.elapsed().as_millis();
     }
 
@@ -89,45 +194,22 @@ impl<'a> ActivationRevision<'a> {
                 .metadata
                 .extend(store.runtime_metadata_paths(marketplace));
         }
-        let installed = object_map(manifest.get("plugins")).unwrap_or_default();
-        for spec in installed
-            .iter()
-            .filter(|(_, entry)| entry.get("managed").and_then(Value::as_bool) != Some(false))
-            .map(|(key, entry)| PluginSyncSpec::from_manifest_entry(key, entry))
-            .chain(plugins.iter().cloned())
-        {
-            for component in [&spec.name, &spec.marketplace, &spec.version] {
-                shared_packages::validate_component(component)?;
-            }
-            let (files, directories) = store.runtime_state_paths(&spec);
-            paths.metadata.extend(files);
-            paths
-                .plugins
-                .entry(spec.key)
-                .or_default()
-                .extend(directories);
+        for spec in plugins {
+            paths.add_plugin_versions(store, &manifest, spec)?;
         }
-        let installed_skills = object_map(manifest.get("skills")).unwrap_or_default();
-        for name in installed_skills
-            .iter()
-            .filter(|(_, entry)| entry.get("managed").and_then(Value::as_bool) != Some(false))
-            .map(|(name, _)| name)
-            .chain(skills.iter().map(|spec| &spec.name))
-        {
-            shared_packages::validate_component(name)?;
-            paths.skills.entry(name.clone()).or_default().extend([
-                store.skills_dir.join(name),
-                store.codex_skills_dir.join(name),
-            ]);
+        for spec in skills {
+            paths.add_skill(store, &spec.name)?;
         }
         // An unreadable or damaged runtime must still be repairable by sync.
         let started = Instant::now();
-        let before = Snapshot::capture(store, &paths);
+        let mut digests = FileDigests::default();
+        let before = Snapshot::capture(store, &paths, &mut digests);
         Ok(Self {
             store,
             paths,
             before: Some(before),
             detection_ms: started.elapsed().as_millis(),
+            digests,
         })
     }
 
@@ -136,7 +218,7 @@ impl<'a> ActivationRevision<'a> {
             return Changes::default();
         }
         let started = Instant::now();
-        let after = Snapshot::capture(self.store, &self.paths);
+        let after = Snapshot::capture(self.store, &self.paths, &mut self.digests);
         self.complete(after, false, started)
     }
 
@@ -145,7 +227,7 @@ impl<'a> ActivationRevision<'a> {
             return Ok(Changes::default());
         }
         let started = Instant::now();
-        let after = Snapshot::capture(self.store, &self.paths);
+        let after = Snapshot::capture(self.store, &self.paths, &mut self.digests);
         let skill_only = match (self.before.as_ref(), &after) {
             (Some(Ok(before)), Ok(after)) => {
                 match skill_toggles::only_skill_toggles(self.store, before, after).map(|toggles| {
@@ -212,6 +294,10 @@ impl<'a> ActivationRevision<'a> {
             }
         };
         changes.detection_ms = self.detection_ms + started.elapsed().as_millis();
+        changes.inspected_plugins = self.paths.plugins.len();
+        changes.hashed_files = self.digests.hashed_files;
+        changes.hashed_bytes = self.digests.hashed_bytes;
+        changes.reused_hashes = self.digests.reused_hashes;
         if changes.requires_restart {
             crate::services::capability_activation::mark_changed();
         }
@@ -248,7 +334,11 @@ fn changed_keys(before: &BTreeMap<String, Value>, after: &BTreeMap<String, Value
 }
 
 impl Snapshot {
-    fn capture(store: &GlobalCapabilityStore, paths: &Paths) -> Result<Self, CapabilitySyncError> {
+    fn capture(
+        store: &GlobalCapabilityStore,
+        paths: &Paths,
+        digests: &mut FileDigests,
+    ) -> Result<Self, CapabilitySyncError> {
         let manifest = store.manifest.load()?;
         let mut plugins = BTreeMap::new();
         for (key, roots) in &paths.plugins {
@@ -265,13 +355,13 @@ impl Snapshot {
             let bytecode = plugin_bytecode_inventory(store, entry);
             plugins.insert(
                 key.clone(),
-                json!({"definition":definition, "runtime":runtime(roots, false, bytecode.as_ref())?}),
+                json!({"definition":definition, "runtime":runtime(roots, false, bytecode.as_ref(), digests)?}),
             );
         }
         let skills = paths
             .skills
             .iter()
-            .map(|(name, roots)| Ok((name.clone(), runtime(roots, true, None)?)))
+            .map(|(name, roots)| Ok((name.clone(), runtime(roots, true, None, digests)?)))
             .collect::<Result<_, CapabilitySyncError>>()?;
         let metadata = paths
             .metadata
@@ -284,7 +374,7 @@ impl Snapshot {
             .map(|path| {
                 Ok((
                     path.clone(),
-                    runtime(&BTreeSet::from([path.clone()]), false, None)?,
+                    runtime(&BTreeSet::from([path.clone()]), false, None, digests)?,
                 ))
             })
             .collect::<Result<_, CapabilitySyncError>>()?;
@@ -318,15 +408,16 @@ fn runtime(
     roots: &BTreeSet<PathBuf>,
     follow_root_links: bool,
     bytecode: Option<&BTreeSet<PathBuf>>,
+    digests: &mut FileDigests,
 ) -> Result<Value, CapabilitySyncError> {
     let mut files = BTreeMap::new();
     for root in roots {
-        fingerprint(root, root, &mut files, bytecode)?;
+        fingerprint(root, root, &mut files, bytecode, digests)?;
         // Skill roots are intentional links. Inspect their target contents too,
         // but never recursively follow links inside a package.
         if follow_root_links && root.is_symlink() && root.is_dir() {
             for child in fs::read_dir(root)? {
-                fingerprint(root, &child?.path(), &mut files, bytecode)?;
+                fingerprint(root, &child?.path(), &mut files, bytecode, digests)?;
             }
         }
     }
@@ -338,6 +429,7 @@ fn fingerprint(
     path: &Path,
     files: &mut BTreeMap<PathBuf, Value>,
     bytecode: Option<&BTreeSet<PathBuf>>,
+    digests: &mut FileDigests,
 ) -> Result<(), CapabilitySyncError> {
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
@@ -349,7 +441,7 @@ fn fingerprint(
     } else if metadata.is_dir() {
         let before = files.len();
         for child in fs::read_dir(path)? {
-            fingerprint(root, &child?.path(), files, bytecode)?;
+            fingerprint(root, &child?.path(), files, bytecode, digests)?;
         }
         // Empty cache directories have no native capability definitions.
         if path != root && files.len() == before {
@@ -374,7 +466,7 @@ fn fingerprint(
         };
         #[cfg(not(unix))]
         let executable = 0;
-        json!({"sha256":file_digest(path)?, "executable":executable})
+        json!({"sha256":digests.read(path)?, "executable":executable})
     } else {
         return Err(CapabilitySyncError::invalid_payload(
             "Capability runtime contains a special file",
@@ -382,23 +474,6 @@ fn fingerprint(
     };
     files.insert(path.to_owned(), value);
     Ok(())
-}
-
-fn file_digest(path: &Path) -> Result<String, CapabilitySyncError> {
-    use sha2::{Digest, Sha256};
-    use std::io::Read;
-
-    let mut digest = Sha256::new();
-    let mut file = fs::File::open(path)?;
-    let mut buffer = [0_u8; 8192];
-    loop {
-        let count = file.read(&mut buffer)?;
-        if count == 0 {
-            break;
-        }
-        digest.update(&buffer[..count]);
-    }
-    Ok(format!("sha256:{:x}", digest.finalize()))
 }
 
 fn metadata(path: &Path) -> Result<Value, CapabilitySyncError> {

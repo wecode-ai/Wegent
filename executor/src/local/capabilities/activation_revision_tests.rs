@@ -1048,3 +1048,6 @@ async fn skill_content_links_and_removal_change_capabilities() {
 
 #[path = "activation_revision_membership_tests.rs"]
 mod membership_tests;
+
+#[path = "activation_revision_scope_tests.rs"]
+mod scope_tests;

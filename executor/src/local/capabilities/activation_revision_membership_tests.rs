@@ -173,8 +173,10 @@ async fn pure_skill_uninstall_does_not_hide_unrelated_metadata_or_mcp_changes() 
         sync(&handler, plugin_payload(&provider, true, 1), true, true).await;
         let _activation = crate::services::capability_activation::activate().await;
         let _publication = store.lock_shared_manifest().unwrap();
-        let mut activation = ActivationRevision::begin(&store, &[], &[]).unwrap();
         let mut manifest = store.manifest.load().unwrap();
+        let removed =
+            PluginSyncSpec::from_manifest_entry("demo@wegent", &manifest["plugins"]["demo@wegent"]);
+        let mut activation = ActivationRevision::begin(&store, &[removed], &[]).unwrap();
         manifest["plugins"]
             .as_object_mut()
             .unwrap()
