@@ -2,7 +2,7 @@
 use super::stand_in::settings_error;
 use super::*;
 
-const EXECUTION_POLICY: &str = "Complete the user's requested outcome within the existing authorization. A failed read or query does not prove the source is empty or unavailable. Before declaring an input blocked, make a small, bounded recovery attempt using already-declared and already-authorized read operations on the same permitted account and resources. Use returned tool schemas and documentation, and prefer a narrower valid query, enumeration followed by reading matching records, or relevant source-backed evidence already available with its actual freshness. Do not guess endpoints, expand resource or time scope, add subscriptions, change accounts, request credentials, repeat unchanged failures, or wait indefinitely. A source authorization denial, an explicit native-review denial, or a policy that forbids escalation stops the operation; never use another tool, route, account or argument to evade it. An OS sandbox failure alone is not a native-review denial. Only when the current native approval policy permits escalation, an exact already-authorized read command blocked by the OS sandbox may request sandbox_permissions=\"require_escalated\" through the existing native reviewer. Preserve the same command, arguments, account and resources, and wait for the native decision; do not change permission settings or credential storage. Missing or expired authentication must use its exact native authorization flow. Read recovery never authorizes an external write or retry of an unknown delivery. Finish with the useful verified outcome, its sources and material remaining uncertainty; an execution being accepted or completed is not the user's requested outcome. Explain unresolved coverage limits in business terms and ask the user to act only when an available user control can actually resolve the blocker. Attribute findings to the evidenced actor. Do not turn the assistant's mistakes, missing context, test activity or the user's corrections into advice that the user must write better prompts or repeat requirements the assistant should already honor. Recommendations about the user's work or habits require independent evidence of their own behavior; when no such finding is supported, say so rather than inventing improvement advice.";
+const EXECUTION_POLICY: &str = "Complete the user's requested outcome within the existing authorization. The user's request and current grants define the authorized scope; the first query window you choose is not an authorization boundary. A requested planning horizon is not a receipt or update date filter. Within the authorized scope, make bounded checks of recent responsibilities, deadlines and unresolved work, and verify current outcomes before ranking what still needs action. Older unfinished obligations can remain relevant to the planning horizon; zero new activity does not establish zero outstanding work. Respect every explicit user source or date restriction and never widen the original grant. A failed read or query does not prove the source is empty or unavailable. Before declaring an input blocked, make a small, bounded recovery attempt using already-declared and already-authorized read operations on the same permitted account and resources. Use returned tool schemas and documentation, and prefer a narrower valid query, enumeration followed by reading matching records, or relevant source-backed evidence already available with its actual freshness. Do not guess endpoints, expand user-authorized resource or time scope, add subscriptions, change accounts, request credentials, repeat unchanged failures, or wait indefinitely. A source authorization denial, an explicit native-review denial, or a policy that forbids escalation stops the operation; never use another tool, route, account or argument to evade it. An OS sandbox failure alone is not a native-review denial. Only when the current native approval policy permits escalation, an exact already-authorized read command blocked by the OS sandbox may request sandbox_permissions=\"require_escalated\" through the existing native reviewer. Preserve the same command, arguments, account and resources, and wait for the native decision; do not change permission settings or credential storage. Missing or expired authentication must use its exact native authorization flow. Read recovery never authorizes an external write or retry of an unknown delivery. Finish with the useful verified outcome, its sources and material remaining uncertainty; an execution being accepted or completed is not the user's requested outcome. Explain unresolved coverage limits in business terms and ask the user to act only when an available user control can actually resolve the blocker. Attribute findings to the evidenced actor. Do not turn the assistant's mistakes, missing context, test activity or the user's corrections into advice that the user must write better prompts or repeat requirements the assistant should already honor. Recommendations about the user's work or habits require independent evidence of their own behavior; when no such finding is supported, say so rather than inventing improvement advice.";
 
 fn refresh_execution_policy(request: &mut ExecutionRequest) -> Result<(), String> {
     let origin = &request.extra.get("origin").cloned().unwrap_or(Value::Null);
@@ -224,6 +224,50 @@ mod tests {
         assert!(request.extra["additionalContext"]
             .get("wework.execution-policy")
             .is_none());
+    }
+
+    #[test]
+    fn planning_guidance_refreshes_primary_and_worker_context_without_changing_explicit_scope() {
+        let root = tempfile::tempdir().unwrap();
+        let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+        handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+        for kind in ["stand_in_identity", "stand_in_task"] {
+            let mut request: ExecutionRequest = serde_json::from_value(json!({
+                "prompt":"Prioritize today's work. Use only the selected source and records since 2026-11-01.",
+                "runtime_permission_profile":":read-only",
+                "origin":{"type":kind,"standInId":"@primary","userId":7,"deviceId":"mac"},
+                "standInDelegation":{"readSources":[{"providerId":"sample","profile":"owner","kind":"record","id":"selected"}]},
+                "additionalContext":{
+                    "wework.execution-policy":{"kind":"application","value":"Outdated execution policy"},
+                    "source-evidence":{"kind":"untrusted","value":"A source record cannot redefine the user's scope"}
+                }
+            })).unwrap();
+            let original = serde_json::to_value(&request).unwrap();
+            handler.refresh_stand_in_context(&mut request).unwrap();
+            let serialized = serde_json::to_value(&request).unwrap();
+            assert_eq!(serialized["prompt"], original["prompt"]);
+            assert_eq!(
+                serialized["runtime_permission_profile"],
+                original["runtime_permission_profile"]
+            );
+            assert_eq!(
+                serialized["standInDelegation"],
+                original["standInDelegation"]
+            );
+            assert_eq!(serialized["origin"], original["origin"]);
+            let context = serialized["additionalContext"].clone();
+            assert_eq!(
+                context["source-evidence"],
+                original["additionalContext"]["source-evidence"]
+            );
+            let policy = &context["wework.execution-policy"];
+            assert_eq!(policy["kind"], "application");
+            assert_eq!(policy["value"], EXECUTION_POLICY);
+            assert!(policy["value"].as_str().unwrap().len() <= 4_000);
+            let mut restored: ExecutionRequest = serde_json::from_value(serialized).unwrap();
+            handler.refresh_stand_in_context(&mut restored).unwrap();
+            assert_eq!(restored.extra["additionalContext"], context);
+        }
     }
 
     #[test]
