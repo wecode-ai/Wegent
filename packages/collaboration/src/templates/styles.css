@@ -316,6 +316,10 @@
 .collaboration-template-role-heading button {
   flex: none;
 }
+.collaboration-template-role-heading button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
 @media (max-width: 767px) {
   .collaboration-template-role-heading button {
     min-width: 44px;
