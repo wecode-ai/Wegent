@@ -239,23 +239,30 @@ rebound to the current host only after their persisted task ID, owner and role
 match. Owner and role stay unchanged. Ordinary tasks, external work and background
 batches retain their existing boundaries and task tools retain all permission checks.
 
-Review executions expose only the read-only `read_review_history` stand-in tool.
-The host verifies account, device, actor task, current arrangement version and
-the actual run binding before paginating task discovery and native transcripts
-over a fixed seven-day window. Prior reports are read separately. Primary
-identity management conversations may also use this tool; external work,
-scenario roles and project coordinators cannot. Native permissions and approvals
-remain in force, and history conveys no authority. Reports disclose missing
-timestamps, failed reads and truncation without automatically changing memories,
-settings or sending externally.
+Review executions reuse the general read-only `list_tasks` and `read_task` tools
+instead of a review-specific batch reader. The existing run binding verifies
+account, local device, actor task, current arrangement version and run state,
+fixing the scope to the seven days before that run. Explicit out-of-window time
+bounds are rejected. Every task page, message page and content chunk revalidates
+access. Follow `nextCursor`, `beforeCursor`, `afterCursor` and
+`messageContentCursor` for the required evidence. Complete message content does
+not imply complete history; `sourceContentMayBeIncomplete` denotes actual source
+incompleteness. Prior reports use ordinary conversation reads and are not
+independent evidence. This identity cannot continue other tasks, create delegates,
+configure settings, write memories or send externally. Native permissions and
+approvals remain unchanged, and history grants no authority. Results return to
+the original primary conversation, with material evidence gaps explained in
+business terms.
 
 Personal stand-ins and scenario roles use the general `list_tasks` and `read_task`
 tools to read permitted conversations belonging to the current account, including
 identity conversations and ordinary tasks. Lists and native transcripts support
 pagination and optional time bounds. List entries distinguish `kind` and
 `canContinue`: reading identity evidence does not authorize dispatching work to it.
-Direct primary-delegated workers inherit only these two read-only tools, without
-configuration, orchestration, scheduling or memory writes. Every read revalidates
+Direct primary-delegated workers inherit these two read-only tools by default.
+Explicit `readSources` selected at creation additionally grants only the chosen
+concrete source catalog and reads, without configuration, orchestration,
+scheduling, memory writes or external actions. Every read revalidates
 the persisted owner, device, existing role and delegation source. Pausing new-work
 intake does not revoke reads of existing conversations. Source tasks can read only
 associated conversations in the same role and exact currently connected scope;
