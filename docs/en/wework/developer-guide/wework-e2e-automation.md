@@ -227,6 +227,13 @@ critical path from 614 to 478 seconds. This estimate excludes builds, preparatio
 and queueing; subsequent CI runs must establish actual savings. Additional runners
 increase preparation overhead.
 
+Device folder selection uses native Executor home lookup and directory enumeration
+for the default `home_dir` and `ls_dirs` commands, without spawning `printenv` or `ls`.
+CI recorded process creation taking 6.2 and 8.1 seconds where the preceding run
+took tens of milliseconds. Native queries remove this startup dependency while
+preserving hidden directories, symlinks, output limits, and error handling.
+Explicit custom commands retain command execution; the ten-second E2E assertion is unchanged.
+
 Step timings from successful runs `39920301020` and `39920742402` separate test
 work from setup overhead. In the first sample, non-test steps across 42 shards
 consumed about 60 runner minutes, or 31% of shard execution time; setup overhead
