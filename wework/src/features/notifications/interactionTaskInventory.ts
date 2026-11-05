@@ -1,4 +1,5 @@
 import type { TaskSource } from './NotificationTaskSourceContext'
+import { logInteractionLoadFailure } from './interactionDiagnostics'
 import {
   collectRuntimeTaskReminderItems,
   type RuntimeTaskReminderItem,
@@ -13,7 +14,7 @@ export async function readInteractionTaskInventory(source: TaskSource): Promise<
   const api = source.services?.runtimeWorkApi
   if (!api) return { items: [], failedDevices: new Set(), refreshedDevices: new Set() }
   const localIdentity = await source.services?.getLocalRuntimeSidebarIdentity?.().catch(error => {
-    console.error('[Wework] Could not discover local runtime identity for pending work', { error })
+    logInteractionLoadFailure('local-identity', error)
     return null
   })
   const devices: Array<string | undefined> = [
@@ -46,7 +47,7 @@ export async function readInteractionTaskInventory(source: TaskSource): Promise<
           if (deviceId) refreshedDevices.add(deviceId)
           for (const item of found) refreshedDevices.add(item.address.deviceId)
         } catch (error) {
-          console.error('[Wework] Could not discover pending runtime work', { deviceId, error })
+          logInteractionLoadFailure('inventory', error, { deviceId })
           failedDevices.add(deviceId ?? '')
         }
       }

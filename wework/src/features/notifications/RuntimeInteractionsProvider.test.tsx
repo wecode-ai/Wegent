@@ -26,6 +26,44 @@ import {
   interactionTranscript,
 } from './runtimeInteractions.fixtures'
 describe('unified human response', () => {
+  it.each(['removed', 'archived'])(
+    'retires cached questions and load errors for a %s task after a healthy inventory refresh',
+    async status => {
+      const rendered = view()
+      await waitFor(() => expect(context!.pending).toHaveLength(1))
+      harness.transcript.mockRejectedValue(new Error('thread is archived'))
+      await act(async () => {
+        await context!.refresh()
+      })
+      expect(context!.errors[interactionTask.key]).toBe('interactions.load_failed')
+      const reads = harness.transcript.mock.calls.length
+      rendered.rerenderSource({
+        ...rendered.taskSource,
+        items:
+          status === 'archived'
+            ? [{ ...interactionTask, task: { ...interactionTask.task, status: 'archived' } }]
+            : [],
+        devices: [
+          { device_id: 'device', status: 'online' } as NonNullable<TaskSource['devices']>[number],
+        ],
+      })
+      await act(async () => {
+        await context!.refresh()
+      })
+      expect(harness.transcript).toHaveBeenCalledTimes(reads)
+      expect(context!.pending).toHaveLength(0)
+      expect(context!.errors).toEqual({})
+      await act(async () => {
+        await context!.refresh()
+      })
+      expect(harness.transcript).toHaveBeenCalledTimes(reads)
+      expect(JSON.parse(localStorage.getItem('wework.interactions:test:1:pending')!)).toEqual([])
+      harness.transcript.mockResolvedValue(interactionTranscript())
+      rendered.rerenderSource(rendered.taskSource)
+      await waitFor(() => expect(context!.pending).toHaveLength(1))
+    }
+  )
+
   it('never writes a stale shared draft into the answer input during IME composition', async () => {
     function Answer() {
       const interactions = useRuntimeInteractions()
@@ -360,9 +398,26 @@ describe('unified human response', () => {
   })
 
   it('does not cache failed history reads or summaries without a timestamp', async () => {
+    const log = vi.spyOn(console, 'info').mockImplementation(() => {})
     const intervals = vi.spyOn(window, 'setInterval')
     const rendered = view(interactionQuestion, interactionTask, false, new Error('offline'))
     await waitFor(() => expect(context!.loading).toBe(false))
+    expect(log).toHaveBeenCalledWith(
+      '[Wework] Runtime task create diagnostic',
+      expect.stringContaining('"stage":"pending-interaction-load-failed"')
+    )
+    const entry = JSON.parse(
+      log.mock.calls.find(
+        ([, value]) =>
+          typeof value === 'string' && value.includes('pending-interaction-load-failed')
+      )![1] as string
+    )
+    expect(entry).toMatchObject({
+      operation: 'transcript',
+      deviceId: interactionTask.address.deviceId,
+      taskId: interactionTask.address.taskId,
+      error: { name: 'Error', message: 'offline' },
+    })
     const poll = intervals.mock.calls.find(([, ms]) => ms === 5000)![0] as () => void
     harness.transcript.mockResolvedValue(interactionTranscript())
     await act(async () => {
@@ -383,6 +438,7 @@ describe('unified human response', () => {
   })
 
   it('invalidates history cache when the service changes or a device recovers', async () => {
+    const log = vi.spyOn(console, 'info').mockImplementation(() => {})
     const intervals = vi.spyOn(window, 'setInterval')
     const rendered = view()
     await waitFor(() => expect(context!.pending).toHaveLength(1))
@@ -409,6 +465,19 @@ describe('unified human response', () => {
     await act(async () => {
       poll()
     })
+    const offlineLogs = () =>
+      log.mock.calls.filter(
+        ([, value]) => typeof value === 'string' && value.includes('Device is marked offline')
+      )
+    expect(offlineLogs()).toHaveLength(1)
+    expect(JSON.parse(offlineLogs()[0][1] as string)).toMatchObject({
+      operation: 'inventory',
+      deviceId: 'device',
+    })
+    await act(async () => {
+      poll()
+    })
+    expect(offlineLogs()).toHaveLength(1)
     const beforeRecovery = harness.transcript.mock.calls.length
     rendered.rerenderSource({ ...offline, devices: [{ ...offline.devices[0], status: 'online' }] })
     // Inventory polling owns device availability and invalidates the previous successful read.

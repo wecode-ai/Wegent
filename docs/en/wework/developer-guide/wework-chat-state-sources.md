@@ -18,6 +18,25 @@ Sidebar priority filtering also reads explicit `interactionStatus` through the
 lifecycle Store projection. A stale task-list snapshot must not override an
 accepted user reply in the view layer.
 
+## Pending Interaction Membership and Error Cleanup
+
+Pending scans use current task sources and device pending inventories. Cached questions must
+not reintroduce archived or removed tasks. After a successful inventory read, remove questions,
+successful-read markers, and related errors for tasks outside the candidate set. Failed or
+offline devices retain their previous inventory; a connection failure is not an empty list.
+Tasks hidden from the sidebar remain discoverable through the device pending inventory.
+
+Failures during local identity discovery, inventory reads, transcript reads, and answered-question
+archival use the existing diagnostic channel in `runtime-launch.log`. Search for
+`pending-interaction-load-failed`. Entries include the operation, device and task identifiers,
+exception message, stack, error code, and status. Requests and conversation contents are not
+serialized; the log writer applies its existing credential redaction. An offline device that
+makes pending work unavailable is logged once per state transition.
+
+The desktop `human-interactions` checkpoint archives a real task after caching an unanswered
+question. It checks that background polling and renderer reload leave no pending item or load
+error and never restore the archived task.
+
 ## Needs Your Input Answer Drafts
 
 `RuntimeInteractionsProvider` directly owns and synchronously exposes account-scoped
