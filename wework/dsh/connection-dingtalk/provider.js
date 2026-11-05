@@ -71,33 +71,49 @@ export function createProvider() {
       return { after: required(input, 'enabledAfter'), cursor: '0' }
     },
     async collect(ctx, { source, checkpoint }) {
-      const profile = required(source, 'profile')
-      const id = required(source, 'id')
-      const selfId = await ownIdentity(ctx, profile, identities)
-      const start = checkpoint?.after ?? required(source, 'enabledAfter')
-      const until = checkpoint?.until ?? new Date().toISOString()
-      const cursor = checkpoint?.cursor ?? '0'
-      const args = { start, end: until, limit: '100', cursor, profile }
-      if (source.scope !== 'all') {
-        if (source.kind === 'group') args.group = id
-        else args.senderIds = id
-      }
-      const response = await readTool(
-        ctx,
-        source.kind === 'group' ? 'listMentions' : 'searchMessages',
-        args
-      )
-      const events = normalizeMessages(source, response, selfId)
-      if (typeof response.result?.hasMore !== 'boolean') throw invalid('Missing pagination state')
-      const hasMore = response.result.hasMore
-      const next = hasMore ? required(response.result, 'nextCursor') : '0'
-      if (hasMore && next === cursor) throw invalid('Pagination cursor did not advance')
-      return {
-        events,
-        nextCheckpoint: hasMore
-          ? { after: start, until, cursor: next }
-          : { after: until, cursor: '0' },
-        hasMore,
+      try {
+        const profile = required(source, 'profile')
+        const id = required(source, 'id')
+        const selfId = await ownIdentity(ctx, profile, identities)
+        const start = checkpoint?.after ?? required(source, 'enabledAfter')
+        const until = checkpoint?.until ?? new Date().toISOString()
+        const cursor = checkpoint?.cursor ?? '0'
+        const args = { start, end: until, limit: '100', cursor, profile }
+        if (source.scope !== 'all') {
+          if (source.kind === 'group') args.group = id
+          else args.senderIds = id
+        }
+        const response = await readTool(
+          ctx,
+          source.kind === 'group' ? 'listMentions' : 'searchMessages',
+          args
+        )
+        const events = normalizeMessages(source, response, selfId)
+        if (typeof response.result?.hasMore !== 'boolean') throw invalid('Missing pagination state')
+        const hasMore = response.result.hasMore
+        const next = hasMore ? required(response.result, 'nextCursor') : '0'
+        if (hasMore && next === cursor) throw invalid('Pagination cursor did not advance')
+        return {
+          events,
+          nextCheckpoint: hasMore
+            ? { after: start, until, cursor: next }
+            : { after: until, cursor: '0' },
+          hasMore,
+        }
+      } catch (error) {
+        if (
+          [
+            'connection_cli_timeout',
+            'ECONNRESET',
+            'ECONNREFUSED',
+            'ETIMEDOUT',
+            'EHOSTUNREACH',
+            'ENETUNREACH',
+            'EAI_AGAIN',
+          ].includes(error.code)
+        )
+          error.retryAfterMs ??= 30000
+        throw error
       }
     },
   }

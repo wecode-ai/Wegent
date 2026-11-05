@@ -29,6 +29,7 @@ const declaration = () => ({
           resourceKinds: ['folder'],
           resourceLabels: { folder: 'Mail folder' },
           eventTypes: ['mail.received'],
+          versionedEventTypes: [],
         },
       ],
     },
@@ -78,6 +79,93 @@ test('declares public resource query parameters without inventing an instance de
   ]) {
     manifest.wework.connections.providers[0].resourceQuerySchema = invalid
     assert.throws(() => parseConnections(manifest), { code: 'invalid_connection' })
+  }
+})
+
+test('declares mutable event types only from the provider event contract', () => {
+  const manifest = declaration()
+  const provider = manifest.wework.connections.providers[0]
+  provider.versionedEventTypes = ['mail.received']
+  assert.deepEqual(parseConnections(manifest).providers[0].versionedEventTypes, ['mail.received'])
+  for (const invalid of [
+    undefined,
+    null,
+    'mail.received',
+    ['unknown'],
+    ['mail.received', 'mail.received'],
+  ]) {
+    provider.versionedEventTypes = invalid
+    assert.throws(() => parseConnections(manifest), { code: 'invalid_connection' })
+  }
+})
+
+test('enforces paired object identities and versions before returning a collected page', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'connection-version-'))
+  let registry
+  try {
+    const manifest = declaration()
+    manifest.wework.connections.providers[0].versionedEventTypes = ['mail.received']
+    const path = join(root, 'package.json')
+    await writeFile(path, JSON.stringify(manifest))
+    registry = new ConnectionRegistry({
+      inventory: async () => [installed()],
+      satisfies,
+      context: value => value,
+    })
+    let event = {
+      id: 'delivery-1',
+      objectId: 'account-object-1',
+      version: 'v1',
+      text: 'body',
+      at: '2026-11-05T00:00:00Z',
+      eventType: 'mail.received',
+    }
+    const checkpoint = { cursor: 'next' }
+    let initialCheckpoint = {}
+    await registry.register({ effect() {} }, pathToFileURL(path), {
+      inbox: {
+        check: async () => ({ status: 'ready' }),
+        listResources: async () => ({ items: [] }),
+        validate: async () => {},
+        initialize: async () => initialCheckpoint,
+        collect: async () => ({ events: [event], nextCheckpoint: checkpoint, hasMore: false }),
+      },
+    })
+    const collect = () =>
+      registry.call('@test/mail/inbox', 'collect', {
+        source: { providerId: '@test/mail/inbox', id: 'folder' },
+        checkpoint: {},
+      })
+    assert.equal((await collect()).events[0].version, 'v1')
+    for (const value of [null, [], 'cursor']) {
+      initialCheckpoint = value
+      await assert.rejects(registry.call('@test/mail/inbox', 'initialize', {}), {
+        code: 'invalid_connection',
+      })
+      await assert.rejects(
+        registry.call('@test/mail/inbox', 'collect', {
+          source: { providerId: '@test/mail/inbox', id: 'folder' },
+          checkpoint: null,
+        }),
+        { code: 'invalid_connection' }
+      )
+    }
+    const valid = event
+    for (const patch of [
+      { objectId: undefined },
+      { version: undefined },
+      { objectId: ' ' },
+      { version: '' },
+      { version: 'x'.repeat(2049) },
+      { objectId: 'bad\0identity' },
+    ]) {
+      event = { ...valid, ...patch }
+      await assert.rejects(collect(), { code: 'invalid_connection' })
+      assert.deepEqual(checkpoint, { cursor: 'next' })
+    }
+  } finally {
+    registry?.dispose()
+    await rm(root, { recursive: true, force: true })
   }
 })
 
@@ -168,6 +256,7 @@ test('a new DSH connection plugin shares collection, reads, declared actions and
                 resourceKinds: ['repository'],
                 resourceLabels: { repository: 'Repository' },
                 eventTypes: ['build.failed'],
+                versionedEventTypes: [],
                 actions: [{ id: 'retry', resourceKinds: ['repository'] }],
               },
             ],

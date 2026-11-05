@@ -6,9 +6,15 @@ const METHODS = ['check', 'listResources', 'validate', 'initialize', 'collect']
 const OPTIONAL_METHODS = ['readSource', 'executeAction']
 
 export class ConnectionError extends Error {
-  constructor(code, message) {
+  constructor(code, message, options = {}) {
     super(message)
     this.code = code
+    if (
+      Number.isSafeInteger(options.retryAfterMs) &&
+      options.retryAfterMs >= 1 &&
+      options.retryAfterMs <= 3600000
+    )
+      this.retryAfterMs = options.retryAfterMs
   }
 }
 
@@ -111,6 +117,12 @@ export function parseConnections(manifest) {
         provider.eventTypes.length > 0 &&
         provider.eventTypes.every(kind => typeof kind === 'string' && ID.test(kind)),
       'Invalid event types'
+    )
+    requireValue(
+      Array.isArray(provider.versionedEventTypes) &&
+        new Set(provider.versionedEventTypes).size === provider.versionedEventTypes.length &&
+        provider.versionedEventTypes.every(type => provider.eventTypes.includes(type)),
+      'Invalid versioned event types'
     )
     requireValue(
       JSON.stringify(provider.collectionModes) === '["poll"]',
@@ -403,6 +415,8 @@ export class ConnectionRegistry {
       if (method === 'collect' && (params.checkpoint === null || params.checkpoint === undefined)) {
         params.checkpoint = await entry.implementation.initialize(context, params.source)
       }
+      if (method === 'collect')
+        requireValue(record(params.checkpoint), 'Invalid connection checkpoint')
     }
     entry.controller.signal.throwIfAborted()
     const result = await entry.implementation[method](context, params)
@@ -458,6 +472,7 @@ export class ConnectionRegistry {
 }
 
 function validateProviderResult(provider, method, result) {
+  if (method === 'initialize') requireValue(record(result), 'Invalid connection checkpoint')
   if (method === 'readSource') {
     requireValue(
       record(result) &&
@@ -493,6 +508,7 @@ function validateProviderResult(provider, method, result) {
             ['id', 'text', 'at'].every(
               key => typeof event[key] === 'string' && event[key].length > 0
             ) &&
+            validEventVersion(provider, event) &&
             provider.eventTypes.includes(event.eventType)
         ),
       'Invalid connection event'
@@ -540,6 +556,18 @@ function validateProviderResult(provider, method, result) {
       'Missing resource pagination cursor'
     )
   }
+}
+
+function validEventVersion(provider, event) {
+  const versioned = provider.versionedEventTypes.includes(event.eventType)
+  if (!versioned && event.objectId === undefined && event.version === undefined) return true
+  return ['objectId', 'version'].every(
+    key =>
+      typeof event[key] === 'string' &&
+      event[key].trim().length > 0 &&
+      event[key].length <= 2048 &&
+      !event[key].includes('\0')
+  )
 }
 
 function requireValue(condition, message) {

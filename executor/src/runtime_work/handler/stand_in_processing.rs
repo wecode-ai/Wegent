@@ -904,11 +904,11 @@ impl RuntimeWorkRpcHandler {
                 )
                 .await?;
                 let known = store
-                    .known_stand_in_message(
+                    .known_stand_in_event_message(
                         user,
                         required(role, "id")?,
                         &event["source"],
-                        required(&event["message"], "id")?,
+                        &event["message"],
                     )
                     .map_err(settings_error)?;
                 if let Some(known) = known {
@@ -925,11 +925,11 @@ impl RuntimeWorkRpcHandler {
         }
         let mut target = work_id.map(str::to_owned);
         if let Some(known) = store
-            .known_stand_in_message(
+            .known_stand_in_event_message(
                 user,
                 required(role, "id")?,
                 &events[0]["source"],
-                required(&events[0]["message"], "id")?,
+                &events[0]["message"],
             )
             .map_err(settings_error)?
         {

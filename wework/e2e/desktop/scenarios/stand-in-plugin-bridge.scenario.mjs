@@ -5,6 +5,7 @@ import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { fetchLocalRuntime } from '../modules/runtime-request.mjs'
 import { withTimeout } from '../modules/shared.mjs'
 import { waitForBundledMarketplaceRegistration } from '../modules/plugin-flows.mjs'
+import { verifyStandInEventVersions } from '../modules/stand-in-event-versions.mjs'
 import {
   verifyStandInResourceScopes,
   verifyStandInCalendarPolicy,
@@ -18,6 +19,7 @@ const PLUGIN = `source@${MARKET}`
 export function createDesktopScenario({
   resultDir,
   electronUserDataDirectory,
+  executorHome,
   uiTimeoutMs,
   workbenchReadyTimeoutMs,
 }) {
@@ -114,6 +116,7 @@ export function createDesktopScenario({
                   allResourceKinds: ['record'],
                   resourceLabels: { record: 'Records' },
                   eventTypes: ['record.received'],
+                  versionedEventTypes: ['record.received'],
                 },
               ],
             },
@@ -178,6 +181,7 @@ export function createDesktopScenario({
         calls.map(call => call.name),
         ['read_record']
       )
+      await verifyStandInEventVersions(control, rpc, PROVIDER, executorHome, records)
       await writeFile(
         records,
         JSON.stringify([

@@ -30,6 +30,7 @@
           "eventTypes": [
             "mail.received"
           ],
+          "versionedEventTypes": [],
           "locales": {
             "en": {
               "displayName": "Email",

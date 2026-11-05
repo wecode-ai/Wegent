@@ -43,9 +43,24 @@ export function bindGitProvider(providerId, provider, request, declaredAuthTarge
             return call('runtime.connections.git.webhooks', params)
           },
         })
-        const result = await operation(Object.freeze({ ...context, git }), input)
-        context.signal.throwIfAborted()
-        return result
+        try {
+          const result = await operation(Object.freeze({ ...context, git }), input)
+          context.signal.throwIfAborted()
+          return result
+        } catch (error) {
+          if (
+            name === 'collect' &&
+            [
+              'git_cli_failed',
+              'git_cli_timeout',
+              'git_rate_limited',
+              'cloud_unavailable',
+              'cloud_request_failed',
+            ].includes(error.code)
+          )
+            error.retryAfterMs ??= 30000
+          throw error
+        }
       },
     ])
   )

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { test } from 'node:test'
 import { createProvider, normalizeWebhook, parseProfile } from './provider.js'
 
@@ -266,6 +267,8 @@ test('the same comment version deduplicates across webhook and personal polling'
   const ctx = { git: { read: async () => ({ data: [comment] }) } }
   const polled = await provider.collect(ctx, { source: personal, checkpoint })
   assert.equal(polled.events[0].id, delivered.id)
+  assert.equal(polled.events[0].objectId, delivered.objectId)
+  assert.equal(polled.events[0].version, delivered.version)
   const edited = normalizeWebhook('github', source, {
     id: 'edited',
     eventType: 'issue_comment',
@@ -273,6 +276,153 @@ test('the same comment version deduplicates across webhook and personal polling'
     payload: { issue: { number: 9 }, comment: { ...comment, body: 'human edit' } },
   })
   assert.notEqual(edited.id, delivered.id)
+  assert.equal(edited.objectId, delivered.objectId)
+  assert.notEqual(edited.version, delivered.version)
+})
+
+test('the same PR receives distinct check versions without depending on webhook delivery identity', () => {
+  const payload = {
+    action: 'completed',
+    check_run: {
+      id: 77,
+      name: 'tests',
+      status: 'completed',
+      conclusion: 'success',
+      head_sha: 'head',
+      pull_requests: [{ number: 9 }],
+    },
+  }
+  const delivery = {
+    id: 'first-delivery',
+    eventType: 'check_run',
+    receivedAt: '2026-02-01T00:00:00Z',
+    payload,
+  }
+  const first = normalizeWebhook('github', source, delivery)
+  const repeated = normalizeWebhook('github', source, {
+    ...delivery,
+    id: 'redelivery',
+    receivedAt: '2026-02-02T00:00:00Z',
+  })
+  assert.notEqual(first.id, repeated.id)
+  assert.equal(first.objectId, repeated.objectId)
+  assert.equal(first.version, repeated.version)
+  const failed = normalizeWebhook('github', source, {
+    ...delivery,
+    payload: { ...payload, check_run: { ...payload.check_run, conclusion: 'failure' } },
+  })
+  assert.equal(first.topicId, failed.topicId)
+  assert.equal(first.objectId, failed.objectId)
+  assert.notEqual(first.version, failed.version)
+  const otherCheck = normalizeWebhook('github', source, {
+    ...delivery,
+    payload: { ...payload, check_run: { ...payload.check_run, id: 78 } },
+  })
+  assert.notEqual(first.objectId, otherCheck.objectId)
+  const reordered = normalizeWebhook('github', source, {
+    ...delivery,
+    payload: {
+      check_run: {
+        pull_requests: [{ number: 9 }],
+        head_sha: 'head',
+        conclusion: 'success',
+        status: 'completed',
+        name: 'tests',
+        id: 77,
+      },
+      action: 'completed',
+    },
+  })
+  assert.equal(first.version, reordered.version)
+})
+
+test('GitLab pipeline transitions carry one stable object identity and distinct source versions', () => {
+  const gl = { ...source, profile: JSON.stringify(['https://gitlab.example', '7']) }
+  const delivery = {
+    id: 'one',
+    eventType: 'Pipeline Hook',
+    receivedAt: '2026-02-01T00:00:00Z',
+    payload: {
+      object_kind: 'pipeline',
+      object_attributes: { id: 41, sha: 'head', status: 'running' },
+    },
+  }
+  const running = normalizeWebhook('gitlab', gl, delivery)
+  const failed = normalizeWebhook('gitlab', gl, {
+    ...delivery,
+    id: 'two',
+    payload: {
+      ...delivery.payload,
+      object_attributes: { ...delivery.payload.object_attributes, status: 'failed' },
+    },
+  })
+  assert.equal(running.objectId, failed.objectId)
+  assert.notEqual(running.version, failed.version)
+  const retry = normalizeWebhook('gitlab', gl, {
+    ...delivery,
+    id: 'duplicate',
+    receivedAt: '2026-02-02T00:00:00Z',
+  })
+  assert.equal(running.version, retry.version)
+})
+
+test('GitLab Pipeline Hook and the MR pipeline list share a business version despite different response shapes', async () => {
+  // GitLab documents Pipeline Hook attributes separately from the four-field MR pipeline list.
+  // https://docs.gitlab.com/user/project/integrations/webhook_events/#pipeline-events
+  // https://docs.gitlab.com/api/merge_requests/#list-merge-request-pipelines
+  const gl = { ...source, profile: JSON.stringify(['https://gitlab.example', '7']) }
+  const attributes = {
+    id: 77,
+    iid: 3,
+    sha: 'head',
+    ref: 'main',
+    status: 'success',
+    detailed_status: 'passed',
+    stages: ['build', 'test'],
+    created_at: '2026-02-01T00:00:00Z',
+    finished_at: '2026-02-01T00:01:00Z',
+    duration: 60,
+    url: 'https://gitlab.example/org/repo/-/pipelines/77',
+  }
+  const delivered = normalizeWebhook('gitlab', gl, {
+    id: 'pipeline-delivery',
+    eventType: 'Pipeline Hook',
+    receivedAt: '2026-02-01T00:01:00Z',
+    payload: {
+      object_kind: 'pipeline',
+      object_attributes: attributes,
+      merge_request: { id: 900, iid: 9, title: 'Parent MR' },
+    },
+  })
+  const target = {
+    url: 'https://gitlab.example/org/repo/-/merge_requests/9',
+    repository: 'org/repo',
+    number: 9,
+    entityKind: 'change_request',
+    sha: 'head',
+  }
+  const checkpoint = {
+    after: personal.enabledAfter,
+    until: '2026-03-01T00:00:00Z',
+    stream: 3,
+    page: 1,
+    seen: {},
+    trackStep: 2,
+    tracked: { [target.url]: target },
+  }
+  const provider = createProvider('gitlab')
+  const collect = status =>
+    provider.collect(
+      { git: { read: async () => ({ data: [{ id: 77, sha: 'head', ref: 'main', status }] }) } },
+      { source: { ...personal, profile: gl.profile }, checkpoint }
+    )
+  const polled = (await collect('success')).events[0]
+  assert.equal(delivered.topicId, target.url)
+  assert.equal(delivered.objectId, polled.objectId)
+  assert.equal(delivered.version, polled.version)
+  const failed = (await collect('failed')).events[0]
+  assert.equal(failed.objectId, delivered.objectId)
+  assert.notEqual(failed.version, delivered.version)
 })
 
 test('personal boundaries compare instants rather than timestamp spelling', async () => {
@@ -293,6 +443,49 @@ test('personal boundaries compare instants rather than timestamp spelling', asyn
   )
   assert.equal(result.events.length, 1)
   assert.equal(result.events[0].external.originalId, '2')
+})
+
+test('personal collection preserves existing raw checkpoint digests while object versions ignore key order', async () => {
+  const provider = createProvider('github')
+  const row = {
+    id: 10,
+    updated_at: '2026-02-01T00:00:00Z',
+    subject: { title: 'Review', type: 'PullRequest' },
+  }
+  const digest = createHash('sha256').update(JSON.stringify(row)).digest('hex')
+  const checkpoint = {
+    after: personal.enabledAfter,
+    until: '2026-03-01T00:00:00Z',
+    stream: 0,
+    page: 1,
+    seen: {},
+    tracked: {},
+  }
+  const collect = (item, state) =>
+    provider.collect(
+      { git: { read: async () => ({ data: [item] }) } },
+      { source: personal, checkpoint: state }
+    )
+  const first = (await collect(row, checkpoint)).events[0]
+  assert.equal(first.id, `github:notifications:10:${digest}`)
+  assert.equal(
+    (
+      await collect(row, {
+        ...checkpoint,
+        seen: { 'notifications:10': { digest, at: row.updated_at } },
+      })
+    ).events.length,
+    0
+  )
+  const reordered = {
+    subject: { type: 'PullRequest', title: 'Review' },
+    updated_at: row.updated_at,
+    id: 10,
+  }
+  const repeated = (await collect(reordered, checkpoint)).events[0]
+  assert.notEqual(first.id, repeated.id)
+  assert.equal(first.objectId, repeated.objectId)
+  assert.equal(first.version, repeated.version)
 })
 
 test('old GitLab pipelines cannot be attributed to the current review head', async () => {

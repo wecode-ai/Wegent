@@ -15,7 +15,7 @@ A new system implements the same contract rather than adding a stand-in-specific
 - Optional `readSource` provides bounded additional information without advancing collection checkpoints. Unsupported plugins fail explicitly; a ready catalog entry or saved subscription never proves content was read.
 - Optional `actions` declare resource operations implemented by the plugin's `executeAction`. The host routes only declared actions for a concrete resource owned by that plugin; a manifest is not an execution grant. Native one-time confirmation or current continuous authorization remains required, and plugins retain recipient, idempotency and external-result validation. Unknown delivery results must not be retried automatically.
 
-The currently implemented built-in external event collectors are email and DingTalk. GitHub business tools and internal calendar arrangements are not external event connections; no new-event listening is claimed until the corresponding plugin implements and registers this contract.
+The built-in external event collectors are email, DingTalk, GitHub and GitLab, all using the same registration and collection contract. Internal calendar arrangements are not an external calendar connection; systems without a registered implementation do not provide new-event listening.
 
 ## Manifest and registration
 
@@ -42,7 +42,8 @@ Declare `wework.connections` in the outer `package.json`, with `apiVersion: 1`, 
           "collectionModes": ["poll"],
           "resourceKinds": ["folder"],
           "resourceLabels": { "folder": "Mail folder" },
-          "eventTypes": ["mail.received"]
+          "eventTypes": ["mail.received"],
+          "versionedEventTypes": []
         }
       ]
     }
@@ -86,6 +87,22 @@ Discovery may also return `availability`. Return `auth_required` only after a bu
 Providers must handle pagination, duplicate events and invalid checkpoints explicitly. Context exposes resolved dependencies and a lifecycle abort signal. Implementations can capture their declared DSH services. Disabling the plugin rejects in-flight collection results.
 
 Declare writes with `actions: [{ id: "retry_build", resourceKinds: ["repository"] }]` and implement `executeAction(context, { action, source, ...input })`. Calls require a declared action and resource kind belonging to that Provider, and reject `scope: "all"` or wildcard operation targets. An action declaration neither exposes a model write tool automatically nor replaces native authorization; only an already authorized host tool may invoke the shared RPC. Plugins must still validate their business boundaries before delivery and must never treat event content or forged caller policies as authorization.
+
+## Event identity, versions and processing progress
+
+Every connection explicitly declares `versionedEventTypes` (an empty array for immutable events) and follows the same contract. Model memory, read flags and the last query time cannot replace durable processing records:
+
+- `id` is a stable source event identifier. Pagination, replay and restarts must not generate a random new identity for the same event.
+- Immutable messages (current email `mail.received` and received DingTalk messages) deduplicate by source and event ID. Email uses `UIDVALIDITY:UID`, scoped by account and mailbox; DingTalk uses platform message IDs, scoped by conversation or contact.
+- Mutable objects require nonempty `objectId` and `version`, with their event types declared in the Provider's `versionedEventTypes`. Both fields must appear together. Missing version metadata for a declared type rejects the page without advancing its checkpoint. `objectId` is unique within the Provider account, including the necessary instance, repository, object kind and object identity, rather than a repository-local number alone. `version` is an opaque semantic revision, using a platform revision or a normalized business-state digest: repeated observations retain the same version, and new business changes produce a new one. Request counters, collection timestamps and webhook delivery IDs alone are not object revisions.
+- Versioned events deduplicate by user, Provider, account, role, `objectId` and `version`. Personal and repository subscriptions observing the same revision create one processing event while retaining independently authorized source boundaries. A new check failure on the same PR must produce a new revision rather than being ignored because that PR was processed before. Accounts, users and roles never share processing or authorization records.
+- `checkpoint` is the plugin's opaque collection position. `nextCheckpoint` records where collection reached, not whether AI handling finished. Plugins do not own the framework's collection progress, pending decisions or completion records; `readSource` cannot move the collection cursor.
+
+The framework persists a page's events before saving its next checkpoint. Interrupted pages can replay and deduplicate by durable identity; collection or persistence failures retain the previous cursor. Internal queues assess and retry collected events without relying on the external service to return them again. Pending decisions retain their original work item; duplicate observations of completed, ignored or cancelled event revisions do not restart them. Native one-time confirmation, continuing grants, durable send idempotency and unknown-delivery handling remain authoritative. Event deduplication never grants execution permission.
+
+For confirmed temporary network failures, timeouts or rate limits during read-only collection, a plugin can attach `retryAfterMs` (1 through 3,600,000 milliseconds) to its error, allowing the framework to retry after that delay. The host forwards this hint only for `collect` failures. The framework persists the failure count, original cursor and backoff deadline without interpreting plugin-specific error codes. Authentication, certificate, invalid-data and configuration errors omit this hint and pause for recovery; network failures do not become login requests. Unknown delivery results and write operations cannot use this collection hint to trigger automatic retries.
+
+GitHub and GitLab provide object revisions on personal activity, tracked-repository and inbox collection paths. Email and DingTalk retain immutable received-message semantics. Future edited-message or external-calendar adapters must declare and implement versioned events through the same contract, without system-specific framework branches.
 
 ## Dependencies and accounts
 

@@ -79,21 +79,42 @@ impl LocalTaskStore {
         let profile = source["profile"]
             .as_str()
             .filter(|value| !value.is_empty())?;
-        let message = event["message"]["id"]
+        let object = event["message"]["objectId"]
             .as_str()
-            .filter(|value| value.starts_with("git-canonical:"))?;
+            .filter(|value| !value.trim().is_empty())?;
+        let version = event["message"]["version"]
+            .as_str()
+            .filter(|value| !value.trim().is_empty())?;
         if event["kind"] != "connection"
             || event["roleScoped"] != true
             || roles.len() != 1
             || !roles[0].as_str().is_some_and(|id| !id.is_empty())
-            || !matches!(
-                provider,
-                "@wegent/dsh-connection-git/github" | "@wegent/dsh-connection-git/gitlab"
-            )
         {
             return None;
         }
-        Some(json!([provider, profile, message, roles[0]]))
+        Some(json!([provider, profile, object, version, roles[0]]))
+    }
+
+    pub(crate) fn validate_connection_message_version(
+        message: &Value,
+    ) -> Result<(), TaskRuntimeError> {
+        match (message.get("objectId"), message.get("version")) {
+            (None, None) => Ok(()),
+            (Some(object), Some(version))
+                if [object, version].iter().all(|value| {
+                    value.as_str().is_some_and(|text| {
+                        !text.trim().is_empty()
+                            && text.encode_utf16().count() <= 2048
+                            && !text.contains('\0')
+                    })
+                }) =>
+            {
+                Ok(())
+            }
+            _ => Err(TaskRuntimeError::Invalid(
+                "Connection objectId and version must be nonempty strings supplied together".into(),
+            )),
+        }
     }
 
     pub fn enqueue_stand_in_event(
@@ -104,8 +125,11 @@ impl LocalTaskStore {
     ) -> Result<Value, TaskRuntimeError> {
         let mut guard = self.connection()?;
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let id = stand_in_record_key("stand-in-event", &json!([user, identity]));
+        if event["kind"] == "connection" {
+            Self::validate_connection_message_version(&event["message"])?;
+        }
         let canonical = Self::canonical_connection_event_identity(&event);
+        let id = stand_in_record_key("stand-in-event", &json!([user, identity]));
         let binding = json!({"source":event["source"],"at":event["message"]["at"],"position":event["message"]["position"]});
         if let Some(existing) = get_item_from(&connection, &id, EVENT)? {
             let mut existing = existing.metadata;
@@ -419,6 +443,73 @@ mod tests {
             .enqueue_stand_in_event(8, identity, json!({}))
             .unwrap();
         assert_eq!(store.stand_in_events(7).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn connection_object_versions_survive_restart_and_preserve_processing_state() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("tasks.sqlite");
+        let source = json!({"providerId":"calendar-plugin/events","profile":"account","kind":"calendar","id":"work"});
+        let mut event = json!({"kind":"connection","roleScoped":true,"roleIds":["@primary"],"source":source,
+            "message":{"id":"delivery-one","objectId":"calendar:work/event:42","version":"v1","text":"Meeting changed","at":"2026-11-05T00:00:00Z"}});
+        let identity = LocalTaskStore::canonical_connection_event_identity(&event).unwrap();
+        let store = LocalTaskStore::open(&path).unwrap();
+        let mut first = store
+            .enqueue_stand_in_event(7, identity.clone(), event.clone())
+            .unwrap();
+        first["status"] = json!("handled");
+        store.save_stand_in_event(7, &first).unwrap();
+        drop(store);
+        let store = LocalTaskStore::open(&path).unwrap();
+        event["message"]["id"] = json!("delivery-retry");
+        let repeated = store
+            .enqueue_stand_in_event(7, identity, event.clone())
+            .unwrap();
+        assert_eq!(repeated, first);
+        event["message"]["version"] = json!("v2");
+        let second = store
+            .enqueue_stand_in_event(
+                7,
+                LocalTaskStore::canonical_connection_event_identity(&event).unwrap(),
+                event.clone(),
+            )
+            .unwrap();
+        assert_ne!(second["id"], first["id"]);
+        assert_eq!(second["status"], "pending");
+        assert_eq!(store.stand_in_events(7).unwrap().len(), 2);
+        for field in ["providerId", "profile"] {
+            let mut isolated = event.clone();
+            isolated["source"][field] = json!("another-identity");
+            let independent = store
+                .enqueue_stand_in_event(
+                    7,
+                    LocalTaskStore::canonical_connection_event_identity(&isolated).unwrap(),
+                    isolated,
+                )
+                .unwrap();
+            assert_ne!(second["id"], independent["id"]);
+        }
+    }
+
+    #[test]
+    fn malformed_connection_versions_are_rejected_before_persistence() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        for message in [
+            json!({"objectId":"pr:1"}),
+            json!({"version":"1"}),
+            json!({"objectId":" ","version":"1"}),
+            json!({"objectId":"pr:1","version":1}),
+        ] {
+            assert!(store
+                .enqueue_stand_in_event(
+                    7,
+                    json!("invalid"),
+                    json!({"kind":"connection","message":message})
+                )
+                .is_err());
+        }
+        assert!(store.stand_in_events(7).unwrap().is_empty());
     }
 
     #[test]

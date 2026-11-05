@@ -6,6 +6,48 @@ import { parseConnections } from '../plugin-runtime/connections.js'
 
 const providerId = '@wegent/dsh-connection-git/github'
 
+test('Git marks temporary failures only during collection and retains platform deadlines', async () => {
+  for (const name of ['collect', 'listResources', 'executeAction']) {
+    for (const code of [
+      'git_cli_failed',
+      'git_cli_timeout',
+      'git_rate_limited',
+      'cloud_unavailable',
+      'cloud_request_failed',
+      'connector_auth_required',
+      'git_permission_denied',
+      'git_connection_invalid',
+    ]) {
+      for (const delay of [undefined, 120000]) {
+        const error = Object.assign(new Error('Native failure'), { code })
+        if (delay !== undefined) error.retryAfterMs = delay
+        const provider = bindGitProvider(
+          providerId,
+          { [name]: ctx => ctx.git.read({ operation: 'identity' }) },
+          async () => {
+            throw error
+          }
+        )
+        const context = { providerId, signal: new AbortController().signal }
+        await assert.rejects(provider[name](context, {}), failure => {
+          const transient = [
+            'git_cli_failed',
+            'git_cli_timeout',
+            'git_rate_limited',
+            'cloud_unavailable',
+            'cloud_request_failed',
+          ].includes(code)
+          assert.equal(
+            failure.retryAfterMs,
+            delay ?? (name === 'collect' && transient ? 30000 : undefined)
+          )
+          return true
+        })
+      }
+    }
+  }
+})
+
 test('both Git providers advertise instance discovery parameters without assuming a host', async () => {
   const manifest = JSON.parse(await readFile(new URL('./package.json', import.meta.url), 'utf8'))
   const declaration = parseConnections(manifest)

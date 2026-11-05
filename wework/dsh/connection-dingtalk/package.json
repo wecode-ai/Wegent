@@ -49,6 +49,7 @@
           "eventTypes": [
             "message.received"
           ],
+          "versionedEventTypes": [],
           "resourceLabels": {
             "group": "群聊中 @我",
             "direct": "私聊消息"

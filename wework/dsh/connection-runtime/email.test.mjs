@@ -42,6 +42,13 @@ test('distinguishes recoverable IMAP transport from authentication, TLS and mess
   const invalid = mailError('email_message_invalid')
   assert.equal(imapError(invalid), invalid)
   assert.equal(imapError(new Error('private account details')).message, 'email_connection_failed')
+  assert.equal(imapError({ code: 'ECONNRESET' }).retryAfterMs, 30000)
+  assert.equal(
+    imapError({ authenticationFailed: true, code: 'ECONNRESET' }).retryAfterMs,
+    undefined
+  )
+  assert.equal(imapError({ code: 'CERT_HAS_EXPIRED' }).retryAfterMs, undefined)
+  assert.equal(imapError(invalid).retryAfterMs, undefined)
 })
 
 function storage() {

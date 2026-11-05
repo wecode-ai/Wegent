@@ -131,21 +131,74 @@ pub(crate) async fn call(
         .map_err(|_| unavailable())?;
     let body: Value = response.json().await.map_err(|_| unavailable())?;
     if body["ok"] != true {
-        return Err(AppIpcError::new(
-            body["error"]["code"]
-                .as_str()
-                .unwrap_or("connection_failed"),
-            body["error"]["message"]
-                .as_str()
-                .unwrap_or("Connection failed"),
-        ));
+        return Err(response_error(method, &body["error"]));
     }
     Ok(body["result"].clone())
+}
+
+fn response_error(method: &str, error: &Value) -> AppIpcError {
+    let failure = AppIpcError::new(
+        error["code"].as_str().unwrap_or("connection_failed"),
+        error["message"].as_str().unwrap_or("Connection failed"),
+    );
+    if method == "collect"
+        && !matches!(
+            failure.code.as_str(),
+            "connector_auth_required"
+                | "connection_response_invalid"
+                | "invalid_connection"
+                | "forbidden"
+                | "connection_tool_denied"
+        )
+    {
+        if let Some(delay) = error["retryAfterMs"]
+            .as_u64()
+            .filter(|delay| (1..=3_600_000).contains(delay))
+        {
+            return failure.with_retry_after_ms(delay);
+        }
+    }
+    failure
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn collection_retry_metadata_is_bounded_and_never_authorizes_action_replay() {
+        let error =
+            json!({"code":"plugin_transport_failed","message":"Offline","retryAfterMs":45000});
+        assert_eq!(
+            response_error("collect", &error).retry_after_ms,
+            Some(45000)
+        );
+        for code in [
+            "connector_auth_required",
+            "connection_response_invalid",
+            "invalid_connection",
+            "forbidden",
+            "connection_tool_denied",
+        ] {
+            let mut permanent = error.clone();
+            permanent["code"] = json!(code);
+            assert_eq!(response_error("collect", &permanent).retry_after_ms, None);
+        }
+        for method in ["executeAction", "readSource", "initialize", "validate"] {
+            assert_eq!(response_error(method, &error).retry_after_ms, None);
+        }
+        for delay in [
+            json!(0),
+            json!(-1),
+            json!(3600001),
+            json!("45000"),
+            json!(1.5),
+        ] {
+            let mut invalid = error.clone();
+            invalid["retryAfterMs"] = delay;
+            assert_eq!(response_error("collect", &invalid).retry_after_ms, None);
+        }
+    }
 
     #[test]
     fn connection_mcp_dependency_grants_are_exact_and_read_tools_come_from_the_host() {

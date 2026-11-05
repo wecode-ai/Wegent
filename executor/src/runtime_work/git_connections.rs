@@ -289,13 +289,19 @@ fn rate_limits() -> &'static Mutex<HashMap<String, i64>> {
     static LIMITS: OnceLock<Mutex<HashMap<String, i64>>> = OnceLock::new();
     LIMITS.get_or_init(|| Mutex::new(HashMap::new()))
 }
-pub(super) fn retry_at(source: &Value) -> Option<i64> {
-    let profile: Value = serde_json::from_str(source["profile"].as_str()?).ok()?;
-    rate_limits()
+fn rate_limit_failure(instance: &str) -> AppIpcError {
+    let delay = rate_limits()
         .lock()
-        .ok()?
-        .get(profile[0].as_str()?)
-        .copied()
+        .ok()
+        .and_then(|limits| limits.get(instance).copied())
+        .unwrap_or_else(|| chrono::Utc::now().timestamp_millis() + 60_000)
+        .saturating_sub(chrono::Utc::now().timestamp_millis())
+        .clamp(1, 3_600_000) as u64;
+    AppIpcError::new(
+        "git_rate_limited",
+        "Git API rate limit reached; waiting for the platform deadline",
+    )
+    .with_retry_after_ms(delay)
 }
 
 struct DecodedReply<'a> {
@@ -404,10 +410,7 @@ async fn api_request(
         .and_then(|limits| limits.get(instance).copied())
         .is_some_and(|at| at > chrono::Utc::now().timestamp_millis())
     {
-        return Err(GitRequestError::not_sent(AppIpcError::new(
-            "git_rate_limited",
-            "Git API rate limit is active; retry after the platform deadline",
-        )));
+        return Err(GitRequestError::not_sent(rate_limit_failure(instance)));
     }
     let mut command = Command::new(if platform == "github" { "gh" } else { "glab" });
     command.args([
@@ -462,7 +465,7 @@ async fn api_request(
         let DecodedReply { status: http_status, poll_interval, retry_at: retry, body: response_body } = decode_reply(&out)?;
         if http_status==429 || (http_status==403 && retry.is_some()) {
             if let Ok(mut limits)=rate_limits().lock(){limits.insert(instance.to_owned(),retry.unwrap_or_else(||chrono::Utc::now().timestamp_millis()+60000));}
-            return Err(GitRequestError::not_sent(AppIpcError::new("git_rate_limited","Git API rate limit reached; waiting for the platform deadline")));
+            return Err(GitRequestError::not_sent(rate_limit_failure(instance)));
         }
         if !status.success(){
             let text=String::from_utf8_lossy(&err).to_lowercase();
@@ -703,6 +706,10 @@ mod tests {
         rate_limits().lock().unwrap().remove(host);
         let failure = result.err().unwrap();
         assert_eq!(failure.error.code, "git_rate_limited");
+        assert!(failure
+            .error
+            .retry_after_ms
+            .is_some_and(|delay| (1..=60_000).contains(&delay)));
         assert!(!failure.uncertain);
     }
     #[test]

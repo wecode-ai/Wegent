@@ -14,6 +14,45 @@ const conversation = (id, direct, sender) => ({
   ],
 })
 
+test('DingTalk collection retries only definite transport failures, not rejected or invalid reads', async () => {
+  for (const code of [
+    'connection_cli_timeout',
+    'ECONNRESET',
+    'ETIMEDOUT',
+    'connector_auth_required',
+    'connection_cli_failed',
+    'dingtalk_response_invalid',
+    'forbidden',
+  ]) {
+    const ctx = {
+      cli: {
+        callTool: async () => {
+          throw Object.assign(new Error('Read failed'), { code })
+        },
+      },
+    }
+    const provider = createProvider()
+    await assert.rejects(
+      provider.collect(ctx, {
+        source: {
+          id: 'group',
+          profile: 'account',
+          kind: 'group',
+          enabledAfter: '2026-10-01T00:00:00Z',
+        },
+        checkpoint: {},
+      }),
+      error => {
+        assert.equal(
+          error.retryAfterMs,
+          ['connection_cli_timeout', 'ECONNRESET', 'ETIMEDOUT'].includes(code) ? 30000 : undefined
+        )
+        return true
+      }
+    )
+  }
+})
+
 test('preserves group and sender boundaries and excludes automated self replies', () => {
   const response = {
     result: {

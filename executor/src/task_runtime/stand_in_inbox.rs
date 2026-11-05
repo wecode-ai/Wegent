@@ -50,8 +50,7 @@ mod git_operation_tests {
         let mut personal = source.clone();
         personal["id"] = json!("personal");
         personal["kind"] = json!("personal");
-        let message =
-            json!({"id":"git-canonical:one","text":"comment","at":"2026-01-01T00:00:00Z"});
+        let message = json!({"id":"git-canonical:one","objectId":"comment:one","version":"1","text":"comment","at":"2026-01-01T00:00:00Z"});
         let first = store
             .ingest_stand_in_message(7, "role", &source, &message, None)
             .unwrap();
@@ -73,6 +72,77 @@ mod git_operation_tests {
             assert_ne!(first["id"], independent["id"]);
         }
     }
+    #[test]
+    fn versioned_messages_keep_new_revisions_and_do_not_reopen_failed_or_completed_work() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("tasks.sqlite");
+        let source = json!({"providerId":"any-plugin/events","profile":"account","kind":"repository","id":"42"});
+        let mut message = json!({"id":"same-pr","objectId":"repository:42/pr:7","version":"checks-pass","text":"Checks passed","at":"2026-11-05T00:00:00Z"});
+        let store = LocalTaskStore::open(&path).unwrap();
+        let first = store
+            .ingest_stand_in_message(7, "role", &source, &message, None)
+            .unwrap();
+        let record = store
+            .known_stand_in_event_message(7, "role", &source, &message)
+            .unwrap()
+            .unwrap();
+        store
+            .update_stand_in_dispatch(
+                7,
+                first["id"].as_str().unwrap(),
+                &[record["recordId"].as_str().unwrap().to_owned()],
+                "failed",
+                Some("retry later"),
+            )
+            .unwrap();
+        drop(store);
+        let store = LocalTaskStore::open(path).unwrap();
+        message["id"] = json!("new-delivery-same-version");
+        let repeated = store
+            .ingest_stand_in_message(7, "role", &source, &message, None)
+            .unwrap();
+        assert_eq!(first["id"], repeated["id"]);
+        assert_eq!(repeated["status"], "failed");
+        for status in ["sending", "sent"] {
+            store
+                .update_stand_in_dispatch(
+                    7,
+                    first["id"].as_str().unwrap(),
+                    &[record["recordId"].as_str().unwrap().to_owned()],
+                    status,
+                    None,
+                )
+                .unwrap();
+            let repeated = store
+                .ingest_stand_in_message(7, "role", &source, &message, None)
+                .unwrap();
+            assert_eq!(first["id"], repeated["id"]);
+            assert_eq!(repeated["status"], status);
+        }
+        message["id"] = json!("same-pr");
+        message["version"] = json!("checks-fail");
+        let next = store
+            .ingest_stand_in_message(7, "role", &source, &message, None)
+            .unwrap();
+        assert_ne!(first["id"], next["id"]);
+        assert_eq!(next["status"], "pending");
+        assert_ne!(
+            record["recordId"],
+            store
+                .known_stand_in_event_message(7, "role", &source, &message)
+                .unwrap()
+                .unwrap()["recordId"]
+        );
+        assert!(store
+            .known_stand_in_event_message(8, "role", &source, &message)
+            .unwrap()
+            .is_none());
+        assert!(store
+            .known_stand_in_event_message(7, "other-role", &source, &message)
+            .unwrap()
+            .is_none());
+    }
+
     #[test]
     fn uncertain_git_writes_cannot_be_replayed_under_a_new_request_id() {
         let root = tempfile::tempdir().unwrap();
@@ -161,22 +231,47 @@ fn find_message(
     role: &str,
     source: &Value,
     message: &str,
+    immutable_only: bool,
 ) -> Result<Option<Value>, TaskRuntimeError> {
-    let canonical = super::personal_stand_in::source_provider(source)
-        .starts_with("@wegent/dsh-connection-git/")
-        && message.starts_with("git-canonical:");
-    let raw: Option<String> = if canonical {
-        connection.query_row("SELECT metadata FROM loop_items WHERE resource_type='stand_in_message' AND json_extract(metadata,'$.userId')=?1 AND json_extract(metadata,'$.roleId')=?2 AND json_extract(metadata,'$.source.providerId')=?3 AND json_extract(metadata,'$.source.profile')=?4 AND json_extract(metadata,'$.id')=?5 LIMIT 1",params![user,role,super::personal_stand_in::source_provider(source),source["profile"].as_str(),message],|row|row.get(0)).optional()?
-    } else {
-        connection.query_row(
+    let raw: Option<String> = connection.query_row(
         "SELECT metadata FROM loop_items WHERE resource_type='stand_in_message'
          AND json_extract(metadata,'$.userId')=?1 AND json_extract(metadata,'$.roleId')=?2
          AND json_extract(metadata,'$.source.profile')=?3 AND json_extract(metadata,'$.source.kind')=?4
-         AND json_extract(metadata,'$.source.id')=?5 AND json_extract(metadata,'$.id')=?6 AND COALESCE(json_extract(metadata,'$.source.providerId'),?7)=?8 LIMIT 1",
-        params![user, role, source["profile"].as_str(), source["kind"].as_str(), source["id"].as_str(), message, super::personal_stand_in::DINGTALK_PROVIDER, super::personal_stand_in::source_provider(source)],
+         AND json_extract(metadata,'$.source.id')=?5 AND json_extract(metadata,'$.id')=?6 AND COALESCE(json_extract(metadata,'$.source.providerId'),?7)=?8 AND (?9=0 OR json_type(metadata,'$.objectId') IS NULL) ORDER BY created_at DESC,id DESC LIMIT 1",
+        params![user, role, source["profile"].as_str(), source["kind"].as_str(), source["id"].as_str(), message, super::personal_stand_in::DINGTALK_PROVIDER, super::personal_stand_in::source_provider(source),immutable_only],
         |row| row.get(0),
-    ).optional()?
-    };
+    ).optional()?;
+    raw.map(|raw| {
+        serde_json::from_str(&raw).map_err(|error| TaskRuntimeError::Invalid(error.to_string()))
+    })
+    .transpose()
+}
+
+fn find_event_message(
+    connection: &Connection,
+    user: i64,
+    role: &str,
+    source: &Value,
+    message: &Value,
+) -> Result<Option<Value>, TaskRuntimeError> {
+    LocalTaskStore::validate_connection_message_version(message)?;
+    if message.get("objectId").is_none() {
+        return find_message(
+            connection,
+            user,
+            role,
+            source,
+            message["id"].as_str().unwrap_or_default(),
+            true,
+        );
+    }
+    let raw: Option<String> = connection.query_row(
+        "SELECT metadata FROM loop_items WHERE resource_type='stand_in_message'
+         AND json_extract(metadata,'$.userId')=?1 AND json_extract(metadata,'$.roleId')=?2
+         AND json_extract(metadata,'$.source.providerId')=?3 AND json_extract(metadata,'$.source.profile')=?4
+         AND json_extract(metadata,'$.objectId')=?5 AND json_extract(metadata,'$.version')=?6 LIMIT 1",
+        params![user,role,super::personal_stand_in::source_provider(source),source["profile"].as_str(),message["objectId"].as_str(),message["version"].as_str()], |row|row.get(0)
+    ).optional()?;
     raw.map(|raw| {
         serde_json::from_str(&raw).map_err(|error| TaskRuntimeError::Invalid(error.to_string()))
     })
@@ -464,7 +559,17 @@ impl LocalTaskStore {
         message: &str,
     ) -> Result<Option<Value>, TaskRuntimeError> {
         let connection = self.connection()?;
-        find_message(&connection, user, role, source, message)
+        find_message(&connection, user, role, source, message, false)
+    }
+
+    pub fn known_stand_in_event_message(
+        &self,
+        user: i64,
+        role: &str,
+        source: &Value,
+        message: &Value,
+    ) -> Result<Option<Value>, TaskRuntimeError> {
+        find_event_message(&*self.connection()?, user, role, source, message)
     }
 
     pub fn ingest_stand_in_message(
@@ -515,24 +620,28 @@ impl LocalTaskStore {
         };
         let mut guard = self.connection()?;
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let key = stand_in_record_key(
-            "stand-in-message",
-            &json!([
+        Self::validate_connection_message_version(message)?;
+        let identity = if message.get("objectId").is_some() {
+            json!([
+                user,
+                role,
+                super::personal_stand_in::source_provider(source),
+                source["profile"],
+                message["objectId"],
+                message["version"]
+            ])
+        } else {
+            json!([
                 user,
                 role,
                 source_namespace(source),
                 source["kind"],
                 source["id"],
                 message["id"]
-            ]),
-        );
-        if let Some(existing) = find_message(
-            &connection,
-            user,
-            role,
-            source,
-            message["id"].as_str().unwrap_or_default(),
-        )? {
+            ])
+        };
+        let key = stand_in_record_key("stand-in-message", &identity);
+        if let Some(existing) = find_event_message(&connection, user, role, source, message)? {
             let result = read_record(
                 &connection,
                 existing["workId"].as_str().unwrap_or_default(),

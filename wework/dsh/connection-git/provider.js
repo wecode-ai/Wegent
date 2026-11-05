@@ -423,6 +423,7 @@ async function collectPersonal(ctx, platform, source, checkpoint) {
 export function normalizeWebhook(platform, source, delivery) {
   const payload = delivery.payload
   const check = payload.check_run ?? payload.check_suite ?? payload.workflow_run
+  const pipeline = payload.object_kind === 'pipeline' ? payload.object_attributes : undefined
   const linkedPull =
     platform === 'github' && check?.pull_requests?.length === 1 ? check.pull_requests[0] : undefined
   const object =
@@ -440,7 +441,7 @@ export function normalizeWebhook(platform, source, delivery) {
       ? 'change_request'
       : payload.issue || payload.object_kind === 'issue'
         ? 'issue'
-        : delivery.eventType
+        : (payload.object_kind ?? delivery.eventType)
   const number = object?.number ?? object?.iid ?? object?.id
   const comment =
     payload.comment ?? (payload.object_kind === 'note' ? payload.object_attributes : undefined)
@@ -459,6 +460,25 @@ export function normalizeWebhook(platform, source, delivery) {
           payload.action ?? comment.action
         ) ?? `${platform}:delivery:${delivery.id}`)
       : `${platform}:delivery:${delivery.id}`,
+    ...objectVersion(
+      platform,
+      source,
+      source.name,
+      comment
+        ? 'comment'
+        : check
+          ? checkKind(payload)
+          : pipeline
+            ? 'pipeline'
+            : payload.review
+              ? 'review'
+              : kind,
+      comment ?? check ?? pipeline ?? payload.review ?? object ?? payload,
+      comment
+        ? comment.id
+        : (check?.id ?? pipeline?.id ?? payload.review?.id ?? number ?? payload.ref ?? delivery.id),
+      payload.action ?? comment?.action
+    ),
     eventType: 'git.event',
     at: delivery.receivedAt,
     senderId: String(payload.sender?.id ?? payload.user?.id ?? payload.user_id ?? ''),
@@ -501,6 +521,8 @@ function normalizePersonal(platform, source, stream, row, at, digest) {
   const tracked = personalTarget(platform, parseProfile(source.profile).instance, row)
   return {
     id: `${platform}:${stream}:${row.id}:${digest}`,
+    objectId: objectIdentity(platform, source, repository, `personal.${stream}`, row.id),
+    version: fingerprint(stableValue(row)),
     eventType: 'git.event',
     at,
     topicId: tracked?.url ?? target.url ?? target.web_url ?? row.html_url ?? `${stream}:${row.id}`,
@@ -641,6 +663,22 @@ async function collectTracked(ctx, platform, source, next) {
           ? (canonicalCommentId(platform, source, target.repository, row) ??
             `${platform}:${key}:${digest}`)
           : `${platform}:${key}:${digest}`,
+      ...objectVersion(
+        platform,
+        source,
+        target.repository,
+        step === 1
+          ? 'comment'
+          : step === 2
+            ? platform === 'github'
+              ? 'check_run'
+              : 'pipeline'
+            : step === 0
+              ? target.entityKind
+              : 'review',
+        row,
+        step === 0 ? target.number : (row.id ?? target.number)
+      ),
       eventType: 'git.event',
       at,
       topicId: target.url,
@@ -706,4 +744,50 @@ function canonicalCommentId(platform, source, repository, comment, action) {
   if (comment.id === undefined || typeof version !== 'string' || typeof body !== 'string')
     return undefined
   return `git-canonical:${fingerprint([platform, parseProfile(source.profile).instance, repository, 'comment', String(comment.id), version, body, action === 'deleted' ? 'deleted' : 'upsert'])}`
+}
+
+function objectIdentity(platform, source, repository, kind, id) {
+  return JSON.stringify([
+    platform,
+    parseProfile(source.profile).instance,
+    repository,
+    kind,
+    String(id),
+  ])
+}
+
+function checkKind(payload) {
+  return payload.check_run ? 'check_run' : payload.check_suite ? 'check_suite' : 'workflow_run'
+}
+
+function objectVersion(platform, source, repository, kind, object, id, action) {
+  const objectId = objectIdentity(platform, source, repository, kind, id)
+  if (platform === 'gitlab' && kind === 'pipeline') {
+    // Both Pipeline Hook attributes and the MR pipelines API expose these fields.
+    // Webhook-only stages/durations and API-only links are not source revisions.
+    return {
+      objectId,
+      version: fingerprint([object.sha ?? null, object.ref ?? null, object.status ?? null]),
+    }
+  }
+  if (kind === 'comment') {
+    const canonical = canonicalCommentId(platform, source, repository, object, action)
+    if (canonical) return { objectId, version: canonical }
+  }
+  // Delivery IDs and collection times are transport state, never object versions.
+  return {
+    objectId,
+    version: fingerprint(stableValue([action === 'deleted' ? 'deleted' : 'upsert', object])),
+  }
+}
+
+function stableValue(value) {
+  if (Array.isArray(value)) return value.map(stableValue)
+  if (value !== null && typeof value === 'object')
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map(key => [key, stableValue(value[key])])
+    )
+  return value
 }

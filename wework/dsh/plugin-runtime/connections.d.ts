@@ -26,6 +26,8 @@ export interface ConnectionDescriptor {
   allResourceLabel?: string
   locales?: Record<string, { displayName?: string; resourceLabels?: Record<string, string> }>
   eventTypes: string[]
+  /** Mutable event types must identify the object and its opaque source version. */
+  versionedEventTypes: string[]
   /** Declared operations remain subject to native host authorization on every call. */
   actions?: Array<{ id: string; resourceKinds: string[] }>
   /** Read contract for existing tools without readOnlyHint; explicit false always wins. */
@@ -92,6 +94,10 @@ export interface ConnectionResourcePage {
 export interface ConnectionEvent {
   position?: { partition: string; sequence: number }
   id: string
+  /** Stable within the provider account, independent of subscription scope. */
+  objectId?: string
+  /** Opaque equality token, paired with objectId; never a collection timestamp. */
+  version?: string
   text: string
   at: string
   eventType: string
@@ -216,5 +222,8 @@ export declare function dependencyPlan(
   satisfies: (version: string, range: string) => boolean
 ): ConnectionDependencyResolution[]
 export declare class ConnectionError extends Error {
+  constructor(code: string, message: string, options?: { retryAfterMs?: number })
   code: string
+  /** A bounded retry delay for collection reads only; never authorizes retrying actions. */
+  retryAfterMs?: number
 }

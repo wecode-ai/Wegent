@@ -37,6 +37,9 @@
           "eventTypes": [
             "git.event"
           ],
+          "versionedEventTypes": [
+            "git.event"
+          ],
           "authTarget": {
             "pluginKey": "github",
             "connectorSlug": "wework-github-cli"
@@ -83,6 +86,9 @@
             "repository": "只关注某个仓库"
           },
           "eventTypes": [
+            "git.event"
+          ],
+          "versionedEventTypes": [
             "git.event"
           ],
           "locales": {

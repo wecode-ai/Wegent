@@ -183,6 +183,7 @@ test('legacy read tool declarations belong only to the provider declared depende
             resourceKinds: ['folder'],
             resourceLabels: { folder: 'Folder' },
             eventTypes: ['message.received'],
+            versionedEventTypes: [],
             collectionModes: ['poll'],
             mcpReadTools: { mail: [{ server: 'mail', tool: 'read' }] },
           },

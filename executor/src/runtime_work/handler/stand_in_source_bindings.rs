@@ -1,4 +1,4 @@
-//! Preserve independently authorized observations of one canonical Git event.
+//! Preserve independently authorized observations of one versioned connection object.
 use super::*;
 
 impl RuntimeWorkRpcHandler {
@@ -45,7 +45,7 @@ mod tests {
 
     fn observation(source: &Value, role: &str) -> Value {
         json!({"roleScoped":true,"kind":"connection","source":source,
-            "message":{"id":"git-canonical:comment-version","at":chrono::Utc::now().to_rfc3339(),"text":"The same comment version","topicId":"https://github.com/owner/repository/issues/1"},
+            "message":{"id":"git-canonical:comment-version","objectId":"comment:one","version":"1","at":chrono::Utc::now().to_rfc3339(),"text":"The same comment version","topicId":"https://github.com/owner/repository/issues/1"},
             "roleIds":[role]})
     }
 
