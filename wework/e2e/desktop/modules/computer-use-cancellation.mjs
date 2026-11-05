@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { performance } from 'node:perf_hooks'
 
 const CANCELLATION_DEADLINE_MS = 5_000
+const NATIVE_TIMEOUT_MS = 10_000
 
 /** Cancel a real bounded native observation after the host reports it active. */
 export async function verifyComputerUseCancellation(control, record, timeoutMs) {
@@ -37,7 +38,7 @@ export async function verifyComputerUseCancellation(control, record, timeoutMs) 
       window_id: window.window_id,
       expect: [{ window: { exists: false } }],
       include_screenshot: false,
-      timeout_ms: 10_000,
+      timeout_ms: NATIVE_TIMEOUT_MS,
     },
     controller.signal
   ).then(
@@ -49,19 +50,27 @@ export async function verifyComputerUseCancellation(control, record, timeoutMs) 
       text: 'verify_state',
       timeoutMs,
     })
+    const cancelledAt = performance.now()
     controller.abort()
     const result = await operation
     assert.equal(result.error?.name, 'AbortError', 'The pending observation was not cancelled')
     // A local AbortError alone does not prove server cancellation. Bound the
     // complete observation below the SDK's 10-second natural timeout.
-    const remainingMs = CANCELLATION_DEADLINE_MS - (performance.now() - startedAt)
+    const remainingMs = Math.min(
+      CANCELLATION_DEADLINE_MS - (performance.now() - cancelledAt),
+      NATIVE_TIMEOUT_MS - (performance.now() - startedAt)
+    )
     assert.ok(remainingMs > 0, 'The native cancellation deadline expired before acknowledgement')
     await control.command('waitFor', '[data-testid="computer-use-activity-indicator"]', {
       visible: false,
       timeoutMs: Math.min(timeoutMs, remainingMs),
     })
     assert.ok(
-      performance.now() - startedAt < CANCELLATION_DEADLINE_MS,
+      performance.now() - cancelledAt < CANCELLATION_DEADLINE_MS,
+      'Native cancellation exceeded its acknowledgement deadline'
+    )
+    assert.ok(
+      performance.now() - startedAt < NATIVE_TIMEOUT_MS,
       'The observation finished too late to distinguish cancellation from natural timeout'
     )
     const after = await request('list_windows', { pid: record.pid }, AbortSignal.timeout(timeoutMs))

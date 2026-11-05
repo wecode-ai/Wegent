@@ -185,15 +185,15 @@ export function usePluginVersionSubmission(options: VersionSubmissionOptions) {
   return {
     actionFor(plugin: InstalledPluginItem | null, listing: PluginMarketplaceItem | null) {
       const eligible = hasNewPersonalPluginVersion(plugin, listing)
-      if (import.meta.env.VITE_WEWORK_E2E === 'true' && listing) {
+      if (import.meta.env.VITE_WEWORK_E2E === 'true') {
         const diagnostic = JSON.stringify({
-          listingId: listing.id,
-          listingName: listing.name,
-          accessRole: listing.accessRole,
-          visibility: listing.visibility,
-          releaseId: listing.latestReleaseId,
-          catalogVersion: listing.version,
-          sharedVersion: listing.sharedVersion,
+          listingId: listing?.id,
+          listingName: listing?.name,
+          accessRole: listing?.accessRole,
+          visibility: listing?.visibility,
+          releaseId: listing?.latestReleaseId,
+          catalogVersion: listing?.version,
+          sharedVersion: listing?.sharedVersion,
           localId: plugin?.id,
           localVersion: plugin?.version,
           localOrigin: plugin?.origin,
