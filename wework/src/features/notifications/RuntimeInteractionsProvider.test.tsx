@@ -130,6 +130,37 @@ describe('unified human response', () => {
     expect(harness.send).not.toHaveBeenCalled()
   })
 
+  it('does not suppress a dismissed question before its history lock commits the archive', async () => {
+    view()
+    await waitFor(() => expect(context!.pending).toHaveLength(1))
+    const item = context!.pending[0]
+    const historyKey = 'wework.interactions:test:1:history'
+    let release!: () => void
+    harness.locks.set(
+      historyKey,
+      new Promise<void>(resolve => {
+        release = resolve
+      })
+    )
+    let dismissal!: Promise<void>
+    act(() => {
+      dismissal = context!.dismiss(item)
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(localStorage.getItem(`wework.interactions:test:1:accepted:${item.id}`)).toBeNull()
+    expect(context!.pending).toHaveLength(1)
+    await act(async () => {
+      release()
+      await dismissal
+    })
+    expect(context!.pending).toHaveLength(0)
+    expect(JSON.parse(localStorage.getItem(historyKey)!)).toEqual([
+      expect.objectContaining({ id: item.id, question: item.question }),
+    ])
+  })
+
   it('dismisses one request durably without sending a runtime answer or hiding later requests', async () => {
     const first = view()
     await waitFor(() => expect(context!.pending).toHaveLength(1))

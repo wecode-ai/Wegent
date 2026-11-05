@@ -492,8 +492,8 @@ function RuntimeInteractionsState({
       setBusy(new Set(inFlight.current))
       try {
         await navigator.locks.request(historyKey + ':' + item.id, async () => {
-          saveInteractionState(acceptancePrefix + item.id, true)
           await archive(item, Date.now())
+          saveInteractionState(acceptancePrefix + item.id, true)
           if (!mounted.current) return
           markHandled(item.id)
         })
