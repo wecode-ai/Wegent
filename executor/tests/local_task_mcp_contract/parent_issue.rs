@@ -5,8 +5,34 @@
 
 use super::*;
 use wegent_executor::task_runtime::{
-    BinaryInput, DeliveryCreate, LocalTaskStore, ProjectCreate, TaskCreate, TaskRuntime,
+    BinaryInput, DeliveryCreate, LocalTaskStore, ProjectCreate, TaskCreate, TaskRuntime, TaskUpdate,
 };
+
+fn spawn_child_executor(
+    home: &std::path::Path,
+    project_id: &str,
+    item_id: &str,
+) -> std::process::Child {
+    let grant = STANDARD.encode(
+        serde_json::to_vec(&json!({
+            "version": 1, "task_id": "child-runtime", "space_id": project_id,
+            "item_id": item_id, "role": "executor", "categories": ["execution"],
+            "expires_at_unix": 4_102_444_800_i64,
+        }))
+        .unwrap(),
+    );
+    Command::new(env!("CARGO_BIN_EXE_wegent-executor"))
+        .arg("space-mcp-server")
+        .env("WEGENT_EXECUTOR_HOME", home)
+        .env("WEWORK_SPACE_CONTEXT_GRANT", grant)
+        .env_remove("WEWORK_SPACE_BACKEND_URL")
+        .env_remove("WEWORK_SPACE_AUTH_TOKEN")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap()
+}
 
 #[tokio::test]
 async fn child_executor_reads_parent_context_without_parent_write_authority() {
@@ -70,25 +96,7 @@ async fn child_executor_reads_parent_context_without_parent_write_authority() {
         .unwrap();
     drop(runtime);
 
-    let grant = STANDARD.encode(
-        serde_json::to_vec(&json!({
-            "version": 1, "task_id": "child-runtime", "space_id": project.id,
-            "item_id": child.id, "role": "executor", "categories": ["execution"],
-            "expires_at_unix": 4_102_444_800_i64,
-        }))
-        .unwrap(),
-    );
-    let mut process = Command::new(env!("CARGO_BIN_EXE_wegent-executor"))
-        .arg("space-mcp-server")
-        .env("WEGENT_EXECUTOR_HOME", home.path())
-        .env("WEWORK_SPACE_CONTEXT_GRANT", grant)
-        .env_remove("WEWORK_SPACE_BACKEND_URL")
-        .env_remove("WEWORK_SPACE_AUTH_TOKEN")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
+    let mut process = spawn_child_executor(home.path(), &project.id, &child.id);
     let output_path = home.path().join("downloaded-evidence.txt");
     let calls = [
         ("get_board_item", json!({"item_id": parent.id})),
@@ -158,4 +166,131 @@ async fn child_executor_reads_parent_context_without_parent_write_authority() {
         .unwrap()
         .iter()
         .any(|comment| comment.content == "Forbidden parent comment"));
+}
+
+#[test]
+fn running_child_executor_rechecks_parent_relationship_without_expanding_scope() {
+    let home = tempfile::tempdir().unwrap();
+    let store = LocalTaskStore::open(home.path().join("data/tasks.sqlite")).unwrap();
+    let project = store
+        .create_project(
+            serde_json::from_value(json!({
+                "name": "Scoped family", "project_key": "FAMILY",
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    let other_project = store
+        .create_project(
+            serde_json::from_value(json!({
+                "name": "Other project", "project_key": "OTHER",
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    let mut issues = Vec::new();
+    for title in ["Grandparent", "Parent", "Child", "Sibling", "New parent"] {
+        let parent_id = match title {
+            "Parent" => Some(&issues[0]),
+            "Child" | "Sibling" => Some(&issues[1]),
+            _ => None,
+        };
+        issues.push(
+            store
+                .create_task(
+                    &project.id,
+                    serde_json::from_value(json!({
+                        "title": title, "parent_id": parent_id,
+                    }))
+                    .unwrap(),
+                )
+                .unwrap()
+                .id,
+        );
+    }
+    let foreign = store
+        .create_task(
+            &other_project.id,
+            serde_json::from_value(json!({
+                "title": "Foreign Issue",
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    let mut process = spawn_child_executor(home.path(), &project.id, &issues[2]);
+    let mut stdin = process.stdin.take().unwrap();
+    let mut stdout = BufReader::new(process.stdout.take().unwrap());
+    let mut sequence = 0;
+    {
+        let mut call = |name: &str, arguments: Value| {
+            sequence += 1;
+            writeln!(
+                stdin,
+                "{}",
+                json!({"jsonrpc": "2.0", "id": sequence, "method": "tools/call", "params": {
+                    "name": name, "arguments": arguments,
+                }})
+            )
+            .unwrap();
+            stdin.flush().unwrap();
+            let mut line = String::new();
+            assert!(stdout.read_line(&mut line).unwrap() > 0);
+            let response: Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(response["id"], sequence);
+            response["result"].clone()
+        };
+        assert_eq!(
+            call("get_board_item", json!({"item_id": issues[1]}))["isError"],
+            false
+        );
+        for target in [&issues[0], &issues[3], &issues[4]] {
+            let denied = call("get_board_item", json!({"item_id": target}));
+            assert_eq!(denied["isError"], true, "{denied}");
+            assert!(denied["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("outside this Agent session"));
+        }
+        let cross_project = call(
+            "get_board_item",
+            json!({"space_id": other_project.id, "item_id": foreign.id}),
+        );
+        assert_eq!(cross_project["isError"], true);
+        let child = store.get_task(&project.id, &issues[2]).unwrap();
+        store
+            .update_task(
+                &project.id,
+                &child.id,
+                TaskUpdate {
+                    version: child.version,
+                    parent_id: Some(Some(issues[4].clone())),
+                    ..TaskUpdate::default()
+                },
+            )
+            .unwrap();
+        let old_parent = call("get_board_item", json!({"item_id": issues[1]}));
+        assert_eq!(old_parent["isError"], true, "{old_parent}");
+        let new_parent = call("get_board_item", json!({"item_id": issues[4]}));
+        assert_eq!(new_parent["isError"], false, "{new_parent}");
+        let parent_write = call(
+            "add_board_item_comment",
+            json!({"item_id": issues[4], "body": "Forbidden write"}),
+        );
+        assert_eq!(parent_write["isError"], true);
+        let current = call("get_current_context", json!({}));
+        let current: Value =
+            serde_json::from_str(current["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(current["item_id"], issues[2]);
+    }
+    drop(stdin);
+    let output = process.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(store
+        .list_comments(&project.id, &issues[4], 0)
+        .unwrap()
+        .is_empty());
 }

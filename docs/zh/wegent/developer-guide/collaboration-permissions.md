@@ -141,6 +141,12 @@ sequenceDiagram
 不在此授权范围内。`mcp/parent_issue/tests.rs` 保护本地读取、关系变化、写入拒绝和
 交付归属，并以云端协议集成测试验证原凭据及服务端权限拒绝的保留。
 
+用户故事的真实进程 E2E 由既有 `local_task_mcp_contract` 套件和 Executor CI 执行：
+子 Issue 智能体读取父项需求、评论和交付文件，同时拒绝父项评论写入且保持子项绑定；
+运行中的同一 MCP 会话在改父项后拒绝旧父项、允许新父项只读，并持续拒绝祖先、
+兄弟和跨项目 Issue。测试使用真实 Executor、MCP、SQLite 和交付文件；云端撤权
+另由协议集成测试覆盖，不代表真实云端环境已完成 E2E 验证。
+
 ## 界面入口
 
 子树归档与恢复在任何任务写入、外部提供方关闭或执行取消之前，逐项校验所有后代的编辑权限，保持 CP13/CP14。可编辑父任务不授予私有后代权限；拒绝时统一返回 404，不泄露后代信息，并保留原版本和排队执行。管理员保留全部子任务权限。`test_loop_item_archive_permissions.py` 覆盖原生项目及 GitHub/GitLab 协议，网页 `collaboration-project-views.spec.ts` 使用真实成员验证拒绝、无副作用及管理员归档恢复；既有 CP 契约不变。

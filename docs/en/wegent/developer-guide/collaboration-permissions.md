@@ -122,6 +122,14 @@ child. Full parent execution conversation history is outside this scope.
 and delivery ownership, with cloud protocol integration tests preserving original
 credentials and server-side access denials.
 
+The existing `local_task_mcp_contract` suite and Executor CI run real-process E2E
+user stories: a child agent reads parent requirements, comments and delivery files
+while parent comment writes are denied and the child binding is preserved; the
+same running MCP session rejects the old parent after reparenting, permits the new
+parent read-only and continues to reject ancestors, siblings and cross-project
+Issues. Executor, MCP, SQLite and delivery files are real. Cloud revocation is
+covered separately by protocol integration tests, not real cloud E2E verification.
+
 ## Management surfaces
 
 Subtree archive and restore authorize every descendant for content editing before any Issue mutation, upstream close, or execution cancellation, preserving CP13/CP14. An editable parent grants no authority over private descendants. Denial returns a uniform 404 without descendant details and preserves versions and queued work. Administrators retain access to all descendants. `test_loop_item_archive_permissions.py` covers native projects and GitHub/GitLab protocols; the web `collaboration-project-views.spec.ts` checks real-member denial, unchanged persistence, and administrator archive/restore. Existing CP invariants remain unchanged.
