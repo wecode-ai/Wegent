@@ -14,7 +14,12 @@ from app.models.kind import Kind
 
 
 def _default_ghost() -> dict:
-    path = Path(__file__).parents[2] / "init_data" / "02-public-resources.yaml"
+    path = (
+        Path(__file__).parents[2].parent
+        / "backend-rs"
+        / "init_data"
+        / "02-public-resources.yaml"
+    )
     resources = yaml.safe_load_all(path.read_text(encoding="utf-8"))
     return next(
         resource

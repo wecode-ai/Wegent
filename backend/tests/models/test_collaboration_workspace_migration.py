@@ -17,8 +17,10 @@ from alembic.runtime.migration import MigrationContext
 
 def _load_migration() -> ModuleType:
     path = (
-        Path(__file__).parents[2]
-        / "alembic"
+        Path(__file__).parents[2].parent
+        / "backend-rs"
+        / "migrations"
+        / "reference"
         / "versions"
         / "20260911_b8e2c4f6a901_add_collaboration_workspaces.py"
     )

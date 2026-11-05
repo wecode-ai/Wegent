@@ -64,6 +64,18 @@ def metadata(row: object) -> dict:
     return dict(value) if isinstance(value, dict) else {}
 
 
+def status_automation_target(context: object) -> str | None:
+    """Return the status that explicitly admitted this automation Run."""
+    if not isinstance(context, dict) or not context.get("run_id"):
+        return None
+    event = context.get("event")
+    if not isinstance(event, dict) or event.get("type") != "task.status_changed":
+        return None
+    payload = event.get("payload")
+    value = payload.get("status") if isinstance(payload, dict) else None
+    return value if isinstance(value, str) else None
+
+
 def next_run(expression: str, timezone_name: str, after: datetime) -> datetime:
     try:
         tz = ZoneInfo(timezone_name)

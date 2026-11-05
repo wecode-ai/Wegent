@@ -55,7 +55,7 @@ def _parse_capacity(
     if (
         not isinstance(limit, int)
         or isinstance(limit, bool)
-        or not 1 <= limit <= 20
+        or not 1 <= limit <= 60
         or not isinstance(active, int)
         or isinstance(active, bool)
         or active < 0

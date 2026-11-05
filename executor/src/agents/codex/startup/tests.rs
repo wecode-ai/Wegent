@@ -39,10 +39,11 @@ async fn shared_startup_timeout_keeps_original_request_pending() {
     let (response_tx, response_rx) = oneshot::channel();
     let request = async { response_rx.await.map_err(|error| error.to_string()) };
     let mut cancellation = None;
+    let mut deadline = Instant::now();
     let run = wait_for_shared_startup(
         &client,
         "thread-slow",
-        Instant::now(),
+        &mut deadline,
         1,
         &mut cancellation,
         request,
@@ -52,6 +53,36 @@ async fn shared_startup_timeout_keeps_original_request_pending() {
     response_tx.send("original response").unwrap();
     assert_eq!(run.await.unwrap(), "original response");
     assert_eq!(client.state.lock().await.active_threads.len(), 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn shared_startup_late_acceptance_retains_the_extended_deadline() {
+    let client = shared_client();
+    let original_deadline = Instant::now();
+    let mut deadline = original_deadline;
+    let (response_tx, response_rx) = oneshot::channel();
+    let request = async { response_rx.await.map_err(|error| error.to_string()) };
+    let mut cancellation = None;
+    {
+        let run = wait_for_shared_startup(
+            &client,
+            "thread-slow",
+            &mut deadline,
+            1,
+            &mut cancellation,
+            request,
+        );
+        tokio::pin!(run);
+        assert!(futures_util::poll!(&mut run).is_pending());
+        tokio::time::advance(Duration::from_millis(500)).await;
+        response_tx.send("late acceptance").unwrap();
+        assert_eq!(run.await.unwrap(), "late acceptance");
+    }
+    assert!(
+        deadline > Instant::now(),
+        "Model progress must retain the protected startup window"
+    );
+    assert_eq!(deadline, original_deadline + Duration::from_secs(1));
 }
 
 #[tokio::test]

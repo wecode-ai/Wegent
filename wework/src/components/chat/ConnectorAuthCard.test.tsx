@@ -214,4 +214,40 @@ describe('ConnectorAuthCard browser oauth', () => {
     await waitFor(() => expect(authMocks.start).toHaveBeenCalledTimes(2))
     expect(onSuccess).not.toHaveBeenCalled()
   })
+
+  test.each([
+    { status: 'waiting_browser', verificationUrl: 'https://github.com/login/device' },
+    {
+      status: 'error',
+      errorCode: 'gh_login_code_missing',
+      verificationUrl: 'https://github.com/login/device',
+    },
+  ])('never opens a device authorization page without a code: $status', async result => {
+    authMocks.start.mockResolvedValue(result)
+    authMocks.poll.mockImplementation(() => new Promise(() => undefined))
+    const onSuccess = vi.fn()
+    render(<ConnectorAuthCard target={GITHUB_CLI_TARGET} onSuccess={onSuccess} />)
+    fireEvent.click(screen.getByTestId('github-cli-login'))
+    await waitFor(() => expect(authMocks.start).toHaveBeenCalledTimes(1))
+    expect(screen.queryByTestId('github-cli-open-browser')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('github-cli-device-code')).not.toBeInTheDocument()
+    if (result.status === 'error') {
+      expect(await screen.findByTestId('connector-auth-retry')).toBeInTheDocument()
+      expect(screen.getByRole('status')).toHaveTextContent('设备验证码')
+    }
+    expect(authMocks.open).not.toHaveBeenCalled()
+    expect(onSuccess).not.toHaveBeenCalled()
+  })
+
+  test('allows the OAuth redirect flow without a device code', async () => {
+    authMocks.start.mockResolvedValue({
+      status: 'waiting_browser',
+      verificationUrl: 'https://github.com/login/oauth/authorize?client_id=fixture',
+    })
+    render(<ConnectorAuthCard target={GITHUB_CLI_TARGET} onSuccess={vi.fn()} />)
+    fireEvent.click(screen.getByTestId('github-cli-login'))
+    fireEvent.click(await screen.findByTestId('github-cli-open-browser'))
+    await waitFor(() => expect(authMocks.open).toHaveBeenCalledTimes(1))
+    expect(screen.queryByTestId('github-cli-device-code')).not.toBeInTheDocument()
+  })
 })

@@ -1,0 +1,15 @@
+{
+  "order": 175000,
+  "ci": {
+    "core": {
+      "order": 91000,
+      "shard": 8,
+      "position": 3000
+    },
+    "cloud": {
+      "order": 19000,
+      "shard": 2,
+      "position": 2000
+    }
+  }
+}

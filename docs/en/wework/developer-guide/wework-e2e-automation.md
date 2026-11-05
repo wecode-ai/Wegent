@@ -165,8 +165,27 @@ checkpoint. When upstream checkpoints are skipped, each checkpoint establishes
 its own minimal fixtures instead of depending on tasks or UI state created only
 by the complete flow. PR CI builds the smallest segment matrix for the changed
 feature paths. Shared desktop infrastructure, merge queue, scheduled runs, and
-`ci:all` still run the complete desktop suites. Core and Cloud shard definitions
-live in `.github/scripts/classify-wework-desktop-e2e.sh`. Linux Core and Cloud jobs
+`ci:all` still run the complete desktop suites. Registration, module paths,
+execution modes, and Core/Cloud shard assignments now come from independent
+`wework/e2e/desktop/catalog/<checkpoint>.json` files. The filename is the checkpoint
+ID. `checkpoints.mjs`, the runner, and CI read the same declarations, so adding a
+scenario does not edit shared registration lists or comma-joined shard lines.
+`order` controls default execution order; `ci.core` / `ci.cloud` declare `shard`
+and `position`, while each CI lane's `order` retains catalog order. Insert values
+between existing ones; equal values sort by checkpoint ID without renumbering
+other files. Core retains ten shards and Cloud retains eight. `scenario` names
+the module and `scenarioOnly` runs that module alone. Composite checkpoints use
+`members`; `ciHost` shares an existing checkpoint's CI lifecycle. Package upgrade
+checkpoints remain owned by `upgrade-suite.mjs`.
+
+A config change selects its CI owner, including the host of a composite member.
+New scenario modules select their declaration automatically. Optional `paths`
+shell globs add source coverage alongside existing path rules. Cross-feature
+rules retain their priority in `.github/scripts/desktop-ci/`. Classifier contracts
+live in `.github/scripts/ci-classification-tests/`, whose `.sh` files are discovered
+by the existing test entry point.
+
+Linux Core and Cloud jobs
 run at most four isolated checkpoints concurrently; actual concurrency also
 depends on the shard's checkpoint count. Each checkpoint owns its database,
 Redis, ports, and runtime directories, and Harness runtimes are extracted once
@@ -408,12 +427,11 @@ the additional-token handoff finishes.
 Merge queue validates
 the final commit that enters `main`, so Tests, Lint, Platform E2E, and Wework E2E
 do not repeat the same validation after the merge through a `push main` trigger. The
-mapping lives in `.github/scripts/classify-wework-desktop-e2e.sh` and must be updated when new
-feature coverage is registered. When adding a `DESKTOP_CHECKPOINTS` entry, also
-add it to a Core, Cloud, or formal-release catalog, assign it to a shard, map
-the relevant source paths to the smallest applicable coverage, and update both
-the matrix expectations and focused classifier assertions in
-`.github/scripts/test-classify-ci-changes.sh`. The classifier rejects a
+mapping is maintained in feature-local catalog files. Declare a new checkpoint's
+module, execution mode, CI shard, and source `paths` in its own file, then add
+focused assertions to the relevant classifier contract module. Update affected
+matrix expectations when cross-feature coverage changes; shared runner lists,
+shard lists, and test entry points no longer need edits. The classifier rejects a
 checkpoint that exists only in the runner without CI catalog coverage, preventing
 locally runnable coverage that GitHub CI never invokes. Segment commands are also
 useful for focused local iteration:

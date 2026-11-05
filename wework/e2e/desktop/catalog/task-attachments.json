@@ -1,0 +1,12 @@
+{
+  "order": 136000,
+  "scenario": "./scenarios/task-attachments.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 86000,
+      "shard": 1,
+      "position": 16000
+    }
+  }
+}

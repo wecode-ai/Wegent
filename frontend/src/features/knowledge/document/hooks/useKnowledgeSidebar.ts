@@ -77,6 +77,7 @@ export interface UseKnowledgeSidebarReturn {
   // Groups
   groups: KnowledgeGroup[]
   isGroupsLoading: boolean
+  hasLoadError: boolean
 
   // Selection
   selectedKbId: number | null
@@ -98,6 +99,7 @@ export interface UseKnowledgeSidebarReturn {
   setFilterGroupId: (groupId: string | null) => void
 
   // Raw KBs for navigation and ID lookups
+  organizationKnowledgeBases: KnowledgeBase[]
   allKnowledgeBases: KnowledgeBase[]
   allKnowledgeBasesWithGroupInfo: KnowledgeBaseWithGroupInfo[]
   // Filtered KBs for display
@@ -194,6 +196,7 @@ export function useKnowledgeSidebar({
 
   // Loading state
   const [isLoading, setIsLoading] = useState(true)
+  const [hasLoadError, setHasLoadError] = useState(false)
   const [isFavoritesLoading, setIsFavoritesLoading] = useState(false)
 
   // Favorites state (will be loaded from API when backend is ready)
@@ -215,10 +218,12 @@ export function useKnowledgeSidebar({
   // Load initial data using the optimized all-grouped API
   const loadInitialData = useCallback(async () => {
     setIsLoading(true)
+    setHasLoadError(false)
     try {
       const response = await knowledgeBaseApi.getAllGrouped()
       setAllGroupedData(response)
     } catch (error) {
+      setHasLoadError(true)
       console.error('Failed to load knowledge sidebar data:', error)
     } finally {
       setIsLoading(false)
@@ -258,6 +263,11 @@ export function useKnowledgeSidebar({
       return bTime - aTime
     })
   }, [allGroupedData])
+
+  const organizationKnowledgeBases = useMemo(
+    () => (allGroupedData?.organization.knowledge_bases || []).map(toKnowledgeBase),
+    [allGroupedData]
+  )
 
   // Build all knowledge bases list for search (without group info)
   const allKnowledgeBases = useMemo((): KnowledgeBase[] => {
@@ -662,6 +672,7 @@ export function useKnowledgeSidebar({
     // Groups
     groups,
     isGroupsLoading: isLoading,
+    hasLoadError,
 
     // Selection
     selectedKbId,
@@ -684,6 +695,7 @@ export function useKnowledgeSidebar({
 
     // Raw KBs for navigation and ID lookups
     allKnowledgeBases,
+    organizationKnowledgeBases,
     allKnowledgeBasesWithGroupInfo,
     visibleKnowledgeBases,
 

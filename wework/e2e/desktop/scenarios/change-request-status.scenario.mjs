@@ -457,7 +457,8 @@ export async function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await control.command('waitFor', '[data-testid="git-hosting-cli-github-status"]', {
-        text: '未登录',
+        // The unavailable fixture exits 127; a CLI execution failure is not missing auth.
+        text: '检测失败',
         timeoutMs: uiTimeoutMs,
       })
       assert.equal(

@@ -23,6 +23,7 @@ export type CronPreset = 'weekdays' | 'daily' | 'weekly' | 'custom'
 export type CustomFrequency = 'hourly' | 'daily' | 'weekly' | 'monthly' | 'yearly'
 
 export interface AutomationDraft {
+  calendarTemplate?: 'weekly_review'
   name: string
   prompt: string
   source: AutomationSource
@@ -313,6 +314,7 @@ export function automationDraftFromAutomation(
       ? (payload.modelOptions as ModelOptions)
       : {}
   const draft = emptyAutomationDraft(automation.source, deviceId, workspacePath)
+  draft.calendarTemplate = automation.taskRequest?.standInCalendar?.template
   draft.name = automation.name
   draft.prompt = automation.prompt
   draft.timezone = automation.timezone

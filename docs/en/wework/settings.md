@@ -6,6 +6,8 @@ sidebar_position: 9
 
 Settings cover language and startup behavior, the top-level tab activated when the main workspace opens, appearance, local Codex and compatible models, cloud models configured in Wegent and synchronized to Wework, proxies, local coding harnesses, context and default principles for the personal supervisor, quick phrases, keybindings, worktrees, browser data, and archived conversations.
 
+The startup tab preference applies only when the main workspace starts at its home route. After opening an explicit address or restoring the pending interactions page, choosing **New task** opens the task composer without reapplying that startup preference.
+
 The context indicator beside the task composer shows the current model's context usage. The ratio
 is measured against the context available to the input, which is the model's maximum context minus
 its configured maximum output; upstream providers charge the completion budget against the same

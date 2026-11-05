@@ -232,6 +232,28 @@ class LoopItemExecution(Base):
         return "wegent_team" if self.team_id else "generic_robot"
 
     @hybrid_property
+    def owns_automation_run(self) -> bool:
+        """Group continuations retain causality without owning the root outcome."""
+        return bool(self.automation_run_id) and (
+            self.runtime_origin_context.get("dispatch_kind") != "collaboration_group"
+            or self.executor_type == "collaboration_group_dispatch"
+        )
+
+    @owns_automation_run.expression
+    def owns_automation_run(cls) -> ColumnElement[bool]:
+        payload = case(
+            (func.json_valid(cls.execution_payload) == 1, cls.execution_payload),
+            else_="{}",
+        )
+        document = type_coerce(payload, JSON)
+        dispatch_kind = document["origin_context"]["dispatch_kind"].as_string()
+        executor_kind = document["runtime_selection"]["executor_kind"].as_string()
+        return (cls.automation_run_id != "") & (
+            (func.coalesce(dispatch_kind, "") != "collaboration_group")
+            | (func.coalesce(executor_kind, "") == "collaboration_group_dispatch")
+        )
+
+    @hybrid_property
     def assignment_pending(self) -> bool:
         """An admitted assignment whose execution configuration is not prepared."""
         return isinstance(self.runtime_selection.get("assignment_request"), dict)

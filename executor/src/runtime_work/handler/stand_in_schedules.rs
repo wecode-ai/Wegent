@@ -222,7 +222,26 @@ impl RuntimeWorkRpcHandler {
         }
         let mut payload = payload;
         payload["origin"] = json!({"type":"stand_in_schedule","initiatedBy":"stand_in","userId":user,"standInId":role_id,"automationId":automation.id,"deviceId":self.device_id,"askBeforeAct":true});
+        let review = role_id == "@primary"
+            && automation.task_request["standInCalendar"]["template"]
+                == crate::runtime_work::automations::WEEKLY_REVIEW_TEMPLATE;
+        if review {
+            payload["origin"]["weeklyReview"] = json!(true);
+        }
         let mut prepared = self.prepare_stand_in_execution(payload, &config).await?;
+        if review {
+            let invalid = || AppIpcError::new("bad_request", "Invalid review execution context");
+            let request = prepared["executionRequest"]
+                .as_object_mut()
+                .ok_or_else(invalid)?;
+            let additional = request
+                .entry("additionalContext")
+                .or_insert_with(|| json!({}));
+            additional.as_object_mut().ok_or_else(invalid)?.insert(
+                "wework.stand-in-review".into(),
+                json!({"kind":"application","value":crate::runtime_work::automations::WEEKLY_REVIEW_INSTRUCTIONS}),
+            );
+        }
         let system = prepared["executionRequest"]["system_prompt"]
             .as_str()
             .unwrap_or_default();
@@ -314,6 +333,7 @@ mod tests {
             ask_before_act: true,
             coordinator_batch: None,
             project: None,
+            review: false,
         };
         let args = json!({"requestId":"event","title":"Review","message":"Review outstanding items","at":"2099-01-01T00:00:00Z","timezone":"UTC"});
         let saved = handler

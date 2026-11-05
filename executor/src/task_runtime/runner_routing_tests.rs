@@ -330,10 +330,244 @@ fn group_automation_materializes_member_models_without_desktop() {
     let payload = claimed.execution_payload.unwrap();
     assert_eq!(payload["dispatch_role"], "manager");
     assert_eq!(payload["automation_run_id"], run["id"]);
+    assert!(payload["message"]
+        .as_str()
+        .unwrap()
+        .starts_with("Review\n\n"));
+    assert_eq!(payload["executionRequest"]["prompt"], payload["message"]);
+    assert_eq!(payload["collaboration_manager_context"], payload["message"]);
+    assert_eq!(
+        payload["runtimeHandle"]["collaborationManagerContext"],
+        payload["message"]
+    );
     assert_eq!(
         payload["memberRuntimeProfiles"][0]["runtimePayload"]["executionRequest"]["model_config"]
             ["model_id"],
         "native-model"
+    );
+}
+
+fn configure_prompt_rule(
+    store: &LocalTaskStore,
+    project: &LoopItem,
+    agent: &ChatAgent,
+    target_kind: &str,
+    trigger: &str,
+    prompt: &str,
+) {
+    let mut rule = json!({
+        "id":"prompt-rule", "version":1, "enabled":true, "targetKind":target_kind,
+        "targetId":if target_kind == "agent" { agent.id.as_str() } else { "group" },
+        "triggerType":trigger, "eventType":"task.status_changed",
+        "eventConfig":{"statuses":["in_review"],"transition":"any"}, "prompt":prompt,
+    });
+    if trigger == "schedule" {
+        rule["cronExpression"] = json!("0 9 * * *");
+        rule["timezone"] = json!("UTC");
+    }
+    store
+        .update_project(
+            &project.id,
+            ProjectUpdate {
+                version: project.version,
+                collaboration_groups: Some(json!([{"id":"group","name":"Prompt group",
+            "leader":{"kind":"agent","id":agent.id},"members":[]}])),
+                automatic_processing_rules: Some(json!([rule])),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+}
+
+fn claim_prompt_execution(store: &LocalTaskStore, catalog: &Value) -> LocalExecution {
+    store
+        .claim_next_execution_with_catalog(Some("runner-a"), "instance", 300, Some(catalog))
+        .unwrap()
+        .unwrap()
+}
+
+fn assert_prompt_execution(execution: &LocalExecution, prompt: &str, group: bool) {
+    let payload = execution.execution_payload.as_ref().unwrap();
+    let message = payload["message"].as_str().unwrap();
+    assert!(message.starts_with(&format!("{prompt}\n\n")), "{message}");
+    assert!(message.contains("Issue"));
+    assert!(message.contains("Original business description"));
+    assert_eq!(payload["executionRequest"]["prompt"], message);
+    assert!(!payload["executionRequest"]["system_prompt"]
+        .as_str()
+        .unwrap()
+        .contains(prompt));
+    if group {
+        assert_eq!(payload["collaboration_manager_context"], message);
+        assert_eq!(
+            payload["runtimeHandle"]["collaborationManagerContext"],
+            message
+        );
+        assert!(message.contains("Prompt group"));
+        assert!(payload["executionRequest"]["system_prompt"]
+            .as_str()
+            .unwrap()
+            .contains(COLLABORATION_MANAGER_SYSTEM_INSTRUCTIONS));
+    }
+}
+
+#[test]
+fn automation_prompts_reach_native_event_schedule_and_retry_requests() {
+    for target_kind in ["agent", "collaboration_group"] {
+        for trigger in ["event", "schedule"] {
+            let (_directory, store, project, agent, issue, catalog) = setup();
+            store
+                .update_task(
+                    &project.id,
+                    &issue.id,
+                    TaskUpdate {
+                        version: issue.version,
+                        description: Some("Original business description".into()),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            let prompt = "检查自动化任务。\n保留多行与 `code`，不要改写 Issue 描述。";
+            configure_prompt_rule(&store, &project, &agent, target_kind, trigger, prompt);
+            if trigger == "event" {
+                let issue = store.get_task(&project.id, &issue.id).unwrap();
+                store
+                    .update_task(
+                        &project.id,
+                        &issue.id,
+                        TaskUpdate {
+                            version: issue.version,
+                            status: Some("in_review".into()),
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap();
+            } else {
+                store.tick_project_automations().unwrap();
+                let mut current = store.get_project(&project.id).unwrap();
+                current.metadata["automation_schedule"]["prompt-rule:1"] =
+                    json!("2020-01-01T00:00:00Z");
+                store
+                    .connection()
+                    .unwrap()
+                    .execute(
+                        "UPDATE loop_items SET metadata=?1 WHERE id=?2",
+                        params![current.metadata.to_string(), project.id],
+                    )
+                    .unwrap();
+                store.tick_project_automations().unwrap();
+            }
+            let runs = store
+                .list_project_automation_runs(&project.id, "prompt-rule")
+                .unwrap();
+            assert_eq!(runs.len(), 1);
+            assert_eq!(
+                runs[0]["trigger"],
+                if trigger == "event" {
+                    "event"
+                } else {
+                    "scheduled"
+                }
+            );
+            let claimed = claim_prompt_execution(&store, &catalog);
+            assert_prompt_execution(&claimed, prompt, target_kind == "collaboration_group");
+            store
+                .fail_execution(claimed.id, "Model fixture stopped", false)
+                .unwrap()
+                .unwrap();
+            let retried = store
+                .retry_project_automation_run(&project.id, runs[0]["id"].as_str().unwrap())
+                .unwrap();
+            assert_ne!(retried[0]["id"], runs[0]["id"]);
+            let retried = claim_prompt_execution(&store, &catalog);
+            assert_prompt_execution(&retried, prompt, target_kind == "collaboration_group");
+            assert_eq!(
+                store.get_task(&project.id, &issue.id).unwrap().description,
+                "Original business description"
+            );
+        }
+    }
+}
+
+#[test]
+fn group_automation_prompt_survives_manager_resume_after_a_member_round() {
+    let (_directory, store, project, agent, issue, catalog) = setup();
+    let member = store.create_chat_agent(&project.id, serde_json::from_value(json!({
+        "name":"Prompt member", "execution_mode":"auto", "execution_policy":{"mode":"project_pool"},
+        "model_policy":{"mode":"fixed","model":{"runtime":"codex","provider":"test","model_id":"model-a"}},
+    })).unwrap()).unwrap();
+    let prompt = "按验收准则检查交付物。\n在每轮管理决策中保留此指令。";
+    configure_prompt_rule(
+        &store,
+        &project,
+        &agent,
+        "collaboration_group",
+        "schedule",
+        prompt,
+    );
+    let project = store.get_project(&project.id).unwrap();
+    let mut groups = project.metadata["collaboration_groups"].clone();
+    groups[0]["members"] = json!([{"kind":"agent","id":member.id}]);
+    store
+        .update_project(
+            &project.id,
+            ProjectUpdate {
+                version: project.version,
+                collaboration_groups: Some(groups),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    store
+        .run_project_automation(&project.id, "prompt-rule", Some(&issue.id))
+        .unwrap();
+    let manager = claim_prompt_execution(&store, &catalog);
+    let payload = manager.execution_payload.as_ref().unwrap();
+    let context = payload["collaboration_manager_context"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(context.starts_with(prompt));
+    let runtime_id = manager.runtime_task_id.as_deref().unwrap();
+    store
+        .request_runtime_start(manager.id, "runner-a", runtime_id, 300)
+        .unwrap()
+        .unwrap();
+    store
+        .confirm_runtime_accepted(manager.id, "runner-a", runtime_id, 300)
+        .unwrap()
+        .unwrap();
+    store.mark_runtime_running(runtime_id).unwrap().unwrap();
+    store
+        .submit_collaboration_round(
+            runtime_id,
+            &json!({"round_id":"prompt-round","items":[{
+                "assignment_id":"review", "assignee_type":"agent", "assignee_id":member.id,
+                "title":"Review evidence", "instructions":"Inspect the acceptance evidence",
+            }]}),
+        )
+        .unwrap();
+    let member_execution = claim_prompt_execution(&store, &catalog);
+    assert_eq!(member_execution.agent_id, member.id);
+    store
+        .complete_execution(member_execution.id, Some("Evidence checked"))
+        .unwrap()
+        .unwrap();
+    let resumed = claim_prompt_execution(&store, &catalog);
+    assert_eq!(resumed.agent_id, agent.id);
+    let payload = resumed.execution_payload.unwrap();
+    let message = payload["message"].as_str().unwrap();
+    assert!(message.starts_with(&format!("{context}\n\n<collaboration_round_results>")));
+    assert!(message.contains("Evidence checked"));
+    assert_eq!(payload["executionRequest"]["prompt"], message);
+    assert_eq!(
+        payload["runtimeHandle"]["collaborationManagerContext"],
+        context
+    );
+    assert_eq!(payload["collaboration_manager_context"], context);
+    assert_eq!(
+        store.get_task(&project.id, &issue.id).unwrap().description,
+        issue.description
     );
 }
 

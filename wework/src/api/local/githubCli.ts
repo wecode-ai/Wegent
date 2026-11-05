@@ -13,7 +13,10 @@ export function isGithubCliTarget(target: LocalConnectorAuthTarget): boolean {
   )
 }
 
-export function githubVerificationUrl(address?: string | null): string | null {
+export function githubVerificationUrl(
+  address?: string | null,
+  userCode?: string | null
+): string | null {
   if (!address) return null
   try {
     const url = new URL(address)
@@ -22,6 +25,7 @@ export function githubVerificationUrl(address?: string | null): string | null {
       !url.port &&
       !url.username &&
       !url.password &&
+      (url.pathname !== '/login/device' || /^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(userCode ?? '')) &&
       ['/login/device', '/login/oauth/authorize'].includes(url.pathname)
       ? url.href
       : null

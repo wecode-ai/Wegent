@@ -641,6 +641,7 @@ fn create_human_assignment_task(
     })?;
     let project = get_item_from(connection, &manager.cloud_project_id, "project")?
         .ok_or(TaskRuntimeError::ProjectNotFound)?;
+    let status = project_status::initial_status(&project.metadata)?;
     let sequence = project.next_item_number.unwrap_or(1);
     let project_key = project
         .project_key
@@ -679,7 +680,7 @@ fn create_human_assignment_task(
             id, resource_type, project_space, cloud_project_id, parent_id,
             title, description, sequence_number, status, priority, sort_order,
             metadata, version, created_at, updated_at, assignee_user_id, created_by_user_id
-         ) VALUES (?1, 'task', 'default', ?2, ?3, ?4, ?5, ?6, 'inbox', ?7,
+         ) VALUES (?1, 'task', 'default', ?2, ?3, ?4, ?5, ?6, ?12, ?7,
                    0, ?8, 1, ?9, ?9, ?10, ?11)",
         params![
             task_id,
@@ -693,6 +694,7 @@ fn create_human_assignment_task(
             timestamp,
             assignee_user_id,
             manager.assigner_user_id,
+            status,
         ],
     )?;
     refresh_runtime_projection_additional_context(connection, &manager.loop_item_id)?;
