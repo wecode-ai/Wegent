@@ -128,6 +128,10 @@ const localExecutorMocks = vi.hoisted(() => ({
   subscribeLocalExecutorEvents: vi.fn(),
 }))
 
+vi.mock('@/api/local/runtimeAuthStatus', () => ({
+  getLocalCodexAuthStatus: vi.fn().mockResolvedValue({ sha256: 'test-account' }),
+}))
+
 vi.mock('@/api/cloud/connectorApps', async importOriginal => ({
   ...(await importOriginal<typeof import('@/api/cloud/connectorApps')>()),
   listWegentInstalledConnectorApps: vi.fn().mockResolvedValue({ apps: [] }),
@@ -3555,17 +3559,13 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
     await userEvent.click(screen.getByText('list local apps'))
     await waitFor(() => expect(getComposerApps().map(app => app.pluginKey)).toEqual(['dingtalk']))
-    // Marketplace membership is already warm, but app authorization is a separate
-    // source within that inventory and still needs its first hydration.
-    await waitFor(() =>
-      expect(
-        localExecutorMocks.requestLocalExecutor.mock.calls.some(
-          ([method, params]) =>
-            method === 'codex.app_server_request' &&
-            (params as { method?: string }).method === 'app/list'
-        )
-      ).toBe(true)
-    )
+    expect(
+      localExecutorMocks.requestLocalExecutor.mock.calls.some(
+        ([method, params]) =>
+          method === 'codex.app_server_request' &&
+          (params as { method?: string }).method === 'app/list'
+      )
+    ).toBe(false)
     expect(pluginApiMocks.cloudListInstalledPlugins).not.toHaveBeenCalled()
 
     act(() => {
@@ -4057,9 +4057,8 @@ describe('WorkbenchProvider runtime tasks', () => {
     }
   )
 
-  test('keeps installed plugins available while both remote Codex catalogs hang and fail', async () => {
+  test('keeps installed plugins available without global apps when installed membership hangs and fails', async () => {
     setElectronRuntime()
-    const codexApps = deferred<{ data: LocalDeviceApp[]; nextCursor: null }>()
     const remoteInstalled = deferred<{ marketplaces: [] }>()
     const documentsPlugin: InstalledPlugin = {
       apiVersion: 'agent.wecode.io/v1',
@@ -4104,7 +4103,8 @@ describe('WorkbenchProvider runtime tasks', () => {
           const request = params as { method?: string }
           if (request.method === 'plugin/list') return { marketplaces: [] }
           if (request.method === 'plugin/installed') return remoteInstalled.promise
-          if (request.method === 'app/list') return codexApps.promise
+          if (request.method === 'app/list')
+            throw new Error('Composer must not discover global apps')
         }
         return {}
       }
@@ -4125,15 +4125,13 @@ describe('WorkbenchProvider runtime tasks', () => {
           'loaded:plugin:documents'
         )
       )
-      await waitFor(() =>
-        expect(
-          localExecutorMocks.requestLocalExecutor.mock.calls.some(
-            ([method, params]) =>
-              method === 'codex.app_server_request' &&
-              (params as { method?: string }).method === 'app/list'
-          )
-        ).toBe(true)
-      )
+      expect(
+        localExecutorMocks.requestLocalExecutor.mock.calls.some(
+          ([method, params]) =>
+            method === 'codex.app_server_request' &&
+            (params as { method?: string }).method === 'app/list'
+        )
+      ).toBe(false)
       expect(
         localExecutorMocks.requestLocalExecutor.mock.calls.some(
           ([method, params]) =>
@@ -4143,11 +4141,10 @@ describe('WorkbenchProvider runtime tasks', () => {
       ).toBe(true)
       expect(getComposerApps().map(app => app.id)).toEqual(['plugin:documents'])
 
-      codexApps.reject(new Error('ChatGPT app directory unavailable'))
       remoteInstalled.reject(new Error('ChatGPT installed directory unavailable'))
       await waitFor(() =>
         expect(warning).toHaveBeenCalledWith(
-          '[Wework] Failed to enrich composer plugins from Codex apps.',
+          '[Wework] Failed to refresh complete plugin inventory.',
           expect.any(Error)
         )
       )
@@ -4458,9 +4455,9 @@ describe('WorkbenchProvider runtime tasks', () => {
     localExecutorMocks.requestLocalExecutor.mockClear()
 
     act(() => {
-      window.dispatchEvent(new Event(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT))
-      window.dispatchEvent(new Event(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT))
-      window.dispatchEvent(new Event(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT))
+      for (let index = 0; index < 11; index += 1) {
+        window.dispatchEvent(new Event(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT))
+      }
     })
 
     const pluginInstalledRequestCount = () =>
@@ -4472,6 +4469,13 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() => expect(pluginInstalledRequestCount()).toBe(1))
     await new Promise(resolve => window.setTimeout(resolve, 300))
     expect(pluginInstalledRequestCount()).toBe(1)
+    expect(
+      localExecutorMocks.requestLocalExecutor.mock.calls.some(
+        ([method, params]) =>
+          method === 'codex.app_server_request' &&
+          (params as { method?: string }).method === 'app/list'
+      )
+    ).toBe(false)
   })
 
   test('loads missing project packages despite fresh membership and projects them after switching', async () => {
@@ -18753,7 +18757,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
   })
 
-  test('loads local skills and apps from Codex app-server', async () => {
+  test('loads local skills without discovering global Codex apps', async () => {
     setElectronRuntime()
     localExecutorMocks.requestLocalExecutor.mockImplementation(
       async (method: string, params?: unknown) => {
@@ -18904,19 +18908,16 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await userEvent.click(screen.getByText('list local apps'))
 
-    await waitFor(() => {
-      expect(localExecutorMocks.requestLocalExecutor).toHaveBeenCalledWith(
-        'codex.app_server_request',
-        {
-          method: 'app/list',
-          params: {
-            cursor: null,
-            limit: 100,
-            forceRefetch: false,
-          },
-        }
+    await waitFor(() =>
+      expect(screen.getByTestId('composer-apps-result')).toHaveTextContent(/^loaded:$/)
+    )
+    expect(
+      localExecutorMocks.requestLocalExecutor.mock.calls.some(
+        ([method, params]) =>
+          method === 'codex.app_server_request' &&
+          (params as { method?: string }).method === 'app/list'
       )
-    })
+    ).toBe(false)
   })
 
   test('ignores stream events from a previously selected runtime task', async () => {

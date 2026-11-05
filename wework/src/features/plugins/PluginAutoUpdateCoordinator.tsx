@@ -88,8 +88,7 @@ export function PluginAutoUpdateCoordinator() {
     const runUpdatePass = async (): Promise<boolean> => {
       const result = await runCurrentDevicePluginAutoUpdate({
         signal: waiting.signal,
-        listLocalInstalledPlugins: () =>
-          localPluginApi.listInstalledPlugins({ refresh: true, shareInflight: true }),
+        listLocalInstalledPlugins: () => localPluginApi.listInstalledPlugins({ refresh: true }),
         listMarketplacePlugins: deviceId => cloudPluginApi.listMarketplacePlugins({ deviceId }),
         updateBatch: () => cloudPluginApi.autoUpdateInstalledPlugins(),
         syncPlugin: (deviceId, installedPluginId) =>

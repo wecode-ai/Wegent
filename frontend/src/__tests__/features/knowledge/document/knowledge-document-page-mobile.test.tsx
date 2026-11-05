@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 
@@ -15,6 +15,8 @@ interface MockKnowledgeTree {
   selectedKb: KnowledgeBase | null
   selectedKbId: number | null
   loading: boolean
+  hasLoadError: boolean
+  groupKbErrors: Record<string, boolean>
   expandState: Record<string, unknown>
   toggleExpand: jest.Mock
   selectKb: jest.Mock
@@ -36,6 +38,7 @@ interface KNavigationProps {
   push: (url: string) => void
 }
 
+let mockSearchParams = new URLSearchParams()
 const mockPush = jest.fn()
 const mockToastSuccess = jest.mocked(toast.success)
 const mockToastWarning = jest.mocked(toast.warning)
@@ -51,7 +54,7 @@ jest.mock('@/hooks/useTranslation', () => ({
 
 jest.mock('next/navigation', () => ({
   useRouter: () => mockRouter,
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => mockSearchParams,
 }))
 
 jest.mock('sonner', () => ({
@@ -93,6 +96,8 @@ function createMockTree(overrides?: Partial<MockKnowledgeTree>) {
     selectedKb: null,
     selectedKbId: null,
     loading: false,
+    hasLoadError: false,
+    groupKbErrors: {},
     expandState: {},
     toggleExpand: jest.fn(),
     selectKb: jest.fn(kb => {
@@ -279,10 +284,11 @@ jest.mock('@/features/knowledge/document/components/KnowledgeDetailPanel', () =>
     selectedKb,
     initialDocPath,
   }: {
-    selectedKb?: Pick<KnowledgeBase, 'name'>
+    selectedKb?: Pick<KnowledgeBase, 'id' | 'name'>
     initialDocPath?: string
   }) => (
     <div data-testid="mock-detail-panel">
+      <span data-testid="detail-kb-id">{selectedKb?.id}</span>
       <span data-testid="detail-kb-name">{selectedKb?.name}</span>
       <span data-testid="detail-doc-path">{initialDocPath}</span>
     </div>
@@ -294,6 +300,8 @@ const defaultTreeState: Partial<MockKnowledgeTree> = {
   selectedKb: null,
   selectedKbId: null,
   loading: false,
+  hasLoadError: false,
+  groupKbErrors: {},
   personalData: null,
   orgKbs: [],
   groupKbMap: {},
@@ -302,6 +310,7 @@ const defaultTreeState: Partial<MockKnowledgeTree> = {
 }
 
 function resetMockTree() {
+  mockSearchParams = new URLSearchParams()
   Object.assign(mockTree, defaultTreeState)
   mockTree.loadGroupKbs = jest.fn().mockResolvedValue(undefined)
   mockTree.selectKb = jest.fn(kb => {
@@ -503,4 +512,171 @@ describe('KnowledgeDocumentPageMobile detail view switch', () => {
       })
     )
   })
+})
+
+describe('KnowledgeDocumentPageMobile scoped URL resolution', () => {
+  beforeEach(resetMockTree)
+
+  it('does not open a same-name team KB when the company list is empty', () => {
+    mockTree.groupKbMap = {
+      organization: [{ ...baseKb, id: 7, name: 'OrgKB', namespace: 'organization' }],
+    }
+    render(<KnowledgeDocumentPageMobile initialKbName="OrgKB" />)
+    expect(mockGetKnowledgeBase).not.toHaveBeenCalled()
+    expect(screen.getByTestId('knowledge-url-not-found')).toBeInTheDocument()
+  })
+
+  it('does not choose the first of two company KB IDs with the same name', () => {
+    mockTree.orgKbs = [
+      { ...baseKb, id: 7, name: 'OrgKB', namespace: 'company' },
+      { ...baseKb, id: 8, name: 'OrgKB', namespace: 'company' },
+    ]
+    render(<KnowledgeDocumentPageMobile initialKbName="OrgKB" />)
+    expect(mockGetKnowledgeBase).not.toHaveBeenCalled()
+    expect(screen.getByTestId('knowledge-url-ambiguous')).toBeInTheDocument()
+  })
+})
+
+describe('KnowledgeDocumentPageMobile asynchronous resolution', () => {
+  beforeEach(resetMockTree)
+
+  it('waits for the company list and passes its ID to detail rendering', async () => {
+    const company = { ...baseKb, id: 202, name: 'OrgKB', namespace: 'company' }
+    mockTree.loading = true
+    mockTree.personalData = {
+      created_by_me: [{ ...company, id: 303, namespace: 'default' }],
+      shared_with_me: [],
+    }
+    const { rerender } = render(<KnowledgeDocumentPageMobile initialKbName="OrgKB" />)
+    expect(screen.getByTestId('knowledge-url-loading')).toBeInTheDocument()
+    expect(mockGetKnowledgeBase).not.toHaveBeenCalled()
+    mockTree.loading = false
+    mockTree.orgKbs = [company, company]
+    mockGetKnowledgeBase.mockResolvedValue(company)
+    rerender(<KnowledgeDocumentPageMobile initialKbName="OrgKB" />)
+    expect(await screen.findByTestId('detail-kb-id')).toHaveTextContent('202')
+    expect(mockGetKnowledgeBase).toHaveBeenCalledWith(202)
+  })
+
+  it('discards an old detail response after navigating to another company KB', async () => {
+    const first = { ...baseKb, id: 202, name: 'First', namespace: 'company' }
+    const second = { ...baseKb, id: 404, name: 'Second', namespace: 'company' }
+    mockTree.orgKbs = [first, second]
+    let finishFirst!: (kb: KnowledgeBase) => void
+    mockGetKnowledgeBase.mockImplementation(id =>
+      id === first.id
+        ? new Promise(resolve => {
+            finishFirst = resolve
+          })
+        : Promise.resolve(second)
+    )
+    const { rerender } = render(<KnowledgeDocumentPageMobile initialKbName="First" />)
+    rerender(<KnowledgeDocumentPageMobile initialKbName="Second" />)
+    expect(await screen.findByTestId('detail-kb-id')).toHaveTextContent('404')
+    await act(async () => finishFirst(first))
+    expect(screen.getByTestId('detail-kb-id')).toHaveTextContent('404')
+  })
+
+  it('shows a detail error and retries without using list data as detail', async () => {
+    const company = { ...baseKb, id: 202, name: 'OrgKB', namespace: 'company' }
+    mockTree.orgKbs = [company]
+    mockGetKnowledgeBase.mockRejectedValueOnce(new Error('unavailable')).mockResolvedValue(company)
+    render(<KnowledgeDocumentPageMobile initialKbName="OrgKB" />)
+    expect(await screen.findByTestId('knowledge-url-error')).toBeInTheDocument()
+    expect(screen.queryByTestId('mock-detail-panel')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('knowledge-url-retry'))
+    expect(await screen.findByTestId('detail-kb-id')).toHaveTextContent('202')
+  })
+})
+
+it('shows an initial group-list load failure instead of waiting forever', () => {
+  resetMockTree()
+  mockTree.hasLoadError = true
+  render(<KnowledgeDocumentPageMobile initialKbNamespace="team" initialKbName="Missing" />)
+  expect(screen.getByTestId('knowledge-url-error')).toBeInTheDocument()
+  expect(screen.queryByTestId('knowledge-url-loading')).not.toBeInTheDocument()
+})
+
+it('keeps the mounted company detail during refresh and a failed refresh', async () => {
+  resetMockTree()
+  const company = { ...baseKb, id: 202, name: 'OrgKB', namespace: 'company' }
+  mockTree.orgKbs = [company]
+  mockGetKnowledgeBase.mockResolvedValue(company)
+  const { rerender } = render(<KnowledgeDocumentPageMobile initialKbName="OrgKB" />)
+  const panel = await screen.findByTestId('mock-detail-panel')
+  mockTree.loading = true
+  rerender(<KnowledgeDocumentPageMobile initialKbName="OrgKB" />)
+  expect(screen.getByTestId('mock-detail-panel')).toBe(panel)
+  mockTree.loading = false
+  mockTree.hasLoadError = true
+  rerender(<KnowledgeDocumentPageMobile initialKbName="OrgKB" />)
+  expect(screen.getByTestId('mock-detail-panel')).toBe(panel)
+  expect(screen.getByTestId('knowledge-url-error')).toBeInTheDocument()
+  mockTree.hasLoadError = false
+  mockTree.orgKbs = [{ ...company }]
+  rerender(<KnowledgeDocumentPageMobile initialKbName="OrgKB" />)
+  expect(screen.getByTestId('mock-detail-panel')).toBe(panel)
+  expect(mockGetKnowledgeBase).toHaveBeenCalledTimes(1)
+})
+
+it('opens the requested same-name ID on mobile and preserves it in a copied URL', async () => {
+  resetMockTree()
+  const first = { ...baseKb, id: 202, name: 'OrgKB', namespace: 'company' }
+  const selected = { ...first, id: 404 }
+  mockTree.orgKbs = [first, selected]
+  mockSearchParams.set('kb', '404')
+  mockGetKnowledgeBase.mockResolvedValue(selected)
+  render(<KnowledgeDocumentPageMobile initialKbName="OrgKB" />)
+  expect(await screen.findByTestId('detail-kb-id')).toHaveTextContent('404')
+  expect(mockGetKnowledgeBase).toHaveBeenCalledWith(404)
+})
+
+it('does not fall back to the matching mobile name for an out-of-scope ID', () => {
+  resetMockTree()
+  const company = { ...baseKb, id: 202, name: 'OrgKB', namespace: 'company' }
+  mockTree.orgKbs = [company]
+  mockSearchParams.set('kb', '999')
+  render(<KnowledgeDocumentPageMobile initialKbName="OrgKB" />)
+  expect(screen.getByTestId('knowledge-url-not-found')).toBeInTheDocument()
+  expect(mockGetKnowledgeBase).not.toHaveBeenCalled()
+})
+
+it('generates a mobile selection URL with the known ID', async () => {
+  resetMockTree()
+  mockPush.mockClear()
+  render(<KnowledgeDocumentPageMobile />)
+  await userEvent.click(screen.getByTestId('select-first-kb'))
+  expect(mockPush).toHaveBeenCalledWith('/knowledge/default/TestKB?kb=999')
+})
+
+it('updates the mobile display name while preserving the selected ID, document path and task', async () => {
+  resetMockTree()
+  const company = { ...baseKb, id: 202, name: 'New name', namespace: 'company' }
+  mockTree.orgKbs = [company]
+  mockSearchParams = new URLSearchParams('kb=202&taskId=123&documentId=7')
+  mockGetKnowledgeBase.mockResolvedValue(company)
+  const replaceState = jest.spyOn(window.history, 'replaceState')
+  render(<KnowledgeDocumentPageMobile initialKbName="Old name" initialDocPath="folder/doc.md" />)
+  expect(await screen.findByTestId('detail-kb-id')).toHaveTextContent('202')
+  const url = new URL(String(replaceState.mock.calls[0][2]), 'https://example.com')
+  expect(url.pathname).toBe('/knowledge/public/New%20name/folder/doc.md')
+  expect(url.searchParams.get('kb')).toBe('202')
+  expect(url.searchParams.get('taskId')).toBe('123')
+  expect(url.searchParams.get('documentId')).toBe('7')
+  replaceState.mockRestore()
+})
+
+it('hides the old mobile detail when the ID changes while lists are loading', async () => {
+  resetMockTree()
+  const company = { ...baseKb, id: 202, name: 'OrgKB', namespace: 'company' }
+  mockTree.orgKbs = [company]
+  mockSearchParams.set('kb', '202')
+  mockGetKnowledgeBase.mockResolvedValue(company)
+  const { rerender } = render(<KnowledgeDocumentPageMobile initialKbName="OrgKB" />)
+  await screen.findByTestId('detail-kb-id')
+  mockTree.loading = true
+  mockSearchParams.set('kb', '404')
+  rerender(<KnowledgeDocumentPageMobile initialKbName="OrgKB" />)
+  expect(screen.queryByTestId('mock-detail-panel')).not.toBeInTheDocument()
+  expect(screen.getByTestId('knowledge-url-loading')).toBeInTheDocument()
 })

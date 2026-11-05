@@ -17,7 +17,14 @@ from app.models.wework_notification import WeworkNotification
 
 
 def _load(filename: str, operations: Operations) -> ModuleType:
-    path = Path(__file__).parents[2] / "alembic" / "versions" / filename
+    path = (
+        Path(__file__).parents[2].parent
+        / "backend-rs"
+        / "migrations"
+        / "reference"
+        / "versions"
+        / filename
+    )
     spec = importlib.util.spec_from_file_location(filename.removesuffix(".py"), path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
