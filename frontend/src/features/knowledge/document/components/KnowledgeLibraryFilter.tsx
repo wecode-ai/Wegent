@@ -3,8 +3,9 @@
 
 'use client'
 
-import { useState } from 'react'
-import { Check, ChevronDown } from 'lucide-react'
+import { useState, useRef } from 'react'
+import { useRouter } from 'next/navigation'
+import { Check, ChevronDown, Settings } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Command,
@@ -40,6 +41,8 @@ export function KnowledgeLibraryFilter({
   mobile: boolean
 }) {
   const { t } = useTranslation('knowledge')
+  const router = useRouter()
+  const manageRequested = useRef(false)
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
   const query = search.trim().toLocaleLowerCase()
@@ -105,6 +108,14 @@ export function KnowledgeLibraryFilter({
       </PopoverTrigger>
       <PopoverContent
         align="start"
+        collisionPadding={8}
+        onCloseAutoFocus={event => {
+          if (manageRequested.current) {
+            event.preventDefault()
+            manageRequested.current = false
+            router.push('/settings?tab=group-manager')
+          }
+        }}
         className="flex max-h-[min(20rem,var(--radix-popover-content-available-height))] w-[var(--radix-popover-trigger-width)] flex-col overflow-hidden p-0"
       >
         <Command
@@ -188,6 +199,22 @@ export function KnowledgeLibraryFilter({
             </div>
           </CommandList>
         </Command>
+        <div className="shrink-0 border-t border-border p-1">
+          <Button asChild variant="ghost" className="min-h-11 min-w-11 w-full justify-start">
+            <a
+              href="/settings?tab=group-manager"
+              data-testid="knowledge-manage-teams"
+              onClick={event => {
+                event.preventDefault()
+                manageRequested.current = true
+                setOpen(false)
+              }}
+            >
+              <Settings className="h-4 w-4" />
+              {t('document.navigation.manageTeams')}
+            </a>
+          </Button>
+        </div>
       </PopoverContent>
     </Popover>
   )

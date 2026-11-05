@@ -1016,7 +1016,8 @@
       "searchLibraryFilters": "Search space names or identifiers",
       "noMatchingFilters": "No matching filters",
       "typeAndSort": "Type and sort",
-      "companySpace": "Company space"
+      "companySpace": "Company space",
+      "manageTeams": "Manage teams"
     },
     "creation": {
       "created": "Library created",

@@ -1016,7 +1016,8 @@
       "searchLibraryFilters": "搜索空间名称或标识",
       "noMatchingFilters": "无匹配的筛选项",
       "typeAndSort": "类型与排序",
-      "companySpace": "公司空间"
+      "companySpace": "公司空间",
+      "manageTeams": "管理团队"
     },
     "creation": {
       "created": "库已创建",

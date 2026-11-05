@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useState } from 'react'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import {
   KnowledgeLibraryFilter,
@@ -12,6 +12,9 @@ import {
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
 }))
+
+const mockPush = jest.fn()
+jest.mock('next/navigation', () => ({ useRouter: () => ({ push: mockPush }) }))
 
 const groups: KnowledgeTeamOption[] = [
   { id: 'group-core', name: 'core', displayName: 'Core team', kbCount: 2 },
@@ -116,4 +119,48 @@ it('selects personal space with its count, including zero, and clears the filter
   await user.click(screen.getByTestId('knowledge-team-filter'))
   await user.click(screen.getByTestId('knowledge-team-option-all'))
   expect(changed).toHaveBeenLastCalledWith(null)
+})
+
+it.each(['', 'missing'])(
+  'keeps team management outside options and closes before navigating (search=%s)',
+  async query => {
+    const changed = jest.fn()
+    mockPush.mockImplementation(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    render(
+      <KnowledgeLibraryFilter
+        groups={[]}
+        personalCount={0}
+        value={null}
+        mobile
+        onValueChange={changed}
+      />
+    )
+    const user = userEvent.setup()
+    await user.click(screen.getByTestId('knowledge-team-filter'))
+    if (query) await user.type(screen.getByTestId('knowledge-team-search'), query)
+    const link = screen.getByRole('link', { name: 'document.navigation.manageTeams' })
+    expect(link).toHaveAttribute('href', '/settings?tab=group-manager')
+    expect(screen.getByRole('listbox')).not.toContainElement(link)
+    await user.click(link)
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/settings?tab=group-manager'))
+    expect(changed).not.toHaveBeenCalled()
+    mockPush.mockReset()
+  }
+)
+
+it('returns focus to the filter on Escape without navigating', async () => {
+  render(
+    <KnowledgeLibraryFilter
+      groups={groups}
+      personalCount={1}
+      value="group-core"
+      mobile
+      onValueChange={jest.fn()}
+    />
+  )
+  const user = userEvent.setup()
+  await user.click(screen.getByTestId('knowledge-team-filter'))
+  await user.keyboard('{Escape}')
+  await waitFor(() => expect(screen.getByTestId('knowledge-team-filter')).toHaveFocus())
+  expect(mockPush).not.toHaveBeenCalled()
 })

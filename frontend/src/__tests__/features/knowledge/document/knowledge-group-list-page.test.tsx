@@ -13,6 +13,8 @@ import {
   type KbDataItem,
 } from '@/features/knowledge/document/components/KnowledgeGroupListPage'
 
+jest.mock('next/navigation', () => ({ useRouter: () => ({ push: jest.fn() }) }))
+
 const mockGetRuntimeConfigSync = jest.fn()
 
 jest.mock('@/hooks/useTranslation', () => ({
