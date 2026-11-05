@@ -44,6 +44,33 @@ def test_apply_image_generation_params_overrides_request_size() -> None:
     }
 
 
+@pytest.mark.asyncio
+async def test_trigger_ai_response_unified_forwards_new_session() -> None:
+    """The unified trigger must preserve fresh-session requests."""
+    from app.services.chat.trigger import unified as trigger_unified
+
+    with patch.object(
+        trigger_unified,
+        "build_execution_request",
+        AsyncMock(return_value=MagicMock()),
+    ) as mock_build_execution_request, patch(
+        "app.services.execution.execution_dispatcher.dispatch",
+        AsyncMock(),
+    ):
+        await trigger_unified.trigger_ai_response_unified(
+            task=SimpleNamespace(id=1),
+            assistant_subtask=SimpleNamespace(id=2),
+            team=SimpleNamespace(id=3),
+            user=SimpleNamespace(id=4),
+            message="hello",
+            payload=None,
+            task_room="task_1",
+            new_session=True,
+        )
+
+    assert mock_build_execution_request.await_args.kwargs["new_session"] is True
+
+
 def test_generation_config_for_log_excludes_capabilities() -> None:
     from app.services.chat.trigger import request_preparation as trigger_unified
 
