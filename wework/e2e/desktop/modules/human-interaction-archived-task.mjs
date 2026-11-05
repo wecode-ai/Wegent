@@ -36,7 +36,8 @@ export function handleArchivedTaskInteractionModel(body, response) {
 
 /** Exercise real archival after the inbox has cached an unanswered question. */
 export async function verifyArchivedTaskInteractionCleanup(control, timeoutMs) {
-  await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
+  // The preceding multi-window flow can detach the initial fixed task tab.
+  await control.command('click', `${PAGE} [data-testid="interaction-open-original"]`)
   const newTask = `${ORIGINAL} [data-testid="new-chat-button"]`
   await control.command('waitFor', newTask, { visible: true })
   await control.command('click', newTask)
@@ -61,7 +62,8 @@ export async function verifyArchivedTaskInteractionCleanup(control, timeoutMs) {
     text: QUESTION,
     timeoutMs,
   })
-  await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
+  await control.command('click', `${PAGE} [data-testid="interaction-list-item"]`)
+  await control.command('click', `${PAGE} [data-testid="interaction-open-original"]`)
   await control.command('hover', `[data-testid="runtime-local-task-row-${taskId}"]`)
   await control.command('click', `[data-testid="runtime-local-task-archive-${taskId}"]`)
   await control.command('waitFor', `[data-testid="runtime-local-task-archive-toast-${taskId}"]`, {
