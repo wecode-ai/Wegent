@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict'
+import { performance } from 'node:perf_hooks'
+
+const CANCELLATION_DEADLINE_MS = 5_000
 
 /** Cancel a real bounded native observation after the host reports it active. */
 export async function verifyComputerUseCancellation(control, record, timeoutMs) {
@@ -26,6 +29,7 @@ export async function verifyComputerUseCancellation(control, record, timeoutMs) 
   assert.ok(window, 'Cancellation requires the isolated host window')
 
   const controller = new AbortController()
+  const startedAt = performance.now()
   const operation = request(
     'verify_state',
     {
@@ -48,13 +52,27 @@ export async function verifyComputerUseCancellation(control, record, timeoutMs) 
     controller.abort()
     const result = await operation
     assert.equal(result.error?.name, 'AbortError', 'The pending observation was not cancelled')
+    // A local AbortError alone does not prove server cancellation. Bound the
+    // complete observation below the SDK's 10-second natural timeout.
+    const remainingMs = CANCELLATION_DEADLINE_MS - (performance.now() - startedAt)
+    assert.ok(remainingMs > 0, 'The native cancellation deadline expired before acknowledgement')
     await control.command('waitFor', '[data-testid="computer-use-activity-indicator"]', {
       visible: false,
-      timeoutMs,
+      timeoutMs: Math.min(timeoutMs, remainingMs),
     })
+    assert.ok(
+      performance.now() - startedAt < CANCELLATION_DEADLINE_MS,
+      'The observation finished too late to distinguish cancellation from natural timeout'
+    )
     const after = await request('list_windows', { pid: record.pid }, AbortSignal.timeout(timeoutMs))
     assert.equal(after.ok, true, 'The cancelled observation left action admission occupied')
     assert.equal(after.data.isError, false, 'Native observation did not recover after cancellation')
+    assert.ok(
+      JSON.parse(after.data.structuredJson).windows.some(
+        candidate => candidate.window_id === window.window_id
+      ),
+      'The target window disappeared instead of its observation being cancelled'
+    )
   } finally {
     controller.abort()
     await operation
