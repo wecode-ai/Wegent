@@ -99,7 +99,6 @@ function row(
     description: null,
     kb_type: 'notebook',
     namespace: 'default',
-    namespace_level: 'personal',
     document_count: 0,
     updated_at: '2026-11-04T00:00:00Z',
     created_at: '2026-11-04T00:00:00Z',
@@ -114,9 +113,9 @@ function row(
 function dataset(): AllGroupedKnowledgeResponse {
   return {
     personal: { created_by_me: [row(1, { user_id: 1 })], shared_with_me: [row(2)] },
-    groups: ['alpha', 'beta', 'gamma'].map(name => ({
+    groups: ['alpha', 'beta', 'gamma', 'origin'].map(name => ({
       group_name: name,
-      group_display_name: 'Same display name',
+      group_display_name: name === 'origin' ? 'Real origin' : 'Same display name',
       kb_count: name === 'gamma' ? 0 : 1,
       knowledge_bases:
         name === 'gamma'
@@ -125,8 +124,6 @@ function dataset(): AllGroupedKnowledgeResponse {
               row(3, {
                 user_id: 1,
                 namespace: 'origin',
-                namespace_level: 'group',
-                namespace_display_name: 'Real origin',
                 group_type: 'group',
                 group_id: name,
                 my_role: 'Owner',
@@ -141,8 +138,6 @@ function dataset(): AllGroupedKnowledgeResponse {
         row(4, {
           user_id: 1,
           namespace: 'company',
-          namespace_level: 'organization',
-          namespace_display_name: 'Actual company',
           group_type: 'organization',
           my_role: 'Owner',
         }),
@@ -176,7 +171,7 @@ describe('relationship navigation and scoped requests', () => {
     ])
     expect(result.current.visibleKnowledgeBases.personalSharedWithMe.map(kb => kb.id)).toEqual([2])
     expect(result.current.allKnowledgeBasesWithGroupInfo.find(kb => kb.id === 3)?.team_ids).toEqual(
-      ['alpha', 'origin', 'beta']
+      ['alpha', 'beta', 'origin']
     )
     expect(result.current.getKbGroupInfo(result.current.allKnowledgeBases[2]).groupName).toBe(
       'Real origin'
@@ -337,7 +332,7 @@ it('does not resurrect a revoked library from a delayed detail response', async 
   expect(result.current.selectedKb).toBeNull()
 })
 
-it('offers the real source team for an accessible library without namespace membership', async () => {
+it('keeps an undisclosed namespace unknown instead of inventing a team directory entry', async () => {
   mockUser = { id: 1 }
   mockScope = 'backend:session-1'
   const data = dataset()
@@ -345,21 +340,16 @@ it('offers the real source team for an accessible library without namespace memb
   data.personal.shared_with_me = [
     row(5, {
       namespace: 'former-team',
-      namespace_level: 'group',
-      namespace_display_name: 'Former team',
     }),
   ]
   mockGetAllGrouped.mockResolvedValue(data)
   const { result } = renderHook(() => useKnowledgeSidebar())
   await waitFor(() => expect(result.current.hasLoaded).toBe(true))
-  expect(result.current.groups.find(group => group.id === 'group-former-team')).toMatchObject({
-    name: 'former-team',
-    displayName: 'Former team',
-    kbCount: 1,
-  })
-  expect(result.current.visibleKnowledgeBases.personalSharedWithMe[0].team_ids).toEqual([
-    'former-team',
-  ])
+  expect(result.current.groups.find(group => group.id === 'group-former-team')).toBeUndefined()
+  const kb = result.current.visibleKnowledgeBases.personalSharedWithMe[0]
+  expect(kb.namespace).toBe('former-team')
+  expect(kb.namespace_level).toBeNull()
+  expect(kb.namespace_display_name).toBeNull()
 })
 
 it('removes a confirmed inaccessible library from selection, rows, counts, and recent entries', async () => {

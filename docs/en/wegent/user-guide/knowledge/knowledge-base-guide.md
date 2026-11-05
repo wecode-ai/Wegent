@@ -31,13 +31,14 @@ The knowledge page lists active libraries you can currently access directly.
 
 | Entry | Contents |
 | --- | --- |
-| Created by me | Libraries you created in personal, team, or company spaces, including those you have shared |
+| All | All accessible libraries returned by the existing list API, including company libraries |
+| Created by me | Personal and team libraries you created, excluding company libraries |
 | Shared with me | Libraries created by others and accessible through user, team, or other grants, excluding company-space libraries |
 | Company knowledge | Libraries that belong to company spaces |
 
-Use the team filter to find libraries owned by or shared with a team. Multiple access paths produce one row per library; sharing does not change its actual space. Entries can overlap, so their counts cannot be added together. Search, type, and team filters affect the result count, while sidebar counts remain independent of these local filters.
+Filter by the library's actual personal or team space. All also supports company spaces; Company knowledge hides the space filter. Sharing with a team does not change ownership. Multiple access paths produce one row per library. Sidebar counts remain independent of local filters; filter option counts reflect the current entry, search, and type. Leaving a team does not trigger additional discovery beyond the existing list API.
 
-On mobile, expand navigation and use the vertical list to see names, spaces, permissions, and actions. The permissions action shows your effective access and its sources; managers can also manage members and roles. Existing library links, code libraries, and migration actions remain available.
+On mobile, expand navigation and use the vertical list to see names, spaces, and actions. Unknown space categories are shown as unknown; unconfirmed effective permissions are hidden in the list. The permissions action confirms effective access and its sources with the server; managers can also manage members and roles. Existing library links, code libraries, and migration actions remain available.
 
 ---
 

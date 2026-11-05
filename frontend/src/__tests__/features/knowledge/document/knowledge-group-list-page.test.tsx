@@ -609,7 +609,7 @@ it('uses readable vertical mobile rows with space, role, permission and migratio
   const row = screen.getByTestId('kb-row-71')
   expect(row).toHaveTextContent(name)
   expect(row).toHaveTextContent('Personal space')
-  expect(row).toHaveTextContent('document.permission.role.Owner')
+  expect(row).not.toHaveTextContent('document.permission.role.Owner')
   expect(screen.getByRole('button', { name })).toHaveClass('break-words')
   expect(screen.queryByTestId('permission-kb-71')).not.toBeInTheDocument()
   expect(screen.getByTestId('more-kb-71')).toHaveClass('min-h-11', 'min-w-11')

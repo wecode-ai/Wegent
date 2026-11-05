@@ -128,9 +128,9 @@ function KnowledgeDocumentSession({
     sidebar.selectedKb?.kb_type,
     sidebar.selectedKb?.id
   )
-  const verifiedRole = sidebar.allKnowledgeBasesWithGroupInfo.find(
-    kb => kb.id === sidebar.selectedKb?.id
-  )?.my_role
+  const verifiedRole =
+    sidebar.allKnowledgeBasesWithGroupInfo.find(kb => kb.id === sidebar.selectedKb?.id)
+      ?.effective_role ?? undefined
   const selectedKbId = sidebar.selectedKb?.id
   const selectedKbType = sidebar.selectedKb?.kb_type
   const [codeWikiView, setCodeWikiView] = useState<CodeWikiView>('wiki')
@@ -495,6 +495,7 @@ function KnowledgeDocumentSession({
 
   const handleGroupClick = useCallback(
     (groupId: string, groupType?: string) => {
+      if (groupType === 'unknown') return
       let sidebarGroupId: string
       if (groupType === 'personal' || groupId === 'default') {
         sidebarGroupId = 'personal'
@@ -770,11 +771,6 @@ function KnowledgeDocumentSession({
         <KnowledgeAccessDialog
           kbId={permissionKb.id}
           kbNamespace={permissionKb.namespace}
-          canManage={
-            dialogs.createdKb
-              ? !createdRow || canManageKbInList(createdRow)
-              : canManageKbInList(accessKb!)
-          }
           resourceCreated={Boolean(dialogs.createdKb)}
           restoreFocus={() => {
             if (createTrigger.current?.isConnected) createTrigger.current.focus()

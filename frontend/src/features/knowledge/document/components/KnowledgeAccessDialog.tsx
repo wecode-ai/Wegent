@@ -28,7 +28,7 @@ interface KnowledgeAccessDialogProps {
   onRetryRefresh?: () => void
   kbId: number
   kbNamespace?: string
-  canManage: boolean
+  canManage?: boolean
   onClose: () => void
   onChanged: () => void
   onAccessLost: () => void
@@ -105,7 +105,7 @@ function KnowledgeAccessSession(props: KnowledgeAccessDialogProps) {
   }
   const canManage =
     !blocked &&
-    props.canManage &&
+    props.canManage !== false &&
     sources?.has_access &&
     (sources.is_creator || isManager(sources.effective_role))
   return (

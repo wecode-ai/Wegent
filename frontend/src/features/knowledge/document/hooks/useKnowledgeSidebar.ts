@@ -12,7 +12,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import client, { ApiError } from '@/apis/client'
 import { useTranslation } from '@/hooks/useTranslation'
-import { collectNavigationKnowledge } from '../navigation'
+import { collectNavigationKnowledge, type NavigationKnowledgeBase } from '../navigation'
 import { knowledgeBaseApi } from '@/apis/knowledge-base'
 import { getKnowledgeBase } from '@/apis/knowledge'
 import { useUser } from '@/features/common/UserContext'
@@ -59,9 +59,9 @@ export type { KbGroupInfo } from '@/types/knowledge'
 
 export interface VisibleKnowledgeBases {
   all: KnowledgeBase[]
-  allWithGroupInfo: KnowledgeBaseWithGroupInfo[]
-  personalCreatedByMe: KnowledgeBaseWithGroupInfo[]
-  personalSharedWithMe: KnowledgeBaseWithGroupInfo[]
+  allWithGroupInfo: NavigationKnowledgeBase[]
+  personalCreatedByMe: NavigationKnowledgeBase[]
+  personalSharedWithMe: NavigationKnowledgeBase[]
 }
 
 export interface UseKnowledgeSidebarReturn {
@@ -105,7 +105,7 @@ export interface UseKnowledgeSidebarReturn {
 
   // Raw KBs for navigation and ID lookups
   allKnowledgeBases: KnowledgeBase[]
-  allKnowledgeBasesWithGroupInfo: KnowledgeBaseWithGroupInfo[]
+  allKnowledgeBasesWithGroupInfo: NavigationKnowledgeBase[]
   // Filtered KBs for display
   visibleKnowledgeBases: VisibleKnowledgeBases
 
@@ -356,9 +356,11 @@ export function useKnowledgeSidebar({
         groupType:
           row?.namespace_level === 'organization'
             ? 'organization'
-            : kb.namespace === 'default'
+            : row?.namespace_level === 'personal'
               ? 'personal'
-              : 'group',
+              : row?.namespace_level === 'group'
+                ? 'group'
+                : 'unknown',
       }
     },
     [allKnowledgeBasesWithGroupInfo, t]
@@ -405,18 +407,17 @@ export function useKnowledgeSidebar({
       kbCount: visibleKnowledgeBases.personalSharedWithMe.length,
     })
 
-    // Visible source spaces are filterable even without namespace membership.
+    const companyNamespaces = new Set([
+      allGroupedData.organization.namespace,
+      ...allKnowledgeBasesWithGroupInfo
+        .filter(kb => kb.namespace_level === 'organization')
+        .map(kb => kb.namespace),
+    ])
     const teamNames = new Map(
-      allGroupedData.groups.map(group => [
-        group.group_name,
-        group.group_display_name || group.group_name,
-      ])
+      allGroupedData.groups
+        .filter(group => !companyNamespaces.has(group.group_name))
+        .map(group => [group.group_name, group.group_display_name || group.group_name])
     )
-    allKnowledgeBasesWithGroupInfo.forEach(kb => {
-      if (kb.namespace_level === 'group' && !teamNames.has(kb.namespace)) {
-        teamNames.set(kb.namespace, kb.namespace_display_name || kb.namespace)
-      }
-    })
     teamNames.forEach((displayName, name) => {
       result.push({
         id: 'group-' + name,

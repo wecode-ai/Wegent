@@ -190,13 +190,6 @@ function row(kb = baseKb, level = 'personal'): KnowledgeBaseWithGroupInfo {
     group_name: 'Destination',
     group_type:
       level === 'organization' ? 'organization' : level === 'group' ? 'group' : 'personal',
-    namespace_level: level,
-    namespace_display_name:
-      level === 'personal'
-        ? 'Personal space'
-        : level === 'group'
-          ? 'Real team space'
-          : 'Real company space',
     my_role: 'Owner',
   }
 }
@@ -231,7 +224,8 @@ it('renders the shared relationship list as readable mobile rows and keeps migra
   render(<KnowledgeDocumentPageMobile />)
   expect(await screen.findByTestId('knowledge-mobile-list')).toBeInTheDocument()
   expect(screen.queryByRole('table')).not.toBeInTheDocument()
-  expect(screen.getByTestId('kb-row-7')).toHaveTextContent('Personal space')
+  expect(screen.getByTestId('kb-row-7')).toHaveTextContent('document.navigation.personalSpace')
+  expect(screen.getByTestId('kb-row-7')).not.toHaveTextContent('document.permission.role.Owner')
   expect(screen.queryByTestId('migrate-kb-7')).not.toBeInTheDocument()
   const user = userEvent.setup()
   await user.click(screen.getByTestId('more-kb-7'))
@@ -442,8 +436,17 @@ it('keeps company libraries only in all and company entries and filters the dedu
     'organization'
   )
   const personal = row({ ...baseKb, id: 43, name: 'Shared personal', user_id: 2 })
-  data.personal.created_by_me.push(ownedCompany)
-  data.personal.shared_with_me = [sharedCompany, personal]
+  data.groups = [
+    {
+      group_name: 'receiver',
+      group_display_name: 'Receiver',
+      kb_count: 1,
+      knowledge_bases: [
+        { ...ownedCompany, group_id: 'receiver', group_name: 'Receiver', group_type: 'group' },
+      ],
+    },
+  ]
+  data.personal.shared_with_me = [personal]
   data.organization.knowledge_bases = [ownedCompany, sharedCompany]
   render(<KnowledgeDocumentPageMobile />)
   await screen.findByTestId('kb-row-41')

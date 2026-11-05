@@ -14,7 +14,7 @@
 'use client'
 
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
-import { COMPANY_SPACE_FILTER, PERSONAL_SPACE_FILTER } from '../navigation'
+import { COMPANY_SPACE_FILTER, PERSONAL_SPACE_FILTER, getListedPermission } from '../navigation'
 import { Input } from '@/components/ui/input'
 import { getKbShareSourceText } from '@/features/knowledge/utils/share-source'
 import {
@@ -271,13 +271,8 @@ export function KnowledgeGroupListPage({
     [category]
   )
 
-  // Helper function to get my_role from KB
-  const getKbRole = useCallback((kb: KbDataItem): string | null | undefined => {
-    if ('my_role' in kb) {
-      return kb.my_role
-    }
-    return undefined
-  }, [])
+  const getKbRole = getListedPermission
+  const showPermissionInfo = dataSource.some(kb => getListedPermission(kb) !== null)
 
   // Sort function for knowledge bases
   const sortKbs = useCallback(
@@ -442,9 +437,11 @@ export function KnowledgeGroupListPage({
             {t('document.table.from', '来自')}
           </TableHead>
         )}
-        <TableHead className="h-auto w-24 px-3 py-2 font-medium">
-          {t('document.table.permission', '权限')}
-        </TableHead>
+        {showPermissionInfo && (
+          <TableHead className="h-auto w-24 px-3 py-2 font-medium">
+            {t('document.table.permission', '权限')}
+          </TableHead>
+        )}
         <TableHead className="h-auto w-28 px-3 py-2 font-medium">
           <button
             className="flex items-center hover:text-text-primary transition-colors"
@@ -488,6 +485,7 @@ export function KnowledgeGroupListPage({
           onMigrate={onMigrateKb ? () => onMigrateKb(kb) : undefined}
           onToggleFavorite={onToggleFavorite ? e => handleToggleFavorite(e, kb) : undefined}
           isFavorite={isFavorite?.(kb.id)}
+          showPermissionInfo={showPermissionInfo}
           showGroupInfo={showGroupColumn}
           showFromInfo={showFromColumn}
           groupInfo={getKbGroupInfo?.(kb)}
@@ -890,6 +888,7 @@ interface KnowledgeBaseRowProps {
   onMigrate?: () => void
   onToggleFavorite?: (e: React.MouseEvent) => void
   isFavorite?: boolean
+  showPermissionInfo?: boolean
   showGroupInfo?: boolean
   showFromInfo?: boolean
   groupInfo?: KbGroupInfo
@@ -905,6 +904,7 @@ function KnowledgeBaseRow({
   onMigrate,
   onToggleFavorite: _onToggleFavorite,
   isFavorite,
+  showPermissionInfo,
   showGroupInfo,
   showFromInfo,
   groupInfo,
@@ -944,10 +944,13 @@ function KnowledgeBaseRow({
         </TableCell>
       )}
 
-      {/* Permission column */}
-      <TableCell className="px-3 py-2 text-text-secondary whitespace-nowrap">
-        {'my_role' in kb && kb.my_role ? t(`document.permission.role.${kb.my_role}`) : '--'}
-      </TableCell>
+      {showPermissionInfo && (
+        <TableCell className="px-3 py-2 text-text-secondary whitespace-nowrap">
+          {getListedPermission(kb)
+            ? t(`document.permission.role.${getListedPermission(kb)}`)
+            : null}
+        </TableCell>
+      )}
 
       {/* Created at column */}
       <TableCell className="px-3 py-2 text-text-secondary whitespace-nowrap">

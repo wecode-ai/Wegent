@@ -5,6 +5,7 @@ import type { ReactNode } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { KbGroupInfo } from '@/types/knowledge'
 import type { KbDataItem } from './KnowledgeGroupListPage'
+import { getListedPermission } from '../navigation'
 import { KnowledgeBaseIcon } from './KnowledgeBaseIcon'
 
 export function KnowledgeMobileList({
@@ -43,14 +44,12 @@ export function KnowledgeMobileList({
                 <dt className="sr-only">{t('document.navigation.space')}</dt>
                 <dd>{getSpace?.(kb).groupName ?? t('document.navigation.unknownSpace')}</dd>
               </div>
-              <div>
-                <dt className="sr-only">{t('document.navigation.effectivePermission')}</dt>
-                <dd>
-                  {'my_role' in kb && kb.my_role
-                    ? t(`document.permission.role.${kb.my_role}`)
-                    : '—'}
-                </dd>
-              </div>
+              {getListedPermission(kb) && (
+                <div>
+                  <dt className="sr-only">{t('document.navigation.effectivePermission')}</dt>
+                  <dd>{t(`document.permission.role.${getListedPermission(kb)}`)}</dd>
+                </div>
+              )}
             </dl>
           </div>
           <div className="shrink-0">{renderActions(kb)}</div>
