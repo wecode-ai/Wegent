@@ -315,18 +315,16 @@ export function useConversationSearchTarget({
         scroller.addEventListener('scrollend', finishNavigation)
         scrollToContentPosition(scroller, top, behavior)
         recordLayout(startedAt)
-        if (behavior === 'auto') finishNavigation()
-        else {
-          const destination = Math.min(
-            top,
-            Math.max(0, scroller.scrollHeight - scroller.clientHeight)
-          )
-          navigationFrame = requestAnimationFrame(() => {
-            navigationFrame = 0
-            // A no-op or clamped scroll does not dispatch scrollend.
-            if (Math.abs(scroller.scrollTop - destination) < 1) finishNavigation()
-          })
-        }
+        const destination = Math.min(
+          top,
+          Math.max(0, scroller.scrollHeight - scroller.clientHeight)
+        )
+        navigationFrame = requestAnimationFrame(() => {
+          navigationFrame = 0
+          // Let native scroll observers read the new offset before releasing ownership.
+          // A no-op or clamped scroll does not dispatch scrollend.
+          if (Math.abs(scroller.scrollTop - destination) < 1) finishNavigation()
+        })
         return
       }
       scheduleNavigation()
@@ -428,7 +426,7 @@ export function useConversationSearchTarget({
     const stopNativeScroll = () => {
       if (!navigationScrolling) return
       scroller.removeEventListener('scrollend', finishNavigation)
-      scrollToContentPosition(scroller, scroller.scrollTop, 'auto')
+      if (behavior === 'smooth') scrollToContentPosition(scroller, scroller.scrollTop, 'auto')
       navigationScrolling = false
     }
     const cancelNavigation = (pauseHighlights = true) => {
@@ -456,7 +454,10 @@ export function useConversationSearchTarget({
     )
     for (const element of inputTargets)
       for (const type of ['wheel', 'pointerdown', 'touchstart', 'keydown'])
-        element.addEventListener(type, cancelForInput, { capture: true, passive: true })
+        element.addEventListener(type, cancelForInput, {
+          capture: true,
+          passive: true,
+        })
     cancelNavigationRef.current = cancelNavigation
     if (navigationCancelled) {
       observer.disconnect()

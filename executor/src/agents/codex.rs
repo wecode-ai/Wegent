@@ -158,7 +158,6 @@ mod thread_action;
 
 use debug_stdout::CodexStdout;
 use diagnostics::{json_scalar_field, json_string_field};
-#[cfg(test)]
 use home::WEGENT_CODEX_HOME_ENV;
 #[cfg(test)]
 use home::WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV;
@@ -386,6 +385,13 @@ impl CodexAppServerClient {
         let mut environment = codex_process_environment(runtime, launch);
         if let Some(home) = &self.home {
             environment.insert(CODEX_HOME_ENV.to_owned(), home.display().to_string());
+        } else {
+            // Remember the effective default Home with the running process.
+            // Registry entries without a named Home can outlive a Home change.
+            environment.insert(
+                WEGENT_CODEX_HOME_ENV.to_owned(),
+                wework_codex_home().display().to_string(),
+            );
         }
         environment
     }

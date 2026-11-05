@@ -222,48 +222,6 @@ else
     fi
 fi
 
-echo "Starting Python Backend upstream on http://127.0.0.1:$PYTHON_UPSTREAM_PORT"
-(
-    cd "$BACKEND_DIR"
-    # brz-http-gateway 0.1.4 does not install hyper-util's pool timer. Keep
-    # upstream sockets alive beyond the longest CI job so its pooled client
-    # cannot reuse a socket that Uvicorn expired during the run.
-    exec "$PYTHON_UVICORN" app.main:app \
-        --reload \
-        --reload-dir . \
-        --reload-dir ../shared \
-        --reload-exclude '.venv/*' \
-        --reload-exclude '__pycache__/*' \
-        --reload-exclude '*.pyc' \
-        --reload-exclude '.git/*' \
-        --host 127.0.0.1 \
-        --port "$PYTHON_UPSTREAM_PORT" \
-        --timeout-keep-alive 2400 \
-        --log-level debug
-) &
-PYTHON_PID=$!
-write_state
-
-wait_for_python() {
-    local timeout=${WEGENT_PYTHON_READY_TIMEOUT:-180}
-    local deadline=$((SECONDS + timeout))
-    while kill -0 "$PYTHON_PID" 2>/dev/null; do
-        if (exec 3<>"/dev/tcp/127.0.0.1/$PYTHON_UPSTREAM_PORT") 2>/dev/null; then
-            return 0
-        fi
-        if [ "$SECONDS" -ge "$deadline" ]; then
-            echo "Error: Python upstream did not become ready within ${timeout}s" >&2
-            return 1
-        fi
-        sleep 3
-    done
-    wait "$PYTHON_PID" || true
-    echo "Error: Python upstream exited before becoming ready" >&2
-    return 1
-}
-
-wait_for_python
-
 echo "Starting Rust gateway on http://$PUBLIC_HOST:$PUBLIC_PORT"
 echo "Fallback upstream: http://127.0.0.1:$PYTHON_UPSTREAM_PORT"
 echo "Route config: $ROUTES_FILE"
@@ -304,6 +262,50 @@ wait_for_rust() {
 }
 
 wait_for_rust
+
+echo "Starting Python Backend upstream on http://127.0.0.1:$PYTHON_UPSTREAM_PORT"
+(
+    cd "$BACKEND_DIR"
+    export DB_INITIALIZATION_OWNER=rust
+    # brz-http-gateway 0.1.4 does not install hyper-util's pool timer. Keep
+    # upstream sockets alive beyond the longest CI job so its pooled client
+    # cannot reuse a socket that Uvicorn expired during the run.
+    exec "$PYTHON_UVICORN" app.main:app \
+        --reload \
+        --reload-dir . \
+        --reload-dir ../shared \
+        --reload-exclude '.venv/*' \
+        --reload-exclude '__pycache__/*' \
+        --reload-exclude '*.pyc' \
+        --reload-exclude '.git/*' \
+        --host 127.0.0.1 \
+        --port "$PYTHON_UPSTREAM_PORT" \
+        --timeout-keep-alive 2400 \
+        --log-level debug
+) &
+PYTHON_PID=$!
+write_state
+
+wait_for_python() {
+    local timeout=${WEGENT_PYTHON_READY_TIMEOUT:-180}
+    local deadline=$((SECONDS + timeout))
+    while kill -0 "$PYTHON_PID" 2>/dev/null; do
+        if (exec 3<>"/dev/tcp/127.0.0.1/$PYTHON_UPSTREAM_PORT") 2>/dev/null; then
+            return 0
+        fi
+        if [ "$SECONDS" -ge "$deadline" ]; then
+            echo "Error: Python upstream did not become ready within ${timeout}s" >&2
+            return 1
+        fi
+        sleep 3
+    done
+    wait "$PYTHON_PID" || true
+    echo "Error: Python upstream exited before becoming ready" >&2
+    return 1
+}
+
+wait_for_python
+
 
 while kill -0 "$PYTHON_PID" 2>/dev/null && kill -0 "$RUST_PID" 2>/dev/null; do
     sleep 1

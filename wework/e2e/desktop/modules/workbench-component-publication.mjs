@@ -2,9 +2,18 @@ import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
+
+export function occupiedPublicationEntry(root, source, target) {
+  if (!basename(source).startsWith('.content-')) return null
+  const parent = dirname(target)
+  if (parent === join(root, 'data', 'managed-components', 'composed', 'wework-core-plugins'))
+    return join('wework-app', 'client.js')
+  if (parent === join(root, 'runtimes')) return 'runtime.json'
+  return null
+}
 
 // Included in the Windows workbench-mode checkpoint using real packaged resources.
 export async function verifyWindowsComponentPublication({ resources, environment, root }) {
@@ -38,6 +47,7 @@ import { basename, dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 const input = JSON.parse(process.argv[2])
 const { waitForNativeFileHolder } = await import(pathToFileURL(input.holderHelper).href)
+const occupiedPublicationEntry = ${occupiedPublicationEntry.toString()}
 app.setPath('userData', join(input.root, 'electron'))
 const originalSymlink = fs.symlink
 let child
@@ -54,9 +64,8 @@ async function holdFile(file, releaseAfterMs = 0) {
   await waitForNativeFileHolder(child)
 }
 fs.symlink = async (source, target, type) => {
-  if (basename(source).startsWith('.content-')) {
-    const file = basename(dirname(target)) === 'wework-core-plugins'
-      ? join('wework-app', 'client.js') : 'runtime.json'
+  const file = occupiedPublicationEntry(input.root, source, target)
+  if (file) {
     await holdFile(join(source, file))
     await assert.rejects(fs.rename(source, source + '.blocked'), error =>
       ['EPERM', 'EACCES', 'EBUSY'].includes(error.code))

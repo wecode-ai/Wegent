@@ -1,3 +1,5 @@
+import { realpath } from 'node:fs/promises'
+
 import {
   assertMentionRenderedAsToken,
   closeComposerPluginPicker,
@@ -795,7 +797,7 @@ async function installOfficialPluginFixture({
     'Installing the official plugin discarded the isolated E2E model provider'
   )
 
-  return { installSelector, pluginId, skillPath }
+  return { installSelector, pluginId, skillPath: await realpath(skillPath) }
 }
 
 async function openOfficialPluginChat(control, installSelector) {
@@ -1080,11 +1082,13 @@ async function verifyMarketplacePluginLifecycle({
 
   const blockingNetworkProxy = new BlockingNetworkProxy()
   await blockingNetworkProxy.start()
-  blockingNetworkProxy.block()
-  const blockedRequestCount = blockingNetworkProxy.requests.length
-  const importStartedAt = Date.now()
   try {
     await control.command('setLocalProxyUrl', 'body', { value: blockingNetworkProxy.url })
+    // Proxy changes restart Codex. Finish that setup before measuring local operations.
+    await control.command('reconcileLocalPluginCatalog', 'body')
+    blockingNetworkProxy.block()
+    const blockedRequestCount = blockingNetworkProxy.requests.length
+    const importStartedAt = Date.now()
     const imported = JSON.parse(
       await control.command('importPluginPackage', 'body', {
         value: JSON.stringify({ preview, overwrite: false }),

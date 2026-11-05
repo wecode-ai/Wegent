@@ -266,7 +266,7 @@ export class PythonRuntimeManager {
   }
 
   resumeAfterLogin(): Promise<PythonRuntimeStatus> {
-    if (!this.waitingForLogin) return this.status()
+    // A login event may precede the pending request's login-required result.
     return (this.activeEnsure?.catch(() => undefined) ?? Promise.resolve()).then(() => {
       if (!this.waitingForLogin) return this.status()
       this.automaticPreparationAttempted = false

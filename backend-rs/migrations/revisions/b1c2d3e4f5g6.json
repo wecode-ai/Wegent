@@ -1,0 +1,62 @@
+{
+  "revision": "b1c2d3e4f5g6",
+  "parents": [
+    "a7b8c9d0e1f3"
+  ],
+  "source": "20260325_b1c2d3e4f5g6_add_work_queue_tables.py",
+  "upgrade": [
+    {
+      "sql": [
+        "CREATE TABLE queue_messages (\n    id INTEGER NOT NULL AUTO_INCREMENT, \n    queue_id INTEGER NOT NULL COMMENT 'Work queue ID (kinds.id)', \n    sender_user_id INTEGER NOT NULL COMMENT 'Sender user ID', \n    recipient_user_id INTEGER NOT NULL COMMENT 'Recipient user ID (queue owner)', \n    source_task_id INTEGER NOT NULL COMMENT 'Original task/conversation ID', \n    source_subtask_ids JSON NOT NULL COMMENT 'List of original message IDs (subtask IDs)', \n    content_snapshot JSON NOT NULL COMMENT 'Snapshot of message content including text and attachments', \n    note TEXT NOT NULL COMMENT 'Sender''s note/comment', \n    priority ENUM('low','normal','high') NOT NULL, \n    status ENUM('unread','read','processing','processed','archived') NOT NULL, \n    process_result JSON NOT NULL COMMENT 'AI processing result', \n    process_task_id INTEGER NOT NULL COMMENT 'Task ID created for processing (0 = not processed)' DEFAULT '0', \n    created_at DATETIME NOT NULL DEFAULT now(), \n    updated_at DATETIME NOT NULL DEFAULT now(), \n    processed_at DATETIME NOT NULL COMMENT 'Processing completion time' DEFAULT now(), \n    PRIMARY KEY (id)\n)",
+        "CREATE INDEX ix_queue_messages_sender_user_id ON queue_messages (sender_user_id)",
+        "CREATE INDEX ix_queue_messages_recipient_user_id ON queue_messages (recipient_user_id)",
+        "CREATE INDEX ix_queue_messages_queue_id ON queue_messages (queue_id)",
+        "CREATE INDEX ix_queue_messages_status ON queue_messages (status)",
+        "CREATE INDEX ix_queue_messages_priority ON queue_messages (priority)",
+        "CREATE INDEX ix_queue_messages_source_task_id ON queue_messages (source_task_id)",
+        "CREATE INDEX ix_queue_messages_created_at ON queue_messages (created_at)",
+        "CREATE INDEX ix_queue_messages_queue_status ON queue_messages (queue_id, status)",
+        "CREATE INDEX ix_queue_messages_recipient_status ON queue_messages (recipient_user_id, status)"
+      ],
+      "when": {
+        "query": "SELECT COUNT(*) AS n FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='queue_messages'",
+        "nonzero": false
+      }
+    },
+    {
+      "sql": [
+        "CREATE TABLE recent_contacts (\n    id INTEGER NOT NULL AUTO_INCREMENT, \n    user_id INTEGER NOT NULL COMMENT 'User ID', \n    contact_user_id INTEGER NOT NULL COMMENT 'Contact user ID', \n    last_contact_at DATETIME NOT NULL COMMENT 'Last contact time' DEFAULT now(), \n    contact_count INTEGER NOT NULL COMMENT 'Contact count', \n    PRIMARY KEY (id)\n)",
+        "CREATE INDEX ix_recent_contacts_contact_user_id ON recent_contacts (contact_user_id)",
+        "CREATE INDEX ix_recent_contacts_user_id ON recent_contacts (user_id)",
+        "CREATE INDEX ix_recent_contacts_user_contact ON recent_contacts (user_id, contact_user_id)"
+      ],
+      "when": {
+        "query": "SELECT COUNT(*) AS n FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='recent_contacts'",
+        "nonzero": false
+      }
+    }
+  ],
+  "downgrade": [
+    {
+      "sql": [
+        "DROP INDEX ix_queue_messages_recipient_status ON queue_messages",
+        "DROP INDEX ix_queue_messages_queue_status ON queue_messages",
+        "DROP TABLE queue_messages"
+      ],
+      "when": {
+        "query": "SELECT COUNT(*) AS n FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='queue_messages'",
+        "nonzero": true
+      }
+    },
+    {
+      "sql": [
+        "DROP INDEX ix_recent_contacts_user_contact ON recent_contacts",
+        "DROP TABLE recent_contacts"
+      ],
+      "when": {
+        "query": "SELECT COUNT(*) AS n FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='recent_contacts'",
+        "nonzero": true
+      }
+    }
+  ]
+}

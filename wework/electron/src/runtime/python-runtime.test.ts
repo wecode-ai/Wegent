@@ -3,7 +3,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { PythonRuntimeManager } from './python-runtime.js'
-import { PythonRuntimeLoginRequiredError } from './python-runtime-downloads.js'
+import {
+  fetchPythonRuntimeDownloads,
+  PythonRuntimeLoginRequiredError,
+} from './python-runtime-downloads.js'
 
 const resolveDownloads = async () => ({
   uvUrl: 'https://github.com/astral-sh/uv/releases/download/0.9.5/uv-aarch64-apple-darwin.tar.gz',
@@ -51,6 +54,106 @@ describe('PythonRuntimeManager', () => {
     await expect(manager.prewarm()).resolves.toMatchObject({ state: 'error' })
     expect(load).toHaveBeenCalledTimes(2)
   })
+
+  test.each([
+    ['before', 'installed'],
+    ['after', 'installed'],
+    ['before', 'error'],
+    ['after', 'error'],
+  ] as const)(
+    'resumes once when login arrives %s the old 401, with recovery ending in %s',
+    async (loginOrder, recoveryState) => {
+      const directory = await temporaryDirectory()
+      const runtimeRoot = join(directory, 'managed-runtimes', 'python')
+      const runtimeBin = join(runtimeRoot, 'bin')
+      const pythonPath = join(runtimeBin, 'python3')
+      const uvPath = join(runtimeRoot, 'bootstrap', 'uv-0.9.5', 'uv')
+      await mkdir(join(runtimeRoot, 'bootstrap', 'uv-0.9.5'), { recursive: true })
+      await mkdir(runtimeBin, { recursive: true })
+      await writeFile(uvPath, 'cached uv fixture')
+      let requestStarted!: () => void
+      const started = new Promise<void>(resolve => (requestStarted = resolve))
+      let finishOldRequest!: (response: Response) => void
+      const oldResponse = new Promise<Response>(resolve => (finishOldRequest = resolve))
+      let token = 'synthetic-old-token'
+      const downloads = await resolveDownloads()
+      const metadataFetch = vi
+        .fn<typeof fetch>()
+        .mockImplementationOnce(() => {
+          requestStarted()
+          return oldResponse
+        })
+        .mockImplementation(async () =>
+          recoveryState === 'installed'
+            ? Response.json({
+                uv: { version: '0.9.5', url: downloads.uvUrl },
+                python: { version: '3.12.12', url: downloads.pythonUrl },
+                expiresAt: null,
+              })
+            : new Response('', { status: 503 })
+        )
+      const load = vi.fn(() =>
+        fetchPythonRuntimeDownloads({
+          connection: async () => ({ apiBaseUrl: 'https://backend.example.invalid/api' }),
+          accessToken: async () => token,
+          fetch: metadataFetch,
+          platform: 'darwin',
+          arch: 'arm64',
+        })
+      )
+      const artifactFetch = vi.fn()
+      const manager = new PythonRuntimeManager({
+        dataDirectory: directory,
+        environment: {},
+        platform: 'darwin',
+        arch: 'arm64',
+        resolveDownloads: load,
+        fetch: artifactFetch,
+        fileSha256: async () => 'd54989c0037e115f53c34a5658c2cc0ff5c44e35b5635ed9a5463b9caa364f81',
+        runFile: async file => {
+          if (file === uvPath) {
+            await writeFile(pythonPath, 'installed launcher fixture')
+            return { stdout: '', stderr: '' }
+          }
+          if (file === pythonPath) return { stdout: 'Python 3.12.12', stderr: '' }
+          throw new Error(`Unexpected command: ${file}`)
+        },
+      })
+      const preparation = manager.prewarm()
+      await started
+      if (loginOrder === 'after') {
+        finishOldRequest(new Response('', { status: 401 }))
+        await expect(preparation).resolves.toMatchObject({ state: 'notInstalled' })
+      }
+      token = 'synthetic-new-token'
+      const resumed = Promise.all([
+        manager.resumeAfterLogin().catch(error => error),
+        manager.resumeAfterLogin().catch(error => error),
+      ])
+      if (loginOrder === 'before') {
+        finishOldRequest(new Response('', { status: 401 }))
+        await preparation
+      }
+      for (const result of await resumed) {
+        if (recoveryState === 'installed')
+          expect(result).toMatchObject({ state: 'installed', version: '3.12.12' })
+        else {
+          expect(result).toBeInstanceOf(Error)
+          expect(result.message).toContain('HTTP 503')
+        }
+      }
+      expect(load).toHaveBeenCalledTimes(2)
+      expect(metadataFetch).toHaveBeenCalledTimes(2)
+      expect(metadataFetch.mock.calls.map(([, options]) => options?.headers)).toEqual([
+        expect.objectContaining({ authorization: 'Bearer synthetic-old-token' }),
+        expect.objectContaining({ authorization: 'Bearer synthetic-new-token' }),
+      ])
+      expect(artifactFetch).not.toHaveBeenCalled()
+      await expect(manager.resumeAfterLogin()).resolves.toMatchObject({ state: recoveryState })
+      await expect(manager.prewarm()).resolves.toMatchObject({ state: recoveryState })
+      expect(load).toHaveBeenCalledTimes(2)
+    }
+  )
 
   test.each([false, true])(
     'redacts query credentials from download diagnostics (nested=%s)',

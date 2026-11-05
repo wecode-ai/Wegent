@@ -29,6 +29,20 @@ function options(fetch = vi.fn().mockImplementation(async () => Response.json(pa
     arch: 'arm64',
   }
 }
+
+function parentDownloads(platform = process.platform, arch: string = process.arch) {
+  const targets: Partial<Record<NodeJS.Platform, string>> = {
+    darwin: 'apple-darwin',
+    linux: 'unknown-linux-gnu',
+    win32: 'pc-windows-msvc',
+  }
+  const target = `${arch === 'arm64' ? 'aarch64' : 'x86_64'}-${targets[platform]}`
+  return {
+    uvUrl: `https://mirror.example.invalid/uv-${target}.${platform === 'win32' ? 'zip' : 'tar.gz'}?signature=synthetic%2Bvalue`,
+    pythonUrl: `https://mirror.example.invalid/${pythonArtifact(platform, arch).filename}?signature=synthetic%2Bvalue`,
+  }
+}
+
 afterEach(() => vi.useRealTimers())
 
 test('only the authenticated descriptor request carries the login token and returns exact signed URLs', async () => {
@@ -180,16 +194,7 @@ test('rejects a backend switch during either credential resolution or the descri
 })
 
 test('development child receives full addresses via a Python-only loopback capability', async () => {
-  const targets: Partial<Record<NodeJS.Platform, string>> = {
-    darwin: 'apple-darwin',
-    linux: 'unknown-linux-gnu',
-    win32: 'pc-windows-msvc',
-  }
-  const target = `${process.arch === 'arm64' ? 'aarch64' : 'x86_64'}-${targets[process.platform]}`
-  const hostDownloads = {
-    uvUrl: `https://mirror.example.invalid/uv-${target}.${process.platform === 'win32' ? 'zip' : 'tar.gz'}?signature=synthetic%2Bvalue`,
-    pythonUrl: `https://mirror.example.invalid/${pythonArtifact(process.platform, process.arch).filename}?signature=synthetic%2Bvalue`,
-  }
+  const hostDownloads = parentDownloads()
   const fetch = vi.fn().mockResolvedValue(Response.json({ ok: true, data: hostDownloads }))
   const environment = {
     WEWORK_PARENT_PYTHON_DOWNLOADS_URL: 'http://127.0.0.1:1234/runtime/python/downloads',
@@ -219,3 +224,29 @@ test('development child receives full addresses via a Python-only loopback capab
   ).rejects.toThrow('Invalid parent')
   expect(fetch).toHaveBeenCalledTimes(2)
 })
+
+test.each([
+  ['darwin', 'arm64'],
+  ['darwin', 'x64'],
+  ['linux', 'arm64'],
+  ['linux', 'x64'],
+  ['win32', 'arm64'],
+  ['win32', 'x64'],
+] as const)(
+  'validates parent artifacts against the declared %s-%s target',
+  async (platform, arch) => {
+    const expected = parentDownloads(platform, arch)
+    const request = vi.fn(async () => Response.json({ ok: true, data: expected }))
+    const environment = {
+      WEWORK_PARENT_PYTHON_DOWNLOADS_URL: 'http://127.0.0.1:1234/runtime/python/downloads',
+      WEWORK_PARENT_PYTHON_DOWNLOADS_TOKEN: 'synthetic-python-capability',
+    }
+    await expect(
+      fetchParentPythonRuntimeDownloads(environment, request, platform, arch)
+    ).resolves.toEqual(expected)
+    const otherPlatform = platform === 'darwin' ? 'linux' : 'darwin'
+    await expect(
+      fetchParentPythonRuntimeDownloads(environment, request, otherPlatform, arch)
+    ).rejects.toThrow('invalid uvUrl artifact')
+  }
+)

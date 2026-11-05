@@ -1,0 +1,9 @@
+{
+  "revision": "c2f8d4a6b901",
+  "parents": [
+    "8d3d51c83c99"
+  ],
+  "source": "20260829_c2f8d4a6b901_plugin_publication_workflow.py",
+  "upgrade": null,
+  "downgrade": null
+}

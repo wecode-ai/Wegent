@@ -35,6 +35,7 @@ import { useKnowledgeBaseDialogs } from '../hooks/useKnowledgeBaseDialogs'
 import { getDefaultKnowledgeView, useKnowledgeViewMode } from '../hooks/useKnowledgeViewMode'
 import { KnowledgeSidebar } from './KnowledgeSidebar'
 import { CodeWikiWorkspace } from '@/features/knowledge/code-wiki/CodeWikiWorkspace'
+import { KnowledgeUrlStatus } from './KnowledgeUrlStatus'
 import { KnowledgeDetailPanel } from './KnowledgeDetailPanel'
 import { KnowledgeGroupListPage, type KbDataItem } from './KnowledgeGroupListPage'
 import { useKnowledgeSourceViews } from '@/features/knowledge/knowledgeSourceViewRegistry'
@@ -245,10 +246,18 @@ export function KnowledgeDocumentPageDesktop({
   const knowledgeBindModel = knowledgeTeamInfo.bindModel
 
   // URL sync and navigation
-  const { initialUrlSyncDone, updateUrlParams, navigateToKbViaHistory } = useKnowledgeUrlSync({
+  const {
+    initialUrlSyncDone,
+    kbResolution,
+    retainedKbId,
+    updateUrlParams,
+    navigateToKbViaHistory,
+  } = useKnowledgeUrlSync({
     initialKbNamespace,
     initialKbName,
     allKnowledgeBases: sidebar.allKnowledgeBases,
+    organizationKnowledgeBases: sidebar.organizationKnowledgeBases,
+    hasLoadError: sidebar.hasLoadError,
     isGroupsLoading: sidebar.isGroupsLoading,
     selectKb: sidebar.selectKb,
     selectGroup: sidebar.selectGroup,
@@ -452,7 +461,21 @@ export function KnowledgeDocumentPageDesktop({
     [sidebar, dialogs]
   )
 
+  const retainsDetail =
+    sidebar.selectedKb?.id === retainedKbId &&
+    retainedKbId !== undefined &&
+    (kbResolution?.status === 'loading' || kbResolution?.status === 'error')
+
   const renderMainContent = () => {
+    if (kbResolution && kbResolution.status !== 'resolved' && !retainsDetail) {
+      return <KnowledgeUrlStatus status={kbResolution.status} onRetry={sidebar.refreshAll} />
+    }
+    if (
+      kbResolution?.status === 'resolved' &&
+      sidebar.selectedKb?.id !== kbResolution.knowledgeBase.id
+    ) {
+      return <KnowledgeUrlStatus status="loading" onRetry={sidebar.refreshAll} />
+    }
     // When navigating to a specific KB via URL, show loading until the URL sync
     // completes and selectedKb is set, to avoid flashing the list page
     if (initialKbName && !sidebar.selectedKb && !initialUrlSyncDone) {
@@ -706,7 +729,12 @@ export function KnowledgeDocumentPageDesktop({
         </div>
       )}
 
-      <div className="flex-1 min-w-0 flex flex-col bg-base relative">{renderMainContent()}</div>
+      <div className="flex-1 min-w-0 flex flex-col bg-base relative">
+        {retainsDetail && kbResolution?.status === 'error' && (
+          <KnowledgeUrlStatus status="error" onRetry={sidebar.refreshAll} compact />
+        )}
+        {renderMainContent()}
+      </div>
 
       <CreateKnowledgeBaseDialog
         open={dialogs.showCreateDialog}

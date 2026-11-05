@@ -156,6 +156,7 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: 0
       CARGO_PROFILE_DEV_DEBUG: 0
       WEGENT_TEST_MYSQL_ADDRESS: 127.0.0.1:3306
+      WEGENT_TEST_REDIS_ADDRESS: 127.0.0.1:6379
     services:
       redis:
         image: redis:7-alpine
@@ -212,6 +213,13 @@ jobs:
           git rev-parse HEAD > ../.ci-artifacts/backend-rs-tests/sha.txt
           echo 'cargo test --locked' > ../.ci-artifacts/backend-rs-tests/command.txt
           cargo test --locked 2>&1 | tee ../.ci-artifacts/backend-rs-tests/cargo-test.log
+
+      - name: Verify native MySQL schema lifecycle and initialization
+        working-directory: backend-rs
+        run: |
+          set -o pipefail
+          cargo test --locked --lib migrations::mysql_tests -- --ignored --nocapture \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/migrations-mysql.log
 
       - name: Verify attachment API key authentication with MySQL
         working-directory: backend-rs

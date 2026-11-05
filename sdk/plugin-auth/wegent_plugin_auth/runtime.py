@@ -17,8 +17,9 @@ from typing import Iterator, Optional, Sequence
 from .transport import AuthError
 
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
-# Cover desktop preparation (780s), native execution (180s), and transport overhead.
-BROKER_REQUEST_TIMEOUT_SECONDS = 18 * 60
+# Match the desktop transport envelope: 16m preparation, 5m native request
+# headroom, and 5s transport overhead. Individual action deadlines stay unchanged.
+BROKER_REQUEST_TIMEOUT_SECONDS = 21 * 60 + 5
 _NATIVE_EXECUTION: ContextVar[bool] = ContextVar(
     "wegent_native_execution", default=False
 )

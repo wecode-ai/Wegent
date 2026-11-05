@@ -102,6 +102,9 @@ export async function verifyInteractionArchiving(control, timeoutMs, taskId) {
       const beforeDismiss = await readUserMessages()
       await control.command('hover', `${PAGE} [data-testid="interaction-list-item"]`)
       await control.command('click', `${PAGE} [data-testid="interaction-dismiss"]`)
+      await control.command('waitFor', `${PAGE} [data-testid="interactions-pending-count"]`, {
+        text: '0',
+      })
       await reloadMainWindow(control, 'The dismissed interaction must survive a renderer reload')
       assert.deepEqual(
         await readUserMessages(),

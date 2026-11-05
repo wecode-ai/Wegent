@@ -377,6 +377,11 @@ export class PluginDevelopmentManager {
     await this.command('open-devtools')
   }
 
+  async resumePythonAfterLogin(): Promise<void> {
+    if (!this.session || !this.isRunning()) return
+    await this.command('python-login')
+  }
+
   async stop(): Promise<void> {
     const child = this.child
     if (!child) return

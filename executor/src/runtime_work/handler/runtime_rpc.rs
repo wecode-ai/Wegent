@@ -47,6 +47,33 @@ impl RuntimeWorkHandler for RuntimeWorkRpcHandler {
                 .cloned()
                 .filter(Value::is_object)
                 .unwrap_or_else(|| json!({}));
+            if method == "app/list" {
+                log_executor_event(
+                    "codex app catalog read started",
+                    &[
+                        ("has_cursor", (!params["cursor"].is_null()).to_string()),
+                        (
+                            "force_refetch",
+                            (params["forceRefetch"] == true).to_string(),
+                        ),
+                    ],
+                );
+            }
+            if method == "plugin/list" {
+                log_executor_event(
+                    "codex plugin catalog read started",
+                    &[
+                        (
+                            "local_only",
+                            (params["marketplaceKinds"] == json!(["local"])).to_string(),
+                        ),
+                        (
+                            "force_refetch",
+                            (params["forceRefetch"] == true).to_string(),
+                        ),
+                    ],
+                );
+            }
             let _activation = if method == "skills/config/write" {
                 Some(crate::services::capability_activation::activate().await)
             } else {
@@ -102,6 +129,11 @@ impl RuntimeWorkHandler for RuntimeWorkRpcHandler {
                     ],
                 );
             }
+            let response = if method == "plugin/list" {
+                super::plugin_catalog::summarize_plugin_catalog(response)
+            } else {
+                response
+            };
             Ok(response)
         })
     }

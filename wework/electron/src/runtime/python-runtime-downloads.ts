@@ -145,7 +145,9 @@ export async function fetchPythonRuntimeDownloads(
 /** Development windows obtain addresses through the parent, never its login credentials. */
 export async function fetchParentPythonRuntimeDownloads(
   environment: NodeJS.ProcessEnv,
-  request: typeof fetch
+  request: typeof fetch,
+  platform = process.platform,
+  arch: string = process.arch
 ): Promise<PythonRuntimeDownloads> {
   const url = httpUrl(environment.WEWORK_PARENT_PYTHON_DOWNLOADS_URL, 'parent download endpoint')
   if (
@@ -167,5 +169,5 @@ export async function fetchParentPythonRuntimeDownloads(
   })
   if (payload.code === 'python_runtime_login_required') throw new PythonRuntimeLoginRequiredError()
   if (!payload.ok) throw new Error('Parent Python download addresses are unavailable')
-  return validatePythonRuntimeDownloads(payload.data)
+  return validatePythonRuntimeDownloads(payload.data, platform, arch)
 }

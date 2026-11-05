@@ -417,6 +417,9 @@ const pluginDevelopmentChildRuntime =
         openDevTools: () =>
           mainWindow?.webContents.openDevTools({ mode: 'detach', activate: true }),
         restartCoreDsh: restartPrimaryCoreDsh,
+        resumePythonAfterLogin: async () => {
+          await pythonRuntimeManagerPromise?.then(runtime => runtime.resumeAfterLogin())
+        },
         requestStop: () => requestApplicationShutdown(() => app.quit()),
         getCoreDshPid: () => desktopRuntime?.diagnostics().coreDshPid ?? null,
         isShuttingDown: () => quitting || !desktopRuntime,
@@ -2685,11 +2688,12 @@ if (hasSingleInstanceLock) {
     })
     rendererStorage = new RendererStorageStore(app.getPath('userData'), update => {
       if (update.changes['wework.cloudConnection']) {
-        void pythonRuntimeManagerPromise
-          ?.then(runtime => runtime.resumeAfterLogin())
-          .catch(() => {
-            console.warn('[python-runtime] Login-triggered preparation failed')
-          })
+        void Promise.all([
+          pythonRuntimeManagerPromise?.then(runtime => runtime.resumeAfterLogin()),
+          pluginDevelopment?.resumePythonAfterLogin(),
+        ]).catch(() => {
+          console.warn('[python-runtime] Login-triggered preparation failed')
+        })
       }
     })
     logStartupStep('desktop-stores-create', 'completed')

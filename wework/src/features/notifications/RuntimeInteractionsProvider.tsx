@@ -165,7 +165,7 @@ function RuntimeInteractionsState({
   }, [draftKey, drafts])
 
   const archive = useCallback(
-    async (item: RuntimeInteraction, answeredAt = item.createdAt) => {
+    async (item: RuntimeInteraction, answeredAt = item.createdAt, dismissed = false) => {
       await navigator.locks.request(historyKey, () => {
         const next = archiveInteraction(readInteractionHistory(historyKey), {
           id: item.id,
@@ -178,10 +178,12 @@ function RuntimeInteractionsState({
           answeredAt,
         })
         saveInteractionState(historyKey, next)
+        // Keep dismissal and its history in the same synchronous storage batch.
+        if (dismissed) saveInteractionState(acceptancePrefix + item.id, true)
         if (mounted.current) setHistory(next)
       })
     },
-    [historyKey]
+    [acceptancePrefix, historyKey]
   )
   useEffect(() => {
     const update = (event: StorageEvent) => {
@@ -439,8 +441,7 @@ function RuntimeInteractionsState({
       setBusy(new Set(inFlight.current))
       try {
         await navigator.locks.request(historyKey + ':' + item.id, async () => {
-          saveInteractionState(acceptancePrefix + item.id, true)
-          await archive(item, Date.now())
+          await archive(item, Date.now(), true)
           if (!mounted.current) return
           markHandled(item.id)
         })
@@ -449,7 +450,7 @@ function RuntimeInteractionsState({
         if (mounted.current) setBusy(new Set(inFlight.current))
       }
     },
-    [acceptancePrefix, archive, historyKey, markHandled]
+    [archive, historyKey, markHandled]
   )
   const respond = useCallback(
     async (

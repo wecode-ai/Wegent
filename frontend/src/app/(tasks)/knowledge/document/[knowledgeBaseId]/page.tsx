@@ -7,9 +7,10 @@
 import { useEffect } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { Spinner } from '@/components/ui/spinner'
+import { KnowledgeUrlStatus } from '@/features/knowledge/document/components/KnowledgeUrlStatus'
 import { useKnowledgeBaseDetail } from '@/features/knowledge/document/hooks'
 import { getOrganizationNamespace } from '@/apis/knowledge'
-import { buildKbUrl } from '@/utils/knowledgeUrl'
+import { buildKbUrl, parseKnowledgeBaseId } from '@/utils/knowledgeUrl'
 
 // Loading fallback component
 function PageLoadingFallback() {
@@ -34,16 +35,16 @@ function KnowledgeBaseCompatContent() {
   const router = useRouter()
 
   const knowledgeBaseId = params.knowledgeBaseId
-    ? parseInt(params.knowledgeBaseId as string, 10)
+    ? parseKnowledgeBaseId(params.knowledgeBaseId as string)
     : null
 
-  const { knowledgeBase } = useKnowledgeBaseDetail({
+  const { knowledgeBase, loading, error, accessDenied, refresh } = useKnowledgeBaseDetail({
     knowledgeBaseId: knowledgeBaseId || 0,
     autoLoad: !!knowledgeBaseId,
   })
 
   useEffect(() => {
-    if (!knowledgeBase) return
+    if (!knowledgeBaseId || !knowledgeBase || knowledgeBase.id !== knowledgeBaseId) return
     const kb = knowledgeBase
     let isCurrent = true
 
@@ -59,9 +60,12 @@ function KnowledgeBaseCompatContent() {
 
       if (!isCurrent) return
 
-      const newPath = buildKbUrl(kb.namespace, kb.name, isOrganization)
-      const query = searchParams.toString()
-      router.replace(query ? `${newPath}?${query}` : newPath)
+      router.replace(
+        buildKbUrl(kb.namespace, kb.name, isOrganization, undefined, {
+          knowledgeBaseId: kb.id,
+          searchParams: searchParams.toString(),
+        })
+      )
     }
 
     redirectToVirtualUrl()
@@ -69,9 +73,12 @@ function KnowledgeBaseCompatContent() {
     return () => {
       isCurrent = false
     }
-  }, [knowledgeBase, router, searchParams])
+  }, [knowledgeBaseId, knowledgeBase, router, searchParams])
 
-  // Show loading while redirecting
+  if (!knowledgeBaseId || accessDenied || (!loading && !knowledgeBase && !error)) {
+    return <KnowledgeUrlStatus status="not-found" onRetry={refresh} />
+  }
+  if (error) return <KnowledgeUrlStatus status="error" onRetry={refresh} />
   return <PageLoadingFallback />
 }
 
