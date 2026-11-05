@@ -332,6 +332,10 @@ function mockComposerDirectoryRoute(resolveRoute: () => string) {
         return { device_id: 'local-device', device_route_id: resolveRoute() }
       if (method === 'runtime.tasks.list') return { projects: [], chats: [], totalTasks: 0 }
       if (method === 'executor.plugins.store.list') return { storePath: '/store', plugins: [] }
+      if (method === 'executor.plugins.personal.list')
+        return { marketplacePath: '/personal', plugins: [] }
+      if (method === 'executor.codex_home.config.read')
+        return { enabledPluginKeys: [], disabledPluginKeys: [] }
       if (method === 'runtime.connectors.apps.sync') return { apps: [] }
       if (method === 'executor.plugins.links.list') return []
       if (method === 'codex.app_server_request') {
