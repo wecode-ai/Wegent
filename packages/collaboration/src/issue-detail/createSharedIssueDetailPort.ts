@@ -119,6 +119,7 @@ export interface SharedIssueDetailUpdateInput {
   version: number;
   security_level?: "open" | "related";
   title?: string;
+  reporter_user_id?: number;
   description?: string;
   status?: string;
   priority?: CollaborationIssue["priority"];
@@ -143,6 +144,10 @@ export interface SharedIssueDetailPort {
   milestones?: SharedWorkspaceApi["milestones"];
   issues: {
     get(issueId: string): Promise<CollaborationIssue>;
+    setFollowing(
+      issueId: string,
+      following: boolean,
+    ): Promise<{ following: boolean }>;
     create(
       projectId: string,
       input: SharedIssueDetailCreateInput,
@@ -332,6 +337,7 @@ export function createSharedIssueDetailPort(
     milestones: api.milestones,
     issues: {
       get: api.issues.get,
+      setFollowing: api.issues.setFollowing,
       create: (projectId, input) =>
         api.issues.create(projectId, {
           milestoneId: input.milestone_id,
@@ -368,6 +374,9 @@ export function createSharedIssueDetailPort(
             ? { securityLevel: input.security_level }
             : {}),
           ...(input.title !== undefined ? { title: input.title } : {}),
+          ...(input.reporter_user_id !== undefined
+            ? { reporterUserId: input.reporter_user_id }
+            : {}),
           ...(input.description !== undefined
             ? { description: input.description }
             : {}),

@@ -140,6 +140,9 @@ export interface CloudLoopItem {
   activity_read_sequence?: number
   has_additional_context?: boolean
   is_unread?: boolean
+  reporter_user_id?: number | null
+  reporter_user_name?: string | null
+  is_following?: boolean
   assignee_user_id: number | null
   assignee_name?: string | null
   assignee_agent_id?: string | null
@@ -787,6 +790,7 @@ export function createDeliveryApi(client: HttpClient) {
         assigneeType?: 'user' | 'agent' | 'team'
         assigneeId?: string | number
         executionState?: string
+        following?: boolean
       }
     ): Promise<{ items: CloudLoopItem[] }> {
       const query = new URLSearchParams()
@@ -795,6 +799,7 @@ export function createDeliveryApi(client: HttpClient) {
         query.set('assignee_id', String(filters.assigneeId))
       }
       if (filters?.executionState) query.set('execution_state', filters.executionState)
+      if (filters?.following) query.set('following', 'true')
       const suffix = query.toString() ? `?${query.toString()}` : ''
       return client.get(`/v1/cloud-projects/${projectId}/loop-items${suffix}`)
     },
@@ -900,6 +905,9 @@ export function createDeliveryApi(client: HttpClient) {
     getLoopItem(itemId: string): Promise<CloudLoopItem> {
       return client.get(`/v1/loop-items/${encodeURIComponent(itemId)}`)
     },
+    setLoopItemFollowing(itemId: string, following: boolean): Promise<{ following: boolean }> {
+      return client.put(`/v1/loop-items/${encodeURIComponent(itemId)}/follow`, { following })
+    },
     async getIssueAssignmentReceipts(itemId: string): Promise<IssueAssignmentReceipt[]> {
       const response = await client.get<{ items: IssueAssignmentReceipt[] }>(
         `/v1/loop-items/${encodeURIComponent(itemId)}/assignments`
@@ -992,6 +1000,7 @@ export function createDeliveryApi(client: HttpClient) {
         Pick<
           CloudLoopItem,
           | 'title'
+          | 'reporter_user_id'
           | 'description'
           | 'status'
           | 'priority'

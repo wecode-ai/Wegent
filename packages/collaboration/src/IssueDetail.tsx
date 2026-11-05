@@ -127,8 +127,28 @@ function browserSave(blob: Blob, filename: string): Promise<void> {
   return Promise.resolve();
 }
 
+function createBrowserIssuePortScope(
+  api: IssueDetailProps["api"],
+  scopeId: string,
+) {
+  let active = false;
+  let token = { api, scopeId };
+  return {
+    activate() {
+      active = true;
+      token = { api, scopeId };
+    },
+    deactivate() {
+      active = false;
+    },
+    capture: () => token,
+    isCurrent: (captured: typeof token) => active && captured === token,
+  };
+}
+
 function useBrowserIssueDetailPort(
   api: IssueDetailProps["api"],
+  scopeId: string,
   onError: () => void,
   onConflict?: () => Promise<void>,
 ) {
@@ -136,6 +156,15 @@ function useBrowserIssueDetailPort(
   useLayoutEffect(() => {
     callbacks.current = { onError, onConflict };
   }, [onError, onConflict]);
+  // Retired ports keep their own inactive token when an old operation retries.
+  const scope = useMemo(
+    () => createBrowserIssuePortScope(api, scopeId),
+    [api, scopeId],
+  );
+  useLayoutEffect(() => {
+    scope.activate();
+    return scope.deactivate;
+  }, [scope]);
 
   return useMemo(() => {
     const basePort = createSharedIssueDetailPort(api, browserSave);
@@ -144,36 +173,44 @@ function useBrowserIssueDetailPort(
       issues: {
         ...basePort.issues,
         create: async (...args: Parameters<typeof basePort.issues.create>) => {
+          const token = scope.capture();
           try {
             return await basePort.issues.create(...args);
           } catch (error) {
-            callbacks.current.onError();
+            if (scope.isCurrent(token)) callbacks.current.onError();
             throw error;
           }
         },
         update: async (...args: Parameters<typeof basePort.issues.update>) => {
+          const token = scope.capture();
           try {
             return await basePort.issues.update(...args);
           } catch (error) {
-            if (callbacks.current.onConflict && isIssueVersionConflict(error)) {
-              await callbacks.current.onConflict();
-            } else {
-              callbacks.current.onError();
+            if (scope.isCurrent(token)) {
+              if (
+                callbacks.current.onConflict &&
+                isIssueVersionConflict(error)
+              ) {
+                await callbacks.current.onConflict();
+              } else {
+                callbacks.current.onError();
+              }
             }
             throw error;
           }
         },
         assign: async (...args: Parameters<typeof basePort.issues.assign>) => {
+          const token = scope.capture();
           try {
             return await basePort.issues.assign(...args);
           } catch (error) {
-            callbacks.current.onError();
+            if (scope.isCurrent(token)) callbacks.current.onError();
             throw error;
           }
         },
       },
     };
-  }, [api]);
+  }, [api, scope]);
 }
 
 export function IssueCreate({
@@ -189,7 +226,7 @@ export function IssueCreate({
   onCreated,
   onError,
 }: IssueCreateProps) {
-  const port = useBrowserIssueDetailPort(api, onError);
+  const port = useBrowserIssueDetailPort(api, project.id, onError);
   const editorTranslate =
     translate ??
     createCollaborationTranslator(
@@ -288,7 +325,7 @@ function BrowserIssueDetail({
     selection?.issueId === issue.id ? selection.target : null;
   const closeExecution = () => setSelection(null);
   const permissions = getCollaborationIssueActionPermissions(project, issue);
-  const port = useBrowserIssueDetailPort(api, onError, onConflict);
+  const port = useBrowserIssueDetailPort(api, issue.id, onError, onConflict);
   const editorTranslate =
     translate ??
     createCollaborationTranslator(

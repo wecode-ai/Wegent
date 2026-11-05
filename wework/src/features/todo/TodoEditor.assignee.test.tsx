@@ -113,6 +113,44 @@ describe('workspace Issue assignee', () => {
     )
   })
 
+  it.each([true, false])('switches the completed automation owner with notify=%s', async notify => {
+    const api = setup()
+    const user = userEvent.setup()
+    const summary = screen.getByTestId('cloud-todo-state-summary')
+    const owner = within(summary).getByTestId('cloud-todo-state-assignee')
+    expect(owner).toHaveTextContent('Codex 工程师')
+    const select = within(owner).getByRole('button', { name: '负责人' })
+    await user.click(select)
+    await user.click(await screen.findByTestId('cloud-todo-detail-assignee-option-user:5'))
+    expect(owner.querySelector('strong')).toHaveTextContent('张三')
+    expect(screen.queryByText('是否通知负责人')).not.toBeInTheDocument()
+    const inlineSave = within(summary).getByTestId('cloud-todo-save')
+    expect(inlineSave).toHaveTextContent('保存并通知')
+    expect(
+      screen
+        .getByTestId('cloud-todo-detail')
+        .querySelector('header [data-testid="cloud-todo-save"]')
+    ).toBeNull()
+    if (notify) {
+      await user.click(inlineSave)
+    } else {
+      await user.click(within(summary).getByTestId('cloud-todo-save-options'))
+      expect(api.assignLoopItem).not.toHaveBeenCalled()
+      await user.click(screen.getByRole('menuitem', { name: '仅保存不通知' }))
+    }
+    await vi.waitFor(() => {
+      expect(api.assignLoopItem).toHaveBeenCalledWith('11', 'WEG-1', {
+        version: 1,
+        assigneeType: 'user',
+        assigneeId: '5',
+        notifyAssignee: notify,
+      })
+      expect(screen.queryByTestId('cloud-todo-save')).not.toBeInTheDocument()
+    })
+    expect(owner.querySelector('strong')).toHaveTextContent('张三')
+    expect(api.updateLoopItem).not.toHaveBeenCalled()
+  })
+
   it('clears the owner and shows the add-owner entry', async () => {
     const api = setup({ assignee_user_id: 5, assignee_name: '张三', assignee_agent_id: null })
     const user = userEvent.setup()
@@ -137,7 +175,7 @@ describe('workspace Issue assignee', () => {
     const api = setup()
     const user = userEvent.setup()
     await user.click(screen.getByTestId('cloud-todo-detail-assignee'))
-    await user.click(await screen.findByRole('option', { name: '张三' }))
+    await user.click(await screen.findByTestId('cloud-todo-detail-assignee-option-user:5'))
     const options = screen.getByTestId('cloud-todo-save-options')
     options.focus()
     await user.keyboard('{ArrowDown}')
@@ -173,7 +211,7 @@ describe('workspace Issue assignee', () => {
     )
     const user = userEvent.setup()
     await user.click(screen.getByTestId('cloud-todo-detail-assignee'))
-    await user.click(await screen.findByRole('option', { name: '张三' }))
+    await user.click(await screen.findByTestId('cloud-todo-detail-assignee-option-user:5'))
     await user.click(screen.getByTestId('cloud-todo-save'))
     expect(screen.getByTestId('cloud-todo-save')).toBeDisabled()
     expect(screen.getByTestId('cloud-todo-save-options')).toBeDisabled()

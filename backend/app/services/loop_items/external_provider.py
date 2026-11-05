@@ -142,7 +142,9 @@ class ExternalLoopItemProvider:
             for issue in issues
         ]
         return self._attach_badges(
-            db, [response for response in responses if response["can_view_detail"]]
+            db,
+            [response for response in responses if response["can_view_detail"]],
+            user_id,
         )
 
     def list_page(
@@ -221,7 +223,9 @@ class ExternalLoopItemProvider:
         ]
         return (
             self._attach_badges(
-                db, [response for response in responses if response["can_view_detail"]]
+                db,
+                [response for response in responses if response["can_view_detail"]],
+                user_id,
             ),
             next_cursor,
         )
@@ -752,6 +756,12 @@ class ExternalLoopItemProvider:
                 issue_creator_user_id=self._creator_id(self._labels(current)),
                 user_id=user_id,
             )
+        if "reporter_user_id" in values.model_fields_set and (
+            values.reporter_user_id not in project_participant_ids(db, project)
+        ):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, "Reporter is not a project member"
+            )
         payload: dict[str, object] = {}
         dumped = values.model_dump(exclude_unset=True)
         if "title" in dumped:
@@ -851,7 +861,12 @@ class ExternalLoopItemProvider:
                 issue=issue,
                 priority=str(values.priority or current_response["priority"]),
             )
-        return self._response(db, project, issue, access, user_id)
+        if "reporter_user_id" in values.model_fields_set:
+            shadow = self.ensure_shadow(db, item_id, user_id)
+            shadow.reporter_user_id = values.reporter_user_id
+        response = self._response(db, project, issue, access, user_id)
+        db.commit()
+        return response
 
     def archive(self, db: Session, item_id: str, user_id: int) -> None:
         """Archive an editable external issue subtree by closing it upstream."""
@@ -1835,7 +1850,11 @@ class ExternalLoopItemProvider:
             status=str(values["status"]),
             priority=str(values["priority"]),
             sort_order=int(values["sort_order"]),
-            metadata_json={"tags": values["tags"], "external_shadow": True},
+            metadata_json={
+                "tags": values["tags"],
+                "external_shadow": True,
+                "reporter_user_id": int(values["created_by_user_id"]),
+            },
             version=int(values["version"]),
         )
         db.add(item)
@@ -1906,11 +1925,15 @@ class ExternalLoopItemProvider:
             include_description=include_description,
         )
         response = self._with_execution_state(db, values, user_id)
-        return self._attach_badges(db, [response])[0] if include_badges else response
+        return (
+            self._attach_badges(db, [response], user_id)[0]
+            if include_badges
+            else response
+        )
 
     @staticmethod
     def _attach_badges(
-        db: Session, responses: list[dict[str, object]]
+        db: Session, responses: list[dict[str, object]], user_id: int
     ) -> list[dict[str, object]]:
         ids = [str(value["id"]) for value in responses if value.get("can_view_detail")]
         metadata = (
@@ -1922,7 +1945,37 @@ class ExternalLoopItemProvider:
             if ids
             else {}
         )
+        reporters = {
+            item_id: values.get("reporter_user_id")
+            for item_id, values in metadata.items()
+            if isinstance(values, dict)
+        }
+        reporter_ids = {
+            reporters.get(str(value["id"])) or value.get("created_by_user_id")
+            for value in responses
+        }
+        users = (
+            {
+                user.id: user.user_name
+                for user in db.query(User).filter(User.id.in_(reporter_ids))
+            }
+            if reporter_ids
+            else {}
+        )
+
+        followed_ids = {
+            item_id
+            for item_id, values in metadata.items()
+            if isinstance(values, dict)
+            and user_id in values.get("follower_user_ids", [])
+        }
         for value in responses:
+            value["is_following"] = str(value["id"]) in followed_ids
+            reporter_id = reporters.get(str(value["id"])) or value.get(
+                "created_by_user_id"
+            )
+            value["reporter_user_id"] = reporter_id
+            value["reporter_user_name"] = users.get(reporter_id)
             value["badges"] = (
                 issue_badges(metadata.get(str(value["id"])))
                 if value.get("can_view_detail")

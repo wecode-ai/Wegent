@@ -310,6 +310,7 @@ export function createDesktopScenario({
         agent => agent.name === LEADER || agent.display_name === LEADER
       ).id
       workerId = agents.find(agent => agent.name === WORKER || agent.display_name === WORKER).id
+      await click('collaboration-project-settings-groups')
       await click('collaboration-project-settings-sharing')
       await control.command('clickWhenEnabled', selector('project-template-import'), {
         timeoutMs: uiTimeoutMs,
@@ -339,6 +340,7 @@ export function createDesktopScenario({
         visible: false,
         timeoutMs: uiTimeoutMs,
       })
+      await click('collaboration-template-close')
       const configured = (await requestExecutor(control, 'projects.list', {}, uiTimeoutMs)).find(
         project => project.id === projectId
       )

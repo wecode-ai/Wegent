@@ -236,9 +236,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       })
       issue = await request(`/api/v1/cloud-projects/${project.id}/loop-items`, {
         method: 'POST',
-        body: JSON.stringify({ title: ISSUE_TITLE, notify_assignee: false }),
+        body: JSON.stringify({
+          title: ISSUE_TITLE,
+          assignee_user_id: owner.id,
+          notify_assignee: false,
+        }),
       })
-      // Creation defaults to the current human owner and records that assignment.
+      // Explicit creation assignment records the initial human owner.
       assert.equal(String(issue.assignee_user_id), String(owner.id))
       assert.equal(issue.assignment_history.length, 1)
       assert.equal(issue.assignment_history[0].action, 'assign')

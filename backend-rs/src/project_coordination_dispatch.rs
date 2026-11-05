@@ -1,6 +1,6 @@
 //! Coordinator decisions admit real group executions; their execution rows are receipts.
 use super::*;
-use crate::background_jobs::project::{authority, issues, queue};
+use crate::background_jobs::project::{authority, issues, notifications, queue};
 
 fn bad_request(message: &str) -> FastApiError {
     FastApiError::detail(StatusCode::BAD_REQUEST, message)
@@ -209,7 +209,7 @@ async fn put_command(
             "The project group or AI leader configuration changed",
         ));
     }
-    commit_command(
+    let (result, pending) = commit_command(
         &state.mysql,
         &project,
         &assignment,
@@ -218,7 +218,11 @@ async fn put_command(
         &digest,
         command_id,
     )
-    .await
+    .await?;
+    for notice in pending {
+        notifications::deliver(state, notice).await;
+    }
+    Ok(result)
 }
 
 fn validate_unassigned_issue(issue: &store::Node, input: &Value) -> Result<(), FastApiError> {
@@ -249,16 +253,16 @@ async fn commit_command(
     scope: &str,
     digest: &str,
     command: &str,
-) -> Result<Value, FastApiError> {
-    mysql
+) -> Result<(Value, Vec<notifications::Pending>), FastApiError> {
+    let (result, pending) = mysql
         .with_transaction(async |tx| {
             if let std::ops::ControlFlow::Break(result) =
                 fence_command_on(tx, project, assignment, context, scope, digest, command).await?
             {
-                return Ok(result);
+                return Ok((result, Vec::new()));
             }
             if let Err(error) = revalidate_command_on(tx, project, assignment, context).await {
-                return Ok(Err(error));
+                return Ok((Err(error), Vec::new()));
             }
             admit_command_on(tx, project, assignment, scope, command).await
         })
@@ -270,7 +274,8 @@ async fn commit_command(
                 conflict(reason)
             }
             other => crate::cloud_projects::internal_error(other),
-        })?
+        })?;
+    Ok((result?, pending))
 }
 
 async fn fence_command_on(
@@ -343,18 +348,21 @@ async fn admit_command_on(
     assignment: &groups::GroupAssignment,
     scope: &str,
     command: &str,
-) -> brz_mysql::MysqlResult<Result<Value, FastApiError>> {
-    groups::apply_assignment_on(tx, project, assignment).await?;
+) -> brz_mysql::MysqlResult<(Result<Value, FastApiError>, Vec<notifications::Pending>)> {
+    let (issue, pending) = groups::apply_assignment_on(tx, project, assignment).await?;
     let plan = assignment.admission.as_ref().unwrap();
-    let execution = queue::enqueue_intent_on(tx, &assignment.issue, None, scope, plan).await?;
+    let execution = queue::enqueue_intent_on(tx, &issue, None, scope, plan).await?;
     let payload = json!({"schema_version":2,"runtime_selection":plan.runtime_selection,"origin_context":plan.context,"dispatch_request":{"kind":"collaboration_group"}});
     tx.execute(
         "UPDATE loop_item_executions SET execution_payload=? WHERE id=?",
         (payload.to_string(), execution.id),
     )
     .await?;
-    Ok(Ok(
-        json!({"commandId":command,"accepted":true,"execution":{"id":execution.id,"issueId":assignment.issue.id,"status":execution.status}}),
+    Ok((
+        Ok(
+            json!({"commandId":command,"accepted":true,"execution":{"id":execution.id,"issueId":assignment.issue.id,"status":execution.status}}),
+        ),
+        pending,
     ))
 }
 

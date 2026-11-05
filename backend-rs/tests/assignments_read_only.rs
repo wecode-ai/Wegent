@@ -34,8 +34,8 @@ async fn assignments_http_preserves_access_and_results_without_index_writes() {
     data::seed(&fixture.mysql).await;
     let reader = data::ReadOnlyMysql::new(&fixture.mysql).await;
     let writer = data::writer(&fixture.mysql).await;
-    let server = http_e2e::Server::start(reader.mysql.clone()).await;
-    let receipt_server = http_e2e::Server::start(fixture.mysql.clone()).await;
+    let (server, _) = http_e2e::Server::start(reader.mysql.clone()).await;
+    let (receipt_server, _) = http_e2e::Server::start(fixture.mysql.clone()).await;
     let mysql = server.mysql.clone();
     let base = server.base.clone();
     let receipt_base = receipt_server.base.clone();

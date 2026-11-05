@@ -167,9 +167,12 @@ async function createAutoTaggedIssue(control, request, projectId, agent, timeout
     visible: false,
     timeoutMs,
   })
-  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
-    timeoutMs,
-  })
+  await waitForValue(
+    () => request(`/api/v1/loop-items/${issue.id}`),
+    value => value.tags?.length === 1 && value.tags[0] === 'auto',
+    'The automation trigger tag did not save automatically',
+    timeoutMs
+  )
   return { issue, rule }
 }
 

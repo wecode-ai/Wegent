@@ -39,11 +39,13 @@ function ScopedCollaborationTemplatePage({
   locale,
   mode = 'desktop',
   onUse,
+  dialog,
 }: {
   store: CollaborationTemplateStore
   locale: CollaborationLocale
   mode?: 'desktop' | 'marketplace'
   onUse?(record: TemplateRecord): void
+  dialog?: Pick<ComponentProps<typeof TemplateDialog>, 'onClose' | 'back'>
 }) {
   const m = templateMessages[locale]
   const local = useTemplateRecords(store)
@@ -179,7 +181,122 @@ function ScopedCollaborationTemplatePage({
     }
   }
 
-  return (
+  const selectedDialog = selected && (
+    <TemplateDialog
+      size={dialog ? 'standard' : 'wide'}
+      back={dialog ? { label: m.back, onClick: () => setSelected(null) } : undefined}
+      title={selected.document.spec.displayName}
+      closeLabel={m.close}
+      onClose={dialog?.onClose ?? (() => setSelected(null))}
+      busy={busy}
+      footer={
+        <>
+          <button
+            type="button"
+            data-testid="template-detail-cancel"
+            disabled={busy}
+            onClick={() => setSelected(null)}
+          >
+            {m.cancel}
+          </button>
+          {mode === 'marketplace' ? (
+            <button
+              type="button"
+              className="collaboration-primary-button"
+              data-testid="template-account-add"
+              disabled={
+                busy ||
+                !!status ||
+                selectedInstalled ||
+                selected.id === null ||
+                !store.library.remote
+              }
+              onClick={async () => {
+                setBusy(true)
+                try {
+                  if (selected.ownerId !== 0 && selected.ownerId !== store.library.ownerId)
+                    await store.library.remote!.install(selected.id!)
+                  setStatus(m.cloudAdded)
+                  void refresh()
+                } catch {
+                  setError(m.failed)
+                } finally {
+                  setBusy(false)
+                }
+              }}
+            >
+              {status ?? (selectedInstalled ? m.cloudAdded : m.cloudAdd)}
+            </button>
+          ) : null}
+          {(mode !== 'marketplace' || onUse) && (
+            <button
+              type="button"
+              className="collaboration-primary-button"
+              data-testid="template-use"
+              disabled={busy || (!onUse && !!status)}
+              onClick={async () => {
+                setBusy(true)
+                try {
+                  const cached = local.records.find(
+                    record =>
+                      templateIdentity(record) === templateIdentity(selected) &&
+                      record.document.spec.version === selected.document.spec.version
+                  )
+                  const record = cached ?? (await store.download(selected.id!))
+                  if (onUse) {
+                    setSelected(null)
+                    onUse(record)
+                  } else {
+                    setStatus(m.added)
+                  }
+                } catch {
+                  setError(m.failed)
+                } finally {
+                  setBusy(false)
+                }
+              }}
+            >
+              {(mode === 'marketplace' ? null : status) ??
+                (selected.source === 'builtin' ||
+                local.records.some(
+                  record => templateIdentity(record) === templateIdentity(selected)
+                )
+                  ? m.use
+                  : m.download)}
+            </button>
+          )}
+        </>
+      }
+    >
+      <TemplatePreview document={selected.document} locale={locale} />
+      {error && (
+        <p role="alert" className="collaboration-template-error">
+          {error}
+        </p>
+      )}
+    </TemplateDialog>
+  )
+  const importDialog = importOpen && (
+    <TemplateImportDialog
+      dialogOptions={
+        dialog
+          ? { size: 'standard', back: { label: m.back, onClick: () => setImportOpen(false) } }
+          : undefined
+      }
+      store={store}
+      locale={locale}
+      onClose={dialog?.onClose ?? (() => setImportOpen(false))}
+      onSaved={() => {
+        setImportOpen(false)
+        setTab('mine')
+        void refresh()
+      }}
+    />
+  )
+  if (dialog && selected) return selectedDialog
+  if (dialog && importOpen) return importDialog
+
+  const page = (
     <section className="collaboration-template-page" data-testid="collaboration-template-page">
       <header className="collaboration-template-page-heading">
         <div>
@@ -344,111 +461,21 @@ function ScopedCollaborationTemplatePage({
           {m.more}
         </button>
       )}
-      {selected && (
-        <TemplateDialog
-          title={selected.document.spec.displayName}
-          closeLabel={m.close}
-          onClose={() => setSelected(null)}
-          busy={busy}
-          footer={
-            <>
-              <button
-                type="button"
-                data-testid="template-detail-cancel"
-                disabled={busy}
-                onClick={() => setSelected(null)}
-              >
-                {m.cancel}
-              </button>
-              {mode === 'marketplace' ? (
-                <button
-                  type="button"
-                  className="collaboration-primary-button"
-                  data-testid="template-account-add"
-                  disabled={
-                    busy ||
-                    !!status ||
-                    selectedInstalled ||
-                    selected.id === null ||
-                    !store.library.remote
-                  }
-                  onClick={async () => {
-                    setBusy(true)
-                    try {
-                      if (selected.ownerId !== 0 && selected.ownerId !== store.library.ownerId)
-                        await store.library.remote!.install(selected.id!)
-                      setStatus(m.cloudAdded)
-                      void refresh()
-                    } catch {
-                      setError(m.failed)
-                    } finally {
-                      setBusy(false)
-                    }
-                  }}
-                >
-                  {status ?? (selectedInstalled ? m.cloudAdded : m.cloudAdd)}
-                </button>
-              ) : null}
-              {(mode !== 'marketplace' || onUse) && (
-                <button
-                  type="button"
-                  className="collaboration-primary-button"
-                  data-testid="template-use"
-                  disabled={busy || (!onUse && !!status)}
-                  onClick={async () => {
-                    setBusy(true)
-                    try {
-                      const cached = local.records.find(
-                        record =>
-                          templateIdentity(record) === templateIdentity(selected) &&
-                          record.document.spec.version === selected.document.spec.version
-                      )
-                      const record = cached ?? (await store.download(selected.id!))
-                      if (onUse) {
-                        setSelected(null)
-                        onUse(record)
-                      } else {
-                        setStatus(m.added)
-                      }
-                    } catch {
-                      setError(m.failed)
-                    } finally {
-                      setBusy(false)
-                    }
-                  }}
-                >
-                  {(mode === 'marketplace' ? null : status) ??
-                    (selected.source === 'builtin' ||
-                    local.records.some(
-                      record => templateIdentity(record) === templateIdentity(selected)
-                    )
-                      ? m.use
-                      : m.download)}
-                </button>
-              )}
-            </>
-          }
-        >
-          <TemplatePreview document={selected.document} locale={locale} />
-          {error && (
-            <p role="alert" className="collaboration-template-error">
-              {error}
-            </p>
-          )}
-        </TemplateDialog>
-      )}
-      {importOpen && (
-        <TemplateImportDialog
-          store={store}
-          locale={locale}
-          onClose={() => setImportOpen(false)}
-          onSaved={() => {
-            setImportOpen(false)
-            setTab('mine')
-            void refresh()
-          }}
-        />
-      )}
+      {!dialog && selectedDialog}
+      {!dialog && importDialog}
     </section>
+  )
+  return dialog ? (
+    <TemplateDialog
+      title={m.importProject}
+      closeLabel={m.close}
+      onClose={dialog.onClose}
+      back={dialog.back}
+      size="standard"
+    >
+      {page}
+    </TemplateDialog>
+  ) : (
+    page
   )
 }

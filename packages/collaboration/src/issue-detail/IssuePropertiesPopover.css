@@ -62,13 +62,15 @@
 }
 
 .task-detail-more-menu-popover .task-detail-rail-prop {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
   min-height: 34px;
   gap: 8px;
-  padding: 4px 6px;
+  padding: 2px 6px;
 }
 
 .task-detail-more-menu-popover .task-detail-rail-key {
-  width: 76px;
+  width: auto;
   color: rgb(var(--color-text-secondary));
   font-size: var(--text-sm);
   font-weight: inherit;
@@ -81,10 +83,31 @@
   line-height: 1.5;
 }
 
+.task-detail-more-menu-popover .task-detail-rail-value-content {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 30px;
+  padding: 0 6px;
+}
+
+.task-detail-more-menu-popover .issue-identity-person,
+.task-detail-more-menu-popover .task-detail-state-security {
+  padding-inline: 0;
+}
+
+.task-detail-more-menu-popover .task-detail-state-security {
+  max-width: 100%;
+}
+
+.task-detail-more-menu-popover .task-detail-state-security strong {
+  font-weight: inherit;
+}
+
 .task-detail-more-menu-popover .task-detail-workspace-tag {
   min-height: 26px;
   border-radius: 6px;
-  padding: 2px 8px;
+  padding: 2px 0;
+  background: transparent;
   font-size: inherit;
 }
 
@@ -169,6 +192,7 @@
   }
 
   .task-detail-more-menu-popover .task-detail-rail-prop,
+  .task-detail-more-menu-popover .task-detail-rail-value-content,
   .task-detail-more-menu-popover input,
   .task-detail-more-menu-popover select,
   .task-detail-more-menu-popover button {

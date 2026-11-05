@@ -96,6 +96,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     await control.command('waitFor', enabled, { timeoutMs: uiTimeoutMs })
     await control.command('clickWhenEnabled', enabled, { timeoutMs: uiTimeoutMs })
     await control.command('waitFor', enabled, { visible: false, timeoutMs: uiTimeoutMs })
+    await click(control, 'collaboration-project-settings-groups')
     await click(control, 'collaboration-project-settings-sharing')
   }
 
@@ -365,6 +366,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       })
       await wait(control, 'cloud-project-header-title', projectName)
       await click(control, 'collaboration-tab-manage')
+      await click(control, 'collaboration-project-settings-groups')
       await click(control, 'collaboration-project-settings-sharing')
       await wait(control, 'project-template-settings')
       await capture(control, '04-sharing-settings')
@@ -394,6 +396,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await fillTemplateRoleBindings(control, 3)
       await capture(control, '08-import-bindings')
       await applyBindings(control)
+      await click(control, 'collaboration-template-close')
       await click(control, 'collaboration-project-settings-groups')
       await wait(control, 'collaboration-project-groups-page', '调研分析小组')
       await wait(control, 'collaboration-project-groups-page', '产品全流程小组')

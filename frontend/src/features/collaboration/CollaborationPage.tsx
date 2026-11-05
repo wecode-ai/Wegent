@@ -130,7 +130,7 @@ function CollaborationWebShell({ main, sidebar }: { main: ReactNode; sidebar: Re
 
 export function CollaborationPage() {
   const theme = useDocumentTheme()
-  const { user, isLoading: userLoading } = useUser()
+  const { user } = useUser()
   const templateStore = useCollaborationTemplates()
   const router = useRouter()
   const pathname = usePathname()
@@ -284,15 +284,9 @@ export function CollaborationPage() {
   const projectSettingsSection =
     projectView === 'manage' &&
     section &&
-    [
-      'project',
-      'agents',
-      'members',
-      'groups',
-      'environments',
-      'automatic-processing',
-      'configuration-sharing',
-    ].includes(section)
+    ['project', 'agents', 'members', 'groups', 'environments', 'automatic-processing'].includes(
+      section
+    )
       ? (section as ProjectSettingsSectionId)
       : null
   useEffect(() => {
@@ -425,7 +419,7 @@ export function CollaborationPage() {
     ]
   )
 
-  if (userLoading && !user) {
+  if (!user || !templateStore) {
     return (
       <CollaborationWebShell sidebar={<div />} main={<LoadingState message={t('loading')} />} />
     )

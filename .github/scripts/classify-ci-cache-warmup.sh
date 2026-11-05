@@ -127,6 +127,12 @@ classify_path() {
       changed[executor_rust]=true
       changed[wework_target]=true
       ;;
+    shared/issue_follow_events.rs)
+      changed[wework_target]=true
+      changed[docker]=true
+      changed[executor_rust]=true
+      changed[backend_rs_rust]=true
+      ;;
     shared/assets/*)
       changed[node]=true
       changed[wework_target]=true

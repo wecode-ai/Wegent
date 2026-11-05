@@ -169,6 +169,7 @@ function createMockDeliveryApi() {
       agents: [],
     } satisfies ProjectBoardSnapshot),
     getLoopItem: vi.fn().mockResolvedValue(issue),
+    setLoopItemFollowing: vi.fn().mockResolvedValue({ following: true }),
     createLoopItem: vi.fn().mockResolvedValue(issue),
     updateLoopItem: vi.fn().mockResolvedValue(issue),
     assignLoopItem: vi.fn().mockResolvedValue(issue),
@@ -667,6 +668,25 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       include_terminal: true,
     })
     await api.executions.stop('project-1', 5)
+  })
+
+  it('forwards following changes without changing assignment or issue fields', async () => {
+    const deliveryApi = createMockDeliveryApi()
+    const api = createWeworkDeliverySharedWorkspaceApi(deliveryApi)
+
+    await expect(api.issues.setFollowing('issue-1', true)).resolves.toEqual({
+      following: true,
+    })
+    vi.mocked(deliveryApi.setLoopItemFollowing).mockResolvedValue({ following: false })
+    await expect(api.issues.setFollowing('issue-1', false)).resolves.toEqual({
+      following: false,
+    })
+    expect(vi.mocked(deliveryApi.setLoopItemFollowing).mock.calls).toEqual([
+      ['issue-1', true],
+      ['issue-1', false],
+    ])
+    expect(deliveryApi.assignLoopItem).not.toHaveBeenCalled()
+    expect(deliveryApi.updateLoopItem).not.toHaveBeenCalled()
   })
 
   it('publishes an exact compile-time inventory instead of fake unsupported methods', () => {

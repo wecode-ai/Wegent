@@ -57,16 +57,14 @@ export function createDesktopScenario(options) {
           timeoutMs: uiTimeoutMs,
         })
         await control.command('select', test('cloud-todo-detail-status'), { value: 'completed' })
-        await control.command('clickWhenEnabled', test('cloud-todo-save'), {
-          timeoutMs: uiTimeoutMs,
-        })
         await waitForBoardValue(
           async () =>
             (await rpc('todos.get', { project_id: project.id, task_id: child.id })).status,
           'completed',
-          'Completing a sub-issue through the UI must persist',
+          'Completing a sub-issue through the UI must auto-save',
           uiTimeoutMs
         )
+        assert.equal(Number(await control.command('getElementCount', test('cloud-todo-save'))), 0)
         await control.command('clickWhenEnabled', test('cloud-todo-detail-close'), {
           timeoutMs: uiTimeoutMs,
         })

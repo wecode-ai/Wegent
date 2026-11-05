@@ -10,6 +10,7 @@ import {
   collaborationScheduleDates,
   verifyCollaborationScheduleViews,
 } from '../e2e/desktop/modules/collaboration-schedule-views.mjs'
+import { scheduleRuntimeControl } from './fixtures/collaboration-schedule-runtime.mjs'
 
 afterEach(() => vi.useRealTimers())
 
@@ -124,9 +125,10 @@ test.each(['2026-10-26T12:00:00', '2026-11-30T12:00:00'])(
         )
       },
     }
+    const runtime = scheduleRuntimeControl(control, 'Schedule regression')
     await verifyCollaborationScheduleViews({
       capture: async (_, name) => captures.push(name),
-      control,
+      control: runtime,
       issueTitle: 'Schedule regression',
       scoped: selector => selector,
       timeoutMs: 1000,
@@ -135,6 +137,10 @@ test.each(['2026-10-26T12:00:00', '2026-11-30T12:00:00'])(
     assert.equal(calls.filter(call => call.action === 'drag').length, 2)
     assert.equal(calls.filter(call => call.action === 'dragBy').length, 1)
     assert.equal(captures.length, 3)
+    assert.deepEqual(
+      runtime.requests.map(request => request.method),
+      ['todos.list', 'todos.get']
+    )
     const dayWaits = calls.filter(
       call => call.action === 'waitFor' && /collaboration-calendar-day-\d{4}/.test(call.selector)
     )

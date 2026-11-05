@@ -11,7 +11,8 @@ export const templateMessages = {
     loading: '正在加载…',
     manageRequired: '只有项目所有者或维护者可以应用模板。',
     executionEnvironment: '项目执行环境',
-    environmentAuthorizationHint: '勾选后，创建时将把执行环境共享给所选空间并授权给新项目。包含智能体的模板需要勾选账号的默认执行环境。',
+    environmentAuthorizationHint:
+      '勾选后，创建时将把执行环境共享给所选空间并授权给新项目。包含智能体的模板需要勾选账号的默认执行环境。',
     selectExecutionEnvironment: '请先选择要授权的默认执行环境；可在设备页面配置默认设备。',
     description: '把成熟的分工与流程，带进你的下一个项目。',
     discover: '发现模板',
@@ -43,6 +44,7 @@ export const templateMessages = {
     author: '作者',
     official: 'Wegent 官方',
     close: '关闭',
+    back: '返回',
     cancel: '取消',
     confirm: '确认',
     save: '保存到我的模板',
@@ -95,6 +97,8 @@ export const templateMessages = {
     selected: '已选择模板',
     configuration: '配置共享',
     configurationHint: '复用已有的协作方式，也把当前配置分享给其他项目。',
+    sharingImportHint: '选择模板，为项目添加分工与流程。',
+    sharingExportHint: '下载分工与流程，不含任务、讨论或连接凭据。',
     importProject: '导入协作模板',
     importProjectHint: '为项目添加一套新的分工与流程。选择模板、确认配置后即可使用。',
     exportHint:
@@ -111,8 +115,10 @@ export const templateMessages = {
     loading: 'Loading…',
     manageRequired: 'Only project owners and maintainers can apply templates.',
     executionEnvironment: 'Project execution environment',
-    environmentAuthorizationHint: 'Selected environments will be shared with the chosen space and authorized for the new project. Templates containing Agents require your account’s default executor.',
-    selectExecutionEnvironment: 'Select the default execution environment to authorize. You can set your default device on the Devices page.',
+    environmentAuthorizationHint:
+      'Selected environments will be shared with the chosen space and authorized for the new project. Templates containing Agents require your account’s default executor.',
+    selectExecutionEnvironment:
+      'Select the default execution environment to authorize. You can set your default device on the Devices page.',
     description: 'Bring proven roles and workflows into your next project.',
     discover: 'Discover',
     available: 'Available',
@@ -143,6 +149,7 @@ export const templateMessages = {
     author: 'Author',
     official: 'Wegent',
     close: 'Close',
+    back: 'Back',
     cancel: 'Cancel',
     confirm: 'Confirm',
     save: 'Save to my templates',
@@ -202,6 +209,8 @@ export const templateMessages = {
     selected: 'Template selected',
     configuration: 'Configuration sharing',
     configurationHint: 'Reuse a way of working, or share this configuration with other projects.',
+    sharingImportHint: 'Choose a template to add roles and workflows.',
+    sharingExportHint: 'Download roles and workflows, without tasks, discussions or credentials.',
     importProject: 'Import collaboration template',
     importProjectHint:
       'Add roles and a workflow to this project. Choose a template and confirm its members.',

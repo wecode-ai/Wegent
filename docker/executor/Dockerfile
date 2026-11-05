@@ -33,6 +33,7 @@ COPY executor/src /app/executor/src
 COPY sdk/plugin-auth /app/sdk/plugin-auth
 COPY sdk/plugin-creator /app/sdk/plugin-creator
 COPY shared/assets /app/shared/assets
+COPY shared/issue_follow_events.rs /app/shared/issue_follow_events.rs
 RUN cd /app/executor \
     && find src -type f -exec touch {} + \
     && APP_VERSION="${APP_VERSION}" cargo build --release --locked --bin wegent-executor

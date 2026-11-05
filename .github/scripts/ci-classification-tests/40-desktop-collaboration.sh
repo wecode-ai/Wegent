@@ -342,3 +342,11 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
     "$terminal_path"
 done
 
+
+assert_desktop_case "Issue identity regression is invoked by its core CI shard" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"collaboration-issue-identity"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/scenarios/collaboration-issue-identity.scenario.mjs"

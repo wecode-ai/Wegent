@@ -6,6 +6,8 @@ mod aitable_provider;
 mod board_views;
 mod content;
 mod credentials;
+#[path = "../../../shared/issue_follow_events.rs"]
+mod issue_follow_events;
 mod issue_provider;
 pub mod mcp;
 pub(crate) mod mcp_http;

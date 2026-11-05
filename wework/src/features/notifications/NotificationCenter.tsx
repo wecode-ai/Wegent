@@ -54,6 +54,7 @@ import {
 
 type InboxCategory = 'tasks' | WeworkNotificationCategory
 const CLOUD_CATEGORIES: WeworkNotificationCategory[] = ['collaboration', 'general']
+const EMPTY_NOTIFICATIONS: WeworkNotification[] = []
 
 /**
  * The preview line a category entry shows for its latest cloud notification.
@@ -271,9 +272,37 @@ function ConnectedNotificationCenter({
   const [anchor, setAnchor] = useState<HTMLElement | null>(null)
   const [category, setCategory] = useState<InboxCategory | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const accountKey = `${baseUrl ?? 'local'}:${userId ?? 'anonymous'}`
-  const [preferences, setPreferences] = useState<WeworkNotificationPreferences>(() =>
-    readCachedNotificationPreferences(accountKey)
+  const accountKey = `${baseUrl ?? 'local'}:${userId ?? taskSource?.userId ?? 'anonymous'}`
+  const [preferenceState, setPreferenceState] = useState(() => ({
+    accountKey,
+    value: readCachedNotificationPreferences(accountKey),
+  }))
+  const preferences = useMemo(
+    () =>
+      preferenceState.accountKey === accountKey
+        ? preferenceState.value
+        : readCachedNotificationPreferences(accountKey),
+    [accountKey, preferenceState]
+  )
+  const setPreferences = useCallback(
+    (
+      next:
+        | WeworkNotificationPreferences
+        | ((current: WeworkNotificationPreferences) => WeworkNotificationPreferences)
+    ) => {
+      setPreferenceState(current => ({
+        accountKey,
+        value:
+          typeof next === 'function'
+            ? next(
+                current.accountKey === accountKey
+                  ? current.value
+                  : readCachedNotificationPreferences(accountKey)
+              )
+            : next,
+      }))
+    },
+    [accountKey]
   )
   const [taskImSessionKey, setTaskImSessionKey] = useState<string | null>(null)
   const [imTargetOpen, setImTargetOpen] = useState(false)
@@ -281,6 +310,21 @@ function ConnectedNotificationCenter({
     collaboration: null,
     general: null,
   })
+  const projectLocalApi = taskSource?.services?.projectSpaceApis?.local
+  const localApi =
+    projectLocalApi?.issueNotificationsUserId === (userId ?? taskSource?.userId ?? 0)
+      ? projectLocalApi
+      : undefined
+  const [localInbox, setLocalInbox] = useState<{
+    accountKey: string
+    api: typeof localApi
+    items: WeworkNotification[]
+  }>({ accountKey, api: localApi, items: EMPTY_NOTIFICATIONS })
+  const localNotifications =
+    localInbox.accountKey === accountKey && localInbox.api === localApi
+      ? localInbox.items
+      : EMPTY_NOTIFICATIONS
+  const localRequestId = useRef(0)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const requestId = useRef(0)
@@ -336,7 +380,7 @@ function ConnectedNotificationCenter({
       cacheNotificationPreferences(accountKey, merged)
       return merged
     })
-  }, [accountKey, api, runtimeApi])
+  }, [accountKey, api, runtimeApi, setPreferences])
   const openSettings = useCallback(() => {
     if (!buttonRef.current) return
     setAnchor(buttonRef.current)
@@ -383,8 +427,44 @@ function ConnectedNotificationCenter({
   }, [refresh, anchor])
 
   useEffect(() => {
+    let active = true
+    const load = async () => {
+      if (!localApi?.listIssueNotifications) return
+      const id = ++localRequestId.current
+      try {
+        const items = await localApi.listIssueNotifications()
+        if (active && id === localRequestId.current)
+          setLocalInbox({ accountKey, api: localApi, items })
+      } catch (cause) {
+        if (active && id === localRequestId.current)
+          setError(cause instanceof Error ? cause.message : String(cause))
+      }
+    }
+    void load()
+    const timer = window.setInterval(() => void load(), 15000)
+    window.addEventListener('wework-notifications-changed', load)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+      window.removeEventListener('wework-notifications-changed', load)
+    }
+  }, [accountKey, localApi])
+
+  useEffect(() => {
     cacheNotificationPreferences(accountKey, readCachedNotificationPreferences(accountKey))
   }, [accountKey])
+
+  useEffect(() => {
+    let active = true
+    void localApi
+      ?.setIssueNotificationPreference?.(preferences.collaboration.in_app)
+      .catch(cause => {
+        if (active) setError(cause instanceof Error ? cause.message : String(cause))
+      })
+    return () => {
+      active = false
+    }
+  }, [localApi, preferences.collaboration.in_app])
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -402,8 +482,20 @@ function ConnectedNotificationCenter({
 
   useStandInAssignmentNotifications(inboxes.collaboration, taskSource, accountKey, userId)
 
+  const combinedCollaboration = useMemo<WeworkInbox>(
+    () => ({
+      items: [...(inboxes.collaboration?.items ?? []), ...localNotifications].sort(
+        (a, b) => Date.parse(b.created_at) - Date.parse(a.created_at)
+      ),
+      unread_count:
+        (inboxes.collaboration?.unread_count ?? 0) +
+        localNotifications.filter(item => !item.read_at).length,
+      next_offset: inboxes.collaboration?.next_offset ?? null,
+    }),
+    [inboxes.collaboration, localNotifications]
+  )
   const collaboration = useStandInNotifications(
-    inboxes.collaboration,
+    combinedCollaboration,
     taskSource,
     accountKey,
     preferences.collaboration.in_app,
@@ -454,6 +546,18 @@ function ConnectedNotificationCenter({
     if (notification.synthetic) {
       collaboration.markRead([notification])
       return notification
+    }
+    if (notification.id.startsWith('local-issue-notification:')) {
+      if (!localApi?.readIssueNotifications) throw new Error(t('notifications.cloud_unavailable'))
+      localRequestId.current++
+      await localApi.readIssueNotifications(notification.id)
+      const saved = { ...notification, read_at: new Date().toISOString() }
+      setLocalInbox(current =>
+        current.accountKey === accountKey
+          ? { ...current, items: current.items.map(item => (item.id === saved.id ? saved : item)) }
+          : current
+      )
+      return saved
     }
     if (!api) throw new Error(t('notifications.cloud_unavailable'))
     const saved = await api.read(notification.id)
@@ -542,7 +646,23 @@ function ConnectedNotificationCenter({
   const readAll = () =>
     void mutate(async () => {
       collaboration.markRead(collaboration.items)
-      if (api && cloudUnreadCount) {
+      if (localApi?.readIssueNotifications && localNotifications.some(item => !item.read_at)) {
+        localRequestId.current++
+        await localApi.readIssueNotifications()
+        const readAt = new Date().toISOString()
+        setLocalInbox(current =>
+          current.accountKey === accountKey
+            ? {
+                ...current,
+                items: current.items.map(item => ({ ...item, read_at: item.read_at ?? readAt })),
+              }
+            : current
+        )
+      }
+      if (
+        api &&
+        (inboxes.collaboration?.unread_count ?? 0) + (inboxes.general?.unread_count ?? 0)
+      ) {
         await api.readAll()
         setInboxes(current => ({
           collaboration: markInboxRead(current.collaboration),

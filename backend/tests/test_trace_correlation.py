@@ -12,13 +12,18 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
+from shared.telemetry.config import get_otel_config
 from shared.telemetry.context.span import get_request_id
 from shared.telemetry.http import internal_http_event_hooks
 from shared.utils.http_client import traced_async_client
 
 
 @pytest.fixture(params=[False, True], ids=["uninstrumented", "auto-instrumented"])
-def service_apps(request: pytest.FixtureRequest) -> Iterator[list[FastAPI]]:
+def service_apps(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[list[FastAPI]]:
+    # Use the test-owned provider instead of a developer's configured OTLP exporter.
+    monkeypatch.setattr(get_otel_config(), "enabled", False)
     from app.main import create_app as create_backend
     from chat_shell.main import create_app as create_chat_shell
 

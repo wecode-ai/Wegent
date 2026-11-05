@@ -296,6 +296,7 @@ def list_loop_items(
     assignee_type: str | None = Query(default=None),
     assignee_id: str | None = Query(default=None),
     execution_state: str | None = Query(default=None),
+    following: bool = Query(default=False),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> LoopItemListResponse:
@@ -306,6 +307,7 @@ def list_loop_items(
         assignee_type=assignee_type,
         assignee_id=assignee_id,
         execution_state=execution_state,
+        following_only=following,
     )
     return LoopItemListResponse(items=items)
 

@@ -198,7 +198,7 @@ async function createIssueAndAssignAgent(control, agentId, timeoutMs) {
   )
   assert.equal(runs.filter(candidate => candidate.loop_item_id === issue.id).length, 1)
   assert.equal(runs.find(candidate => candidate.loop_item_id === issue.id).agent_id, bindings[0].id)
-  return { project, source }
+  return { project, source, issue }
 }
 
 async function waitForIssueStatus(control, expected, timeoutMs) {
@@ -242,14 +242,26 @@ async function waitForModelRequestCount(requests, expected, timeoutMs) {
   )
 }
 
-async function renameIssueWhileRunning(control, timeoutMs) {
+async function renameIssueWhileRunning(control, { project, issue }, timeoutMs) {
   await control.command('click', scoped('[data-testid="cloud-todo-detail-title"]'))
   await control.command('fill', scoped('[data-testid="cloud-todo-detail-title"]'), {
     value: RENAMED_ISSUE,
   })
-  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
-    timeoutMs,
+  await control.command('press', scoped('[data-testid="cloud-todo-detail-title"]'), {
+    key: 'Enter',
   })
+  await waitForValue(
+    () =>
+      requestExecutor(
+        control,
+        'todos.get',
+        { project_id: project.id, task_id: issue.id },
+        timeoutMs
+      ),
+    value => value.title === RENAMED_ISSUE,
+    'The running local Issue title did not save on Enter',
+    timeoutMs
+  )
   await control.command('waitFor', scoped('[data-testid="cloud-todo-detail-title"]'), {
     text: RENAMED_ISSUE,
     timeoutMs,
@@ -417,7 +429,7 @@ export async function createDesktopScenario({
       await waitForModelRequest(modelStarted, modelResponseTimeoutMs)
       await waitForIssueStatus(control, 'in_progress', modelResponseTimeoutMs)
       await verifyExecutionActivityOrder(control, scoped, 'running', uiTimeoutMs)
-      await renameIssueWhileRunning(control, uiTimeoutMs)
+      await renameIssueWhileRunning(control, fixture, uiTimeoutMs)
       await captureScreenshot(control, 'local-agent-dispatch-01-running.png', CONTENT)
 
       releaseRequests.get('initial')?.()

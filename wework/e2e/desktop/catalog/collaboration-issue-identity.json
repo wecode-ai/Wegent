@@ -1,0 +1,18 @@
+{
+  "order": 73500,
+  "scenario": "./scenarios/collaboration-issue-identity.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 18500,
+      "shard": 2,
+      "position": 19500
+    }
+  },
+  "paths": [
+    "executor/tests/local_issue_identity_contract.rs",
+    "executor/src/task_runtime/external_issue*",
+    "executor/src/task_runtime/aitable_events.rs",
+    "shared/issue_follow_events.rs"
+  ]
+}

@@ -30,6 +30,7 @@ class ProjectBoardSnapshotService:
         assignee_type: str | None = None,
         assignee_id: str | None = None,
         execution_state: str | None = None,
+        following_only: bool = False,
     ) -> tuple[CloudProject, list[LoopItemResponse]]:
         access = cloud_project_service.access(db, project_id, user_id)
         return access.project, self._item_views(
@@ -39,6 +40,7 @@ class ProjectBoardSnapshotService:
             assignee_type=assignee_type,
             assignee_id=assignee_id,
             execution_state=execution_state,
+            following_only=following_only,
         )
 
     def _item_views(
@@ -50,6 +52,7 @@ class ProjectBoardSnapshotService:
         assignee_type: str | None = None,
         assignee_id: str | None = None,
         execution_state: str | None = None,
+        following_only: bool = False,
     ) -> list[LoopItemResponse]:
         project = access.project
         if project.task_provider in {"github", "gitlab"}:
@@ -60,7 +63,11 @@ class ProjectBoardSnapshotService:
                 assignee_type=assignee_type,
                 assignee_id=assignee_id,
             )
-            return [LoopItemResponse.model_validate(item) for item in items]
+            return [
+                LoopItemResponse.model_validate(item)
+                for item in items
+                if not following_only or item.get("is_following")
+            ]
 
         items = loop_item_service.list_for_access(
             db,
@@ -75,6 +82,7 @@ class ProjectBoardSnapshotService:
             for values in loop_item_service.response_values_many(
                 db, items, user_id, access=access
             )
+            if not following_only or values["is_following"]
         ]
 
     def get(
@@ -82,9 +90,11 @@ class ProjectBoardSnapshotService:
         db: Session,
         project_id: int,
         user_id: int,
+        *,
+        following_only: bool = False,
     ) -> ProjectBoardSnapshotResponse:
         access = cloud_project_service.access(db, project_id, user_id)
-        items = self._item_views(db, access, user_id)
+        items = self._item_views(db, access, user_id, following_only=following_only)
         if access.is_viewer:
             return ProjectBoardSnapshotResponse(
                 items=items,

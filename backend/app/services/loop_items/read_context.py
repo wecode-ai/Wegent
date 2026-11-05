@@ -28,6 +28,7 @@ class LoopItemReadContext:
     messages: dict[tuple[str, str], ProjectChatMessage]
     human_bindings: dict[str, dict]
     visible_ids: set[str]
+    followed_ids: set[str]
 
     @classmethod
     def load(
@@ -39,7 +40,17 @@ class LoopItemReadContext:
     ) -> "LoopItemReadContext":
         item_ids = [item.id for item in items]
         executions = _latest_executions(db, item_ids)
-        user_ids = {item.assignee_user_id for item in items if item.assignee_user_id}
+        followed_ids = {item.id for item in items if user_id in item.follower_user_ids}
+        user_ids = {
+            user_id
+            for item in items
+            for user_id in (
+                item.assignee_user_id,
+                item.created_by_user_id,
+                item.reporter_user_id,
+            )
+            if user_id
+        }
         agent_ids = {item.assignee_agent_id for item in items if item.assignee_agent_id}
         team_ids = {item.assignee_team_id for item in items if item.assignee_team_id}
         agent_ids.update(row.agent_id for row in executions.values() if row.agent_id)
@@ -71,6 +82,7 @@ class LoopItemReadContext:
                 db, items, user_id, projects=[access.project]
             ),
             visible_ids=_visible_ids(db, items, user_id, access),
+            followed_ids=followed_ids,
         )
 
 
@@ -85,8 +97,8 @@ def _latest_executions(
         .group_by(LoopItemExecution.loop_item_id)
     )
     return {
-        row.loop_item_id: row
-        for row in db.query(LoopItemExecution).filter(
+        execution.loop_item_id: execution
+        for execution in db.query(LoopItemExecution).filter(
             LoopItemExecution.id.in_(latest_ids)
         )
     }

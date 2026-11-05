@@ -9,7 +9,8 @@ import { CollaborationTemplatePage } from './CollaborationTemplatePage'
 import { CollaborationTemplateStore } from './store'
 import { builtinCollaborationTemplates } from './builtins'
 import type { CollaborationTemplateRemote, TemplateRecord } from './types'
-import { TemplateBindings } from './TemplateBindings'
+import { TemplateBindings, TemplateBindingsDialog } from './TemplateBindings'
+import { PartialTemplateApplyError } from './apply'
 
 let root: Root
 let container: HTMLDivElement
@@ -59,6 +60,40 @@ async function click(testId: string) {
   await act(async () => target!.click())
 }
 
+it('blocks returning to template selection after a partial import until the project is reloaded', async () => {
+  const document = structuredClone(builtinCollaborationTemplates()[0].document)
+  const group = document.spec.resources.collaboration.groups[0]
+  group.roles = [group.roles.find(role => role.key === group.leaderRole)!]
+  group.stages = []
+  document.spec.resources.collaboration.groups = [group]
+  const onApply = vi.fn(async () => {
+    throw new PartialTemplateApplyError('Partially imported')
+  })
+  const onClose = vi.fn()
+  await act(async () =>
+    root.render(
+      <TemplateBindingsDialog
+        document={document}
+        locale="en"
+        candidates={[{ kind: 'agent', id: 'leader', label: 'Coordinator', responsibility: '' }]}
+        dialogOptions={{ size: 'standard', back: { label: 'Back', onClick: vi.fn() } }}
+        onApply={onApply}
+        onClose={onClose}
+      />
+    )
+  )
+  expect(container.querySelector('[data-testid="template-dialog-back"]')).not.toBeNull()
+  await click('template-bindings-apply')
+  expect(container.querySelector('[role="alert"]')?.textContent).toBe('Partially imported')
+  expect(container.querySelector('[data-testid="template-dialog-back"]')).toBeNull()
+  expect(
+    container.querySelector<HTMLButtonElement>('[data-testid="template-bindings-apply"]')!.disabled
+  ).toBe(true)
+  expect(onApply).toHaveBeenCalledOnce()
+  await click('collaboration-template-close')
+  expect(onClose).toHaveBeenCalledOnce()
+})
+
 it('keeps the use action available after adding a marketplace template to the account', async () => {
   const backend = remote()
   const record: TemplateRecord = {
@@ -69,13 +104,17 @@ it('keeps the use action available after adding a marketplace template to the ac
   }
   record.document.metadata = { name: 'shared-workflow', namespace: 'default' }
   const store = new CollaborationTemplateStore({
-    scope: 'backend:7', ownerId: 7, remote: backend,
+    scope: 'backend:7',
+    ownerId: 7,
+    remote: backend,
     persistence: { read: async () => [record], write: async () => {} },
   })
   const onUse = vi.fn()
-  await act(async () => root.render(
-    <CollaborationTemplatePage store={store} locale="en" mode="marketplace" onUse={onUse} />
-  ))
+  await act(async () =>
+    root.render(
+      <CollaborationTemplatePage store={store} locale="en" mode="marketplace" onUse={onUse} />
+    )
+  )
   await click('template-details-shared-workflow')
   await click('template-account-add')
   expect(backend.install).toHaveBeenCalledWith(42)

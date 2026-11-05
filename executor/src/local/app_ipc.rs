@@ -2343,10 +2343,69 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                         input,
                         optional_nullable_task_string(todo, "start_at")?.flatten(),
                         optional_nullable_task_string(todo, "due_at")?.flatten(),
+                        params.get("actor_user_id").and_then(Value::as_i64),
                     )
                     .await
                     .map_err(task_runtime_error)?,
             )
+        }
+        "todos.follow" => {
+            let user_id = params
+                .get("user_id")
+                .and_then(Value::as_i64)
+                .ok_or_else(|| AppIpcError::new("bad_request", "user_id is required"))?;
+            let following = params
+                .get("following")
+                .and_then(Value::as_bool)
+                .ok_or_else(|| AppIpcError::new("bad_request", "following is required"))?;
+            serialize_task_value(
+                runtime
+                    .set_task_following(
+                        required_task_string(&params, "project_id")?,
+                        required_task_string(&params, "task_id")?,
+                        user_id,
+                        following,
+                    )
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "todos.notifications.preferences" => {
+            let user_id = params["user_id"]
+                .as_i64()
+                .ok_or_else(|| AppIpcError::new("bad_request", "user_id is required"))?;
+            let in_app = params["in_app"]
+                .as_bool()
+                .ok_or_else(|| AppIpcError::new("bad_request", "in_app is required"))?;
+            runtime
+                .stand_in_store()
+                .set_issue_notification_preference(user_id, in_app)
+                .map_err(task_runtime_error)?;
+            Ok(json!({"in_app":in_app}))
+        }
+        "todos.notifications.list" => {
+            let user_id = params["user_id"]
+                .as_i64()
+                .ok_or_else(|| AppIpcError::new("bad_request", "user_id is required"))?;
+            serialize_task_value(
+                runtime
+                    .stand_in_store()
+                    .list_issue_notifications(user_id)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "todos.notifications.read" => {
+            let user_id = params["user_id"]
+                .as_i64()
+                .ok_or_else(|| AppIpcError::new("bad_request", "user_id is required"))?;
+            runtime
+                .stand_in_store()
+                .read_issue_notifications(
+                    user_id,
+                    params.get("notification_id").and_then(Value::as_str),
+                )
+                .map_err(task_runtime_error)?;
+            Ok(json!({"read":true}))
         }
         "todos.update" => {
             let project_id = required_task_string(&params, "project_id")?;
@@ -2362,6 +2421,7 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                         input,
                         optional_nullable_task_string(todo, "start_at")?,
                         optional_nullable_task_string(todo, "due_at")?,
+                        params.get("actor_user_id").and_then(Value::as_i64),
                     )
                     .await
                     .map_err(task_runtime_error)?,
@@ -2426,13 +2486,19 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                 .unwrap_or(0);
             serialize_task_value(
                 runtime
-                    .list_comments(project_id, task_id, after_sequence)
+                    .list_visible_comments(project_id, task_id, after_sequence)
+                    .await
                     .map_err(task_runtime_error)?,
             )
         }
         "todos.comment.create" => {
             let create = task_input::<LocalCommentCreate>(&params, "comment")?;
-            serialize_task_value(runtime.create_comment(create).map_err(task_runtime_error)?)
+            serialize_task_value(
+                runtime
+                    .create_visible_comment(create)
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
         }
         "todos.comment.agent.start" => {
             let project_id = required_task_string(&params, "project_id")?;

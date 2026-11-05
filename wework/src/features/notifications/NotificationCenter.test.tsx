@@ -28,7 +28,7 @@ const runtimeApi = vi.hoisted(() => ({
 }))
 const desktopHost = vi.hoisted(() => ({ invoke: vi.fn() }))
 const environment = vi.hoisted(() => ({ electron: false }))
-const taskState = vi.hoisted(() => ({ reminders: null as unknown }))
+const taskState = vi.hoisted(() => ({ reminders: null as unknown, services: undefined as unknown }))
 vi.mock('@/api/notifications', () => ({ createNotificationsApi: () => api }))
 vi.mock('@/api/runtimeWork', () => ({ createRuntimeWorkApi: () => runtimeApi }))
 vi.mock('@/api/dsh/desktopHost', () => ({ invokeDesktopHost: desktopHost.invoke }))
@@ -43,7 +43,7 @@ vi.mock('@/lib/navigation', async importOriginal => ({
   navigateTo: navigation.navigateTo,
 }))
 vi.mock('@/features/workbench/useWorkbench', () => ({
-  useWorkbench: () => ({ runtimeTaskReminders: taskState.reminders }),
+  useWorkbench: () => ({ runtimeTaskReminders: taskState.reminders, services: taskState.services }),
 }))
 vi.mock('@/hooks/useTranslation', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 
@@ -92,6 +92,7 @@ const viewWithTask = (value = connection) => (
 beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
+  taskState.services = undefined
   environment.electron = false
   desktopHost.invoke.mockResolvedValue({
     taskCompletionNotificationsEnabled: false,
@@ -147,6 +148,185 @@ beforeEach(() => {
 })
 
 describe('notification center', () => {
+  it('hides the previous local source while another source for the same account loads', async () => {
+    taskState.services = {
+      projectSpaceApis: {
+        local: {
+          issueNotificationsUserId: 1,
+          listIssueNotifications: vi
+            .fn()
+            .mockResolvedValue([
+              { ...entry, id: 'local-issue-notification:old', title: 'Old source' },
+            ]),
+          readIssueNotifications: vi.fn(),
+        },
+      },
+    }
+    const rendered = render(viewWithTask())
+    fireEvent.click(screen.getByTestId('wework-notifications-button'))
+    fireEvent.click(screen.getByTestId('wework-notifications-category-collaboration'))
+    expect(await screen.findByText('Old source')).toBeVisible()
+    taskState.services = {
+      projectSpaceApis: {
+        local: {
+          issueNotificationsUserId: 1,
+          listIssueNotifications: vi.fn().mockReturnValue(new Promise(() => {})),
+          readIssueNotifications: vi.fn(),
+        },
+      },
+    }
+    rendered.rerender(viewWithTask())
+    expect(screen.queryByText('Old source')).toBeNull()
+  })
+  it('hides the previous local inbox immediately when the account changes', async () => {
+    const notification = {
+      ...entry,
+      id: 'local-issue-notification:account',
+      title: 'Previous account',
+      url: null,
+    }
+    taskState.services = {
+      projectSpaceApis: {
+        local: {
+          issueNotificationsUserId: 1,
+          listIssueNotifications: vi
+            .fn()
+            .mockResolvedValueOnce([notification])
+            .mockReturnValueOnce(new Promise(() => {})),
+          readIssueNotifications: vi.fn(),
+        },
+      },
+    }
+    const rendered = render(viewWithTask())
+    fireEvent.click(screen.getByTestId('wework-notifications-button'))
+    fireEvent.click(screen.getByTestId('wework-notifications-category-collaboration'))
+    expect(await screen.findByText('Previous account')).toBeVisible()
+    rendered.rerender(
+      viewWithTask({ ...connection, user: { id: 2 } } as CloudConnectionContextValue)
+    )
+    expect(screen.queryByText('Previous account')).toBeNull()
+  })
+  it('does not restore unread state from an older local inbox request', async () => {
+    const notification = {
+      ...entry,
+      id: 'local-issue-notification:race',
+      title: 'Local update',
+      url: null,
+    }
+    let resolveStale!: (items: (typeof notification)[]) => void
+    const stale = new Promise<(typeof notification)[]>(resolve => {
+      resolveStale = resolve
+    })
+    const listIssueNotifications = vi
+      .fn()
+      .mockResolvedValueOnce([notification])
+      .mockReturnValueOnce(stale)
+    taskState.services = {
+      projectSpaceApis: {
+        local: {
+          issueNotificationsUserId: 1,
+          listIssueNotifications,
+          readIssueNotifications: vi.fn().mockResolvedValue(undefined),
+        },
+      },
+    }
+    render(viewWithTask())
+    fireEvent.click(screen.getByTestId('wework-notifications-button'))
+    fireEvent.click(screen.getByTestId('wework-notifications-category-collaboration'))
+    const row = await screen.findByTestId(`wework-notification-${notification.id}`)
+    expect(row).toHaveAttribute('data-unread', 'true')
+    await act(async () => window.dispatchEvent(new Event('wework-notifications-changed')))
+    expect(listIssueNotifications).toHaveBeenCalledTimes(2)
+    fireEvent.click(row)
+    await waitFor(() => expect(row).not.toHaveAttribute('data-unread'))
+    await act(async () => resolveStale([notification]))
+    expect(row).not.toHaveAttribute('data-unread')
+  })
+  it('shows and reads a local Issue notification using the local inbox', async () => {
+    const notification = {
+      ...entry,
+      id: 'local-issue-notification:1',
+      title: 'Local Issue update',
+      url: 'wework://boards/local/project/issues/issue',
+    }
+    const readIssueNotifications = vi.fn().mockResolvedValue(undefined)
+    taskState.services = {
+      projectSpaceApis: {
+        local: {
+          issueNotificationsUserId: 1,
+          listIssueNotifications: vi.fn().mockResolvedValue([notification]),
+          readIssueNotifications,
+        },
+      },
+    }
+    const open = vi.fn()
+    window.addEventListener(WEWORK_OPEN_SCHEME_EVENT, open)
+    try {
+      render(viewWithTask())
+      fireEvent.click(screen.getByTestId('wework-notifications-button'))
+      fireEvent.click(screen.getByTestId('wework-notifications-category-collaboration'))
+      fireEvent.click(await screen.findByText('Local Issue update'))
+      await waitFor(() => expect(readIssueNotifications).toHaveBeenCalledWith(notification.id))
+      expect(api.read).not.toHaveBeenCalled()
+      expect(open).toHaveBeenCalledOnce()
+    } finally {
+      window.removeEventListener(WEWORK_OPEN_SCHEME_EVENT, open)
+    }
+  })
+
+  it('persists the collaboration channel preference in the local Issue runtime', async () => {
+    const setIssueNotificationPreference = vi.fn().mockResolvedValue(undefined)
+    taskState.services = {
+      projectSpaceApis: {
+        local: {
+          issueNotificationsUserId: 1,
+          setIssueNotificationPreference,
+        },
+      },
+    }
+    render(viewWithTask())
+    await waitFor(() => expect(setIssueNotificationPreference).toHaveBeenCalledWith(true))
+    fireEvent.click(screen.getByTestId('wework-notifications-button'))
+    fireEvent.click(screen.getByTestId('wework-notifications-settings'))
+    fireEvent.click(await screen.findByTestId('wework-notifications-setting-collaboration-in_app'))
+    await waitFor(() => expect(setIssueNotificationPreference).toHaveBeenLastCalledWith(false))
+  })
+
+  it('uses the new account preference before its cloud refresh completes', async () => {
+    const disabled = {
+      tasks: { in_app: true, system: false, im: null },
+      collaboration: { in_app: false, system: true, im: true },
+      general: { in_app: true, system: null, im: true },
+    }
+    localStorage.setItem(
+      'wework.notification-preferences:http://backend/api:2',
+      JSON.stringify(disabled)
+    )
+    api.getPreferences.mockReturnValue(new Promise(() => {}))
+    const first = vi.fn().mockResolvedValue(undefined)
+    const second = vi.fn().mockResolvedValue(undefined)
+    taskState.services = {
+      projectSpaceApis: {
+        local: {
+          issueNotificationsUserId: 1,
+          setIssueNotificationPreference: first,
+        },
+      },
+    }
+    const { rerender } = render(viewWithTask())
+    await waitFor(() => expect(first).toHaveBeenCalledWith(true))
+    taskState.services = {
+      projectSpaceApis: {
+        local: {
+          issueNotificationsUserId: 2,
+          setIssueNotificationPreference: second,
+        },
+      },
+    }
+    rerender(viewWithTask({ ...connection, user: { id: 2 } } as CloudConnectionContextValue))
+    await waitFor(() => expect(second).toHaveBeenCalledWith(false))
+    expect(second).not.toHaveBeenCalledWith(true)
+  })
   it.each(['cloud', 'local'] as const)(
     'opens the %s Issue for a handled stand-in notification',
     async projectStore => {

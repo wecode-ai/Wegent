@@ -540,15 +540,18 @@ classify_workbench_path() {
       return
       ;;
 
+    # Registered scenarios select their catalog owner before the generic rendering path.
+    wework/e2e/desktop/scenarios/*)
+      if ! select_catalog_path_targets "$path"; then
+        select_rendering_checkpoints
+      fi
+      return
+      ;;
+
     # Assistant/tool rendering and desktop extension surfaces.
     wework/src/components/chat/blocks/* | \
       wework/src/components/chat/AttachmentImagePreview* | \
-      wework/src/extensions/desktop* | \
-      wework/e2e/desktop/scenarios/*)
-      if [[ "$path" == wework/e2e/desktop/scenarios/* ]] && \
-        select_catalog_path_targets "$path"; then
-        return
-      fi
+      wework/src/extensions/desktop*)
       select_rendering_checkpoints
       return
       ;;

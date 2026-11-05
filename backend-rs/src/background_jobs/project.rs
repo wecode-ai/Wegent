@@ -49,6 +49,17 @@ mod mysql_tests;
 pub(crate) mod notifications;
 #[path = "project_polling.rs"]
 mod polling;
+#[cfg(test)]
+#[path = "../../tests/support/assignments_fixture.rs"]
+#[allow(dead_code)]
+mod test_data;
+#[cfg(test)]
+#[path = "../../tests/support/responses_mysql.rs"]
+#[allow(dead_code)]
+mod test_fixture;
+
+#[path = "issue_follow_polling.rs"]
+pub(crate) mod issue_follow_polling;
 
 use super::registry::BackgroundJobRegistry;
 use crate::state::AppState;
@@ -73,6 +84,10 @@ pub(crate) fn register(registry: &mut BackgroundJobRegistry, state: Arc<AppState
             2,
             "app.tasks.project_automation_tasks.check_due_project_event_subscriptions",
         ),
+        (
+            3,
+            "app.tasks.issue_follow_tasks.check_followed_issue_events",
+        ),
     ] {
         let state = Arc::clone(&state);
         registry.register(name, move |_, _| {
@@ -81,7 +96,8 @@ pub(crate) fn register(registry: &mut BackgroundJobRegistry, state: Arc<AppState
                 let count = match kind {
                     0 => due::check(&state).await?,
                     1 => incoming::pending(&state).await?,
-                    _ => polling::check(&state).await?,
+                    2 => polling::check(&state).await?,
+                    _ => issue_follow_polling::check(&state).await?,
                 };
                 Ok(serde_json::json!(count))
             }

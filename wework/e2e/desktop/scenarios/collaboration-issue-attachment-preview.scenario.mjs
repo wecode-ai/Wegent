@@ -97,6 +97,17 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
     const title = `${CONTENT} [data-testid="cloud-todo-detail-title"]`
     await control.command('waitFor', title, { visible: true, timeoutMs: uiTimeoutMs })
     assert.equal(await control.command('getValue', title), ISSUE_TITLE)
+    const attachments = `${CONTENT} [data-testid="cloud-todo-attachment-toggle"]`
+    await control.command('waitFor', attachments, { visible: true, timeoutMs: uiTimeoutMs })
+    assert.equal(
+      await control.command('getAttribute', attachments, { value: 'aria-expanded' }),
+      'false'
+    )
+    await control.command('click', attachments)
+    await control.command('waitFor', `${attachments}[aria-expanded="true"]`, {
+      visible: true,
+      timeoutMs: uiTimeoutMs,
+    })
   }
 
   async function assertThumbnailDecoded(control) {

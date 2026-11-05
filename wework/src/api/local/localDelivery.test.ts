@@ -76,6 +76,55 @@ const taskRecord = {
   metadata: { tags: ['local'] },
 }
 
+test('uses the active identity for local projects and issue creators', async () => {
+  const request = vi.fn(async (method: string) => {
+    if (method === 'projects.list') return [{ ...projectRecord, created_by_user_id: 17 }]
+    if (method === 'todos.get' || method === 'todos.create' || method === 'todos.update')
+      return { ...taskRecord, created_by_user_id: 17 }
+    throw new Error(`Unexpected method: ${method}`)
+  })
+  const api = createLocalDeliveryApi(request, { currentUserId: 17, currentUserName: 'Ada' })
+  const project = (await api.listCloudProjects()).items[0]
+  expect(project.current_user_id).toBe(17)
+  expect(project.current_user_name).toBe('Ada')
+  expect(project.created_by_user_id).toBe(17)
+  expect(await api.listCloudProjectMembers(project.id)).toEqual([
+    expect.objectContaining({ user_id: 17, user_name: 'Ada', role: 'Owner' }),
+  ])
+  const issue = await api.getLoopItem(taskRecord.id)
+  expect(issue.created_by_user_name).toBe('Ada')
+  expect(issue.reporter_user_id).toBe(17)
+  await api.createLoopItem(project.id, { title: 'New issue' })
+  expect(request).toHaveBeenCalledWith(
+    'todos.create',
+    expect.objectContaining({ actor_user_id: 17 })
+  )
+  await api.updateLoopItem(taskRecord.id, { version: 1, reporter_user_id: 17 })
+  expect(request).toHaveBeenCalledWith(
+    'todos.update',
+    expect.objectContaining({
+      actor_user_id: 17,
+      todo: { version: 1, reporter_user_id: 17 },
+    })
+  )
+})
+
+test('shows the provider author when an external creator has no mapped user', async () => {
+  const request = vi.fn(async (method: string) => {
+    if (method === 'projects.list') return [projectRecord]
+    if (method === 'todos.get') {
+      return {
+        ...taskRecord,
+        created_by_user_id: 0,
+        metadata: { author: 'octocat', creator_label: null },
+      }
+    }
+    throw new Error(`Unexpected method: ${method}`)
+  })
+  const api = createLocalDeliveryApi(request, { currentUserId: 17, currentUserName: 'Ada' })
+  expect((await api.getLoopItem(taskRecord.id)).created_by_user_name).toBe('octocat')
+})
+
 describe('local delivery API', () => {
   test('round-trips saved board views through existing project metadata', async () => {
     const boardViews = { schema_version: 1, futureExtension: { keepCase: true }, views: [] }
@@ -664,6 +713,88 @@ describe('local delivery API', () => {
     })
   })
 
+  test('routes project and task operations through executor IPC', async () => {
+    const request = vi.fn(async (method: string) => {
+      if (method === 'projects.list') return [projectRecord]
+      if (method === 'projects.import_code_project') {
+        return {
+          ...projectRecord,
+          metadata: {
+            ...projectRecord.metadata,
+            code_project_key: 'runtime-project',
+            workspace_roots: ['/workspace/project'],
+          },
+        }
+      }
+      if (method === 'projects.update') {
+        return { ...projectRecord, name: 'Renamed board', version: 2 }
+      }
+      if (method === 'projects.archive') return {}
+      if (method === 'todos.list') return [taskRecord]
+      if (method === 'todos.create') return taskRecord
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+
+    await expect(api.listCloudProjects()).resolves.toMatchObject({
+      items: [
+        {
+          id: 'project-1',
+          name: 'Local board',
+          metadata: { task_provider: 'local', tags: [] },
+        },
+      ],
+    })
+    await expect(api.listLoopItems('project-1')).resolves.toMatchObject({
+      items: [{ id: 'LOCAL-1', title: 'First task', tags: ['local'] }],
+    })
+    await expect(
+      api.importLocalCodeProject({
+        runtimeProjectKey: 'runtime-project',
+        name: 'Local board',
+        roots: ['/workspace/project'],
+      })
+    ).resolves.toMatchObject({
+      id: 'project-1',
+      metadata: {
+        code_project_key: 'runtime-project',
+        workspace_roots: ['/workspace/project'],
+      },
+    })
+    expect(request).toHaveBeenCalledWith('projects.import_code_project', {
+      project_key: 'runtime-project',
+      name: 'Local board',
+      roots: ['/workspace/project'],
+    })
+    await expect(
+      api.updateCloudProject('project-1', { name: 'Renamed board', version: 1 })
+    ).resolves.toMatchObject({ name: 'Renamed board', version: 2 })
+    await api.createLoopItem('project-1', { title: 'First task' })
+
+    expect(request).toHaveBeenCalledWith('todos.create', {
+      actor_user_id: 0,
+      project_id: 'project-1',
+      todo: {
+        title: 'First task',
+        description: '',
+        status: 'inbox',
+        priority: 'none',
+        parent_id: null,
+        tags: [],
+      },
+    })
+    expect(request).toHaveBeenCalledWith('projects.update', {
+      project_id: 'project-1',
+      project: { name: 'Renamed board', version: 1 },
+    })
+
+    await api.archiveCloudProject('project-1', 2)
+    expect(request).toHaveBeenCalledWith('projects.archive', {
+      project_id: 'project-1',
+      version: 2,
+    })
+  })
+
   test('persists and reads the local task schedule through executor IPC', async () => {
     const startAt = '2026-10-10T01:00:00.000Z'
     const dueAt = '2026-10-12T09:00:00.000Z'
@@ -697,6 +828,7 @@ describe('local delivery API', () => {
       })
     ).resolves.toMatchObject({ start_at: startAt, due_at: dueAt })
     expect(request).toHaveBeenCalledWith('todos.create', {
+      actor_user_id: 0,
       project_id: 'project-1',
       todo: {
         title: 'Scheduled task',
@@ -746,6 +878,7 @@ describe('local delivery API', () => {
     ).resolves.toMatchObject({ assignee_user_id: 7 })
 
     expect(request).toHaveBeenCalledWith('todos.create', {
+      actor_user_id: 0,
       project_id: 'project-1',
       todo: {
         title: 'Assigned task',
@@ -785,6 +918,7 @@ describe('local delivery API', () => {
       tags: ['feature'],
     })
     expect(request).toHaveBeenCalledWith('todos.create', {
+      actor_user_id: 0,
       project_id: 'project-1',
       todo: {
         title: 'Modify Wegent',
@@ -1083,6 +1217,7 @@ describe('local delivery API', () => {
       task_id: 'runtime-1',
     })
     expect(request).toHaveBeenCalledWith('todos.create', {
+      actor_user_id: 0,
       project_id: 'project-1',
       todo: {
         title: 'Runtime task',
@@ -1121,6 +1256,7 @@ describe('local delivery API', () => {
     )
 
     expect(request).toHaveBeenCalledWith('todos.create', {
+      actor_user_id: 0,
       project_id: 'default-work-items',
       todo: {
         title: 'Runtime task',
@@ -1165,6 +1301,7 @@ describe('local delivery API', () => {
     ).resolves.toMatchObject({ item: { id: 'LOCAL-MOVED' } })
 
     expect(request).toHaveBeenCalledWith('todos.create', {
+      actor_user_id: 0,
       project_id: 'project-2',
       todo: {
         title: 'Runtime task',

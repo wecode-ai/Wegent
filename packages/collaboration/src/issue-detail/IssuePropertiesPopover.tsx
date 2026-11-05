@@ -11,7 +11,7 @@ export function IssuePropertiesPopover({
   triggerRef,
 }: {
   label: string
-  children: ReactNode
+  children: ReactNode | ((close: () => void) => ReactNode)
   onClose?: () => void
   triggerRef?: Ref<HTMLButtonElement>
 }) {
@@ -35,6 +35,7 @@ export function IssuePropertiesPopover({
           type="button"
           className="task-detail-more-menu-trigger"
           aria-label={label}
+          title={label}
           data-testid="cloud-todo-more-properties"
         >
           <Ellipsis className="h-4 w-4" aria-hidden="true" />
@@ -49,12 +50,11 @@ export function IssuePropertiesPopover({
           align="end"
           sideOffset={4}
           collisionPadding={8}
-          onOpenAutoFocus={event => event.preventDefault()}
         >
           <h3 id={titleId} className="task-detail-more-menu-title">
             {label}
           </h3>
-          {children}
+          {typeof children === 'function' ? children(() => changeOpen(false)) : children}
         </Popover.Content>
       </Popover.Portal>
     </Popover.Root>

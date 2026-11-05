@@ -54,7 +54,8 @@ def test_personal_api_key_creates_board_and_task(
     task = task_response.json()
     assert task["cloud_project_id"] == board["id"]
     assert task["created_by_user_id"] == api_key.user_id
-    assert task["assignee_user_id"] == api_key.user_id
+    assert task["reporter_user_id"] == api_key.user_id
+    assert task["assignee_user_id"] is None
     assert task["status"] == "inbox"
     assert task["priority"] == "high"
     assert task["tags"] == ["api"]

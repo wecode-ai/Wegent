@@ -131,6 +131,9 @@ export interface CollaborationIssue {
   parent_id: string | null;
   created_by_user_id: number;
   created_by_user_name?: string | null;
+  reporter_user_id?: number | null;
+  reporter_user_name?: string | null;
+  is_following?: boolean;
   assignee_user_id: number | null;
   assignee_group_id?: string | null;
   assignee_group_name?: string | null;
@@ -516,7 +519,6 @@ export type CollaborationView =
   | "manage";
 export type CollaborationRootView = "home" | "my-work";
 export type ProjectSettingsSectionId =
-  | "configuration-sharing"
   | "project"
   | "agents"
   | "members"

@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
+import { waitForBoardValue } from './collaboration-board-flows.mjs'
 import { waitForSnapshot } from './conversation-layout.mjs'
+import { requestExecutor } from './executor-rpc.mjs'
 import {
   assertFullscreenIssueComposerColumn,
   assertFullscreenIssueComposerColumnAtWindowSize,
@@ -1105,6 +1107,9 @@ async function verifyWorkspaceIssueCreation(control) {
     'The newly created Issue did not expose a stable board identity'
   )
   const createdIssueId = createdIssueTestId.slice('cloud-todo-card-'.length)
+  const projects = await requestExecutor(control, 'projects.list', {}, DEFAULT_STEP_TIMEOUT_MS)
+  const project = projects.find(candidate => candidate.name === projectName)
+  assert.ok(project, 'The shared Issue fixture project was not persisted')
   const issueDetailSelector = `${boardContentSelector} [data-testid="collaboration-issue-detail"]`
   await control.command('waitFor', issueDetailSelector, {
     text: 'WEWORK_DESKTOP_E2E_ISSUE_TITLE',
@@ -1176,6 +1181,20 @@ async function verifyWorkspaceIssueCreation(control) {
     await control.command('getValue', issueStatusSelector),
     'pending',
     'The Issue did not enter pending before returning to its board'
+  )
+  await waitForBoardValue(
+    async () => {
+      const saved = await requestExecutor(
+        control,
+        'todos.get',
+        { project_id: project.id, task_id: createdIssueId },
+        DEFAULT_STEP_TIMEOUT_MS
+      )
+      return [saved.status, saved.description]
+    },
+    ['pending', issueDescription],
+    'The automatic status save must preserve the description until manual submission',
+    DEFAULT_STEP_TIMEOUT_MS
   )
   await control.command(
     'clickWhenEnabled',
@@ -1480,6 +1499,13 @@ async function verifyTrackedTaskSettledStatus(control) {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await waitForStableColumnPlacement(
+    control,
+    reviewColumnSelector,
+    runningColumnSelector,
+    'WEWORK_DESKTOP_E2E_TASK',
+    'The settled task did not finish moving from the running column to review'
+  )
   assert.doesNotMatch(
     await control.command('getText', runningColumnSelector),
     /WEWORK_DESKTOP_E2E_TASK/,
@@ -1487,10 +1513,10 @@ async function verifyTrackedTaskSettledStatus(control) {
   )
 }
 
-async function openBoardTaskPageByText(control, activeBoardContentSelector, text, marker) {
+async function openBoardIssueDetailByText(control, activeBoardContentSelector, text, marker) {
   const boardCardId = await control.command(
     'markElementWithText',
-    `${activeBoardContentSelector} [data-testid^="cloud-todo-card-drop-"]`,
+    `${activeBoardContentSelector} [data-testid^="cloud-todo-card-drop-"]:not([data-testid^="cloud-todo-card-drop-runtime:"])`,
     {
       text,
       value: marker,
@@ -1501,11 +1527,7 @@ async function openBoardTaskPageByText(control, activeBoardContentSelector, text
   assert.ok(boardCardId.startsWith('cloud-todo-card-drop-'))
   const boardItemId = boardCardId.slice('cloud-todo-card-drop-'.length)
   const boardCardSelector = `${activeBoardContentSelector} [data-testid="${boardCardId}"]`
-  const openTaskSelector = `${boardCardSelector} [data-testid="cloud-todo-card-open-task-${boardItemId}"]`
-  const selector =
-    Number(await control.command('getElementCount', openTaskSelector)) > 0
-      ? openTaskSelector
-      : `${boardCardSelector} [data-testid="cloud-todo-card-${boardItemId}"]`
+  const selector = `${boardCardSelector} [data-testid="cloud-todo-card-${boardItemId}"]`
   await control.command('scrollIntoView', selector)
   await control.command('click', selector, { visible: true })
   await control.command(
@@ -1530,7 +1552,7 @@ async function enrichTrackedDefaultIssueTitle(control, taskTabTestId, title) {
     control,
     'The default Issue context test did not open its My Tasks tab'
   )
-  await openBoardTaskPageByText(
+  await openBoardIssueDetailByText(
     control,
     activeBoardContentSelector,
     'WEWORK_DESKTOP_E2E_TASK',
@@ -1541,14 +1563,31 @@ async function enrichTrackedDefaultIssueTitle(control, taskTabTestId, title) {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  const originalTitle = await control.command('getValue', titleSelector)
+  const items = await requestExecutor(
+    control,
+    'todos.list',
+    { project_id: 'default-work-items' },
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  const issue = items.find(candidate => candidate.title === originalTitle)
+  assert.ok(issue, 'The tracked default Issue fixture was not persisted')
   await control.command('click', titleSelector)
   await control.command('fill', titleSelector, { value: title })
-  await control.command(
-    'clickWhenEnabled',
-    `${activeBoardContentSelector} [data-testid="cloud-todo-save"]`,
-    {
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
+  await control.command('press', titleSelector, { key: 'Enter' })
+  await waitForBoardValue(
+    async () =>
+      (
+        await requestExecutor(
+          control,
+          'todos.get',
+          { project_id: 'default-work-items', task_id: issue.id },
+          DEFAULT_STEP_TIMEOUT_MS
+        )
+      ).title,
+    title,
+    'The tracked default Issue title did not save on Enter',
+    DEFAULT_STEP_TIMEOUT_MS
   )
   await control.command(
     'waitFor',
@@ -1623,7 +1662,7 @@ async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
     'workspace-05-awaiting-confirmation-on-board.png',
     activeBoardContentSelector
   )
-  await openBoardTaskPageByText(
+  await openBoardIssueDetailByText(
     control,
     activeBoardContentSelector,
     'WEWORK_DESKTOP_E2E_TASK',
@@ -2659,6 +2698,7 @@ export {
   verifyTrackedTaskBoardRunningStatus,
   verifyTrackedTaskRunningStatus,
   verifyTrackedTaskSettledStatus,
+  openBoardIssueDetailByText,
   enrichTrackedDefaultIssueTitle,
   verifyExistingTaskBoardAssociation,
   verifyExplicitlyTrackedTask,

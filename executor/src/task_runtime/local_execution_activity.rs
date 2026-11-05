@@ -388,6 +388,15 @@ impl LocalTaskStore {
                     &format!("comment:{message_id}"),
                     content,
                 )?;
+                if status == "completed" && !content.is_empty() {
+                    issue_notifications::notify_followers(
+                        &transaction,
+                        &task_id,
+                        "comment",
+                        Some(&message_id),
+                        content,
+                    )?;
+                }
                 if !matches!(dispatch_role.as_deref(), Some("manager" | "member")) {
                     let task = get_item_from(&transaction, &task_id, "task")?
                         .ok_or(TaskRuntimeError::TaskNotFound)?;
@@ -406,7 +415,7 @@ impl LocalTaskStore {
                             "in_review",
                         )
                     });
-                    transaction.execute(
+                    let changed = transaction.execute(
                         "UPDATE loop_items
                          SET status=?3, completed_at=NULL,
                              version=version+1, updated_at=?1
@@ -433,6 +442,15 @@ impl LocalTaskStore {
                         task.status.as_deref(),
                         origin_run_id.as_deref(),
                     )?;
+                    if changed > 0 && task.status.as_deref() != next_status {
+                        issue_notifications::notify_followers(
+                            &transaction,
+                            &task_id,
+                            "status",
+                            None,
+                            "",
+                        )?;
+                    }
                 }
             }
         }

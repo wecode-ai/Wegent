@@ -2268,7 +2268,7 @@ flowchart LR
   Sort entries within each category by event time, newest first. Cloud category
   counts and pagination must be computed by the server, not inferred from the
   first page. Cloud `assignment`, `mention`, `execution` and
-  `issue_dispatch_assignment` events
+  `issue_dispatch_assignment` and `issue_follow` events
   belong to Collaboration; every other cloud kind belongs to Other notifications
   until given an explicit category in the product contract.
 - Make the full notification entry open its destination, including the icon,

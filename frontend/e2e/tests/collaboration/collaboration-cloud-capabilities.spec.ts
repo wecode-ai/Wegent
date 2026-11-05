@@ -577,6 +577,11 @@ test.describe('Collaboration cloud capabilities', () => {
         mimeType: 'text/plain',
         buffer: Buffer.from('shared issue attachment evidence'),
       })
+      const attachmentToggle = page.getByTestId('cloud-todo-attachment-toggle')
+      await expect(attachmentToggle).toContainText('1')
+      await expect(attachmentToggle).toHaveAttribute('aria-expanded', 'false')
+      await expect(page.getByText(`issue-${suffix}.txt`, { exact: true })).toHaveCount(0)
+      await attachmentToggle.click()
       await expect(page.getByText(`issue-${suffix}.txt`, { exact: true })).toBeVisible()
 
       await page.getByTestId('cloud-todo-more-properties').click()
@@ -594,6 +599,9 @@ test.describe('Collaboration cloud capabilities', () => {
       await expect(page.getByTestId('collaboration-comments')).toContainText(
         'Cloud E2E persistent comment'
       )
+      await expect(attachmentToggle).toHaveAttribute('aria-expanded', 'false')
+      await expect(page.getByText(`issue-${suffix}.txt`, { exact: true })).toHaveCount(0)
+      await attachmentToggle.click()
       await expect(page.getByText(`issue-${suffix}.txt`, { exact: true })).toBeVisible()
       await page.getByTestId('cloud-todo-more-properties').click()
       await expect(

@@ -301,10 +301,13 @@ def list_project_chat_agents(
 )
 def get_project_board_snapshot(
     project_id: int,
+    following: bool = False,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> ProjectBoardSnapshotResponse:
-    return project_board_snapshot_service.get(db, project_id, current_user.id)
+    return project_board_snapshot_service.get(
+        db, project_id, current_user.id, following_only=following
+    )
 
 
 @router.post(

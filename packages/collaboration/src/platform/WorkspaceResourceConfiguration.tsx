@@ -252,6 +252,7 @@ export function WorkspaceCollaborationGroupsConfiguration({
   detailPresentation = "page",
   agentActions,
   showGroupCollection = true,
+  headerActions,
 }: {
   workspace?: CollaborationWorkspace;
   groups: CollaborationGroup[];
@@ -274,6 +275,7 @@ export function WorkspaceCollaborationGroupsConfiguration({
   detailPresentation?: "page" | "dialog";
   agentActions?: CollaborationGroupAgentActions;
   showGroupCollection?: boolean;
+  headerActions?: ReactNode;
 }) {
   const messages = copy[locale];
   const templateStore = useCollaborationTemplateStore();
@@ -1278,20 +1280,23 @@ export function WorkspaceCollaborationGroupsConfiguration({
                 <h2>{messages.collaborationGroups}</h2>
                 <p>{messages.collaborationGroupHint}</p>
               </div>
-              {canManage && !formOpen ? (
-                <button
-                  type="button"
-                  className={
-                    workspace
-                      ? "collaboration-primary-button"
-                      : "collaboration-secondary-button"
-                  }
-                  data-testid="collaboration-group-open-create"
-                  onClick={() => setFormOpen(true)}
-                >
-                  {messages.createGroup}
-                </button>
-              ) : null}
+              <div className="collaboration-group-heading-actions">
+                {headerActions}
+                {canManage && !formOpen ? (
+                  <button
+                    type="button"
+                    className={
+                      workspace
+                        ? "collaboration-primary-button"
+                        : "collaboration-secondary-button"
+                    }
+                    data-testid="collaboration-group-open-create"
+                    onClick={() => setFormOpen(true)}
+                  >
+                    {messages.createGroup}
+                  </button>
+                ) : null}
+              </div>
             </div>
           ) : null}
           {canManage && formOpen ? (

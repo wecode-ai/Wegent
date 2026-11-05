@@ -255,6 +255,17 @@ async def _deliver_notification_payload(
     *,
     emit_inbox: bool,
 ) -> None:
+    if notification["kind"] == "issue_follow":
+        from app.services.issue_follow_notifications import (
+            can_receive_follow_notification,
+        )
+
+        payload = notification.get("payload") or {}
+        item_id = payload.get("itemId") if isinstance(payload, dict) else None
+        if not item_id or not can_receive_follow_notification(
+            db, item_id, notification["user_id"]
+        ):
+            return
     from app.api.ws.wework_runtime_namespace import (
         WEWORK_RUNTIME_EVENT,
         WEWORK_RUNTIME_NAMESPACE,

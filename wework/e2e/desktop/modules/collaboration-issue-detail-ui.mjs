@@ -4,22 +4,12 @@ export async function verifyIssueDetailPropertyUi(control, scope, timeoutMs) {
   const summary = scope('[data-testid="cloud-todo-state-summary"]')
   await control.command('waitFor', summary, { visible: true, timeoutMs })
   const summaryText = await control.command('getText', summary)
-  const propertyLabels = `${summary} [data-testid="issue-property-grid"] dt`
-  assert.equal(
-    Number(await control.command('getElementCount', propertyLabels)),
-    4,
-    'The Issue property grid must contain four labels'
-  )
-  assert.equal(
-    await control.command('getText', propertyLabels),
-    '状态\n负责人\n里程碑\n时间范围',
-    'Each Issue property must have exactly one label in the property grid'
-  )
   assert.doesNotMatch(
     summaryText,
-    /可见范围/,
-    'The secondary visibility control must not repeat its property label'
+    /创建人|报告人|可见范围/,
+    'Secondary properties belong in the more information popover'
   )
+  assert.equal(summaryText.match(/负责人/g)?.length, 1, 'Show the assignee label exactly once')
   assert.equal(
     await control.command('getAttribute', scope('[data-testid="cloud-todo-detail-assignee"]'), {
       value: 'aria-label',
@@ -27,13 +17,22 @@ export async function verifyIssueDetailPropertyUi(control, scope, timeoutMs) {
     '负责人',
     'The assignee icon control must remain accessible'
   )
+  await control.command('click', scope('[data-testid="cloud-todo-more-properties"]'))
+  const properties = '[data-testid="cloud-todo-more-properties-popover"]'
+  await control.command('waitFor', properties, { visible: true, timeoutMs })
   assert.equal(
-    await control.command('getAttribute', scope('[data-testid="cloud-issue-security-level"]'), {
-      value: 'aria-label',
-    }),
+    await control.command(
+      'getAttribute',
+      `${properties} [data-testid="cloud-issue-security-level"]`,
+      {
+        value: 'aria-label',
+      }
+    ),
     '任务可见范围',
     'The visibility icon control must remain accessible'
   )
+  await control.command('press', properties, { key: 'Escape' })
+  await control.command('waitFor', properties, { visible: false, timeoutMs })
 
   const status = scope('[data-testid="cloud-todo-detail-status"]')
   await control.command('hover', status, { visible: true })

@@ -487,16 +487,18 @@ pub(crate) async fn load(state: &AppState, project: &Node, id: &str, user: i64) 
         .find_map(|label| label.strip_prefix("wegent:assignee:user:"))
         .and_then(|value| value.parse::<i64>().ok())
         .unwrap_or(0);
-    let mut snapshot = store::get(&state.mysql, "task", id)
-        .await?
-        .unwrap_or_else(|| {
-            let mut issue = project.clone();
-            issue.id = id.into();
-            issue.resource_type = "task".into();
-            issue.cloud_project_id = project.id.clone();
-            issue
-        });
-    snapshot.created_by_user_id = creator;
+    let existing_snapshot = store::get(&state.mysql, "task", id).await?;
+    let has_existing = existing_snapshot.is_some();
+    let mut snapshot = existing_snapshot.unwrap_or_else(|| {
+        let mut issue = project.clone();
+        issue.id = id.into();
+        issue.resource_type = "task".into();
+        issue.cloud_project_id = project.id.clone();
+        issue
+    });
+    if !has_existing || snapshot.created_by_user_id == 0 {
+        snapshot.created_by_user_id = creator;
+    }
     snapshot.assignee_user_id = assigned_user;
     snapshot.metadata = Json(json!({"security_level":security}));
     authority::require_issue(state, project, &snapshot, user).await?;
@@ -505,7 +507,7 @@ pub(crate) async fn load(state: &AppState, project: &Node, id: &str, user: i64) 
         let mut metadata=existing.as_ref().map(Node::meta).unwrap_or(json!({}));metadata["external_index"]=json!(true);metadata["security_level"]=json!(security);
         metadata["tags"]=json!(labels.iter().filter(|label|!label.starts_with("wegent:")).collect::<Vec<_>>());
         if existing.is_none(){store::insert(tx,"task",json!({"id":id,"cloud_project_id":project.id,"title":title,"description":description,"status":status,"priority":priority,"created_by_user_id":creator,"assignee_user_id":assigned_user,"metadata":metadata})).await?;}
-        else{tx.execute("UPDATE loop_items SET title=?,description=?,status=?,priority=?,created_by_user_id=?,assignee_user_id=?,metadata=? WHERE id=?",(title,description,status,priority,creator,assigned_user,Json(metadata),id)).await?;}
+        else{tx.execute("UPDATE loop_items SET title=?,description=?,status=?,priority=?,created_by_user_id=COALESCE(NULLIF(created_by_user_id,0),?),assignee_user_id=?,metadata=? WHERE id=?",(title,description,status,priority,creator,assigned_user,Json(metadata),id)).await?;}
         Ok(())
     }).await?;
     let issue = store::get(&state.mysql, "task", id)

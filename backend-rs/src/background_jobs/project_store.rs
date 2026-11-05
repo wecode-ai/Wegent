@@ -49,6 +49,24 @@ pub(crate) struct Node {
 }
 
 impl Node {
+    pub fn followers(&self) -> Vec<(i32, NaiveDateTime)> {
+        self.metadata.0["follower_user_ids"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|value| {
+                let user = i32::try_from(value.as_i64()?).ok().filter(|id| *id > 0)?;
+                let since = self.metadata.0["follower_since"][user.to_string()]
+                    .as_i64()
+                    .unwrap_or(0);
+                Some((
+                    user,
+                    chrono::DateTime::from_timestamp_millis(since)?.naive_utc(),
+                ))
+            })
+            .collect()
+    }
+
     pub fn meta(&self) -> Value {
         if self.metadata.0.is_object() {
             self.metadata.0.clone()
@@ -169,6 +187,13 @@ pub(crate) async fn insert(
     ]);
     if let Value::Object(values) = values {
         row.extend(values);
+    }
+    if kind == "task" && row["metadata"]["reporter_user_id"].is_null() {
+        let creator = row
+            .get("created_by_user_id")
+            .cloned()
+            .unwrap_or(Value::Null);
+        row.get_mut("metadata").unwrap()["reporter_user_id"] = creator;
     }
     let id = row["id"].as_str().unwrap_or_default().to_owned();
     let mut args = Vec::with_capacity(columns.len());

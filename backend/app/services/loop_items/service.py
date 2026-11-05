@@ -260,6 +260,18 @@ class LoopItemService:
             "created_at": database_datetime_as_utc(db, item.created_at),
             "updated_at": database_datetime_as_utc(db, item.updated_at),
             "can_view_detail": can_view_detail,
+            "is_following": can_view_detail and item.id in context.followed_ids,
+            "reporter_user_id": item.reporter_user_id,
+            "created_by_user_name": (
+                context.users[item.created_by_user_id].user_name
+                if item.created_by_user_id in context.users
+                else None
+            ),
+            "reporter_user_name": (
+                context.users[item.reporter_user_id].user_name
+                if item.reporter_user_id in context.users
+                else None
+            ),
             "can_edit": permissions.edit_content,
             "security_level": item_security(item, access.project),
             "permissions": {
@@ -584,7 +596,6 @@ class LoopItemService:
         commit: bool = True,
         automation_context: dict[str, Any] | None = None,
         instruction: str | None = None,
-        assign_creator_if_unassigned: bool = True,
         apply_project_workflow: bool = True,
     ) -> LoopItem:
         self._require_internal_task_project(
@@ -766,15 +777,6 @@ class LoopItemService:
                 str(collaboration_group["id"]),
                 str(collaboration_group["name"]),
             )
-        elif payload.get("assignee_user_id") is None and assign_creator_if_unassigned:
-            payload["assignee_user_id"] = user_id
-            self.record_assignment_change(
-                task_metadata,
-                user_id,
-                "user",
-                str(user_id),
-                None,
-            )
         elif payload.get("assignee_user_id"):
             self.record_assignment_change(
                 task_metadata,
@@ -810,6 +812,7 @@ class LoopItemService:
             task_metadata, "issue", f"{values.title}\n{values.description}"
         )
         task_metadata = initialize_content_revision(task_metadata, user_id)
+        task_metadata["reporter_user_id"] = user_id
         item = LoopItem(
             id=f"{project.project_key}-{sequence}",
             cloud_project_id=project.id,
@@ -867,12 +870,7 @@ class LoopItemService:
                 workflow_step=None,
                 notify=values.notify_assignee,
                 initial_assignment=True,
-                trigger=(
-                    "default"
-                    if payload.get("assignee_user_id") == user_id
-                    and values.assignee_user_id is None
-                    else "automation" if automation_context is not None else "manual"
-                ),
+                trigger="automation" if automation_context is not None else "manual",
             )
         if agent_id:
             db.flush()
@@ -1129,6 +1127,19 @@ class LoopItemService:
         )
         db.add(comment)
         db.flush()
+        from app.services.issue_follow_notifications import notify_issue_followers
+
+        project = db.get(CloudProject, item.cloud_project_id)
+        if project is not None:
+            notify_issue_followers(
+                db,
+                project=project,
+                item=item,
+                actor_user_id=user_id,
+                event="comment",
+                comment_id=comment.id,
+                content=body,
+            )
         metadata = update_change_request_source(
             item.metadata_json, f"comment:{comment.id}", body
         )
@@ -1543,6 +1554,9 @@ class LoopItemService:
         automation_context: dict[str, Any] | None = None,
     ) -> LoopItem:
         item = self.get(db, item_id, user_id)
+        from app.services.issue_follow_notifications import issue_assignee
+
+        previous_assignee = issue_assignee(item)
         position_order = None
         if values.position is not None:
             self._require_internal_task_project(
@@ -1581,6 +1595,12 @@ class LoopItemService:
                 issue_creator_user_id=item.created_by_user_id,
                 user_id=user_id,
             )
+        if "reporter_user_id" in values.model_fields_set and (
+            values.reporter_user_id not in project_participant_ids(db, access.project)
+        ):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, "Reporter is not a project member"
+            )
         if item.version != values.version:
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
@@ -1594,6 +1614,7 @@ class LoopItemService:
                 "runner_selection",
                 "assignee_group_id",
                 "security_level",
+                "reporter_user_id",
                 "position",
             },
             exclude_unset=True,
@@ -1607,6 +1628,7 @@ class LoopItemService:
             )
             for field in (
                 "title",
+                "reporter_user_id",
                 "description",
                 "status",
                 "assignee_user_id",
@@ -1676,7 +1698,8 @@ class LoopItemService:
                 "start_at cannot be after due_at",
             )
         if (
-            "tags" in values.model_fields_set
+            "reporter_user_id" in values.model_fields_set
+            or "tags" in values.model_fields_set
             or "milestone_id" in values.model_fields_set
             or "workflow" in values.model_fields_set
             or "execution_config" in values.model_fields_set
@@ -1685,6 +1708,8 @@ class LoopItemService:
             # Tags live inside the metadata JSON column; merge so other
             # metadata keys survive the update.
             metadata = dict(item.metadata_json or {})
+            if "reporter_user_id" in values.model_fields_set:
+                metadata["reporter_user_id"] = values.reporter_user_id
             if "milestone_id" in values.model_fields_set:
                 require_milestone(db, item.cloud_project_id, values.milestone_id)
                 updates.pop("milestone_id")
@@ -2011,6 +2036,28 @@ class LoopItemService:
             )
         if position_order is not None:
             persist_sibling_order(position_order, updated_item_id=item.id)
+        db.flush()
+        db.refresh(item)
+        from app.services.issue_follow_notifications import notify_issue_followers
+
+        project = db.get(CloudProject, item.cloud_project_id)
+        if project is not None:
+            if status_changed:
+                notify_issue_followers(
+                    db,
+                    project=project,
+                    item=item,
+                    actor_user_id=user_id,
+                    event="status",
+                )
+            if previous_assignee != issue_assignee(item):
+                notify_issue_followers(
+                    db,
+                    project=project,
+                    item=item,
+                    actor_user_id=user_id,
+                    event="assignee",
+                )
         if status_changed and emit_status_event:
             from app.services.project_internal_events import queue_issue_status_changed
 
@@ -2158,6 +2205,10 @@ class LoopItemService:
             user_id=user_id,
         )
         previous_assignee_user_id = item.assignee_user_id
+        previous_status = item.status
+        from app.services.issue_follow_notifications import issue_assignee
+
+        previous_assignee = issue_assignee(item)
         automation_run_requested = bool((automation_context or {}).get("run_id"))
         metadata = dict(item.metadata_json or {})
         assignment_created = False
@@ -2439,17 +2490,31 @@ class LoopItemService:
             item,
             values.version,
             metadata,
-            commit=commit and position_order is None,
+            commit=False,
             automation_run_id=(automation_context or {}).get("run_id"),
             **assignee_updates,
         )
         if position_order is not None:
             persist_sibling_order(position_order, updated_item_id=item.id)
-            if commit:
-                db.commit()
-            else:
-                db.flush()
-            db.refresh(updated)
+        from app.services.issue_follow_notifications import notify_issue_followers
+
+        if previous_status != updated.status:
+            notify_issue_followers(
+                db, project=project, item=updated, actor_user_id=user_id, event="status"
+            )
+        if previous_assignee != issue_assignee(updated):
+            notify_issue_followers(
+                db,
+                project=project,
+                item=updated,
+                actor_user_id=user_id,
+                event="assignee",
+            )
+        if commit:
+            db.commit()
+        else:
+            db.flush()
+        db.refresh(updated)
         if cancelled_runs:
             from app.services.loop_item_executions.cancellation import (
                 request_execution_cancellations,

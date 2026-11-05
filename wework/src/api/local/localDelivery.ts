@@ -1,5 +1,6 @@
 import type { Milestone, MilestoneInput } from '@wegent/collaboration'
 import type { IssueAssignmentReceipt } from '@/api/deliveries'
+import type { WeworkNotification } from '@/api/notifications'
 import type { RunnerSelection } from '@wegent/collaboration'
 import { createRequestCache } from '@wegent/chat-core/request-cache'
 import type {
@@ -67,6 +68,8 @@ export interface LocalAssignmentExecutionPayloadInput {
 }
 
 interface LocalDeliveryApiOptions {
+  currentUserId?: number
+  currentUserName?: string
   prepareAssignmentExecutionPayload?(
     input: LocalAssignmentExecutionPayloadInput
   ): Promise<Record<string, unknown>>
@@ -262,7 +265,11 @@ function stringList(value: unknown): string[] {
   return Array.isArray(value) ? value.filter(item => typeof item === 'string') : []
 }
 
-function localProject(record: LocalLoopItemRecord): CloudProject {
+function localProject(
+  record: LocalLoopItemRecord,
+  currentUserId = 0,
+  currentUserName = 'local'
+): CloudProject {
   const taskProvider =
     record.metadata.task_provider === 'github' ||
     record.metadata.task_provider === 'gitlab' ||
@@ -322,9 +329,9 @@ function localProject(record: LocalLoopItemRecord): CloudProject {
       !Array.isArray(record.metadata.execution_environment)
         ? (record.metadata.execution_environment as CloudProject['execution_environment'])
         : undefined,
-    created_by_user_id: 0,
-    current_user_id: 0,
-    current_user_name: '',
+    created_by_user_id: record.created_by_user_id ?? 0,
+    current_user_id: currentUserId,
+    current_user_name: currentUserName,
     access_role: 'Owner',
     visibility: 'private',
     status: record.status ?? 'active',
@@ -840,10 +847,19 @@ export function createLocalLoopItemExecutionApi(request: LocalRequest) {
   }
 }
 
-function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLoopItem {
+function localTask(
+  record: LocalLoopItemRecord,
+  project?: CloudProject,
+  currentUserId = 0,
+  currentUserName = 'local'
+): CloudLoopItem {
   const role = project?.access_role ?? 'Owner'
   const storedTags = stringList(record.metadata.tags)
   const localProjectAssociation = localProjectAssociationFromTags(storedTags)
+  const creatorLabelName =
+    typeof record.metadata.creator_label === 'string'
+      ? record.metadata.creator_label.split(':').slice(3).join(':').trim()
+      : ''
   return {
     runner_binding: record.metadata.runner_binding as CloudLoopItem['runner_binding'],
     id: record.id,
@@ -851,10 +867,24 @@ function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLo
     sequence_number: record.sequence_number ?? 0,
     parent_id: record.parent_id,
     created_by_user_id: record.created_by_user_id,
+    reporter_user_id:
+      typeof record.metadata.reporter_user_id === 'number'
+        ? record.metadata.reporter_user_id
+        : record.created_by_user_id,
+    is_following:
+      Array.isArray(record.metadata.follower_user_ids) &&
+      record.metadata.follower_user_ids.includes(currentUserId),
     created_by_user_name:
-      typeof record.metadata.creator_label === 'string'
-        ? record.metadata.creator_label.split(':').slice(3).join(':').trim() || null
-        : null,
+      record.created_by_user_id === currentUserId &&
+      (currentUserId > 0 ||
+        !record.metadata.task_provider ||
+        record.metadata.task_provider === 'local')
+        ? currentUserName
+        : creatorLabelName
+          ? creatorLabelName
+          : typeof record.metadata.author === 'string'
+            ? record.metadata.author
+            : null,
     can_view_detail: true,
     can_edit: ['Owner', 'Maintainer', 'Developer'].includes(role),
     security_level: record.metadata.security_level === 'related' ? 'related' : 'open',
@@ -962,6 +992,12 @@ export function createLocalDeliveryApi(
   request: LocalRequest,
   options: LocalDeliveryApiOptions = {}
 ): LocalProjectSpaceApi {
+  const currentUserId = options.currentUserId ?? 0
+  const currentUserName = options.currentUserName ?? 'local'
+  const toLocalTask = (record: LocalLoopItemRecord) =>
+    localTask(record, undefined, currentUserId, currentUserName)
+  const toLocalProject = (record: LocalLoopItemRecord) =>
+    localProject(record, currentUserId, currentUserName)
   const taskProjects = new Map<string, CloudProjectId>()
   const trackProjectTaskOnce = createProjectTaskTrackingSingleFlight()
   let cachedProjectRecords: LocalLoopItemRecord[] | null = null
@@ -1000,7 +1036,7 @@ export function createLocalDeliveryApi(
     const known = taskProjects.get(itemId)
     if (known) return known
     const projectRecords = await loadProjectRecords()
-    const projects = projectRecords.map(localProject)
+    const projects = projectRecords.map(toLocalProject)
     const prefixMatches = projects.filter(project => itemId.startsWith(`${project.project_key}-`))
     if (prefixMatches.length === 1) return prefixMatches[0].id
     for (const project of projects) {
@@ -1024,7 +1060,7 @@ export function createLocalDeliveryApi(
       return {
         items: records
           .filter(record => record.metadata.project_store !== 'backend')
-          .map(localProject),
+          .map(toLocalProject),
       }
     },
     async createCloudProject(data: {
@@ -1054,7 +1090,7 @@ export function createLocalDeliveryApi(
         provider_config: data.provider_config ?? {},
       })
       invalidateProjectRecords()
-      return localProject(record)
+      return toLocalProject(record)
     },
     async importLocalCodeProject(data: {
       runtimeProjectKey: string
@@ -1067,7 +1103,7 @@ export function createLocalDeliveryApi(
         roots: data.roots,
       })
       invalidateProjectRecords()
-      return localProject(record)
+      return toLocalProject(record)
     },
     async updateCloudProject(
       projectId: CloudProjectId,
@@ -1092,7 +1128,7 @@ export function createLocalDeliveryApi(
         project: data,
       })
       invalidateProjectRecords()
-      return localProject(record)
+      return toLocalProject(record)
     },
     async archiveCloudProject(projectId: CloudProjectId, version: number) {
       await request('projects.archive', {
@@ -1109,13 +1145,15 @@ export function createLocalDeliveryApi(
       options: {
         assigneeType?: 'user' | 'agent'
         assigneeId?: string | number
+        following?: boolean
       } = {}
     ) {
       const records = await request<LocalLoopItemRecord[]>('todos.list', {
         project_id: projectId,
       })
       rememberTasks(projectId, records)
-      let items = records.map(record => localTask(record))
+      let items = records.map(toLocalTask)
+      if (options.following) items = items.filter(item => item.is_following)
       if (options.assigneeType === 'agent' && options.assigneeId !== undefined) {
         const agentId = String(options.assigneeId)
         items = items.filter(item => item.assignee_agent_id === agentId)
@@ -1153,7 +1191,7 @@ export function createLocalDeliveryApi(
         project_id: projectId,
       })
       rememberTasks(projectId, records)
-      const items = records.map(record => localTask(record))
+      const items = records.map(toLocalTask)
       const taskBindings = await request<LocalTaskBindingRecord[]>('todos.bindings.batch', {
         task_ids: items.map(item => item.id),
       })
@@ -1194,7 +1232,33 @@ export function createLocalDeliveryApi(
         task_id: itemId,
       })
       taskProjects.set(record.id, projectId)
-      return localTask(record)
+      return toLocalTask(record)
+    },
+    async setLoopItemFollowing(itemId: string, following: boolean) {
+      const projectId = await resolveProjectId(itemId)
+      await request<LocalLoopItemRecord>('todos.follow', {
+        project_id: projectId,
+        task_id: itemId,
+        user_id: currentUserId,
+        following,
+      })
+      return { following }
+    },
+    issueNotificationsUserId: currentUserId,
+    async setIssueNotificationPreference(inApp: boolean) {
+      await request('todos.notifications.preferences', {
+        user_id: currentUserId,
+        in_app: inApp,
+      })
+    },
+    async listIssueNotifications() {
+      return request<WeworkNotification[]>('todos.notifications.list', { user_id: currentUserId })
+    },
+    async readIssueNotifications(notificationId?: string) {
+      await request('todos.notifications.read', {
+        user_id: currentUserId,
+        notification_id: notificationId,
+      })
     },
     getMilestonesCacheScope() {
       return request
@@ -1247,6 +1311,7 @@ export function createLocalDeliveryApi(
           : []
       const record = await request<LocalLoopItemRecord>('todos.create', {
         project_id: projectId,
+        actor_user_id: currentUserId,
         todo: {
           milestone_id: data.milestone_id,
           title: data.title,
@@ -1269,7 +1334,7 @@ export function createLocalDeliveryApi(
         },
       })
       taskProjects.set(record.id, projectId)
-      return localTask(record)
+      return toLocalTask(record)
     },
     async updateLoopItem(itemId: string, data: Record<string, unknown> & { version: number }) {
       const projectId = await resolveProjectId(itemId)
@@ -1306,10 +1371,11 @@ export function createLocalDeliveryApi(
       const record = await request<LocalLoopItemRecord>('todos.update', {
         project_id: projectId,
         task_id: itemId,
+        ...(data.reporter_user_id !== undefined ? { actor_user_id: currentUserId } : {}),
         todo,
       })
       taskProjects.set(record.id, projectId)
-      return localTask(record)
+      return toLocalTask(record)
     },
     async assignLoopItem(
       projectId: CloudProjectId,
@@ -1352,7 +1418,7 @@ export function createLocalDeliveryApi(
         },
       })
       taskProjects.set(record.id, projectId)
-      return localTask(record)
+      return toLocalTask(record)
     },
     async getIssueAssignmentReceipts(itemId: string): Promise<IssueAssignmentReceipt[]> {
       const projectId = await resolveProjectId(itemId)
@@ -1378,7 +1444,7 @@ export function createLocalDeliveryApi(
         task_id: itemId,
         ...(activitySequence == null ? {} : { activity_sequence: activitySequence }),
       })
-      return localTask(record)
+      return toLocalTask(record)
     },
     async approveLoopItemRun(projectId: CloudProjectId, itemId: string): Promise<CloudLoopItem> {
       const executions = await request<LocalLoopItemExecution[]>('executions.list', {
@@ -1430,7 +1496,7 @@ export function createLocalDeliveryApi(
       })
       rememberTasks(projectId, response.items)
       return {
-        items: response.items.map(record => localTask(record)),
+        items: response.items.map(toLocalTask),
         next_cursor: response.next_cursor,
       }
     },
@@ -1441,7 +1507,7 @@ export function createLocalDeliveryApi(
         task_id: itemId,
       })
       rememberTasks(projectId, records)
-      return { items: records.map(record => localTask(record)) }
+      return { items: records.map(toLocalTask) }
     },
     async reorderLoopItems(
       projectId: CloudProjectId,
@@ -1456,7 +1522,7 @@ export function createLocalDeliveryApi(
         reorder: data,
       })
       rememberTasks(projectId, records)
-      return { items: records.map(record => localTask(record)) }
+      return { items: records.map(toLocalTask) }
     },
     async listLoopItemAttachments(itemId: string) {
       const projectId = await resolveProjectId(itemId)
@@ -1642,11 +1708,20 @@ export function createLocalDeliveryApi(
       return {
         ...binding,
         id: binding.id,
-        project: localProject(projectRecord),
+        project: toLocalProject(projectRecord),
         loop_item: loopItem,
       }
     },
-    listCloudProjectMembers: async (): Promise<CloudProjectMember[]> => [],
+    listCloudProjectMembers: async (): Promise<CloudProjectMember[]> => [
+      {
+        id: currentUserId,
+        user_id: currentUserId,
+        user_name: currentUserName,
+        email: null,
+        role: 'Owner',
+        can_be_assignee: true,
+      },
+    ],
     addCloudProjectMember: async () => unsupported('Project members'),
     updateCloudProjectMember: async () => unsupported('Project members'),
     removeCloudProjectMember: async () => unsupported('Project members'),

@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict'
 
+import { waitForBoardValue } from './collaboration-board-flows.mjs'
+import { requestExecutor } from './executor-rpc.mjs'
+
 function dateKey(value) {
   const year = value.getFullYear()
   const month = String(value.getMonth() + 1).padStart(2, '0')
@@ -89,6 +92,12 @@ export async function verifyCollaborationScheduleViews({
     value: JSON.stringify({ width: 1440, height: 900 }),
   })
   const keys = collaborationScheduleDates()
+  const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+  const projectId = new URL(snapshot.location).searchParams.get('projectId')
+  assert.ok(projectId, 'The schedule fixture did not open its local project')
+  const issues = await requestExecutor(control, 'todos.list', { project_id: projectId }, timeoutMs)
+  const issue = issues.find(candidate => candidate.title === issueTitle)
+  assert.ok(issue, 'The schedule Issue fixture was not persisted')
 
   await control.command('click', scoped('[aria-label="时间范围"]'))
   await control.command('waitFor', '[data-testid="cloud-todo-detail-start-date"]', {
@@ -101,9 +110,20 @@ export async function verifyCollaborationScheduleViews({
   await control.command('fill', '[data-testid="cloud-todo-detail-due-date"]', {
     value: keys.initialEnd,
   })
-  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
-    timeoutMs,
-  })
+  await waitForBoardValue(
+    async () => {
+      const saved = await requestExecutor(
+        control,
+        'todos.get',
+        { project_id: projectId, task_id: issue.id },
+        timeoutMs
+      )
+      return [saved.metadata.start_at?.slice(0, 10), saved.metadata.due_at?.slice(0, 10)]
+    },
+    [keys.initialStart, keys.initialEnd],
+    'The local Issue date range did not save automatically',
+    timeoutMs
+  )
   await control.command('waitFor', scoped('[data-testid="cloud-todo-save"]'), {
     visible: false,
     timeoutMs,

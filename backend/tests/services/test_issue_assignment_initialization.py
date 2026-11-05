@@ -2,6 +2,8 @@
 
 import uuid
 
+import pytest
+
 from app.models.delivery import CloudProject, LoopItemActiveAssignment, LoopItemComment
 from app.schemas.delivery import LoopItemCreate
 from app.services.issue_assignments import issue_assignment_service
@@ -9,8 +11,9 @@ from app.services.loop_items.service import loop_item_service
 from tests.utils.collaboration import authorize_project
 
 
-def test_new_issue_writes_initial_assignment_and_index_without_history_locks(
-    test_db, test_user, monkeypatch
+@pytest.mark.parametrize("explicit_assignee", [False, True])
+def test_new_issue_initializes_only_explicit_assignments_without_history_locks(
+    test_db, test_user, monkeypatch, explicit_assignee
 ):
     project = CloudProject(
         public_id=str(uuid.uuid4()),
@@ -41,13 +44,28 @@ def test_new_issue_writes_initial_assignment_and_index_without_history_locks(
     )
 
     item = loop_item_service.create(
-        test_db, int(project.id), test_user.id, LoopItemCreate(title="First assignment")
+        test_db,
+        int(project.id),
+        test_user.id,
+        LoopItemCreate(
+            title="First assignment",
+            assignee_user_id=test_user.id if explicit_assignee else None,
+        ),
     )
 
-    comment = test_db.query(LoopItemComment).filter_by(loop_item_id=item.id).one()
+    assert item.created_by_user_id == item.reporter_user_id == test_user.id
+    comments = test_db.query(LoopItemComment).filter_by(loop_item_id=item.id).all()
+    index = test_db.query(LoopItemActiveAssignment).filter_by(parent_id=item.id).all()
+    if not explicit_assignee:
+        assert item.assignee_user_id is None
+        assert comments == []
+        assert index == []
+        return
+    assert item.assignee_user_id == test_user.id
+    assert len(comments) == 1
+    comment = comments[0]
     assert comment.metadata_json["action"] == "assign"
     assert comment.metadata_json["target_id"] == str(test_user.id)
-    assert comment.metadata_json["trigger"] == "default"
-    index = test_db.query(LoopItemActiveAssignment).filter_by(parent_id=item.id).all()
+    assert comment.metadata_json["trigger"] == "manual"
     assert len(index) == 2
     assert {row.loop_item_id for row in index} == {None, comment.id}

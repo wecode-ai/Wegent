@@ -43,6 +43,7 @@ class IssueAction(str, Enum):
 ISSUE_CONTENT_FIELDS = frozenset(
     {
         "title",
+        "reporter_user_id",
         "description",
         "status",
         "priority",

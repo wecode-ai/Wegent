@@ -157,6 +157,30 @@
   display: flex;
   flex-direction: column;
 }
+.collaboration-template-dialog[data-size='compact'] {
+  width: min(420px, 92vw);
+}
+.collaboration-template-dialog[data-size='standard'] {
+  width: min(600px, 92vw);
+}
+.collaboration-template-dialog[data-size='compact'] > header,
+.collaboration-template-dialog[data-size='standard'] > header {
+  padding: 16px 20px;
+}
+.collaboration-template-dialog[data-size='compact'] > .collaboration-template-dialog-body,
+.collaboration-template-dialog[data-size='standard'] > .collaboration-template-dialog-body {
+  padding: 12px 20px 20px;
+}
+.collaboration-template-dialog > header > div {
+  flex: 1;
+  min-width: 0;
+}
+.collaboration-template-dialog[data-size='standard'] .collaboration-template-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+.collaboration-template-dialog h2:focus {
+  outline: none;
+}
 .collaboration-template-dialog::backdrop {
   background: rgb(0 0 0 / 0.24);
 }
@@ -261,6 +285,55 @@
   color: rgb(var(--color-text-muted));
 }
 
+.collaboration-project-sharing-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.collaboration-project-sharing-trigger > svg {
+  width: 16px;
+  height: 16px;
+}
+.collaboration-sharing-actions {
+  display: grid;
+  gap: 4px;
+}
+.collaboration-template-dialog .collaboration-sharing-action {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 8px;
+  background: transparent;
+  text-align: left;
+}
+.collaboration-sharing-action > span {
+  flex: 1;
+  min-width: 0;
+}
+.collaboration-sharing-action strong,
+.collaboration-sharing-action small {
+  display: block;
+}
+.collaboration-sharing-action strong {
+  font-weight: 500;
+}
+.collaboration-sharing-action small {
+  margin-top: 4px;
+  font-size: var(--text-sm);
+  color: rgb(var(--color-text-muted));
+}
+.collaboration-sharing-action > svg:last-child {
+  color: rgb(var(--color-text-muted));
+}
+.collaboration-sharing-actions > p {
+  margin: 8px 0;
+}
+.collaboration-template-dialog button:focus-visible,
+.collaboration-project-sharing-trigger:focus-visible {
+  outline: 2px solid rgb(var(--color-focus));
+  outline-offset: 2px;
+}
+
 @media (max-width: 767px) {
   .collaboration-template-page {
     padding: 16px;
@@ -286,7 +359,8 @@
   .collaboration-template-page button,
   .collaboration-template-dialog button,
   .collaboration-template-dialog input,
-  .collaboration-template-dialog select {
+  .collaboration-template-dialog select,
+  .collaboration-project-sharing-trigger {
     min-height: 44px;
   }
 }

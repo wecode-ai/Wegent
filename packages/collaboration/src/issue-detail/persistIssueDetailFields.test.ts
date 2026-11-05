@@ -59,7 +59,10 @@ describe("persistIssueDetailFields", () => {
 
   it.each([
     { code: "version_conflict" },
-    { status: 409, detail: { code: "version_conflict", message: "TODO changed" } },
+    {
+      status: 409,
+      detail: { code: "version_conflict", message: "TODO changed" },
+    },
     { errorCode: "version_conflict" },
   ])("preserves a concurrent edit to the same field (%j)", async (conflict) => {
     const port = portFor(
@@ -81,6 +84,56 @@ describe("persistIssueDetailFields", () => {
     ).rejects.toBe(error);
     expect(port.get).not.toHaveBeenCalled();
     expect(port.update).toHaveBeenCalledOnce();
+  });
+
+  it("publishes the latest snapshot before rejecting a conflicting field", async () => {
+    const latest = {
+      ...issue,
+      priority: "urgent",
+      version: 2,
+    } as CollaborationIssue;
+    const port = portFor(latest);
+    const onRefresh = vi.fn();
+    await expect(
+      persistIssueDetailFields(issue, { priority: "high" }, port, {
+        onRefresh,
+        isActive: () => true,
+      }),
+    ).rejects.toEqual({ code: "version_conflict" });
+    expect(onRefresh).toHaveBeenCalledExactlyOnceWith(latest);
+    expect(port.update).toHaveBeenCalledOnce();
+  });
+
+  it("does not refresh or retry a conflict after its scope has closed", async () => {
+    const port = portFor({ ...issue, version: 2 });
+    const onRefresh = vi.fn();
+    await expect(
+      persistIssueDetailFields(issue, { title: "Renamed" }, port, {
+        onRefresh,
+        isActive: () => false,
+      }),
+    ).rejects.toEqual({ code: "version_conflict" });
+    expect(port.get).not.toHaveBeenCalled();
+    expect(port.update).toHaveBeenCalledOnce();
+    expect(onRefresh).not.toHaveBeenCalled();
+  });
+
+  it("does not publish or retry when the scope closes during recovery", async () => {
+    const port = portFor({ ...issue, version: 2 });
+    let active = true;
+    port.get.mockImplementation(async () => {
+      active = false;
+      return { ...issue, version: 2 };
+    });
+    const onRefresh = vi.fn();
+    await expect(
+      persistIssueDetailFields(issue, { title: "Renamed" }, port, {
+        onRefresh,
+        isActive: () => active,
+      }),
+    ).rejects.toEqual({ code: "version_conflict" });
+    expect(port.update).toHaveBeenCalledOnce();
+    expect(onRefresh).not.toHaveBeenCalled();
   });
 
   it("does not classify a business denial as a version conflict", async () => {

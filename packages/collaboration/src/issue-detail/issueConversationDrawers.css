@@ -93,7 +93,7 @@
   padding: 0 16px;
 }
 
-.issue-drawer-surface .task-detail-workspace-header > button {
+.issue-drawer-surface .task-detail-workspace-header button {
   flex-shrink: 0;
   margin-right: 0;
 }
@@ -123,7 +123,7 @@
 }
 
 @media (max-width: 767px) {
-  .issue-drawer-surface .task-detail-workspace-header > button {
+  .issue-drawer-surface .task-detail-workspace-header button {
     min-width: 44px;
     min-height: 44px;
   }

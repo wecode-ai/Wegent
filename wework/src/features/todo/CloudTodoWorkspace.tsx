@@ -1060,7 +1060,8 @@ export function CloudTodoWorkspace({
         project.id === selectedProjectRef?.projectId &&
         project.project_store === selectedProjectRef.projectStore
     ) ?? null
-  const taskOwnerUserId = selectedProject?.current_user_id ?? user.id
+  const taskOwnerUserId =
+    selectedProject?.project_store === 'local' ? 0 : (selectedProject?.current_user_id ?? user.id)
   const openTaskBinding = async (binding: SelectedTaskBinding) => {
     advanceTaskPanelSession()
     const session = taskPanelSessionIdRef.current
@@ -4459,7 +4460,27 @@ export function CloudTodoWorkspace({
                       <AITableView api={aitableApi} project={selectedProject} />
                     ) : (
                       <ProjectIssueTable
+                        key={`${selectedProject.location}:${selectedProject.id}:${user.id}`}
                         issues={selectedProjectBoardItems}
+                        loadFollowed={async () => {
+                          const rows =
+                            selectedProject.location === 'cloud'
+                              ? await cloudWorkspaceApi!.issues.list(String(selectedProject.id), {
+                                  following: true,
+                                })
+                              : (
+                                  await selectedProjectApi!.listLoopItems(selectedProject.id, {
+                                    following: true,
+                                  })
+                                ).items
+                          return rows.map(item => ({
+                            ...item,
+                            project_store: selectedProject.project_store,
+                          }))
+                        }}
+                        followedLabel={t('todo.my_followed')}
+                        followLoadErrorLabel={t('todo.follow_load_failed')}
+                        retryLabel={t('todo.retry', '重试')}
                         assignmentsByIssueId={issueTableAssignmentsByIssue}
                         emptyLabel={t('todo.issue_table_empty', '暂无 Issue')}
                         issueLabel={t('todo.issue_column', 'Issue')}
@@ -4601,6 +4622,9 @@ export function CloudTodoWorkspace({
                           ) ? (
                             <ProjectCollaborationGroups
                               key={selectedProject.id}
+                              onProjectChanged={updated =>
+                                replaceProject(selectedProject, updated as CloudProject)
+                              }
                               api={
                                 selectedProject.location === 'cloud'
                                   ? cloudWorkspaceApi!

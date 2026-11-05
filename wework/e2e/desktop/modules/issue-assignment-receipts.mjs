@@ -69,15 +69,7 @@ export async function verifyIssueAssignmentReceipts(
   assert.equal((await load())[0].stand_in_received_at, null)
   await control.command(
     'waitFor',
-    `${CONTENT} [data-testid="issue-property-grid"] dd:has([data-testid="cloud-todo-detail-assignee"]) [data-testid="issue-assignment-receipts"] svg[data-figure="human"]`
-  )
-  assert.equal(
-    await control.command(
-      'getElementCount',
-      `${CONTENT} [data-testid="cloud-todo-detail-assignee"] [data-testid="issue-assignment-receipts"]`
-    ),
-    '0',
-    'Assignment receipts must remain outside the assignee selector trigger'
+    `${CONTENT} [data-testid="cloud-todo-detail-assignee"] [data-testid="issue-assignment-receipts"] svg[data-figure="human"]`
   )
   await capture('assignment-receipts-02-human-read.png')
 

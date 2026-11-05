@@ -276,38 +276,3 @@ export function useIssueDetailDraft<TWorkflow = unknown>({
 
   return { draft, setDraft, setField, dirty };
 }
-
-export interface PersistIssueDetailDraftPort<TIssue> {
-  update(
-    issue: TIssue,
-    draft: IssueDetailDraftValue,
-    assignment: ReturnType<typeof parseIssueAssigneeTarget>,
-  ): Promise<TIssue>;
-  assign?(
-    issue: TIssue,
-    target: Exclude<IssueAssigneeTarget, "">,
-    notifyAssignee: boolean,
-  ): Promise<TIssue>;
-  clearAssignment?(issue: TIssue): Promise<TIssue>;
-  getAssigneeTarget(issue: TIssue): IssueAssigneeTarget;
-}
-
-export async function persistIssueDetailDraft<TIssue>(
-  issue: TIssue,
-  draft: IssueDetailDraftValue,
-  notifyAssignee: boolean,
-  port: PersistIssueDetailDraftPort<TIssue>,
-): Promise<TIssue> {
-  let updated = await port.update(
-    issue,
-    draft,
-    parseIssueAssigneeTarget(draft.assigneeTarget),
-  );
-  if (draft.assigneeTarget === port.getAssigneeTarget(issue)) return updated;
-  if (!draft.assigneeTarget) {
-    return port.clearAssignment ? port.clearAssignment(updated) : updated;
-  }
-  return port.assign
-    ? port.assign(updated, draft.assigneeTarget, notifyAssignee)
-    : updated;
-}

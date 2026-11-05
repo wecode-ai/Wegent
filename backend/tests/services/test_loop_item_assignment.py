@@ -30,12 +30,14 @@ from app.models.project_chat_message import ProjectChatMessage
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.user import User
+from app.models.wework_notification import WeworkNotification
 from app.schemas.base_role import BaseRole
 from app.schemas.delivery import LoopItemCreate, LoopItemUpdate
 from app.schemas.project_chat import LoopItemApproval, LoopItemAssign
 from app.services.issue_assignments import issue_assignment_service
 from app.services.loop_item_executions.service import loop_item_execution_service
 from app.services.loop_items.service import loop_item_service
+from app.services.project_board_snapshot import project_board_snapshot_service
 from tests.utils.agent_resources import create_runnable_wegent_team
 from tests.utils.collaboration import (
     authorize_project,
@@ -406,6 +408,257 @@ def test_collaboration_group_owner_is_project_scoped_and_persisted(
     )
     assert not restored.metadata_json.get("collaboration_group")
     assert restored.assignee_user_id == test_user.id
+
+
+def test_create_without_assignee_preserves_creator_and_has_no_assignment(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+
+    item = loop_item_service.create(
+        test_db, project.id, test_user.id, LoopItemCreate(title="Unassigned issue")
+    )
+
+    test_db.expire_all()
+    saved = test_db.get(LoopItem, item.id)
+    assert saved.created_by_user_id == test_user.id
+    assert saved.reporter_user_id == test_user.id
+    assert saved.assignee_user_id is None
+    assert saved.assignee_agent_id == ""
+    assert saved.assignee_team_id is None
+    assert not saved.metadata_json.get("assignment_history")
+
+
+def test_reporter_update_persists_without_changing_creator(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    member = _make_member(test_db, project, "reporter-member", BaseRole.Developer)
+    item = loop_item_service.create(
+        test_db, project.id, test_user.id, LoopItemCreate(title="Issue")
+    )
+    item = loop_item_service.update(
+        test_db,
+        item.id,
+        test_user.id,
+        LoopItemUpdate(version=item.version, reporter_user_id=member.id),
+    )
+    test_db.expire_all()
+    saved = test_db.get(LoopItem, item.id)
+    assert saved.reporter_user_id == member.id
+    assert saved.created_by_user_id == test_user.id
+    assert (
+        loop_item_service.response_values(test_db, saved, test_user.id)[
+            "reporter_user_name"
+        ]
+        == member.user_name
+    )
+
+
+def test_follow_projection_does_not_change_issue_assignment(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    item = loop_item_service.create(
+        test_db, project.id, test_user.id, LoopItemCreate(title="Followed issue")
+    )
+    assert not loop_item_service.response_values(test_db, item, test_user.id)[
+        "is_following"
+    ]
+
+    item.metadata_json = {
+        **(item.metadata_json or {}),
+        "follower_user_ids": [test_user.id],
+    }
+    test_db.commit()
+    assert loop_item_service.response_values(test_db, item, test_user.id)[
+        "is_following"
+    ]
+    assert item.assignee_user_id is None
+
+    item.metadata_json = {**(item.metadata_json or {}), "follower_user_ids": []}
+    test_db.commit()
+    assert not loop_item_service.response_values(test_db, item, test_user.id)[
+        "is_following"
+    ]
+    assert item.assignee_user_id is None
+
+
+def test_followed_issue_filter_is_per_user_and_reflects_unfollow(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    other = _make_member(test_db, project, "filter-viewer", BaseRole.Viewer)
+    first = loop_item_service.create(
+        test_db, project.id, test_user.id, LoopItemCreate(title="Followed")
+    )
+    loop_item_service.create(
+        test_db, project.id, test_user.id, LoopItemCreate(title="Not followed")
+    )
+    first.metadata_json = {
+        **(first.metadata_json or {}),
+        "follower_user_ids": [test_user.id],
+    }
+    test_db.commit()
+
+    _, mine = project_board_snapshot_service.list_item_views(
+        test_db, project.id, test_user.id, following_only=True
+    )
+    _, theirs = project_board_snapshot_service.list_item_views(
+        test_db, project.id, other.id, following_only=True
+    )
+    assert [item.id for item in mine] == [first.id]
+    assert theirs == []
+    first.metadata_json = {**(first.metadata_json or {}), "follower_user_ids": []}
+    test_db.commit()
+    assert (
+        project_board_snapshot_service.list_item_views(
+            test_db, project.id, test_user.id, following_only=True
+        )[1]
+        == []
+    )
+
+
+def test_follower_receives_comment_status_and_assignment_until_unfollowed(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    item = loop_item_service.create(
+        test_db, project.id, test_user.id, LoopItemCreate(title="Followed issue")
+    )
+    item.metadata_json = {
+        **(item.metadata_json or {}),
+        "follower_user_ids": [test_user.id],
+    }
+    test_db.commit()
+
+    loop_item_service.add_comment(test_db, item.id, test_user.id, "New information")
+    item = loop_item_service.update(
+        test_db,
+        item.id,
+        test_user.id,
+        LoopItemUpdate(version=item.version, status="pending"),
+    )
+    item = loop_item_service.update(
+        test_db,
+        item.id,
+        test_user.id,
+        LoopItemUpdate(version=item.version, assignee_user_id=test_user.id),
+    )
+    notifications = (
+        test_db.query(WeworkNotification)
+        .filter_by(user_id=test_user.id, kind="issue_follow")
+        .all()
+    )
+    assert {notification.payload["event"] for notification in notifications} == {
+        "comment",
+        "status",
+        "assignee",
+    }
+    assert all(
+        notification.payload["itemId"] == item.id for notification in notifications
+    )
+
+    item.metadata_json = {**(item.metadata_json or {}), "follower_user_ids": []}
+    test_db.commit()
+    loop_item_service.add_comment(test_db, item.id, test_user.id, "No longer followed")
+    assert (
+        test_db.query(WeworkNotification)
+        .filter_by(user_id=test_user.id, kind="issue_follow")
+        .count()
+        == 3
+    )
+
+
+def test_follower_loses_notifications_when_issue_access_is_revoked(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    viewer = _make_member(test_db, project, "follower-viewer", BaseRole.Viewer)
+    item = loop_item_service.create(
+        test_db, project.id, test_user.id, LoopItemCreate(title="Private issue")
+    )
+    item.metadata_json = {
+        **(item.metadata_json or {}),
+        "follower_user_ids": [viewer.id],
+    }
+    test_db.commit()
+
+    loop_item_service.add_comment(test_db, item.id, test_user.id, "Visible")
+    assert (
+        test_db.query(WeworkNotification)
+        .filter_by(user_id=viewer.id, kind="issue_follow")
+        .count()
+        == 1
+    )
+    item = loop_item_service.update(
+        test_db,
+        item.id,
+        test_user.id,
+        LoopItemUpdate(version=item.version, security_level="related"),
+    )
+    loop_item_service.add_comment(test_db, item.id, test_user.id, "Private")
+    assert (
+        test_db.query(WeworkNotification)
+        .filter_by(user_id=viewer.id, kind="issue_follow")
+        .count()
+        == 1
+    )
+
+
+def test_reporter_and_following_do_not_grant_related_issue_access(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    member = _make_member(test_db, project, "reporter-only", BaseRole.Developer)
+    item = loop_item_service.create(
+        test_db, project.id, test_user.id, LoopItemCreate(title="Related issue")
+    )
+    item = loop_item_service.update(
+        test_db,
+        item.id,
+        test_user.id,
+        LoopItemUpdate(version=item.version, reporter_user_id=member.id),
+    )
+    item.metadata_json = {
+        **(item.metadata_json or {}),
+        "follower_user_ids": [member.id],
+    }
+    test_db.commit()
+    item = loop_item_service.update(
+        test_db,
+        item.id,
+        test_user.id,
+        LoopItemUpdate(version=item.version, security_level="related"),
+    )
+    with pytest.raises(HTTPException) as denied:
+        loop_item_service.get(test_db, item.id, member.id)
+    assert denied.value.status_code == 404
+    loop_item_service.add_comment(test_db, item.id, test_user.id, "Restricted")
+    assert (
+        test_db.query(WeworkNotification)
+        .filter_by(user_id=member.id, kind="issue_follow")
+        .count()
+        == 0
+    )
+
+
+def test_read_only_creator_cannot_change_reporter(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    creator = _make_member(test_db, project, "read-only-reporter", BaseRole.Viewer)
+    item = _make_item(test_db, project, creator)
+    with pytest.raises(HTTPException) as denied:
+        loop_item_service.update(
+            test_db,
+            item.id,
+            creator.id,
+            LoopItemUpdate(version=item.version, reporter_user_id=test_user.id),
+        )
+    assert denied.value.status_code == 403
+    test_db.refresh(item)
+    assert item.created_by_user_id == creator.id
 
 
 def test_create_with_collaboration_group_preserves_group_as_owner(
@@ -1269,7 +1522,7 @@ def test_assign_to_self_does_not_send_notification(
 
 
 @pytest.mark.parametrize("explicit", [False, True])
-def test_initial_assignment_inserts_complete_index_without_empty_range_locks(
+def test_initial_creation_keeps_assignment_index_consistent_without_empty_range_locks(
     test_db: Session, test_user: User, explicit: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     project = _make_project(test_db, test_user)
@@ -1313,12 +1566,24 @@ def test_initial_assignment_inserts_complete_index_without_empty_range_locks(
         .filter(LoopItemComment.loop_item_id == item.id)
         .all()
     )
+    if not explicit:
+        assert item.assignee_user_id is None
+        assert comments == []
+        assert (
+            test_db.query(LoopItemActiveAssignment)
+            .filter(LoopItemActiveAssignment.parent_id == item.id)
+            .all()
+            == []
+        )
+        assert history_lock_reads == []
+        assert deletes == []
+        return
     assert len(comments) == 1
     assignment = comments[0]
     assert assignment.metadata_json["action"] == "assign"
     assert assignment.metadata_json["target_id"] == str(test_user.id)
     assert assignment.metadata_json["receipt_tracking"] is True
-    assert assignment.metadata_json["trigger"] == ("manual" if explicit else "default")
+    assert assignment.metadata_json["trigger"] == "manual"
     index = (
         test_db.query(LoopItemActiveAssignment)
         .filter(LoopItemActiveAssignment.parent_id == item.id)

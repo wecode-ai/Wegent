@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ComponentProps } from 'react'
 import type { CollaborationGroupMember } from '../types'
 import type { CollaborationLocale } from '../i18n'
 import type { ProjectCreateCollaborationGroupDraft } from '../project-create/types'
@@ -236,6 +236,8 @@ export function TemplateBindingsDialog({
   existingNames = [],
   onApply,
   onClose,
+  onApplied = onClose,
+  dialogOptions,
 }: {
   document: CollaborationTemplate
   locale: CollaborationLocale
@@ -247,6 +249,8 @@ export function TemplateBindingsDialog({
     document: CollaborationTemplate
   ): Promise<void>
   onClose(): void
+  onApplied?(): void
+  dialogOptions?: Pick<ComponentProps<typeof TemplateDialog>, 'size' | 'back'>
 }) {
   const m = templateMessages[locale]
   const [selection, setSelection] = useState<{
@@ -258,6 +262,8 @@ export function TemplateBindingsDialog({
   const [failed, setFailed] = useState(false)
   return (
     <TemplateDialog
+      {...dialogOptions}
+      back={failed ? undefined : dialogOptions?.back}
       title={m.bindingsTitle}
       description={m.bindingsHint}
       closeLabel={m.close}
@@ -294,7 +300,7 @@ export function TemplateBindingsDialog({
               setError(null)
               try {
                 await onApply(selection.drafts, selection.document)
-                onClose()
+                onApplied()
               } catch (error) {
                 setFailed(error instanceof PartialTemplateApplyError)
                 setError(

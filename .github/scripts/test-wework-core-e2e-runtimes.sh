@@ -48,6 +48,11 @@ ruby -ryaml -e '
   raise "Backend Rust builder must use Noble" unless builder.include?("FROM ubuntu:24.04")
   raise "Backend Rust must compile the attachment S3 example" unless builder.include?("--example attachment_s3_e2e")
   raise "Backend Rust must compile the attachment hosting example" unless builder.include?("--example attachment_hosting_e2e")
+  shared_events = "shared/issue_follow_events.rs"
+  raise "Backend Rust OCI digest must include its shared event module" unless digests.first.include?(shared_events)
+  shared_copy = "COPY #{shared_events} /workspace/#{shared_events}"
+  build_stage = builder.split("FROM ${DEPS_IMAGE} AS build", 2).fetch(1).split("FROM scratch AS runtime", 2).first
+  raise "Backend Rust must copy its shared event module before compiling" unless build_stage.include?(shared_copy) && build_stage.index(shared_copy) < build_stage.index("cargo build")
   publish = steps.fetch("Publish content-addressed Backend Rust E2E image")
   raise "Backend Rust image publication must use its hashed recipe" unless publish.fetch("run").include?("--file #{recipe}")
   dockerfile = File.read(File.join(File.dirname(ARGV[1]), "../runtime-images/backend-rs-e2e.Dockerfile"))

@@ -17,6 +17,9 @@ use tokio::process::Command;
 use super::{LoopItem, TaskProviderKind, TaskRuntimeError};
 use super::{TaskCreate, TaskUpdate};
 
+#[path = "aitable_events.rs"]
+mod events;
+
 #[derive(Clone)]
 pub(crate) struct AITableProvider {
     dws_binary: PathBuf,
@@ -644,6 +647,7 @@ impl AITableProvider {
         let mut command = Command::new(&self.dws_binary);
         crate::process::hide_windows_console(&mut command);
         command
+            .kill_on_drop(true)
             .args(args)
             .args(["--format", "json"])
             // DWS 1.0.32 keeps OAuth credentials below the user home even when

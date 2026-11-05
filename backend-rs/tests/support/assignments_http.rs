@@ -26,7 +26,7 @@ pub struct Server {
 }
 
 impl Server {
-    pub async fn start(mysql: MysqlService) -> Self {
+    pub async fn start(mysql: MysqlService) -> (Self, Arc<AppState>) {
         let state = application_state(mysql).await;
         // Expose the actual application pool for the database negative controls.
         let mysql = state.mysql.clone();
@@ -34,7 +34,7 @@ impl Server {
         let server = wegent_backend_rs::http_server::Server::bind_with_authenticator(
             "127.0.0.1:0".parse().unwrap(),
             application.routes,
-            AppAuthenticator::new(state),
+            AppAuthenticator::new(state.clone()),
         )
         .await
         .unwrap();
@@ -72,14 +72,17 @@ impl Server {
             .await
             .unwrap()
         });
-        Self {
-            base,
-            mysql,
-            api_stop,
-            gateway_stop,
-            api_task,
-            gateway_task,
-        }
+        (
+            Self {
+                base,
+                mysql,
+                api_stop,
+                gateway_stop,
+                api_task,
+                gateway_task,
+            },
+            state,
+        )
     }
 
     pub async fn close(self) {
@@ -176,10 +179,10 @@ pub async fn request(
         target.to_owned()
     };
     let url = format!("{base}/api/v1/loop-items/{path}");
-    let mut request = if method == "GET" {
-        client.get(&url)
-    } else {
-        client.post(&url)
+    let mut request = match method {
+        "GET" => client.get(&url),
+        "PUT" => client.put(&url),
+        _ => client.post(&url),
     }
     .unwrap();
     if let Some(token) = token {

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useRef, useState } from 'react'
+import { useRef, useState, type ComponentProps } from 'react'
 import type { CollaborationLocale } from '../i18n'
 import { importTemplate } from './document'
 import { templateMessages } from './messages'
@@ -15,11 +15,13 @@ export function TemplateImportDialog({
   locale,
   onClose,
   onSaved,
+  dialogOptions,
 }: {
   store: CollaborationTemplateStore
   locale: CollaborationLocale
   onClose(): void
   onSaved(document: CollaborationTemplate): void
+  dialogOptions?: Pick<ComponentProps<typeof TemplateDialog>, 'size' | 'back'>
 }) {
   const m = templateMessages[locale]
   const [document, setDocument] = useState<CollaborationTemplate | null>(null)
@@ -28,6 +30,7 @@ export function TemplateImportDialog({
   const readVersion = useRef(0)
   return (
     <TemplateDialog
+      {...dialogOptions}
       title={m.importTitle}
       description={m.importHint}
       closeLabel={m.close}

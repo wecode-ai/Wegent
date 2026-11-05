@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useEffect, useRef, type ReactNode } from 'react'
-import { X } from 'lucide-react'
+import { ArrowLeft, X } from 'lucide-react'
+
+export type TemplateDialogSize = 'compact' | 'standard' | 'wide'
 
 export function TemplateDialog({
   title,
@@ -12,6 +14,8 @@ export function TemplateDialog({
   footer,
   onClose,
   busy = false,
+  size = 'wide',
+  back,
 }: {
   title: string
   description?: string
@@ -20,8 +24,11 @@ export function TemplateDialog({
   footer?: ReactNode
   onClose(): void
   busy?: boolean
+  size?: TemplateDialogSize
+  back?: { label: string; onClick(): void }
 }) {
   const ref = useRef<HTMLDialogElement>(null)
+  const heading = useRef<HTMLHeadingElement>(null)
   useEffect(() => {
     const previous = document.activeElement
     const dialog = ref.current!
@@ -31,10 +38,15 @@ export function TemplateDialog({
       if (previous instanceof HTMLElement && previous.isConnected) previous.focus()
     }
   }, [])
+  useEffect(() => {
+    // A sequential step can remove the focused control without remounting the dialog.
+    if (ref.current?.open && !ref.current.contains(document.activeElement)) heading.current?.focus()
+  }, [title])
   return (
     <dialog
       ref={ref}
       className="collaboration-template-dialog"
+      data-size={size}
       aria-label={title}
       data-testid="collaboration-template-dialog"
       onCancel={event => {
@@ -43,8 +55,22 @@ export function TemplateDialog({
       }}
     >
       <header>
+        {back && (
+          <button
+            type="button"
+            className="collaboration-template-icon-button"
+            aria-label={back.label}
+            data-testid="template-dialog-back"
+            disabled={busy}
+            onClick={back.onClick}
+          >
+            <ArrowLeft aria-hidden="true" />
+          </button>
+        )}
         <div>
-          <h2>{title}</h2>
+          <h2 ref={heading} tabIndex={-1}>
+            {title}
+          </h2>
           {description && <p>{description}</p>}
         </div>
         <button

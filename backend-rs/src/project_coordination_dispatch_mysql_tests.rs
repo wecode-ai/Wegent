@@ -42,7 +42,9 @@ async fn transact(
     digest: &str,
 ) -> Result<Value, FastApiError> {
     let scope = command_scope(&project.id, "101", command).unwrap();
-    commit_command(mysql, project, plan, context, &scope, digest, command).await
+    commit_command(mysql, project, plan, context, &scope, digest, command)
+        .await
+        .map(|(result, _pending)| result)
 }
 
 async fn count(mysql: &MysqlService) -> i64 {
@@ -53,7 +55,24 @@ async fn count(mysql: &MysqlService) -> i64 {
     row.get_required("count").unwrap()
 }
 
+async fn follow_after_preparation(mysql: &MysqlService, issue: &str) {
+    mysql.execute("UPDATE loop_items SET metadata=JSON_SET(metadata,'$.follower_user_ids',JSON_ARRAY(8),'$.follower_since',?) WHERE id=?",(Json(json!({"8":chrono::Utc::now().timestamp_millis()})),issue)).await.unwrap();
+}
+
+async fn notification_count(mysql: &MysqlService) -> i64 {
+    let row: brz_mysql::MysqlRow = mysql
+        .fetch_one("SELECT COUNT(*) AS count FROM wework_notifications", ())
+        .await
+        .unwrap();
+    row.get_required("count").unwrap()
+}
+
 pub(crate) async fn verify_dispatch_transactions(mysql: &MysqlService) {
+    mysql
+        .execute("ALTER TABLE users ADD COLUMN preferences TEXT", ())
+        .await
+        .unwrap();
+    mysql.execute("CREATE TABLE wework_notifications (id VARCHAR(36) PRIMARY KEY,user_id INT,actor_user_id INT,kind VARCHAR(50),title TEXT,body TEXT,url TEXT,payload JSON,created_at DATETIME(6),is_read BOOL,read_status_changed_at DATETIME(6)) ENGINE=InnoDB",()).await.unwrap();
     mysql.execute("CREATE TABLE loop_item_executions (id BIGINT AUTO_INCREMENT PRIMARY KEY,loop_item_id VARCHAR(64),cloud_project_id VARCHAR(64),executor_owner_user_id BIGINT,agent_id VARCHAR(64),team_id BIGINT,automation_run_id VARCHAR(64),execution_environment VARCHAR(30),execution_device_id VARCHAR(128),assigner_user_id BIGINT,status VARCHAR(30),priority_weight BIGINT,queued_at DATETIME(6),attempt_no BIGINT,previous_execution_id BIGINT,execution_scope VARCHAR(255),execution_note TEXT,approval_status VARCHAR(30),execution_payload TEXT,error_message TEXT,max_retries BIGINT,observed_state VARCHAR(30),sync_state VARCHAR(30),runtime_task_id VARCHAR(128),updated_at DATETIME(6),INDEX(execution_scope)) ENGINE=InnoDB",()).await.unwrap();
     mysql
         .execute(
@@ -207,6 +226,7 @@ pub(crate) async fn verify_dispatch_transactions(mysql: &MysqlService) {
     assert_eq!(count(mysql).await, 0);
 
     let rollback = assignment(issue(mysql, "ISSUE-ROLLBACK").await, &context);
+    follow_after_preparation(mysql, "ISSUE-ROLLBACK").await;
     mysql.execute("ALTER TABLE loop_item_executions ADD CONSTRAINT reject_command CHECK(execution_scope <> 'coordination:1001:101:rollback')",()).await.unwrap();
     assert_eq!(
         transact(mysql, &project, &rollback, &context, "rollback", "digest")
@@ -229,9 +249,12 @@ pub(crate) async fn verify_dispatch_transactions(mysql: &MysqlService) {
     assert_eq!(current.version, 1);
     assert_eq!(current.status, "inbox");
     assert!(current.metadata.0["collaboration_group"].is_null());
+    assert_eq!(current.metadata.0["follower_user_ids"], json!([8]));
     assert_eq!(count(mysql).await, 0);
+    assert_eq!(notification_count(mysql).await, 0);
 
     let plan = assignment(issue(mysql, "ISSUE-ACCEPT").await, &context);
+    follow_after_preparation(mysql, "ISSUE-ACCEPT").await;
     let (a, b) = tokio::join!(
         transact(mysql, &project, &plan, &context, "accept", "digest"),
         transact(mysql, &project, &plan, &context, "accept", "digest")
@@ -246,6 +269,23 @@ pub(crate) async fn verify_dispatch_transactions(mysql: &MysqlService) {
     assert_eq!(row.version, 2);
     assert_eq!(row.metadata.0["read_revisions"]["7"], 2);
     assert_eq!(row.metadata.0["collaboration_group"]["id"], "101");
+    assert_eq!(row.metadata.0["follower_user_ids"], json!([8]));
+    assert_eq!(notification_count(mysql).await, 2);
+    let notifications: Vec<brz_mysql::MysqlRow> = mysql.fetch_all("SELECT user_id,payload FROM wework_notifications ORDER BY JSON_UNQUOTE(JSON_EXTRACT(payload,'$.event'))",()).await.unwrap();
+    assert_eq!(
+        notifications
+            .iter()
+            .map(|row| row.get_required::<i64>("user_id").unwrap())
+            .collect::<Vec<_>>(),
+        vec![8, 8]
+    );
+    assert_eq!(
+        notifications
+            .iter()
+            .map(|row| row.get_required::<Json<Value>>("payload").unwrap().0["event"].clone())
+            .collect::<Vec<_>>(),
+        vec![json!("assignee"), json!("status")]
+    );
     let receipt:brz_mysql::MysqlRow=mysql.fetch_one("SELECT automation_run_id,assigner_user_id,executor_owner_user_id FROM loop_item_executions",()).await.unwrap();
     assert_eq!(
         receipt.get_required::<String>("automation_run_id").unwrap(),
@@ -306,4 +346,5 @@ pub(crate) async fn verify_dispatch_transactions(mysql: &MysqlService) {
         StatusCode::CONFLICT
     );
     assert_eq!(count(mysql).await, 1);
+    assert_eq!(notification_count(mysql).await, 2);
 }

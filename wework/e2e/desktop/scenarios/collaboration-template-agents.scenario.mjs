@@ -138,6 +138,7 @@ export function createDesktopScenario({
       await createLocalCollaborationProject(control, CONTENT, name)
       await configureFirstProjectExecutionEnvironment(control, CONTENT, uiTimeoutMs)
       await control.command('click', selector('collaboration-tab-manage'))
+      await control.command('click', selector('collaboration-project-settings-groups'))
       await control.command('click', selector('collaboration-project-settings-sharing'))
       await control.command('clickWhenEnabled', selector('project-template-import'))
       await control.command('click', selector('template-tab-available'))
@@ -212,9 +213,15 @@ export function createDesktopScenario({
         rule => rule.event_type === 'task.created' || rule.eventType === 'task.created'
       )
       assert.ok(rule, 'Template task routing must persist')
+      await control.command('click', selector('collaboration-template-close'))
+      await control.command('waitFor', selector('collaboration-template-dialog'), {
+        visible: false,
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('click', selector('collaboration-project-settings-agents'))
       await control.command('waitFor', selector('project-agent-add'))
       await captureScreenshot(control, 'template-agents-03-created-agents.png', CONTENT)
+      await control.command('click', selector('collaboration-project-settings-groups'))
       await control.command('click', selector('collaboration-project-settings-sharing'))
       await control.command('clickWhenEnabled', selector('project-template-save'))
       await control.command('waitFor', selector('template-save-name'))

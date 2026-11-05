@@ -25,7 +25,7 @@ pub(super) async fn cancel(
         if row.can_cancel_without_runtime() {
             let result=tx.execute("UPDATE loop_item_executions SET status='cancelled',completed_at=?,lease_expires_at='1970-01-01 00:00:01',observed_state='cancelled',observed_at=?,sync_state='in_sync',termination_reason='cancelled_before_start',error_message='',execution_note=?,version=version+1,updated_at=UTC_TIMESTAMP(6) WHERE id=? AND status=? AND version=?",(now,now,note,row.id,row.status.as_str(),row.version)).await?;
             if result.rows_affected==0{return Ok((false,Effects::default()));}
-            Ok((true,projection::terminal_on(tx,state,row,"cancelled",note,note,now,true).await?))
+            Ok((true,projection::terminal_on(tx,row,"cancelled",note,note,now,true).await?))
         } else {
             let result=tx.execute("UPDATE loop_item_executions SET status='cancel_requested',cancel_requested_at=?,sync_state='pending',execution_note=?,version=version+1,updated_at=UTC_TIMESTAMP(6) WHERE id=? AND status IN ('claimed','running') AND version=?",(now,note,row.id,row.version)).await?;
             Ok((result.rows_affected>0,Effects::default()))
@@ -50,7 +50,7 @@ pub(super) async fn fail_preparation(state: &AppState, row: &Execution, error: &
         let now=Utc::now().naive_utc();
         let result=tx.execute("UPDATE loop_item_executions SET status='failed',completed_at=?,lease_expires_at='1970-01-01 00:00:01',observed_state='failed',observed_at=?,sync_state='in_sync',termination_reason='runtime_failed',error_message=?,execution_note='execution_configuration_unavailable',version=version+1,updated_at=UTC_TIMESTAMP(6) WHERE id=? AND status='queued' AND version=?",(now,now,detail.as_str(),row.id,row.version)).await?;
         if result.rows_affected==0{return Ok(Effects::default());}
-        projection::terminal_on(tx,state,row,"failed",&detail,"execution_configuration_unavailable",now,true).await
+        projection::terminal_on(tx,row,"failed",&detail,"execution_configuration_unavailable",now,true).await
     }).await?;
     projection::publish(state, messages).await
 }
@@ -151,7 +151,6 @@ async fn has_text(state: &AppState, row: &Execution) -> Result<Option<bool>> {
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn prepared_on(
     tx: &mut impl MysqlTransaction,
-    app: &AppState,
     row: &Execution,
     status: &str,
     payload: &serde_json::Value,
@@ -179,7 +178,7 @@ pub(super) async fn prepared_on(
         effects.messages.push(message);
     }
     if matches!(status, "pending_approval" | "waiting_runtime")
-        && let Some(notice) = projection::notify_on(tx, app, row, status, "").await?
+        && let Some(notice) = projection::notify_on(tx, row, status, "").await?
     {
         effects.notices.push(notice);
     }

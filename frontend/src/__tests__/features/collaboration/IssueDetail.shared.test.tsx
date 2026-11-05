@@ -3,9 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import type { ComponentProps } from 'react'
+import { StrictMode, type ComponentProps } from 'react'
 
 if (typeof globalThis.structuredClone !== 'function') {
   Object.defineProperty(globalThis, 'structuredClone', {
@@ -249,6 +249,43 @@ describe('shared IssueDetail', () => {
     return render(detailView(api, props))
   }
 
+  function persistedIssues(initial: CollaborationIssue = issue) {
+    let saved = initial
+    const update = jest.fn(
+      async (_id: string, input: Parameters<IssueDetailApi['issues']['update']>[1]) => {
+        const { version: _version, parentId, startAt, dueAt, reporterUserId, ...fields } = input
+        saved = {
+          ...saved,
+          ...fields,
+          ...(parentId !== undefined ? { parent_id: parentId } : {}),
+          ...(startAt !== undefined ? { start_at: startAt } : {}),
+          ...(dueAt !== undefined ? { due_at: dueAt } : {}),
+          ...(reporterUserId !== undefined ? { reporter_user_id: reporterUserId } : {}),
+          version: saved.version + 1,
+        }
+        return saved
+      }
+    )
+    return {
+      update,
+      get: jest.fn(async () => saved),
+      read: () => saved,
+      accept: (source: CollaborationIssue) => {
+        saved = source
+      },
+    }
+  }
+
+  function deferred<T>() {
+    let resolve!: (value: T) => void
+    let reject!: (error: unknown) => void
+    const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+      resolve = resolvePromise
+      reject = rejectPromise
+    })
+    return { promise, resolve, reject }
+  }
+
   it('loads the PC project thread and sends replies through the same transport', async () => {
     const message = {
       messageId: 'chat-root',
@@ -365,6 +402,9 @@ describe('shared IssueDetail', () => {
   ])('uses the latest callbacks after a $name', async ({ error, conflict }) => {
     const api = createApi()
     jest.mocked(api.issues.update).mockRejectedValue(error)
+    if (conflict) {
+      jest.mocked(api.issues.get).mockResolvedValue({ ...issue, title: '并发修改标题', version: 2 })
+    }
     const original = { onError: jest.fn(), onConflict: jest.fn() }
     const latest = { onError: jest.fn(), onConflict: jest.fn() }
     const view = renderDetail(api, original)
@@ -374,7 +414,7 @@ describe('shared IssueDetail', () => {
     fireEvent.change(screen.getByTestId('cloud-todo-detail-title'), {
       target: { value: '修改标题' },
     })
-    fireEvent.click(screen.getByTestId('cloud-todo-save'))
+    fireEvent.blur(screen.getByTestId('cloud-todo-detail-title'))
     await waitFor(() =>
       expect(conflict ? latest.onConflict : latest.onError).toHaveBeenCalledTimes(1)
     )
@@ -614,15 +654,95 @@ describe('shared IssueDetail', () => {
     expect(onCreated).toHaveBeenCalledWith(created)
   }, 30_000)
 
-  it('persists content and assigns through the shared assignee control', async () => {
-    const updated = { ...issue, version: 2, description: '新描述', priority: 'high' as const }
+  it('reveals identities in more properties without changing the recorded creator or assignee', async () => {
+    const original = {
+      ...issue,
+      created_by_user_name: '原创建人',
+      reporter_user_id: member.user_id,
+      reporter_user_name: member.user_name,
+      assignee_user_id: member.user_id,
+    }
+    const updated = {
+      ...original,
+      reporter_user_id: secondMember.user_id,
+      reporter_user_name: secondMember.user_name,
+      version: 2,
+    }
     const update = jest.fn().mockResolvedValue(updated)
-    const assign = jest.fn().mockResolvedValue({ ...updated, assignee_user_id: 5, version: 3 })
+    const onChange = jest.fn()
+    renderDetail(createApi({ issues: { update } }), {
+      issue: original,
+      allIssues: [original],
+      members: [member, secondMember],
+      onChange,
+    })
+
+    const header = screen.getByTestId('cloud-todo-detail').querySelector('header')!
+    const summary = screen.getByTestId('cloud-todo-state-summary')
+    expect(header).toContainElement(screen.getByTestId('cloud-todo-detail-status'))
+    expect(header).toContainElement(screen.getByTestId('cloud-todo-follow'))
+    expect(screen.getByTestId('cloud-todo-follow')).toHaveTextContent(/^$/)
+    expect(summary).toContainElement(screen.getByTestId('cloud-todo-detail-assignee'))
+    expect(summary).toContainElement(screen.getByRole('button', { name: '时间范围' }))
+    expect(screen.queryByTestId('cloud-todo-identity-properties')).not.toBeInTheDocument()
+
+    await openIssueProperties()
+    const properties = within(screen.getByTestId('cloud-todo-more-properties-popover'))
+    const creator = properties.getByTestId('cloud-todo-identity-creator')
+    expect(creator).toHaveTextContent('原创建人')
+    expect(creator.closest('button, input, select')).toBeNull()
+    await userEvent.click(properties.getByTestId('cloud-todo-reporter'))
+    await userEvent.click(await screen.findByRole('option', { name: secondMember.user_name }))
+    await waitFor(() =>
+      expect(update).toHaveBeenCalledWith(issue.id, {
+        version: 1,
+        reporterUserId: secondMember.user_id,
+      })
+    )
+    expect(onChange).toHaveBeenCalledWith(updated)
+    expect(creator).toHaveTextContent('原创建人')
+    expect(screen.getByTestId('cloud-todo-detail-assignee')).toHaveTextContent(member.user_name)
+  })
+
+  it('merges a pending follow result with a newer external Issue update', async () => {
+    const pending = deferred<{ following: boolean }>()
+    const setFollowing = jest.fn(() => pending.promise)
+    const update = jest.fn()
+    const api = createApi({ issues: { setFollowing, update } })
+    const originalOnChange = jest.fn()
+    const latestOnChange = jest.fn()
+    const view = renderDetail(api, { onChange: originalOnChange })
+    const follow = screen.getByTestId('cloud-todo-follow')
+    expect(follow).toHaveAttribute('aria-pressed', 'false')
+    await userEvent.click(follow)
+    await waitFor(() => expect(setFollowing).toHaveBeenCalledWith(issue.id, true))
+
+    const external = { ...issue, status: 'in_progress', title: '外部修改后的标题', version: 2 }
+    view.rerender(
+      detailView(api, { issue: external, allIssues: [external], onChange: latestOnChange })
+    )
+    await act(async () => pending.resolve({ following: true }))
+
+    await waitFor(() => expect(follow).toHaveAttribute('aria-pressed', 'true'))
+    expect(screen.getByTestId('cloud-todo-detail-status')).toHaveValue(external.status)
+    expect(screen.getByTestId('cloud-todo-detail-title')).toHaveValue(external.title)
+    expect(latestOnChange).toHaveBeenLastCalledWith({ ...external, is_following: true })
+    expect(originalOnChange).not.toHaveBeenCalled()
+    expect(update).not.toHaveBeenCalled()
+  })
+
+  it('automatically saves metadata while preserving manual description and assignee drafts', async () => {
+    const { update, get, read } = persistedIssues()
+    const assign = jest.fn(async () => ({
+      ...read(),
+      assignee_user_id: 5,
+      version: read().version + 1,
+    }))
     const onChange = jest.fn()
     const onAssignmentsChange = jest.fn()
     const onCommentsChange = jest.fn()
     const api = createApi({
-      issues: { update, assign },
+      issues: { update, get, assign },
     })
     renderDetail(api, {
       agents: [{ id: 'bot-1', name: '代码机器人' }],
@@ -634,7 +754,9 @@ describe('shared IssueDetail', () => {
 
     expect(screen.getByTestId('cloud-todo-detail')).toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-tasks')).not.toBeInTheDocument()
-    expect(screen.getByTestId('cloud-todo-state-summary')).toHaveTextContent('待开始')
+    const header = screen.getByTestId('cloud-todo-detail').querySelector('header')!
+    expect(header).toContainElement(screen.getByTestId('cloud-todo-detail-status'))
+    expect(screen.getByTestId('cloud-todo-detail-status')).toHaveDisplayValue('待开始')
     expect(screen.getByTestId('cloud-todo-state-summary')).not.toHaveTextContent('执行任务')
     expect(screen.getByTestId('collaboration-comments')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-detail-assignee')).toBeEnabled()
@@ -647,28 +769,36 @@ describe('shared IssueDetail', () => {
     fireEvent.change(screen.getByTestId('cloud-todo-detail-description'), {
       target: { value: '新描述' },
     })
+    fireEvent.click(screen.getByTestId('cloud-todo-detail-assignee'))
+    fireEvent.click(await screen.findByTestId('cloud-todo-detail-assignee-option-user:5'))
+    expect(update).not.toHaveBeenCalled()
+    expect(assign).not.toHaveBeenCalled()
     await openIssueProperties()
     fireEvent.change(screen.getByTestId('cloud-todo-detail-priority'), {
       target: { value: 'high' },
     })
-    await userEvent.click(screen.getByTestId('cloud-todo-save'))
-
     await waitFor(() =>
       expect(update).toHaveBeenCalledWith('issue-1', {
         version: 1,
-        description: '新描述',
         priority: 'high',
       })
     )
-    await waitFor(() => expect(screen.queryByTestId('cloud-todo-save')).not.toBeInTheDocument())
-    fireEvent.click(screen.getByTestId('cloud-todo-detail-assignee'))
-    fireEvent.click(await screen.findByTestId('cloud-todo-detail-assignee-option-user:5'))
+    expect(read()).toMatchObject({ priority: 'high', description: issue.description })
+    expect(screen.getByTestId('cloud-todo-detail-description')).toHaveValue('新描述')
+    expect(screen.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute('data-value', 'user:5')
+    expect(assign).not.toHaveBeenCalled()
     expect(screen.queryByTestId('wework-assignment-notify-confirm')).not.toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-save')).toHaveTextContent('保存并通知')
     await userEvent.click(screen.getByTestId('cloud-todo-save'))
     await waitFor(() =>
-      expect(assign).toHaveBeenCalledWith(project.id, issue.id, {
+      expect(update).toHaveBeenNthCalledWith(2, issue.id, {
         version: 2,
+        description: '新描述',
+      })
+    )
+    await waitFor(() =>
+      expect(assign).toHaveBeenCalledWith(project.id, issue.id, {
+        version: 3,
         assigneeType: 'user',
         assigneeId: '5',
         notifyAssignee: true,
@@ -677,6 +807,377 @@ describe('shared IssueDetail', () => {
     expect(screen.queryByTestId('collaboration-current-assignment')).not.toBeInTheDocument()
     expect(onCommentsChange).not.toHaveBeenCalled()
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ assignee_user_id: 5 }))
+    await waitFor(() => expect(screen.queryByTestId('cloud-todo-save')).not.toBeInTheDocument())
+  })
+
+  it.each([
+    {
+      name: 'uses the latest version for assignment after saving a description',
+      ownerChanged: false,
+    },
+    {
+      name: 'preserves an externally changed assignee after saving a description',
+      ownerChanged: true,
+    },
+  ])('$name', async ({ ownerChanged }) => {
+    const original = { ...issue, assignee_user_id: 1 }
+    const { update, get, read, accept } = persistedIssues(original)
+    const pendingDescription = deferred<CollaborationIssue>()
+    update.mockImplementationOnce(() => pendingDescription.promise)
+    const assign = jest.fn(
+      async (
+        _projectId: string,
+        _issueId: string,
+        input: Parameters<IssueDetailApi['issues']['assign']>[2]
+      ) => {
+        const saved = {
+          ...read(),
+          assignee_user_id: Number(input.assigneeId),
+          version: read().version + 1,
+        }
+        accept(saved)
+        return saved
+      }
+    )
+    const onChange = jest.fn()
+    const api = createApi({ issues: { update, get, assign } })
+    const view = renderDetail(api, {
+      issue: original,
+      allIssues: [original],
+      members: [member, secondMember],
+      onChange,
+    })
+    await userEvent.click(screen.getByTestId('cloud-todo-detail-description'))
+    await waitFor(() => expect(screen.getByTestId('cloud-todo-detail-description')).toHaveFocus())
+    fireEvent.change(screen.getByTestId('cloud-todo-detail-description'), {
+      target: { value: '已保存的手动描述' },
+    })
+    await userEvent.click(screen.getByTestId('cloud-todo-detail-assignee'))
+    await userEvent.click(await screen.findByTestId('cloud-todo-detail-assignee-option-user:5'))
+    await userEvent.click(screen.getByTestId('cloud-todo-save'))
+    await waitFor(() =>
+      expect(update).toHaveBeenCalledWith(issue.id, {
+        version: 1,
+        description: '已保存的手动描述',
+      })
+    )
+    expect(assign).not.toHaveBeenCalled()
+
+    const external = {
+      ...original,
+      description: '已保存的手动描述',
+      status: 'in_progress',
+      assignee_user_id: ownerChanged ? secondMember.user_id : original.assignee_user_id,
+      version: 3,
+    }
+    accept(external)
+    view.rerender(
+      detailView(api, {
+        issue: external,
+        allIssues: [external],
+        members: [member, secondMember],
+        onChange,
+      })
+    )
+    await act(async () => {
+      pendingDescription.resolve({
+        ...original,
+        description: external.description,
+        version: 2,
+      })
+    })
+
+    expect(update).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId('cloud-todo-detail-status')).toHaveValue(external.status)
+    expect(screen.getByTestId('cloud-todo-detail-description')).toHaveValue(external.description)
+    if (ownerChanged) {
+      expect(await screen.findByTestId('cloud-todo-save-error')).toHaveTextContent(
+        '负责人已被其他协作者修改，请确认后重新保存。'
+      )
+      expect(assign).not.toHaveBeenCalled()
+      expect(read()).toEqual(external)
+      expect(onChange).not.toHaveBeenCalled()
+      expect(screen.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute(
+        'data-value',
+        'user:5'
+      )
+    } else {
+      expect(assign).toHaveBeenCalledWith(project.id, issue.id, {
+        version: 3,
+        assigneeType: 'user',
+        assigneeId: '5',
+        notifyAssignee: true,
+      })
+      expect(read()).toMatchObject({
+        description: external.description,
+        status: external.status,
+        assignee_user_id: 5,
+        version: 4,
+      })
+      expect(onChange).toHaveBeenLastCalledWith(read())
+      expect(screen.queryByTestId('cloud-todo-save-error')).not.toBeInTheDocument()
+      await waitFor(() => expect(screen.queryByTestId('cloud-todo-save')).not.toBeInTheDocument())
+    }
+  })
+
+  it('serializes metadata changes with the latest version and commits only the selected fields', async () => {
+    const parent = { ...issue, id: 'parent-1', title: '父任务' }
+    const { update, get, read } = persistedIssues()
+    const firstSave = deferred<void>()
+    const persist = update.getMockImplementation()!
+    update.mockImplementationOnce(async (...args) => {
+      await firstSave.promise
+      return persist(...args)
+    })
+    renderDetail(createApi({ issues: { update, get } }), { allIssues: [issue, parent] })
+
+    fireEvent.change(screen.getByTestId('cloud-todo-detail-status'), {
+      target: { value: 'in_progress' },
+    })
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(1))
+    await openIssueProperties()
+    fireEvent.change(screen.getByTestId('cloud-todo-detail-priority'), {
+      target: { value: 'high' },
+    })
+    await userEvent.click(screen.getByTestId('cloud-todo-detail-parent'))
+    await userEvent.click(await screen.findByTestId('cloud-todo-detail-parent-option-parent-1'))
+    expect(update).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId('cloud-todo-detail-description')).toHaveAttribute('readonly')
+    expect(screen.queryByTestId('cloud-todo-save')).not.toBeInTheDocument()
+
+    await act(async () => firstSave.resolve())
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(3))
+    expect(update.mock.calls).toEqual([
+      [issue.id, { version: 1, status: 'in_progress' }],
+      [issue.id, { version: 2, priority: 'high' }],
+      [issue.id, { version: 3, parentId: parent.id }],
+    ])
+    expect(screen.queryByTestId('cloud-todo-more-properties-popover')).not.toBeInTheDocument()
+    await openIssueProperties()
+    const tags = screen.getByTestId('cloud-todo-detail-tag-input')
+    fireEvent.change(tags, { target: { value: '回归' } })
+    fireEvent.keyDown(tags, { key: 'Enter' })
+    await waitFor(() =>
+      expect(update).toHaveBeenNthCalledWith(4, issue.id, { version: 4, tags: ['回归'] })
+    )
+    await userEvent.click(screen.getByTestId('cloud-todo-detail-tag-tag-remove-回归'))
+    await waitFor(() =>
+      expect(update).toHaveBeenNthCalledWith(5, issue.id, { version: 5, tags: [] })
+    )
+    expect(read()).toMatchObject({
+      status: 'in_progress',
+      priority: 'high',
+      parent_id: parent.id,
+      tags: [],
+      version: 6,
+    })
+    expect(screen.queryByTestId('cloud-todo-save')).not.toBeInTheDocument()
+  })
+
+  it('keeps a failed title draft and retries on blur without opening the description editor', async () => {
+    const { update, get, read } = persistedIssues()
+    const error = new Error('offline')
+    update.mockRejectedValueOnce(error)
+    const onError = jest.fn()
+    renderDetail(createApi({ issues: { update, get } }), { onError })
+    const title = screen.getByTestId('cloud-todo-detail-title')
+    await userEvent.click(title)
+    fireEvent.change(title, { target: { value: '自动保存标题' } })
+    expect(update).not.toHaveBeenCalled()
+    expect(screen.getByTestId('cloud-todo-detail-description')).toHaveAttribute('readonly')
+    expect(screen.queryByTestId('cloud-todo-save')).not.toBeInTheDocument()
+
+    fireEvent.blur(title)
+    await waitFor(() => expect(onError).toHaveBeenCalledTimes(1))
+    expect(title).toHaveValue('自动保存标题')
+    expect(read().title).toBe(issue.title)
+    expect(screen.getByTestId('cloud-todo-save-error')).toHaveTextContent('offline')
+    await userEvent.click(title)
+    await userEvent.keyboard('{Enter}')
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(2))
+    expect(update.mock.calls).toEqual([
+      [issue.id, { version: 1, title: '自动保存标题' }],
+      [issue.id, { version: 1, title: '自动保存标题' }],
+    ])
+    expect(read().title).toBe('自动保存标题')
+    expect(screen.getByTestId('cloud-todo-detail-description')).toHaveAttribute('readonly')
+    expect(screen.queryByTestId('cloud-todo-save-error')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-save')).not.toBeInTheDocument()
+  })
+
+  it('rolls back rejected metadata while preserving manual content and assignment drafts', async () => {
+    const error = Object.assign(new Error('Status unavailable'), { status: 422 })
+    const { update, get } = persistedIssues()
+    update.mockRejectedValueOnce(error)
+    const assign = jest.fn()
+    const onError = jest.fn()
+    renderDetail(createApi({ issues: { update, get, assign } }), {
+      members: [member],
+      onError,
+    })
+    fireEvent.click(screen.getByTestId('cloud-todo-detail-description'))
+    await waitFor(() => expect(screen.getByTestId('cloud-todo-detail-description')).toHaveFocus())
+    fireEvent.change(screen.getByTestId('cloud-todo-detail-description'), {
+      target: { value: '未保存描述' },
+    })
+    await userEvent.click(screen.getByTestId('cloud-todo-detail-assignee'))
+    await userEvent.click(await screen.findByTestId('cloud-todo-detail-assignee-option-user:5'))
+    fireEvent.change(screen.getByTestId('cloud-todo-detail-status'), {
+      target: { value: 'in_progress' },
+    })
+    await waitFor(() => expect(onError).toHaveBeenCalledTimes(1))
+    expect(update).toHaveBeenCalledWith(issue.id, { version: 1, status: 'in_progress' })
+    expect(screen.getByTestId('cloud-todo-detail-status')).toHaveValue(issue.status)
+    expect(screen.getByTestId('cloud-todo-detail-description')).toHaveValue('未保存描述')
+    expect(screen.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute('data-value', 'user:5')
+    expect(screen.getByTestId('cloud-todo-save')).toHaveTextContent('保存并通知')
+    expect(assign).not.toHaveBeenCalled()
+  })
+
+  it('does not let a rejected metadata write overwrite a newer selection or external update', async () => {
+    const { update, get, read, accept } = persistedIssues()
+    const firstSave = deferred<CollaborationIssue>()
+    const secondSave = deferred<void>()
+    const persist = update.getMockImplementation()!
+    update.mockImplementationOnce(() => firstSave.promise)
+    update.mockImplementationOnce(async (...args) => {
+      await secondSave.promise
+      return persist(...args)
+    })
+    const onError = jest.fn()
+    const api = createApi({ issues: { update, get } })
+    const view = renderDetail(api, { onError })
+    await openIssueProperties()
+    const priority = screen.getByTestId('cloud-todo-detail-priority')
+    fireEvent.change(priority, { target: { value: 'high' } })
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(1))
+    fireEvent.change(priority, { target: { value: 'urgent' } })
+    const external = { ...issue, title: '外部更新标题', version: 2 }
+    accept(external)
+    view.rerender(detailView(api, { issue: external, allIssues: [external], onError }))
+    await act(async () => firstSave.reject(new Error('offline')))
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(2))
+    expect(priority).toHaveValue('urgent')
+    expect(screen.getByTestId('cloud-todo-detail-title')).toHaveValue(external.title)
+    await act(async () => secondSave.resolve())
+    await waitFor(() => expect(read().priority).toBe('urgent'))
+    expect(update).toHaveBeenLastCalledWith(issue.id, { version: 2, priority: 'urgent' })
+    expect(onError).toHaveBeenCalledTimes(1)
+  })
+
+  it('restores the latest server value when a metadata write fails after an external edit', async () => {
+    const pending = deferred<CollaborationIssue>()
+    const update = jest.fn(() => pending.promise)
+    const onError = jest.fn()
+    const api = createApi({ issues: { update, get: jest.fn() } })
+    const view = renderDetail(api, { onError })
+    await openIssueProperties()
+    fireEvent.change(screen.getByTestId('cloud-todo-detail-priority'), {
+      target: { value: 'high' },
+    })
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(1))
+    const external = { ...issue, priority: 'urgent' as const, version: 2 }
+    view.rerender(detailView(api, { issue: external, allIssues: [external], onError }))
+    await act(async () => pending.reject(new Error('offline')))
+    await waitFor(() => expect(onError).toHaveBeenCalledTimes(1))
+    expect(screen.getByTestId('cloud-todo-detail-priority')).toHaveValue('urgent')
+    expect(update).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    ['success', false],
+    ['failure', false],
+    ['success', true],
+    ['failure', true],
+  ] as const)(
+    'ignores a late metadata %s after switching Issues (returning=%s)',
+    async (outcome, returnToOriginal) => {
+      const pending = deferred<CollaborationIssue>()
+      const update = jest.fn(() => pending.promise)
+      const api = createApi({ issues: { update, get: jest.fn() } })
+      const previousCallbacks = { onChange: jest.fn(), onError: jest.fn(), onConflict: jest.fn() }
+      const nextCallbacks = { onChange: jest.fn(), onError: jest.fn(), onConflict: jest.fn() }
+      const view = renderDetail(api, previousCallbacks)
+      fireEvent.change(screen.getByTestId('cloud-todo-detail-status'), {
+        target: { value: 'in_progress' },
+      })
+      await waitFor(() => expect(update).toHaveBeenCalledTimes(1))
+      const nextIssue = { ...issue, id: 'issue-2', title: '第二个Issue', version: 7 }
+      view.rerender(detailView(api, { issue: nextIssue, allIssues: [nextIssue], ...nextCallbacks }))
+      const currentIssue = returnToOriginal ? issue : nextIssue
+      if (returnToOriginal) {
+        view.rerender(detailView(api, { issue, allIssues: [issue], ...nextCallbacks }))
+      }
+      fireEvent.click(screen.getByTestId('cloud-todo-detail-description'))
+      await waitFor(() => expect(screen.getByTestId('cloud-todo-detail-description')).toHaveFocus())
+      fireEvent.change(screen.getByTestId('cloud-todo-detail-description'), {
+        target: { value: '当前Issue描述草稿' },
+      })
+      await act(async () => {
+        if (outcome === 'success') {
+          pending.resolve({ ...issue, status: 'in_progress', version: 2 })
+        } else {
+          pending.reject(new Error('Previous Issue failed'))
+        }
+      })
+      expect(screen.getByTestId('cloud-todo-detail-title')).toHaveValue(currentIssue.title)
+      expect(screen.getByTestId('cloud-todo-detail-status')).toHaveValue(currentIssue.status)
+      expect(screen.getByTestId('cloud-todo-detail-description')).toHaveValue('当前Issue描述草稿')
+      expect(screen.queryByTestId('cloud-todo-save-error')).not.toBeInTheDocument()
+      for (const callback of [
+        ...Object.values(previousCallbacks),
+        ...Object.values(nextCallbacks),
+      ]) {
+        expect(callback).not.toHaveBeenCalled()
+      }
+      expect(update).toHaveBeenCalledTimes(1)
+      expect(api.attachments.list).toHaveBeenLastCalledWith(currentIssue.id)
+    }
+  )
+
+  it('stops conflict recovery after switching Issues without reporting the old error to the new host', async () => {
+    const conflict = Object.assign(new Error('Issue changed'), {
+      status: 409,
+      detail: { code: 'version_conflict' },
+    })
+    const pendingLatest = deferred<CollaborationIssue>()
+    const get = jest.fn(() => pendingLatest.promise)
+    const update = jest.fn().mockRejectedValue(conflict)
+    const api = createApi({ issues: { get, update } })
+    const originalCallbacks = { onChange: jest.fn(), onError: jest.fn(), onConflict: jest.fn() }
+    const nextCallbacks = { onChange: jest.fn(), onError: jest.fn(), onConflict: jest.fn() }
+    const view = render(<StrictMode>{detailView(api, originalCallbacks)}</StrictMode>)
+    await userEvent.click(screen.getByTestId('cloud-todo-detail-title'))
+    fireEvent.change(screen.getByTestId('cloud-todo-detail-title'), {
+      target: { value: '旧Issue的待保存标题' },
+    })
+    fireEvent.blur(screen.getByTestId('cloud-todo-detail-title'))
+    await waitFor(() => expect(get).toHaveBeenCalledWith(issue.id))
+    expect(originalCallbacks.onConflict).toHaveBeenCalledTimes(1)
+
+    const nextIssue = { ...issue, id: 'issue-2', title: '当前Issue', version: 7 }
+    view.rerender(
+      <StrictMode>
+        {detailView(api, { issue: nextIssue, allIssues: [nextIssue], ...nextCallbacks })}
+      </StrictMode>
+    )
+    await userEvent.click(screen.getByTestId('cloud-todo-detail-description'))
+    await waitFor(() => expect(screen.getByTestId('cloud-todo-detail-description')).toHaveFocus())
+    fireEvent.change(screen.getByTestId('cloud-todo-detail-description'), {
+      target: { value: '当前Issue的手动草稿' },
+    })
+    await act(async () => {
+      pendingLatest.resolve({ ...issue, status: 'in_progress', version: 2 })
+    })
+
+    expect(update).toHaveBeenCalledTimes(1)
+    expect(update).toHaveBeenCalledWith(issue.id, { version: 1, title: '旧Issue的待保存标题' })
+    expect(originalCallbacks.onConflict).toHaveBeenCalledTimes(1)
+    expect(originalCallbacks.onError).not.toHaveBeenCalled()
+    for (const callback of Object.values(nextCallbacks)) expect(callback).not.toHaveBeenCalled()
+    expect(screen.getByTestId('cloud-todo-detail-title')).toHaveValue(nextIssue.title)
+    expect(screen.getByTestId('cloud-todo-detail-description')).toHaveValue('当前Issue的手动草稿')
+    expect(screen.queryByTestId('cloud-todo-save-error')).not.toBeInTheDocument()
   })
 
   it.each([true, false])(
@@ -744,13 +1245,18 @@ describe('shared IssueDetail', () => {
     renderDetail(api, { issue: emptyIssue, allIssues: [emptyIssue] })
     expect(screen.queryByTestId('cloud-todo-detail-description')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-attachment-input')).not.toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('cloud-todo-detail-title'))
-    expect(screen.getByTestId('cloud-todo-detail-title')).not.toHaveAttribute('readonly')
+    await userEvent.click(screen.getByTestId('cloud-todo-add-description'))
+    expect(screen.getByTestId('cloud-todo-detail-description')).not.toHaveAttribute('readonly')
     expect(screen.getByTestId('cloud-todo-attachment-input')).toBeEnabled()
     fireEvent.change(screen.getByTestId('cloud-todo-attachment-input'), {
       target: { files: [new File(['race'], uploaded.display_name, { type: 'text/plain' })] },
     })
 
+    const attachmentToggle = await screen.findByTestId('cloud-todo-attachment-toggle')
+    await waitFor(() => expect(attachmentToggle).toHaveTextContent('1'))
+    expect(attachmentToggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText(uploaded.display_name)).not.toBeInTheDocument()
+    await userEvent.click(attachmentToggle)
     expect(await screen.findByText(uploaded.display_name)).toBeVisible()
     await act(async () => {
       resolveAttachments([])
@@ -809,6 +1315,11 @@ describe('shared IssueDetail', () => {
     await act(async () => {
       resolveUpload(uploaded)
     })
+    const attachmentToggle = await screen.findByTestId('cloud-todo-attachment-toggle')
+    await waitFor(() => expect(attachmentToggle).toHaveTextContent('1'))
+    expect(attachmentToggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText(uploaded.display_name)).not.toBeInTheDocument()
+    await userEvent.click(attachmentToggle)
     expect(await screen.findByText(uploaded.display_name)).toBeVisible()
 
     await act(async () => {
@@ -1016,15 +1527,24 @@ describe('shared IssueDetail', () => {
     expect(screen.getByTestId('cloud-todo-add-collaborator')).toBeDisabled()
     expect(screen.getByRole('button', { name: '移除参与者 张三' })).toBeDisabled()
     await userEvent.click(screen.getByTestId('cloud-todo-detail-title'))
+    const attachmentToggle = await screen.findByTestId('cloud-todo-attachment-toggle')
+    expect(attachmentToggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText('readonly.txt')).not.toBeInTheDocument()
+    await userEvent.click(attachmentToggle)
+    expect(attachmentToggle).toHaveAttribute('aria-expanded', 'true')
     expect(await screen.findByText('readonly.txt')).toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-attachment-input')).not.toBeInTheDocument()
     expect(
       screen.queryByTestId('cloud-todo-attachment-delete-attachment-read-only')
     ).not.toBeInTheDocument()
+    await userEvent.click(attachmentToggle)
+    expect(attachmentToggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText('readonly.txt')).not.toBeInTheDocument()
 
     fireEvent.change(screen.getByTestId('cloud-todo-detail-title'), {
       target: { value: '不应保存' },
     })
+    fireEvent.blur(screen.getByTestId('cloud-todo-detail-title'))
     fireEvent.keyDown(screen.getByTestId('cloud-todo-detail'), {
       key: 'Enter',
       metaKey: true,
@@ -1101,9 +1621,8 @@ describe('shared IssueDetail', () => {
 
   it('preserves a date-only due_at when saving another field', async () => {
     const dateOnlyIssue = { ...issue, due_at: '2026-09-12' }
-    const updated = { ...dateOnlyIssue, title: '仅修改标题', version: 2 }
-    const update = jest.fn().mockResolvedValue(updated)
-    const api = createApi({ issues: { update, assign: jest.fn() } })
+    const { update, get, read } = persistedIssues(dateOnlyIssue)
+    const api = createApi({ issues: { update, get, assign: jest.fn() } })
 
     renderDetail(api, { issue: dateOnlyIssue, allIssues: [dateOnlyIssue] })
 
@@ -1114,7 +1633,7 @@ describe('shared IssueDetail', () => {
     fireEvent.change(screen.getByTestId('cloud-todo-detail-title'), {
       target: { value: '仅修改标题' },
     })
-    fireEvent.click(screen.getByTestId('cloud-todo-save'))
+    fireEvent.blur(screen.getByTestId('cloud-todo-detail-title'))
 
     await waitFor(() =>
       expect(update).toHaveBeenCalledWith('issue-1', {
@@ -1122,6 +1641,7 @@ describe('shared IssueDetail', () => {
         title: '仅修改标题',
       })
     )
+    expect(read().due_at).toBe(dateOnlyIssue.due_at)
   })
 
   it('converts an edited datetime-local due date to UTC before saving', async () => {
@@ -1129,9 +1649,8 @@ describe('shared IssueDetail', () => {
       ...issue,
       due_at: '2026-09-12T02:30:00.000Z',
     }
-    const updated = { ...timestampIssue, version: 2 }
-    const update = jest.fn().mockResolvedValue(updated)
-    const api = createApi({ issues: { update, assign: jest.fn() } })
+    const { update, get, read } = persistedIssues(timestampIssue)
+    const api = createApi({ issues: { update, get, assign: jest.fn() } })
     const editedLocalValue = '2026-09-13T09:45'
     const expectedUtcValue = new Date(editedLocalValue).toISOString()
 
@@ -1145,13 +1664,94 @@ describe('shared IssueDetail', () => {
     fireEvent.change(screen.getByTestId('cloud-todo-detail-due-date'), {
       target: { value: editedLocalValue },
     })
-    await userEvent.click(screen.getByTestId('cloud-todo-save'))
-
     await waitFor(() =>
-      expect(update).toHaveBeenCalledWith(
-        'issue-1',
-        expect.objectContaining({ dueAt: expectedUtcValue })
-      )
+      expect(update).toHaveBeenCalledWith('issue-1', { version: 1, dueAt: expectedUtcValue })
+    )
+    expect(read().due_at).toBe(expectedUtcValue)
+  })
+
+  it('waits for a valid date range and automatically saves both edited endpoints', async () => {
+    const scheduled = {
+      ...issue,
+      start_at: '2026-09-12T02:30:00.000Z',
+      due_at: '2026-09-13T02:30:00.000Z',
+    }
+    const { update, get, read } = persistedIssues(scheduled)
+    renderDetail(createApi({ issues: { update, get } }), {
+      issue: scheduled,
+      allIssues: [scheduled],
+    })
+    await openIssueScheduleRange()
+    const nextStart = '2026-09-15T09:00'
+    const nextDue = '2026-09-16T09:00'
+    fireEvent.change(screen.getByTestId('cloud-todo-detail-start-date'), {
+      target: { value: nextStart },
+    })
+    await act(async () => {})
+    expect(update).not.toHaveBeenCalled()
+    fireEvent.change(screen.getByTestId('cloud-todo-detail-due-date'), {
+      target: { value: nextDue },
+    })
+    const range = {
+      startAt: new Date(nextStart).toISOString(),
+      dueAt: new Date(nextDue).toISOString(),
+    }
+    await waitFor(() => expect(update).toHaveBeenCalledWith(issue.id, { version: 1, ...range }))
+    expect(read()).toMatchObject({ start_at: range.startAt, due_at: range.dueAt })
+    expect(screen.queryByTestId('cloud-todo-save')).not.toBeInTheDocument()
+  })
+
+  it('preserves an externally updated due date when a start-date change is queued', async () => {
+    const scheduled = {
+      ...issue,
+      start_at: '2026-09-10T00:00:00.000Z',
+      due_at: '2026-09-20T00:00:00.000Z',
+    }
+    const { update, get, read, accept } = persistedIssues(scheduled)
+    const pendingPriority = deferred<CollaborationIssue>()
+    update.mockImplementationOnce(() => pendingPriority.promise)
+    const api = createApi({ issues: { update, get } })
+    const onChange = jest.fn()
+    const view = renderDetail(api, { issue: scheduled, allIssues: [scheduled], onChange })
+    await openIssueProperties()
+    fireEvent.change(screen.getByTestId('cloud-todo-detail-priority'), {
+      target: { value: 'high' },
+    })
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(1))
+    await openIssueScheduleRange()
+    const nextStart = '2026-09-12T09:00'
+    fireEvent.change(screen.getByTestId('cloud-todo-detail-start-date'), {
+      target: { value: nextStart },
+    })
+    expect(update).toHaveBeenCalledTimes(1)
+
+    const external = {
+      ...scheduled,
+      priority: 'high' as const,
+      due_at: '2026-10-03T00:00:00.000Z',
+      version: 3,
+    }
+    accept(external)
+    view.rerender(detailView(api, { issue: external, allIssues: [external], onChange }))
+    expect(screen.getByTestId('cloud-todo-detail-due-date')).toHaveValue(
+      dueDateTimeLocalFromSource(external.due_at)
+    )
+    await act(async () => {
+      pendingPriority.resolve({ ...scheduled, priority: 'high', version: 2 })
+    })
+
+    const expectedStart = new Date(nextStart).toISOString()
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(2))
+    expect(update.mock.calls).toEqual([
+      [issue.id, { version: 1, priority: 'high' }],
+      [issue.id, { version: 3, startAt: expectedStart }],
+    ])
+    expect(read()).toMatchObject({ start_at: expectedStart, due_at: external.due_at, version: 4 })
+    expect(onChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({ start_at: expectedStart, due_at: external.due_at, version: 4 })
+    )
+    expect(screen.getByTestId('cloud-todo-detail-due-date')).toHaveValue(
+      dueDateTimeLocalFromSource(external.due_at)
     )
   })
 
@@ -1171,6 +1771,17 @@ describe('shared IssueDetail', () => {
       },
     ])
     const view = renderDetail(api)
+    const attachmentToggle = await screen.findByTestId('cloud-todo-attachment-toggle')
+    expect(attachmentToggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByTestId('cloud-todo-attachment-open-attachment-1')).not.toBeInTheDocument()
+    expect(api.attachments.read).not.toHaveBeenCalled()
+    await userEvent.click(attachmentToggle)
+    expect(attachmentToggle).toHaveAttribute('aria-expanded', 'true')
+    await waitFor(() => expect(api.attachments.read).toHaveBeenCalledWith('attachment-1'))
+    await userEvent.click(attachmentToggle)
+    expect(attachmentToggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByTestId('cloud-todo-attachment-open-attachment-1')).not.toBeInTheDocument()
+    await userEvent.click(attachmentToggle)
     const trigger = await screen.findByTestId('cloud-todo-attachment-open-attachment-1')
     await waitFor(() => expect(api.attachments.read).toHaveBeenCalledWith('attachment-1'))
     jest.mocked(api.attachments.read).mockClear()
@@ -1184,6 +1795,10 @@ describe('shared IssueDetail', () => {
       expect(open).not.toHaveBeenCalled()
       view.rerender(detailView(api, { issue: { ...issue, id: 'issue-2' } }))
       expect(screen.queryByTestId('browser-attachment-preview-dialog')).not.toBeInTheDocument()
+      expect(await screen.findByTestId('cloud-todo-attachment-toggle')).toHaveAttribute(
+        'aria-expanded',
+        'false'
+      )
       view.rerender(detailView(api))
       expect(screen.queryByTestId('browser-attachment-preview-dialog')).not.toBeInTheDocument()
     } finally {
@@ -1278,6 +1893,10 @@ describe('shared IssueDetail', () => {
 
     expect(await screen.findByText('实现任务')).toBeInTheDocument()
 
+    const attachmentToggle = await screen.findByTestId('cloud-todo-attachment-toggle')
+    expect(attachmentToggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByTestId('cloud-todo-attachment-open-attachment-1')).not.toBeInTheDocument()
+    await userEvent.click(attachmentToggle)
     fireEvent.click(screen.getByTestId('cloud-todo-attachment-open-attachment-1'))
     expect(await screen.findByTestId('browser-attachment-preview-dialog')).toBeInTheDocument()
     expect(api.attachments.access).not.toHaveBeenCalled()

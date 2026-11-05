@@ -1590,7 +1590,10 @@ def test_todo_lifecycle_and_multiple_local_tasks(
     )
     assert created.status_code == 201
     item = created.json()
-    assert item["assignee_name"] == test_user.user_name
+    assert item["assignee_name"] is None
+    assert item["assignee_user_id"] is None
+    assert item["created_by_user_id"] == test_user.id
+    assert item["reporter_user_id"] == test_user.id
     assert item["id"] == "CHAIN-1"
     assert item["cloud_project_id"] == project["id"]
     assert item["status"] == "inbox"
@@ -1820,7 +1823,11 @@ def test_loop_item_clears_all_assignee_fields(
     created = test_client.post(
         f"/api/v1/cloud-projects/{project['id']}/loop-items",
         headers=_auth(test_token),
-        json={"title": "Move to unassigned", "status": "pending"},
+        json={
+            "title": "Move to unassigned",
+            "status": "pending",
+            "assignee_user_id": test_user.id,
+        },
     )
     assert created.status_code == 201
     item = created.json()

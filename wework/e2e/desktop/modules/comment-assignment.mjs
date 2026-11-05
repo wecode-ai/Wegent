@@ -6,8 +6,13 @@ export async function verifyCommentAssignment(control, { request, project, owner
   const scoped = selector => `${content} ${selector}`
   const issue = await request(`/api/v1/cloud-projects/${project.id}/loop-items`, {
     method: 'POST',
-    body: JSON.stringify({ title: '讨论区直接转派回归', notify_assignee: false }),
+    body: JSON.stringify({
+      title: '讨论区直接转派回归',
+      assignee_user_id: owner.id,
+      notify_assignee: false,
+    }),
   })
+  assert.equal(String(issue.assignee_user_id), String(owner.id))
   await control.command('openWeworkScheme', 'body', {
     value: `wework://boards/${project.id}/issues/${issue.id}`,
   })

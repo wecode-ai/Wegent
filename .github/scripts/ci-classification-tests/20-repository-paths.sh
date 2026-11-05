@@ -189,3 +189,10 @@ assert_case "Wework transport retains E2E coverage" "$wework_e2e_expected" \
 assert_case "Wework E2E image changes run Wework E2E" "$wework_e2e_expected" \
   "docker/wework-e2e/desktop.Dockerfile"
 
+
+issue_follow_provider_expected="${all_false/backend_rs=false/backend_rs=true}"
+issue_follow_provider_expected="${issue_follow_provider_expected/executor=false/executor=true}"
+assert_case "Shared Issue provider fixtures validate both Rust consumers" \
+  "$issue_follow_provider_expected" "shared/issue_follow_test_provider.rs"
+assert_case "Shared Issue follow events validate both Rust consumers" \
+  "${backend_rs_expected/executor=false/executor=true}" "shared/issue_follow_events.rs"

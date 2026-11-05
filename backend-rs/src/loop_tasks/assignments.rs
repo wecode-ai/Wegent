@@ -20,7 +20,7 @@
 //! 4. `response_values` per active event, resolving `created_by_user_name`
 //!    through the session's identity map (`db.get(User, id)`).
 use brz_http_server::StatusCode;
-use brz_mysql::MysqlService;
+use brz_mysql::{MysqlService, MysqlTransaction};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 
@@ -106,6 +106,14 @@ pub(super) async fn require_issue_read(
     item_id: &str,
     current_user: &FlexibleUser,
 ) -> Result<(), FastApiError> {
+    require_issue_read_as(state, item_id, current_user.id).await
+}
+
+pub(crate) async fn require_issue_read_as(
+    state: &AppState,
+    item_id: &str,
+    user_id: i32,
+) -> Result<(), FastApiError> {
     let repository = LoopItemRepository::new(&state.mysql);
 
     // `is_external_item(db, item_id)`.
@@ -114,7 +122,7 @@ pub(super) async fn require_issue_read(
         .await
         .map_err(internal)?;
     if external.is_some() {
-        ensure_shadow(state, item_id, current_user.id).await?;
+        ensure_shadow(state, item_id, user_id).await?;
     }
 
     // `project_for_issue(db, issue_id=item_id, user_id=current_user.id)`.
@@ -127,12 +135,12 @@ pub(super) async fn require_issue_read(
         .map_err(internal)?
         .ok_or_else(|| FastApiError::detail(StatusCode::NOT_FOUND, "Project not found"))?;
     // `issue_assignment_service.list`.
-    let access = require_cloud_project_role(state, &project.id, current_user.id).await?;
+    let access = require_cloud_project_role(state, &project.id, user_id).await?;
     // `_require_issue_project` re-reads the item through the session's identity
     // map, so it issues no statement.
     if is_external_provider(&access.project) {
-        provider_get(state, item_id, current_user.id).await?;
-    } else if !can_view_item(state, &access, &item, current_user.id).await? {
+        provider_get(state, item_id, user_id).await?;
+    } else if !can_view_item(state, &access, &item, user_id).await? {
         return Err(FastApiError::detail(
             StatusCode::NOT_FOUND,
             "Issue not found",
@@ -149,11 +157,18 @@ pub(crate) async fn require_cloud_project_role(
     user_id: i32,
 ) -> Result<ProjectAccess, FastApiError> {
     let number: i64 = project_id.parse().map_err(|_| cloud_project_not_found())?;
-    BoardSnapshotRepository::new(&state.mysql)
+    let access = BoardSnapshotRepository::new(&state.mysql)
         .require_cloud_project_role(number, user_id)
         .await
         .map_err(internal)?
-        .ok_or_else(cloud_project_not_found)
+        .ok_or_else(cloud_project_not_found)?;
+    if !has_permission(&access.role, "Viewer") {
+        return Err(FastApiError::detail(
+            StatusCode::FORBIDDEN,
+            "Insufficient permission",
+        ));
+    }
+    Ok(access)
 }
 
 /// `can_view_item(db, access, item, user_id)`.
@@ -229,14 +244,73 @@ pub(crate) async fn ensure_shadow(
     {
         return Ok(());
     }
-    // A missing shadow row requires the provider `get` and the shadow insert
-    // (`LoopItem(...)` + `db.commit()`). Every recorded case already holds the
-    // shadow row, so this branch is outside the recording.
-    let _ = (state, user_id);
-    Err(FastApiError::detail(
-        StatusCode::INTERNAL_SERVER_ERROR,
-        "Internal server error",
-    ))
+    let project = repository
+        .find_external_project(item_id)
+        .await
+        .map_err(internal)?
+        .ok_or_else(todo_not_found)?;
+    let access = require_cloud_project_role(state, &project.id, user_id).await?;
+    let number = item_number(item_id).ok_or_else(todo_not_found)?;
+    let issue = get_issue(state, &project, number).await?;
+    let response = issue_response(state, &project, &access.role, user_id, &issue)
+        .await
+        .map_err(internal)?;
+    if !response.can_view_detail() {
+        return Err(todo_not_found());
+    }
+    let values = serde_json::to_value(response).map_err(|_| {
+        FastApiError::detail(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
+    })?;
+    let title = values["title"].as_str().unwrap_or_default();
+    let description = values["description"].as_str().unwrap_or_default();
+    let issue_status = values["status"].as_str().unwrap_or_default();
+    let priority = values["priority"].as_str().unwrap_or_default();
+    let creator = values["created_by_user_id"].as_i64().unwrap_or_default();
+    let version = values["version"].as_i64().unwrap_or(1);
+    state
+        .mysql
+        .with_transaction(async |tx| {
+            let required = crate::loop_node_storage::required_columns(tx).await?;
+            let sql = crate::loop_node_storage::insert_sql(
+                &[
+                    "id",
+                    "resource_type",
+                    "cloud_project_id",
+                    "sequence_number",
+                    "title",
+                    "description",
+                    "status",
+                    "priority",
+                    "created_by_user_id",
+                    "metadata",
+                    "version",
+                ],
+                &[
+                    "?", "'task'", "?", "?", "?", "?", "?", "?", "?", "?", "?",
+                ],
+                &required,
+            );
+            tx.execute(
+                format!("{sql} ON DUPLICATE KEY UPDATE id = id"),
+                (
+                    item_id,
+                    project.id.as_str(),
+                    number,
+                    title,
+                    description,
+                    issue_status,
+                    priority,
+                    creator,
+                    brz_mysql::Json(serde_json::json!({"external_shadow": true, "tags": [], "reporter_user_id": creator})),
+                    version,
+                ),
+            )
+            .await?;
+            Ok(())
+        })
+        .await
+        .map_err(internal)?;
+    Ok(())
 }
 
 /// `is_external_provider(project)`: `task_provider in {"github", "gitlab"}`.
@@ -247,7 +321,11 @@ fn is_external_provider(project: &ProjectRow) -> bool {
 /// `external_loop_item_provider.get(db, item_id, user_id)`. The source discards
 /// the returned mapping, so only its dependencies and error mapping are
 /// observable.
-async fn provider_get(state: &AppState, item_id: &str, user_id: i32) -> Result<(), FastApiError> {
+pub(crate) async fn provider_get(
+    state: &AppState,
+    item_id: &str,
+    user_id: i32,
+) -> Result<(), FastApiError> {
     let repository = LoopItemRepository::new(&state.mysql);
     // `_resolve_project` -> `_find_project`; `None` maps to 404 "TODO not found".
     let project = repository

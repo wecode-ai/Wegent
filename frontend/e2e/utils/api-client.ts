@@ -572,6 +572,10 @@ export class ApiClient {
     return this.call<T>('PUT', endpoint, data)
   }
 
+  async patch<T = unknown>(endpoint: string, data?: unknown): Promise<ApiResponse<T>> {
+    return this.call<T>('PATCH', endpoint, data)
+  }
+
   /**
    * Generic DELETE request
    */

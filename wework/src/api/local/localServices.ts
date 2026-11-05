@@ -4231,6 +4231,8 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       : payload
   }
   const deliveryApi: LocalProjectSpaceApi = createLocalDeliveryApi(request, {
+    currentUserId: (deps.user ?? getLocalUser()).id,
+    currentUserName: (deps.user ?? getLocalUser()).user_name,
     async prepareAssignmentExecutionPayload({
       projectId,
       itemId,

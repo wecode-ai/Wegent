@@ -32,6 +32,7 @@ const PARENT_MARKER: &str = "Wegent-Parent:";
 const PRIORITY_LABEL_PREFIX: &str = "wegent:priority:";
 const STATUS_LABEL_PREFIX: &str = "wegent:status:";
 const CREATOR_LABEL_PREFIX: &str = "wegent:creator:";
+const ASSIGNEE_LABEL_PREFIX: &str = "wegent:assignee:";
 const ATTACHMENT_BLOCK_START: &str = "<!-- wegent-attachments:v1:start -->";
 const ATTACHMENT_BLOCK_END: &str = "<!-- wegent-attachments:v1:end -->";
 const ATTACHMENT_DATA_PREFIX: &str = "<!-- wegent-attachments:data:";
@@ -45,6 +46,49 @@ pub(crate) struct IssueProvider {
 }
 
 impl IssueProvider {
+    pub(crate) async fn event_page(
+        &self,
+        project: &LoopItem,
+        provider: TaskProviderKind,
+        task_id: &str,
+        stream: &str,
+        page: u64,
+    ) -> Result<(Vec<super::issue_follow_events::Event>, bool), TaskRuntimeError> {
+        let config = self.provider_config(project, provider)?;
+        let source = if provider == TaskProviderKind::Github {
+            "github"
+        } else {
+            "gitlab"
+        };
+        let path = super::issue_follow_events::path(
+            source,
+            &config.repository,
+            issue_number(project, task_id)?,
+            stream,
+            page,
+        );
+        let rows = self
+            .send(
+                provider,
+                "events",
+                &config.repository,
+                config.authorize(
+                    self.client.get(format!("{}{path}", config.api_base)),
+                    provider,
+                ),
+            )
+            .await?
+            .json::<Value>()
+            .await
+            .map_err(provider_error)?;
+        let events = super::issue_follow_events::decode(source, stream, &rows)
+            .map_err(TaskRuntimeError::ProviderRequest)?;
+        Ok((
+            events,
+            rows.as_array().is_some_and(|rows| rows.len() < PAGE_SIZE),
+        ))
+    }
+
     pub(crate) fn new(database_path: PathBuf) -> Result<Self, TaskRuntimeError> {
         let client = Client::builder()
             .user_agent(concat!("wegent-executor/", env!("CARGO_PKG_VERSION")))
@@ -106,6 +150,16 @@ impl IssueProvider {
                 .map(|parent_id| issue_number(project, parent_id))
                 .transpose()?,
         );
+        let assignee = assignee_label(
+            input.assignee_user_id,
+            input.assignee_agent_id.as_deref(),
+            input.assignee_group_id.as_deref(),
+        )?;
+        let mut tags = input.tags;
+        tags.retain(|label| !label.starts_with(ASSIGNEE_LABEL_PREFIX));
+        if let Some(label) = assignee {
+            tags.push(label);
+        }
         match provider {
             TaskProviderKind::Github => {
                 let url = format!("{}/repos/{}/issues", config.api_base, config.repository);
@@ -120,7 +174,7 @@ impl IssueProvider {
                                 "title": input.title,
                                 "body": description,
                                 "labels": labels_for_write(
-                                    input.tags,
+                                    tags,
                                     &input.priority,
                                     &input.status,
                                 ),
@@ -161,7 +215,7 @@ impl IssueProvider {
                                 "title": input.title,
                                 "description": description,
                                 "labels": labels_for_write(
-                                    input.tags,
+                                    tags,
                                     &input.priority,
                                     &input.status,
                                 ).join(","),
@@ -218,8 +272,24 @@ impl IssueProvider {
         let config = self.provider_config(project, provider)?;
         config.require_write_token()?;
         let number = issue_number(project, task_id)?;
-        let updates_labels =
-            input.tags.is_some() || input.priority.is_some() || input.status.is_some();
+        let updates_assignee = input.assignee_user_id.is_some()
+            || input.assignee_agent_id.is_some()
+            || input.assignee_group_id.is_some();
+        let requested_assignee = assignee_label(
+            input.assignee_user_id.flatten(),
+            input
+                .assignee_agent_id
+                .as_ref()
+                .and_then(|id| id.as_deref()),
+            input
+                .assignee_group_id
+                .as_ref()
+                .and_then(|id| id.as_deref()),
+        )?;
+        let updates_labels = input.tags.is_some()
+            || input.priority.is_some()
+            || input.status.is_some()
+            || updates_assignee;
         let updates_description = input.description.is_some() || input.parent_id.is_some();
         let needs_current = (input.description.is_none() && input.parent_id.is_some())
             || (provider == TaskProviderKind::Gitlab && updates_description)
@@ -256,6 +326,19 @@ impl IssueProvider {
                     })
             }) {
                 tags.push(creator_label);
+            }
+            tags.retain(|label| !label.starts_with(ASSIGNEE_LABEL_PREFIX));
+            let assignee = if updates_assignee {
+                requested_assignee
+            } else {
+                current.as_ref().and_then(|item| {
+                    item.metadata["provider_assignee_label"]
+                        .as_str()
+                        .map(ToOwned::to_owned)
+                })
+            };
+            if let Some(label) = assignee {
+                tags.push(label);
             }
             let priority = input
                 .priority
@@ -1183,12 +1266,34 @@ fn issue_loop_item(
         .iter()
         .find(|label| label.starts_with(CREATOR_LABEL_PREFIX))
         .cloned();
+    let assignee_label = labels
+        .iter()
+        .find(|label| label.starts_with(ASSIGNEE_LABEL_PREFIX))
+        .cloned();
+    let assignee = assignee_label.as_deref().and_then(parse_assignee_label);
+    let assignee_user_id = assignee
+        .filter(|(kind, _)| *kind == "user")
+        .and_then(|(_, id)| id.parse::<i64>().ok())
+        .filter(|id| *id > 0);
+    let assignee_agent_id = assignee
+        .filter(|(kind, _)| *kind == "agent")
+        .map(|(_, id)| id.to_owned());
+    let collaboration_group = assignee
+        .filter(|(kind, _)| *kind == "group")
+        .map(|(_, id)| {
+            project.metadata["collaboration_groups"]
+                .as_array()
+                .and_then(|groups| groups.iter().find(|group| group["id"].as_str() == Some(id)))
+                .cloned()
+                .unwrap_or_else(|| json!({"id": id}))
+        });
     let labels = labels
         .into_iter()
         .filter(|label| {
             !label.starts_with(PRIORITY_LABEL_PREFIX)
                 && !label.starts_with(STATUS_LABEL_PREFIX)
                 && !label.starts_with(CREATOR_LABEL_PREFIX)
+                && !label.starts_with(ASSIGNEE_LABEL_PREFIX)
         })
         .collect::<Vec<_>>();
     LoopItem {
@@ -1216,6 +1321,8 @@ fn issue_loop_item(
             "web_url": web_url,
             "author": author,
             "creator_label": creator_label,
+            "provider_assignee_label": assignee_label,
+            "collaboration_group": collaboration_group,
             "labels": labels,
             "comments": comments,
         }),
@@ -1223,11 +1330,48 @@ fn issue_loop_item(
         created_at,
         updated_at,
         completed_at: closed_at,
-        assignee_agent_id: None,
-        assignee_user_id: None,
+        assignee_agent_id,
+        assignee_user_id,
         execution_id: None,
         execution_state: None,
     }
+}
+
+fn parse_assignee_label(label: &str) -> Option<(&str, &str)> {
+    let mut parts = label.strip_prefix(ASSIGNEE_LABEL_PREFIX)?.split(':');
+    let kind = parts.next()?;
+    let id = parts.next().filter(|id| !id.is_empty())?;
+    matches!(kind, "user" | "agent" | "group" | "team").then_some((kind, id))
+}
+
+fn assignee_label(
+    user: Option<i64>,
+    agent: Option<&str>,
+    group: Option<&str>,
+) -> Result<Option<String>, TaskRuntimeError> {
+    let count =
+        usize::from(user.is_some()) + usize::from(agent.is_some()) + usize::from(group.is_some());
+    if count > 1 {
+        return Err(invalid("Issue can only be assigned to one target"));
+    }
+    if let Some(user) = user {
+        if user <= 0 {
+            return Err(invalid("Invalid assignee user"));
+        }
+        return Ok(Some(format!("{ASSIGNEE_LABEL_PREFIX}user:{user}")));
+    }
+    let target = agent
+        .map(|id| ("agent", id))
+        .or_else(|| group.map(|id| ("group", id)));
+    target
+        .map(|(kind, id)| {
+            if id.trim().is_empty() || id.contains(':') {
+                Err(invalid("Invalid assignee id"))
+            } else {
+                Ok(format!("{ASSIGNEE_LABEL_PREFIX}{kind}:{id}"))
+            }
+        })
+        .transpose()
 }
 
 fn issue_id(project: &LoopItem, number: i64) -> String {
@@ -1558,10 +1702,40 @@ fn provider_error(error: impl std::fmt::Display) -> TaskRuntimeError {
 #[cfg(test)]
 mod tests {
     use super::{
-        creator_from_labels, labels_for_write, normalize_repository, parent_number,
-        priority_from_labels, status_from_labels,
+        assignee_label, creator_from_labels, labels_for_write, normalize_repository, parent_number,
+        parse_assignee_label, priority_from_labels, status_from_labels,
     };
     use crate::task_runtime::TaskProviderKind;
+
+    #[test]
+    fn assignee_labels_identify_one_supported_target() {
+        for (label, kind, id) in [
+            (
+                assignee_label(Some(42), None, None).unwrap().unwrap(),
+                "user",
+                "42",
+            ),
+            (
+                assignee_label(None, Some("robot-1"), None)
+                    .unwrap()
+                    .unwrap(),
+                "agent",
+                "robot-1",
+            ),
+            (
+                assignee_label(None, None, Some("group-1"))
+                    .unwrap()
+                    .unwrap(),
+                "group",
+                "group-1",
+            ),
+        ] {
+            assert_eq!(parse_assignee_label(&label), Some((kind, id)));
+        }
+        assert!(assignee_label(Some(42), Some("robot-1"), None).is_err());
+        assert!(assignee_label(None, Some("bad:id"), None).is_err());
+        assert_eq!(assignee_label(None, None, None).unwrap(), None);
+    }
 
     #[tokio::test]
     async fn rejects_manual_position_before_contacting_an_external_provider() {

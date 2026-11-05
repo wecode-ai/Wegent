@@ -362,7 +362,7 @@ pub(crate) async fn apply_assignment_on(
     tx: &mut impl MysqlTransaction,
     project: &Node,
     assignment: &GroupAssignment,
-) -> brz_mysql::MysqlResult<()> {
+) -> brz_mysql::MysqlResult<(Node, Vec<notifications::Pending>)> {
     let issue = &assignment.issue;
     let current = store::locked(tx, "task", &issue.id)
         .await?
@@ -373,7 +373,20 @@ pub(crate) async fn apply_assignment_on(
         });
     }
     let actor = assignment.actor;
-    let mut metadata = issue.meta();
+    let status_changed = current.status != "in_progress";
+    let assignee_changed = current.assignee_user_id != 0
+        || current.assignee_team_id != 0
+        || !current.assignee_agent_id.is_empty()
+        || current.metadata.0["collaboration_group"]["id"]
+            != issue.metadata.0["collaboration_group"]["id"];
+    let mut metadata = current.meta();
+    for field in [
+        "collaboration_group",
+        "collaboration_group_assignment_key",
+        "assignment_history",
+    ] {
+        metadata[field] = issue.metadata.0[field].clone();
+    }
     let revision = metadata["content_revision"].as_i64().unwrap_or(1) + 1;
     metadata["content_revision"] = json!(revision);
     if !metadata["read_revisions"].is_object() {
@@ -389,8 +402,21 @@ pub(crate) async fn apply_assignment_on(
             last["trigger"] = json!("collaboration_group_assignment");
         }
     }
-    tx.execute("UPDATE loop_items SET assignee_user_id=0,assignee_agent_id='',assignee_team_id=0,status='in_progress',completed_at=?,sort_order=0,metadata=?,version=version+1,updated_by_user_id=?,updated_at=UTC_TIMESTAMP(6) WHERE id=?",(store::UNSET,Json(metadata),actor,issue.id.as_str())).await?;
-    Ok(())
+    tx.execute("UPDATE loop_items SET assignee_user_id=0,assignee_agent_id='',assignee_team_id=0,status='in_progress',completed_at=?,sort_order=0,metadata=?,version=version+1,updated_by_user_id=?,updated_at=UTC_TIMESTAMP(6) WHERE id=?",(store::UNSET,Json(metadata.clone()),actor,issue.id.as_str())).await?;
+    let mut updated = current;
+    updated.status = "in_progress".into();
+    updated.assignee_user_id = 0;
+    updated.assignee_team_id = 0;
+    updated.assignee_agent_id.clear();
+    updated.metadata = Json(metadata);
+    updated.version += 1;
+    let mut pending = Vec::new();
+    for (changed, event) in [(status_changed, "status"), (assignee_changed, "assignee")] {
+        if changed {
+            pending.extend(notifications::followers_on(tx, project, &updated, actor, event).await?);
+        }
+    }
+    Ok((updated, pending))
 }
 
 pub(super) async fn assign(
@@ -405,29 +431,28 @@ pub(super) async fn assign(
     let issue = issues::load(state, project, &run.task_id, actor).await?;
     let assignment = prepare_assignment(state, project, issue, id, actor, context).await?;
     let GroupAssignment {
-        issue,
         group,
         key,
         admission,
         ..
     } = &assignment;
     let pending=state.mysql.with_transaction(async |tx| {
-        apply_assignment_on(tx,project,&assignment).await?;
+        let (issue,mut pending)=apply_assignment_on(tx,project,&assignment).await?;
         if let Some(plan)=admission.as_ref(){
             let existing:Option<Id>=tx.fetch_optional("SELECT id FROM loop_item_executions WHERE loop_item_id=? AND automation_run_id=? ORDER BY id DESC LIMIT 1",(issue.id.as_str(),run.id.as_str())).await?;
-            if existing.is_none(){let execution=queue::enqueue_on(tx,state,issue,run,plan).await?;let payload=json!({"runtime_selection":plan.runtime_selection,"origin_context":plan.context,"dispatch_request":{"kind":"collaboration_group"}});tx.execute("UPDATE loop_item_executions SET execution_payload=? WHERE id=?",(payload.to_string(),execution.id)).await?;}
-            tx.execute("UPDATE loop_items SET status='queued',version=version+1 WHERE id=?",(run.id.as_str(),)).await?;Ok(None)
+            if existing.is_none(){let execution=queue::enqueue_on(tx,state,&issue,run,plan).await?;let payload=json!({"runtime_selection":plan.runtime_selection,"origin_context":plan.context,"dispatch_request":{"kind":"collaboration_group"}});tx.execute("UPDATE loop_item_executions SET execution_payload=? WHERE id=?",(payload.to_string(),execution.id)).await?;}
+            tx.execute("UPDATE loop_items SET status='queued',version=version+1 WHERE id=?",(run.id.as_str(),)).await?;Ok(pending)
         }else{
             let leader=authority::integer(&group["leader"]["id"]).ok_or_else(||brz_mysql::MysqlError::InvalidQuery{reason:"Collaboration group human leader is invalid".into()})?;
-            let mut payload=notifications::target(state,project,issue,leader).await.map_err(|error|brz_mysql::MysqlError::InvalidQuery{reason:error.to_string()})?;
+            let mut payload=notifications::target_on(tx,project,&issue,leader).await?;
             let assignment_key=format!("group:{id}:{key}");
             let existing:Option<Id>=tx.fetch_optional("SELECT 1 AS id FROM wework_notifications WHERE user_id=? AND kind='assignment' AND JSON_UNQUOTE(JSON_EXTRACT(payload,'$.collaborationGroupAssignmentKey'))=? LIMIT 1",(leader,assignment_key.as_str())).await?;
-            payload["action"]=json!("coordinate_collaboration_group");payload["issueId"]=json!(issue.id);payload["collaborationGroupId"]=json!(id);payload["collaborationGroupAssignmentKey"]=json!(assignment_key);payload["instructions"]=json!(human_instructions(project,issue,group).map_err(|error|brz_mysql::MysqlError::InvalidQuery{reason:error.to_string()})?);
-            let pending=if existing.is_none(){Some(notifications::create_on(tx,state,leader,actor,"assignment",&format!("请协调：{}",issue.title),"你是该协作小组的负责人。请打开 Issue 分配本轮任务并验收结果。",payload).await?)}else{None};
+            payload["action"]=json!("coordinate_collaboration_group");payload["issueId"]=json!(issue.id);payload["collaborationGroupId"]=json!(id);payload["collaborationGroupAssignmentKey"]=json!(assignment_key);payload["instructions"]=json!(human_instructions(project,&issue,group).map_err(|error|brz_mysql::MysqlError::InvalidQuery{reason:error.to_string()})?);
+            if existing.is_none(){pending.push(notifications::create_on(tx,leader,actor,"assignment",&format!("请协调：{}",issue.title),"你是该协作小组的负责人。请打开 Issue 分配本轮任务并验收结果。",payload).await?);}
             tx.execute("UPDATE loop_items SET status='succeeded',completed_at=UTC_TIMESTAMP(6),version=version+1 WHERE id=?",(run.id.as_str(),)).await?;Ok(pending)
         }
     }).await?;
-    if let Some(pending) = pending {
+    for pending in pending {
         notifications::deliver(state, pending).await;
     }
     Ok(())

@@ -1052,6 +1052,18 @@ class ProjectChatService:
             mentions=request.mentions,
             reply_preview=reply.preview,
         )
+        if item is not None:
+            from app.services.issue_follow_notifications import notify_issue_followers
+
+            notify_issue_followers(
+                db,
+                project=project,
+                item=item,
+                actor_user_id=user_id,
+                event="comment",
+                comment_id=message_id,
+                content=request.content,
+            )
         if request.task_id:
             if item is not None:
                 item.metadata_json = update_change_request_source(
@@ -1742,6 +1754,7 @@ class ProjectChatService:
     ) -> None:
         """Apply one terminal state to the streaming AI message."""
 
+        previous_status = row.status
         if (
             (status_value == "completed" or not row.content)
             and isinstance(content, str)
@@ -1763,6 +1776,23 @@ class ProjectChatService:
         )
         self._advance_task_to_review(db, row)
         self._index_activity_change_requests(db, row)
+        if row.status == "completed" and previous_status != "completed" and row.task_id:
+            item = db.get(LoopItem, row.task_id)
+            project = db.get(CloudProject, row.project_id)
+            if item is not None and project is not None:
+                from app.services.issue_follow_notifications import (
+                    notify_issue_followers,
+                )
+
+                notify_issue_followers(
+                    db,
+                    project=project,
+                    item=item,
+                    actor_user_id=0,
+                    event="comment",
+                    comment_id=row.message_id,
+                    content=row.content,
+                )
         # DB-generated timestamps lose subsecond precision. Record the result
         # after its status transition so the activity preserves causal order.
         self._record_activity_timestamp(row)
@@ -2180,6 +2210,17 @@ class ProjectChatService:
                         task.status = next_status
                         task.completed_at = ProjectChatService._loop_unset_datetime(db)
                         task.sort_order = 0
+                        from app.services.issue_follow_notifications import (
+                            notify_issue_followers,
+                        )
+
+                        notify_issue_followers(
+                            db,
+                            project=project,
+                            item=task,
+                            actor_user_id=user_id or 0,
+                            event="status",
+                        )
         else:
             next_state["completed_at"] = now.isoformat()
             next_state["heartbeat_at"] = None
@@ -2364,6 +2405,12 @@ class ProjectChatService:
         task.completed_at = ProjectChatService._loop_unset_datetime(db)
         task.sort_order = 0
         task.version += 1
+        if project is not None:
+            from app.services.issue_follow_notifications import notify_issue_followers
+
+            notify_issue_followers(
+                db, project=project, item=task, actor_user_id=0, event="status"
+            )
         ProjectChatService._queue_task_status_change(db, task, previous_status, row)
 
     def fail_agent_response(
