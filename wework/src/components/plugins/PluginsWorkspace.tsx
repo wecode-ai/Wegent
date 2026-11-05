@@ -1967,7 +1967,7 @@ export function PluginsWorkspace({
     for (const key of autoUpdateAttemptKeysRef.current) {
       if (key.startsWith(attemptScope)) autoUpdateAttemptKeysRef.current.delete(key)
     }
-    openAiCatalog.refresh()
+    clearLocalCodexPluginsReadStateCache()
     manualReconciliationTickRef.current = {
       tick: marketplaceRefreshTick + 1,
       accountKey: marketplaceCacheKeyValue,
@@ -2680,13 +2680,17 @@ export function PluginsWorkspace({
           t('workbench.plugins_install_failed', '安装失败，请稍后重试')
         )
         const errorMessage = humanizeMarketplaceInstallError(rawErrorMessage, t)
-        console.error('[Wework plugins] install failed', {
-          pluginId: item.id,
-          pluginName: item.name,
-          marketplaceId: localMarketplaceIdFromItem(item),
-          installFromLocal,
-          error: rawErrorMessage,
-        })
+        console.error(
+          '[Wework plugins] install failed',
+          JSON.stringify({
+            pluginId: item.id,
+            pluginName: item.name,
+            marketplaceId: localMarketplaceIdFromItem(item),
+            installFromLocal,
+            installPersonalSource,
+            error: rawErrorMessage,
+          })
+        )
         const syncSettled =
           /failed to synchronize/i.test(rawErrorMessage) ||
           /PLUGIN_DEVICE_SYNC_FAILED/i.test(rawErrorMessage) ||
@@ -3478,7 +3482,6 @@ export function PluginsWorkspace({
     const membershipPromise = localPluginApi
       .listInstalledPlugins({
         refresh: true,
-        shareInflight: !isExplicitRefresh,
       })
       .then(result => {
         if (!inventoryReadIsCurrent()) return result
@@ -4609,6 +4612,7 @@ export function PluginsWorkspace({
         mergeAllMarketplaces: true,
         marketplaceKinds: ['local'],
         refresh: true,
+        reuseInstalledInventory: true,
       })
       .then(localState => {
         const trace = (reason: string) => {

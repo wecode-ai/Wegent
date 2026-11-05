@@ -158,7 +158,6 @@ mod thread_action;
 
 use debug_stdout::CodexStdout;
 use diagnostics::{json_scalar_field, json_string_field};
-#[cfg(test)]
 use home::WEGENT_CODEX_HOME_ENV;
 #[cfg(test)]
 use home::WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV;
@@ -305,6 +304,9 @@ mod mcp_apps;
 #[path = "codex/connection_mcp.rs"]
 mod connection_mcp;
 
+#[path = "codex/mcp_config.rs"]
+mod mcp_config;
+
 #[path = "codex/mcp_reload.rs"]
 mod mcp_reload;
 #[cfg(test)]
@@ -383,6 +385,13 @@ impl CodexAppServerClient {
         let mut environment = codex_process_environment(runtime, launch);
         if let Some(home) = &self.home {
             environment.insert(CODEX_HOME_ENV.to_owned(), home.display().to_string());
+        } else {
+            // Remember the effective default Home with the running process.
+            // Registry entries without a named Home can outlive a Home change.
+            environment.insert(
+                WEGENT_CODEX_HOME_ENV.to_owned(),
+                wework_codex_home().display().to_string(),
+            );
         }
         environment
     }
@@ -4421,42 +4430,7 @@ fn build_codex_launch_config_with_route_scope(
         ));
     }
 
-    if super::instance_home::request_home(request).is_none() {
-        let overrides = global_mcp_config_overrides(&mut launch_config.thread_config)?;
-        launch_config.config_overrides.extend(overrides);
-    }
-    let (browser_overrides, browser_env) = cdp_browser_mcp_config_overrides(request)?;
-    launch_config.config_overrides.extend(browser_overrides);
-    launch_config.env.extend(browser_env);
-    let (computer_use_overrides, computer_use_env) = computer_use_mcp_config_overrides();
-    launch_config
-        .config_overrides
-        .extend(computer_use_overrides);
-    launch_config.env.extend(computer_use_env);
-    let (project_space_overrides, project_space_env) =
-        managed_wework_mcp_config_overrides(request)?;
-    launch_config
-        .config_overrides
-        .extend(project_space_overrides);
-    launch_config.env.extend(project_space_env);
-    let (request_mcp_overrides, request_mcp_environment) =
-        runtime_capabilities::request_mcp_config_overrides(
-            request,
-            &mut launch_config.thread_config,
-        )?;
-    launch_config.config_overrides.extend(request_mcp_overrides);
-    launch_config.env.extend(request_mcp_environment);
-    if crate::runtime_work::stand_in_requires_confirmation(request)
-        && !external_work::applies(request)
-    {
-        let approvals = stand_in_mcp_approval_overrides(
-            request,
-            &codex_home,
-            &launch_config.config_overrides,
-            &launch_config.thread_config,
-        )?;
-        launch_config.config_overrides.extend(approvals);
-    }
+    mcp_config::configure_task_mcp(request, &mut launch_config)?;
 
     if request.extra.get("enable_tools").and_then(Value::as_bool) == Some(false) {
         configure_text_generation(&mut launch_config);

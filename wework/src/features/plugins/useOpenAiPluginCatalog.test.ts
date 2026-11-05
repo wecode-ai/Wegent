@@ -62,6 +62,28 @@ afterEach(() => {
 })
 
 describe('on-demand OpenAI catalog', () => {
+  test('loads only an active tab and delegates freshness to the account-scoped API cache', async () => {
+    seed([], Date.now())
+    const readCatalog = vi.fn().mockResolvedValue({ items: [], deviceId: 'device' })
+    const { result, rerender } = renderHook(
+      ({ enabled }) => useOpenAiPluginCatalog({ cacheKey: 'account', enabled, readCatalog }),
+      { initialProps: { enabled: false } }
+    )
+    await act(async () => {})
+    expect(readCatalog).not.toHaveBeenCalled()
+    act(() => result.current.refresh())
+    await act(async () => {})
+    expect(readCatalog).not.toHaveBeenCalled()
+    rerender({ enabled: true })
+    await waitFor(() => expect(readCatalog).toHaveBeenCalledOnce())
+    expect(readCatalog).toHaveBeenLastCalledWith({ forceRefetch: false, accountScope: 'account' })
+    act(() => result.current.refresh())
+    await waitFor(() => expect(readCatalog).toHaveBeenCalledTimes(2))
+    expect(readCatalog).toHaveBeenLastCalledWith({ forceRefetch: true, accountScope: 'account' })
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(getPluginMarketplaceCache('account')?.marketplaceItems).toEqual([])
+  })
+
   test('403 retains cached rows, settles loading, sanitizes the error and permits retry', async () => {
     seed([remoteItem], Date.now() - 61_000)
     const readCatalog = vi
@@ -72,12 +94,12 @@ describe('on-demand OpenAI catalog', () => {
       useOpenAiPluginCatalog({ cacheKey: 'account', enabled: true, readCatalog })
     )
     await waitFor(() => expect(result.current.error).toBe('blocked'))
-    expect(readCatalog).toHaveBeenLastCalledWith({ forceRefetch: false })
+    expect(readCatalog).toHaveBeenLastCalledWith({ forceRefetch: false, accountScope: 'account' })
     expect(result.current.loading).toBe(false)
     expect(getPluginMarketplaceCache('account')?.marketplaceItems).toEqual([remoteItem])
     act(() => result.current.refresh())
     await waitFor(() => expect(readCatalog).toHaveBeenCalledTimes(2))
-    expect(readCatalog).toHaveBeenLastCalledWith({ forceRefetch: true })
+    expect(readCatalog).toHaveBeenLastCalledWith({ forceRefetch: true, accountScope: 'account' })
     await waitFor(() => expect(result.current.loading).toBe(false))
     expect(result.current.error).toBeNull()
     expect(getPluginMarketplaceCache('account')?.marketplaceItems).toEqual([])
@@ -131,12 +153,12 @@ describe('on-demand OpenAI catalog', () => {
     const pending = deferred()
     const readCatalog = vi.fn(() => pending.promise)
     const { result, rerender } = renderHook(
-      ({ cacheKey }) => useOpenAiPluginCatalog({ cacheKey, enabled: false, readCatalog }),
-      { initialProps: { cacheKey: 'account' } }
+      ({ cacheKey, enabled }) => useOpenAiPluginCatalog({ cacheKey, enabled, readCatalog }),
+      { initialProps: { cacheKey: 'account', enabled: true } }
     )
-    act(() => result.current.refresh())
     await waitFor(() => expect(readCatalog).toHaveBeenCalledOnce())
-    rerender({ cacheKey: 'other-account' })
+    rerender({ cacheKey: 'other-account', enabled: false })
+    act(() => result.current.refresh())
     await act(async () => {
       pending.resolve({ items: [], deviceId: 'device' })
     })

@@ -15,8 +15,10 @@ from pytest import MonkeyPatch
 
 def _load_migration() -> ModuleType:
     path = (
-        Path(__file__).parents[2]
-        / "alembic"
+        Path(__file__).parents[2].parent
+        / "backend-rs"
+        / "migrations"
+        / "reference"
         / "versions"
         / "20260804_730e43eb7d0f_bind_wiki_projects_to_their_code_wiki.py"
     )

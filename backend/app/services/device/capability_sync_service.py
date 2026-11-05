@@ -27,6 +27,7 @@ from app.services.device.capability_payloads import (
     CapabilityPayloadResolver,
     DeviceCapabilityResolutionError,
 )
+from app.services.device.capability_sync_rpc import call_capability_sync
 from app.services.device.plugin_sync_protocol import (
     load_versioned_plugin_payload,
     supports_plugin_sync_v2,
@@ -565,12 +566,14 @@ class DeviceCapabilitySyncService(CapabilityPayloadResolver):
                 [item.get("name") for item in dispatch_payload.get("plugins") or []],
                 [item.get("name") for item in dispatch_payload.get("mcps") or []],
             )
-            response = await get_sio().call(
-                SYNC_EVENT,
-                dispatch_payload,
-                to=route.socket_id,
+            response = await call_capability_sync(
+                get_sio(),
+                user_id=user_id,
+                route=route,
+                event=SYNC_EVENT,
+                payload=dispatch_payload,
                 namespace=SYNC_NAMESPACE,
-                timeout=timeout_seconds,
+                timeout_seconds=timeout_seconds,
             )
         except Exception as exc:
             logger.warning(
