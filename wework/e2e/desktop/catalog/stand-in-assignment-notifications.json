@@ -1,0 +1,12 @@
+{
+  "order": 48000,
+  "scenario": "./scenarios/stand-in-assignment-suite.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 47000,
+      "shard": 8,
+      "position": 7000
+    }
+  }
+}

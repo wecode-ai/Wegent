@@ -36,6 +36,9 @@ impl RuntimeWorkRpcHandler {
         name: &str,
         args: Value,
     ) -> Result<Value, AppIpcError> {
+        if name == "read_review_history" {
+            return self.read_stand_in_review_history(&identity, &args).await;
+        }
         if identity.device != self.device_id
             || identity.work.is_some()
             || !matches!(identity.role.as_deref(), None | Some("@primary"))
@@ -258,6 +261,7 @@ mod operation_tests {
             role: None,
             work: None,
             project: None,
+            review: false,
             ask_before_act: true,
             coordinator_batch: Some("batch".into()),
         };
@@ -313,6 +317,7 @@ mod operation_tests {
             role: None,
             work: None,
             project: None,
+            review: false,
             ask_before_act: true,
             coordinator_batch: None,
         };

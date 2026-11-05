@@ -2487,7 +2487,9 @@ export function WorkspaceBrowserTabPanel({
               onFocus={() => {
                 addressEditingRef.current = true
               }}
-              onBlur={() => {
+              onBlur={event => {
+                // Window deactivation can emit blur while this input retains DOM focus.
+                if (event.currentTarget.ownerDocument.activeElement === event.currentTarget) return
                 addressEditingRef.current = false
                 const currentPageUrl = activePageUrlRef.current
                 if (currentPageUrl) setAddress(currentPageUrl)

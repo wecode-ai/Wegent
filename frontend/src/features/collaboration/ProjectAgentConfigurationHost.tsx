@@ -11,8 +11,11 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { WebAgentResourceForm } from './WebAgentResourceForm'
+import { resolveWebTemplateAgentRouting } from './templateAgentRouting'
 
 export const webProjectAgentConfigurationHost: ProjectAgentConfigurationHost = {
+  requiresTemplateEnvironmentSelection: true,
+  resolveTemplateAgentRouting: resolveWebTemplateAgentRouting,
   supportsExistingAgentSelection: true,
   renderAgentCreator(props) {
     return <WebAgentResourceForm {...props} />

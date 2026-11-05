@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, expect, it, vi } from 'vitest'
 import {
@@ -54,6 +54,7 @@ function interactionValue(
     open: vi.fn(),
     notice: null,
     dismissNotice: vi.fn(),
+    dismiss: vi.fn(),
     registerView: vi.fn(),
     ...overrides,
   }
@@ -107,6 +108,97 @@ it('hosts the original entity instead of building a separate approval or reply f
   )
   expect(screen.queryByTestId('interaction-reply')).not.toBeInTheDocument()
   expect(screen.queryByTestId('interaction-evidence')).not.toBeInTheDocument()
+})
+
+it('groups pending questions by source type and orders each group newest first', () => {
+  view(
+    undefined,
+    {},
+    {
+      pending: [
+        { ...approval, id: 'older-task', question: 'Older task question', createdAt: 1 },
+        {
+          ...approval,
+          id: 'project',
+          question: 'Project question',
+          source: 'project',
+          createdAt: 4,
+        },
+        {
+          ...approval,
+          id: 'stand-in',
+          question: 'Stand-in question',
+          source: 'stand_in',
+          createdAt: 5,
+        },
+        { ...approval, id: 'newer-task', question: 'Newer task question', createdAt: 3 },
+      ],
+    }
+  )
+  const tasks = within(screen.getByTestId('interaction-source-group-task'))
+  expect(tasks.getAllByTestId('interaction-list-summary').map(row => row.textContent)).toEqual([
+    'Newer task question',
+    'Older task question',
+  ])
+  expect(tasks.getByTestId('interaction-source-count-task')).toHaveTextContent('2')
+  expect(screen.getByTestId('interaction-source-group-project')).toHaveTextContent(
+    'Project question'
+  )
+  expect(screen.getByTestId('interaction-source-group-stand_in')).toHaveTextContent(
+    'Stand-in question'
+  )
+})
+
+it('groups handled history and recognizes existing project destinations without source metadata', () => {
+  view(
+    undefined,
+    {},
+    {
+      pending: [],
+      history: [
+        {
+          id: 'project',
+          title: 'Project',
+          question: 'Project question',
+          address: interactionTask.address,
+          originalUrl: 'wework://boards/12/issues/issue',
+          answeredAt: 1,
+        },
+        {
+          id: 'stand-in',
+          title: 'Stand-in',
+          question: 'Stand-in question',
+          address: interactionTask.address,
+          source: 'stand_in',
+          answeredAt: 2,
+        },
+      ],
+    }
+  )
+  expect(screen.queryByTestId('interaction-source-group-task')).not.toBeInTheDocument()
+  fireEvent.click(screen.getByTestId('interactions-history'))
+  expect(screen.getByTestId('interaction-source-group-project')).toHaveTextContent(
+    'Project question'
+  )
+  expect(screen.getByTestId('interaction-source-group-stand_in')).toHaveTextContent(
+    'Stand-in question'
+  )
+  expect(screen.queryByTestId('interaction-source-group-task')).not.toBeInTheDocument()
+})
+
+it('dismisses a row without selecting or opening it', () => {
+  const dismiss = vi.fn()
+  view('another-request', {}, { dismiss })
+  fireEvent.click(screen.getByTestId('interaction-dismiss'))
+  expect(dismiss).toHaveBeenCalledExactlyOnceWith(approval)
+  expect(screen.getByTestId('interaction-list-item')).toHaveAttribute('aria-pressed', 'false')
+})
+
+it('disables dismissal during a response and hides it from handled history', () => {
+  view(undefined, {}, { busy: new Set([approval.id]) })
+  expect(screen.getByTestId('interaction-dismiss')).toBeDisabled()
+  fireEvent.click(screen.getByTestId('interactions-history'))
+  expect(screen.queryByTestId('interaction-dismiss')).not.toBeInTheDocument()
 })
 
 it('opens the original view at the AI message resolved inside the current entity', () => {
@@ -301,6 +393,8 @@ it('lets keyboard users enter the scrollable original question before opening th
   const question = 'Original decision and relevant choices. '.repeat(30)
   view(approval.id, {}, { pending: [{ ...approval, question }] })
   screen.getByTestId('interaction-list-item').focus()
+  await userEvent.tab()
+  expect(screen.getByTestId('interaction-dismiss')).toHaveFocus()
   await userEvent.tab()
   expect(screen.getByTestId('interaction-question-heading')).toHaveFocus()
   expect(screen.getByTestId('interaction-question-heading').textContent).toBe(question)

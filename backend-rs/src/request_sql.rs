@@ -182,8 +182,10 @@ impl RequestSql for &MysqlService {
     }
 }
 
+/// The open transaction handle itself; a `&mut MysqlTransactionService` then
+/// coerces to `&mut dyn RequestSql` without an extra reference binding.
 #[async_trait]
-impl RequestSql for &mut MysqlTransactionService {
+impl RequestSql for MysqlTransactionService {
     async fn execute_statement(
         &mut self,
         route: RouteKey,
@@ -193,7 +195,7 @@ impl RequestSql for &mut MysqlTransactionService {
         let mut routed = route_transaction(self, route);
         match routed.as_mut() {
             Some(transaction) => MysqlTransaction::execute(transaction, sql, arguments).await,
-            None => MysqlTransaction::execute(*self, sql, arguments).await,
+            None => MysqlTransaction::execute(self, sql, arguments).await,
         }
     }
 
@@ -208,7 +210,7 @@ impl RequestSql for &mut MysqlTransactionService {
             Some(transaction) => {
                 MysqlTransaction::fetch_optional(transaction, sql, arguments).await
             }
-            None => MysqlTransaction::fetch_optional(*self, sql, arguments).await,
+            None => MysqlTransaction::fetch_optional(self, sql, arguments).await,
         }
     }
 
@@ -221,8 +223,39 @@ impl RequestSql for &mut MysqlTransactionService {
         let mut routed = route_transaction(self, route);
         match routed.as_mut() {
             Some(transaction) => MysqlTransaction::fetch_all(transaction, sql, arguments).await,
-            None => MysqlTransaction::fetch_all(*self, sql, arguments).await,
+            None => MysqlTransaction::fetch_all(self, sql, arguments).await,
         }
+    }
+}
+
+/// A borrowed transaction handle.
+#[async_trait]
+impl RequestSql for &mut MysqlTransactionService {
+    async fn execute_statement(
+        &mut self,
+        route: RouteKey,
+        sql: &str,
+        arguments: StatementArgs,
+    ) -> MysqlResult<MysqlExecution> {
+        RequestSql::execute_statement(*self, route, sql, arguments).await
+    }
+
+    async fn fetch_optional_row(
+        &mut self,
+        route: RouteKey,
+        sql: &str,
+        arguments: StatementArgs,
+    ) -> MysqlResult<Option<MysqlRow>> {
+        RequestSql::fetch_optional_row(*self, route, sql, arguments).await
+    }
+
+    async fn fetch_all_rows(
+        &mut self,
+        route: RouteKey,
+        sql: &str,
+        arguments: StatementArgs,
+    ) -> MysqlResult<Vec<MysqlRow>> {
+        RequestSql::fetch_all_rows(*self, route, sql, arguments).await
     }
 }
 

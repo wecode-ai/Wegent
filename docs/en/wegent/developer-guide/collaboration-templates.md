@@ -8,6 +8,28 @@ Wework exposes discovery under Collaboration → Templates. Wegent exposes the s
 discovery UI in its capability marketplace. Both use
 `packages/collaboration/src/templates` and the same Backend data.
 
+## Use a marketplace template
+
+Open a template under Capabilities → Templates and choose “Use template” to select an
+existing project or create a new one. Built-ins need no additional account installation;
+public templates use the existing installation protocol when their configuration is downloaded.
+The picker lists active projects managed by the account. Selecting one rechecks current
+management access before role and group-name confirmation. Successful application opens
+the project board while preserving existing tasks, groups and views.
+
+New projects inherit the template name, description, roles and workflow, using the existing
+space picker and space creation flow. Web templates containing Agents use the account’s
+designated default executor and its unique default model for each required runtime;
+they never choose an arbitrary device or model. The default executor must be online and
+must not be an APP device that only supports desktop-local calls. New-project forms require
+explicit execution-environment selection and explain that selected environments are shared
+with the chosen space and authorized for the project. Missing consent, devices or models
+blocks submission before project creation. Existing projects require prior device authorization;
+import does not grant space or project device access. Saving, collecting and previewing templates
+does not perform these operations.
+Local projects use their local execution environment without calling cloud space-sharing
+or project device-grant APIs.
+
 ## Storage and access
 
 Templates are `kinds` rows with `kind: Template` and `spec.category: collaboration`.
@@ -96,6 +118,13 @@ save/publication, additive import, and reload persistence.
 `frontend/e2e/tests/collaboration/templates.spec.ts` covers marketplace discovery
 and YAML import. Both run through existing CI runners. Evidence screenshots are
 test artifacts and are never committed.
+
+`frontend/e2e/tests/collaboration/template-use.spec.ts` uses isolated accounts to verify
+marketplace application to existing projects, new-project creation, stage and automation
+persistence, and zero project creation without a default device. Positive cases use the built-in
+product lifecycle template with explicitly selected human coordinators and executors, verifying all six stage bindings without a real model. Shared-component and Web-routing
+tests separately cover Agent creation, default-model resolution, explicit device authorization,
+revoked management access and request recovery.
 
 ## Execution defaults
 

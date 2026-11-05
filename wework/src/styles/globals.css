@@ -23,7 +23,9 @@ input.content-find-input:focus-visible {
   box-shadow: none;
 }
 
-body[data-wework-anchor-popover-open] .electron-titlebar-drag-region {
+/* Native drag regions intercept clicks even beneath renderer overlays. */
+body[data-wework-anchor-popover-open] .electron-titlebar-drag-region,
+body:has(#wework-debug-panel [role='dialog']) .electron-titlebar-drag-region {
   -webkit-app-region: no-drag;
 }
 

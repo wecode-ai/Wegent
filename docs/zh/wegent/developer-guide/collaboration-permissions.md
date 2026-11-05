@@ -128,6 +128,8 @@ sequenceDiagram
 
 ## 界面入口
 
+子树归档与恢复在任何任务写入、外部提供方关闭或执行取消之前，逐项校验所有后代的编辑权限，保持 CP13/CP14。可编辑父任务不授予私有后代权限；拒绝时统一返回 404，不泄露后代信息，并保留原版本和排队执行。管理员保留全部子任务权限。`test_loop_item_archive_permissions.py` 覆盖原生项目及 GitHub/GitLab 协议，网页 `collaboration-project-views.spec.ts` 使用真实成员验证拒绝、无副作用及管理员归档恢复；既有 CP 契约不变。
+
 云端 Runtime 历史读取的每个设备分块都在独立短事务中检查当前项目权限、Issue
 可见性和持久会话绑定，遵循 CP14 与 CP15。鉴权 Session 在设备 RPC 前关闭，
 不修改调用方事务；不能依靠重复 SELECT 或刷新 ORM 对象推进 MySQL REPEATABLE

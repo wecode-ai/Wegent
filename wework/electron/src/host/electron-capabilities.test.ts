@@ -14,7 +14,6 @@ import {
   captureWebContentsDataUrl,
   createElectronCapabilityRouter,
   coreGrantedCapabilities,
-  cpuLoadRatioBetween,
   e2eSystemPressureOverride,
   systemPressureSnapshot,
   e2eOpenDialogOverride,
@@ -32,6 +31,7 @@ import {
   type ElectronDesktopServices,
   type ElectronE2EHost,
 } from './electron-capabilities.js'
+import { cpuLoadRatioBetween } from './system-cpu.js'
 import { HOST_CAPABILITIES } from './capability-router.js'
 import type { AppUpdateService } from './app-update-service.js'
 import type { FeedbackBundleManager } from './feedback-bundle-manager.js'

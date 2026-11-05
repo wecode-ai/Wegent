@@ -10,15 +10,12 @@
 //! builder: the recorded `queued` case's `_build_all_query` carries a
 //! `kinds.namespace IN (…)` group term and an organization term of the same
 //! shape, both derived from the group-role map this module produces.
-use brz_mysql::{FromMysqlRow, MysqlResult, MysqlService};
+use brz_mysql::{FromMysqlRow, Mysql, MysqlResult, MysqlService};
 use brz_redis::Redis;
 
 use crate::teams::teams_repository::NAMESPACE_COLUMNS;
 
-use super::EntityResolvers;
-
-/// `NAMESPACE_RESOURCE_TYPE`.
-const NAMESPACE_RESOURCE_TYPE: &str = "Namespace";
+use super::{EntityResolvers, ResolutionPurpose};
 
 /// `MemberStatus.APPROVED.value`.
 const APPROVED_STATUS: &str = "approved";
@@ -45,12 +42,35 @@ struct NamespaceRow {
     namespace_name: String,
 }
 
+/// One full `ResourceMember` row (`group_member_helper.py:586-594`).
 #[derive(FromMysqlRow)]
 struct EntityMemberRow {
+    #[mysql(rename = "resource_members_resource_id")]
     resource_id: i64,
+    #[mysql(rename = "resource_members_entity_id")]
     entity_id: String,
+    #[mysql(rename = "resource_members_role")]
     role: String,
 }
+
+/// `db.query(ResourceMember)`'s full projection, aliased per column.
+const MEMBER_COLUMNS: &str = "resource_members.id AS resource_members_id, \
+     resource_members.resource_type AS resource_members_resource_type, \
+     resource_members.resource_id AS resource_members_resource_id, \
+     resource_members.entity_type AS resource_members_entity_type, \
+     resource_members.entity_id AS resource_members_entity_id, \
+     resource_members.entity_display_name AS resource_members_entity_display_name, \
+     resource_members.user_id AS resource_members_user_id, \
+     resource_members.`role` AS resource_members_role, \
+     resource_members.status AS resource_members_status, \
+     resource_members.invited_by_user_id AS resource_members_invited_by_user_id, \
+     resource_members.share_link_id AS resource_members_share_link_id, \
+     resource_members.reviewed_by_user_id AS resource_members_reviewed_by_user_id, \
+     resource_members.reviewed_at AS resource_members_reviewed_at, \
+     resource_members.copied_resource_id AS resource_members_copied_resource_id, \
+     resource_members.requested_at AS resource_members_requested_at, \
+     resource_members.created_at AS resource_members_created_at, \
+     resource_members.updated_at AS resource_members_updated_at";
 
 #[derive(FromMysqlRow)]
 struct ResourceIdRow {
@@ -128,38 +148,58 @@ pub async fn list_resources_by_entity_match(
     Ok(rows.into_iter().map(|row| row.resource_id).collect())
 }
 
-/// `iter_user_groups_with_roles`'s entity-derived member read: the resource
-/// ids are `bigint` values the source renders as unquoted integer literals
-/// (`IN (92)`), so the target renders them the same way; `entity_type` stays
-/// the bound string parameter. Binding the ids as strings is a different
-/// value type and never matches the recorded read.
-fn entity_member_statement(resource_ids: &[i64]) -> String {
-    let joined = resource_ids
-        .iter()
-        .map(i64::to_string)
-        .collect::<Vec<_>>()
-        .join(", ");
+/// `iter_user_groups_with_roles` step 2's entity-derived member read
+/// (`group_member_helper.py:586-594`): every approved `Namespace` member row of
+/// one entity type, with the Source's full `ResourceMember` projection.
+fn entity_members_statement() -> String {
     format!(
-        "SELECT resource_members.resource_id AS resource_id, \
-         resource_members.entity_id AS entity_id, \
-         resource_members.`role` AS role \n\
+        "SELECT {MEMBER_COLUMNS} \n\
          FROM resource_members \n\
          WHERE resource_members.resource_type = 'Namespace' \
-         AND resource_members.resource_id IN ({joined}) \
          AND resource_members.entity_type = ? \
          AND resource_members.status = 'approved'"
     )
 }
 
+/// `group_member_helper.py:599`'s `list({m.entity_id for m in entity_members})`:
+/// the resolver input keeps one copy per entity id, in first-seen order.
+fn distinct_entity_ids(members: &[EntityMemberRow]) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut ids = Vec::new();
+    for member in members {
+        if seen.insert(member.entity_id.as_str()) {
+            ids.push(member.entity_id.clone());
+        }
+    }
+    ids
+}
+
+/// The Source filters the member rows by matched entity id without collapsing
+/// them (`group_member_helper.py:601-606`), so one entity bound to several
+/// Namespaces keeps one row per Namespace and its own role.
+fn keep_matched_entity_members(
+    members: Vec<EntityMemberRow>,
+    matched: &std::collections::HashSet<String>,
+) -> Vec<EntityMemberRow> {
+    members
+        .into_iter()
+        .filter(|row| matched.contains(&row.entity_id))
+        .collect()
+}
+
 /// `iter_user_groups_with_roles`: the user's namespace groups, their highest
 /// role, and the winning source, from direct user memberships plus each
 /// registered external entity type's bindings.
-pub async fn iter_user_groups_with_roles<R: Redis>(
-    mysql: &MysqlService,
+pub async fn iter_user_groups_with_roles<M, R>(
+    mysql: &M,
     resolvers: &EntityResolvers<R>,
     redis: Option<&R>,
     user_id: i64,
-) -> MysqlResult<Vec<GroupRoleEntry>> {
+) -> MysqlResult<Vec<GroupRoleEntry>>
+where
+    M: Mysql,
+    R: Redis,
+{
     let mut entries: Vec<GroupRoleEntry> = Vec::new();
 
     // 1) Direct user memberships of Namespace resources.
@@ -190,18 +230,32 @@ pub async fn iter_user_groups_with_roles<R: Redis>(
 
     // 2) Entity-derived memberships. `get_all_entity_types` includes the
     // built-in `namespace` resolver first, then each registered external
-    // type; `namespace` delegates to every external type again, so one call
-    // reaches the ERP resolver twice (`group_member_helper.py:579-583`).
+    // type (`group_member_helper.py:579-583`). Per type the Source reads every
+    // approved `Namespace` member row, matches that type's entity bindings,
+    // and keeps the rows whose `entity_id` matched.
     for entity_type in resolvers.types() {
-        let matched = resolvers
-            .resource_ids_by_entity(mysql, redis, user_id, entity_type, NAMESPACE_RESOURCE_TYPE)
+        let members: Vec<EntityMemberRow> = mysql
+            .fetch_all(&entity_members_statement(), (entity_type.to_string(),))
             .await?;
-        if matched.is_empty() {
+        if members.is_empty() {
             continue;
         }
-        let sql = entity_member_statement(&matched);
-        let members: Vec<EntityMemberRow> =
-            mysql.fetch_all(&sql, (entity_type.to_string(),)).await?;
+        let entity_ids = distinct_entity_ids(&members);
+        let matched: std::collections::HashSet<String> = resolvers
+            .match_bindings(
+                redis,
+                user_id,
+                entity_type,
+                &entity_ids,
+                ResolutionPurpose::ResourceAccess,
+            )
+            .await?
+            .into_iter()
+            .collect();
+        let members = keep_matched_entity_members(members, &matched);
+        if members.is_empty() {
+            continue;
+        }
         let member_ids: Vec<i64> = members.iter().map(|row| row.resource_id).collect();
         let names = namespace_names(mysql, &member_ids).await?;
         for row in &members {
@@ -220,8 +274,8 @@ pub async fn iter_user_groups_with_roles<R: Redis>(
 }
 
 /// `Namespace.name` for the active namespaces among `ids`.
-async fn namespace_names(
-    mysql: &MysqlService,
+async fn namespace_names<M: Mysql>(
+    mysql: &M,
     ids: &[i64],
 ) -> MysqlResult<std::collections::BTreeMap<i64, String>> {
     if ids.is_empty() {
@@ -377,6 +431,14 @@ mod tests {
         items.iter().map(|s| s.to_string()).collect()
     }
 
+    fn member(resource_id: i64, entity_id: &str, role: &str) -> EntityMemberRow {
+        EntityMemberRow {
+            resource_id,
+            entity_id: entity_id.to_string(),
+            role: role.to_string(),
+        }
+    }
+
     #[test]
     fn effective_roles_inherit_from_the_nearest_parent() {
         let entries = vec![entry("a", "Developer", "1")];
@@ -440,18 +502,63 @@ mod tests {
         assert!(dedupe_group_roles(vec![entry("g", "nonsense", "1")]).is_empty());
     }
 
-    /// `resource_members.resource_id` is a bigint column: the recorded read
-    /// renders the ids as unquoted integer literals, so the target must not
-    /// bind stringified ids (the replay matcher compares types).
+    /// Recorded a60e1b08 seq 16/17: per entity type the Source reads every
+    /// approved `Namespace` member row with the full `ResourceMember`
+    /// projection, bound only by `entity_type`; the replay projection derives
+    /// column names from the `resource_members_*` aliases.
     #[test]
-    fn entity_member_statement_keeps_integer_resource_ids_unquoted() {
-        let sql = entity_member_statement(&[92, 386]);
-        let normalized = sql.split_whitespace().collect::<Vec<_>>().join(" ");
-        assert!(normalized.contains(
-            "AND resource_members.resource_id IN (92, 386) \
-             AND resource_members.entity_type = ?"
+    fn entity_members_statement_matches_the_source_full_row_read() {
+        let normalized = entity_members_statement()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(normalized.starts_with(
+            "SELECT resource_members.id AS resource_members_id, \
+             resource_members.resource_type AS resource_members_resource_type"
         ));
-        assert!(!normalized.contains("IN ('92'"));
+        assert!(
+            normalized.contains("resource_members.resource_id AS resource_members_resource_id")
+        );
+        assert!(normalized.contains("resource_members.\u{60}role\u{60} AS resource_members_role"));
+        assert!(normalized.contains("resource_members.updated_at AS resource_members_updated_at"));
+        assert!(normalized.contains(
+            "WHERE resource_members.resource_type = 'Namespace' \
+             AND resource_members.entity_type = ? \
+             AND resource_members.status = 'approved'"
+        ));
+        assert!(
+            !normalized.contains("resource_members.resource_id IN"),
+            "{normalized}"
+        );
+    }
+
+    /// `group_member_helper.py:599` hands the resolver `list({...})`: one id
+    /// per entity even when the same entity grants several Namespaces, while
+    /// the member rows themselves stay intact so every Namespace and role
+    /// survives the match filter.
+    #[test]
+    fn the_resolver_input_is_deduped_but_every_member_row_is_kept() {
+        let members = vec![
+            member(760, "100152", "Developer"),
+            member(632, "100153", "Reporter"),
+            member(798, "100152", "Maintainer"),
+        ];
+        // Arrange: the same department id appears on two Namespace rows.
+        assert_eq!(distinct_entity_ids(&members), vec!["100152", "100153"]);
+
+        // Act: only the department the user belongs to matched.
+        let matched = std::collections::HashSet::from(["100152".to_string()]);
+        let kept = keep_matched_entity_members(members, &matched);
+
+        // Assert: both Namespace rows and their own roles are preserved.
+        assert_eq!(
+            kept.iter().map(|row| row.resource_id).collect::<Vec<_>>(),
+            vec![760, 798]
+        );
+        assert_eq!(
+            kept.iter().map(|row| row.role.as_str()).collect::<Vec<_>>(),
+            vec!["Developer", "Maintainer"]
+        );
     }
 
     /// `iter_user_groups_with_roles` iterates `get_all_entity_types`, which
