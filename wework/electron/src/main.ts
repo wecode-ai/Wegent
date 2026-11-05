@@ -20,6 +20,7 @@ import { desktopE2EStartupTiming, StartupProgressReporter } from './host/startup
 import { recordReleaseDiagnostic } from './runtime/release-diagnostics.js'
 import { traceShutdownStep } from './runtime/shutdown-diagnostics.js'
 import { installE2ERendererCpuProfiling } from './host/e2e-renderer-cpu-profile.js'
+import { VerificationDevtools } from './host/verification-devtools.js'
 
 import {
   app,
@@ -2234,6 +2235,9 @@ async function configureDesktopRuntime(): Promise<void> {
     registryDirectory: desktopControlRegistryDirectory(),
     window: () => mainWindow,
     smartApps: () => smartApps,
+    ...(process.env.VITE_WEWORK_E2E === 'true' && process.env.WEWORK_E2E_CONTROL_URL
+      ? { devtools: new VerificationDevtools(() => webContents.getAllWebContents()) }
+      : {}),
   })
   logStartupStep('desktop-control-bridge', 'started')
   await desktopControlBridge.start()
