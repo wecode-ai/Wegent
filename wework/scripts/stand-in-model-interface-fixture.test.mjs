@@ -6,12 +6,13 @@ import { createDesktopScenario } from '../e2e/desktop/scenarios/stand-in-model-i
 import { MODEL_API_KEY } from '../e2e/desktop/modules/shared.mjs'
 import { REPLY_PREDICTION_PROMPT } from '../e2e/desktop/modules/response-protocol.mjs'
 
-async function respond(input, tools = [], requestKind) {
+async function respond(input, tools = [], requestKind, extra = {}) {
   const request = Readable.from([
     JSON.stringify({
       model: 'stand-in-interface-upstream',
       input,
       tools,
+      ...extra,
       ...(requestKind
         ? {
             client_metadata: {
@@ -39,6 +40,37 @@ async function respond(input, tools = [], requestKind) {
 }
 
 describe('stand-in custom interface model fixture', () => {
+  test('uses the native approval model protocol for a guardian quoting worker history', async () => {
+    const output = await respond(
+      [{ role: 'user', content: 'STAND_IN_MODEL_INTERFACE_WORK' }],
+      [],
+      undefined,
+      {
+        client_metadata: {
+          'x-codex-turn-metadata': JSON.stringify({
+            request_kind: 'turn',
+            thread_source: 'guardian_review',
+          }),
+        },
+        text: {
+          format: {
+            schema: {
+              properties: {
+                risk_level: {},
+                user_authorization: {},
+                rationale: {},
+                outcome: { enum: ['allow', 'deny'] },
+              },
+            },
+          },
+        },
+      }
+    )
+    expect(output).toContain('allow')
+    expect(output).toContain('risk_level')
+    expect(output).not.toContain('tool_search_call')
+  })
+
   test.each(['compaction', 'prewarm'])(
     'handles %s quoting worker history without inventing a business tool call',
     async kind => {

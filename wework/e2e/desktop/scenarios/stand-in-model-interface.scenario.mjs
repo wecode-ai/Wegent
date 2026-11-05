@@ -6,6 +6,7 @@ import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { until } from '../modules/plugin-regression-fixture.mjs'
 import { MODEL_API_KEY } from '../modules/shared.mjs'
 import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
+import { nativeApprovalModelResponse } from '../modules/native-approval-model.mjs'
 import { reloadMainWindow } from '../modules/workspace-flows.mjs'
 import {
   assistantMessage,
@@ -102,6 +103,15 @@ export function createDesktopScenario(options) {
         latestUserHasChat: latestText.includes(CHAT),
       })
       if (interfaceRequests.length > 20) interfaceRequests.shift()
+      const approval = await nativeApprovalModelResponse(body, existing)
+      if (approval !== null) {
+        const id = `interface-approval-${Date.now()}`
+        response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
+        response.end(
+          createSse([responseCreated(id), assistantMessage(approval), responseCompleted(id)])
+        )
+        return true
+      }
       if (handleModelMaintenanceRequest(body, response)) return true
       if (handleEmptyReplyPrediction(body, response)) return true
       const resultEvents = delegatedTaskResultEvents(body)
