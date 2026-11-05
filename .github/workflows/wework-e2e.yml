@@ -422,13 +422,17 @@ jobs:
         with:
           setup-toolchain: "false"
 
-      - name: Install the native log-folder opener
-        if: contains(matrix.segments, 'native-window-startup')
+      - name: Install native external-path openers
+        if: contains(matrix.segments, 'native-window-startup') || contains(matrix.segments, 'browser-toolbar-actions')
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends file xdg-utils pcmanfm
+          apt-get install -y --no-install-recommends file xdg-utils pcmanfm mousepad
+          mousepad_desktop="$(basename "$(find /usr/share/applications -maxdepth 1 -name '*mousepad*.desktop' -print -quit)")"
+          test -n "$mousepad_desktop"
           XDG_CONFIG_HOME=/etc/xdg xdg-mime default pcmanfm.desktop inode/directory
+          XDG_CONFIG_HOME=/etc/xdg xdg-mime default "$mousepad_desktop" text/plain
           test "$(XDG_CONFIG_HOME=/tmp/wework-e2e-unconfigured xdg-mime query default inode/directory)" = pcmanfm.desktop
+          test "$(XDG_CONFIG_HOME=/tmp/wework-e2e-unconfigured xdg-mime query default text/plain)" = "$mousepad_desktop"
           test "$(xdg-mime query filetype /tmp)" = inode/directory
 
       - name: Install Electron for native startup and schema verification

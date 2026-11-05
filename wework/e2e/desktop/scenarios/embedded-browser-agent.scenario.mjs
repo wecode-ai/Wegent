@@ -226,6 +226,17 @@ async function callBridge(identity, payload, label = BROWSER_LABEL) {
   return body.data
 }
 
+async function waitForBridgePageState(identity, predicate, timeoutMs, message) {
+  const startedAt = Date.now()
+  let lastState = null
+  while (Date.now() - startedAt < timeoutMs) {
+    lastState = await callBridge(identity, { action: 'pageState' })
+    if (predicate(lastState)) return lastState
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  assert.fail(`${message}; last state=${JSON.stringify(lastState)}`)
+}
+
 async function callBridgeResponse(identity, payload, label = BROWSER_LABEL) {
   const response = await fetch(`${identity.baseUrl}/browser`, {
     method: 'POST',
@@ -1769,6 +1780,57 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs, wo
           localDirectoryInspect.inspectText.includes('nested/') &&
           localDirectoryInspect.inspectText.includes(LOCAL_DIRECTORY_TEXT),
         `file:// directory was not rendered: ${localDirectoryInspect.inspectText}`
+      )
+
+      const nestedDirectoryUrl = `${pathToFileURL(join(localDirectoryPath, 'nested')).href}/`
+      const nestedLinkResult = await bridgeCall({
+        action: 'click',
+        selector: 'a[href$="nested/"]',
+        timeoutMs: 8_000,
+      })
+      assert.equal(
+        nestedLinkResult.ok,
+        true,
+        `Directory link click failed: ${JSON.stringify(nestedLinkResult)}`
+      )
+      const nestedDirectoryState = await waitForBridgePageState(
+        bridgeIdentity,
+        state => state.url === nestedDirectoryUrl,
+        5_000,
+        'Clicking the nested directory did not open its preview'
+      )
+      assert.equal(nestedDirectoryState.navigationError, null)
+      const nestedDirectoryInspect = await bridgeCall({
+        action: 'inspect',
+        options: { interactiveOnly: false, includeTextBlocks: true, maxNodes: 40 },
+        timeoutMs: 5_000,
+      })
+      assert.ok(
+        nestedDirectoryInspect.inspectText.includes('Index of') &&
+          nestedDirectoryInspect.inspectText.includes('Parent directory'),
+        `Nested directory preview was not rendered: ${nestedDirectoryInspect.inspectText}`
+      )
+
+      await bridgeCall({
+        action: 'click',
+        selector: '[data-testid="embedded-browser-directory-parent"]',
+        timeoutMs: 8_000,
+      })
+      const parentDirectoryState = await waitForBridgePageState(
+        bridgeIdentity,
+        state => state.url === pathToFileURL(localDirectoryPath).href,
+        5_000,
+        'Clicking the parent directory did not restore the original preview'
+      )
+      assert.equal(parentDirectoryState.navigationError, null)
+      const parentDirectoryInspect = await bridgeCall({
+        action: 'inspect',
+        options: { interactiveOnly: false, includeTextBlocks: true, maxNodes: 40 },
+        timeoutMs: 5_000,
+      })
+      assert.ok(
+        parentDirectoryInspect.inspectText.includes(LOCAL_DIRECTORY_TEXT),
+        `Parent directory preview did not restore its entries: ${parentDirectoryInspect.inspectText}`
       )
 
       const localZipPath = join(resultDir, 'local-file-fixture.zip')
