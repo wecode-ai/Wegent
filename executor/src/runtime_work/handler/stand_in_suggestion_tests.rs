@@ -170,14 +170,14 @@ async fn suggestions_revalidate_source_scope_timing_and_live_permissions_before_
         let mut changed = settings.clone();
         changed["roles"][0][field] = value;
         assert!(handler
-            .deliver_connection_suggestion(7, &changed, &action, &[event.clone()])
+            .deliver_connection_suggestion(7, &changed, &action, std::slice::from_ref(&event))
             .await
             .is_err());
     }
     let mut paused = settings.clone();
     paused["roles"][0]["connections"][0]["policy"]["automatic"] = json!(false);
     assert!(handler
-        .deliver_connection_suggestion(7, &paused, &action, &[event.clone()])
+        .deliver_connection_suggestion(7, &paused, &action, std::slice::from_ref(&event))
         .await
         .is_err());
     for (field, value) in [
