@@ -7,8 +7,8 @@ import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
 import type { CollaborationGroup, CollaborationProject } from '../types'
 import type { CollaborationLocale } from '../i18n'
 import { useCollaborationTemplateStore } from './context'
-import { exportTemplate, templateFromProject } from './document'
-import { templateMessages } from './messages'
+import { downloadTemplate, templateFromProject } from './document'
+import { templateFailureMessage, templateMessages } from './messages'
 import { TemplateDialog } from './TemplateDialog'
 import { CollaborationTemplatePage } from './CollaborationTemplatePage'
 import { TemplateBindingsDialog, type TemplateParticipant } from './TemplateBindings'
@@ -16,9 +16,12 @@ import { TemplateSaveDialog } from './TemplateSaveDialog'
 import type { CollaborationTemplate } from './types'
 import { applyProjectTemplate } from './projectConfiguration'
 import { PartialTemplateApplyError } from './apply'
+import { readTemplateAgents, templateRoutingResolver } from './agents'
+import type { ProjectAgentConfigurationHost } from '../project-agent-config/types'
 
 interface ProjectTemplateSettingsProps {
   api: SharedWorkspaceApi
+  agentConfiguration?: ProjectAgentConfigurationHost
   projectId: string
   locale: CollaborationLocale
   currentUserId?: number
@@ -57,6 +60,7 @@ export function ProjectTemplateSettings(props: ProjectTemplateSettingsProps) {
 
 function ProjectTemplateSettingsContent({
   api,
+  agentConfiguration,
   projectId,
   locale,
   currentUserId,
@@ -110,14 +114,32 @@ function ProjectTemplateSettingsContent({
     }
   }, [reload])
   if (!store) return null
-  const snapshot = () => {
+  const snapshot = async () => {
     if (!configurationProject) throw new Error('Project configuration has not loaded')
     return templateFromProject(
       configurationProject,
       groups,
       `template-${crypto.randomUUID()}`,
-      locale
+      locale,
+      await readTemplateAgents(
+        await api.agents.list(projectId, { forceRefresh: true }),
+        groups,
+        agentConfiguration?.readTemplateAgent
+      )
     )
+  }
+  const withSnapshot = async (action: (document: CollaborationTemplate) => void) => {
+    const generation = scope.current
+    setLoading(true)
+    setError(null)
+    try {
+      const document = await snapshot()
+      if (scope.current === generation) action(document)
+    } catch (error) {
+      if (scope.current === generation) setError(templateFailureMessage(error, locale))
+    } finally {
+      if (scope.current === generation) setLoading(false)
+    }
   }
   const back = { label: m.back, onClick: () => setStep({ type: 'actions' }) }
   if (step.type === 'browse') {
@@ -146,7 +168,20 @@ function ProjectTemplateSettingsContent({
         onApplied={() => setStep({ type: 'actions' })}
         onApply={async (drafts, document) => {
           try {
-            await applyProjectTemplate(api, projectId, document, drafts, locale, m.partial)
+            await applyProjectTemplate(
+              api,
+              projectId,
+              document,
+              drafts,
+              locale,
+              m.partial,
+              templateRoutingResolver(
+                agentConfiguration,
+                configurationProject?.project_store === 'local' ? 'local' : 'cloud',
+                projectId,
+                locale
+              )
+            )
           } catch (error) {
             // Partial imports have persisted groups even though configuration failed.
             if (error instanceof PartialTemplateApplyError) await onImported?.()
@@ -247,7 +282,7 @@ function ProjectTemplateSettingsContent({
           className="collaboration-sharing-action"
           data-testid="project-template-save"
           disabled={loading || !!error}
-          onClick={() => setStep({ type: 'save', document: snapshot() })}
+          onClick={() => void withSnapshot(document => setStep({ type: 'save', document }))}
         >
           <BookmarkPlus aria-hidden="true" />
           <span>
@@ -261,18 +296,9 @@ function ProjectTemplateSettingsContent({
           className="collaboration-sharing-action"
           data-testid="project-template-export"
           disabled={loading || !!error}
-          onClick={() => {
-            const url = URL.createObjectURL(
-              new Blob([exportTemplate(snapshot())], {
-                type: 'application/yaml;charset=utf-8',
-              })
-            )
-            const link = document.createElement('a')
-            link.href = url
-            link.download = 'collaboration-template.yaml'
-            link.click()
-            window.setTimeout(() => URL.revokeObjectURL(url), 1000)
-          }}
+          onClick={() =>
+            void withSnapshot(document => downloadTemplate(document, 'collaboration-template.yaml'))
+          }
         >
           <Download aria-hidden="true" />
           <span>

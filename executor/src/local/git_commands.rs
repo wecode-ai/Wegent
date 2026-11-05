@@ -20,7 +20,7 @@ use serde_json::{json, Value};
 use tokio::{process::Command, time};
 
 use crate::{
-    local::command::{build_env, CommandResult},
+    local::command::{build_env, CommandResult, GIT_CURRENT_BRANCH_ARGV},
     local::native_git::run_git_capture,
     process::hide_windows_console,
 };
@@ -449,7 +449,7 @@ pub async fn push_current_branch(
     let max_output_bytes = max_output_bytes.clamp(1, MAX_DIFF_OUTPUT_BYTES);
 
     run_diff_with_timeout(timeout_seconds, async {
-        let branch_args = owned_args(&["branch", "--show-current"]);
+        let branch_args = owned_args(&GIT_CURRENT_BRANCH_ARGV[1..]);
         let (branch_stdout, _, success) =
             run_git(&branch_args, cwd_path, &process_env, call_timeout, 4096)
                 .await
@@ -614,7 +614,7 @@ pub async fn worktree_remove(
 
 /// Locate `gh` or `glab` using the executor PATH with Windows PATHEXT
 /// handling, mirroring `shutil.which` in the removed Python detection script.
-pub(super) fn resolve_cli_executable(tool: &str, env: &HashMap<String, String>) -> Option<PathBuf> {
+pub(crate) fn resolve_cli_executable(tool: &str, env: &HashMap<String, String>) -> Option<PathBuf> {
     let path = env.get("PATH").map(String::as_str).unwrap_or_default();
     #[cfg(windows)]
     let extensions = env
@@ -711,6 +711,22 @@ pub async fn hosting_cli_status(
                 );
             }
         };
+    if tool == "gh" {
+        let health =
+            crate::services::github_cli::health(&process_env, timeout, "code_hosting").await;
+        if health["errorCode"] == "gh_health_timeout" {
+            return cli_timeout_result(tool, &executable, started_at, version_value);
+        }
+        return cli_result(
+            tool,
+            &executable,
+            started_at,
+            health["status"] == "ok",
+            version_value,
+            health["errorCode"].as_str().map(str::to_owned),
+            String::new(),
+        );
+    }
     let auth_output =
         match run_cli_probe(&executable, &process_env, &["auth", "status"], timeout).await {
             Ok(output) => output,

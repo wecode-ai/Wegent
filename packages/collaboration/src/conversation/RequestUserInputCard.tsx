@@ -31,6 +31,9 @@ interface RequestUserInputCardProps {
   payload: RequestUserInputPayload;
   compact?: boolean;
   disabled?: boolean;
+  error?: string;
+  draftAnswers?: Record<string, string>;
+  onDraftAnswersChange?: (answers: Record<string, string>) => void;
   onSubmit?: (
     response: RequestUserInputResponse,
   ) => boolean | void | Promise<boolean | void>;
@@ -68,6 +71,9 @@ function RequestUserInputForm({
   disabled = false,
   onSubmit,
   onIgnore,
+  error,
+  draftAnswers,
+  onDraftAnswersChange,
   remainingTime,
 }: RequestUserInputCardProps & { remainingTime: string | null }) {
   const { t } = useConversationTranslation();
@@ -84,9 +90,24 @@ function RequestUserInputForm({
     questions.length === 1 &&
     questions[0].options.length > 0 &&
     !questions[0].allowCustom;
-  const [selectedAnswers, setSelectedAnswers] = useState<
-    Record<string, string>
-  >(() => initialAnswers(questions));
+  const [localAnswers, setLocalAnswers] = useState<Record<string, string>>(() =>
+    initialAnswers(questions),
+  );
+  // Newly arriving questions receive their defaults without resetting drafts.
+  const selectedAnswers = draftAnswers ?? {
+    ...initialAnswers(questions),
+    ...localAnswers,
+  };
+  const setSelectedAnswers = (
+    update:
+      | Record<string, string>
+      | ((current: Record<string, string>) => Record<string, string>),
+  ) => {
+    const next =
+      typeof update === "function" ? update(selectedAnswers) : update;
+    setLocalAnswers(next);
+    onDraftAnswersChange?.(next);
+  };
   const [activeQuestionId, setActiveQuestionId] = useState<string | null>(() =>
     initialActiveQuestionId(questions),
   );
@@ -251,6 +272,11 @@ function RequestUserInputForm({
           className="mb-2 text-sm text-text-muted"
         >
           {t("request_user_input.expires_in", { time: remainingTime })}
+        </p>
+      )}
+      {error && (
+        <p role="alert" className="mb-2 text-sm text-error">
+          {error}
         </p>
       )}
       <div

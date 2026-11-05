@@ -94,7 +94,36 @@ it('blocks returning to template selection after a partial import until the proj
   expect(onClose).toHaveBeenCalledOnce()
 })
 
-it('selects an Agent coordinator instead of the current human for the builtin workflow', async () => {
+it('keeps the use action available after adding a marketplace template to the account', async () => {
+  const backend = remote()
+  const record: TemplateRecord = {
+    ...structuredClone(builtinCollaborationTemplates()[0]),
+    id: 42,
+    ownerId: 8,
+    source: 'downloaded',
+  }
+  record.document.metadata = { name: 'shared-workflow', namespace: 'default' }
+  const store = new CollaborationTemplateStore({
+    scope: 'backend:7',
+    ownerId: 7,
+    remote: backend,
+    persistence: { read: async () => [record], write: async () => {} },
+  })
+  const onUse = vi.fn()
+  await act(async () =>
+    root.render(
+      <CollaborationTemplatePage store={store} locale="en" mode="marketplace" onUse={onUse} />
+    )
+  )
+  await click('template-details-shared-workflow')
+  await click('template-account-add')
+  expect(backend.install).toHaveBeenCalledWith(42)
+  expect(container.querySelector('[data-testid="template-use"]')?.textContent).toBe('Use template')
+  await click('template-use')
+  expect(onUse).toHaveBeenCalledWith(record)
+})
+
+it('preconfigures a new Agent coordinator instead of requiring an existing Agent', async () => {
   const document = builtinCollaborationTemplates()[0].document
   await act(async () =>
     root.render(
@@ -123,7 +152,7 @@ it('selects an Agent coordinator instead of the current human for the builtin wo
   )
   expect(
     container.querySelector<HTMLSelectElement>('[data-testid="template-role-main-role-0"]')!.value
-  ).toBe('agent:coordinator')
+  ).toBe('agent:template-agent:main-role-0')
 })
 
 it('downloads the version shown in preview instead of using an older cached definition', async () => {

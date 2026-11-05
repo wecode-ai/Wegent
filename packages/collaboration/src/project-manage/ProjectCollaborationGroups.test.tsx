@@ -170,6 +170,15 @@ it.each(['success', 'groups', 'configuration', 'partial'] as const)(
     expect(container.querySelectorAll('dialog[open]')).toHaveLength(1)
     await click('template-use')
     expect(container.querySelectorAll('dialog[open]')).toHaveLength(1)
+    // Reuse the existing coordinator; embedded Agent creation has its own coverage.
+    const importedGroup = configuration.groups[0]
+    const leader = container.querySelector<HTMLSelectElement>(
+      `[data-testid="template-role-${importedGroup.key}-${importedGroup.leaderRole}"]`
+    )!
+    await act(async () => {
+      leader.value = `agent:${agent.id}`
+      leader.dispatchEvent(new Event('change', { bubbles: true }))
+    })
     await click('template-bindings-apply')
     expect(api.projects.createCollaborationGroup).toHaveBeenCalledOnce()
     expect(container.querySelectorAll('dialog[open]')).toHaveLength(1)

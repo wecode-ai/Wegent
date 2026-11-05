@@ -189,11 +189,6 @@ export function BranchSelector({
   }
 
   async function handleCheckout(branchName: string) {
-    if (branchName === currentBranch) {
-      close()
-      return
-    }
-
     setError(null)
     setAction('switching')
     try {

@@ -269,7 +269,7 @@ class ProjectAutomationExecution:
             )
         else:
             raise RuntimeError("Automation task carrier is unavailable")
-        execution = self._project_robot_execution_for_run(db, str(run.id))
+        execution = self._execution_for_run(db, str(run.id))
         if execution is None:
             raise RuntimeError("Project robot execution was not created")
         run.assignee_agent_id = agent.id
@@ -327,7 +327,7 @@ class ProjectAutomationExecution:
                 workflow_step=None,
                 context=context,
             )
-            execution = self._project_robot_execution_for_run(db, str(run.id))
+            execution = self._execution_for_run(db, str(run.id))
             run.status = "queued" if execution else "succeeded"
             if execution is None:
                 run.completed_at = utcnow()
@@ -441,7 +441,7 @@ class ProjectAutomationExecution:
             workflow_step=workflow_step,
             context=context,
         )
-        execution = self._project_robot_execution_for_run(db, str(run.id))
+        execution = self._execution_for_run(db, str(run.id))
         if execution is None:
             raise RuntimeError("The collaboration-group Agent Run was not created")
         run.status = "queued"
@@ -470,6 +470,7 @@ class ProjectAutomationExecution:
             version=1,
             trigger="automation",
         )
+        instruction = ProjectAutomationExecution._run_instruction(rule, run)
         item = db.get(LoopItem, run.task_id)
         if item is not None:
             loop_item_service.assign(
@@ -479,7 +480,7 @@ class ProjectAutomationExecution:
                 user_id=owner.id,
                 values=values.model_copy(update={"version": item.version}),
                 automation_context=context,
-                instruction=rule.description or "",
+                instruction=instruction,
             )
             return
         if external_loop_item_provider.is_external_item(db, run.task_id):
@@ -490,7 +491,7 @@ class ProjectAutomationExecution:
                 owner.id,
                 values.model_copy(update={"version": int(current.get("version") or 1)}),
                 automation_context=context,
-                instruction=rule.description or "",
+                instruction=instruction,
             )
             return
         raise RuntimeError("Automatic processing Issue is unavailable")
@@ -731,6 +732,7 @@ class ProjectAutomationExecution:
         context = {
             "rule_id": str(rule.id),
             "run_id": str(run.id),
+            "execution_prompt": self._run_instruction(rule, run),
             "trigger": run_metadata.get("trigger") or run.source,
             "scheduled_for": run_metadata.get("scheduled_for"),
             "event": run_metadata.get("event") or {},
@@ -779,9 +781,7 @@ class ProjectAutomationExecution:
         return run.created_at or utcnow()
 
     @staticmethod
-    def _project_robot_execution_for_run(
-        db: Session, run_id: str
-    ) -> LoopItemExecution | None:
+    def _execution_for_run(db: Session, run_id: str) -> LoopItemExecution | None:
         run = db.get(ProjectAutomationRun, run_id)
         run_metadata = metadata(run) if run is not None else {}
         execution_floor_id = integer(run_metadata.get("retry_execution_floor_id")) or 0
@@ -789,8 +789,8 @@ class ProjectAutomationExecution:
             db.query(LoopItemExecution)
             .filter(
                 LoopItemExecution.automation_run_id == run_id,
-                LoopItemExecution.agent_id != "",
                 LoopItemExecution.id > execution_floor_id,
+                LoopItemExecution.owns_automation_run,
             )
             .order_by(LoopItemExecution.id.desc())
             .first()
@@ -886,6 +886,10 @@ class ProjectAutomationProcessor:
         matches: list[ProjectAutomationRule] = []
         for rule in candidate_rules:
             if deferred_automation_id and str(rule.id) == deferred_automation_id:
+                continue
+            if event.event_type == "task.status_changed" and str(
+                rule.id
+            ) == event.payload.get("caused_by_automation_rule_id"):
                 continue
             rule_metadata = metadata(rule)
             if rule_metadata.get("trigger_type") != "event":
@@ -1066,7 +1070,11 @@ class ProjectAutomationProcessor:
         for rule in matching_rules:
             run_public_id = self._event_run_public_id(event, rule)
             existing = self._event_run(db, run_public_id)
-            if existing is not None and not self._is_unresolved_run(existing):
+            if (
+                existing is not None
+                and not self._can_resume_pending(existing, event)
+                and not self._is_unresolved_run(existing)
+            ):
                 runs.append(existing)
                 continue
             run_event_payload = dict(event.payload)
@@ -1085,7 +1093,9 @@ class ProjectAutomationProcessor:
                     run = self._event_run(db, run_public_id)
                     if run is None:
                         raise
-                    if not self._is_unresolved_run(run):
+                    if not self._can_resume_pending(
+                        run, event
+                    ) and not self._is_unresolved_run(run):
                         runs.append(run)
                         continue
             else:
@@ -1168,6 +1178,17 @@ class ProjectAutomationProcessor:
 
             await consume_queues_background()
         return runs
+
+    @staticmethod
+    def _can_resume_pending(
+        run: ProjectAutomationRun, event: ProjectAutomationEvent
+    ) -> bool:
+        return (
+            run.status == "pending"
+            and event.source == "wework"
+            and event.event_type
+            in {"task.created", "task.tag_added", "task.status_changed"}
+        )
 
     @staticmethod
     def _event_run(
@@ -1463,6 +1484,13 @@ class ProjectAutomationProcessor:
             ):
                 return False
             if previous_status == current_status:
+                return False
+            expected_statuses = config.get("statuses")
+            if expected_statuses is not None and (
+                not isinstance(expected_statuses, list)
+                or not expected_statuses
+                or current_status not in expected_statuses
+            ):
                 return False
             if (
                 transition == "entered_processing"

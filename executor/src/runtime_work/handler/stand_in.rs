@@ -180,6 +180,7 @@ impl RuntimeWorkRpcHandler {
             return Ok(settings);
         }
         let mut settings = payload["settings"].clone();
+        settings["id"] = json!(settings["id"].as_str().unwrap_or("default").to_owned());
         if settings["executionDeviceId"].as_str() != Some(self.device_id.as_str()) {
             return Err(AppIpcError::new(
                 "wrong_device",
@@ -191,6 +192,25 @@ impl RuntimeWorkRpcHandler {
         settings["userId"] = json!(user_id);
         let gate = self.task_send_gate(&format!("stand-in-processing:{user_id}"));
         let _guard = gate.lock().await;
+        let previous = store
+            .personal_stand_in(user_id, &self.device_id)
+            .map_err(settings_error)?;
+        if settings.get("connections").is_none() {
+            if let Some(role) = previous["roles"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|role| role["id"] == settings["id"])
+            {
+                if role["connections"].is_array() {
+                    settings["connections"] = role["connections"].clone();
+                }
+            }
+        }
+        let mut prepared = json!({"roles":[settings]});
+        self.prepare_connection_boundaries(&mut prepared, &previous)
+            .await?;
+        let settings = prepared["roles"][0].clone();
         store
             .save_stand_in_settings(&project, user_id, settings)
             .map_err(settings_error)
@@ -677,8 +697,17 @@ impl RuntimeWorkRpcHandler {
             );
             return Ok(());
         }
-        self.execute_stand_in_task(config, issue, binding, bound.is_some())
-            .await
+        let reserved = bound.is_some()
+            && config["manual"] == true
+            && self.has_pending_stand_in_assignment(config, issue, binding)?;
+        // A validated intake action or explicit delegation may start queued work.
+        self.execute_stand_in_task(
+            config,
+            issue,
+            binding,
+            bound.is_some() && config["intakeRouted"] != true && !reserved,
+        )
+        .await
     }
 
     pub(super) async fn create_stand_in_task(
@@ -688,19 +717,6 @@ impl RuntimeWorkRpcHandler {
         binding: &Value,
         mut payload: Value,
     ) -> Result<(), AppIpcError> {
-        if config["projectStore"] == "cloud" {
-            self.verify_stand_in_user(config).await?;
-        }
-        let receipt_backend = if config["projectStore"] == "cloud" {
-            self.backend_connection_snapshot()?
-                .map(|connection| connection.backend_url)
-                .ok_or_else(|| {
-                    AppIpcError::new("cloud_unavailable", "Cloud connection is unavailable")
-                })?
-        } else {
-            String::new()
-        };
-        let project = config["projectId"].as_str().unwrap_or_default();
         let issue_id = issue["id"].as_str().unwrap_or_default();
         let task_id = self.stand_in_task_id(config, binding);
         let gate = self.task_send_gate(&format!("stand-in-start:{task_id}"));
@@ -716,31 +732,10 @@ impl RuntimeWorkRpcHandler {
             return Ok(());
         }
         let retry = existing.is_some();
-        let mut binding = binding.clone();
-        binding["deviceId"] = json!(self.device_id);
-        binding["taskId"] = json!(task_id);
-        binding["taskTitle"] = issue["title"].clone();
         let local = config["projectStore"] == "local";
-        if local {
-            LocalTaskStore::open(self.task_store_path.as_ref())
-                .map_err(settings_error)?
-                .bind_task(
-                    project,
-                    Some(issue_id),
-                    None,
-                    serde_json::from_value(binding.clone())
-                        .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?,
-                    Some(&binding),
-                )
-                .map_err(settings_error)?;
-        } else {
-            self.stand_in_http(
-                reqwest::Method::POST,
-                &format!("/v1/loop-items/{issue_id}/tasks"),
-                Some(&binding),
-            )
+        let binding = self
+            .accept_stand_in_assignment(config, issue, binding)
             .await?;
-        }
         self.log_stand_in_decision(
             config,
             issue,
@@ -777,15 +772,6 @@ impl RuntimeWorkRpcHandler {
                 );
             }
             return Err(error);
-        }
-        if let Err(error) = self
-            .record_stand_in_receipt(config, issue, &binding, &receipt_backend)
-            .await
-        {
-            log_executor_event(
-                "Stand-in receipt persistence failed",
-                &[("task_id", task_id), ("error", error.message)],
-            );
         }
         Ok(())
     }

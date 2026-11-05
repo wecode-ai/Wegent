@@ -1,0 +1,9 @@
+{
+  "revision": "b8e2c4f6a901",
+  "parents": [
+    "580031eb7ddc"
+  ],
+  "source": "20260911_b8e2c4f6a901_add_collaboration_workspaces.py",
+  "upgrade": null,
+  "downgrade": null
+}

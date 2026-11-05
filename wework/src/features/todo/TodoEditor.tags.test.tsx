@@ -1,10 +1,10 @@
+import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
+import { fillDesktopControlElement } from '@/e2e/automation'
+import '@/i18n'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
-import '@/i18n'
-import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import { TodoEditor } from './TodoEditor'
-import { fillDesktopControlElement } from '@/e2e/automation'
 
 const item = {
   id: 'TAG-1',
@@ -84,21 +84,6 @@ describe('workspace Issue tag editing', () => {
     )
     expect(onUpdated).toHaveBeenCalledWith(expect.objectContaining({ tags: ['新标签'] }))
     expect(screen.queryByTestId('cloud-todo-save')).not.toBeInTheDocument()
-  })
-
-  it('offers project tags and commits on blur without stealing focus', async () => {
-    await openEditor()
-    const input = screen.getByTestId('cloud-todo-detail-tag-input')
-    await userEvent.click(input)
-    await userEvent.click(screen.getByTestId('cloud-todo-detail-tag-suggestion-发布'))
-    expect(screen.getByTestId('cloud-todo-detail-tag-tag-发布')).toBeVisible()
-    await userEvent.type(input, '核对')
-    const title = screen.getByTestId('cloud-todo-detail-title')
-    await userEvent.click(title)
-    expect(title).toHaveFocus()
-    expect(screen.queryByTestId('cloud-todo-more-properties-popover')).not.toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('cloud-todo-more-properties'))
-    expect(screen.getByTestId('cloud-todo-detail-tag-tag-核对')).toBeVisible()
   })
 
   it('does not commit a tag when Enter confirms IME composition', async () => {

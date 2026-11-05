@@ -19,11 +19,12 @@ on:
       - checks_requested
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name != 'ci:all' && github.run_id || 'code' }}
   cancel-in-progress: true
 
 jobs:
   changes:
+    if: github.event_name != 'pull_request' || github.event.action != 'labeled' || github.event.label.name == 'ci:all'
     name: Detect CI Changes
     runs-on: ubuntu-latest
     outputs:
@@ -68,6 +69,16 @@ jobs:
     needs: changes
     if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
+    env:
+      BACKEND_GUARD_TESTS: >-
+        tests/test_collaboration_permission_guard.py
+        tests/api/test_collaboration_permission_contract.py
+        tests/api/test_collaboration_permission_resources.py
+        tests/api/test_loop_item_reorder_permissions.py
+        tests/api/test_workspace_shared_agents.py
+        tests/models/test_collaboration_permission_compatibility.py
+        tests/test_startup_migration_failure.py
+        tests/services/test_runner_routing.py
 
     steps:
       - name: Checkout code
@@ -91,19 +102,33 @@ jobs:
         working-directory: ./backend
         env:
           PYTHONPATH: ${{ github.workspace }}
-        run: uv run pytest tests/test_collaboration_permission_guard.py tests/api/test_collaboration_permission_contract.py tests/api/test_collaboration_permission_resources.py tests/api/test_loop_item_reorder_permissions.py tests/api/test_workspace_shared_agents.py tests/models/test_collaboration_permission_compatibility.py tests/test_startup_migration_failure.py tests/services/test_runner_routing.py -n 0
+        run: |
+          set -euo pipefail
+          mkdir -p ../.ci-artifacts/backend-tests
+          read -r -a guard_tests <<< "$BACKEND_GUARD_TESTS"
+          uv run pytest "${guard_tests[@]}" -n 0 --cov=app --cov-report= --durations=40 \
+            --junitxml=../.ci-artifacts/backend-tests/guard-results.xml
+          git rev-parse HEAD > ../.ci-artifacts/backend-tests/guard.sha.txt
 
       - name: Run backend tests
         working-directory: ./backend
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: |
-          set -o pipefail
+          set -euo pipefail
+          test -f .coverage
+          test "$(cat ../.ci-artifacts/backend-tests/guard.sha.txt)" = "$(git rev-parse HEAD)"
+          read -r -a guard_tests <<< "$BACKEND_GUARD_TESTS"
+          ignore_guards=("${guard_tests[@]/#/--ignore=}")
           mkdir -p ../.ci-artifacts/backend-tests
           git rev-parse HEAD > ../.ci-artifacts/backend-tests/sha.txt
-          echo 'uv run pytest tests/ --cov=app --cov-report=xml --cov-report=term-missing -v --junitxml=../.ci-artifacts/backend-tests/results.xml' > ../.ci-artifacts/backend-tests/command.txt
-          uv run pytest tests/ --cov=app --cov-report=xml --cov-report=term-missing -v \
-            --junitxml=../.ci-artifacts/backend-tests/results.xml \
+          # These read-only schema assertions share one worker's production OpenAPI cache.
+          command=(uv run pytest tests/ "${ignore_guards[@]}" --dist=loadgroup --cov=app --cov-append --durations=40 \
+            --cov-report=xml --cov-report=term-missing -v \
+            --junitxml=../.ci-artifacts/backend-tests/results.xml)
+          printf '%q ' "${command[@]}" > ../.ci-artifacts/backend-tests/command.txt
+          printf '\n' >> ../.ci-artifacts/backend-tests/command.txt
+          "${command[@]}" \
             2>&1 | tee ../.ci-artifacts/backend-tests/pytest.log
 
       - name: Upload backend test evidence
@@ -131,6 +156,7 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: 0
       CARGO_PROFILE_DEV_DEBUG: 0
       WEGENT_TEST_MYSQL_ADDRESS: 127.0.0.1:3306
+      WEGENT_TEST_REDIS_ADDRESS: 127.0.0.1:6379
     services:
       redis:
         image: redis:7-alpine
@@ -158,9 +184,6 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
-      - name: Configure backend Rust target directory
-        run: echo "CARGO_TARGET_DIR=$RUNNER_TEMP/backend-rs-target" >> "$GITHUB_ENV"
-
       - name: Set up Python and uv for gateway tests
         uses: ./.github/actions/setup-python-uv-cache
         with:
@@ -169,13 +192,11 @@ jobs:
       - name: Prepare stdlib-only Python environment for gateway tests
         run: uv venv --python 3.11 backend/.venv
 
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+      - name: Set up shared Rust toolchain and cache
+        uses: ./.github/actions/setup-rust-cache
         with:
+          manifest-path: backend-rs/Cargo.toml
           components: rustfmt, clippy
-
-      - name: Set up sccache
-        uses: ./.github/actions/setup-sccache
 
       - name: Check Rust backend formatting
         working-directory: backend-rs
@@ -192,6 +213,13 @@ jobs:
           git rev-parse HEAD > ../.ci-artifacts/backend-rs-tests/sha.txt
           echo 'cargo test --locked' > ../.ci-artifacts/backend-rs-tests/command.txt
           cargo test --locked 2>&1 | tee ../.ci-artifacts/backend-rs-tests/cargo-test.log
+
+      - name: Verify native MySQL schema lifecycle and initialization
+        working-directory: backend-rs
+        run: |
+          set -o pipefail
+          cargo test --locked --lib migrations::mysql_tests -- --ignored --nocapture \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/migrations-mysql.log
 
       - name: Verify attachment API key authentication with MySQL
         working-directory: backend-rs
@@ -354,30 +382,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Configure executor target directory
-        run: echo "CARGO_TARGET_DIR=$RUNNER_TEMP/executor-target" >> "$GITHUB_ENV"
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+      - name: Set up shared Rust toolchain and cache
+        uses: ./.github/actions/setup-rust-cache
         with:
+          manifest-path: executor/Cargo.toml
           components: rustfmt, clippy
-
-      - name: Set up sccache
-        uses: ./.github/actions/setup-sccache
 
       - name: Install executor Rust system dependencies
         run: .github/scripts/install-executor-rust-system-dependencies.sh
-
-      - name: Restore shared executor Cargo sources
-        id: executor-cargo-sources-cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-${{ runner.arch }}-executor-cargo-sources-v3-${{ hashFiles('executor/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-executor-cargo-sources-v3-
 
       - name: Run executor Rust format check
         working-directory: ./executor
@@ -445,21 +457,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+      - name: Verify Windows executor installer release selection
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .github/scripts/test-local-executor-installer.ps1
 
-      - name: Set up sccache
-        uses: ./.github/actions/setup-sccache
-
-      - name: Restore shared executor Cargo sources
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+      - name: Set up shared Rust toolchain and cache
+        uses: ./.github/actions/setup-rust-cache
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-${{ runner.arch }}-executor-cargo-sources-v3-${{ hashFiles('executor/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-executor-cargo-sources-v3-
+          manifest-path: executor/Cargo.toml
 
       - name: Run local connector auth platform tests
         working-directory: ./executor
@@ -679,7 +685,7 @@ jobs:
 
       - name: Verify immutable upgrade artifact consumption
         if: matrix.shard == 1
-        run: node --test wework/scripts/published-desktop-release.test.mjs wework/scripts/portable-desktop-release.test.mjs wework/e2e/desktop/modules/inspect-before-start.test.mjs wework/e2e/desktop/modules/desktop-build-flows.test.mjs
+        run: node --test wework/scripts/published-desktop-release.test.mjs wework/scripts/portable-desktop-release.test.mjs wework/e2e/desktop/modules/inspect-before-start.test.mjs wework/e2e/desktop/modules/desktop-build-flows.test.mjs wework/e2e/desktop/modules/failure-followup.test.mjs
 
       - name: Verify isolated Electron update transport
         if: matrix.shard == 1
@@ -689,13 +695,18 @@ jobs:
           sudo chmod 4755 "$sandbox_path"
           xvfb-run -a node --test wework/e2e/desktop/modules/upgrade-request-route.test.mjs
 
+      - name: Verify measured Wework test sharding
+        if: matrix.shard == 1
+        run: node --test wework/scripts/ci-test-sequencer.test.mjs
+
       - name: Run Wework tests
         env:
           TZ: Asia/Shanghai
+          WEWORK_CI_BALANCED_SHARDS: "true"
+          WEWORK_TEST_TIMING_FILE: ${{ runner.temp }}/wework-unit-timings.json
         run: |
           WEWORK_TEST_REPORT_FILE=../.ci-artifacts/wework-tests/renderer.xml \
           pnpm --filter wework exec vitest run \
-            --coverage \
             --passWithNoTests \
             --shard=${{ matrix.shard }}/2 &
           vitest_pid=$!
@@ -714,6 +725,15 @@ jobs:
           fi
           exit "$status"
 
+      - name: Upload Wework unit timing evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wework-unit-timings-${{ matrix.shard }}
+          path: ${{ runner.temp }}/wework-unit-timings.json
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Upload Wework test evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -721,13 +741,6 @@ jobs:
           name: wework-test-evidence-${{ matrix.shard }}
           path: .ci-artifacts/wework-tests/
           retention-days: 7
-
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
-        with:
-          files: ./wework/coverage/coverage-final.json
-          flags: wework
-          name: wework-coverage-${{ matrix.shard }}
 
   test-wegent-cli:
     name: Test wegent CLI
@@ -884,7 +897,7 @@ jobs:
         test-wegent-cli,
         test-wegent-cli-integration,
       ]
-    if: always() && !cancelled()
+    if: always() && !cancelled() && (github.event_name != 'pull_request' || github.event.action != 'labeled' || github.event.label.name == 'ci:all')
 
     steps:
       - name: Check test results

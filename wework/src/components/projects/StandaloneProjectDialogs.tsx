@@ -34,7 +34,7 @@ import {
 import type { CloneGitRepositoryInput, DeviceInfo } from '@/types/api'
 import type { DockerRemoteDeviceCommandResponse, RemoteDeviceStartupCommand } from '@/types/devices'
 import { DeviceFolderPicker } from './DeviceFolderPicker'
-import { basename, joinPath } from './device-folder-path'
+import { basename, getParentPath, joinPath } from './device-folder-path'
 import { LocalProjectCreateDialog } from './LocalProjectCreateDialog'
 
 export type StandaloneWorkspaceDialogMode = 'existing' | 'remote'
@@ -353,6 +353,7 @@ export function StandaloneFolderProjectDialog({
   open,
   mode,
   remoteIntent = 'project',
+  initialGitClone,
   fixedDeviceId,
   chooseProjectSource = false,
   layer = 'modal',
@@ -372,6 +373,7 @@ export function StandaloneFolderProjectDialog({
   open: boolean
   mode: StandaloneWorkspaceDialogMode
   remoteIntent?: StandaloneRemoteDialogIntent
+  initialGitClone?: CloneGitRepositoryInput | null
   fixedDeviceId?: string
   chooseProjectSource?: boolean
   layer?: 'modal' | 'system-popover'
@@ -407,12 +409,16 @@ export function StandaloneFolderProjectDialog({
   const [nativePickerFallback, setNativePickerFallback] = useState(false)
   const [selectedLocalRoots, setSelectedLocalRoots] = useState<string[]>([])
   const [selectedLocalDeviceId, setSelectedLocalDeviceId] = useState('')
-  const [remoteProjectSource, setRemoteProjectSource] = useState<RemoteProjectSource | null>(null)
-  const [gitUrl, setGitUrl] = useState('')
-  const [gitBranch, setGitBranch] = useState('')
-  const [gitParentPath, setGitParentPath] = useState('')
+  const [remoteProjectSource, setRemoteProjectSource] = useState<RemoteProjectSource | null>(
+    initialGitClone ? 'git' : null
+  )
+  const [gitUrl, setGitUrl] = useState(initialGitClone?.url ?? '')
+  const [gitBranch, setGitBranch] = useState(initialGitClone?.branch ?? '')
+  const [gitParentPath, setGitParentPath] = useState(
+    initialGitClone ? getParentPath(initialGitClone.targetPath) : ''
+  )
   const [gitParentPickerOpen, setGitParentPickerOpen] = useState(false)
-  const [gitAdvancedOpen, setGitAdvancedOpen] = useState(false)
+  const [gitAdvancedOpen, setGitAdvancedOpen] = useState(Boolean(initialGitClone?.branch))
   const [gitSubmitting, setGitSubmitting] = useState(false)
   const [gitError, setGitError] = useState<string | null>(null)
   const nativePickerStartedRef = useRef(false)

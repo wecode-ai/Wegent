@@ -29,6 +29,7 @@ import type { ComponentPaths } from '../runtime/component-update-manager.js'
 import { restoreReleaseData, snapshotReleaseData } from '../runtime/release-snapshot.js'
 import { verifyReleaseSignature } from '../runtime/release-signature.js'
 import { extractPhysicalRelease, removePhysicalRelease } from '../runtime/physical-release-files.js'
+import { preparationStep } from '../runtime/release-preparation.js'
 import { prepareReleaseProcess } from '../runtime/release-preparation-progress.mjs'
 import { terminateProcessTree } from '../runtime/runtime-supervisor.js'
 
@@ -276,20 +277,27 @@ export class AppUpdateService {
       phase: 'host',
     }
     const store = this.options.store
-    await this.registerInstalledRelease()
+    const id = `${pending.version}-${randomUUID()}`
+    const step = <T>(stage: string, run: () => Promise<T>) =>
+      preparationStep(
+        { write: async (_source, line) => this.options.log?.(JSON.parse(line)) },
+        { id, version: pending.version },
+        stage,
+        run
+      )
+    await step('retain-source', () => this.registerInstalledRelease())
     // Download preparation owns cleanup. Startup cleanup could race creation
     // of the next slot when automatic downloads start immediately after readiness.
-    await store.prune()
-    const id = `${pending.version}-${randomUUID()}`
+    await step('prune', () => store.prune())
     const slot = store.slot(id)
     await mkdir(slot, { recursive: true, mode: 0o700 })
     const archive = join(slot, 'host.tar.gz')
     try {
-      await this.downloadArchive(pending, archive)
+      await step('download', () => this.downloadArchive(pending, archive))
       this.progress = { ...this.progress, phase: 'extracting' }
       const host = join(slot, 'host')
       await mkdir(host, { recursive: true, mode: 0o700 })
-      await extractPhysicalRelease(archive, host)
+      await step('host-extraction', () => extractPhysicalRelease(archive, host))
       const manifest = JSON.parse(await readFile(join(host, 'wework-release.json'), 'utf8')) as {
         schemaVersion: number
         version: string
@@ -314,9 +322,11 @@ export class AppUpdateService {
         dataSchema: pending.dataSchema,
         readableDataSchemas: pending.readableDataSchemas,
       }
-      await verifyReleaseSignature(this.options.executable, release.executable)
+      await step('signature', () =>
+        verifyReleaseSignature(this.options.executable, release.executable)
+      )
       this.progress = { ...this.progress, phase: 'runtime' }
-      await this.prepareHostEnvironment(release)
+      await step('target-preparation', () => this.prepareHostEnvironment(release))
       this.prepared = await store.read(id)
       this.pendingUpdate = { ...this.pendingUpdate!, readyToInstall: true }
       this.progress = { ...this.progress, phase: 'ready', update: this.pendingUpdate }

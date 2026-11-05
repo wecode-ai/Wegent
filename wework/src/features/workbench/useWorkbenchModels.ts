@@ -371,6 +371,17 @@ export function useWorkbenchModels({
       const currentSelection = selectedModelRef.current[targetScopeKey] ?? null
       const currentOptions = selectedModelOptionsRef.current[targetScopeKey] ?? {}
       const nextOptions = resolveOptions(model, currentSelection, currentOptions)
+      if (
+        currentSelection &&
+        model &&
+        model.type === 'runtime' &&
+        isSameModelSelection(currentSelection, model) &&
+        currentOptions.runnerModelProvider
+      ) {
+        nextOptions.runnerModelProvider = currentOptions.runnerModelProvider
+      } else {
+        delete nextOptions.runnerModelProvider
+      }
       selectedModelRef.current[targetScopeKey] = model
       selectedModelOptionsRef.current[targetScopeKey] = nextOptions
       setSelectedModelByScope(current => ({ ...current, [targetScopeKey]: model }))

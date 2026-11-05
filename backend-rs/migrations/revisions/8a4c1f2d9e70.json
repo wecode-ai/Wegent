@@ -1,0 +1,9 @@
+{
+  "revision": "8a4c1f2d9e70",
+  "parents": [
+    "f5e4d3c2b1a0"
+  ],
+  "source": "20260812_8a4c1f2d9e70_enable_plugin_auto_update.py",
+  "upgrade": null,
+  "downgrade": null
+}

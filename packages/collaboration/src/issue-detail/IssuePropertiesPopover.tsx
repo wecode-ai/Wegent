@@ -1,34 +1,37 @@
-import * as Popover from "@radix-ui/react-popover";
-import { Ellipsis } from "lucide-react";
-import { useId, useState, type ReactNode } from "react";
-import { useCollaborationPortalTheme } from "../theme/CollaborationTheme";
-import "./IssuePropertiesPopover.css";
+import * as Popover from '@radix-ui/react-popover'
+import { Ellipsis } from 'lucide-react'
+import { useId, useState, type ReactNode, type Ref } from 'react'
+import { useCollaborationPortalTheme } from '../theme/CollaborationTheme'
+import './IssuePropertiesPopover.css'
 
 export function IssuePropertiesPopover({
   label,
   children,
   onClose,
+  triggerRef,
 }: {
-  label: string;
-  children: ReactNode | ((close: () => void) => ReactNode);
-  onClose?: () => void;
+  label: string
+  children: ReactNode | ((close: () => void) => ReactNode)
+  onClose?: () => void
+  triggerRef?: Ref<HTMLButtonElement>
 }) {
-  const [open, setOpen] = useState(false);
-  const portalTheme = useCollaborationPortalTheme();
-  const titleId = useId();
+  const [open, setOpen] = useState(false)
+  const portalTheme = useCollaborationPortalTheme()
+  const titleId = useId()
 
   function changeOpen(nextOpen: boolean) {
     if (!nextOpen) {
       // Commit drafts explicitly: inactive desktop windows may not emit blur.
-      onClose?.();
+      onClose?.()
     }
-    setOpen(nextOpen);
+    setOpen(nextOpen)
   }
 
   return (
     <Popover.Root open={open} onOpenChange={changeOpen}>
       <Popover.Trigger asChild>
         <button
+          ref={triggerRef}
           type="button"
           className="task-detail-more-menu-trigger"
           aria-label={label}
@@ -51,11 +54,9 @@ export function IssuePropertiesPopover({
           <h3 id={titleId} className="task-detail-more-menu-title">
             {label}
           </h3>
-          {typeof children === "function"
-            ? children(() => changeOpen(false))
-            : children}
+          {typeof children === 'function' ? children(() => changeOpen(false)) : children}
         </Popover.Content>
       </Popover.Portal>
     </Popover.Root>
-  );
+  )
 }

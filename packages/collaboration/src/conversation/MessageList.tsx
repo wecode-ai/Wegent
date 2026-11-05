@@ -228,6 +228,8 @@ export const MessageList = memo(function MessageList({
     () => new Map(turns.flatMap(turn => (turn.id ? [[turn.id, turn] as const] : []))),
     [turns]
   )
+  // Native crash history may retain an open status; only its latest root turn is live.
+  const latestNativeTurnId = turns[findLastIndex(turns, turn => turn.id !== null)]?.id
   const lastAssistantMessageIdByTurn = useMemo(() => {
     const result = new Map<string, string>()
     visibleMessages.forEach(message => {
@@ -681,13 +683,6 @@ export const MessageList = memo(function MessageList({
     <div
       ref={listRef}
       className={cn(listLayoutClass, className, virtualMessages && 'relative gap-0 pb-0 pt-0')}
-      style={
-        virtualMessages
-          ? {
-              height: Math.max(0, virtualTotalSize - tailHeight),
-            }
-          : undefined
-      }
     >
       {textSelection && textSelection.conversationKey === conversationKey && (
         <SelectionActionsPopover
@@ -697,22 +692,20 @@ export const MessageList = memo(function MessageList({
         />
       )}
       {(virtualMessages
-        ? virtualRows.map(virtualRow => ({
+        ? virtualRows.map((virtualRow, position) => ({
             index: virtualRow.index,
             key: virtualRow.key,
-            measureRef: undefined,
             style: {
-              position: 'absolute',
-              left: 0,
-              top: 0,
-              width: '100%',
-              transform: `translateY(${virtualRow.start - scrollMargin}px)`,
+              flexShrink: 0,
+              marginTop: Math.max(
+                0,
+                virtualRow.start - (virtualRows[position - 1]?.end ?? scrollMargin)
+              ),
             } satisfies CSSProperties,
           }))
         : visibleMessages.map((_, index) => ({
             index,
             key: visibleMessages[index].id,
-            measureRef: undefined,
             style: undefined,
           }))
       ).map(row => {
@@ -755,6 +748,9 @@ export const MessageList = memo(function MessageList({
               }
               forceExpanded={searchMessageId === message.id}
               isActiveTurn={isWaitingForAssistant && index === visibleMessages.length - 1}
+              isHistoricalTurn={Boolean(
+                message.turnId && latestNativeTurnId && message.turnId !== latestNativeTurnId
+              )}
               userMessageServices={userMessageServices}
               renderVisualization={renderVisualization}
               conversationKey={conversationKey}
@@ -792,13 +788,7 @@ export const MessageList = memo(function MessageList({
         )
         const gap = renderGapAfterMessage?.(message, nextMessage)
         return virtualMessages ? (
-          <div
-            key={row.key}
-            ref={row.measureRef}
-            data-index={index}
-            data-message-row
-            style={row.style}
-          >
+          <div key={row.key} data-index={index} data-message-row style={row.style}>
             {searchableArticle}
             {gap}
           </div>
@@ -809,6 +799,22 @@ export const MessageList = memo(function MessageList({
           </Fragment>
         )
       })}
+      {virtualMessages && (
+        <div
+          aria-hidden="true"
+          className="shrink-0"
+          data-virtual-message-tail
+          style={{
+            height: Math.max(
+              0,
+              virtualTotalSize -
+                tailHeight -
+                (virtualRows.at(-1)?.end ?? scrollMargin) +
+                scrollMargin
+            ),
+          }}
+        />
+      )}
       {!virtualMessages && shouldShowWaitingIndicator && (
         <article className="min-w-0" data-testid="message-assistant-waiting">
           <AssistantThinkingIndicator />

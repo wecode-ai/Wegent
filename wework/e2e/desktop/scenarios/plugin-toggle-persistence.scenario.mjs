@@ -83,14 +83,15 @@ export function createDesktopScenario(options) {
     },
     async verify(control) {
       const local = await cloud.waitForConnectedAppDevice()
-      const fixture = await installFixture(
-        cloud,
-        control,
-        'toggle-persistence-e2e',
-        local.device_id,
-        workbenchReadyTimeoutMs
-      )
       try {
+        await hotUpdate.verifyMembershipLifecycle(control, cloud, local.device_id)
+        const fixture = await installFixture(
+          cloud,
+          control,
+          'toggle-persistence-e2e',
+          local.device_id,
+          workbenchReadyTimeoutMs
+        )
         await hotUpdate.start(control, fixture)
         await verifyComponentTogglePersistence(control, cloud, fixture, hotUpdate)
         await verifyComponentTogglePersistence(control, cloud, fixture, hotUpdate, true)

@@ -598,6 +598,11 @@ export interface SharedCollaborationWorkspacesApi {
     input: WorkspaceMemberUpdateInput,
   ): Promise<CollaborationWorkspaceMember>;
   removeMember(workspaceId: string, userId: number): Promise<void>;
+  createTemplateAgent?(
+    workspaceId: string,
+    agent: import("../templates/types").TemplateAgent,
+    routing: import("../templates/types").TemplateAgentRouting,
+  ): Promise<WorkspaceProjectAgent>;
   listAgents(
     workspaceId: string,
     options?: { forceRefresh?: boolean },

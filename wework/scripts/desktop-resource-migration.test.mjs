@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { access, readFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -325,7 +327,8 @@ describe('desktop resource migration', () => {
     expect(source).toContain(
       "const packagedResources = join(packagedResourcesRoot, 'harness-runtime')"
     )
-    expect(source).toContain("corePluginsRoot: join(packagedResourcesRoot, 'wework-core-plugins')")
+    expect(source).toContain('corePluginsRoot: componentRoots.weworkCorePlugins')
+    expect(source).toContain('await packagedComponentRoots(')
     expect(source).toContain('harnessRuntimeRoot: runtimeRoot')
     expect(source).not.toContain("['prepare:harness-runtime', '--materialize']")
   })
@@ -333,7 +336,10 @@ describe('desktop resource migration', () => {
   test('packages split Wework app static resources for local Electron verification', async () => {
     const source = await readFile(join(weworkRoot, 'electron/scripts/package-app.mjs'), 'utf8')
 
-    expect(source).toContain("join(electronRoot, 'resources', 'wework-app-static')")
+    const { default: layout } = await import('../electron/scripts/bundled-component-layout.cjs')
+    expect(layout.directories).toContain('wework-app-static')
+    expect(source).toContain('bundledComponentLayout.directories.map')
+    expect(source).toContain('`${name}.tar.gz`')
   })
 
   test('prepares AI verification source mode without packaged Node resources', async () => {

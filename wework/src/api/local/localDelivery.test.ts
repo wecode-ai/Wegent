@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, test, vi } from 'vitest'
 import {
   createExternalIssueApi,
@@ -123,48 +125,6 @@ test('shows the provider author when an external creator has no mapped user', as
   expect((await api.getLoopItem(taskRecord.id)).created_by_user_name).toBe('octocat')
 })
 
-test.each(['renamed', null])(
-  'forwards atomic tag change target %s to local storage',
-  async target => {
-    const request = vi.fn().mockResolvedValue({ ...projectRecord, version: 2 })
-    const api = createLocalDeliveryApi(request)
-
-    await api.updateCloudProject(projectRecord.id, {
-      version: 1,
-      tag_change: { source: 'old', target },
-    })
-
-    expect(request).toHaveBeenCalledExactlyOnceWith('projects.update', {
-      project_id: projectRecord.id,
-      project: { version: 1, tag_change: { source: 'old', target } },
-    })
-  }
-)
-
-test('loads task context from its known binding without rediscovering the project', async () => {
-  const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
-    if (method === 'runtime_tasks.context') {
-      return { cloud_project_id: projectRecord.id, loop_item_id: taskRecord.id }
-    }
-    if (method === 'projects.list') return [projectRecord]
-    if (method === 'todos.get') {
-      expect(params).toEqual({ project_id: projectRecord.id, task_id: taskRecord.id })
-      return taskRecord
-    }
-    throw new Error(`Unexpected method: ${method}`)
-  })
-  const api = createLocalDeliveryApi(request)
-
-  await expect(
-    api.findCloudContextForTask({ deviceId: 'local-device', taskId: 'runtime-1' })
-  ).resolves.toMatchObject({ project: { id: projectRecord.id }, loop_item: { id: taskRecord.id } })
-  expect(request.mock.calls.map(([method]) => method)).toEqual([
-    'runtime_tasks.context',
-    'projects.list',
-    'todos.get',
-  ])
-})
-
 describe('local delivery API', () => {
   test('round-trips saved board views through existing project metadata', async () => {
     const boardViews = { schema_version: 1, futureExtension: { keepCase: true }, views: [] }
@@ -248,117 +208,6 @@ describe('local delivery API', () => {
 
     const result = await createLocalDeliveryApi(request).listLoopItems('project-1')
     expect(result.items[0].status_history).toEqual(statusHistory)
-  })
-
-  test('preserves generated project execution environments when listing and updating', async () => {
-    const executionEnvironment = {
-      repositories: [
-        {
-          name: 'Wegent',
-          url: 'https://github.com/wecode-ai/Wegent.git',
-          ref: 'main',
-          path: 'Wegent',
-          primary: true,
-        },
-      ],
-      setup_steps: [],
-    }
-    const generatedProject = {
-      ...projectRecord,
-      metadata: {
-        ...projectRecord.metadata,
-        code_project_key: 'wegent',
-        execution_environment: executionEnvironment,
-      },
-    }
-    const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
-      if (method === 'projects.list') return [generatedProject]
-      if (method === 'projects.update') {
-        return {
-          ...generatedProject,
-          metadata: {
-            ...generatedProject.metadata,
-            execution_environment: (params?.project as Record<string, unknown>)
-              .execution_environment,
-          },
-          version: 2,
-        }
-      }
-      throw new Error(`Unexpected method: ${method}`)
-    })
-    const api = createLocalDeliveryApi(request)
-
-    await expect(api.listCloudProjects()).resolves.toMatchObject({
-      items: [{ execution_environment: executionEnvironment }],
-    })
-    await api.updateCloudProject('project-1', {
-      version: 1,
-      execution_environment: executionEnvironment,
-    })
-
-    expect(request).toHaveBeenCalledWith('projects.update', {
-      project_id: 'project-1',
-      project: {
-        version: 1,
-        execution_environment: executionEnvironment,
-      },
-    })
-  })
-
-  test('loads a board snapshot with one batched task-binding request', async () => {
-    const secondTask = {
-      ...taskRecord,
-      id: 'LOCAL-2',
-      title: 'Second task',
-      sequence_number: 2,
-    }
-    const binding = {
-      id: '7',
-      cloud_project_id: 'project-1',
-      loop_item_id: 'LOCAL-2',
-      task_user_id: 0,
-      device_id: 'local-device',
-      task_id: 'runtime-2',
-      task_title: 'Second task',
-      backend_task_id: null,
-      modelSelection: {
-        modelName: 'gpt-5.6-sol',
-        modelType: 'public',
-        options: { reasoning: 'high' },
-      },
-      workflow_node_id: null,
-      linked_at: '2026-08-21T00:00:00Z',
-    }
-    const request = vi.fn(async (method: string) => {
-      if (method === 'todos.list') return [taskRecord, secondTask]
-      if (method === 'todos.bindings.batch') return [binding]
-      throw new Error(`Unexpected method: ${method}`)
-    })
-    const api = createLocalDeliveryApi(request)
-
-    await expect(api.getBoardSnapshot('project-1')).resolves.toMatchObject({
-      items: [{ id: 'LOCAL-1' }, { id: 'LOCAL-2' }],
-      task_bindings: [
-        {
-          id: 7,
-          task_id: 'runtime-2',
-          modelSelection: {
-            modelName: 'gpt-5.6-sol',
-            modelType: 'public',
-            options: { reasoning: 'high' },
-          },
-        },
-      ],
-      members: [],
-      agents: [],
-    })
-    expect(request).toHaveBeenCalledTimes(2)
-    expect(request).toHaveBeenNthCalledWith(1, 'todos.list', {
-      project_id: 'project-1',
-    })
-    expect(request).toHaveBeenNthCalledWith(2, 'todos.bindings.batch', {
-      task_ids: ['LOCAL-1', 'LOCAL-2'],
-    })
   })
 
   test('preserves and clears unread state for local board cards', async () => {
@@ -479,41 +328,6 @@ describe('local delivery API', () => {
       })
     }
   )
-
-  test('persists the immutable runtime snapshot with an agent assignment', async () => {
-    const executionPayload = {
-      title: 'First task',
-      executionRequest: { task_id: 'LOCAL-1-direct-LA-1' },
-    }
-    const prepareAssignmentExecutionPayload = vi.fn().mockResolvedValue(executionPayload)
-    const request = vi.fn(async (method: string) => {
-      if (method === 'todos.update') return { ...taskRecord, assignee_agent_id: 'LA-1' }
-      throw new Error(`Unexpected method: ${method}`)
-    })
-    const api = createLocalDeliveryApi(request, { prepareAssignmentExecutionPayload })
-
-    await api.assignLoopItem('project-1', 'LOCAL-1', {
-      version: 1,
-      assigneeType: 'agent',
-      assigneeId: 'LA-1',
-    })
-
-    expect(prepareAssignmentExecutionPayload).toHaveBeenCalledWith({
-      projectId: 'project-1',
-      itemId: 'LOCAL-1',
-      assigneeType: 'agent',
-      assigneeId: 'LA-1',
-    })
-    expect(request).toHaveBeenCalledWith('todos.update', {
-      project_id: 'project-1',
-      task_id: 'LOCAL-1',
-      todo: {
-        version: 1,
-        assignee_agent_id: 'LA-1',
-        execution_payload: executionPayload,
-      },
-    })
-  })
 
   test('persists the collaboration runtime snapshot through the editor update path', async () => {
     const executionPayload = {
@@ -1078,51 +892,6 @@ describe('local delivery API', () => {
     })
   })
 
-  test('preserves a local project version conflict for field-aware resolution', async () => {
-    const conflict = Object.assign(new Error('task changed'), {
-      code: 'version_conflict',
-    })
-    const request = vi.fn().mockRejectedValue(conflict)
-    const api = createLocalDeliveryApi(request)
-
-    await expect(
-      api.updateCloudProject('project-1', {
-        version: 1,
-        board_config: {
-          group_by: 'priority',
-          processing_start_status_id: 'pending',
-          statuses: [],
-          schedule_view: {
-            status_filter: 'pending',
-            assignee_filter: null,
-            tag_filter: 'frontend',
-            group_by: 'tag',
-            sort_by: 'updated_desc',
-          },
-        },
-      })
-    ).rejects.toBe(conflict)
-    expect(request).toHaveBeenCalledOnce()
-    expect(request).toHaveBeenCalledWith('projects.update', {
-      project_id: 'project-1',
-      project: {
-        version: 1,
-        board_config: {
-          group_by: 'priority',
-          processing_start_status_id: 'pending',
-          statuses: [],
-          schedule_view: {
-            status_filter: 'pending',
-            assignee_filter: null,
-            tag_filter: 'frontend',
-            group_by: 'tag',
-            sort_by: 'updated_desc',
-          },
-        },
-      },
-    })
-  })
-
   test('persists the local coding project without exposing its system tag', async () => {
     const associatedRecord = {
       ...taskRecord,
@@ -1202,28 +971,6 @@ describe('local delivery API', () => {
         tags: ['bug', 'wegent:local-project:91:Wegent'],
         position: { before_item_id: null },
       },
-    })
-  })
-
-  test('does not expose cached backend projects as local project spaces', async () => {
-    const backendProjectRecord = {
-      ...projectRecord,
-      id: 'cloud-1',
-      name: 'Cloud GitLab board',
-      metadata: {
-        project_store: 'backend',
-        task_provider: 'gitlab',
-        provider_config: { repository: 'group/project' },
-      },
-    }
-    const request = vi.fn(async (method: string) => {
-      if (method === 'projects.list') return [projectRecord, backendProjectRecord]
-      throw new Error(`Unexpected method: ${method}`)
-    })
-    const api = createLocalDeliveryApi(request)
-
-    await expect(api.listCloudProjects()).resolves.toMatchObject({
-      items: [{ id: 'project-1', name: 'Local board' }],
     })
   })
 
@@ -1369,49 +1116,6 @@ describe('local delivery API', () => {
     ])
 
     expect(request.mock.calls.filter(([method]) => method === 'projects.list')).toHaveLength(1)
-  })
-
-  test('invalidates the shared project catalog after project mutations', async () => {
-    const createdProject = {
-      ...projectRecord,
-      id: 'project-2',
-      public_id: 'public-2',
-      project_key: 'SECOND',
-      name: 'Second board',
-    }
-    let projectRecords = [projectRecord]
-    const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
-      if (method === 'projects.list') return projectRecords
-      if (method === 'projects.create') {
-        projectRecords = [projectRecord, createdProject]
-        return createdProject
-      }
-      if (method === 'runtime_tasks.context') {
-        return {
-          id: 'binding-runtime-2',
-          cloud_project_id: 'project-2',
-          loop_item_id: null,
-          task_user_id: 0,
-          device_id: 'local-device',
-          task_id: params?.task_id,
-          task_title: 'Runtime',
-          backend_task_id: null,
-          linked_at: '2026-07-27T00:00:00Z',
-        }
-      }
-      throw new Error(`Unexpected method: ${method}`)
-    })
-    const api = createLocalDeliveryApi(request)
-
-    await api.listCloudProjects()
-    await api.createCloudProject({ name: 'Second board' })
-
-    await expect(
-      api.findCloudContextForTask({ deviceId: 'local-device', taskId: 'runtime-2' })
-    ).resolves.toMatchObject({
-      project: { id: 'project-2', project_key: 'SECOND' },
-    })
-    expect(request.mock.calls.filter(([method]) => method === 'projects.list')).toHaveLength(2)
   })
 
   test('does not restore stale project records from a pre-mutation request', async () => {

@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -18,7 +20,7 @@ exec node -e 'setInterval(() => {}, 1000)'
 
 const windowManagerProperties = `#!/bin/sh
 queries=0
-if [ -f "$OPENBOX_TEST_DIR/queries" ]; then queries=$(cat "$OPENBOX_TEST_DIR/queries"); fi
+if [ -f "$OPENBOX_TEST_DIR/queries" ]; then IFS= read -r queries < "$OPENBOX_TEST_DIR/queries"; fi
 queries=$((queries + 1))
 echo "$queries" > "$OPENBOX_TEST_DIR/queries"
 if [ "$queries" -lt 2 ] || [ ! -f "$OPENBOX_TEST_DIR/openbox-started" ]; then
@@ -34,7 +36,7 @@ if [ -f "$OPENBOX_TEST_DIR/openbox-started" ]; then
   exit 1
 fi
 queries=0
-if [ -f "$OPENBOX_TEST_DIR/display-queries" ]; then queries=$(cat "$OPENBOX_TEST_DIR/display-queries"); fi
+if [ -f "$OPENBOX_TEST_DIR/display-queries" ]; then IFS= read -r queries < "$OPENBOX_TEST_DIR/display-queries"; fi
 queries=$((queries + 1))
 echo "$queries" > "$OPENBOX_TEST_DIR/display-queries"
 if [ "$queries" -lt 3 ]; then
@@ -49,20 +51,28 @@ function runFixture(openbox, xprop, display = '#!/bin/sh\nexit 0\n') {
     writeFileSync(join(directory, 'openbox'), openbox, { mode: 0o755 })
     writeFileSync(join(directory, 'xprop-window-manager'), xprop, { mode: 0o755 })
     writeFileSync(join(directory, 'xprop-display'), display, { mode: 0o755 })
-    writeFileSync(
-      join(directory, 'xprop'),
-      `#!/bin/sh
-if [ "$#" -eq 1 ] && [ "$1" = '-root' ]; then
-  exec "$OPENBOX_TEST_DIR/xprop-display"
-fi
-exec "$OPENBOX_TEST_DIR/xprop-window-manager" "$@"
-`,
-      { mode: 0o755 }
-    )
-    writeFileSync(join(directory, 'sleep'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+    // Accelerate display probes without starving the real window-manager process.
+    const fixtureShell = `
+sleep() {
+  if [ -n "\${openbox_pid:-}" ]; then command sleep "$@"; fi
+}
+xprop() (
+  if [ "$#" -eq 1 ] && [ "$1" = '-root' ]; then
+    . "$OPENBOX_TEST_DIR/xprop-display"
+  else
+    . "$OPENBOX_TEST_DIR/xprop-window-manager"
+  fi
+)
+launcher=$1
+shift
+. "$launcher"
+`
     const result = spawnSync(
       'sh',
       [
+        '-c',
+        fixtureShell,
+        'openbox-fixture',
         launcher,
         'sh',
         '-c',
@@ -148,7 +158,7 @@ it(
       windowManagerProperties,
       `#!/bin/sh
 queries=0
-if [ -f "$OPENBOX_TEST_DIR/display-queries" ]; then queries=$(cat "$OPENBOX_TEST_DIR/display-queries"); fi
+if [ -f "$OPENBOX_TEST_DIR/display-queries" ]; then IFS= read -r queries < "$OPENBOX_TEST_DIR/display-queries"; fi
 queries=$((queries + 1))
 echo "$queries" > "$OPENBOX_TEST_DIR/display-queries"
 echo "X connection unavailable probe=$queries" >&2
@@ -171,7 +181,7 @@ it(
   () => {
     const xprop = `#!/bin/sh
 queries=0
-if [ -f "$OPENBOX_TEST_DIR/queries" ]; then queries=$(cat "$OPENBOX_TEST_DIR/queries"); fi
+if [ -f "$OPENBOX_TEST_DIR/queries" ]; then IFS= read -r queries < "$OPENBOX_TEST_DIR/queries"; fi
 queries=$((queries + 1))
 echo "$queries" > "$OPENBOX_TEST_DIR/queries"
 if [ "$queries" -lt 3 ]; then exit 1; fi

@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { access, cp, mkdir, mkdtemp, rm, symlink } from 'node:fs/promises'
@@ -33,6 +35,13 @@ async function isolatedConsumer(name) {
   const consumer = join(root, name)
   const desktop = join(consumer, 'wework/e2e/desktop')
   await cp(join(wework, 'e2e/desktop'), desktop, { recursive: true })
+  // desktop-build-flows imports the shared native tar extractor.
+  const sharedScripts = join(consumer, 'wework/scripts/lib')
+  await mkdir(sharedScripts, { recursive: true })
+  await cp(
+    join(wework, 'scripts/lib/extract-runtime-archive.mjs'),
+    join(sharedScripts, 'extract-runtime-archive.mjs')
+  )
   const runtime = join(consumer, 'wework/electron/src/runtime')
   await mkdir(runtime, { recursive: true })
   await cp(
@@ -88,6 +97,33 @@ test('the shared build loads plugin scenarios and decodes inventory without node
       join(fixture.desktop, 'modules/plugin-scope-boundaries.mjs'),
       compressed,
       JSON.stringify(Object.values(inventory.entries)),
+    ],
+    fixture.options
+  )
+}, 30_000)
+
+test('the shared build loads renderer storage and performance recording without node_modules', async () => {
+  const fixture = await isolatedConsumer('renderer-storage')
+  await assert.rejects(access(join(fixture.consumer, 'node_modules')))
+  await assert.rejects(access(join(fixture.consumer, 'wework/node_modules')))
+  const script = `
+    import assert from 'node:assert/strict'
+    import { createRequire } from 'node:module'
+    import { pathToFileURL } from 'node:url'
+    assert.throws(() => createRequire(pathToFileURL(process.argv[2])).resolve('jszip'), { code: 'MODULE_NOT_FOUND' })
+    const scene = await import(pathToFileURL(process.argv[1]))
+    assert.equal(typeof scene.createDesktopScenario, 'function')
+    const performance = await import(pathToFileURL(process.argv[2]))
+    assert.equal(typeof performance.verifyPerformanceRecording, 'function')
+  `
+  await run(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      script,
+      join(fixture.desktop, 'scenarios/renderer-storage.scenario.mjs'),
+      join(fixture.desktop, 'modules/performance-recording.mjs'),
     ],
     fixture.options
   )

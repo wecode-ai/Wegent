@@ -7,6 +7,36 @@ use serde_json::json;
 use super::*;
 
 #[test]
+fn effective_git_credentials_are_pinned_in_app_server_and_tool_shells() {
+    let environment = HashMap::from([
+        ("GH_CONFIG_DIR".into(), "/device/git-auth/current/gh".into()),
+        (
+            "GLAB_CONFIG_DIR".into(),
+            "/device/git-auth/current/glab".into(),
+        ),
+        (
+            "GIT_CONFIG_GLOBAL".into(),
+            "/device/git-auth/current/gitconfig".into(),
+        ),
+    ]);
+    let mut config = CodexLaunchConfig::default();
+    apply_git_cli_environment(&mut config, &environment);
+    for (key, value) in &environment {
+        assert_eq!(config.env.get(key), Some(value));
+        assert!(config.config_overrides.contains(&format!(
+            "shell_environment_policy.set.{key}={}",
+            toml_value(value)
+        )));
+    }
+    let request: ExecutionRequest = serde_json::from_value(json!({})).unwrap();
+    let params = thread_start_params(&request, &config);
+    assert_eq!(
+        params["config"]["shell_environment_policy.set.GH_CONFIG_DIR"],
+        "/device/git-auth/current/gh"
+    );
+}
+
+#[test]
 fn stand_in_approvals_never_grant_session_or_command_rule_permissions() {
     let mut message = json!({"id":1,"method":"item/commandExecution/requestApproval","params":{"availableDecisions":["accept","acceptForSession",{"acceptWithExecpolicyAmendment":{"execpolicy_amendment":["touch"]}}]}});
     restrict_stand_in_approval(&mut message);
@@ -78,7 +108,10 @@ async fn runtime_interaction_settlement_joins_the_native_mailbox_in_order() {
 #[tokio::test]
 async fn native_subscription_survives_process_stop_and_replacement() {
     let mut state = CodexAppServerSharedState::default();
-    let hub = CodexNotificationHub::for_runtime(Arc::clone(&state.runtime_notifications));
+    let hub = CodexNotificationHub::for_runtime(
+        Arc::clone(&state.runtime_notifications),
+        Arc::clone(&state.thread_activity_changed),
+    );
     let generation = hub.process_generation;
     let mut runtime = hub.subscribe_runtime();
     let mut child = spawn_idle_app_server_child();
@@ -99,7 +132,10 @@ async fn native_subscription_survives_process_stop_and_replacement() {
         Err(mpsc::error::TryRecvError::Empty)
     ));
 
-    let replacement = CodexNotificationHub::for_runtime(Arc::clone(&state.runtime_notifications));
+    let replacement = CodexNotificationHub::for_runtime(
+        Arc::clone(&state.runtime_notifications),
+        Arc::clone(&state.thread_activity_changed),
+    );
     assert_ne!(replacement.process_generation, generation);
     replacement.send(json!({"method": "turn/started"})).await;
     let start = runtime.try_recv().unwrap();
@@ -418,7 +454,7 @@ async fn explicit_unsubscribe_keeps_thread_admission_locked_until_the_native_res
     let responses = std::mem::take(&mut *pending.lock().await);
     assert_eq!(responses.len(), 1);
     for (_, response) in responses {
-        response.send(Ok(json!({}))).unwrap();
+        response.sender.send(Ok(json!({}))).unwrap();
     }
     unsubscribe.await.unwrap();
     if admission_blocked {
@@ -546,7 +582,7 @@ async fn idle_restart_preserves_pending_reads_until_the_native_response() {
     let responses = std::mem::take(&mut *pending.lock().await);
     assert_eq!(responses.len(), 1);
     for (_, sender) in responses {
-        sender.send(Ok(json!({"data": []}))).unwrap();
+        sender.sender.send(Ok(json!({"data": []}))).unwrap();
     }
     assert_eq!(response.await.unwrap().unwrap(), json!({"data": []}));
     assert_eq!(client.restart_if_idle().await, Ok(()));
@@ -1253,6 +1289,28 @@ fn mcp_form_elicitation_maps_enum_names_to_request_user_input_options() {
             {"label": "指定人", "description": "custom"}
         ])
     );
+}
+
+#[test]
+fn native_mcp_approval_preserves_its_exact_tool_arguments() {
+    let mut params = json!({
+        "serverName": "wework_stand_in", "mode": "form",
+        "message": "Allow the tool?", "requestedSchema": {"properties": {}},
+        "_meta": {"codex_approval_kind": "mcp_tool_call", "tool_title": "Wework: Send email", "tool_params": {
+            "from": "owner@example.com", "to": "sender@example.com",
+            "subject": "Re: Review", "text": "Complete reply\nFinal paragraph"
+        }}
+    });
+    let payload = mcp_server_elicitation_request_user_input_params(&params).unwrap();
+    assert_eq!(payload["approvalKind"], "mcp_tool_call");
+    assert_eq!(payload["toolTitle"], "Wework: Send email");
+    assert_eq!(payload["toolArguments"], params["_meta"]["tool_params"]);
+    assert_eq!(payload["questions"][0]["id"], "__mcp_approval");
+    params["_meta"]["codex_approval_kind"] = json!("other");
+    let payload = mcp_server_elicitation_request_user_input_params(&params).unwrap();
+    assert!(payload.get("toolArguments").is_none());
+    assert!(payload.get("toolTitle").is_none());
+    assert!(payload.get("approvalKind").is_none());
 }
 
 #[test]
@@ -2477,6 +2535,49 @@ fn configured_inference_provider_reads_the_unmodified_user_config() {
     );
 
     let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn stand_in_custom_provider_uses_authenticated_protocol_adapter() {
+    let _lock = crate::test_env::lock();
+    let root = tempfile::tempdir().unwrap();
+    let _home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
+    env::set_var(WEGENT_CODEX_HOME_ENV, root.path());
+    fs::write(
+        root.path().join("config.toml"),
+        r#"model_provider = "openai"
+[model_providers.custom]
+base_url = "http://127.0.0.1:3456/v1"
+experimental_bearer_token = "synthetic-custom-token"
+upstream_api_format = "openai-chat-completions"
+wire_api = "responses"
+"#,
+    )
+    .unwrap();
+    let model = json!({"runtime":"codex","provider":"custom","model_id":"custom-model"});
+    let catalog = json!({"models":[{
+        "runtime":"codex","provider":"custom","model_id":"custom-model",
+        "local_model_id":"custom-model"
+    }]});
+    let mut payload = json!({
+        "taskId":"stand-in-custom-provider", "message":"Reply OK",
+        "origin":{"initiatedBy":"stand_in"},
+        "runnerPolicy":{"runtime":"codex","execution_policy":{"mode":"fixed","environment_id":"mac"},"model_policy":{"mode":"user_select"}},
+        "runnerSelection":{"model":model}
+    });
+    crate::task_runtime::runner_routing::resolve_pending(&mut payload, Some(&catalog), "mac")
+        .unwrap();
+    let request: ExecutionRequest =
+        serde_json::from_value(payload["executionRequest"].clone()).unwrap();
+    let launch = build_codex_launch_config(&request).unwrap();
+    assert_eq!(
+        launch.model_provider.as_deref(),
+        Some(codex_model_catalog::PROVIDER_ID)
+    );
+    assert!(launch.local_proxy_registration.is_some());
+    let upstream = configured_codex_provider("custom", None).unwrap();
+    assert_eq!(upstream.api_key, "synthetic-custom-token");
+    assert_eq!(upstream.api_format, "openai-chat-completions");
 }
 
 #[test]

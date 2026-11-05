@@ -395,6 +395,7 @@ impl RuntimeWorkRpcHandler {
         force_start: bool,
         queue_only: bool,
     ) -> Result<(), AppIpcError> {
+        turn.bind_task_kind(&self.store);
         self.apply_project_workspace_roots(&mut turn.request);
         let local_task_id = turn.local_task_id.clone();
         let _operation = self.turn_queue_operation.lock().await;
@@ -431,9 +432,8 @@ impl RuntimeWorkRpcHandler {
                 .lock()
                 .expect("runtime turn scheduler lock should not be poisoned");
             if queue_only
-                || scheduler.active_tasks >= scheduler.max_concurrent_tasks
-                || scheduler.active_task_ids.contains(&local_task_id)
-                || !scheduler.queued_turns.is_empty()
+                || !scheduler.has_capacity(&turn)
+                || scheduler.has_queued_kind(turn.task_kind())
             {
                 return Err(AppIpcError::new("runtime_schedule_capacity", "Scheduled work cannot enter a delayed queue; retry when execution capacity is available"));
             }
@@ -591,6 +591,7 @@ impl RuntimeWorkRpcHandler {
                 .and_then(|link| link.thread_id)
         });
         let persisted_turn = SpawnTurnRequest {
+            task_kind: None,
             local_task_id: local_task_id.to_owned(),
             runtime: "codex".to_owned(),
             request,
@@ -1231,6 +1232,7 @@ impl RuntimeWorkRpcHandler {
             &turn.local_task_id,
         );
         let SpawnTurnRequest {
+            task_kind: _,
             local_task_id,
             runtime: _,
             request,
@@ -1386,6 +1388,13 @@ impl RuntimeWorkRpcHandler {
                         active_turn_execution_id,
                         thread_id.clone(),
                         turn_id.clone(),
+                    );
+                    active_turn_handler.bind_native_turn_start(
+                        &active_turn_local_task_id,
+                        &active_turn_request,
+                        active_turn_execution_id,
+                        &thread_id,
+                        &turn_id,
                     );
                     let presentation = callback_turn_presentation
                         .lock()
@@ -1686,7 +1695,6 @@ impl RuntimeWorkRpcHandler {
                 .expect("runtime turn scheduler lock should not be poisoned");
             *scheduler = previous;
             scheduler.active_task_ids.remove(local_task_id);
-            scheduler.active_tasks = scheduler.active_task_ids.len();
             log_executor_event(
                 "runtime turn queue drain persistence failed",
                 &[("error", error.message)],
@@ -1702,7 +1710,7 @@ impl RuntimeWorkRpcHandler {
         }
     }
 
-    pub(super) async fn update_max_concurrent_tasks(&self, max_concurrent_tasks: usize) {
+    pub(super) async fn update_concurrency_settings(&self, settings: RuntimeSettings) {
         let _operation = self.turn_queue_operation.lock().await;
         let (previous, turns, remaining_turns) = {
             let mut scheduler = self
@@ -1711,7 +1719,7 @@ impl RuntimeWorkRpcHandler {
                 .expect("runtime turn scheduler lock should not be poisoned");
             let previous = scheduler.clone();
             scheduler.refresh_automatic_waits(&self.store, None);
-            let turns = scheduler.update_limit(max_concurrent_tasks);
+            let turns = scheduler.update_limits(settings.clone());
             let remaining_turns = (!turns.is_empty()).then(|| scheduler.queued_turns.clone());
             (previous, turns, remaining_turns)
         };
@@ -1725,7 +1733,7 @@ impl RuntimeWorkRpcHandler {
                     .lock()
                     .expect("runtime turn scheduler lock should not be poisoned");
                 *scheduler = previous;
-                scheduler.max_concurrent_tasks = max_concurrent_tasks;
+                scheduler.settings = settings;
                 log_executor_event(
                     "runtime turn queue limit persistence failed",
                     &[("error", error.message)],
@@ -2126,6 +2134,7 @@ mod tests {
 
     fn scheduled_turn(local_task_id: &str) -> SpawnTurnRequest {
         SpawnTurnRequest {
+            task_kind: None,
             local_task_id: local_task_id.to_owned(),
             runtime: "codex".to_owned(),
             request: ExecutionRequest::default(),
@@ -2185,7 +2194,7 @@ mod tests {
 
     #[test]
     fn scheduler_queues_over_limit_and_starts_in_fifo_order() {
-        let mut scheduler = RuntimeTurnScheduler::new(2, VecDeque::new());
+        let mut scheduler = RuntimeTurnScheduler::new(RuntimeSettings::uniform(2), VecDeque::new());
 
         assert_eq!(
             scheduler
@@ -2218,30 +2227,30 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["task-4"]
         );
-        assert_eq!(scheduler.active_tasks, 2);
+        assert_eq!(scheduler.active_task_ids.len(), 2);
         assert!(scheduler.queued_turns.is_empty());
     }
 
     #[test]
     fn scheduler_serializes_turns_for_the_same_task() {
-        let mut scheduler = RuntimeTurnScheduler::new(2, VecDeque::new());
+        let mut scheduler = RuntimeTurnScheduler::new(RuntimeSettings::uniform(2), VecDeque::new());
 
         assert!(scheduler.enqueue(scheduled_turn("task-1")).is_some());
         assert!(scheduler.enqueue(scheduled_turn("task-1")).is_none());
         assert_eq!(scheduler.queued_turns.len(), 1);
-        assert_eq!(scheduler.active_tasks, 1);
+        assert_eq!(scheduler.active_task_ids.len(), 1);
 
         let started = scheduler.finish("task-1");
 
         assert_eq!(started.len(), 1);
         assert_eq!(started[0].local_task_id, "task-1");
-        assert_eq!(scheduler.active_tasks, 1);
+        assert_eq!(scheduler.active_task_ids.len(), 1);
         assert!(scheduler.queued_turns.is_empty());
     }
 
     #[test]
     fn scheduler_skips_queued_turns_for_tasks_that_are_still_active() {
-        let mut scheduler = RuntimeTurnScheduler::new(2, VecDeque::new());
+        let mut scheduler = RuntimeTurnScheduler::new(RuntimeSettings::uniform(2), VecDeque::new());
         assert!(scheduler.enqueue(scheduled_turn("task-1")).is_some());
         assert!(scheduler.enqueue(scheduled_turn("task-2")).is_some());
         scheduler.enqueue_queued(scheduled_turn("task-1"));
@@ -2253,13 +2262,13 @@ mod tests {
         assert_eq!(started[0].local_task_id, "task-3");
         assert_eq!(scheduler.queued_turns.len(), 1);
         assert_eq!(scheduler.queued_turns[0].local_task_id, "task-1");
-        assert!(scheduler.active_task_ids.contains("task-1"));
-        assert!(scheduler.active_task_ids.contains("task-3"));
+        assert!(scheduler.active_task_ids.contains_key("task-1"));
+        assert!(scheduler.active_task_ids.contains_key("task-3"));
     }
 
     #[test]
     fn forced_turn_overcommits_without_releasing_more_queued_work() {
-        let mut scheduler = RuntimeTurnScheduler::new(1, VecDeque::new());
+        let mut scheduler = RuntimeTurnScheduler::new(RuntimeSettings::uniform(1), VecDeque::new());
         assert!(scheduler.enqueue(scheduled_turn("running")).is_some());
         assert!(scheduler.enqueue(scheduled_turn("forced")).is_none());
         assert!(scheduler.enqueue(scheduled_turn("waiting")).is_none());
@@ -2270,9 +2279,9 @@ mod tests {
                 .map(|turn| turn.local_task_id),
             Some("forced".to_owned())
         );
-        assert_eq!(scheduler.active_tasks, 2);
+        assert_eq!(scheduler.active_task_ids.len(), 2);
         assert!(scheduler.finish("running").is_empty());
-        assert_eq!(scheduler.active_tasks, 1);
+        assert_eq!(scheduler.active_task_ids.len(), 1);
         assert_eq!(
             scheduler
                 .finish("forced")
@@ -2281,12 +2290,12 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["waiting"]
         );
-        assert_eq!(scheduler.active_tasks, 1);
+        assert_eq!(scheduler.active_task_ids.len(), 1);
     }
 
     #[test]
     fn forced_enqueue_starts_new_work_without_disturbing_the_existing_queue() {
-        let mut scheduler = RuntimeTurnScheduler::new(1, VecDeque::new());
+        let mut scheduler = RuntimeTurnScheduler::new(RuntimeSettings::uniform(1), VecDeque::new());
         assert!(scheduler.enqueue(scheduled_turn("running")).is_some());
         assert!(scheduler.enqueue(scheduled_turn("waiting")).is_none());
 
@@ -2296,7 +2305,7 @@ mod tests {
                 .local_task_id,
             "forced"
         );
-        assert_eq!(scheduler.active_tasks, 2);
+        assert_eq!(scheduler.active_task_ids.len(), 2);
         assert_eq!(
             scheduler
                 .queued_turns
@@ -2309,26 +2318,26 @@ mod tests {
 
     #[test]
     fn increasing_limit_starts_queued_turns_immediately() {
-        let mut scheduler = RuntimeTurnScheduler::new(1, VecDeque::new());
+        let mut scheduler = RuntimeTurnScheduler::new(RuntimeSettings::uniform(1), VecDeque::new());
         assert!(scheduler.enqueue(scheduled_turn("task-1")).is_some());
         assert!(scheduler.enqueue(scheduled_turn("task-2")).is_none());
         assert!(scheduler.enqueue(scheduled_turn("task-3")).is_none());
 
         let started = scheduler
-            .update_limit(3)
+            .update_limits(RuntimeSettings::uniform(3))
             .into_iter()
             .map(|turn| turn.local_task_id)
             .collect::<Vec<_>>();
 
         assert_eq!(started, vec!["task-2", "task-3"]);
-        assert_eq!(scheduler.active_tasks, 3);
+        assert_eq!(scheduler.active_task_ids.len(), 3);
         assert!(scheduler.queued_turns.is_empty());
     }
 
     #[test]
     fn scheduler_reorders_the_real_fifo_queue() {
         let scheduler = RuntimeTurnScheduler::new(
-            1,
+            RuntimeSettings::uniform(1),
             VecDeque::from([
                 scheduled_turn("task-1"),
                 scheduled_turn("task-2"),

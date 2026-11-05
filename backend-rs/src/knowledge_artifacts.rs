@@ -39,6 +39,7 @@ use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
 use serde::Serialize;
 
 use crate::http_compat::FastApiError;
+use crate::sql_support::DecimalCount;
 use crate::state::AppState;
 use brz_json::OpaqueJson;
 
@@ -282,16 +283,19 @@ where
 }
 
 /// `_document_source_counts`: usable (active + success) and processing
-/// document counts for the knowledge base. `sum` renders DECIMAL columns;
-/// the source converts None to 0 like `int(value or 0)`.
+/// document counts for the knowledge base. Both `sum` aggregates render
+/// DECIMAL columns; the statement has no `GROUP BY`, so a knowledge base with
+/// no documents still returns one row whose sums are SQL NULL. The `Option`
+/// fields make the derive read them with `MysqlRow::get` (NULL → `None`), and
+/// `DecimalCount::or_zero` applies the source's `int(value or 0)`.
 async fn document_source_counts<M>(mysql: &M, knowledge_base_id: i64) -> MysqlResult<(i64, i64)>
 where
     M: Mysql,
 {
     #[derive(Debug, FromMysqlRow)]
     struct CountRow {
-        sum_1: Option<String>,
-        sum_2: Option<String>,
+        sum_1: Option<DecimalCount>,
+        sum_2: Option<DecimalCount>,
     }
     let row: Option<CountRow> = mysql
         .fetch_optional(
@@ -309,21 +313,10 @@ where
     let Some(row) = row else {
         return Ok((0, 0));
     };
-    Ok((decimal_count(row.sum_1), decimal_count(row.sum_2)))
-}
-
-/// `int(value or 0)` over a SQLAlchemy `sum()` DECIMAL. The driver renders the
-/// decimal as text; a replayed response can carry a fractional form (`1.0`),
-/// so fall back to a numeric parse that truncates toward zero like Python's
-/// `int(Decimal)`.
-fn decimal_count(value: Option<String>) -> i64 {
-    let Some(text) = value else {
-        return 0;
-    };
-    let text = text.trim();
-    text.parse::<i64>()
-        .or_else(|_| text.parse::<f64>().map(|number| number.trunc() as i64))
-        .unwrap_or(0)
+    Ok((
+        DecimalCount::or_zero(row.sum_1),
+        DecimalCount::or_zero(row.sum_2),
+    ))
 }
 
 /// `KnowledgeArtifactListResponse` (`app.schemas.knowledge_artifact`), in the
@@ -481,17 +474,6 @@ mod tests {
         let unmanaged = artifact_response(&artifact, false);
         assert!(!unmanaged.can_retry);
         assert!(!unmanaged.can_delete);
-    }
-
-    #[test]
-    fn decimal_count_truncates_a_replayed_fraction() {
-        // A live DECIMAL `sum()` renders `1`, but a replayed response can carry
-        // the fractional form `1.0`; `int(Decimal)` truncates both to 1.
-        assert_eq!(decimal_count(Some("1".to_string())), 1);
-        assert_eq!(decimal_count(Some("1.0".to_string())), 1);
-        assert_eq!(decimal_count(Some("0.0".to_string())), 0);
-        assert_eq!(decimal_count(Some(" 2 ".to_string())), 2);
-        assert_eq!(decimal_count(None), 0);
     }
 
     #[test]

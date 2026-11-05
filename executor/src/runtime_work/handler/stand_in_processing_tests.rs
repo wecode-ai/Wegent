@@ -48,6 +48,7 @@ async fn a_waiting_assessment_retires_only_after_the_original_question_is_resolv
         state: CommandState::AwaitingUser,
         accepted_at: 1,
         turn: SpawnTurnRequest {
+            task_kind: None,
             local_task_id: task_id(7),
             runtime: "codex".into(),
             request,
@@ -282,6 +283,56 @@ async fn waiting_work_never_accepts_an_automatic_reply_and_foreign_tasks_are_rej
             .runtime_handle
             .get("userMessagePresentations")
             .is_none()));
+}
+
+#[test]
+fn configuration_starts_observation_before_fast_work_completes() {
+    let root = tempfile::tempdir().unwrap();
+    let (handler, store, _) = fixture(root.path());
+    let mut state = store.stand_in_processing_state(7).unwrap();
+    let since = state["observedSince"]
+        .as_i64()
+        .expect("configuration establishes the observation boundary");
+    for (id, created_at) in [("historical", since - 10), ("new-fast-work", since + 1)] {
+        handler.upsert_local_task(RuntimeTaskLink {
+            local_task_id: id.into(), status: "done".into(), turn_status: Some("completed".into()),
+            created_at, completed_at: Some(since + 2),
+            runtime_handle: json!({"origin":{"initiatedBy":"stand_in","userId":7,"standInId":"default"}}),
+            ..Default::default()
+        });
+    }
+    handler
+        .observe_stand_in_work(&store, 7, &mut state)
+        .unwrap();
+    handler
+        .observe_stand_in_work(&store, 7, &mut state)
+        .unwrap();
+    let events = store.stand_in_events(7).unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["taskId"], "new-fast-work");
+    handler.upsert_local_task(RuntimeTaskLink {
+        local_task_id: "unstarted".into(), status: "active".into(), created_at: since + 1,
+        runtime_handle: json!({"origin":{"initiatedBy":"stand_in","userId":7,"standInId":"default"}}),
+        ..Default::default()
+    });
+    handler
+        .observe_stand_in_work(&store, 7, &mut state)
+        .unwrap();
+    assert_eq!(store.stand_in_events(7).unwrap().len(), 1);
+    handler.upsert_local_task(RuntimeTaskLink {
+        local_task_id: "status-only-completion".into(),
+        status: "done".into(), created_at: since + 1,
+        runtime_handle: json!({"origin":{"initiatedBy":"stand_in","userId":7,"standInId":"default"}}),
+        ..Default::default()
+    });
+    handler
+        .observe_stand_in_work(&store, 7, &mut state)
+        .unwrap();
+    let events = store.stand_in_events(7).unwrap();
+    assert_eq!(events.len(), 2);
+    assert!(events
+        .iter()
+        .any(|event| event["taskId"] == "status-only-completion"));
 }
 
 #[test]
@@ -683,4 +734,27 @@ async fn primary_created_work_feedback_stays_owned_and_requires_semantic_assessm
         snapshot["events"][0]["binding"].is_null(),
         "Completion feedback must not echo an automatic continuation into itself"
     );
+}
+
+#[tokio::test]
+async fn direct_connection_intake_supplies_a_native_dispatch_without_starting_assessment() {
+    let root = tempfile::tempdir().unwrap();
+    let (handler, store, mut settings) = fixture(root.path());
+    settings["roles"][0]["connections"][0]["policy"]["immediate"] = json!(true);
+    store.save_personal_stand_in(7, "mac", settings).unwrap();
+    store
+        .enqueue_stand_in_event(7, json!("direct-input"), connection_event())
+        .unwrap();
+    let snapshot = handler
+        .coordination_snapshot_for_test(&store, 7)
+        .await
+        .unwrap();
+    assert_eq!(
+        snapshot["events"][0]["dispatch"],
+        json!({"roleId":"default"})
+    );
+    assert_eq!(snapshot["events"][0]["processingMode"], "immediate");
+    assert!(handler.local_task_links(true).is_empty());
+    assert!(store.stand_in_actions(7).unwrap().is_empty());
+    assert!(store.stand_in_processing_state(7).unwrap()["batchId"].is_null());
 }

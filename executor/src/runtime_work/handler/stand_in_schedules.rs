@@ -117,6 +117,7 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<Value, AppIpcError> {
         let owned = |automation: &Automation| {
             automation.task_request["standInOwner"]["userId"] == identity.user
+                && automation.task_request["standInCalendar"].is_object()
         };
         if name == "list_schedules" {
             return Ok(
@@ -168,19 +169,11 @@ impl RuntimeWorkRpcHandler {
         } else {
             json!({"type":"cron","expression":required(args,"cron")?})
         };
-        let task = args["taskId"].as_str();
-        if task.is_some_and(|id| {
-            !self
-                .local_task_link(id)
-                .is_some_and(|link| super::stand_in_tasks::owns_task(&link, identity.user))
-        }) {
-            return Err(AppIpcError::new(
-                "permission_denied",
-                "Scheduled continuation must belong to this user",
-            ));
+        if args.get("taskId").is_some() {
+            return Err(AppIpcError::new("bad_request", "Calendar events inherit connection settings and cannot select an execution conversation"));
         }
-        let request = json!({"schemaVersion":2,"runtime":"codex","deviceId":self.device_id,"message":required(args,"message")?,"title":required(args,"title")?,"standInOwner":{"userId":identity.user,"roleId":"@primary"}});
-        self.create_automation(json!({"automation":{"id":id,"version":0,"name":required(args,"title")?,"prompt":required(args,"message")?,"schedule":schedule,"timezone":args["timezone"].as_str().unwrap_or("UTC"),"enabled":true,"conversationMode":if task.is_some(){"continue_thread"}else{"independent"},"notificationPolicy":"attention_only","taskRequest":request,"taskPayload":{"runtime":"codex"},"continuationPayload":task.map(|id|json!({"taskId":id}))}})).await
+        let request = json!({"schemaVersion":2,"runtime":"codex","deviceId":self.device_id,"message":required(args,"message")?,"title":required(args,"title")?,"standInOwner":{"userId":identity.user,"roleId":"@primary"},"standInCalendar":{}});
+        self.create_automation(json!({"automation":{"id":id,"version":0,"name":required(args,"title")?,"prompt":required(args,"message")?,"schedule":schedule,"timezone":args["timezone"].as_str().unwrap_or("UTC"),"enabled":true,"conversationMode":"independent","notificationPolicy":"attention_only","taskRequest":request,"taskPayload":{"runtime":"codex"},"continuationPayload":null}})).await
     }
 
     pub(super) async fn prepare_stand_in_schedule(
@@ -229,7 +222,26 @@ impl RuntimeWorkRpcHandler {
         }
         let mut payload = payload;
         payload["origin"] = json!({"type":"stand_in_schedule","initiatedBy":"stand_in","userId":user,"standInId":role_id,"automationId":automation.id,"deviceId":self.device_id,"askBeforeAct":true});
+        let review = role_id == "@primary"
+            && automation.task_request["standInCalendar"]["template"]
+                == crate::runtime_work::automations::WEEKLY_REVIEW_TEMPLATE;
+        if review {
+            payload["origin"]["weeklyReview"] = json!(true);
+        }
         let mut prepared = self.prepare_stand_in_execution(payload, &config).await?;
+        if review {
+            let invalid = || AppIpcError::new("bad_request", "Invalid review execution context");
+            let request = prepared["executionRequest"]
+                .as_object_mut()
+                .ok_or_else(invalid)?;
+            let additional = request
+                .entry("additionalContext")
+                .or_insert_with(|| json!({}));
+            additional.as_object_mut().ok_or_else(invalid)?.insert(
+                "wework.stand-in-review".into(),
+                json!({"kind":"application","value":crate::runtime_work::automations::WEEKLY_REVIEW_INSTRUCTIONS}),
+            );
+        }
         let system = prepared["executionRequest"]["system_prompt"]
             .as_str()
             .unwrap_or_default();
@@ -307,6 +319,72 @@ impl RuntimeWorkRpcHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn chat_created_calendar_events_use_connection_routing_and_reject_execution_targets() {
+        let root = tempfile::tempdir().unwrap();
+        let handler = fixture(root.path());
+        let identity = StandInMcpIdentity {
+            task_id: "primary-chat".into(),
+            user: 7,
+            device: "mac".into(),
+            role: Some("@primary".into()),
+            work: None,
+            ask_before_act: true,
+            coordinator_batch: None,
+            project: None,
+            review: false,
+        };
+        let args = json!({"requestId":"event","title":"Review","message":"Review outstanding items","at":"2099-01-01T00:00:00Z","timezone":"UTC"});
+        let saved = handler
+            .create_stand_in_schedule(&identity, &args)
+            .await
+            .unwrap();
+        assert_eq!(
+            saved["automation"]["taskRequest"]["standInCalendar"],
+            json!({})
+        );
+        assert_eq!(saved["automation"]["conversationMode"], "independent");
+        assert!(handler.local_task_links(true).is_empty());
+        let mut conflicting = args;
+        conflicting["requestId"] = json!("conflicting");
+        conflicting["taskId"] = json!("work");
+        assert_eq!(
+            handler
+                .create_stand_in_schedule(&identity, &conflicting)
+                .await
+                .unwrap_err()
+                .code,
+            "bad_request"
+        );
+        assert_eq!(handler.automation_store.list().len(), 1);
+        let mut ordinary = handler.automation_store.list().pop().unwrap();
+        ordinary.id = "ordinary-schedule".into();
+        ordinary
+            .task_request
+            .as_object_mut()
+            .unwrap()
+            .remove("standInCalendar");
+        handler.automation_store.create(ordinary).unwrap();
+        let listed = handler
+            .stand_in_schedule_operation(&identity, "list_schedules", &json!({}))
+            .await
+            .unwrap();
+        assert_eq!(listed["items"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            handler
+                .stand_in_schedule_operation(
+                    &identity,
+                    "cancel_schedule",
+                    &json!({"scheduleId":"ordinary-schedule"})
+                )
+                .await
+                .unwrap_err()
+                .code,
+            "permission_denied"
+        );
+        assert_eq!(handler.automation_store.list().len(), 2);
+    }
 
     #[test]
     fn a_queued_arrangement_cannot_start_before_its_deadline() {

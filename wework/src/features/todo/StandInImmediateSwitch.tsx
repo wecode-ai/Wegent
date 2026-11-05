@@ -1,5 +1,6 @@
 import type { StandInHandlingPolicy } from '@/api/personalStandIn'
 import { useTranslation } from '@/hooks/useTranslation'
+import { SettingsSwitch } from '@/components/settings/settings-ui'
 
 export function StandInImmediateSwitch({
   policy,
@@ -16,19 +17,20 @@ export function StandInImmediateSwitch({
 }) {
   const { t } = useTranslation('common')
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      <label className="flex min-h-11 items-center gap-2 text-sm md:min-h-8">
-        <input
-          type="checkbox"
+    <div
+      className="flex flex-wrap items-center gap-2"
+      title={t('standIn.workspace.direct_processing_description')}
+    >
+      <div className="flex min-h-11 items-center gap-2 text-sm md:min-h-8">
+        <span>{t('standIn.workspace.process_immediately')}</span>
+        <SettingsSwitch
           data-testid={testId}
           aria-label={label}
           disabled={disabled || !policy.automatic}
           checked={policy.immediate ?? true}
-          onChange={event => onChange({ ...policy, immediate: event.target.checked })}
-          className="accent-text-primary"
+          onCheckedChange={immediate => onChange({ ...policy, immediate })}
         />
-        <span>{t('standIn.workspace.process_immediately')}</span>
-      </label>
+      </div>
       {!policy.automatic && (
         <button
           type="button"

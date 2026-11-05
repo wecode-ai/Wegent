@@ -53,9 +53,14 @@ from app.services.loop_items.assignment_notification import (
     notify_project_task_assignee,
 )
 from app.services.loop_items.change_requests import persist_external_badge_source
+from app.services.loop_items.task_bindings import (
+    owned_binding_cancellation_targets,
+    uncovered_binding_cancellation_targets,
+)
 from app.services.notification_copy import NotificationTarget
 from app.services.notification_target import board_status_label
 from app.services.project_automation_domain import runnable_wegent_team
+from app.services.runtime_cancellation import emit_runtime_cancellations
 
 logger = logging.getLogger(__name__)
 
@@ -864,7 +869,7 @@ class ExternalLoopItemProvider:
         return response
 
     def archive(self, db: Session, item_id: str, user_id: int) -> None:
-        """Archive a completed external issue subtree by closing it upstream."""
+        """Archive an editable external issue subtree by closing it upstream."""
 
         project, _ = self._resolve_project(db, item_id)
         access = require_cloud_project_role(db, project.id, user_id, BaseRole.Viewer)
@@ -877,22 +882,31 @@ class ExternalLoopItemProvider:
         target = responses.get(item_id)
         if target is None or not target[1]["can_edit"]:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
-        subtree_ids = self._subtree_ids(responses, item_id)
-        if any(
-            responses[current_id][1]["status"] != "completed"
-            for current_id in subtree_ids
-        ):
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "Only completed TODO subtrees can be archived",
-            )
+        subtree_ids = self._editable_subtree_ids(responses, item_id)
+        binding_targets = owned_binding_cancellation_targets(
+            db, project_id=project.id, item_ids=subtree_ids, user_id=user_id
+        )
         closed: list[int] = []
+        cancelled_runs = []
         try:
             for current_id in reversed(subtree_ids):
                 number = self._number(responses[current_id][0])
                 self._update_issue(project, number, {"state": "closed"})
                 closed.append(number)
+            for current_id in subtree_ids:
+                cancelled_runs.extend(
+                    self._cancel_active_executions(
+                        db,
+                        current_id,
+                        note="Issue was archived while the Run was active",
+                    )
+                )
+            binding_targets = uncovered_binding_cancellation_targets(
+                db, targets=binding_targets, executions=cancelled_runs
+            )
+            db.commit()
         except Exception:
+            db.rollback()
             for number in reversed(closed):
                 try:
                     self._update_issue(
@@ -907,6 +921,13 @@ class ExternalLoopItemProvider:
                         number,
                     )
             raise
+        if cancelled_runs:
+            from app.services.loop_item_executions.cancellation import (
+                request_execution_cancellations,
+            )
+
+            request_execution_cancellations(cancelled_runs)
+        emit_runtime_cancellations(binding_targets)
         self._invalidate_issue_page_cache(project.id)
 
     def list_archived(
@@ -918,7 +939,7 @@ class ExternalLoopItemProvider:
         offset: int,
         limit: int,
     ) -> tuple[list[dict[str, object]], str | None]:
-        """List closed completed external Issue roots."""
+        """List readable closed external Issue roots regardless of status."""
 
         access = require_cloud_project_role(db, project_id, user_id, BaseRole.Viewer)
         project = access.project
@@ -932,11 +953,7 @@ class ExternalLoopItemProvider:
             }
             for issue in self._list_issues_state(project, "closed")
         ]
-        visible = [
-            response
-            for response in responses
-            if response["can_view_detail"] and response["status"] == "completed"
-        ]
+        visible = [response for response in responses if response["can_view_detail"]]
         archived_ids = {str(response["id"]) for response in visible}
         roots = [
             response
@@ -977,7 +994,7 @@ class ExternalLoopItemProvider:
                 status.HTTP_409_CONFLICT,
                 "Restore the archived subtree from its root TODO",
             )
-        subtree_ids = self._subtree_ids(responses, item_id)
+        subtree_ids = self._editable_subtree_ids(responses, item_id)
         reopened: list[dict[str, object]] = []
         opened: list[int] = []
         try:
@@ -1006,7 +1023,7 @@ class ExternalLoopItemProvider:
         return reopened
 
     @staticmethod
-    def _subtree_ids(
+    def _editable_subtree_ids(
         responses: dict[str, tuple[dict[str, Any], dict[str, object]]],
         root_id: str,
     ) -> list[str]:
@@ -1014,6 +1031,8 @@ class ExternalLoopItemProvider:
         pending = [root_id]
         while pending:
             current = pending.pop(0)
+            if not responses[current][1]["can_edit"]:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
             ordered.append(current)
             pending.extend(
                 candidate_id
@@ -1087,8 +1106,9 @@ class ExternalLoopItemProvider:
         item_id: str,
         *,
         preserve_automation_run_id: str = "",
+        note: str = "Assignee changed before the run finished",
     ) -> list:
-        """Cancel any active runs of one issue (assignee changed/unassigned).
+        """Cancel active runs when an Issue is reassigned or archived.
 
         Returns the runs that were cancelled and already handed to a device so
         callers can ask the executor to stop them after the change commits.
@@ -1103,6 +1123,7 @@ class ExternalLoopItemProvider:
                     {
                         "pending_approval",
                         "queued",
+                        "waiting_runtime",
                         "claimed",
                         "running",
                         "cancel_requested",
@@ -1115,7 +1136,7 @@ class ExternalLoopItemProvider:
             cancelled = loop_item_execution_service.cancel(
                 db,
                 execution_id=execution.id,
-                note="Assignee changed before the run finished",
+                note=note,
                 commit=False,
             )
             if (

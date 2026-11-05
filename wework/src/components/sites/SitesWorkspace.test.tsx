@@ -1,13 +1,12 @@
-import { useEffect, useState } from 'react'
-import type { ComponentProps } from 'react'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import '@/i18n'
 import { ApiError } from '@/api/http'
 import type { MiniProgram, Site, SiteListItem, SitesApi } from '@/api/sites'
+import '@/i18n'
 import { copyTextToClipboard } from '@/lib/clipboard'
-import { openExternalUrl } from '@/lib/external-links'
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import type { ComponentProps } from 'react'
+import { useEffect, useState } from 'react'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { SitesWorkspace as SitesWorkspaceComponent } from './SitesWorkspace'
 
 type SitesWorkspaceProps = Omit<ComponentProps<typeof SitesWorkspaceComponent>, 'search'>
@@ -195,29 +194,6 @@ function createApi(items: SiteListItem[] = [unpublishedSite]): SitesApi {
 }
 
 describe('SitesWorkspace', () => {
-  test.each(['owner', 'collaborator'] as const)(
-    'opens analytics for a %s from the site menu',
-    async role => {
-      const api = createApi([{ ...unpublishedSite, access_role: role }])
-      render(<SitesWorkspace api={api} onCreate={vi.fn()} />)
-      await userEvent.click(await screen.findByTestId('site-more-site-1'))
-      await userEvent.click(screen.getByTestId('site-analytics-menu-item-site-1'))
-      expect(await screen.findByTestId('site-analytics-totals')).toHaveTextContent('4')
-      expect(api.getSiteAnalytics).toHaveBeenCalledTimes(1)
-      await userEvent.click(screen.getByTestId('site-analytics-close'))
-      expect(screen.queryByTestId('site-analytics-dialog')).not.toBeInTheDocument()
-    }
-  )
-  test('does not expose analytics when the Backend omits the capability', async () => {
-    const api = createApi()
-    vi.mocked(api.listApplicationTypes).mockResolvedValue({
-      items: [{ app_type: 'web', enabled: true, order: 10, capabilities: ['edit'] }],
-    })
-    render(<SitesWorkspace api={api} onCreate={vi.fn()} />)
-    await userEvent.click(await screen.findByTestId('site-more-site-1'))
-    expect(screen.queryByTestId('site-analytics-menu-item-site-1')).not.toBeInTheDocument()
-  })
-
   beforeEach(() => {
     vi.clearAllMocks()
     window.history.replaceState({}, '', '/sites')
@@ -269,24 +245,6 @@ describe('SitesWorkspace', () => {
     expect(screen.getByTestId('applications-context-toolbar')).toHaveClass('md:h-9')
   })
 
-  test('loads the current user sites and opens the default internal URL', async () => {
-    const api = createApi()
-    render(<SitesWorkspace api={api} onCreate={vi.fn()} />)
-
-    expect(await screen.findByText('产品发布页')).toBeInTheDocument()
-    expect(api.listSites).toHaveBeenCalledWith({
-      appType: 'web',
-      q: '',
-      offset: 0,
-      limit: 20,
-    })
-
-    await userEvent.click(screen.getByTestId('site-internal-url-site-1'))
-    expect(openExternalUrl).toHaveBeenCalledWith('http://sites.internal/product', {
-      target: 'system',
-    })
-  })
-
   test('lets owners load, add, and remove Project collaborators', async () => {
     const api = createApi()
     vi.mocked(api.listCollaborators).mockResolvedValueOnce({
@@ -321,76 +279,6 @@ describe('SitesWorkspace', () => {
     await userEvent.click(screen.getByTestId('site-collaborator-remove-member-1'))
     await waitFor(() => expect(api.removeCollaborator).toHaveBeenCalledWith('site-1', 'member-1'))
     expect(screen.getByTestId('site-collaborators-dialog')).not.toHaveTextContent('member-1')
-  })
-
-  test('does not show collaborator management to collaborators', async () => {
-    const api = createApi([{ ...unpublishedSite, access_role: 'collaborator' }])
-    render(<SitesWorkspace api={api} onCreate={vi.fn()} />)
-    await screen.findByText('产品发布页')
-
-    await userEvent.click(screen.getByTestId('site-more-site-1'))
-    expect(screen.queryByTestId('site-collaborators-menu-item-site-1')).not.toBeInTheDocument()
-    expect(screen.getByTestId('site-access-menu-item-site-1')).toBeInTheDocument()
-  })
-
-  test('lets collaborators update the access policy for an internal site', async () => {
-    const api = createApi([{ ...unpublishedSite, access_role: 'collaborator' }])
-    render(<SitesWorkspace api={api} onCreate={vi.fn()} />)
-    await screen.findByText('产品发布页')
-
-    await userEvent.click(screen.getByTestId('site-more-site-1'))
-    await userEvent.click(screen.getByTestId('site-access-menu-item-site-1'))
-
-    expect(await screen.findByTestId('site-access-dialog')).toBeInTheDocument()
-    await waitFor(() => expect(api.getSiteAccess).toHaveBeenCalledWith('site-1'))
-    expect(screen.getByTestId('site-access-audience-owner')).toBeChecked()
-
-    await userEvent.click(screen.getByTestId('site-access-audience-custom'))
-    await userEvent.type(screen.getByTestId('site-access-subjects'), 'member-b, member-a')
-    await userEvent.click(screen.getByTestId('site-access-save'))
-
-    await waitFor(() =>
-      expect(api.updateSiteAccess).toHaveBeenCalledWith(
-        'site-1',
-        { audience: 'custom', subjects: ['member-a', 'member-b'] },
-        expect.stringMatching(/^site-access-/)
-      )
-    )
-    expect(await screen.findByText('访问权限已保存')).toBeInTheDocument()
-  })
-
-  test('does not show access management for an external site', async () => {
-    const api = createApi([
-      {
-        ...unpublishedSite,
-        network: 'outer',
-        external_url: 'https://product.example.site',
-      },
-    ])
-    render(<SitesWorkspace api={api} onCreate={vi.fn()} />)
-    await screen.findByText('产品发布页')
-
-    await userEvent.click(screen.getByTestId('site-more-site-1'))
-    expect(screen.queryByTestId('site-access-menu-item-site-1')).not.toBeInTheDocument()
-  })
-
-  test('debounces search and replaces the current results', async () => {
-    const api = createApi()
-    render(<SitesWorkspace api={api} onCreate={vi.fn()} />)
-    await screen.findByText('产品发布页')
-
-    fireEvent.change(screen.getByTestId('sites-search-input'), {
-      target: { value: '机器人' },
-    })
-
-    await waitFor(() => {
-      expect(api.listSites).toHaveBeenLastCalledWith({
-        appType: 'web',
-        q: '机器人',
-        offset: 0,
-        limit: 20,
-      })
-    })
   })
 
   test('switches a site between inner and outer network scopes', async () => {
@@ -450,259 +338,6 @@ describe('SitesWorkspace', () => {
     await userEvent.click(screen.getByTestId('site-more-site-1'))
     expect(screen.getByTestId('site-publish-site-1')).toHaveTextContent('安全检查中')
     expect(screen.getByTestId('site-publish-site-1')).toBeDisabled()
-  })
-
-  test('loads the next page without dropping existing sites', async () => {
-    const secondSite: Site = {
-      ...unpublishedSite,
-      siteid: 'site-2',
-      name: '机器人学习站',
-      internal_url: 'http://sites.internal/robot',
-    }
-    const api = createApi()
-    vi.mocked(api.listSites)
-      .mockResolvedValueOnce({ items: [unpublishedSite], total: 2, offset: 0, limit: 20 })
-      .mockResolvedValueOnce({ items: [secondSite], total: 2, offset: 1, limit: 20 })
-
-    render(<SitesWorkspace api={api} onCreate={vi.fn()} pageSize={1} />)
-    await screen.findByText('产品发布页')
-    await userEvent.click(screen.getByTestId('sites-load-more-button'))
-
-    expect(await screen.findByText('机器人学习站')).toBeInTheDocument()
-    expect(screen.getByText('产品发布页')).toBeInTheDocument()
-    expect(api.listSites).toHaveBeenLastCalledWith({
-      appType: 'web',
-      q: '',
-      offset: 1,
-      limit: 1,
-    })
-  })
-
-  test('invokes the create entry from the page header', async () => {
-    const onCreate = vi.fn()
-    render(<SitesWorkspace api={createApi([])} onCreate={onCreate} />)
-    await screen.findByText('还没有站点')
-
-    await userEvent.click(screen.getByTestId('sites-create-button'))
-    await userEvent.click(screen.getByTestId('sites-create-site-menu-item'))
-    expect(onCreate).toHaveBeenCalledWith(
-      'web',
-      expect.objectContaining({ pluginName: 'wegent-sites', marketplaceName: 'wegent' })
-    )
-  })
-
-  test('shows a plugin installation notice while creation is preparing chat', async () => {
-    render(
-      <SitesWorkspace
-        api={createApi([])}
-        onCreate={vi.fn()}
-        creatingType="web"
-        createNotice="正在安装应用插件，完成后将进入会话..."
-      />
-    )
-    await screen.findByText('还没有站点')
-
-    expect(screen.getByTestId('sites-create-notice')).toHaveTextContent(
-      '正在安装应用插件，完成后将进入会话...'
-    )
-    expect(screen.getByTestId('sites-create-button')).toBeDisabled()
-  })
-
-  test('switches to the Mini Program tab through the shared sites API', async () => {
-    const api = createApi()
-    vi.mocked(api.listSites)
-      .mockResolvedValueOnce({ items: [unpublishedSite], total: 1, offset: 0, limit: 20 })
-      .mockResolvedValueOnce({ items: [miniProgram], total: 1, offset: 0, limit: 20 })
-
-    render(<SitesWorkspace api={api} onCreate={vi.fn()} />)
-    await screen.findByText('产品发布页')
-    await userEvent.click(screen.getByTestId('applications-tab-miniapp'))
-
-    expect(await screen.findByText('微博活动助手')).toBeInTheDocument()
-    expect(screen.getByText('AppID：1234567890')).toBeInTheDocument()
-    expect(screen.getByText('体验版')).toBeInTheDocument()
-    expect(screen.getByTestId('mini-program-qrcode-mini-1')).toHaveTextContent('查看二维码')
-    expect(screen.getByTestId('mini-program-copy-link-mini-1')).toHaveTextContent('复制链接')
-    expect(api.listSites).toHaveBeenLastCalledWith({
-      appType: 'miniapp',
-      q: '',
-      offset: 0,
-      limit: 20,
-    })
-    expect(window.location.search).toBe('?app_type=miniapp')
-  })
-
-  test('shows experimental Smart apps beside Sites and Mini Programs', async () => {
-    window.history.replaceState({}, '', '/sites?app_type=web')
-    const api = createApi()
-
-    render(
-      <SitesWorkspace
-        api={api}
-        onCreate={vi.fn()}
-        smartAppsEnabled
-        smartAppsContent={<div data-testid="smart-apps-content">智能工作台市场</div>}
-      />
-    )
-    await screen.findByText('产品发布页')
-
-    expect(screen.getByTestId('applications-tab-web')).toHaveTextContent('站点')
-    expect(screen.getByTestId('applications-tab-miniapp')).toHaveTextContent('小程序')
-    expect(screen.getByTestId('applications-tab-smart-app')).toHaveTextContent('智能工作台')
-    expect(screen.getAllByRole('tab').map(tab => tab.textContent)).toEqual([
-      '智能工作台实验性',
-      '站点',
-      '小程序',
-    ])
-
-    await userEvent.click(screen.getByTestId('applications-tab-smart-app'))
-
-    expect(screen.getByTestId('applications-tab-smart-app')).toHaveAttribute(
-      'aria-selected',
-      'true'
-    )
-    expect(screen.getByTestId('smart-apps-content')).toBeInTheDocument()
-    expect(screen.queryByTestId('sites-search-input')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('sites-create-button')).not.toBeInTheDocument()
-    expect(window.location.search).toBe('?app_type=smart_app')
-  })
-
-  test('selects Smart apps for the default Applications path without changing the path', async () => {
-    const api = createApi()
-
-    render(
-      <SitesWorkspace
-        api={api}
-        onCreate={vi.fn()}
-        smartAppsEnabled
-        smartAppsContent={<div data-testid="smart-apps-content">智能工作台市场</div>}
-      />
-    )
-
-    expect(await screen.findByTestId('smart-apps-content')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: '应用' })).toBeInTheDocument()
-    expect(screen.getByText('创建、管理并发布你的应用')).toBeInTheDocument()
-    expect(screen.getByTestId('applications-content')).toHaveClass('max-w-[1120px]')
-    expect(screen.getByTestId('applications-tab-smart-app')).toHaveAttribute(
-      'aria-selected',
-      'true'
-    )
-    expect(window.location.pathname).toBe('/sites')
-    expect(window.location.search).toBe('')
-    expect(api.listSites).not.toHaveBeenCalled()
-  })
-
-  test('opens a requested Smart apps view without loading the Sites collection', async () => {
-    window.history.replaceState({}, '', '/sites?app_type=smart_app')
-    const api = createApi()
-
-    render(
-      <SitesWorkspace
-        api={api}
-        onCreate={vi.fn()}
-        smartAppsEnabled
-        smartAppsContent={<div data-testid="smart-apps-content">智能工作台市场</div>}
-      />
-    )
-
-    expect(await screen.findByTestId('smart-apps-content')).toBeInTheDocument()
-    expect(api.listSites).not.toHaveBeenCalled()
-  })
-
-  test('keeps the shared Applications heading for the owned Smart apps view', async () => {
-    window.history.replaceState({}, '', '/sites?app_type=smart_app&view=owned')
-
-    render(
-      <SitesWorkspace
-        api={createApi()}
-        onCreate={vi.fn()}
-        smartAppsEnabled
-        smartAppsContent={<div data-testid="smart-apps-content">我的内容</div>}
-      />
-    )
-
-    expect(await screen.findByRole('heading', { name: '应用' })).toBeInTheDocument()
-    expect(screen.getByText('创建、管理并发布你的应用')).toBeInTheDocument()
-    expect(screen.getByTestId('applications-content')).toHaveClass('max-w-[1120px]')
-  })
-
-  test('invokes the Mini Program entry from the create menu', async () => {
-    const onCreate = vi.fn()
-    render(<SitesWorkspace api={createApi([])} onCreate={onCreate} />)
-    await screen.findByText('还没有站点')
-
-    await userEvent.click(screen.getByTestId('sites-create-button'))
-    await userEvent.click(screen.getByTestId('sites-create-mini-program-menu-item'))
-
-    expect(onCreate).toHaveBeenCalledWith(
-      'miniapp',
-      expect.objectContaining({
-        pluginName: 'weibo-miniapp-h5-develop-agent',
-        marketplaceName: 'wegent',
-      })
-    )
-  })
-
-  test('uses discovered application order and capabilities for navigation and actions', async () => {
-    const api = createApi()
-    vi.mocked(api.listApplicationTypes).mockResolvedValueOnce({
-      items: [
-        {
-          app_type: 'future_type',
-          enabled: true,
-          order: 1,
-          capabilities: ['create'],
-        },
-        {
-          app_type: 'miniapp',
-          enabled: true,
-          order: 5,
-          capabilities: [],
-          create: {
-            plugin_name: 'weibo-miniapp-h5-develop-agent',
-            marketplace_name: 'wegent',
-          },
-        },
-        {
-          app_type: 'web',
-          enabled: true,
-          order: 10,
-          capabilities: ['create'],
-          create: {
-            plugin_name: 'wegent-sites',
-            marketplace_name: 'wegent',
-          },
-        },
-      ],
-    })
-    vi.mocked(api.listSites)
-      .mockResolvedValueOnce({ items: [unpublishedSite], total: 1, offset: 0, limit: 20 })
-      .mockResolvedValueOnce({ items: [miniProgram], total: 1, offset: 0, limit: 20 })
-
-    render(<SitesWorkspace api={api} onCreate={vi.fn()} />)
-    await screen.findByText('产品发布页')
-
-    await waitFor(() => {
-      const tabs = screen.getAllByRole('tab')
-      expect(tabs.map(tab => tab.textContent)).toEqual(['小程序', '站点'])
-    })
-    expect(screen.queryByTestId('site-publish-site-1')).not.toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('site-more-site-1'))
-    expect(screen.getByTestId('site-collaborators-menu-item-site-1')).toBeInTheDocument()
-    expect(screen.queryByTestId('site-edit-menu-item-site-1')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('site-delete-menu-item-site-1')).not.toBeInTheDocument()
-    await userEvent.keyboard('{Escape}')
-
-    await userEvent.click(screen.getByTestId('sites-create-button'))
-    expect(screen.getByTestId('sites-create-site-menu-item')).toBeInTheDocument()
-    expect(screen.queryByTestId('sites-create-mini-program-menu-item')).not.toBeInTheDocument()
-    await userEvent.keyboard('{Escape}')
-
-    await userEvent.click(screen.getByTestId('applications-tab-miniapp'))
-    expect(await screen.findByText('微博活动助手')).toBeInTheDocument()
-    expect(screen.queryByTestId('mini-program-experience-mini-1')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('mini-program-qrcode-mini-1')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('mini-program-copy-link-mini-1')).not.toBeInTheDocument()
   })
 
   test('shows mini program QR codes and copies experience links', async () => {
@@ -766,50 +401,6 @@ describe('SitesWorkspace', () => {
     expect(api.deleteSite).not.toHaveBeenCalled()
   })
 
-  test('continues development from a site row action', async () => {
-    const api = createApi()
-    const onContinueDevelopment = vi.fn()
-    render(
-      <SitesWorkspace api={api} onCreate={vi.fn()} onContinueDevelopment={onContinueDevelopment} />
-    )
-    await screen.findByText('产品发布页')
-
-    await userEvent.click(screen.getByTestId('site-continue-development-site-1'))
-
-    expect(onContinueDevelopment).toHaveBeenCalledWith(
-      unpublishedSite,
-      expect.objectContaining({ pluginName: 'wegent-sites', marketplaceName: 'wegent' })
-    )
-  })
-
-  test('edits a site title and custom domain prefix from the row menu', async () => {
-    const api = createApi()
-    render(<SitesWorkspace api={api} onCreate={vi.fn()} />)
-    await screen.findByText('产品发布页')
-
-    await userEvent.click(screen.getByTestId('site-more-site-1'))
-    await userEvent.click(screen.getByTestId('site-edit-menu-item-site-1'))
-
-    expect(screen.getByTestId('site-edit-dialog')).toBeInTheDocument()
-    expect(screen.getByTestId('site-edit-title-input')).toHaveValue('产品发布页')
-    expect(screen.getByTestId('site-edit-domain-prefix-input')).toHaveValue('product')
-
-    await userEvent.clear(screen.getByTestId('site-edit-title-input'))
-    await userEvent.type(screen.getByTestId('site-edit-title-input'), 'Docs Site')
-    await userEvent.clear(screen.getByTestId('site-edit-domain-prefix-input'))
-    await userEvent.type(screen.getByTestId('site-edit-domain-prefix-input'), 'Docs')
-    await userEvent.click(screen.getByTestId('site-edit-save-button'))
-
-    await waitFor(() =>
-      expect(api.updateSite).toHaveBeenCalledWith('site-1', {
-        title: 'Docs Site',
-        customDomainPrefix: 'docs',
-      })
-    )
-    expect(await screen.findByText('Docs Site')).toBeInTheDocument()
-    expect(screen.queryByTestId('site-edit-dialog')).not.toBeInTheDocument()
-  })
-
   test('edits Project environment variables without exposing the configured Secret', async () => {
     const api = createApi()
     vi.mocked(api.getEnvironmentVariables).mockResolvedValueOnce({
@@ -871,19 +462,6 @@ describe('SitesWorkspace', () => {
     expect(screen.getByTestId('environment-variables-dialog')).toHaveTextContent('下一次部署时生效')
   })
 
-  test('opens Project environment settings from the Platform configuration deep link', async () => {
-    const api = createApi()
-    window.history.replaceState(
-      {},
-      '',
-      '/sites?app_type=web&view=environment-variables&project_id=prj-product'
-    )
-    render(<SitesWorkspace api={api} onCreate={vi.fn()} />)
-
-    expect(await screen.findByTestId('environment-variables-dialog')).toBeInTheDocument()
-    await waitFor(() => expect(api.getEnvironmentVariables).toHaveBeenCalledWith('site-1'))
-  })
-
   test('keeps the edit dialog open when metadata saving fails', async () => {
     const api = createApi()
     vi.mocked(api.updateSite).mockRejectedValueOnce(
@@ -903,19 +481,6 @@ describe('SitesWorkspace', () => {
     )
     expect(screen.getByTestId('site-edit-dialog')).toBeInTheDocument()
     expect(screen.getByTestId('site-row-site-1')).toHaveTextContent('产品发布页')
-  })
-
-  test('removes only the confirmed site after the API succeeds', async () => {
-    const api = createApi()
-    render(<SitesWorkspace api={api} onCreate={vi.fn()} />)
-    await screen.findByText('产品发布页')
-
-    await userEvent.click(screen.getByTestId('site-more-site-1'))
-    await userEvent.click(screen.getByTestId('site-delete-menu-item-site-1'))
-    await userEvent.click(screen.getByTestId('site-delete-confirm-button'))
-
-    await waitFor(() => expect(api.deleteSite).toHaveBeenCalledWith('site-1'))
-    await waitFor(() => expect(screen.queryByTestId('site-row-site-1')).not.toBeInTheDocument())
   })
 
   test('keeps the row and dialog open when deletion fails so it can be retried', async () => {

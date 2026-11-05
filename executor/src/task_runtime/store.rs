@@ -27,6 +27,7 @@ mod project_coordination_commands;
 mod project_coordinator;
 #[path = "project_router_store.rs"]
 pub(crate) mod project_router_store;
+mod project_status;
 mod project_tags;
 
 use super::credentials::{encrypt_provider_config, update_provider_config};
@@ -40,6 +41,8 @@ use super::model::{
 
 #[path = "local_automation.rs"]
 mod local_automation;
+pub(super) use local_automation::on_status_changed;
+pub(super) use project_status::runtime_transition_status;
 
 #[path = "runner_dispatch.rs"]
 mod runner_dispatch;
@@ -47,6 +50,14 @@ mod runner_dispatch;
 #[cfg(test)]
 #[path = "runner_routing_tests.rs"]
 mod runner_routing_tests;
+
+#[cfg(test)]
+#[path = "local_automation_tests.rs"]
+mod local_automation_tests;
+
+#[cfg(test)]
+#[path = "local_assignment_status_tests.rs"]
+mod local_assignment_status_tests;
 
 #[path = "local_execution_activity.rs"]
 mod local_execution_activity;
@@ -608,7 +619,6 @@ impl LocalTaskStore {
         actor_user_id: Option<i64>,
     ) -> Result<LoopItem, TaskRuntimeError> {
         validate_name(&input.title, "task title")?;
-        validate_status(&input.status)?;
         validate_priority(&input.priority)?;
         super::tagging::validate_tags(&input.tags)?;
         validate_schedule_range(start_at.as_deref(), due_at.as_deref())?;
@@ -617,6 +627,7 @@ impl LocalTaskStore {
         let project = get_item_from(&transaction, project_id, "project")?
             .ok_or(TaskRuntimeError::ProjectNotFound)?;
         let creator_user_id = actor_user_id.unwrap_or(project.created_by_user_id);
+        project_status::validate(&project.metadata, &input.status)?;
         if task_provider(&project)? != TaskProviderKind::Local {
             return Err(TaskRuntimeError::UnsupportedProvider("external".to_owned()));
         }
@@ -649,10 +660,8 @@ impl LocalTaskStore {
         let id = format!("{project_key}-{sequence}");
         let now = now();
         let parent_id = input.parent_id.clone();
-        let status = if (assigned_agent.is_some() || assigned_group.is_some())
-            && input.status != "completed"
-        {
-            "in_progress".to_owned()
+        let status = if assigned_agent.is_some() || assigned_group.is_some() {
+            project_status::robot_assignment_status(&project.metadata, &input.status).to_owned()
         } else {
             input.status
         };
@@ -743,6 +752,7 @@ impl LocalTaskStore {
                     issue_title: &input.title,
                     issue_description: &input.description,
                     issue_status: Some(&status),
+                    prompt: None,
                     priority: &input.priority,
                     payload: Value::Null,
                 },
@@ -761,7 +771,12 @@ impl LocalTaskStore {
         if let Some(parent_id) = parent_id.as_deref() {
             refresh_runtime_projection_additional_context(&transaction, parent_id)?;
         }
-        local_automation::on_event_with_origin(&transaction, project_id, &id, "task.created", &[])?;
+        local_automation::on_event(
+            &transaction,
+            project_id,
+            &id,
+            local_automation::AutomationEvent::Created,
+        )?;
         transaction.commit()?;
         drop(connection);
         self.get_item(&id, "task")
@@ -805,7 +820,9 @@ impl LocalTaskStore {
             validate_name(title, "task title")?;
         }
         if let Some(status) = input.status.as_deref() {
-            validate_status(status)?;
+            let project = get_item_from(&transaction, project_id, "project")?
+                .ok_or(TaskRuntimeError::ProjectNotFound)?;
+            project_status::validate(&project.metadata, status)?;
         }
         if let Some(priority) = input.priority.as_deref() {
             validate_priority(priority)?;
@@ -1003,8 +1020,12 @@ impl LocalTaskStore {
         let starts_runtime_dispatch = (collaboration_group_changed
             && selected_collaboration_group.is_some())
             || (assignee_changed && assignee_agent_id.is_some());
-        if starts_runtime_dispatch && status.as_deref() != Some("completed") {
-            status = Some("in_progress".to_owned());
+        if starts_runtime_dispatch {
+            let project = get_item_from(&transaction, project_id, "project")?
+                .ok_or(TaskRuntimeError::ProjectNotFound)?;
+            status = status.map(|status| {
+                project_status::robot_assignment_status(&project.metadata, &status).to_owned()
+            });
         }
         let status_changed = current.status.as_ref() != status.as_ref();
         let now = now();
@@ -1064,7 +1085,12 @@ impl LocalTaskStore {
             }
         }
         if assignee_changed || collaboration_group_changed {
-            cancel_active_executions(&transaction, task_id)?;
+            cancel_active_executions(
+                &transaction,
+                task_id,
+                "Assignee changed before the run finished",
+                "Stop the active Runtime task before changing its robot assignee",
+            )?;
             if let Some(group) = selected_collaboration_group.as_ref() {
                 dispatch_collaboration_group_assignment(
                     &transaction,
@@ -1075,6 +1101,7 @@ impl LocalTaskStore {
                         issue_title: title.as_deref().unwrap_or(task_id),
                         issue_description: &description,
                         issue_status: status.as_deref(),
+                        prompt: None,
                         priority: priority.as_deref().unwrap_or("none"),
                         payload: input.execution_payload.unwrap_or(Value::Null),
                     },
@@ -1093,22 +1120,20 @@ impl LocalTaskStore {
                 }
             }
         }
-        if !added_tags.is_empty() {
-            local_automation::on_event_with_origin(
+        if status_changed {
+            local_automation::on_status_changed(
                 &transaction,
-                project_id,
                 task_id,
-                "task.tag_added",
-                &added_tags,
+                current.status.as_deref(),
+                None,
             )?;
         }
-        if status_changed {
-            local_automation::on_event_with_origin(
+        if !added_tags.is_empty() {
+            local_automation::on_event(
                 &transaction,
                 project_id,
                 task_id,
-                "task.status_changed",
-                &[],
+                local_automation::AutomationEvent::TagsAdded(&added_tags),
             )?;
         }
         transaction.commit()?;
@@ -1476,7 +1501,7 @@ impl LocalTaskStore {
             .optional()?
         {
             if matches!(status.as_str(), "pending" | "streaming") {
-                move_runtime_comment_task_to_in_progress(&transaction, task_id)?;
+                move_runtime_comment_task_to_in_progress(&transaction, task_id, None)?;
             }
             let comment = comment_row(&transaction, &message_id)?;
             transaction.commit()?;
@@ -1510,7 +1535,7 @@ impl LocalTaskStore {
             },
             "streaming",
         )?;
-        move_runtime_comment_task_to_in_progress(&transaction, task_id)?;
+        move_runtime_comment_task_to_in_progress(&transaction, task_id, None)?;
         transaction.commit()?;
         Ok(comment)
     }
@@ -2198,7 +2223,14 @@ impl LocalTaskStore {
             .and_then(|payload| payload.get("dispatch_role"))
             .and_then(Value::as_str);
         if !matches!(dispatch_role, Some("manager" | "member")) {
-            move_runtime_comment_task_to_in_progress(&connection, &execution.loop_item_id)?;
+            move_runtime_comment_task_to_in_progress(
+                &connection,
+                &execution.loop_item_id,
+                execution
+                    .execution_payload
+                    .as_ref()
+                    .and_then(|payload| payload["automation_run_id"].as_str()),
+            )?;
         }
         connection.commit()?;
         Ok(Some(execution))
@@ -2355,9 +2387,14 @@ impl LocalTaskStore {
         if !matches!(dispatch_role, Some("manager" | "member")) {
             let previous_status = get_item_from(&transaction, &current.loop_item_id, "task")?
                 .and_then(|item| item.status);
+            let project = get_item_from(&transaction, &current.cloud_project_id, "project")?
+                .ok_or(TaskRuntimeError::ProjectNotFound)?;
+            let next_status = current.task_status.as_deref().map(|status| {
+                project_status::runtime_transition_status(&project.metadata, status, "in_review")
+            });
             transaction.execute(
                 "UPDATE loop_items
-                 SET status = 'in_review',
+                 SET status = ?3,
                      metadata = json_set(metadata, '$.is_unread', json('true')),
                      version = version + 1, updated_at = ?1
                  WHERE id = ?2 AND status != 'completed'
@@ -2375,7 +2412,16 @@ impl LocalTaskStore {
                              'cancel_requested'
                          )
                    )",
-                params![timestamp, current.loop_item_id],
+                params![timestamp, current.loop_item_id, next_status],
+            )?;
+            local_automation::on_status_changed(
+                &transaction,
+                &current.loop_item_id,
+                current.task_status.as_deref(),
+                current
+                    .execution_payload
+                    .as_ref()
+                    .and_then(|payload| payload["automation_run_id"].as_str()),
             )?;
             let current_status = get_item_from(&transaction, &current.loop_item_id, "task")?
                 .and_then(|item| item.status);
@@ -2688,8 +2734,9 @@ impl LocalTaskStore {
             )
             .optional()?
             .ok_or(TaskRuntimeError::TaskNotFound)?;
-        let incomplete_count: i64 = transaction.query_row(
-            "WITH RECURSIVE task_tree(id) AS (
+        let subtree_ids: Vec<String> = {
+            let mut statement = transaction.prepare(
+                "WITH RECURSIVE task_tree(id) AS (
                  SELECT id FROM loop_items
                  WHERE id = ?1 AND resource_type = 'task'
                    AND cloud_project_id = ?2 AND deleted_at IS NULL
@@ -2699,15 +2746,18 @@ impl LocalTaskStore {
                  WHERE child.resource_type = 'task'
                    AND child.cloud_project_id = ?2 AND child.deleted_at IS NULL
              )
-             SELECT COUNT(*) FROM loop_items
-             WHERE id IN (SELECT id FROM task_tree) AND status != 'completed'",
-            params![task_id, project_id],
-            |row| row.get(0),
-        )?;
-        if incomplete_count > 0 {
-            return Err(TaskRuntimeError::Invalid(
-                "Only completed task subtrees can be archived".to_owned(),
-            ));
+             SELECT id FROM task_tree",
+            )?;
+            let rows = statement.query_map(params![task_id, project_id], |row| row.get(0))?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        for id in subtree_ids {
+            cancel_active_executions(
+                &transaction,
+                &id,
+                "Issue was archived before the run finished",
+                "Stop the active Runtime task before archiving this Issue",
+            )?;
         }
         let archived_at = now();
         let updated = transaction.execute(
@@ -2863,9 +2913,6 @@ impl LocalTaskStore {
         project_id: &str,
         input: TaskReorder,
     ) -> Result<Vec<LoopItem>, TaskRuntimeError> {
-        if let Some(status) = &input.status {
-            validate_status(status)?;
-        }
         if input.item_ids.is_empty() {
             return Err(TaskRuntimeError::Invalid(
                 "item_ids must contain at least one task".to_owned(),
@@ -2875,6 +2922,9 @@ impl LocalTaskStore {
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let project = get_item_from(&transaction, project_id, "project")?
             .ok_or(TaskRuntimeError::ProjectNotFound)?;
+        if let Some(status) = &input.status {
+            project_status::validate(&project.metadata, status)?;
+        }
         if task_provider(&project)? != TaskProviderKind::Local {
             return Err(TaskRuntimeError::UnsupportedProvider("external".to_owned()));
         }
@@ -3192,22 +3242,15 @@ impl LocalTaskStore {
                 | "interrupted"
                 | "error"
         );
-        let changed = transaction.execute(
-            "UPDATE loop_items
-             SET status = ?1,
-                 completed_at = CASE WHEN ?1 = 'completed' THEN ?2 ELSE NULL END,
-                 metadata = CASE
-                     WHEN ?5 AND cloud_project_id != ?7
-                         THEN json_set(metadata, '$.is_unread', json('true'))
-                     ELSE metadata
-                 END,
-                 sort_order = 0, version = version + 1, updated_at = ?2
+        let candidate_tasks = {
+            let mut statement = transaction.prepare(
+                "SELECT id FROM loop_items
              WHERE resource_type = 'task'
                AND id IN (
                    SELECT loop_item_id
                    FROM loop_items
                    WHERE resource_type = 'execution'
-                     AND device_id = ?3 AND task_id = ?4
+                     AND device_id = ?2 AND task_id = ?3
                      AND unlinked_at IS NULL AND loop_item_id IS NOT NULL
                      AND json_extract(metadata, '$.workflow_node_id') IS NULL
                      AND NOT EXISTS (
@@ -3220,20 +3263,62 @@ impl LocalTaskStore {
                      AND CAST(COALESCE(
                          json_extract(metadata, '$.runtime_status_observed_at_ms'),
                          0
-                     ) AS INTEGER) < ?6
+                     ) AS INTEGER) < ?5
                )
                AND status != ?1
-               AND (NOT ?5 OR status NOT IN ('completed', 'in_review'))",
-            params![
-                next_status,
-                timestamp,
-                device_id,
-                task_id,
-                preserve_reviewed,
-                observed_at_ms,
-                DEFAULT_WORK_ITEM_PROJECT_ID
-            ],
-        )?;
+               AND (NOT ?4 OR status NOT IN ('completed', 'in_review'))",
+            )?;
+            let rows = statement.query_map(
+                params![
+                    next_status,
+                    device_id,
+                    task_id,
+                    preserve_reviewed,
+                    observed_at_ms,
+                ],
+                |row| row.get::<_, String>(0),
+            )?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        let mut changed_tasks = Vec::new();
+        for item_id in candidate_tasks {
+            let task = get_item_from(&transaction, &item_id, "task")?
+                .ok_or(TaskRuntimeError::TaskNotFound)?;
+            let project = get_item_from(
+                &transaction,
+                task.cloud_project_id
+                    .as_deref()
+                    .ok_or(TaskRuntimeError::ProjectNotFound)?,
+                "project",
+            )?
+            .ok_or(TaskRuntimeError::ProjectNotFound)?;
+            let status = task.status.as_deref().map(|current| {
+                project_status::runtime_transition_status(&project.metadata, current, next_status)
+            });
+            if status == task.status.as_deref() {
+                continue;
+            }
+            transaction.execute(
+                "UPDATE loop_items
+                 SET status = ?1,
+                     completed_at = CASE WHEN ?1 = 'completed' THEN ?2 ELSE NULL END,
+                     metadata = CASE
+                         WHEN ?4 AND cloud_project_id != ?5
+                             THEN json_set(metadata, '$.is_unread', json('true'))
+                         ELSE metadata
+                     END,
+                     sort_order = 0, version = version + 1, updated_at = ?2
+                 WHERE id = ?3",
+                params![
+                    status,
+                    timestamp,
+                    item_id,
+                    preserve_reviewed,
+                    DEFAULT_WORK_ITEM_PROJECT_ID
+                ],
+            )?;
+            changed_tasks.push((item_id, task.status));
+        }
         transaction.execute(
             "UPDATE loop_items
              SET metadata = json_set(
@@ -3260,8 +3345,11 @@ impl LocalTaskStore {
                ) AS INTEGER) < ?1",
             params![observed_at_ms, timestamp, device_id, task_id],
         )?;
+        for (item_id, previous) in &changed_tasks {
+            local_automation::on_status_changed(&transaction, item_id, previous.as_deref(), None)?;
+        }
         transaction.commit()?;
-        Ok(changed)
+        Ok(changed_tasks.len())
     }
 
     pub fn list_task_bindings(&self, item_id: &str) -> Result<Vec<TaskBinding>, TaskRuntimeError> {
@@ -4267,7 +4355,7 @@ pub(super) fn refresh_runtime_projection_additional_context(
     Ok(())
 }
 
-fn get_item_from(
+pub(super) fn get_item_from(
     connection: &Connection,
     id: &str,
     resource_type: &str,
@@ -4580,16 +4668,7 @@ fn local_project_metadata(task_provider: TaskProviderKind, provider_config: Valu
         "project_store": ProjectStoreKind::Local,
         "task_provider": task_provider,
         "provider_config": provider_config,
-        "board_config": {
-            "group_by": "status",
-            "statuses": [
-                {"id": "inbox", "name": "收集箱", "color": "gray"},
-                {"id": "pending", "name": "待开始", "color": "blue"},
-                {"id": "in_progress", "name": "进行中", "color": "orange"},
-                {"id": "in_review", "name": "待确认", "color": "purple"},
-                {"id": "completed", "name": "已完成", "color": "green"}
-            ]
-        },
+        "board_config": project_status::default_board_config(),
         "tags": [],
     })
 }
@@ -4695,15 +4774,6 @@ fn validate_mcp_servers(value: &Value) -> Result<(), TaskRuntimeError> {
     value.is_object().then_some(()).ok_or_else(|| {
         TaskRuntimeError::Invalid("Robot MCP servers must be a JSON object".to_owned())
     })
-}
-
-fn validate_status(value: &str) -> Result<(), TaskRuntimeError> {
-    matches!(
-        value,
-        "inbox" | "pending" | "in_progress" | "in_review" | "completed"
-    )
-    .then_some(())
-    .ok_or_else(|| TaskRuntimeError::Invalid("invalid task status".to_owned()))
 }
 
 fn validate_priority(value: &str) -> Result<(), TaskRuntimeError> {
@@ -4940,14 +5010,34 @@ fn insert_comment(
 fn move_runtime_comment_task_to_in_progress(
     connection: &Connection,
     task_id: &str,
+    origin_run_id: Option<&str>,
 ) -> Result<(), TaskRuntimeError> {
+    let task = get_item_from(connection, task_id, "task")?.ok_or(TaskRuntimeError::TaskNotFound)?;
+    let project = get_item_from(
+        connection,
+        task.cloud_project_id
+            .as_deref()
+            .ok_or(TaskRuntimeError::ProjectNotFound)?,
+        "project",
+    )?
+    .ok_or(TaskRuntimeError::ProjectNotFound)?;
+    let next_status = task
+        .status
+        .as_deref()
+        .map(|status| project_status::robot_assignment_status(&project.metadata, status));
     let changed = connection.execute(
         "UPDATE loop_items
-         SET status='in_progress', completed_at=NULL,
+         SET status=?3, completed_at=NULL,
              version=version+1, updated_at=?1
          WHERE id=?2 AND resource_type='task'
-           AND status IN ('inbox', 'pending', 'in_review')",
-        params![now(), task_id],
+           AND status != ?3",
+        params![now(), task_id, next_status],
+    )?;
+    local_automation::on_status_changed(
+        connection,
+        task_id,
+        task.status.as_deref(),
+        origin_run_id,
     )?;
     if changed > 0 {
         issue_notifications::notify_followers(connection, task_id, "status", None, "")?;
@@ -5155,6 +5245,7 @@ struct CollaborationGroupExecutionInput<'a> {
     issue_title: &'a str,
     issue_description: &'a str,
     issue_status: Option<&'a str>,
+    prompt: Option<&'a str>,
     priority: &'a str,
     payload: Value,
 }
@@ -5213,6 +5304,7 @@ fn dispatch_collaboration_group_assignment(
         input.issue_title,
         input.issue_description,
         input.issue_status,
+        input.prompt,
     );
     execution_payload.insert("message".to_owned(), Value::String(manager_context.clone()));
     execution_payload.insert(
@@ -5221,7 +5313,16 @@ fn dispatch_collaboration_group_assignment(
     );
     execution_payload.insert(
         "projectInstructions".to_owned(),
-        json!(COLLABORATION_MANAGER_SYSTEM_INSTRUCTIONS),
+        json!([
+            leader_agent.metadata["system_prompt"]
+                .as_str()
+                .unwrap_or_default(),
+            COLLABORATION_MANAGER_SYSTEM_INSTRUCTIONS,
+        ]
+        .into_iter()
+        .filter(|instruction| !instruction.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")),
     );
     execution_payload.insert("dispatch_id".to_owned(), json!(input.item_id));
     execution_payload.insert("dispatch_role".to_owned(), json!("manager"));
@@ -5350,6 +5451,7 @@ fn collaboration_manager_message(
     issue_title: &str,
     issue_description: &str,
     issue_status: Option<&str>,
+    prompt: Option<&str>,
 ) -> String {
     let group_name = group
         .get("name")
@@ -5380,7 +5482,7 @@ fn collaboration_manager_message(
             .unwrap_or_else(|| json!([])),
         "project_workflow": project_workflow,
     });
-    format!(
+    let context = format!(
         "Issue 标题：{issue_title}\nIssue 状态：{}\nIssue 描述：{}\n\n“{group_name}”的项目协作规则、成员与流程：{}",
         issue_status.unwrap_or("inbox"),
         if issue_description.trim().is_empty() {
@@ -5390,12 +5492,18 @@ fn collaboration_manager_message(
         },
         serde_json::to_string_pretty(&collaboration_context)
             .unwrap_or_else(|_| "{}".to_owned()),
-    )
+    );
+    match prompt.filter(|prompt| !prompt.trim().is_empty()) {
+        Some(prompt) => format!("{prompt}\n\n{context}"),
+        None => context,
+    }
 }
 
 fn cancel_active_executions(
     connection: &Connection,
     item_id: &str,
+    note: &str,
+    active_error: &str,
 ) -> Result<(), TaskRuntimeError> {
     let delivered: i64 = connection.query_row(
         "SELECT COUNT(*) FROM loop_item_executions
@@ -5406,15 +5514,13 @@ fn cancel_active_executions(
         |row| row.get(0),
     )?;
     if delivered > 0 {
-        return Err(TaskRuntimeError::Invalid(
-            "Stop the active Runtime task before changing its robot assignee".to_owned(),
-        ));
+        return Err(TaskRuntimeError::Invalid(active_error.to_owned()));
     }
     let active: Vec<i64> = {
         let mut statement = connection.prepare(
             "SELECT id FROM loop_item_executions
              WHERE loop_item_id = ?1
-               AND (status IN ('pending_approval', 'queued')
+               AND (status IN ('pending_approval', 'queued', 'waiting_runtime')
                     OR (status = 'claimed' AND start_requested_at IS NULL))",
         )?;
         let rows = statement.query_map(params![item_id], |row| row.get(0))?;
@@ -5429,7 +5535,7 @@ fn cancel_active_executions(
         "UPDATE loop_item_executions
          SET status = 'cancelled', completed_at = ?1,
              observed_state = 'cancelled', sync_state = 'in_sync', observed_at = ?1,
-             execution_note = 'Assignee changed before the run finished',
+             execution_note = ?2,
              termination_reason = 'cancelled_before_start',
              version = version + 1, updated_at = ?1
          WHERE id IN ({placeholders})"
@@ -5437,10 +5543,11 @@ fn cancel_active_executions(
     connection.execute(
         &sql,
         rusqlite::params_from_iter(
-            std::iter::once(now.clone()).chain(active.iter().map(|id| id.to_string())),
+            [now.clone(), note.to_owned()]
+                .into_iter()
+                .chain(active.iter().map(|id| id.to_string())),
         ),
     )?;
-    let note = "Assignee changed before the run finished";
     for execution_id in active {
         update_agent_comment(connection, execution_id, "cancelled", note, &now)?;
     }
@@ -5641,6 +5748,12 @@ fn local_execution_runtime_payload(execution: &LocalExecution) -> Value {
             json!(format!("{title} - Assistant")),
         );
         request.insert("prompt".to_owned(), json!(message));
+        if let Some(instructions) = stored
+            .get("projectInstructions")
+            .filter(|_| stored.get("dispatch_role").and_then(Value::as_str) == Some("manager"))
+        {
+            request.insert("system_prompt".to_owned(), instructions.clone());
+        }
         if stored.contains_key("project_coordination") {
             request.insert("user_id".to_owned(), json!(execution.assigner_user_id));
         }
@@ -5734,6 +5847,10 @@ fn truncate(value: &str, max: usize) -> String {
         value.chars().take(max).collect()
     }
 }
+
+#[cfg(test)]
+#[path = "store_archive_tests.rs"]
+mod archive_tests;
 
 #[cfg(test)]
 mod tests {
@@ -7117,6 +7234,7 @@ mod tests {
                             "executionRequest": {
                                 "task_id": "manager-template",
                                 "subtask_id": "manager-template-initial",
+                                "system_prompt": "Stale manager request instructions.",
                                 "bot": [{
                                     "id": leader.id,
                                     "name": "Manager",
@@ -7245,7 +7363,18 @@ mod tests {
         assert!(payload["projectInstructions"]
             .as_str()
             .unwrap()
+            .contains("Be careful."));
+        assert!(payload["projectInstructions"]
+            .as_str()
+            .unwrap()
             .contains("Do not execute member work yourself"));
+        let request: crate::protocol::ExecutionRequest =
+            serde_json::from_value(payload["executionRequest"].clone()).unwrap();
+        assert_eq!(
+            request.system_prompt,
+            payload["projectInstructions"].as_str().unwrap(),
+            "The Runtime consumes the nested request, including the leader prompt and manager rules"
+        );
         let runtime_task_id = claimed
             .runtime_task_id
             .as_deref()
@@ -7559,6 +7688,11 @@ mod tests {
             .unwrap();
         let resumed_manager = resumed_manager.expect("manager must restart after the batch");
         assert_eq!(resumed_manager.agent_id, leader.id);
+        let resumed_request: crate::protocol::ExecutionRequest = serde_json::from_value(
+            resumed_manager.execution_payload.as_ref().unwrap()["executionRequest"].clone(),
+        )
+        .unwrap();
+        assert_eq!(resumed_request.system_prompt, request.system_prompt);
         assert_eq!(
             resumed_manager.execution_payload.as_ref().unwrap()["origin"]["dispatchRole"],
             "manager"

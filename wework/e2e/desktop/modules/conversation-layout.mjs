@@ -139,15 +139,14 @@ async function verifyShortConversationLayout({ composerSelector, control, restar
     4,
     'The unified virtual list did not mount every short-conversation turn'
   )
-  assert.equal(
-    await control.command(
-      'getStyle',
-      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll-content"] [data-index]`,
-      { value: 'position' }
-    ),
-    'absolute',
-    'Short conversations did not use the unified virtual row layout'
-  )
+  for (const [index, row] of virtualRows.entries()) {
+    assert.ok(row.height > 0, `Short-conversation virtual row ${index} has no layout height`)
+    if (index > 0)
+      assert.ok(
+        row.top >= virtualRows[index - 1].bottom - 1,
+        `Short-conversation virtual rows overlap: ${JSON.stringify({ previous: virtualRows[index - 1], row })}`
+      )
+  }
   const conversationSnapshot = JSON.parse(
     await control.command(
       'snapshot',
@@ -724,20 +723,41 @@ async function waitForElementInsideScroller(
   elementSelector,
   scrollerSelector,
   description,
-  timeoutMs = 3_000
+  timeoutMs = 3_000,
+  { occluderSelector, clipToViewport = false } = {}
 ) {
   const startedAt = Date.now()
   let element
   let scroller
+  let occluder
   while (Date.now() - startedAt < timeoutMs) {
     scroller = await getSingleElementMetrics(control, scrollerSelector, description)
     element = (await getElementMetrics(control, elementSelector)).at(-1)
-    if (element && element.top >= scroller.top - 2 && element.bottom <= scroller.bottom + 2) {
-      return { element, scroller }
+    occluder = occluderSelector
+      ? (await getElementMetrics(control, occluderSelector)).at(-1)
+      : undefined
+    const bottom = Math.min(
+      scroller.bottom,
+      occluder?.height > 0 ? occluder.top : scroller.bottom,
+      clipToViewport ? scroller.viewportHeight : Infinity
+    )
+    if (
+      element &&
+      (!occluderSelector || occluder?.height > 0) &&
+      element.height > 0 &&
+      element.top >= Math.max(scroller.top, clipToViewport ? 0 : -Infinity) - 2 &&
+      element.bottom <= bottom + 2 &&
+      (!clipToViewport ||
+        (element.left >= Math.max(scroller.left, 0) - 2 &&
+          element.right <= Math.min(scroller.right, scroller.viewportWidth) + 2))
+    ) {
+      return { element, scroller, ...(occluder ? { occluder } : {}) }
     }
     await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
   }
-  throw new Error(`${description} after ${timeoutMs}ms: ${JSON.stringify({ element, scroller })}`)
+  throw new Error(
+    `${description} after ${timeoutMs}ms: ${JSON.stringify({ element, scroller, occluder })}`
+  )
 }
 
 async function waitForTopMetrics(control, selector, description, timeoutMs = 3_000) {

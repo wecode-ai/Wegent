@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { EventEmitter } from 'node:events'
 import { createServer } from 'node:http'
 import { afterEach, describe, expect, test, vi } from 'vitest'

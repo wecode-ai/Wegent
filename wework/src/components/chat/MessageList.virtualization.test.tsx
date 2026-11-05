@@ -1,14 +1,14 @@
-import { act, render, screen } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { MessageList } from './MessageList'
 import {
-  clearRuntimeConversationCacheForTests,
   cacheConversationVirtualMeasurements,
+  clearRuntimeConversationCacheForTests,
   getConversationVirtualMeasurements,
 } from '@/features/workbench/runtimeConversationCache'
-import type { WorkbenchMessage } from '@/types/workbench'
-import * as messagePretextLayout from '../../../../packages/collaboration/src/conversation/messagePretextLayout'
 import '@/i18n'
+import type { WorkbenchMessage } from '@/types/workbench'
+import { act, render, screen } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import * as messagePretextLayout from '../../../../packages/collaboration/src/conversation/messagePretextLayout'
+import { MessageList } from './MessageList'
 
 const {
   measureElementMock,
@@ -157,36 +157,6 @@ describe('MessageList desktop virtualization', () => {
     vi.unstubAllGlobals()
   })
 
-  test('uses the unified virtual layout for short conversations', () => {
-    const intersectionObserver = vi.fn()
-    vi.stubGlobal('IntersectionObserver', intersectionObserver)
-
-    render(
-      <MessageList
-        messages={buildMessages(5, 'short')}
-        scrollElementRef={{ current: createScrollElement(1_000) }}
-      />
-    )
-
-    expect(screen.getAllByTestId('message-user')).toHaveLength(5)
-    expect(screen.getByText('short message 0').closest('[data-index]')).toHaveStyle({
-      position: 'absolute',
-    })
-    expect(useVirtualizerMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        anchorTo: 'end',
-        count: 5,
-        enabled: true,
-        overscan: 2,
-      })
-    )
-    const virtualizer = virtualizerInstances.at(-1)
-    expect(
-      (virtualizer?.shouldAdjustScrollPositionOnItemSizeChange as (() => boolean) | undefined)?.()
-    ).toBeUndefined()
-    expect(intersectionObserver).not.toHaveBeenCalled()
-  })
-
   test.each([0, 2523.78])(
     'measures rich historical Markdown while scrolling using actual row height %s',
     async rowHeight => {
@@ -279,7 +249,9 @@ describe('MessageList desktop virtualization', () => {
     const heights: string[] = []
     const onVirtualLayoutChange = () => {
       const list = screen.getByText('layout message 19').closest('[data-index]')?.parentElement
-      heights.push(list?.style.height ?? '')
+      heights.push(
+        list?.querySelector<HTMLElement>('[data-virtual-message-tail]')?.style.height ?? ''
+      )
     }
     const { rerender } = render(
       <MessageList
@@ -288,7 +260,7 @@ describe('MessageList desktop virtualization', () => {
         onVirtualLayoutChange={onVirtualLayoutChange}
       />
     )
-    expect(heights).toEqual(['10000px'])
+    expect(heights).toEqual(['7620px'])
 
     virtualizerLayout.height = 10_040
     rerender(
@@ -299,7 +271,7 @@ describe('MessageList desktop virtualization', () => {
       />
     )
     // No ResizeObserver callback or animation frame has run between commit and this assertion.
-    expect(heights).toEqual(['10000px', '10040px'])
+    expect(heights).toEqual(['7620px', '7660px'])
   })
 
   test('notifies the scroll owner when inverse row measurements preserve total height', () => {
@@ -308,8 +280,10 @@ describe('MessageList desktop virtualization', () => {
     const positions: string[] = []
     const onVirtualLayoutChange = () => {
       const row = screen.getByText('layout message 19').closest<HTMLElement>('[data-index]')!
-      expect(row.parentElement).toHaveStyle({ height: '10000px' })
-      positions.push(row.style.transform)
+      expect(row.parentElement!.style.height).toBe('')
+      expect(row.style.position).toBe('')
+      expect(row.style.transform).toBe('')
+      positions.push(row.style.marginTop)
     }
     const { rerender } = render(
       <MessageList
@@ -318,7 +292,7 @@ describe('MessageList desktop virtualization', () => {
         onVirtualLayoutChange={onVirtualLayoutChange}
       />
     )
-    expect(positions).toEqual(['translateY(2280px)'])
+    expect(positions).toEqual(['20px'])
 
     // The preceding row grows by 40px and this row shrinks by 40px in the same commit.
     virtualizerLayout.shift = 40
@@ -329,7 +303,7 @@ describe('MessageList desktop virtualization', () => {
         onVirtualLayoutChange={onVirtualLayoutChange}
       />
     )
-    expect(positions).toEqual(['translateY(2280px)', 'translateY(2320px)'])
+    expect(positions).toEqual(['20px', '20px'])
   })
 
   test('keeps only the end-anchored overscan range mounted for long conversations', () => {

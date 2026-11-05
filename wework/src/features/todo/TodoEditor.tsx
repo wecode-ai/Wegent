@@ -24,6 +24,7 @@ import type { AITableApi } from '@/api/aitable'
 import type { CloudLoopItem, CloudProject, LoopItemTaskBinding } from '@/api/deliveries'
 import type { ProjectWithTasks } from '@/types/api'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import type { RuntimeTaskAddress } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
 import { saveBlobToDownloads } from '@/lib/blobDownload'
@@ -38,6 +39,7 @@ import type { StartHumanTaskFromReplyInput } from './TaskActivityView'
 import { createWeworkDeliverySharedWorkspaceApi } from '@/features/collaboration/weworkSharedWorkspaceApi'
 import { canEditProjectSpaceIssue } from './projectSpaceSelection'
 import { CloudFilePreviewDialog } from './CloudFilePreviewDialog'
+import { IssueWebLinkButton } from './IssueWebLinkButton'
 
 type DeliveryApi = NonNullable<WorkbenchServices['deliveryApi']>
 
@@ -111,6 +113,7 @@ export type TodoEditorProps = TodoEditorApiProps & {
   deleteLabel?: string
   onCreateTask?: () => void
   onOpenTaskConversation?: (task: LoopItemTaskBinding) => void
+  onOpenRuntimeTask?: (address: RuntimeTaskAddress) => void
   onOpenChildTask?: (task: CloudLoopItem) => void
   onOpenRelatedIssue?: (issue: CloudLoopItem) => void
   /** Starts the work item a manager assigned this member, from a reply. */
@@ -245,6 +248,7 @@ export function TodoEditor(props: TodoEditorProps) {
           projectMembers={context.members as import('@/api/deliveries').CloudProjectMember[]}
           issueTimeline={props.presentation === 'workspace-panel'}
           onOpenTask={props.onOpenTaskConversation}
+          onOpenRuntimeTask={props.onOpenRuntimeTask}
           onStartHumanTaskFromReply={props.onStartHumanTaskFromReply}
           onRefreshExecutionArtifacts={context.onExecutionArtifactsChange}
           members={context.members}
@@ -346,7 +350,14 @@ export function TodoEditor(props: TodoEditorProps) {
     ) as SharedIssueDetailTaskBinding[] | undefined,
     taskExecutionStates: props.taskExecutionStates,
     deviceNamesById: props.deviceNamesById,
-    headerActions: props.headerActions,
+    headerActions: (
+      <>
+        {props.mode === 'edit' ? (
+          <IssueWebLinkButton key={props.item.id} project={props.project} issueId={props.item.id} />
+        ) : null}
+        {props.headerActions}
+      </>
+    ),
     canStartWork: false,
     selectedTaskId: props.selectedTaskId,
     currentAssignment: props.currentAssignment,

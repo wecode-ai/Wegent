@@ -20,6 +20,8 @@ from app.models.delivery import (
     LoopItem,
     LoopItemActiveAssignment,
     LoopItemComment,
+    ProjectAutomationRule,
+    ProjectAutomationRun,
     ProjectChatAgent,
 )
 from app.models.kind import Kind
@@ -1248,6 +1250,71 @@ def test_create_completed_issue_does_not_start_execution(
         .count()
         == 0
     )
+
+
+@pytest.mark.parametrize("target_status", ["in_review", "completed"])
+@pytest.mark.parametrize("target_type", ["agent", "team"])
+def test_status_automation_creates_new_runs_for_an_existing_agent_assignment(
+    test_db: Session, test_user: User, target_status: str, target_type: str
+) -> None:
+    project = _make_project(test_db, test_user)
+    if target_type == "agent":
+        bot = _make_bot(test_db, project, test_user)
+        target_id = bot.id
+    else:
+        team = create_runnable_wegent_team(
+            test_db, user_id=test_user.id, name_prefix="status-handler"
+        )
+        _make_bot(test_db, project, test_user, wegent_team_id=team.id)
+        target_id = str(team.id)
+    item = _make_item(test_db, project, test_user)
+    rule = ProjectAutomationRule(
+        cloud_project_id=project.id,
+        title="Status handler",
+        created_by_user_id=test_user.id,
+    )
+    test_db.add(rule)
+    test_db.flush()
+    run_ids = []
+    for _ in range(2):
+        run = ProjectAutomationRun(
+            cloud_project_id=project.id,
+            parent_id=rule.id,
+            created_by_user_id=test_user.id,
+        )
+        test_db.add(run)
+        item.status = target_status
+        test_db.commit()
+        run_ids.append(str(run.id))
+        loop_item_service.assign(
+            test_db,
+            project_id=project.id,
+            item_id=item.id,
+            user_id=test_user.id,
+            values=LoopItemAssign(
+                assignee_type=target_type,
+                assignee_id=target_id,
+                version=item.version,
+                trigger="automation",
+            ),
+            automation_context={
+                "run_id": str(run.id),
+                "event": {
+                    "type": "task.status_changed",
+                    "payload": {"status": target_status},
+                },
+            },
+        )
+
+    executions = (
+        test_db.query(LoopItemExecution)
+        .filter(LoopItemExecution.loop_item_id == item.id)
+        .all()
+    )
+    assert {row.automation_run_id for row in executions} == set(run_ids)
+    assert len(executions) == 2
+    if target_status == "completed":
+        assert item.status == "completed"
 
 
 def test_refresh_execution_configuration_starts_run_without_snapshot(

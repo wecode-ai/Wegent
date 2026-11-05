@@ -4,6 +4,7 @@
 
 import { DialogForm } from "../controls/DialogForm";
 import { TemplateCreateSection } from "../templates/TemplateCreateSection";
+import { TemplateEnvironmentSelection } from "../templates/TemplateEnvironmentSelection";
 
 import * as Popover from "@radix-ui/react-popover";
 import {
@@ -928,8 +929,9 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
               setup={resourceSetup}
               locale={labels.locale}
               initialTemplate={props.initialTemplate}
-              disabled={state.saving}
+              disabled={state.saving || Boolean(state.createdProject)}
               onSelect={(document) => {
+                commands.clearError();
                 commands.setTemplateDocument(document);
                 setTemplateSelected(Boolean(document));
                 if (document) {
@@ -973,6 +975,19 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
               }}
             />
           )}
+          {templateSelected &&
+            resourceSetup?.requiresTemplateEnvironmentSelection && (
+              <TemplateEnvironmentSelection
+                environments={resourceSetup.executionEnvironments ?? []}
+                selected={state.executionEnvironmentDeviceIds}
+                locale={labels.locale}
+                disabled={state.saving || Boolean(state.createdProject)}
+                onChange={commands.setExecutionEnvironmentDeviceIds}
+                loading={resourceSetup.executionEnvironmentLoading}
+                error={resourceSetup.executionEnvironmentError}
+                onRetry={resourceSetup.retryExecutionEnvironments}
+              />
+            )}
           <label className="collaboration-project-create-field">
             <span>{labels.name}</span>
             <input
@@ -1910,36 +1925,37 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
               </div>
             ) : null}
           </section>
-
-          {state.error && (
-            <p className="collaboration-project-create-error" role="alert">
-              {state.error}
-            </p>
-          )}
         </div>
         {!groupEditorDraft && !groupModelPickerOpen ? (
           <footer className="collaboration-project-create-footer">
-            <button
-              type="button"
-              disabled={state.saving}
-              onClick={() => {
-                if (!state.saving) onClose();
-              }}
-            >
-              {labels.cancel}
-            </button>
-            <button
-              type="submit"
-              className="collaboration-primary-button"
-              data-testid={testIds?.confirm ?? "cloud-project-create-confirm"}
-              disabled={!state.canSubmit}
-            >
-              {state.saving
-                ? labels.creating
-                : state.createdProject
-                  ? labels.openCreated
-                  : labels.create}
-            </button>
+            {state.error && (
+              <p className="collaboration-project-create-error" role="alert">
+                {state.error}
+              </p>
+            )}
+            <div className="collaboration-project-create-footer-actions">
+              <button
+                type="button"
+                disabled={state.saving}
+                onClick={() => {
+                  if (!state.saving) onClose();
+                }}
+              >
+                {labels.cancel}
+              </button>
+              <button
+                type="submit"
+                className="collaboration-primary-button"
+                data-testid={testIds?.confirm ?? "cloud-project-create-confirm"}
+                disabled={!state.canSubmit}
+              >
+                {state.saving
+                  ? labels.creating
+                  : state.createdProject
+                    ? labels.openCreated
+                    : labels.create}
+              </button>
+            </div>
           </footer>
         ) : null}
       </DialogForm>

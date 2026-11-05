@@ -14,9 +14,12 @@
 
 import * as http from 'http'
 import { writePhaseChangingMessage, type PhaseChangingMessage } from './mock-responses-phase'
-import { closePreviewFileSource, handlePreviewFileSource } from './preview-file-source'
+import { handlePreviewFileSource } from './preview-file-source'
+import { startMockServer } from './mock-server-lifecycle'
 import { writeAnthropicStreamingResponse, writeAnthropicJsonResponse } from './mock-anthropic'
 import { MockResponseGate } from './mock-response-gate'
+import { MockScopeStore, mockRequestScope, withMockScope } from './mock-scope'
+import { verifyImageUrlInMessage, type VisionMessage } from './mock-model-vision'
 import {
   writeAnthropicStreamingToolCalls,
   writeAnthropicJsonToolCalls,
@@ -42,19 +45,6 @@ interface CapturedRequest {
   url: string
   headers: Record<string, string | string[] | undefined>
   body: unknown
-}
-
-interface VisionMessage {
-  role: string
-  content:
-    | string
-    | Array<{
-        type: string
-        text?: string
-        image_url?: {
-          url: string
-        }
-      }>
 }
 
 interface ModelRequest {
@@ -94,68 +84,19 @@ interface ToolScenario {
   capturedHeaders: Array<Record<string, string | string[] | undefined>>
 }
 
-// Store captured requests for verification
-const capturedRequests: CapturedRequest[] = []
-const streamRules: StreamRule[] = []
-const responseGates = new Map<string, MockResponseGate>()
-const toolScenarios: ToolScenario[] = []
-const servedToolRuleCounts = new Map<string, number>()
+const states = new MockScopeStore(() => ({
+  capturedRequests: [] as CapturedRequest[],
+  streamRules: [] as StreamRule[],
+  responseGates: new Map<string, MockResponseGate>(),
+  toolScenarios: [] as ToolScenario[],
+  servedToolRuleCounts: new Map<string, number>(),
+}))
 
 // Port for the mock server
 const PORT = parseInt(process.env.MOCK_MODEL_PORT || '9999')
 const DEFAULT_RESPONSE_CONTENT =
   'I can see the image you uploaded. It appears to be a small red test image with dimensions of 10x10 pixels.'
 const DEFAULT_CHUNK_DELAY_MS = 50
-
-/**
- * Verify if a message contains valid image_url format
- */
-function verifyImageUrlInMessage(message: VisionMessage): {
-  hasImageUrl: boolean
-  imageUrlPrefix?: string
-  isValidFormat: boolean
-  details: string
-} {
-  if (typeof message.content === 'string') {
-    return {
-      hasImageUrl: false,
-      isValidFormat: false,
-      details: 'Content is a string, not vision format',
-    }
-  }
-
-  if (!Array.isArray(message.content)) {
-    return {
-      hasImageUrl: false,
-      isValidFormat: false,
-      details: 'Content is not an array',
-    }
-  }
-
-  let hasText = false
-  let hasImageUrl = false
-  let imageUrlPrefix: string | undefined
-
-  for (const item of message.content) {
-    if (item.type === 'text' && item.text) {
-      hasText = true
-    }
-    if (item.type === 'image_url' && item.image_url?.url) {
-      hasImageUrl = true
-      const match = item.image_url.url.match(/^(data:image\/[^;]+;base64,)/)
-      if (match) {
-        imageUrlPrefix = match[1]
-      }
-    }
-  }
-
-  return {
-    hasImageUrl,
-    imageUrlPrefix,
-    isValidFormat: hasText && hasImageUrl && !!imageUrlPrefix,
-    details: `hasText=${hasText}, hasImageUrl=${hasImageUrl}, prefix=${imageUrlPrefix || 'none'}`,
-  }
-}
 
 function extractText(value: unknown): string {
   if (typeof value === 'string') {
@@ -182,8 +123,9 @@ function getRequestText(request: ModelRequest | null): string {
 
 function findStreamRule(request: ModelRequest | null): StreamRule | undefined {
   const requestText = getRequestText(request)
-  return streamRules
-    .filter(rule => requestText.includes(rule.matchText))
+  return states
+    .current()
+    .streamRules.filter(rule => requestText.includes(rule.matchText))
     .sort((left, right) => right.matchText.length - left.matchText.length)[0]
 }
 
@@ -213,8 +155,9 @@ function findToolScenario(
   headers: http.IncomingHttpHeaders
 ): ToolScenario | undefined {
   const requestText = getRequestText(request)
-  return toolScenarios
-    .filter(
+  return states
+    .current()
+    .toolScenarios.filter(
       scenario =>
         requestText.includes(scenario.matchText) && headersMatch(headers, scenario.matchHeaders)
     )
@@ -607,6 +550,13 @@ function writeResponsesToolCalls(
  * Create the mock HTTP server
  */
 const server = http.createServer((req, res) => {
+  let scope: string
+  try {
+    scope = mockRequestScope(req)
+  } catch {
+    res.writeHead(400).end('Invalid mock request scope')
+    return
+  }
   const pathname = req.url?.split('?')[0]
   if (
     pathname &&
@@ -624,11 +574,16 @@ const server = http.createServer((req, res) => {
   }
   let body = ''
 
-  req.on('data', chunk => {
-    body += chunk.toString()
+  req.setEncoding('utf8')
+  req.on('data', (chunk: string) => {
+    body += chunk
   })
 
-  req.on('end', async () => {
+  req.on('end', () => withMockScope(scope, handleRequest))
+
+  async function handleRequest(): Promise<void> {
+    const { capturedRequests, streamRules, responseGates, toolScenarios, servedToolRuleCounts } =
+      states.current()
     const timestamp = new Date().toISOString()
 
     try {
@@ -657,7 +612,7 @@ const server = http.createServer((req, res) => {
 
     // Log the request
     console.log(`\n${'='.repeat(60)}`)
-    console.log(`[${timestamp}] ${req.method} ${req.url}`)
+    console.log(`[${timestamp}] ${req.method} ${req.url}${scope ? ` scope=${scope}` : ''}`)
     console.log(`${'='.repeat(60)}`)
 
     const requestText = getRequestText(parsedBody).trim()
@@ -1010,49 +965,9 @@ const server = http.createServer((req, res) => {
       res.writeHead(404, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ error: 'Not found' }))
     }
-  })
+  }
 })
 
-// Start the server
-server.listen(PORT, () => {
-  console.log(`
-╔════════════════════════════════════════════════════════════╗
-║           Mock Model Server for E2E Testing                ║
-╠════════════════════════════════════════════════════════════╣
-║  Server running on: http://localhost:${PORT}                  ║
-║                                                            ║
-║  Endpoints:                                                ║
-║    POST /v1/responses        - Mock OpenAI Responses API   ║
-║    POST /v1/chat/completions - Mock OpenAI chat API        ║
-║    POST /v1/messages         - Mock Anthropic Messages API ║
-║    GET  /captured-requests   - View captured requests      ║
-║    POST /clear-requests      - Clear captured requests     ║
-║    GET  /stream-rules        - View stream rules           ║
-║    POST /stream-rules        - Add a matched stream rule   ║
-║    DELETE /stream-rules      - Clear stream rules          ║
-║    POST /tool-scenarios      - Add a tool-call scenario    ║
-║    GET  /tool-scenarios      - View one tool-call scenario ║
-║    DELETE /tool-scenarios    - Clear tool-call scenarios   ║
-║    POST /mcp                 - Mock Streamable HTTP MCP    ║
-║    GET  /mcp-control/calls   - View provider tool calls    ║
-║    POST /mcp-control/reset   - Reset provider state        ║
-║    GET  /health              - Health check                ║
-║                                                            ║
-║  Configure your model to use:                              ║
-║    Base URL: http://localhost:${PORT}/v1                      ║
-║    API Key: any-value                                      ║
-╚════════════════════════════════════════════════════════════╝
-`)
-})
+startMockServer(server, PORT)
 
-// Handle graceful shutdown
-process.on('SIGINT', async () => {
-  console.log('\nShutting down mock server...')
-  await closePreviewFileSource()
-  server.close(() => {
-    console.log('Server closed')
-    process.exit(0)
-  })
-})
-
-export { server, capturedRequests, verifyImageUrlInMessage }
+export { server, verifyImageUrlInMessage }

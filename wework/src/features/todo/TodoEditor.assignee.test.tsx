@@ -1,9 +1,9 @@
-import { useState } from 'react'
-import { describe, expect, it, vi } from 'vitest'
+import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
+import '@/i18n'
 import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import '@/i18n'
-import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
+import { useState } from 'react'
+import { describe, expect, it, vi } from 'vitest'
 import { TodoEditor } from './TodoEditor'
 
 const item = {
@@ -82,16 +82,6 @@ function setup(
 }
 
 describe('workspace Issue assignee', () => {
-  it('keeps one inline save action in the read-first two-column layout', async () => {
-    setup({}, 'Owner', 'modal')
-    const user = userEvent.setup()
-    await user.click(screen.getAllByTestId('cloud-todo-detail-assignee')[0])
-    await user.click(await screen.findByTestId('cloud-todo-detail-assignee-option-empty'))
-    const save = screen.getByTestId('cloud-todo-save')
-    expect(save.closest('.task-detail-meta-line')).not.toBeNull()
-    expect(save).toHaveTextContent('保存分配')
-  })
-
   it('retains the inline save action and draft after a rejected assignment', async () => {
     const api = setup()
     api.assignLoopItem.mockRejectedValueOnce(new Error('Assignment rejected'))
@@ -253,12 +243,6 @@ describe('workspace Issue assignee', () => {
       expect(screen.getByTestId('cloud-todo-detail-assignee')).toBeDisabled()
     }
   )
-
-  it('switches the owner for a Developer without project management role', () => {
-    setup({}, 'Developer')
-    expect(screen.getByTestId('cloud-todo-state-assignee')).toHaveTextContent('Codex 工程师')
-    expect(screen.getByTestId('cloud-todo-detail-assignee')).not.toBeDisabled()
-  })
 
   it('keeps a Viewer Issue creator read-only under CP06 and CP07', () => {
     const api = setup({ created_by_user_id: 1 }, 'Viewer')

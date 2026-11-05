@@ -5,7 +5,12 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
+import { verifyBrowserFullControl } from '../modules/browser-full-control.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
+import {
+  handleBrowserHistoryModelRequest,
+  verifyBrowserHistoryResume,
+} from './browser-history-resume-regression.mjs'
 import {
   EMBEDDED_BROWSER_BRIDGE_COLLISION_COMPLETION_TEXT,
   EMBEDDED_BROWSER_BRIDGE_COLLISION_PROMPT,
@@ -631,7 +636,7 @@ function parseToolJson(text) {
   return JSON.parse(text)
 }
 
-export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) {
+export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs, workspacePath }) {
   let cacheResourceRequests = 0
 
   return {
@@ -639,6 +644,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       desktopScenarioExecutorBinary = path
     },
     async handleHttp(request, response, url) {
+      if (await handleBrowserHistoryModelRequest(request, response, url)) return true
       if (request.method === 'GET' && url.pathname === REDIRECT_PATH) {
         response.writeHead(302, { location: FIXTURE_PATH })
         response.end()
@@ -1137,7 +1143,14 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       )
       const localhostWait = await bridgeCall({
         action: 'waitFor',
-        options: { condition: { textVisible: READY_TEXT } },
+        // The previous origin serves the same text and the address bar updates
+        // before navigation commits. Wait for the target document itself.
+        options: {
+          condition: {
+            textVisible: READY_TEXT,
+            expression: `location.href === ${JSON.stringify(normalizedLocalhostUrl)}`,
+          },
+        },
         timeoutMs: 5_000,
       })
       assert.equal(
@@ -1629,6 +1642,12 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
               })
             )
         )
+        await verifyBrowserFullControl(
+          control,
+          bridgeCall,
+          async request => parseToolJson(await callTool('browser_fill', request)),
+          uiTimeoutMs
+        )
       })
 
       // file:// local file support: the bridge renders a local HTML page, and
@@ -1789,6 +1808,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         )}\n`,
         'utf8'
       )
+      await verifyBrowserHistoryResume(control, resultDir, workspacePath, uiTimeoutMs)
     },
   }
 }

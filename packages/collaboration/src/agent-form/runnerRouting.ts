@@ -32,6 +32,7 @@ export interface RunnerModel extends RunnerModelIdentity {
 export interface RunnerEnvironment {
   id: string
   device_key: string
+  app_device_id?: string
   name: string
   owner_type: 'user' | 'workspace'
   owner_id: string

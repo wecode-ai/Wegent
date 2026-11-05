@@ -11,13 +11,31 @@ import type {
   RunnerModel,
 } from '@wegent/collaboration'
 import type { RuntimeTaskSummary } from '@/types/api'
+import type { Automation } from '@/types/automation'
+
+export interface StandInOnboardingResult {
+  settings?: PersonalStandInSettings | null
+  state: { version: number; completed: boolean; weeklyReview?: boolean }
+  reviewTemplate: Omit<Automation, 'source'>
+}
 
 export interface ConnectionProviderDescriptor {
   id: string
   displayName: string
   resourceKinds: string[]
+  allResourceLabel?: string
+  allResourceKinds?: string[]
+  allResourceLabels?: Record<string, string>
   resourceLabels?: Record<string, string>
-  locales?: Record<string, { displayName?: string; resourceLabels?: Record<string, string> }>
+  locales?: Record<
+    string,
+    {
+      displayName?: string
+      resourceLabels?: Record<string, string>
+      allResourceLabels?: Record<string, string>
+      allResourceLabel?: string
+    }
+  >
   authTarget?: { pluginKey: string; connectorSlug: string }
   availability: { status: string; code?: string }
   dependencies: Array<{
@@ -158,6 +176,14 @@ export type StandInTelemetryFact = {
 }[keyof StandInGeneratedEventMap]
 
 export interface StandInExecutorApi {
+  onboarding(userId: number, deviceId: string, language: string): Promise<StandInOnboardingResult>
+  completeOnboarding(
+    userId: number,
+    deviceId: string,
+    weeklyReview: boolean,
+    time: string,
+    language: string
+  ): Promise<StandInOnboardingResult>
   projectProcessing(
     userId: number,
     deviceId: string,
@@ -224,9 +250,13 @@ export interface StandInExecutorApi {
     providerId: string,
     kind: string,
     query: string,
-    cursor?: string
+    cursor?: string,
+    scope?: 'all'
   ): Promise<{
-    items: Pick<StandInSourceConnection, 'id' | 'name' | 'kind' | 'profile' | 'providerId'>[]
+    items: Pick<
+      StandInSourceConnection,
+      'id' | 'name' | 'kind' | 'profile' | 'providerId' | 'scope'
+    >[]
     hasMore?: boolean
     nextCursor?: string
   }>
@@ -333,6 +363,17 @@ export function createStandInExecutorApi(
     }
   }
   return {
+    onboarding: (userId, deviceId, language) =>
+      request('runtime.stand_in.onboarding.get', { userId, language }, deviceId),
+    completeOnboarding: async (userId, deviceId, weeklyReview, time, language) => {
+      const result = await request<StandInOnboardingResult>(
+        'runtime.stand_in.onboarding.complete',
+        { userId, weeklyReview, time, language },
+        deviceId
+      )
+      if (result.settings) publishPersonalStandIn(result.settings)
+      return result
+    },
     processingStatus: (userId, deviceId) =>
       request('runtime.stand_in.processing.status', { userId }, deviceId),
     checkProcessing: (userId, deviceId) =>
@@ -402,8 +443,12 @@ export function createStandInExecutorApi(
       ),
     retrySource: (userId, deviceId, source) =>
       request('runtime.stand_in.source.retry', { userId, source }, deviceId),
-    searchConnectionResources: (deviceId, providerId, kind, query, cursor) =>
-      request('runtime.connections.resources', { providerId, kind, query, cursor }, deviceId),
+    searchConnectionResources: (deviceId, providerId, kind, query, cursor, scope) =>
+      request(
+        'runtime.connections.resources',
+        { providerId, kind, query, cursor, ...(scope ? { scope } : {}) },
+        deviceId
+      ),
     conversation: (userId, deviceId, message, roleId, options) =>
       request('runtime.stand_in.conversation', { userId, message, roleId, options }, deviceId),
     projectProcessing: (userId, deviceId, target, check = false) =>

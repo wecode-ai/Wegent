@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import assert from 'node:assert/strict'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -35,6 +37,9 @@ vi.mock('../e2e/desktop/modules/plugin-scope-boundaries.mjs', () => ({
 }))
 vi.mock('../e2e/desktop/modules/plugin-sync-disconnect.mjs', () => ({
   verifyPluginSyncDisconnect: context => state.invoke('sync-disconnect', context),
+}))
+vi.mock('../e2e/desktop/modules/plugin-reinstall-status.mjs', () => ({
+  verifyPluginReinstallStatus: context => state.invoke('reinstall-status', context),
 }))
 vi.mock('../e2e/desktop/modules/plugin-write-coordination.mjs', () => ({
   verifyPluginWriteCoordination: context => state.invoke('write-coordination', context),
@@ -253,7 +258,12 @@ test('install/update cases reuse the write-coordination cloud, MinIO and all exi
 
   await f.scenario.verify(f.control)
 
-  expect(state.calls).toEqual(['sync-disconnect', 'write-coordination', 'install-and-update'])
+  expect(state.calls).toEqual([
+    'sync-disconnect',
+    'reinstall-status',
+    'write-coordination',
+    'install-and-update',
+  ])
   expect(state.storages).toHaveLength(1)
   expect(state.proxies).toHaveLength(3)
   expect(f.cloud.restartCloudExecutor).toHaveBeenCalledTimes(1)
@@ -276,7 +286,12 @@ for (const name of ['sync-disconnect', 'write-coordination']) {
 
     await expect(f.scenario.verify(f.control)).rejects.toBeInstanceOf(AggregateError)
 
-    expect(state.calls).toEqual(['sync-disconnect', 'write-coordination', 'install-and-update'])
+    expect(state.calls).toEqual([
+      'sync-disconnect',
+      'reinstall-status',
+      'write-coordination',
+      'install-and-update',
+    ])
     const { evidence } = await f.evidence()
     expect(evidence.find(entry => entry.group === name).passed).toBe(false)
     expect(evidence.find(entry => entry.group === 'install-and-update').passed).toBe(true)

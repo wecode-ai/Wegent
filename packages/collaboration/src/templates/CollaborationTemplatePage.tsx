@@ -227,7 +227,8 @@ function ScopedCollaborationTemplatePage({
             >
               {status ?? (selectedInstalled ? m.cloudAdded : m.cloudAdd)}
             </button>
-          ) : (
+          ) : null}
+          {(mode !== 'marketplace' || onUse) && (
             <button
               type="button"
               className="collaboration-primary-button"
@@ -255,7 +256,7 @@ function ScopedCollaborationTemplatePage({
                 }
               }}
             >
-              {status ??
+              {(mode === 'marketplace' ? null : status) ??
                 (selected.source === 'builtin' ||
                 local.records.some(
                   record => templateIdentity(record) === templateIdentity(selected)

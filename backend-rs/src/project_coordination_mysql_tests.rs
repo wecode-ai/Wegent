@@ -233,7 +233,10 @@ where
     let admin = MysqlService::connect(&url("mysql")).await.unwrap();
     let name = format!("coordination_{}", notifications::uuid().replace('-', ""));
     admin
-        .execute(format!("CREATE DATABASE {name}"), ())
+        .execute(
+            format!("CREATE DATABASE {name} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"),
+            (),
+        )
         .await
         .unwrap();
     let mysql = MysqlService::connect_with_options(

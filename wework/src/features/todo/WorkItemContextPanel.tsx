@@ -18,8 +18,13 @@ interface WorkItemContextPanelProps {
   currentUserId?: string | number
   localProjects?: ProjectWithTasks[]
   deviceNamesById?: Readonly<Record<string, string>>
-  onOpenBoard: () => void
+  onOpenBoard?: () => void
   onOpenTask: (address: RuntimeTaskAddress) => Promise<void> | void
+  onOpenRuntimeTask?: (address: RuntimeTaskAddress) => void
+  onOpenChildTask?: (item: CloudLoopItem) => void
+  focusedCommentId?: string
+  focusedCommentRequestKey?: string
+  readFirst?: boolean
 }
 
 export function WorkItemContextPanel({
@@ -33,6 +38,11 @@ export function WorkItemContextPanel({
   deviceNamesById,
   onOpenBoard,
   onOpenTask,
+  onOpenRuntimeTask,
+  onOpenChildTask,
+  focusedCommentId,
+  focusedCommentRequestKey,
+  readFirst,
 }: WorkItemContextPanelProps) {
   const { t } = useTranslation('common')
   const detailServices =
@@ -66,20 +76,27 @@ export function WorkItemContextPanel({
         <TodoEditor
           getRuntimeTranscript={services.runtimeWorkApi?.getRuntimeTranscript}
           mode="edit"
+          focusedCommentId={focusedCommentId}
+          focusedCommentRequestKey={focusedCommentRequestKey}
+          readFirst={readFirst}
           presentation="workspace-panel"
           workspacePanelFill
           showPanelControls={false}
+          onOpenRuntimeTask={onOpenRuntimeTask}
+          onOpenChildTask={onOpenChildTask}
           headerActions={
-            <button
-              type="button"
-              data-testid="work-item-open-board"
-              onClick={onOpenBoard}
-              className="issue-detail-header-icon"
-              aria-label={t('workbench.open_workspace', '打开工作空间')}
-              title={t('workbench.open_workspace', '打开工作空间')}
-            >
-              <ArrowUpRight size={16} aria-hidden="true" />
-            </button>
+            onOpenBoard && (
+              <button
+                type="button"
+                data-testid="work-item-open-board"
+                onClick={onOpenBoard}
+                className="issue-detail-header-icon"
+                aria-label={t('workbench.open_workspace', '打开工作空间')}
+                title={t('workbench.open_workspace', '打开工作空间')}
+              >
+                <ArrowUpRight size={16} aria-hidden="true" />
+              </button>
+            )
           }
           selectedTaskId={currentTask.taskId}
           deviceNamesById={deviceNamesById}

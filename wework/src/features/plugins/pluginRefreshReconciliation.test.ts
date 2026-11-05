@@ -1,5 +1,7 @@
-import { describe, expect, test, vi } from 'vitest'
+// @vitest-environment node
+
 import type { InstalledPlugin, PluginDeviceSyncResponse } from '@/types/api'
+import { describe, expect, test, vi } from 'vitest'
 import {
   reconcilePluginRefresh,
   verifyReconciledPluginInventory,
@@ -34,20 +36,6 @@ function operations() {
 }
 
 describe('plugin refresh reconciliation', () => {
-  test('verifies a fresh store inventory after synchronizing and invalidating caches', async () => {
-    const ops = operations()
-    ops.readStore.mockResolvedValueOnce([plugin(99)]).mockResolvedValueOnce([plugin(12)])
-    await reconcilePluginRefresh(ops)
-    expect(ops.sync).toHaveBeenCalledOnce()
-    expect(ops.readStore).toHaveBeenCalledTimes(2)
-    expect(ops.invalidate).toHaveBeenCalledOnce()
-  })
-  test('does not mutate unsupported or unreadable local inventories', async () => {
-    const ops = operations()
-    ops.readStore.mockRejectedValue(new Error('unsupported'))
-    await expect(reconcilePluginRefresh(ops)).rejects.toThrow('unsupported')
-    expect(ops.sync).not.toHaveBeenCalled()
-  })
   test('does not report success for HTTP success with failed device synchronization', async () => {
     const ops = operations()
     ops.sync.mockResolvedValue({

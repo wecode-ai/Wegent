@@ -10,6 +10,7 @@ import type { CollaborationProject } from '../types'
 import { CollaborationTemplateContext } from './context'
 import { ProjectTemplateSettings } from './ProjectTemplateSettings'
 import { CollaborationTemplateStore } from './store'
+import * as templateDocument from './document'
 
 let container: HTMLDivElement
 let root: Root
@@ -220,6 +221,33 @@ it('preserves read-only export access while hiding template import', async () =>
   expect(container.querySelector('[data-testid="project-template-import"]')).toBeNull()
   expect(button('project-template-save').disabled).toBe(false)
   expect(button('project-template-export').disabled).toBe(false)
+})
+
+it('ignores a pending Agent snapshot after closing and exports a fresh snapshot on reopen', async () => {
+  const api = createApi()
+  let resolve!: (agents: []) => void
+  vi.mocked(api.agents.list).mockImplementationOnce(
+    () =>
+      new Promise(done => {
+        resolve = done
+      })
+  )
+  const download = vi.spyOn(templateDocument, 'downloadTemplate').mockImplementation(() => {})
+  await render(api)
+  await click('collaboration-project-settings-sharing')
+  await click('project-template-export')
+  expect(api.agents.list).toHaveBeenCalledExactlyOnceWith(project.id, { forceRefresh: true })
+  expect(button('project-template-export').disabled).toBe(true)
+  await click('collaboration-template-close')
+  await click('collaboration-project-settings-sharing')
+  await act(async () => resolve([]))
+  expect(download).not.toHaveBeenCalled()
+  expect(button('project-template-export').disabled).toBe(false)
+  await click('project-template-export')
+  expect(download).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({ kind: 'Template' }),
+    'collaboration-template.yaml'
+  )
 })
 
 it('hides sharing and makes no configuration requests without a template library', async () => {

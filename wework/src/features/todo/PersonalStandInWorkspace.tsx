@@ -3,10 +3,12 @@ import type { CollaborationProject } from '@wegent/collaboration'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { DeviceInfo, RuntimeTaskAddress, User } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
-import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
+import { getStandInErrorMessage, reportStandInError } from '@/lib/stand-in-error-message'
 import { createLocalWorkspaceApi } from './localWorkspaceApi'
 import { createWeworkPlatformApi } from './weworkPlatformApi'
 import { StandInOverviewPage } from './StandInOverviewPage'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
 
 export function PersonalStandInWorkspace({
   services,
@@ -33,6 +35,12 @@ export function PersonalStandInWorkspace({
   const [projects, setProjects] = useState<CollaborationProject[]>([])
   const [error, setError] = useState<string | null>(null)
   const [attempt, setAttempt] = useState(0)
+  useEffect(() => {
+    if (!active || !isElectronRuntime() || getDesktopWindowLabel() !== 'main') return
+    void invokeDesktopHost<void>('renderer.startupReady').catch(cause => {
+      console.error('[Wework] Failed to reveal the personal stand-in workspace', cause)
+    })
+  }, [active])
   const api = useMemo(
     () =>
       createWeworkPlatformApi(
@@ -59,7 +67,10 @@ export function PersonalStandInWorkspace({
         }
       },
       cause => {
-        if (current) setError(getStandInErrorMessage(cause))
+        if (current) {
+          reportStandInError('load_projects', cause)
+          setError(getStandInErrorMessage(cause, 'load_projects_failed'))
+        }
       }
     )
     return () => {

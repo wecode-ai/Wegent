@@ -271,7 +271,7 @@ pub(crate) async fn verify_dispatch_transactions(mysql: &MysqlService) {
     assert_eq!(row.metadata.0["collaboration_group"]["id"], "101");
     assert_eq!(row.metadata.0["follower_user_ids"], json!([8]));
     assert_eq!(notification_count(mysql).await, 2);
-    let notifications: Vec<brz_mysql::MysqlRow> = mysql.fetch_all("SELECT user_id,JSON_UNQUOTE(JSON_EXTRACT(payload,'$.event')) AS event FROM wework_notifications ORDER BY event",()).await.unwrap();
+    let notifications: Vec<brz_mysql::MysqlRow> = mysql.fetch_all("SELECT user_id,payload FROM wework_notifications ORDER BY JSON_UNQUOTE(JSON_EXTRACT(payload,'$.event'))",()).await.unwrap();
     assert_eq!(
         notifications
             .iter()
@@ -282,9 +282,9 @@ pub(crate) async fn verify_dispatch_transactions(mysql: &MysqlService) {
     assert_eq!(
         notifications
             .iter()
-            .map(|row| row.get_required::<String>("event").unwrap())
+            .map(|row| row.get_required::<Json<Value>>("payload").unwrap().0["event"].clone())
             .collect::<Vec<_>>(),
-        vec!["assignee", "status"]
+        vec![json!("assignee"), json!("status")]
     );
     let receipt:brz_mysql::MysqlRow=mysql.fetch_one("SELECT automation_run_id,assigner_user_id,executor_owner_user_id FROM loop_item_executions",()).await.unwrap();
     assert_eq!(

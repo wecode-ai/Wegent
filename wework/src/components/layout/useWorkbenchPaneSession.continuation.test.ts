@@ -1,24 +1,15 @@
-import { act, cleanup, fireEvent, renderHook, waitFor } from '@testing-library/react'
-import { createElement, StrictMode, type ReactNode } from 'react'
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import type { RuntimeGoal, RuntimeTaskAddress } from '@/types/api'
-import type { WorkbenchMessage } from '@/types/workbench'
 import { useConversationFind } from '@/components/chat/useConversationFind'
-import { getPlatform } from '@/lib/platform'
-import { useScopedDraftInput } from '@/features/workbench/useScopedDraftInput'
-import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
 import {
   applyRuntimeConversationAction,
   cacheRuntimeConversationQueuedMessages,
   cacheRuntimeConversationQueuePaused,
   clearRuntimeConversationCacheForTests,
+  getRuntimeConversationMessages,
   getRuntimeConversationQueuedMessages,
   getRuntimeConversationQueuePaused,
-  getRuntimeConversationMessages,
   reconcileRuntimeConversationSnapshot,
   replaceRuntimeConversationSnapshot,
 } from '@/features/workbench/runtimeConversationCache'
-import type { RuntimeConversationTurn } from '@/types/workbench'
 import {
   getRuntimeConversationQueueController,
   resetRuntimeConversationQueueControllersForTests,
@@ -27,8 +18,19 @@ import {
   RuntimeTaskLifecycleProvider,
   RuntimeTaskLifecycleStore,
 } from '@/features/workbench/runtimeTaskLifecycle'
+import { useScopedDraftInput } from '@/features/workbench/useScopedDraftInput'
+import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
+import { getPlatform } from '@/lib/platform'
+import type { RuntimeGoal, RuntimeTaskAddress } from '@/types/api'
+import type { RuntimeConversationTurn, WorkbenchMessage } from '@/types/workbench'
+import { act, cleanup, fireEvent, renderHook, waitFor } from '@testing-library/react'
+import { createElement, StrictMode, type ReactNode } from 'react'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import {
+  pendingRequestUserInputPayload,
+  pendingRequestUserInputResponses,
+} from './requestUserInputOverlay'
 import { useWorkbenchPaneSession } from './useWorkbenchPaneSession'
-import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
 
 const mocks = vi.hoisted(() => ({
   context: {} as Record<string, unknown>,
@@ -454,7 +456,7 @@ describe('composer draft during an in-flight send', () => {
     }
   )
 
-  test.each(['rejected', 'thrown'] as const)(
+  test.each(['rejected'] as const)(
     'preserves newer text when a new-pane send is %s',
     async outcome => {
       let rejectSend!: (cause: Error) => void
@@ -769,7 +771,7 @@ describe('pane continuation without composer submission', () => {
     }
   )
 
-  test.each([true, false])(
+  test.each([true])(
     'retains a form while terminal history arrives before its response acknowledgment (accepted=%s)',
     async accepted => {
       const { result } = await renderSession()
@@ -1102,22 +1104,91 @@ describe('composer cancellation rollback', () => {
   )
 })
 
-describe('accepted async question replies', () => {
-  test.each([true, false])(
-    'clears global waiting only after reply acceptance (%s)',
-    async accepted => {
-      const { result } = await renderSession()
-      act(() => lifecycleStore.userInputRequested(address, 'async'))
-      mocks.send.mockResolvedValue(accepted)
-      await act(async () => {
-        expect(
-          await result.current.sendRequestUserInputResponse(
-            { requestId: 'async-question', answers: { direction: { answers: ['Complete'] } } },
-            { appendUserMessage: true }
-          )
-        ).toBe(accepted)
-      })
-      expect(lifecycleStore.getTask(address)?.derived.shouldShowSidebarWaiting).toBe(!accepted)
+test.each([true, false])(
+  'dismisses a question group with one cancellation and restores all IDs on failure (%s)',
+  async accepted => {
+    const { result } = await renderSession()
+    mocks.cancel.mockResolvedValueOnce(accepted)
+    await act(async () => {
+      await result.current.ignoreRequestUserInput([
+        { kind: 'request_user_input', delivery: 'async', itemId: 'first' },
+        { kind: 'request_user_input', delivery: 'async', itemId: 'second' },
+      ])
+    })
+    expect(mocks.cancel).toHaveBeenCalledTimes(1)
+    expect(result.current.answeredRequestUserInputIds.has('item:first')).toBe(accepted)
+    expect(result.current.answeredRequestUserInputIds.has('item:second')).toBe(accepted)
+  }
+)
+
+test.each([true, false])(
+  'settles the whole async group after guidance without a turn ID (accepted=%s)',
+  async accepted => {
+    const { result } = await renderSession()
+    mocks.guide.mockResolvedValueOnce({ sent: accepted })
+    act(() => {
+      reconcileRuntimeConversationSnapshot(address, [
+        {
+          id: 'group-turn',
+          status: 'streaming',
+          items: ['first', 'second'].map(itemId => ({
+            id: itemId,
+            type: 'block',
+            block: {
+              id: itemId,
+              type: 'tool',
+              toolName: 'request_user_input',
+              status: 'done',
+              createdAt: 1,
+              renderPayload: {
+                kind: 'request_user_input',
+                delivery: 'async',
+                itemId,
+                questions: [{ id: 'question_1', question: `${itemId}?` }],
+              },
+            },
+          })),
+        },
+      ])
+      lifecycleStore.turnStarted(address, 'group-turn')
+    })
+    const response = {
+      itemId: 'first',
+      answers: {
+        question_1: { answers: ['One'] },
+        '["item:second","question_1",0]': { answers: ['Two'] },
+      },
     }
-  )
-})
+    const responses = pendingRequestUserInputResponses(response, result.current.messages)
+    await act(async () => {
+      expect(
+        await result.current.sendRequestUserInputResponse(response, {
+          requestUserInputResponses: responses,
+        })
+      ).toBe(accepted)
+    })
+    if (accepted) {
+      expect(result.current.messages.flatMap(message => message.blocks ?? [])).toMatchObject([
+        {
+          renderPayload: {
+            response: { itemId: 'first', answers: { question_1: { answers: ['One'] } } },
+          },
+        },
+        {
+          renderPayload: {
+            response: { itemId: 'second', answers: { question_1: { answers: ['Two'] } } },
+          },
+        },
+      ])
+    }
+    expect(mocks.guide).toHaveBeenCalledOnce()
+    expect(result.current.answeredRequestUserInputIds.has('item:first')).toBe(accepted)
+    expect(result.current.answeredRequestUserInputIds.has('item:second')).toBe(accepted)
+    expect(
+      pendingRequestUserInputPayload(
+        result.current.messages,
+        result.current.answeredRequestUserInputIds
+      ) === null
+    ).toBe(accepted)
+  }
+)

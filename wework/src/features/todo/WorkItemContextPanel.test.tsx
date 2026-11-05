@@ -2,8 +2,8 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
 
-import '@/i18n'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
+import '@/i18n'
 import type { ProjectSpaceApi } from './projectSpaceSelection'
 import { WorkItemContextPanel } from './WorkItemContextPanel'
 

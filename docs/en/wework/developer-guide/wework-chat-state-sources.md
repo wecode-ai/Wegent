@@ -145,14 +145,26 @@ that identity, but it must not be required before the turn becomes active.
 Guidance and interruption therefore still target the current turn when a live
 notification is delayed or missing.
 
+The UI and guidance must read the same `NativeExecutionState`, rather than
+infer execution from local request controls. A start receipt may only bind the
+current request's `starting` state; native notifications then supply process
+generation and timing. A late receipt cannot reactivate a settled or replaced
+request, and a delayed start notification for the same turn cannot revive a
+stopped state. Native Goal continuations can outlive local request controls and must
+remain guidable through their native running turn. Waiting for the next turn
+is bounded and does not create another guidance state.
+
 When the user sends guidance, Wework optimistically inserts the guidance
 message into the current turn before calling `runtime.tasks.guidance`. If
 Codex `turn/steer` explicitly reports that the expected turn ID differs from
-the actual active turn ID, the executor updates its record with the returned
-ID and retries exactly once. The successful response turn ID may rebind the
-optimistic message to the correct turn. On failure, Wework removes the
+the actual active turn ID, the executor corrects this guidance request's target
+and retries exactly once without rewriting execution state. The successful
+response turn ID may rebind the optimistic message to the correct turn. On failure, Wework removes the
 optimistic message and keeps a retryable queue item so the transcript never
 shows guidance that Codex did not accept.
+
+Queue items display the specific failure reason; an absent active turn asks
+the user to edit and resend.
 
 **Interrupt and send now** optimistically marks the running turn as cancelled
 and removes in-flight optimistic guidance before requesting interruption. The
@@ -700,6 +712,16 @@ After changing this path, run `pnpm --filter wework e2e:desktop -- --segment tas
 - `runtimePaneStatus.ts` only projects the lifecycle snapshot into compatibility presentation fields; it does not maintain task or turn state.
 
 ## Maintenance Rules
+
+### Display Clock Update Boundaries
+
+Tool duration is presentation state: `ToolDurationText` owns the 0.1-second clock in a leaf component. Clock ticks must not rerender labels, command parsing, expanded output, or the tool list. Non-tool blocks and branches that do not display a duration must not create timers.
+
+The summary header owns the thinking-only duration and updates once per displayed second. When tool activity hides the summary duration, it neither formats that duration nor starts a timer. The list computes tool classification statistics once and shares them with the header; unchanged rows do not need reclassification.
+
+`packages/collaboration/src/conversation/ToolBlocks.performance.test.tsx` advances individual clock ticks without new business data and asserts that classification, labels, and expanded details are not recomputed. It also covers input/output updates, completion, resumption, and unmount cleanup. Real Electron regression coverage reuses the `streaming-tools` and `streaming-timers` checkpoints. These local optimizations do not establish a process-wide CPU reduction; measure that with the same task and recording conditions.
+
+### Lifecycle State
 
 - Define native lifecycle transitions in the executor owner first, then expose versioned snapshots through the Store and derive UI fields in `RuntimeTaskMachine`.
 - Do not recompute task running, turn activity, busy, or unread state in layouts, pane hooks, or components.

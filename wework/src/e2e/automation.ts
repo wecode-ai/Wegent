@@ -1,4 +1,5 @@
 import { rendererCrashStore } from './rendererCrashStore'
+import { getMainWindowFocusDiagnostics } from '@/desktop/windowFocus'
 import { completeDesktopControlCommand, type DesktopControlResult } from './desktop-control-command'
 import { captureHarnessAppLaunchDiagnostics } from './harness-app-launch-diagnostics'
 import { createDesktopControlFile } from './file-fixture'
@@ -670,6 +671,7 @@ function desktopControlElementMetrics(selector: string): string {
         bottom: rect.bottom,
         clientHeight: element.clientHeight,
         clientWidth: element.clientWidth,
+        devicePixelRatio: window.devicePixelRatio,
         height: rect.height,
         left: rect.left,
         right: rect.right,
@@ -679,6 +681,8 @@ function desktopControlElementMetrics(selector: string): string {
         scrollTop: element.scrollTop,
         scrollWidth: element.scrollWidth,
         top: rect.top,
+        viewportHeight: window.innerHeight,
+        viewportWidth: window.innerWidth,
         width: rect.width,
       }
     })
@@ -1969,7 +1973,11 @@ async function dispatchDesktopControlPaths(
 async function executeDesktopControlCommand(command: DesktopControlCommand): Promise<string> {
   const getWindowFocusSnapshot = () =>
     invokeDesktopHost<Record<string, unknown>>('e2e.getWindowFocusSnapshot').then(snapshot =>
-      JSON.stringify(snapshot)
+      JSON.stringify({
+        ...snapshot,
+        documentFocused: document.hasFocus(),
+        tracker: getMainWindowFocusDiagnostics(),
+      })
     )
 
   const verificationResult = await executeVerificationControlCommand(command, {
@@ -3363,6 +3371,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
             responseStart: timing.responseStart,
             responseEnd: timing.responseEnd,
             nextHopProtocol: timing.nextHopProtocol,
+            serverTiming: timing.serverTiming.map(({ name, description }) => ({
+              name,
+              description,
+            })),
           }
         }),
         ...(command.value

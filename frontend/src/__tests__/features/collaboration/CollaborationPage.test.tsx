@@ -9,6 +9,8 @@ import type {
   CollaborationPlatformLocation,
 } from '@wegent/collaboration'
 
+import { CollaborationTemplateStore, templateIdentity } from '@wegent/collaboration/templates'
+
 import { CollaborationPage } from '@/features/collaboration/CollaborationPage'
 import { collaborationLocationPath } from '@/features/collaboration/routes'
 
@@ -21,6 +23,11 @@ const mockGetProject = jest.fn()
 const mockListGroups = jest.fn()
 let mockUser: { id: number; user_name: string } | null = null
 const mockPlatformScopes: Array<string | undefined> = []
+let mockTemplateStore: CollaborationTemplateStore | null = null
+let mockUserLoading = false
+jest.mock('@/features/resource-library/useCollaborationTemplates', () => ({
+  useCollaborationTemplates: () => mockTemplateStore,
+}))
 
 jest.mock('next/navigation', () => ({
   usePathname: () => mockPathname,
@@ -59,7 +66,8 @@ jest.mock('@/features/layout/components/UserFloatingMenu', () => ({
 
 jest.mock('@/features/common/UserContext', () => ({
   useUser: () => ({
-    user: mockUser,
+    isLoading: mockUserLoading,
+    user: mockUserLoading ? null : mockUser,
   }),
 }))
 
@@ -88,6 +96,12 @@ jest.mock('sonner', () => ({
 
 describe('CollaborationPage platform routing', () => {
   beforeEach(() => {
+    mockUserLoading = false
+    mockTemplateStore = new CollaborationTemplateStore({
+      scope: 'backend:7',
+      ownerId: 7,
+      persistence: { read: async () => [], write: async () => {} },
+    })
     mockPush.mockReset()
     mockReplace.mockReset()
     mockPathname = '/collaboration'
@@ -117,6 +131,32 @@ describe('CollaborationPage platform routing', () => {
     expect(screen.getByTestId('shared-collaboration-main')).toBeInTheDocument()
     expect(mockPlatformScopes.length).toBeGreaterThan(0)
     expect(mockPlatformScopes.every(scope => scope?.endsWith(':7'))).toBe(true)
+  })
+
+  it('waits for the template account scope even after the user is available', () => {
+    const readyStore = mockTemplateStore
+    mockTemplateStore = null
+    const view = render(<CollaborationPage />)
+    expect(capturedHost).toBeNull()
+    expect(screen.getByText('loading')).toBeInTheDocument()
+    mockTemplateStore = readyStore
+    view.rerender(<CollaborationPage />)
+    expect(capturedHost?.templateStore).toBe(readyStore)
+    expect(screen.getByTestId('shared-collaboration-main')).toBeInTheDocument()
+  })
+
+  it('waits for the authenticated owner before mounting the scoped workbench', () => {
+    mockUserLoading = true
+    const view = render(<CollaborationPage />)
+    expect(screen.queryByTestId('shared-collaboration-main')).not.toBeInTheDocument()
+    expect(capturedHost).toBeNull()
+    expect(screen.getByTestId('top-navigation')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('collaboration-back-to-workbench'))
+    expect(mockPush).toHaveBeenCalledWith('/chat')
+    mockUserLoading = false
+    view.rerender(<CollaborationPage />)
+    expect(screen.getByTestId('shared-collaboration-main')).toBeInTheDocument()
+    expect(capturedHost?.currentUser?.id).toBe(7)
   })
 
   it('renders the platform spaces root through the thin host shell', () => {
@@ -412,4 +452,36 @@ describe('CollaborationPage platform routing', () => {
       expect(capturedHost?.location.platformView).toBe('spaces')
     }
   )
+  it('resolves the marketplace template in the current account and consumes its URL request', async () => {
+    mockTemplateStore = new CollaborationTemplateStore({
+      scope: 'web-7',
+      ownerId: 7,
+      persistence: { read: async () => [], write: async () => {} },
+    })
+    const record = mockTemplateStore.getSnapshot().records[0]
+    mockSearchParams = new URLSearchParams({ template: templateIdentity(record) })
+    render(<CollaborationPage />)
+    await waitFor(() =>
+      expect(capturedHost?.projectTemplateRequest?.document).toEqual(record.document)
+    )
+    capturedHost!.projectTemplateRequest!.onHandled()
+    expect(mockReplace).toHaveBeenCalledWith('/collaboration', { scroll: false })
+  })
+
+  it('allows retry when the selected template cannot be loaded', async () => {
+    mockTemplateStore = new CollaborationTemplateStore({
+      scope: 'web-7',
+      ownerId: 7,
+      persistence: { read: async () => [], write: async () => {} },
+    })
+    const record = mockTemplateStore.getSnapshot().records[0]
+    jest.spyOn(mockTemplateStore, 'load').mockRejectedValueOnce(new Error('storage failure'))
+    mockSearchParams = new URLSearchParams({ template: templateIdentity(record) })
+    render(<CollaborationPage />)
+    fireEvent.click(await screen.findByTestId('template-request-retry'))
+    await waitFor(() =>
+      expect(capturedHost?.projectTemplateRequest?.document).toEqual(record.document)
+    )
+    expect(screen.queryByTestId('template-request-retry')).not.toBeInTheDocument()
+  })
 })

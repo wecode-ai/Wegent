@@ -58,12 +58,19 @@ pub use config::{init_env, init_env_file};
 pub use filters::RequestIdFilter;
 pub use git_repositories::GitRepositoriesService;
 pub use hybrid::{
-    HybridConfig, load_routes_config, run_hybrid, run_hybrid_with_gateway, serve_hybrid,
-    serve_hybrid_application, serve_hybrid_application_with_gateway,
+    HybridConfig, load_routes_config, run_hybrid, run_hybrid_with_gateway,
+    run_hybrid_with_services, serve_hybrid, serve_hybrid_application,
+    serve_hybrid_application_with_gateway, serve_hybrid_application_with_services,
 };
 pub use knowledge_documents_content::access::is_organization_namespace;
 pub use repository_tokens::{RepositoryTokenResolver, StoredRepositoryTokens};
 pub use startup::app::build as build_app_state;
+pub use startup::app::{
+    build_with_clients as build_app_state_with_clients, clients as build_database_clients,
+};
+pub use startup::database::prepare as prepare_database;
+pub mod initialization;
+pub mod migrations;
 pub use startup::mysql::connect as connect_mysql;
 pub use startup::redis::cache_client as build_cache_client;
 pub use state::AppState;
@@ -120,6 +127,7 @@ mod device_artifacts;
 mod device_command;
 pub mod device_commands;
 pub mod device_identity;
+mod device_identity_lock;
 mod device_online_state;
 mod device_records;
 mod device_running_tasks;
@@ -204,6 +212,7 @@ mod oidc_login;
 pub mod oidc_service;
 pub mod permissions;
 mod pet;
+mod plugin_account_auth;
 mod plugin_publications;
 mod plugins_capabilities_probe;
 mod plugins_installed;
@@ -241,6 +250,7 @@ mod skills;
 mod smart_apps_download;
 mod smart_apps_marketplace;
 mod snapshots;
+pub mod socketio;
 mod socketio_emit;
 pub mod socketio_rpc;
 mod sql_support;
@@ -356,6 +366,9 @@ mod workspaces_execution_environments;
 brz_http_server::registry!(
     dependencies(state: Arc<AppState>),
     auth = auth::AppAuthenticator
+);
+brz_socket_io::registry!(
+    dependencies(app: Arc<AppState>, runtime: Arc<crate::socketio::runtime::SocketRuntime>)
 );
 brz_http_server::registry!(
     group = runtime_check,

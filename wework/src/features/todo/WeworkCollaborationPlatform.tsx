@@ -56,7 +56,9 @@ import {
 } from '@/api/deliveries'
 import { loopItemLocalProject } from '@/api/localProjectAssociation'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useStableEvent } from '@/features/workbench/useStableEvent'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
+import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { getChangeRequestMonitor } from '@/features/workbench/changeRequestMonitor'
 import { useCollaborationMarkdownServices } from './useCollaborationMarkdownServices'
 import { AddCloudDeviceDialog } from '@/components/settings/AddCloudDeviceDialog'
@@ -408,6 +410,7 @@ export function WeworkSharedProject({
 }) {
   const { t } = useTranslation('common')
   const preferences = useAppPreferencesState()
+  const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const issueChangeRequestMonitor =
     services.deviceApi && (preferences?.preferences.changeRequestStatusEnabled ?? true)
       ? getChangeRequestMonitor(services.deviceApi)
@@ -533,45 +536,46 @@ export function WeworkSharedProject({
   )
   const projectHost = useMemo<CollaborationHostAdapter>(
     () => ({
-      renderProjectHeaderAction: currentProject => (
-        <div className="flex items-center gap-2">
-          <ProjectCoordinatorConversation
-            key={`${currentProject.project_store}:${currentProject.id}:${userId}`}
-            api={scopedApi}
-            project={currentProject}
-            services={services}
-            userId={Number(userId)}
-            devices={devices ?? []}
-            onOpenTask={onOpenRuntimeTask}
-            onOpenIssue={issueId => {
-              setTaskComposer(null)
-              setLocation(current => ({ ...current, projectView: 'board', issueId }))
-              if (focusedItemId) onFocusedItemHandled?.()
-            }}
-            onOpenGroupSettings={() => {
-              setTaskComposer(null)
-              setLocation(current => ({
-                ...current,
-                projectView: 'manage',
-                projectSettingsSection: 'groups',
-                issueId: null,
-              }))
-              if (focusedItemId) onFocusedItemHandled?.()
-            }}
-          />
-          <StandInPopover
-            key={currentProject.id}
-            api={standInWorkspaceApi}
-            project={currentProject}
-            devices={devices}
-            readLocalIdentity={services.getLocalRuntimeSidebarIdentity}
-            services={services}
-            userId={Number(userId)}
-            onOpenPersonalSettings={onOpenStandInSettings}
-            initialDeviceId={standInDeviceId}
-          />
-        </div>
-      ),
+      renderProjectHeaderAction: currentProject =>
+        experimentalFeaturesEnabled ? (
+          <div className="flex items-center gap-2">
+            <ProjectCoordinatorConversation
+              key={`${currentProject.project_store}:${currentProject.id}:${userId}`}
+              api={scopedApi}
+              project={currentProject}
+              services={services}
+              userId={Number(userId)}
+              devices={devices ?? []}
+              onOpenTask={onOpenRuntimeTask}
+              onOpenIssue={issueId => {
+                setTaskComposer(null)
+                setLocation(current => ({ ...current, projectView: 'board', issueId }))
+                if (focusedItemId) onFocusedItemHandled?.()
+              }}
+              onOpenGroupSettings={() => {
+                setTaskComposer(null)
+                setLocation(current => ({
+                  ...current,
+                  projectView: 'manage',
+                  projectSettingsSection: 'groups',
+                  issueId: null,
+                }))
+                if (focusedItemId) onFocusedItemHandled?.()
+              }}
+            />
+            <StandInPopover
+              key={currentProject.id}
+              api={standInWorkspaceApi}
+              project={currentProject}
+              devices={devices}
+              readLocalIdentity={services.getLocalRuntimeSidebarIdentity}
+              services={services}
+              userId={Number(userId)}
+              onOpenPersonalSettings={onOpenStandInSettings}
+              initialDeviceId={standInDeviceId}
+            />
+          </div>
+        ) : null,
       capabilities: {
         automation: true,
         dingtalkAitable: true,
@@ -623,6 +627,7 @@ export function WeworkSharedProject({
     [
       focusedItemId,
       devices,
+      experimentalFeaturesEnabled,
       standInWorkspaceApi,
       scopedApi,
       onOpenRuntimeTask,
@@ -684,8 +689,8 @@ export function WeworkSharedProject({
     }
     return running
   }, [runtimeTaskLifecycle, runtimeWork])
-  // Stop any in-flight run bound to the Issue before it leaves the board, so an
-  // archived Issue never keeps an orphaned execution running on a device.
+  // Local archives require the Runtime to stop first. Cloud archives own the
+  // tombstone and cancellation transaction in the Backend before stopping work.
   const prepareIssueArchive = useCallback(
     async (issue: CollaborationIssue) => {
       if (!onCancelRuntimeTask) return
@@ -1128,7 +1133,9 @@ export function WeworkSharedProject({
           showProjectBack={false}
           refreshProjectRequestKey={refreshProjectRequestKey}
           issueArchiveEnabled
-          onPrepareIssueArchive={prepareIssueArchive}
+          onPrepareIssueArchive={
+            project.project_store === 'local' ? prepareIssueArchive : undefined
+          }
           onCreateTask={
             runtimePort ? async (_taskProject, issue) => openNewTaskConversation(issue) : undefined
           }
@@ -1344,6 +1351,7 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
 
 function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformProps) {
   const { i18n, t } = useTranslation('common')
+  const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const standInProjects = useStandInProjects(props.services, props.devices, Number(props.user.id))
   const cloudConnection = useOptionalCloudConnection()
   const templateOwnerId =
@@ -1501,8 +1509,12 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
   const pendingNavigationProjectIdRef = useRef<string | null | undefined>(undefined)
   const navigationRequestRevisionRef = useRef(0)
   const resolvedWorkspaceProjectRef = useRef<string | null>(null)
+  const publishActiveProject = useStableEvent((project: LocatedProjectSpace | null) =>
+    props.onActiveProjectChange?.(project)
+  )
   // An external route supersedes an internal project's pending lookup, even
   // when it only selects another Issue or comment in the same project.
+  // API refreshes in the same account do not revoke the user's navigation intent.
   useLayoutEffect(() => {
     navigationRequestRevisionRef.current += 1
     pendingNavigationProjectIdRef.current = undefined
@@ -1512,7 +1524,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
   }, [
     activeProject?.projectId,
     activeProject?.projectStore,
-    platformApi,
+    templateScope,
     props.focusedCommentId,
     props.focusedCommentRequestKey,
     props.focusedItemId,
@@ -1642,6 +1654,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
           templateStore,
           templateNavigation: true,
           renderProjectSidebarBadge: project => {
+            if (!experimentalFeaturesEnabled) return null
             const enabled = standInProjects.has(
               `${project.project_store === 'local' ? 'local' : 'cloud'}:${project.id}`
             )
@@ -1717,7 +1730,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
                   : null,
             })
             if (!nextLocation.projectId) {
-              props.onActiveProjectChange?.(null)
+              publishActiveProject(null)
               return
             }
             const requestedProjectId = String(nextLocation.projectId)
@@ -1725,7 +1738,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
               .get(requestedProjectId)
               .then(project => {
                 if (navigationRequestRevisionRef.current !== navigationRevision) return
-                props.onActiveProjectChange?.({
+                publishActiveProject({
                   ...project,
                   location: project.project_store === 'local' ? 'local' : 'cloud',
                 })

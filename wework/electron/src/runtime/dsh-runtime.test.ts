@@ -114,30 +114,33 @@ describe('DSH runtime readiness', () => {
     }
   )
 
-  test('exchanges a private pipe credential before probing with the Electron session', async () => {
-    browserFetch.mockResolvedValue(new Response('', { status: 200 }))
-    const url = 'http://127.0.0.1:12345/'
-    const runtime = new DshRuntime({
-      url,
-      command: process.execPath,
-      args: [
-        '-e',
-        "require('node:fs').writeSync(5, JSON.stringify({url:'http://127.0.0.1:12345/?token=private-test-token'}) + '\\n'); setInterval(() => {}, 1000)",
-      ],
-      env: { ...process.env, WEWORK_DSH_BROWSER_AUTH: '1' },
-    })
-    try {
-      await runtime.start()
-      expect(browserFetch.mock.calls.map(([input]) => input)).toEqual([
-        url + '?token=private-test-token',
+  test.each(['1', 'legacy'])(
+    'exchanges a private pipe credential in %s mode before probing with the Electron session',
+    async authentication => {
+      browserFetch.mockResolvedValue(new Response('', { status: 200 }))
+      const url = 'http://127.0.0.1:12345/'
+      const runtime = new DshRuntime({
         url,
-      ])
-      expect(runtime.url()).toBe(url)
-    } finally {
-      await runtime.stop()
-      browserFetch.mockReset()
+        command: process.execPath,
+        args: [
+          '-e',
+          "require('node:fs').writeSync(5, JSON.stringify({url:'http://127.0.0.1:12345/?token=private-test-token'}) + '\\n'); setInterval(() => {}, 1000)",
+        ],
+        env: { ...process.env, WEWORK_DSH_BROWSER_AUTH: authentication },
+      })
+      try {
+        await runtime.start()
+        expect(browserFetch.mock.calls.map(([input]) => input)).toEqual([
+          url + '?token=private-test-token',
+          url,
+        ])
+        expect(runtime.url()).toBe(url)
+      } finally {
+        await runtime.stop()
+        browserFetch.mockReset()
+      }
     }
-  })
+  )
 
   test('rejects a pipe credential for a different origin before any browser request', async () => {
     const runtime = new DshRuntime({

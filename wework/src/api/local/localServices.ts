@@ -38,7 +38,7 @@ import {
   buildHarnessUserContext,
   type HarnessContextRegistration,
 } from '@/features/harness-apps/harnessContext'
-import { reconnectDshExecutorEvents } from '@/api/dsh/executorTransport'
+import { DshExecutorTransportError, reconnectDshExecutorEvents } from '@/api/dsh/executorTransport'
 import { createExecutorClientFromApis } from '@/api/executorAccess'
 import { listLocalInstalledPluginsFromDisk } from '@/api/local/codexPlugins'
 import { getAppPreferences } from '@/desktop/appPreferences'
@@ -485,6 +485,8 @@ async function reconcilePendingLocalModelCatalog(
   try {
     await reconciliation
   } catch (error) {
+    // A transport interruption must not suppress synchronization after recovery.
+    if (error instanceof DshExecutorTransportError && error.retryable) tracker.key = ''
     console.error('Local model catalog reconciliation failed', error)
   } finally {
     if (tracker.inFlight === reconciliation) tracker.inFlight = null
@@ -2788,10 +2790,8 @@ export function createRuntimeWorkApiFromIpc(
     getRuntimeSettings(): Promise<RuntimeSettings> {
       return request('runtime.settings.get', {})
     },
-    updateRuntimeSettings(data: RuntimeSettings): Promise<RuntimeSettings> {
-      return request('runtime.settings.update', {
-        maxConcurrentTasks: data.maxConcurrentTasks,
-      })
+    updateRuntimeSettings(data: Partial<RuntimeSettings>): Promise<RuntimeSettings> {
+      return request('runtime.settings.update', data)
     },
     updateKeybindings(data: {
       keybindings: KeybindingOverride[]
@@ -3788,11 +3788,28 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       timeout_seconds?: number
       max_output_bytes?: number
     }
-  ) =>
-    request<DeviceCommandResponse>(
-      'device.execute_command',
-      normalizeLocalDeviceRecord({ deviceId, ...data }, await getDeviceCommandLocalDeviceId())
-    )
+  ) => {
+    const startedAt = performance.now()
+    const tracePhase = (phase: string) => {
+      if (data.command_key !== 'home_dir' && data.command_key !== 'ls_dirs') return
+      console.debug('[Wework] Device directory command phase', {
+        commandKey: data.command_key,
+        phase,
+        elapsedMs: Math.round(performance.now() - startedAt),
+      })
+    }
+    try {
+      tracePhase('resolve_device')
+      const localDeviceId = await getDeviceCommandLocalDeviceId()
+      tracePhase('dispatch')
+      return await request<DeviceCommandResponse>(
+        'device.execute_command',
+        normalizeLocalDeviceRecord({ deviceId, ...data }, localDeviceId)
+      )
+    } finally {
+      tracePhase('settled')
+    }
+  }
 
   const deviceApi: WorkbenchServices['deviceApi'] = {
     async listDevices() {
@@ -3826,15 +3843,26 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       return {
         device_id: deviceId,
         max_concurrent_tasks: settings.maxConcurrentTasks,
+        max_concurrent_stand_in_tasks: settings.maxConcurrentStandInTasks,
+        max_concurrent_agent_tasks: settings.maxConcurrentAgentTasks,
         active_tasks: 0,
         queued_tasks: 0,
       }
     },
-    async updateRuntimeSettings(deviceId: string, maxConcurrentTasks: number) {
-      const settings = await runtimeWorkApi.updateRuntimeSettings({ maxConcurrentTasks })
+    async updateRuntimeSettings(
+      deviceId: string,
+      limits: Parameters<WorkbenchServices['deviceApi']['updateRuntimeSettings']>[1]
+    ) {
+      const settings = await runtimeWorkApi.updateRuntimeSettings({
+        maxConcurrentTasks: limits.max_concurrent_tasks,
+        maxConcurrentStandInTasks: limits.max_concurrent_stand_in_tasks,
+        maxConcurrentAgentTasks: limits.max_concurrent_agent_tasks,
+      })
       return {
         device_id: deviceId,
         max_concurrent_tasks: settings.maxConcurrentTasks,
+        max_concurrent_stand_in_tasks: settings.maxConcurrentStandInTasks,
+        max_concurrent_agent_tasks: settings.maxConcurrentAgentTasks,
         active_tasks: 0,
         queued_tasks: 0,
       }
