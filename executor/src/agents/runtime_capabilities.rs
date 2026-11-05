@@ -2511,8 +2511,12 @@ pub(super) fn write_json_file(path: &Path, value: &Value) -> Result<(), String> 
     }
     let content = serde_json::to_string_pretty(value)
         .map_err(|error| format!("failed to serialize JSON: {error}"))?;
-    let parent = path.parent().ok_or("JSON file has no parent")?;
-    let mut file = tempfile::NamedTempFile::new_in(parent)
+    // Windows publication uses a native rename. Both paths must retain the
+    // extended-length prefix when an agent's isolated home exceeds MAX_PATH.
+    let parent = fs::canonicalize(path.parent().ok_or("JSON file has no parent")?)
+        .map_err(|error| format!("failed to resolve JSON directory: {error}"))?;
+    let destination = parent.join(path.file_name().ok_or("JSON file has no name")?);
+    let mut file = tempfile::NamedTempFile::new_in(&parent)
         .map_err(|error| format!("failed to stage JSON: {error}"))?;
     use std::io::Write;
     file.write_all(content.as_bytes())
@@ -2520,7 +2524,7 @@ pub(super) fn write_json_file(path: &Path, value: &Value) -> Result<(), String> 
     file.as_file()
         .sync_all()
         .map_err(|error| error.to_string())?;
-    file.persist(path)
+    file.persist(destination)
         .map_err(|error| format!("failed to publish JSON: {}", error.error))?;
     Ok(())
 }
@@ -2649,6 +2653,21 @@ mod tests {
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
     };
+
+    #[test]
+    fn publish_json_in_long_agent_home() {
+        let root = tempfile::tempdir().unwrap();
+        let mut directory = root.path().to_path_buf();
+        while directory.as_os_str().len() < 280 {
+            directory = directory.join("isolated-agent-configuration");
+        }
+        let path = directory.join("settings.json");
+        write_json_file(&path, &serde_json::json!({"version": 1})).unwrap();
+        write_json_file(&path, &serde_json::json!({"version": 2})).unwrap();
+        let value: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        assert_eq!(value["version"], 2);
+        assert_eq!(fs::read_dir(directory).unwrap().count(), 1);
+    }
 
     #[test]
     fn backend_api_url_includes_api_prefix_once() {

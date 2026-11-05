@@ -8,6 +8,7 @@ import {
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import {
   CONVERSATION_SCROLL_WRITE_SOURCE,
+  observeConversationScrollWrites,
   recordConversationScrollWrite,
 } from './conversationScrollWrite'
 
@@ -56,8 +57,13 @@ export function useConversationVirtualizer({
     observeElementOffset: (instance, callback) => {
       readOffsetRef.current = callback
       const dispose = observeElementOffset(instance, callback)
+      const element = instance.scrollElement
+      const stopObservingWrites = element
+        ? observeConversationScrollWrites(element, offset => callback(offset, false))
+        : undefined
       return () => {
         readOffsetRef.current = null
+        stopObservingWrites?.()
         dispose?.()
       }
     },

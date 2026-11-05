@@ -20,6 +20,18 @@ export const CONVERSATION_SCROLL_WRITE_SOURCE = {
 type ScrollWriteSource =
   (typeof CONVERSATION_SCROLL_WRITE_SOURCE)[keyof typeof CONVERSATION_SCROLL_WRITE_SOURCE]
 
+const offsetObservers = new WeakMap<HTMLElement, (offset: number) => void>()
+
+export function observeConversationScrollWrites(
+  element: HTMLElement,
+  onOffset: (offset: number) => void
+): () => void {
+  offsetObservers.set(element, onOffset)
+  return () => {
+    if (offsetObservers.get(element) === onOffset) offsetObservers.delete(element)
+  }
+}
+
 export function recordConversationScrollWrite<T>(
   element: HTMLElement,
   writeSource: ScrollWriteSource,
@@ -27,25 +39,32 @@ export function recordConversationScrollWrite<T>(
   write: () => T,
   details?: () => Record<string, number | boolean | null>
 ): T {
-  if (!isConversationDiagnosticsEnabled()) return write()
+  const diagnosticsEnabled = isConversationDiagnosticsEnabled()
   const previousScrollTop = element.scrollTop
   try {
     return write()
   } finally {
     const scrollTop = element.scrollTop
-    const clientHeight = element.clientHeight
-    recordConversationDiagnostic('scroll-write', {
-      ...details?.(),
-      ...getConversationDiagnosticContext(element),
-      writeSource,
-      previousScrollTop,
-      targetScrollTop,
-      appliedCorrection: scrollTop - previousScrollTop,
-      scrollTop,
-      scrollHeight: element.scrollHeight,
-      clientHeight,
-      clientWidth: element.clientWidth,
-      rootHeight: clientHeight,
-    })
+    // Native scroll events arrive after ResizeObserver. Publish instant external
+    // writes first so a virtualizer cannot compensate from its previous offset.
+    if (writeSource !== CONVERSATION_SCROLL_WRITE_SOURCE.virtualizerOffset) {
+      offsetObservers.get(element)?.(scrollTop)
+    }
+    if (diagnosticsEnabled) {
+      const clientHeight = element.clientHeight
+      recordConversationDiagnostic('scroll-write', {
+        ...details?.(),
+        ...getConversationDiagnosticContext(element),
+        writeSource,
+        previousScrollTop,
+        targetScrollTop,
+        appliedCorrection: scrollTop - previousScrollTop,
+        scrollTop,
+        scrollHeight: element.scrollHeight,
+        clientHeight,
+        clientWidth: element.clientWidth,
+        rootHeight: clientHeight,
+      })
+    }
   }
 }

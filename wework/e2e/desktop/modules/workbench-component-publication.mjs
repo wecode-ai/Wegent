@@ -13,7 +13,31 @@ export async function verifyWindowsComponentPublication({ resources, environment
     holder,
     `
 param([string]$Path, [int]$ReleaseAfterMs = 0)
-$handle = [System.IO.File]::Open($Path, 'Open', 'Read', 'ReadWrite')
+$ErrorActionPreference = 'Stop'
+if ([System.IO.Directory]::Exists($Path)) {
+  Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+public static class NativeDirectoryHolder {
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+  public static extern SafeFileHandle CreateFile(string path, uint access,
+    uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
+}
+'@
+  # Lock the directory being renamed; a child file handle does not fence its parent.
+  $nativePath = [string]::Concat([char]92, [char]92, '?', [char]92, $Path)
+  $handle = [NativeDirectoryHolder]::CreateFile(
+    $nativePath, 0x80000000, 3, [IntPtr]::Zero, 3, 0x02000000, [IntPtr]::Zero
+  )
+  if ($handle.IsInvalid) {
+    throw [System.ComponentModel.Win32Exception]::new(
+      [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+    )
+  }
+} else {
+  $handle = [System.IO.File]::Open($Path, 'Open', 'Read', 'ReadWrite')
+}
 try {
   [Console]::Out.WriteLine('held')
   [Console]::Out.Flush()
@@ -65,7 +89,7 @@ fs.symlink = async (source, target, type) => {
   if (basename(source).startsWith('.content-')) {
     const file = basename(dirname(target)) === 'wework-core-plugins'
       ? join('wework-app', 'client.js') : 'runtime.json'
-    await holdFile(join(source, file))
+    await holdFile(source)
     await assert.rejects(fs.rename(source, source + '.blocked'), error =>
       ['EPERM', 'EACCES', 'EBUSY'].includes(error.code))
     await originalSymlink(source, target, type)
