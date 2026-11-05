@@ -39,6 +39,10 @@ use super::model::{
     TaskUpdate,
 };
 
+#[path = "connection_identity.rs"]
+mod connection_identity;
+#[path = "connection_rules.rs"]
+pub(crate) mod connection_rules;
 #[path = "local_automation.rs"]
 mod local_automation;
 pub(super) use local_automation::on_status_changed;
@@ -566,13 +570,26 @@ impl LocalTaskStore {
         start_at: Option<String>,
         due_at: Option<String>,
     ) -> Result<LoopItem, TaskRuntimeError> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let item = Self::create_task_on(&transaction, project_id, input, start_at, due_at, true)?;
+        transaction.commit()?;
+        Ok(item)
+    }
+
+    fn create_task_on(
+        transaction: &Connection,
+        project_id: &str,
+        input: TaskCreate,
+        start_at: Option<String>,
+        due_at: Option<String>,
+        dispatch_created: bool,
+    ) -> Result<LoopItem, TaskRuntimeError> {
         validate_name(&input.title, "task title")?;
         validate_priority(&input.priority)?;
         super::tagging::validate_tags(&input.tags)?;
         validate_schedule_range(start_at.as_deref(), due_at.as_deref())?;
-        let mut connection = self.connection()?;
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let project = get_item_from(&transaction, project_id, "project")?
+        let project = get_item_from(transaction, project_id, "project")?
             .ok_or(TaskRuntimeError::ProjectNotFound)?;
         project_status::validate(&project.metadata, &input.status)?;
         if task_provider(&project)? != TaskProviderKind::Local {
@@ -589,7 +606,7 @@ impl LocalTaskStore {
         let assigned_agent = input
             .assignee_agent_id
             .as_deref()
-            .map(|agent_id| collaboration_agent(&transaction, project_id, agent_id))
+            .map(|agent_id| collaboration_agent(transaction, project_id, agent_id))
             .transpose()?;
         let assigned_group = input
             .assignee_group_id
@@ -597,7 +614,7 @@ impl LocalTaskStore {
             .map(|group_id| collaboration_group(&project, group_id))
             .transpose()?;
         if let Some(parent_id) = input.parent_id.as_deref() {
-            require_parent(&transaction, project_id, parent_id, None)?;
+            require_parent(transaction, project_id, parent_id, None)?;
         }
         let sequence = project.next_item_number.unwrap_or(1);
         let project_key = project
@@ -687,10 +704,10 @@ impl LocalTaskStore {
                 input.assignee_user_id,
             ],
         )?;
-        assignment_receipts::sync_assignment_receipt(&transaction, project_id, &id, &metadata)?;
+        assignment_receipts::sync_assignment_receipt(transaction, project_id, &id, &metadata)?;
         if let Some(group) = assigned_group.as_ref() {
             dispatch_collaboration_group_assignment(
-                &transaction,
+                transaction,
                 CollaborationGroupExecutionInput {
                     item_id: &id,
                     project_id,
@@ -705,7 +722,7 @@ impl LocalTaskStore {
             )?;
         } else if let Some(agent) = assigned_agent.as_ref() {
             create_local_execution(
-                &transaction,
+                transaction,
                 &id,
                 project_id,
                 &agent.id,
@@ -715,17 +732,17 @@ impl LocalTaskStore {
             )?;
         }
         if let Some(parent_id) = parent_id.as_deref() {
-            refresh_runtime_projection_additional_context(&transaction, parent_id)?;
+            refresh_runtime_projection_additional_context(transaction, parent_id)?;
         }
-        local_automation::on_event(
-            &transaction,
-            project_id,
-            &id,
-            local_automation::AutomationEvent::Created,
-        )?;
-        transaction.commit()?;
-        drop(connection);
-        self.get_item(&id, "task")
+        if dispatch_created {
+            local_automation::on_event(
+                transaction,
+                project_id,
+                &id,
+                local_automation::AutomationEvent::Created,
+            )?;
+        }
+        get_item_from(transaction, &id, "task")?.ok_or(TaskRuntimeError::TaskNotFound)
     }
 
     pub fn update_task(

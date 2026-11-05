@@ -9,21 +9,25 @@ export type AutomationRunStatus =
   | "skipped"
   | "cancelled";
 
-export type AutomationEventType =
-  | "task.created"
-  | "task.tag_added"
-  | "task.status_changed"
-  | "change_request.checks_failed"
-  | "change_request.merge_conflict"
-  | "change_request.review_submitted"
-  | "change_request.comment_created"
-  | "document.changed";
+export const AUTOMATION_EVENT_TYPES = [
+  "task.created",
+  "task.tag_added",
+  "task.status_changed",
+  "change_request.checks_failed",
+  "change_request.merge_conflict",
+  "change_request.review_submitted",
+  "change_request.comment_created",
+  "document.changed",
+  "connection.result_published",
+] as const;
+export type AutomationEventType = (typeof AUTOMATION_EVENT_TYPES)[number];
 
 export type AutomationEventSourceType =
   | "github"
   | "gitlab"
   | "wework"
-  | "generic";
+  | "generic"
+  | "connection";
 export type AutomationEventCollectionMode =
   | "webhook"
   | "poll"

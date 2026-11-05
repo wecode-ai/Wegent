@@ -11,6 +11,7 @@ import type {
   RunnerModel,
 } from '@wegent/collaboration'
 import type { RuntimeTaskSummary } from '@/types/api'
+import type { ConnectionRulesApi } from '@wegent/collaboration/automation'
 import type { Automation } from '@/types/automation'
 
 export interface StandInOnboardingResult {
@@ -23,6 +24,7 @@ export interface ConnectionProviderDescriptor {
   id: string
   displayName: string
   resourceKinds: string[]
+  eventTypes?: string[]
   allResourceLabel?: string
   allResourceKinds?: string[]
   allResourceLabels?: Record<string, string>
@@ -123,7 +125,11 @@ export interface StandInMemory {
   sourceTaskId?: string | null
 }
 
-type Request = <T>(method: string, payload: Record<string, unknown>, deviceId: string) => Promise<T>
+type Request = <T>(
+  method: string,
+  payload: Record<string, unknown>,
+  deviceId?: string
+) => Promise<T>
 type ProjectStore = 'local' | 'cloud'
 
 export interface ProjectCoordinatorTarget {
@@ -175,7 +181,21 @@ export type StandInTelemetryFact = {
   }
 }[keyof StandInGeneratedEventMap]
 
+export interface ConnectionRuleBinding {
+  authority: string
+  deviceId?: string
+}
+
+export function connectionRuleOwnerScope(userId: number, binding: ConnectionRuleBinding): string {
+  return JSON.stringify([
+    binding.authority.replace(/\/+$/, ''),
+    userId,
+    binding.deviceId ? { kind: 'device', id: binding.deviceId } : { kind: 'current-native' },
+  ])
+}
+
 export interface StandInExecutorApi {
+  connectionRules?(userId: number, binding: ConnectionRuleBinding): ConnectionRulesApi
   onboarding(userId: number, deviceId: string, language: string): Promise<StandInOnboardingResult>
   completeOnboarding(
     userId: number,
@@ -363,6 +383,59 @@ export function createStandInExecutorApi(
     }
   }
   return {
+    connectionRules(userId, binding) {
+      const deviceId = binding.deviceId
+      return {
+        ownerScope: connectionRuleOwnerScope(userId, binding),
+        async list(project) {
+          const result = await request<{ items: Awaited<ReturnType<ConnectionRulesApi['list']>> }>(
+            'runtime.connection_rules.list',
+            { userId, project },
+            deviceId
+          )
+          return result.items
+        },
+        async save(rule) {
+          const result = await request<{ rule: Awaited<ReturnType<ConnectionRulesApi['save']>> }>(
+            'runtime.connection_rules.save',
+            { userId, rule },
+            deviceId
+          )
+          return result.rule
+        },
+        async remove(id, version) {
+          await request('runtime.connection_rules.remove', { userId, id, version }, deviceId)
+        },
+        async runs(id) {
+          const result = await request<{ items: Awaited<ReturnType<ConnectionRulesApi['runs']>> }>(
+            'runtime.connection_rules.runs',
+            { userId, id },
+            deviceId
+          )
+          return result.items
+        },
+        async retrySource(id) {
+          await request('runtime.connection_rules.retry_source', { userId, id }, deviceId)
+        },
+        async retry(id) {
+          await request('runtime.connection_rules.retry', { userId, id }, deviceId)
+        },
+        async providers() {
+          const result = await request<{ items: ConnectionProviderDescriptor[] }>(
+            'runtime.connections.catalog',
+            {},
+            deviceId
+          )
+          return result.items
+        },
+        async resources(providerId, kind, query) {
+          const result = await request<{
+            items: Awaited<ReturnType<ConnectionRulesApi['resources']>>
+          }>('runtime.connections.resources', { providerId, kind, query }, deviceId)
+          return result.items
+        },
+      }
+    },
     onboarding: (userId, deviceId, language) =>
       request('runtime.stand_in.onboarding.get', { userId, language }, deviceId),
     completeOnboarding: async (userId, deviceId, weeklyReview, time, language) => {

@@ -154,6 +154,12 @@ def _event_view(event: ProjectIncomingEvent) -> ProjectIncomingEventView:
             else event.description or None
         ),
         attempt_count=int(metadata.get("attempt_count") or 0),
+        next_retry_at=(
+            event.due_at
+            if event.status == "failed"
+            and not loop_datetime_value_is_unset(event.due_at)
+            else None
+        ),
         created_at=event.created_at,
         updated_at=event.updated_at,
     )
@@ -274,6 +280,7 @@ def list_incoming_events(
     project_id: str,
     hook_id: str,
     limit: int = Query(default=50, ge=1, le=200),
+    event_id: str | None = Query(default=None, max_length=100),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[ProjectIncomingEventView]:
@@ -285,6 +292,7 @@ def list_incoming_events(
             hook_id,
             current_user.id,
             limit=limit,
+            event_id=event_id,
         )
     ]
 

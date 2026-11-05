@@ -8,7 +8,52 @@ Wework automations start Codex Runtime tasks on a fixed schedule, at a recurring
 interval, or at a specific time. Open **Automations** from the Wework sidebar;
 the entry is available without enabling experimental features.
 
-## Local mode
+## Source rules in collaboration and My stand-in
+
+Project **Automatic processing** has one **New rule** entry. It follows the personal stand-in
+connection flow: choose email, messages, a project, or time; choose the specific connection;
+then configure its trigger and action. Email and message sources reuse the personal connection
+search and selection list rather than a separate provider/resource form. After selecting a source,
+configure the event, optional message conditions, published Issue title, authorized result and
+project handler. Source conditions and publication requirements remain private on the collection
+device. The project stores the rule name, assignment, Issue instructions and published results.
+
+My stand-in keeps its **Connections** entry. **Edit handling rule** exposes the
+same message conditions and handling instructions while preserving immediate
+processing, work grouping and native operation confirmations. Disabling handling
+does not revoke the account connection. Scheduled tasks retain the Automations
+entry and their existing conversation and notification behavior.
+
+Original messages, account details, credentials, private attachments and collection
+records are not published as project events or execution context. Explicitly
+configure the result authorized for publication; published Issues and results
+follow project permissions. Do not place private information in shared rule names
+or Issue handling instructions.
+
+The device where a rule is configured collects its source. Collection pauses while
+the device is closed or asleep and resumes from its persisted position. Open **Run history**
+beside a rule to inspect runs and open published Issues. Failed
+publications that support recovery can be retried from the rule history, reusing the same
+run and any prepared result. Failed runs already accepted by the project recover
+through the existing project retry flow without delivering the message again.
+Changing or disabling a rule cancels older runs that
+have not been delivered. Work already delivered remains in the project run history. New source rules do not replay messages from before they were enabled.
+
+Local source rules may continue during a cloud transport outage using the same previously
+verified device and account connection. Account switching, connection configuration changes
+or invalid account authentication invalidate that evidence. A denied project operation does not affect other local rules.
+Cloud delivery and execution still require current online authorization. You can remove
+your device's private source rule and inspect its history after losing project administration.
+Members without project settings access can open **My source rules** in the project header.
+It hides creation and toggle actions and disables editing while retaining
+**Remove my private rule**. An authorized project member must clean up shared automation and
+connection settings. Switching accounts, service addresses or collection devices immediately
+clears the previous identity's rules, editor drafts and run history. “Delivered”
+means the server accepted the publication; “Issue
+created” links to its result. “Recheck source” clears a recovered connection error
+without resetting its collection checkpoint.
+
+## Local scheduled mode
 
 Local automations are stored in the current device's Executor data directory and
 are scheduled by the local Executor.

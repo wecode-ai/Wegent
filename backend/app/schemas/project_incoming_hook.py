@@ -11,7 +11,7 @@ from pydantic import Field, field_validator, model_validator
 from app.schemas.project_chat import ProjectChatSchema
 
 IncomingHookStatus = Literal["active", "disabled"]
-EventSourceType = Literal["github", "gitlab", "wework", "generic"]
+EventSourceType = Literal["github", "gitlab", "wework", "generic", "connection"]
 EventCollectionMode = Literal["webhook", "poll", "internal", "hybrid"]
 
 
@@ -106,6 +106,7 @@ class ProjectIncomingEventView(ProjectChatSchema):
     matched_runs: list[str] = Field(default_factory=list)
     reason: str | None = None
     attempt_count: int = 0
+    next_retry_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 

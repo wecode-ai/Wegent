@@ -185,6 +185,35 @@ rules retain their priority in `.github/scripts/desktop-ci/`. Classifier contrac
 live in `.github/scripts/ci-classification-tests/`, whose `.sh` files are discovered
 by the existing test entry point.
 
+Project automation and personal connections share connection rows, source search/selection, and condition/instruction components. `connection-automations` first checks that the project has one creation entry, then exercises connection choice → resource choice → trigger/action in real Electron at 1280×720, retaining publication, deduplication, privacy and native Tab/Shift+Tab/Escape assertions. Existing status-automation and remote-dispatch scenarios add only the connection-choice prerequisite; business assertions stay unchanged. Web coverage includes that step. Focused component tests cover draft back/cancel, identity switches and source-discovery recovery.
+
+`stand-in-connection-rule-layout` independently verifies personal connection rules
+in a 1280×720 window. Run
+`pnpm --filter wework run e2e:desktop --segment stand-in-connection-rule-layout`
+to check the private instruction value, field bounds between the sticky header
+and save footer, paused state, and persisted policy. It uses the real isolated
+source and the same verification function invoked by `stand-in-plugin-bridge`.
+That existing CI host retains coverage without another shard or duplicate run.
+
+`stand-in-source-project-permissions` creates a real project and ordinary member,
+then verifies that demotion to Viewer and a project 403 preserve local account
+evidence. A transparent proxy interrupts only identity-endpoint transport; Backend,
+Electron, Executor, source and storage remain real. The case reads and pauses a
+local rule, opens history and clicks **Remove my private rule** as a Viewer,
+captures the interface and confirms shared project settings were not deleted
+without authorization. It reuses account switching and restores
+the original account. `stand-in-cloud` invokes the same function in CI without
+another shard or duplicate execution.
+Private management uses a 1280×720 window and existing geometry checks to verify
+that the entry, dialog and close action remain visible. Cleanup restores the
+original window size.
+
+The first cloud publication wait includes two 15-second scheduler ticks plus the
+model response budget, covering source collection and receipt observation. Model
+completion alone does not prove observation completed. The bounded wait retains
+actual `published` status, Issue, successful run, deduplication and privacy assertions;
+other interface and model waits retain their existing budgets.
+
 Linux Core and Cloud jobs
 run at most four isolated checkpoints concurrently; actual concurrency also
 depends on the shard's checkpoint count. Each checkpoint owns its database,

@@ -689,7 +689,13 @@ class ProjectAutomationService:
         )
 
     def list_runs(
-        self, db: Session, project_id: str, automation_id: str, user_id: int
+        self,
+        db: Session,
+        project_id: str,
+        automation_id: str,
+        user_id: int,
+        *,
+        run_ids: list[str] | None = None,
     ) -> list[dict]:
         require_cloud_project_role(db, project_id, user_id, BaseRole.Viewer)
         rule = self._rule(db, project_id, automation_id)
@@ -698,6 +704,7 @@ class ProjectAutomationService:
             db.query(ProjectAutomationRun)
             .filter(
                 ProjectAutomationRun.parent_id == automation_id,
+                *([ProjectAutomationRun.id.in_(run_ids)] if run_ids else []),
                 loop_datetime_is_unset(ProjectAutomationRun.deleted_at),
             )
             .order_by(ProjectAutomationRun.created_at.desc())
@@ -717,6 +724,7 @@ class ProjectAutomationService:
                 db.query(ProjectAutomationRun)
                 .filter(
                     ProjectAutomationRun.parent_id == automation_id,
+                    *([ProjectAutomationRun.id.in_(run_ids)] if run_ids else []),
                     loop_datetime_is_unset(ProjectAutomationRun.deleted_at),
                 )
                 .order_by(ProjectAutomationRun.created_at.desc())

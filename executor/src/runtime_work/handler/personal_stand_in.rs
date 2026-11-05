@@ -285,13 +285,17 @@ impl RuntimeWorkRpcHandler {
                     crate::task_runtime::personal_stand_in::stand_in_connection(row, source)
                 });
                 let boundary = existing
-                    .filter(|_| preserve)
+                    .filter(|old| {
+                        preserve
+                            && old["policy"]["enabled"] != false
+                            && source["policy"]["enabled"] != false
+                    })
                     .map(|row| row["boundary"].clone())
                     .filter(Value::is_object);
                 source.as_object_mut().unwrap().remove("boundary");
                 if let Some(boundary) = boundary {
                     source["boundary"] = boundary;
-                } else if enabled {
+                } else if enabled && source["policy"]["enabled"] != false {
                     let boundary = self
                         .connection_call(
                             "initialize",

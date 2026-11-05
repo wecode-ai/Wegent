@@ -5,7 +5,7 @@ import type {
   ProjectSpaceDetailServices,
 } from '@/features/workbench/workbenchServices'
 import { createLocalWorkspaceApi } from './localWorkspaceApi'
-import { loadWorkspaceCatalog } from './localWorkspaceCatalog'
+import { getLocalWorkspaceCatalogDiagnostics, loadWorkspaceCatalog } from './localWorkspaceCatalog'
 
 beforeEach(() => {
   vi.spyOn(console, 'debug').mockImplementation(() => undefined)
@@ -30,6 +30,53 @@ function progress() {
 }
 
 describe('local workspace catalog diagnostics', () => {
+  it('keeps the newer pending load visible when an older load completes', async () => {
+    let finishOlder!: () => void
+    let finishNewer!: () => void
+    const older = loadWorkspaceCatalog(
+      'navigation-workspaces',
+      () =>
+        new Promise<void>(resolve => {
+          finishOlder = resolve
+        })
+    )
+    const newer = loadWorkspaceCatalog(
+      'navigation-workspaces',
+      () =>
+        new Promise<void>(resolve => {
+          finishNewer = resolve
+        })
+    )
+    finishOlder()
+    await older
+    expect(
+      getLocalWorkspaceCatalogDiagnostics().find(row => row.catalog === 'navigation-workspaces')
+        ?.status
+    ).toBe('started')
+    finishNewer()
+    await newer
+  })
+
+  it('does not replace a newer successful load with an older failure', async () => {
+    let failOlder!: (error: Error) => void
+    const older = loadWorkspaceCatalog(
+      'navigation-workspaces',
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          failOlder = reject
+        })
+    )
+    await loadWorkspaceCatalog('navigation-workspaces', async () => undefined)
+    const error = new Error('private stale error')
+    const rejected = expect(older).rejects.toBe(error)
+    failOlder(error)
+    await rejected
+    expect(
+      getLocalWorkspaceCatalogDiagnostics().find(row => row.catalog === 'navigation-workspaces')
+        ?.status
+    ).toBe('fulfilled')
+  })
+
   it('returns the original value and records completion without logging contents', async () => {
     const value = { token: 'private-token' }
     const load = vi.fn(async () => value)
@@ -80,6 +127,7 @@ describe('local workspace catalog diagnostics', () => {
       {
         source: 'local',
         catalog: 'navigation-workspaces',
+        requestId: expect.any(Number),
         status: 'rejected',
         elapsedMs: expect.any(Number),
         errorName: scenario.name === 'private-name' ? 'Error' : scenario.name,
@@ -89,6 +137,10 @@ describe('local workspace catalog diagnostics', () => {
     ])
     expect(failures()[0].elapsedMs).toBeGreaterThanOrEqual(0)
     expect(JSON.stringify(vi.mocked(console.error).mock.calls)).not.toMatch(/private|https:/)
+    expect(
+      getLocalWorkspaceCatalogDiagnostics().find(row => row.catalog === 'navigation-workspaces')
+    ).toEqual(failures()[0])
+    expect(JSON.stringify(getLocalWorkspaceCatalogDiagnostics())).not.toMatch(/private|https:/)
   })
 
   it.each(['projects', 'workspaces'] as const)(
@@ -167,6 +219,7 @@ describe('local workspace catalog diagnostics', () => {
         scenario.failed.map(catalog => ({
           source: 'local',
           catalog,
+          requestId: expect.any(Number),
           status: 'rejected',
           elapsedMs: expect.any(Number),
           errorName: 'Error',
@@ -177,6 +230,7 @@ describe('local workspace catalog diagnostics', () => {
       expect(progress()).toContainEqual({
         source: 'local',
         catalog: 'agents-summary',
+        requestId: expect.any(Number),
         status: 'fulfilled',
         elapsedMs: expect.any(Number),
       })

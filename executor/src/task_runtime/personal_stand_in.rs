@@ -280,6 +280,7 @@ fn validate_policy(policy: &Value) -> bool {
     policy["automatic"].is_boolean()
         && policy["askBeforeAct"].is_boolean()
         && policy.get("immediate").map_or(true, Value::is_boolean)
+        && policy.get("enabled").map_or(true, Value::is_boolean)
 }
 
 fn valid_collaboration(source: &Value) -> bool {
@@ -359,6 +360,8 @@ fn validate_connections(role: &Value) -> Result<(), TaskRuntimeError> {
                             && validate_policy(&row["policy"])
                             && (source_provider(row) != EMAIL_PROVIDER
                                 || row["policy"]["askBeforeAct"] == true)
+                            && super::connection_rules::valid_condition(&row["condition"])
+                            && row.get("instruction").map_or(true, |v| v.is_string())
                             && ids.insert((
                                 row["providerId"].to_string(),
                                 row["profile"].to_string(),
@@ -615,7 +618,11 @@ pub(super) fn stamp_stand_in_connections(identity: &mut Value, previous: &Value)
             })
         });
         source["enabledAfter"] = before
-            .filter(|_| preserve)
+            .filter(|before| {
+                preserve
+                    && (before["policy"]["enabled"] != false)
+                        == (source["policy"]["enabled"] != false)
+            })
             .and_then(|source| source.get("enabledAfter"))
             .cloned()
             .unwrap_or_else(|| json!(now()));

@@ -1,6 +1,6 @@
 {
   "order": 51000,
-  "scenario": "./scenarios/stand-in-cloud.scenario.mjs",
+  "scenario": "./scenarios/connection-automation-cloud-host.scenario.mjs",
   "scenarioOnly": true,
   "ci": {
     "core": {

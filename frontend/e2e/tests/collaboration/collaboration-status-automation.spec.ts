@@ -50,6 +50,7 @@ projectTest(
     await page.goto(`${path}?view=manage`)
     await page.getByTestId('collaboration-project-settings-automatic-processing').click()
     await page.getByTestId('automatic-processing-create').click()
+    await page.getByTestId('project-rule-connection-projects').click()
     await page.getByTestId('automatic-processing-trigger-status_changed').locator('..').click()
     await expect(page.getByTestId('automatic-processing-trigger-status_changed')).toBeChecked()
     await page.getByTestId('automatic-processing-status').selectOption('in_review')

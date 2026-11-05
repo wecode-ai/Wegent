@@ -1,0 +1,6 @@
+{
+  "order": 51010,
+  "ciHost": "stand-in-cloud",
+  "scenario": "./scenarios/stand-in-source-project-permissions.scenario.mjs",
+  "scenarioOnly": true
+}

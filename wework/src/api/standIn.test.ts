@@ -6,6 +6,50 @@ import { bindProjectStandInApi, createStandInExecutorApi, type StandInExecutorAp
 
 const settings = { enabled: false, prompt: '', executionDeviceId: '', version: 0 }
 
+it('isolates private views by authority, account and collector without using API object identity', () => {
+  const request = vi.fn()
+  const scope = (user: number, authority: string, deviceId?: string) =>
+    createStandInExecutorApi(request).connectionRules!(user, { authority, deviceId }).ownerScope
+  const original = scope(7, 'https://one.test/api')
+  expect(scope(7, 'https://one.test/api/')).toBe(original)
+  expect(scope(8, 'https://one.test/api')).not.toBe(original)
+  expect(scope(7, 'https://two.test/api')).not.toBe(original)
+  expect(scope(7, 'https://one.test/api', 'other-device')).not.toBe(original)
+  expect(scope(7, 'https://one.test/api', 'device-A')).not.toBe(
+    scope(7, 'https://one.test/api', 'device-B')
+  )
+  expect(request).not.toHaveBeenCalled()
+})
+
+it('keeps connection rules and their private source discovery on the selected Executor', async () => {
+  const request = vi.fn().mockResolvedValue({ items: [] })
+  const api = createStandInExecutorApi(request).connectionRules!(7, {
+    authority: 'https://wework.test/api',
+    deviceId: 'collector-device',
+  })
+  const project = { id: 'project', store: 'cloud' as const }
+  await api.list(project)
+  expect(request).toHaveBeenLastCalledWith(
+    'runtime.connection_rules.list',
+    { userId: 7, project },
+    'collector-device'
+  )
+  await api.providers()
+  expect(request).toHaveBeenLastCalledWith('runtime.connections.catalog', {}, 'collector-device')
+  await api.resources('provider', 'inbox', 'query')
+  expect(request).toHaveBeenLastCalledWith(
+    'runtime.connections.resources',
+    { providerId: 'provider', kind: 'inbox', query: 'query' },
+    'collector-device'
+  )
+  await api.runs('rule')
+  expect(request).toHaveBeenLastCalledWith(
+    'runtime.connection_rules.runs',
+    { userId: 7, id: 'rule' },
+    'collector-device'
+  )
+})
+
 it('routes onboarding reads and explicit feature choices to the selected Executor', async () => {
   const request = vi.fn().mockResolvedValue({ state: { version: 1, completed: true } })
   const api = createStandInExecutorApi(request)

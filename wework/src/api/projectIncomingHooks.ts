@@ -1,6 +1,7 @@
 import type { HttpClient } from './http'
 
-export type ProjectEventSourceType = 'github' | 'gitlab' | 'wework' | 'generic'
+export type { AutomationEventSourceType as ProjectEventSourceType } from '@wegent/collaboration/automation'
+import type { AutomationEventSourceType as ProjectEventSourceType } from '@wegent/collaboration/automation'
 export type ProjectEventCollectionMode = 'webhook' | 'poll' | 'internal' | 'hybrid'
 export type ProjectAutomationExecutionTarget =
   | 'existing_issue'
@@ -63,6 +64,7 @@ export interface ProjectIncomingEvent {
   matchedRuns: string[]
   reason: string | null
   attemptCount: number
+  nextRetryAt: string | null
   createdAt: string
   updatedAt: string
 }

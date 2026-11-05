@@ -1,6 +1,7 @@
+import { ConnectionTypeRow } from '@wegent/collaboration/automation'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react'
-import { ChevronRight, Folder, Mail, MessageSquare, Plus, type LucideIcon } from 'lucide-react'
+import { ChevronRight, Folder, Mail, MessageSquare, Plus } from 'lucide-react'
 import type { CollaborationProject } from '@wegent/collaboration'
 import { standInPolicy, type StandInRole } from '@/api/personalStandIn'
 import type { ConnectionProviderDescriptor, StandInExecutorApi } from '@/api/standIn'
@@ -474,33 +475,5 @@ function ConnectionProviderStatus({
         </button>
       )}
     </>
-  )
-}
-
-function ConnectionTypeRow({
-  testId,
-  icon: Icon,
-  label,
-  disabled,
-  onSelect,
-}: {
-  testId: string
-  icon: LucideIcon
-  label: string
-  disabled: boolean
-  onSelect(): void
-}) {
-  return (
-    <button
-      type="button"
-      data-testid={testId}
-      disabled={disabled}
-      onClick={onSelect}
-      className="flex min-h-9 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-muted disabled:opacity-40"
-    >
-      <Icon aria-hidden="true" className="h-4 w-4 shrink-0 text-text-secondary" />
-      <span className="min-w-0 flex-1 truncate">{label}</span>
-      <ChevronRight aria-hidden="true" className="h-4 w-4 shrink-0 text-text-muted" />
-    </button>
   )
 }

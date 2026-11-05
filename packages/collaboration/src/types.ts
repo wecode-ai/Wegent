@@ -531,6 +531,10 @@ export interface CollaborationLocation {
 }
 
 export interface CollaborationHostAdapter {
+  connectionAutomation?: {
+    api: import("./automation/connectionRules").ConnectionRulesApi;
+    renderRunnerSelection?: import("./automation/ConnectionRulesPanel").ConnectionRulesPanelProps["renderRunnerSelection"];
+  };
   capabilities: CollaborationCapabilities;
   defaultAssistant?: CollaborationDefaultAssistant;
   location: CollaborationLocation;

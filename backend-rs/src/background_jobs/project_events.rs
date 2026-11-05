@@ -38,6 +38,7 @@ fn supported(event_type: &str) -> bool {
             | "change_request.comment_created"
             | "change_request.merged"
             | "document.changed"
+            | "connection.result_published"
     )
 }
 
@@ -354,6 +355,20 @@ mod tests {
             subscription_id: "h".into(),
         }
     }
+    #[test]
+    fn published_connection_results_use_the_existing_event_pipeline() {
+        assert!(supported("connection.result_published"));
+        assert!(!supported("message.received"));
+        assert!(matches(
+            &json!({"execution_target":"create_issue"}),
+            &event(
+                "connection.result_published",
+                json!({"title":"Result","description":"Summary"})
+            ),
+            &json!({})
+        ));
+    }
+
     #[test]
     fn status_rules_follow_the_projects_processing_boundary() {
         let config = json!({"transition":"entered_processing"});

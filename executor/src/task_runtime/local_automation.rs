@@ -90,7 +90,10 @@ pub(super) fn validate_rules(
             "event"
                 if matches!(
                     text(rule, "eventType"),
-                    "task.created" | "task.tag_added" | "task.status_changed"
+                    "task.created"
+                        | "task.tag_added"
+                        | "task.status_changed"
+                        | "connection.result_published"
                 ) => {}
             _ => {
                 return Err(TaskRuntimeError::Invalid(
@@ -273,7 +276,7 @@ fn on_task_status_changed(
     Ok(())
 }
 
-fn run_for_issue(
+pub(super) fn run_for_issue(
     connection: &Connection,
     project: &LoopItem,
     task_id: &str,

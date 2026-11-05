@@ -12,6 +12,15 @@ classify_path() {
   fi
 
   case "$path" in
+    executor/src/task_runtime/connection_identity.rs|executor/src/runtime_work/handler/connection_identity.rs|executor/src/runtime_work/handler/stand_in_ingress_tests.rs|executor/src/task_runtime/connection_rules.rs|executor/src/runtime_work/handler/connection_rules*|executor/tests/connection_automation_contract.rs|packages/collaboration/src/automation/ConnectionRule*|packages/collaboration/src/automation/connectionRules.ts|wework/src/features/todo/ConnectionRulesPanel*|wework/e2e/desktop/scenarios/connection-automation*.mjs|wework/e2e/desktop/fixtures/connection-automation-provider.mjs)
+      select_target "core:stand-in-plugin-bridge"
+      select_target "core:stand-in-cloud"
+      return
+      ;;
+    wework/e2e/desktop/modules/connection-rule-project-permissions.mjs|wework/e2e/desktop/scenarios/stand-in-source-project-permissions.scenario.mjs)
+      select_target "core:stand-in-cloud"
+      return
+      ;;
     wework/src/features/todo/ProjectCoordinatorConversation*|wework/src/features/todo/ProjectCoordinatorPublication*|wework/src/features/todo/ProjectCoordinationPanel*|executor/src/runtime_work/handler/project_coordinator.rs|executor/src/runtime_work/handler/project_router*|executor/src/task_runtime/project_router_store.rs|executor/src/task_runtime/store/project_coordinator.rs|wework/e2e/desktop/scenarios/project-coordinator-publication.scenario.mjs|wework/e2e/desktop/scenarios/project-coordination.scenario.mjs)
       select_target "core:stand-in-profile"
       select_target "core:stand-in-permissions"

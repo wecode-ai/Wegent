@@ -5,6 +5,7 @@ import {
   summarizeRuntimeDisplayItems,
 } from './runtimePaneDiagnostics'
 import { getIdleTaskSchedulerDiagnostics } from '@/features/idle-tasks/idleTaskScheduler'
+import { getLocalWorkspaceCatalogDiagnostics } from '@/features/todo/localWorkspaceCatalog'
 import type { RuntimePaneStatus } from '@/features/workbench/runtimePaneStatus'
 import type {
   RuntimeDeviceWorkspace,
@@ -40,6 +41,7 @@ export interface DebugLogEntry {
 
 export interface WorkbenchDebugSnapshot {
   idleTasks: ReturnType<typeof getIdleTaskSchedulerDiagnostics>
+  localWorkspaceCatalogs: ReturnType<typeof getLocalWorkspaceCatalogDiagnostics>
   updatedAt: string
   workbench: {
     publishedAt: string
@@ -390,6 +392,7 @@ export function clearWorkbenchDebugLogs() {
 export function getWorkbenchDebugSnapshot(): WorkbenchDebugSnapshot {
   return {
     idleTasks: getIdleTaskSchedulerDiagnostics(),
+    localWorkspaceCatalogs: getLocalWorkspaceCatalogDiagnostics(),
     updatedAt: new Date().toISOString(),
     workbench: workbenchSnapshot,
     pane: paneSnapshot,

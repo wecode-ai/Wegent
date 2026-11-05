@@ -127,6 +127,7 @@ pub(super) fn normalize(source: &str, payload: &Value, headers: &Value) -> Vec<E
         "github" => github(payload, headers),
         "gitlab" => gitlab(payload, headers),
         "generic" => generic(payload),
+        "connection" => connection_publication(payload),
         _ => Vec::new(),
     }
 }
@@ -436,6 +437,46 @@ fn gitlab(payload: &Value, headers: &Value) -> Vec<Event> {
     }
 }
 
+fn connection_publication(payload: &Value) -> Vec<Event> {
+    let Some(fields) = payload.as_object() else {
+        return vec![];
+    };
+    if fields.keys().any(|key| {
+        !["event_type", "resource", "subject", "title", "description"].contains(&key.as_str())
+    }) || payload["event_type"] != "connection.result_published"
+        || !payload["subject"]
+            .as_object()
+            .is_some_and(|fields| fields.len() == 1 && fields.contains_key("id"))
+        || text(&payload["subject"]["id"]).is_empty()
+        || !payload["resource"].as_object().is_some_and(|fields| {
+            fields.len() == 2
+                && fields.contains_key("resource_type")
+                && fields.contains_key("external_id")
+        })
+        || payload["resource"]["resource_type"] != "publication"
+        || text(&payload["resource"]["external_id"]).is_empty()
+    {
+        return vec![];
+    }
+    let (title, description) = (text(&payload["title"]), text(&payload["description"]));
+    if title.is_empty()
+        || title.chars().count() > 255
+        || description.is_empty()
+        || description.len() > 32000
+    {
+        return vec![];
+    }
+    let id = text(&payload["resource"]["external_id"]);
+    let resource = json!({"resource_type":"publication","instance_url":"","external_id":id,"path":"","url":"","display_name":id});
+    event(
+        "connection.result_published",
+        "connection",
+        &resource,
+        Some(json!({"type":"publication","id":payload["subject"]["id"]})),
+        json!({"title":title,"description":description}),
+    )
+}
+
 fn generic(payload: &Value) -> Vec<Event> {
     let kind = if text(&payload["event_type"]).is_empty() {
         text(&payload["eventType"])
@@ -552,5 +593,43 @@ mod tests {
         payload["resource"]["instance_url"] = json!("not-http");
         assert!(normalize("generic", &payload, &json!({})).is_empty());
         assert_eq!(identity(&Value::Null), "");
+    }
+    #[test]
+    fn private_connection_publications_have_only_authorized_text_and_stable_identity() {
+        let payload = json!({"event_type":"connection.result_published","resource":{"resource_type":"publication","external_id":"rule"},"subject":{"id":"delivery"},"title":"  Published result  ","description":" Approved summary "});
+        let events = normalize("connection", &payload, &json!({}));
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0].payload,
+            json!({"title":"Published result","description":"Approved summary"})
+        );
+        assert_eq!(
+            events[0].subject,
+            json!({"type":"publication","id":"delivery"})
+        );
+        assert_eq!(
+            events[0].identity(),
+            normalize("connection", &payload, &json!({}))[0].identity()
+        );
+        for patch in [
+            json!({"messages":["PRIVATE ORIGINAL"]}),
+            json!({"credentials":{"token":"private"}}),
+            json!({"subject":{"id":"delivery","url":"private-link"}}),
+            json!({"resource":{"resource_type":"publication","external_id":"rule","profile":"private"}}),
+            json!({"title":"🦀".repeat(256)}),
+            json!({"description":"文".repeat(11000)}),
+            json!({"description":{"text":"PRIVATE ORIGINAL"}}),
+            json!({"event_type":"message.received"}),
+        ] {
+            let mut invalid = payload.clone();
+            invalid
+                .as_object_mut()
+                .unwrap()
+                .extend(patch.as_object().unwrap().clone());
+            assert!(
+                normalize("connection", &invalid, &json!({})).is_empty(),
+                "{patch}"
+            );
+        }
     }
 }

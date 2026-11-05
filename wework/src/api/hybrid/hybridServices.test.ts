@@ -97,6 +97,7 @@ const mocks = vi.hoisted(() => {
 
   const localServices = {
     standInApi: {
+      connectionRules: vi.fn(),
       projectCoordination: vi.fn(),
       projectProcessing: vi.fn(),
       readTask: vi.fn().mockResolvedValue({ success: true }),
@@ -190,6 +191,7 @@ const mocks = vi.hoisted(() => {
   }
   const cloudServices = {
     standInApi: {
+      connectionRules: vi.fn(),
       projectCoordination: vi.fn(),
       projectProcessing: vi.fn(),
       readTask: vi.fn().mockResolvedValue({ success: true }),
@@ -498,6 +500,29 @@ function deferred<T>() {
 }
 
 describe('stand-in save routing', () => {
+  it('uses the current native identity for source rules without querying a cloud device inventory', async () => {
+    const list = vi.fn().mockResolvedValue([])
+    mocks.localSidebarIdentity.mockResolvedValue({
+      deviceId: 'actual-native-device',
+      runtimeInstanceId: 'native-instance',
+    })
+    mocks.localServices.standInApi.connectionRules.mockReturnValue({ list })
+    const services = createServices()
+    mocks.localListDevices.mockClear()
+    mocks.cloudListDevices.mockClear()
+    await services.standInApi!.connectionRules!(7, { authority: 'https://wework.test/api' }).list({
+      id: 'project',
+      store: 'local',
+    })
+    expect(mocks.localServices.standInApi.connectionRules).toHaveBeenCalledWith(7, {
+      authority: 'https://wework.test/api',
+      deviceId: 'actual-native-device',
+    })
+    expect(list).toHaveBeenCalledWith({ id: 'project', store: 'local' })
+    expect(mocks.localListDevices).not.toHaveBeenCalled()
+    expect(mocks.cloudListDevices).not.toHaveBeenCalled()
+  })
+
   it.each(['local-device', 'remote-device'])(
     'routes saves by the selected Executor %s rather than the stored device field',
     async deviceId => {

@@ -1,92 +1,20 @@
 import type { HttpClient } from './http'
-import type { RunnerSelection } from '@wegent/collaboration'
 import type { LocalLoopItemExecution } from './local/localDelivery'
 import type { ProjectWorkflowDefinition } from './deliveries'
 
-export type ProjectAutomationRunStatus =
-  | 'pending'
-  | 'queued'
-  | 'waiting_runtime'
-  | 'waiting_device'
-  | 'running'
-  | 'succeeded'
-  | 'failed'
-  | 'skipped'
-  | 'cancelled'
-
-export type ProjectAutomationEventType =
-  | 'task.created'
-  | 'task.tag_added'
-  | 'task.status_changed'
-  | 'change_request.checks_failed'
-  | 'change_request.merge_conflict'
-  | 'change_request.review_submitted'
-  | 'change_request.comment_created'
-  | 'document.changed'
-
-export type ProjectAutomationTargetKind = 'human' | 'agent' | 'collaboration_group'
-
-export interface ProjectAutomationRule {
-  id: string
-  projectId: string
-  name: string
-  prompt: string
-  triggerType: 'manual' | 'schedule' | 'event' | 'workflow'
-  eventType: ProjectAutomationEventType | null
-  eventConfig: Record<string, unknown>
-  cronExpression: string | null
-  timezone: string
-  executionDeviceId: string | null
-  runnerSelection?: RunnerSelection | null
-  targetKind: ProjectAutomationTargetKind
-  targetId: string
-  targetName: string
-  enabled: boolean
-  nextRunAt: string | null
-  lastRunAt: string | null
-  lastRunStatus: ProjectAutomationRunStatus | null
-  version: number
-  createdAt: string
-  updatedAt: string
-}
-
-export interface ProjectAutomationRun {
-  id: string
-  automationId: string
-  projectId: string
-  trigger: 'scheduled' | 'manual' | 'event'
-  status: ProjectAutomationRunStatus
-  timezone: string
-  scheduledFor: string
-  expiresAt: string | null
-  taskId: string | null
-  taskTitle?: string | null
-  backendTaskId: number | null
-  deviceId: string | null
-  error: string | null
-  createdAt: string
-  updatedAt: string
-  completedAt: string | null
-  retryable?: boolean
-  triggerType?: 'schedule' | 'event' | 'workflow' | null
-  eventType?: ProjectAutomationEventType | null
-  eventConfig?: Record<string, unknown> | null
-}
-
-export interface ProjectAutomationInput {
-  name: string
-  prompt: string
-  triggerType: 'manual' | 'schedule' | 'event' | 'workflow'
-  eventType: ProjectAutomationEventType | null
-  eventConfig: Record<string, unknown>
-  cronExpression: string | null
-  timezone: string
-  executionDeviceId: string | null
-  runnerSelection?: RunnerSelection | null
-  targetKind: ProjectAutomationTargetKind
-  targetId: string
-  enabled: boolean
-}
+export type {
+  AutomationRunStatus as ProjectAutomationRunStatus,
+  AutomationEventType as ProjectAutomationEventType,
+  AutomationTargetKind as ProjectAutomationTargetKind,
+} from '@wegent/collaboration/automation'
+import type {
+  AutomationBackendRule,
+  AutomationBackendRun,
+  AutomationBackendInput,
+} from '@wegent/collaboration/automation'
+export type ProjectAutomationRule = AutomationBackendRule
+export type ProjectAutomationRun = AutomationBackendRun
+export type ProjectAutomationInput = AutomationBackendInput
 
 export interface ProjectAutomationWorkflowMigrationResult {
   automation: ProjectAutomationRule

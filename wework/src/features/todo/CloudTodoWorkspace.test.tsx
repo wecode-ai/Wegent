@@ -2919,6 +2919,41 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.queryByTestId('project-automation-policy')).not.toBeInTheDocument()
   })
 
+  it.each(['Viewer', 'Developer'] as const)(
+    'keeps %s private rule management outside project settings',
+    async role => {
+      const privateApi = {
+        ownerScope: 'owner/current-native',
+        list: vi.fn().mockResolvedValue([]),
+        providers: vi.fn().mockResolvedValue([]),
+      }
+      const workbenchServices = services({
+        standInApi: {
+          connectionRules: vi.fn(() => privateApi),
+        } as unknown as WorkbenchServices['standInApi'],
+      })
+      vi.mocked(workbenchServices.deliveryApi!.listCloudProjects).mockResolvedValue({
+        items: [{ ...project, access_role: role }],
+      })
+      render(
+        <CloudTodoWorkspace
+          user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+          localProjects={[]}
+          services={workbenchServices}
+        />
+      )
+      await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+      expect(screen.queryByTestId('cloud-project-manage-view')).not.toBeInTheDocument()
+      await userEvent.click(await screen.findByTestId('private-connection-rules-open'))
+      expect(await screen.findByTestId('connection-rules-project-readonly')).toBeInTheDocument()
+      expect(screen.queryByTestId('connection-rule-create')).not.toBeInTheDocument()
+      await waitFor(() =>
+        expect(privateApi.list).toHaveBeenCalledWith({ id: '11', store: 'cloud' })
+      )
+      expect(screen.queryByTestId('automatic-processing')).not.toBeInTheDocument()
+    }
+  )
+
   it('uses shared project view permissions for restricted analysts', async () => {
     const workbenchServices = services()
     const listCloudProjects = workbenchServices.deliveryApi!.listCloudProjects as ReturnType<

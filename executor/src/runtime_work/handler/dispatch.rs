@@ -105,6 +105,14 @@ impl RuntimeWorkRpcHandler {
             "runtime.connections.host" => {
                 boxed_rpc(move || async move { self.configure_connection_host(payload) })
             }
+            "runtime.connection_rules.list"
+            | "runtime.connection_rules.save"
+            | "runtime.connection_rules.remove"
+            | "runtime.connection_rules.runs"
+            | "runtime.connection_rules.retry_source"
+            | "runtime.connection_rules.retry" => {
+                boxed_rpc(move || async move { self.connection_rules_rpc(method, payload).await })
+            }
             "runtime.connections.catalog" => {
                 boxed_rpc(
                     move || async move { self.connection_call("catalog", None, payload).await },

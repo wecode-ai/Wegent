@@ -232,6 +232,13 @@ print(json.dumps(result, ensure_ascii=False))
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 pub trait RuntimeWorkHandler: Send + Sync {
+    fn update_local_account_identity(
+        &self,
+        _connection: Option<&crate::config::device::ConnectionConfig>,
+    ) -> Result<(), AppIpcError> {
+        Ok(())
+    }
+
     fn handle_runtime_rpc<'a>(&'a self, data: Value) -> BoxFuture<'a, Result<Value, AppIpcError>>;
 
     fn reconcile_bound_task_statuses<'a>(&'a self) -> BoxFuture<'a, ()> {

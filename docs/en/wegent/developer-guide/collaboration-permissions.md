@@ -165,6 +165,42 @@ Legacy `creator_admin` input remains accepted, while shared bindings follow proj
 
 Local private projects retain owner authority offline. Shared cloud operations use server-side relationships.
 
+Source rules retain verified account evidence in device-private storage: a user ID and
+an irreversible fingerprint of the current connection configuration. During transport
+or server outages, local rule management and collection require the same device,
+connection configuration and user. Switching accounts, any 401, or a 403 from the
+account identity endpoint `/users/me` invalidates the evidence. A project endpoint's
+403 rejects that project operation without retiring the verified local account.
+Collection responses and publication recheck account changes.
+This evidence grants no cloud project authority: cloud creation, delivery and execution
+retain current credentials and the original server authorization, waiting through a
+transport outage. `connection_identity::tests` and `connection_automation_contract`
+cover offline use, switching, denial, persistence and absence of persisted credentials,
+preserving CP15's current cloud execution authorization.
+
+Account changes serialize the durable identity epoch before updating the connection
+snapshot. Storage failures preserve the previous state and permit retries; they must
+not be ignored to continue switching. Persistence runs on a blocking thread to keep
+the async Runtime responsive. Unfiltered rule lists isolate ordinary cloud failures
+per project, returning only the current user's cached configuration with a sync error
+until recovery. A 401 or an identity-endpoint 403 still invalidates identity evidence;
+cached configuration grants no project authority. Project 403/404 responses mark that
+project's sync error while preserving other local rules. Owners may remove their own
+private source subscription and cancel undelivered runs; denied project administration
+does not permit further cleanup of shared automation or hooks. `connection_rules::tests`
+covers project denials, private cleanup, version conflicts and account invalidation.
+
+The source-rule interface separates project writes from private record management:
+read-only members cannot create, edit or toggle project rules, but can inspect their
+own history and remove local rules through **My source rules** in the project header.
+Project settings remain hidden; this entry does not mount shared automation configuration
+or load its options. Source RPC and interface scope use the actual cloud connection user,
+with the supplied local identity reserved for the compatibility entry. Rules, drafts and history are scoped by service
+address, user and collection device, and unmount synchronously when that boundary changes.
+Pending or failed reads under a new identity cannot retain the previous identity's private
+content. Credential refresh or API recreation within the same scope preserves unsaved
+drafts. This interface scope key does not grant authorization.
+
 ## Incident and recovery evidence
 
 Development startup automatically runs Alembic. The original permission migration was automatically applied while under development and failed serializing backup data. MySQL retained completed DDL while rolling back project-parent backfill. Startup swallowed the failure, and queries against the empty new parent column hid projects. The earlier claim that no real database had been migrated was inaccurate.

@@ -1,6 +1,6 @@
 {
   "order": 46000,
-  "scenario": "./scenarios/stand-in-plugin-bridge.scenario.mjs",
+  "scenario": "./scenarios/connection-automation-host.scenario.mjs",
   "scenarioOnly": true,
   "ci": {
     "core": {

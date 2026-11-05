@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { projectStatuses } from './board'
+import { projectStatuses } from "./board";
 import { ProjectTemplateSettings } from "./templates/ProjectTemplateSettings";
 import { useCollaborationTemplateStore } from "./templates/context";
 import { templateMessages } from "./templates/messages";
@@ -60,7 +60,11 @@ import type {
 } from "./ports/SharedWorkspaceApi";
 import { executeStandardCloudBoardMutation } from "./project-board/useStandardCloudBoardController";
 import { useCollaborationWorkspaceController } from "./workspace-controller";
-import { canEditCollaborationIssue } from "./permissions";
+import {
+  canAccessCollaborationProjectView,
+  canEditCollaborationIssue,
+} from "./permissions";
+import { PrivateConnectionRulesButton } from "./automation/PrivateConnectionRulesButton";
 import { ProjectCreateDialog, projectCreateLabels } from "./project-create";
 import { ProjectIssueTable, useIssueAssignmentsByIssueId } from "./platform";
 import {
@@ -629,6 +633,24 @@ export function CollaborationApp({
               renderRightActions={({ actionRefs, showLabels }) => (
                 <>
                   {host.renderProjectHeaderAction?.(project)}
+                  {!canAccessCollaborationProjectView(project, "manage") &&
+                    host.connectionAutomation && (
+                      <PrivateConnectionRulesButton
+                        api={host.connectionAutomation.api}
+                        project={{
+                          id: project.id,
+                          store:
+                            project.project_store === "local"
+                              ? "local"
+                              : "cloud",
+                        }}
+                        translate={translate}
+                        onOpenIssue={async (issueId) => {
+                          await api.issues.get(issueId);
+                          host.navigate({ ...host.location, issueId });
+                        }}
+                      />
+                    )}
                   {host.location.view === "board" ||
                   host.location.view === "calendar" ||
                   host.location.view === "gantt" ? (
@@ -1125,6 +1147,27 @@ export function CollaborationApp({
                                 "collaboration-project-settings-automatic-processing",
                               content: (
                                 <ProjectAutomaticProcessing
+                                  connectionRules={
+                                    host.connectionAutomation?.api
+                                  }
+                                  renderConnectionRunnerSelection={
+                                    host.connectionAutomation
+                                      ?.renderRunnerSelection
+                                  }
+                                  connectionProject={{
+                                    id: project.id,
+                                    store:
+                                      project.project_store === "local"
+                                        ? "local"
+                                        : "cloud",
+                                  }}
+                                  onOpenConnectionIssue={async (issueId) => {
+                                    await api.issues.get(issueId);
+                                    host.navigate({
+                                      ...host.location,
+                                      issueId,
+                                    });
+                                  }}
                                   api={api}
                                   project={project}
                                   members={members}
@@ -1208,9 +1251,9 @@ export function CollaborationApp({
                 onClose: () => {
                   commands.clearSelectedIssue();
                   host.navigate({
+                    ...host.location,
                     projectId: project.id,
                     issueId: null,
-                    view: host.location.view,
                   });
                 },
                 onChange: commands.replaceIssue,
@@ -1266,9 +1309,9 @@ export function CollaborationApp({
                 onClose={() => {
                   commands.clearSelectedIssue();
                   host.navigate({
+                    ...host.location,
                     projectId: project.id,
                     issueId: null,
-                    view: host.location.view,
                   });
                 }}
                 onChange={commands.replaceIssue}

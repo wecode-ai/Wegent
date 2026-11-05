@@ -10,6 +10,7 @@ import type {
   RuntimeContextUsage,
 } from "./runtime";
 import { applyRequestUserInputResponseToBlock } from "./runtime-user-input";
+import { transcriptOrderDiagnostic } from "./transcript-order-diagnostics";
 import type {
   RuntimeConversationTurn,
   RuntimePaneMessageAction,
@@ -191,6 +192,8 @@ export function createRuntimeConversationSession(
     if (changedThread) supersededTurnIds = new Set();
     for (const id of response.supersededTurnIds ?? [])
       supersededTurnIds.add(id);
+    const previousTurns = new Map(turns.map((turn) => [turn.id, turn]));
+    const pageTurns = new Map(page.turns.map((turn) => [turn.id, turn]));
     turns = hydrateRuntimeConversationTurns(
       changedThread ? [] : turns,
       page.turns,
@@ -198,6 +201,17 @@ export function createRuntimeConversationSession(
       !changedThread,
       [...supersededTurnIds],
     );
+    for (const turn of turns) {
+      const previous = previousTurns.get(turn.id);
+      if (!previous) continue;
+      const evidence = transcriptOrderDiagnostic(
+        previous,
+        turn,
+        pageTurns.get(turn.id)?.items ?? [],
+      );
+      if (evidence)
+        console.debug("[Wework] Transcript order changed", evidence);
+    }
     if (changedThread) {
       beforeCursor = null;
       fullContent = false;

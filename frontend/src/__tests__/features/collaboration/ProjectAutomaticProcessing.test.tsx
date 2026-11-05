@@ -58,7 +58,13 @@ function fixture() {
     projects: { listCollaborationGroups: jest.fn().mockResolvedValue([]) },
     agents: { list: jest.fn().mockResolvedValue(agents) },
     members: { list: jest.fn().mockResolvedValue([]) },
-    incomingHooks: { list: jest.fn().mockResolvedValue([]) },
+    incomingHooks: {
+      list: jest.fn().mockResolvedValue([]),
+      catalog: jest.fn().mockResolvedValue([
+        { sourceType: 'github', eventTypes: ['change_request.checks_failed'] },
+        { sourceType: 'generic', eventTypes: ['document.changed'] },
+      ]),
+    },
   }
   return {
     api,
@@ -87,6 +93,7 @@ describe('ProjectAutomaticProcessing loading', () => {
     await act(async () => members.resolve([{ user_id: 7, user_name: '项目成员' }]))
     expect(api.members.list).toHaveBeenCalledWith(project.id)
     fireEvent.click(screen.getByTestId('automatic-processing-create'))
+    fireEvent.click(screen.getByTestId('project-rule-connection-projects'))
     expect(screen.getByTestId('automatic-processing-target-kind-human')).toHaveAttribute(
       'aria-pressed',
       'true'
@@ -196,18 +203,22 @@ describe('ProjectAutomaticProcessing loading', () => {
     render(view())
     await screen.findByText('自动分配')
     fireEvent.click(screen.getByTestId('automatic-processing-create'))
+    fireEvent.click(screen.getByTestId('project-rule-connection-projects'))
     expect(api.incomingHooks.list).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByTestId('automatic-processing-trigger-external'))
+    fireEvent.click(screen.getByTestId('automatic-processing-back'))
+    fireEvent.click(screen.getByTestId('project-rule-connection-webhook'))
     expect(screen.getByTestId('automatic-processing-hook')).toBeDisabled()
     expect(screen.getByTestId('automatic-processing-save')).toBeDisabled()
     await act(async () => hooks.reject(new Error('接入服务不可用')))
     expect(screen.getAllByRole('alert')[0]).toHaveTextContent('接入服务不可用')
     expect(screen.getByText('自动分配')).toBeInTheDocument()
-    fireEvent.click(screen.getByTestId('automatic-processing-trigger-created'))
+    fireEvent.click(screen.getByTestId('automatic-processing-back'))
+    fireEvent.click(screen.getByTestId('project-rule-connection-projects'))
     api.incomingHooks.list.mockResolvedValue([
       { id: 'hook-1', name: 'GitHub', sourceType: 'github' },
     ])
-    fireEvent.click(screen.getByTestId('automatic-processing-trigger-external'))
+    fireEvent.click(screen.getByTestId('automatic-processing-back'))
+    fireEvent.click(screen.getByTestId('project-rule-connection-webhook'))
     await waitFor(() =>
       expect(screen.getByTestId('automatic-processing-hook')).toHaveValue('hook-1')
     )
@@ -226,11 +237,11 @@ describe('ProjectAutomaticProcessing loading', () => {
     expect(screen.getByText('自动分配')).toBeInTheDocument()
     expect(screen.queryByTestId('automatic-processing-loading')).not.toBeInTheDocument()
     await act(async () => refresh.resolve([]))
-    expect(screen.getByText('暂无自动处理规则')).toBeInTheDocument()
+    expect(screen.getByText('暂无自动处理规则。添加连接，设置触发与动作。')).toBeInTheDocument()
     mounted.unmount()
     api.automations.list.mockReturnValue(new Promise(() => {}))
     render(view())
-    expect(screen.getByText('暂无自动处理规则')).toBeInTheDocument()
+    expect(screen.getByText('暂无自动处理规则。添加连接，设置触发与动作。')).toBeInTheDocument()
     await act(async () => {})
   })
 })
@@ -241,6 +252,7 @@ describe('ProjectAutomaticProcessing status triggers', () => {
     render(view())
     await screen.findByText('自动分配')
     fireEvent.click(screen.getByTestId('automatic-processing-create'))
+    fireEvent.click(screen.getByTestId('project-rule-connection-projects'))
     fireEvent.click(screen.getByTestId('automatic-processing-trigger-status_changed'))
     expect(screen.getByTestId('automatic-processing-save')).toBeDisabled()
     expect(screen.getByRole('option', { name: '安全评审' })).toHaveValue('custom-review')
@@ -392,6 +404,7 @@ describe('ProjectAutomaticProcessing status triggers', () => {
     render(view())
     await screen.findByText('自动分配')
     fireEvent.click(screen.getByTestId('automatic-processing-create'))
+    fireEvent.click(screen.getByTestId('project-rule-connection-projects'))
     fireEvent.click(screen.getByTestId('automatic-processing-trigger-status_changed'))
     fireEvent.change(screen.getByTestId('automatic-processing-status'), {
       target: { value: 'completed' },
@@ -436,6 +449,7 @@ describe('ProjectAutomaticProcessing status triggers', () => {
     render(view(project.id, 'en'))
     await screen.findByText('自动分配')
     fireEvent.click(screen.getByTestId('automatic-processing-create'))
+    fireEvent.click(screen.getByTestId('project-rule-connection-projects'))
     fireEvent.click(screen.getByTestId('automatic-processing-trigger-status_changed'))
     expect(screen.getByText('Status reached')).toBeInTheDocument()
     expect(screen.getByLabelText('Status')).toHaveValue('')
@@ -457,13 +471,21 @@ describe('ProjectAutomaticProcessing prompts', () => {
       render(view())
       await screen.findByText('自动分配')
       fireEvent.click(screen.getByTestId('automatic-processing-create'))
+      fireEvent.click(screen.getByTestId('project-rule-connection-projects'))
       const field = screen.getByLabelText('提示词（可选）')
       expect(field).toHaveValue('')
       expect(field).toHaveAccessibleDescription(
         '触发时发送给 AI，用于处理当前 Issue；留空按目标职责处理。'
       )
       fireEvent.change(field, { target: { value: prompt } })
-      fireEvent.click(screen.getByTestId(`automatic-processing-trigger-${trigger}`))
+      if (trigger === 'external' || trigger === 'schedule') {
+        fireEvent.click(screen.getByTestId('automatic-processing-back'))
+        fireEvent.click(
+          screen.getByTestId(
+            'project-rule-connection-' + (trigger === 'schedule' ? 'time' : 'webhook')
+          )
+        )
+      } else fireEvent.click(screen.getByTestId(`automatic-processing-trigger-${trigger}`))
       if (trigger === 'tag_added') {
         fireEvent.change(screen.getByTestId('automatic-processing-tag'), {
           target: { value: 'review' },
@@ -477,7 +499,7 @@ describe('ProjectAutomaticProcessing prompts', () => {
           expect(screen.getByTestId('automatic-processing-hook')).toHaveValue('hook-1')
         )
       }
-      expect(field).toHaveValue(prompt)
+      expect(screen.getByLabelText('提示词（可选）')).toHaveValue(prompt)
       expect(screen.getByTestId('automatic-processing-save')).toBeEnabled()
       fireEvent.click(screen.getByTestId('automatic-processing-save'))
       await waitFor(() =>
@@ -570,6 +592,7 @@ describe('ProjectAutomaticProcessing prompts', () => {
     render(view())
     await screen.findByText('自动分配')
     fireEvent.click(screen.getByTestId('automatic-processing-create'))
+    fireEvent.click(screen.getByTestId('project-rule-connection-projects'))
     fireEvent.click(screen.getByTestId('automatic-processing-save'))
     await waitFor(() =>
       expect(api.automations.create).toHaveBeenCalledWith(
@@ -585,6 +608,7 @@ describe('ProjectAutomaticProcessing prompts', () => {
     render(view())
     await screen.findByText('自动分配')
     fireEvent.click(screen.getByTestId('automatic-processing-create'))
+    fireEvent.click(screen.getByTestId('project-rule-connection-projects'))
     fireEvent.change(screen.getByTestId('automatic-processing-prompt'), {
       target: { value: prompt },
     })
@@ -604,6 +628,7 @@ describe('ProjectAutomaticProcessing prompts', () => {
     render(view(project.id, 'en'))
     await screen.findByText('自动分配')
     fireEvent.click(screen.getByTestId('automatic-processing-create'))
+    fireEvent.click(screen.getByTestId('project-rule-connection-projects'))
     expect(screen.getByLabelText('Prompt (optional)')).toHaveAccessibleDescription(
       "Sent to AI when triggered to work on the current Issue. Leave blank to use the target's responsibilities."
     )

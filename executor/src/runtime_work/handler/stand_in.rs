@@ -124,6 +124,12 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<Value, AppIpcError> {
         let response = self.stand_in_request(method, path, body).await?;
         if !response.status().is_success() {
+            if path == "/users/me" && matches!(response.status().as_u16(), 401 | 403) {
+                LocalTaskStore::open(self.task_store_path.as_ref())
+                    .map_err(settings_error)?
+                    .forget_connection_user(&self.device_id)
+                    .map_err(settings_error)?;
+            }
             return Err(AppIpcError::new(
                 "cloud_request_failed",
                 format!("Issue synchronization returned {}", response.status()),
