@@ -1312,6 +1312,7 @@ jobs:
           MOCK_MODEL_SERVER_URL: http://localhost:9999
           E2E_SHARD_INDEX: ${{ matrix.shardIndex }}
           E2E_USE_ISOLATED_USERS: "false"
+          PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/browser
           CI: true
           RUNNER_PROCESS_DIAGNOSTICS: "1"
           RUNNER_RESOURCE_LOG_PATH: ci-diagnostics/shard-${{ matrix.shardIndex }}.jsonl
@@ -1332,6 +1333,7 @@ jobs:
           E2E_QDRANT_URL: http://qdrant:6333
           E2E_KNOWLEDGE_RUNTIME_URL: http://localhost:8200
           E2E_USE_ISOLATED_USERS: "false"
+          PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/provider-native
           CI: true
         run: |
           node ./node_modules/@playwright/test/cli.js test \

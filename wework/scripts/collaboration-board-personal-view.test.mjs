@@ -11,7 +11,11 @@ test.each([true, false])(
     const command = vi.fn(async (action, selector) => {
       if (action === 'getAttribute') return 'true'
       if (action === 'getElementCount') return compact ? '1' : '0'
-      if (compact && selector.endsWith('[data-testid="collaboration-tab-board"]')) {
+      if (
+        compact &&
+        action === 'clickWhenEnabled' &&
+        selector.endsWith('[data-testid="collaboration-tab-board"]')
+      ) {
         throw new Error('Expanded tabs are not mounted in compact layout')
       }
       return ''

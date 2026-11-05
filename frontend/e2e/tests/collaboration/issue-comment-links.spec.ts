@@ -105,10 +105,18 @@ commentTest(
       ] as const) {
         await expect(link).toHaveAttribute('target', '_blank')
         await expect(link).toHaveAttribute('rel', 'noopener noreferrer')
+        const navigationPromise = page
+          .context()
+          .waitForEvent(
+            'request',
+            request => request.isNavigationRequest() && request.url() === url
+          )
         const popupPromise = page.waitForEvent('popup')
         await link.click()
         const popup = await popupPromise
         try {
+          const navigation = await navigationPromise
+          expect(navigation.frame()).toBe(popup.mainFrame())
           await expect(popup).toHaveURL(url)
           expect(await popup.evaluate(() => window.opener === null)).toBe(true)
           if (documentText) {
