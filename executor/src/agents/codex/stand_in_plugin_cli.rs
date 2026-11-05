@@ -3,7 +3,7 @@ use crate::protocol::ExecutionRequest;
 use serde_json::{json, Map, Value};
 
 const CONTEXT_KEY: &str = "wework.plugin-cli-shell";
-const INSTRUCTIONS: &str = "Wework managed plugin CLI invocation on macOS:\nFor bundled plugin CLI commands executed through exec_command, explicitly select shell=\"/bin/sh\" and login=false. These are noninteractive POSIX commands; do not route them through the account's interactive Zsh or its startup configuration. Keep the original execution permissions, authorization controls and local timezone. This tool-use contract does not change the native default shell or grant additional access. Do not change TZ, the account shell, sandbox permissions, or credentials to make a command run. A denied command remains denied; do not retry it through another interpreter to evade the decision. Prefer the plugin's declared native business tools when available.";
+const INSTRUCTIONS: &str = "Wework managed plugin CLI invocation on macOS:\nFor bundled plugin CLI commands executed through exec_command, explicitly select shell=\"/bin/sh\" and login=false. These are noninteractive POSIX commands; do not route them through the account's interactive Zsh or its startup configuration. Keep the original execution permissions, authorization controls and local timezone. This tool-use contract does not change the native default shell or grant additional access. Do not change TZ, the account shell, configured sandbox permissions, or credentials to make a command run. An OS sandbox failure is not a native-review denial. Only when the current native approval policy permits escalation, an exact already-authorized read command blocked by the OS sandbox may request sandbox_permissions=\"require_escalated\" through the existing native reviewer. Keep the same command, arguments, account and resources, and wait for the native decision. An explicit native-review denial or a policy that forbids escalation stops the operation; never switch interpreters, tools or paths to evade it. Prefer the plugin's declared native business tools when available.";
 
 pub(super) fn additional_context(request: &ExecutionRequest) -> Option<Value> {
     context_for_platform(request, cfg!(target_os = "macos"))
@@ -184,6 +184,39 @@ mod tests {
             assert_eq!(
                 turn["approvalPolicy"],
                 crate::agents::codex::codex_runtime_approval_policy(&request)
+            );
+        }
+    }
+
+    #[test]
+    fn managed_cli_context_preserves_native_review_policy_and_explicit_denial() {
+        use crate::agents::codex::{codex_approval_result, prepare_codex_runtime_notification};
+        for (ask, reviewer, permissions) in [
+            (false, "auto_review", "wework-source-project"),
+            (true, "user", "wework-source-read"),
+        ] {
+            let mut request = fixture("stand_in_task");
+            request.extra.get_mut("origin").unwrap()["askBeforeAct"] = json!(ask);
+            let context = context_for_platform(&request, true).unwrap();
+            request.extra.insert("additionalContext".into(), context);
+            let turn = turn_start_params("thread", &request, &CodexLaunchConfig::default(), vec![]);
+            assert_eq!(turn["permissions"], permissions);
+            assert_eq!(turn["approvalsReviewer"], reviewer);
+            assert_eq!(turn["approvalPolicy"]["granular"]["sandbox_approval"], true);
+            let mut approval = json!({"id":1,"method":"item/commandExecution/requestApproval",
+                "params":{"command":["plugin-reader","read"],"availableDecisions":["accept","decline"]}});
+            assert!(prepare_codex_runtime_notification(&request, &mut approval));
+            assert_eq!(
+                approval["params"]["command"],
+                json!(["plugin-reader", "read"])
+            );
+            assert_eq!(
+                codex_approval_result(
+                    &approval,
+                    &json!({"answers":{"__codex_approval":{"answers":["decline"]}}}),
+                )
+                .unwrap(),
+                json!({"decision":"decline"})
             );
         }
     }
