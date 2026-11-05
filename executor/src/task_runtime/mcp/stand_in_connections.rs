@@ -137,6 +137,14 @@ pub(super) async fn connect_source(arguments: Value) -> Result<Value, String> {
     )
     .await
     .map_err(|error| format!("{}: {}", error.code, error.message))?;
+    connection_discovery_result(provider, kind, resources)
+}
+
+fn connection_discovery_result(
+    provider: &str,
+    kind: &str,
+    resources: Value,
+) -> Result<Value, String> {
     if let Some(status) = resource_availability(&resources, provider, kind)? {
         return Ok(status);
     }
@@ -146,10 +154,11 @@ pub(super) async fn connect_source(arguments: Value) -> Result<Value, String> {
     Ok(json!({
         "status":if has_resources {"scope_required"} else {"setup_required"},
         "providerId":provider,"kind":kind,"resources":resources,
+        "capabilityScope":"stand_in_connections","executionPluginsAssessed":false,
         "nextStep":if has_resources {
-            "Ask the user to select exact resources and handling scope. Read get_profile and use propose_profile without replacing other connections; wait for native confirmation before using the subscription."
+            "Select the exact source and handling scope requested by the user. Read get_profile and use propose_profile without replacing other connections; wait for native confirmation before using the subscription. Discovery alone grants no source access. Separately installed execution plugins retain their existing native permissions."
         } else {
-            "No matching resources are available. Ask the user to configure an account in stand-in Settings > Connections using the secure native form, or refine the search. Never request credentials in chat. Resume connect_source after setup."
+            "This stand-in provider returned no matching source resources. This is not a finding that separately installed execution skills, tools or accounts are unavailable or unauthenticated. For the requested one-time read, delegate bounded discovery and use of relevant already-installed execution capabilities through their existing native authorization; a new subscription is not a prerequisite. Do not infer credentials, migrate accounts, create subscriptions, broaden scope or evade a denied operation. Configure this provider through its native source setup only when that connection is actually needed; never request credentials in chat."
         }
     }))
 }
@@ -270,12 +279,16 @@ pub(super) async fn list_providers(identity: &StandInMcpIdentity) -> Result<Valu
     let catalog = crate::runtime_work::connection_host::call("catalog", None, json!({}))
         .await
         .map_err(|error| format!("{}: {}", error.code, error.message))?;
-    if identity.readonly_worker {
-        return Ok(delegated_provider_catalog(&catalog, &sources));
-    }
-    Ok(sources.first().map_or(catalog.clone(), |source| {
-        scoped_provider_catalog(&catalog, source)
-    }))
+    let mut result = if identity.readonly_worker {
+        delegated_provider_catalog(&catalog, &sources)
+    } else {
+        sources.first().map_or(catalog.clone(), |source| {
+            scoped_provider_catalog(&catalog, source)
+        })
+    };
+    result["capabilityScope"] = json!("stand_in_connections");
+    result["executionPluginsAssessed"] = json!(false);
+    Ok(result)
 }
 
 fn delegated_provider_catalog(catalog: &Value, sources: &[Value]) -> Value {
@@ -340,6 +353,57 @@ pub(super) async fn read_source(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_discovery_does_not_infer_execution_plugin_availability_or_authentication() {
+        for provider in [
+            "@independent/files/service",
+            "@independent/calendar/service",
+        ] {
+            let empty = connection_discovery_result(
+                provider,
+                "resource",
+                json!({"items":[],"hasMore":false}),
+            )
+            .unwrap();
+            assert_eq!(empty["status"], "setup_required");
+            assert_eq!(empty["providerId"], provider);
+            assert_eq!(empty["capabilityScope"], "stand_in_connections");
+            assert_eq!(empty["executionPluginsAssessed"], false);
+            assert!(empty.get("code").is_none());
+            assert!(empty.get("authTarget").is_none());
+            assert!(empty.get("pluginKey").is_none());
+            assert!(empty["nextStep"]
+                .as_str()
+                .unwrap()
+                .contains("one-time read"));
+            let resources = json!({"items":[{"id":"one","profile":"account","kind":"resource"}],"hasMore":false});
+            let selected =
+                connection_discovery_result(provider, "resource", resources.clone()).unwrap();
+            assert_eq!(selected["status"], "scope_required");
+            assert_eq!(selected["resources"], resources);
+            assert_eq!(selected["executionPluginsAssessed"], false);
+            assert!(selected.get("policy").is_none());
+            let target = json!({"pluginKey":"actual-plugin","connectorSlug":"actual-account","instance":"https://service.example"});
+            let auth = connection_discovery_result(
+                provider,
+                "resource",
+                json!({"items":[],"availability":{"status":"auth_required","authTarget":target}}),
+            )
+            .unwrap();
+            assert_eq!(auth["code"], "connector_auth_required");
+            assert_eq!(auth["authTarget"], target);
+            let denied = connection_discovery_result(
+                provider,
+                "resource",
+                json!({"items":[],"availability":{"status":"error","code":"permission_denied"}}),
+            )
+            .unwrap();
+            assert_eq!(denied["status"], "error");
+            assert!(denied.get("connectorSlug").is_none());
+            assert!(denied.get("executionPluginsAssessed").is_none());
+        }
+    }
 
     #[test]
     fn resource_discovery_preserves_exact_native_authorization_identity() {
