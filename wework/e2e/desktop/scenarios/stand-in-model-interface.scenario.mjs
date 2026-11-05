@@ -31,6 +31,9 @@ export function createDesktopScenario(options) {
   const existing = createExistingScenario(options)
   let userId
   let concreteTaskId
+  let primaryTaskId
+  let primaryAddressReady
+  let resolvePrimaryAddress
   let modelCalls = 0
   return {
     ...existing,
@@ -82,7 +85,13 @@ export function createDesktopScenario(options) {
       assert.equal(body.model, MODEL)
       modelCalls++
       const input = JSON.stringify(body.input ?? [])
-      if (input.includes(CHAT) || input.includes(RESUME_CHAT)) {
+      // Tool output may quote primary chat markers; it cannot change the acting task.
+      const latestUserInput = JSON.stringify(
+        (Array.isArray(body.input) ? body.input : []).filter(item => item.role === 'user').at(-1) ??
+          []
+      )
+      const worker = latestUserInput.includes(WORK)
+      if (!worker && (input.includes(CHAT) || input.includes(RESUME_CHAT))) {
         assert.ok(
           JSON.stringify(body).includes(
             'Attempt missing data-source connections with connect_source'
@@ -91,7 +100,41 @@ export function createDesktopScenario(options) {
         )
       }
       let events
-      if (input.includes(RESUME_CHAT)) {
+      if (worker) {
+        assert.ok(input.includes(WORK))
+        await primaryAddressReady
+        assert.ok(primaryTaskId, 'The worker must read the real primary conversation address')
+        const resumed = latestUserInput.includes(RESUME_WORK)
+        const phase = resumed ? 'resume' : 'initial'
+        const listCallId = `interface-worker-${phase}-list`
+        const readCallId = `interface-worker-${phase}-read`
+        if (requestContainsToolOutput(body, readCallId)) {
+          const history = JSON.parse(readMcpToolOutput(body, readCallId))
+          assert.equal(history.taskId, primaryTaskId)
+          assert.ok(
+            JSON.stringify(history.messages).includes(resumed ? RESUME_CHAT : CHAT),
+            'The delegated worker must read actual primary chat evidence before completing'
+          )
+          events = [assistantMessage(resumed ? RESUMED : DONE)]
+        } else {
+          const listed = requestContainsToolOutput(body, listCallId)
+          if (listed) {
+            const result = JSON.parse(readMcpToolOutput(body, listCallId))
+            const primary = result.items.find(item => item.taskId === primaryTaskId)
+            assert.ok(primary, 'General history discovery must include the primary identity')
+            assert.equal(primary.kind, 'identity')
+            assert.equal(primary.canContinue, false)
+          }
+          const toolName = listed ? 'read_task' : 'list_tasks'
+          events = mcpToolRequestEvents(body, {
+            toolName,
+            directToolName: `mcp__wework_stand_in__${toolName}`,
+            argumentsValue: listed ? { taskId: primaryTaskId } : { limit: 50 },
+            searchCallId: `${listed ? readCallId : listCallId}-search`,
+            toolCallId: listed ? readCallId : listCallId,
+          }).events
+        }
+      } else if (input.includes(RESUME_CHAT)) {
         if (requestContainsToolOutput(body, 'interface-resume')) {
           const result = JSON.parse(readMcpToolOutput(body, 'interface-resume'))
           assert.equal(result.success, true)
@@ -112,7 +155,7 @@ export function createDesktopScenario(options) {
         }
       } else if (!input.includes(CHAT)) {
         assert.ok(input.includes(WORK))
-        events = [assistantMessage(input.includes(RESUME_WORK) ? RESUMED : DONE)]
+        assert.fail('A concrete worker must complete its general conversation reads first')
       } else if (requestContainsToolOutput(body, 'interface-create')) {
         const result = JSON.parse(readMcpToolOutput(body, 'interface-create'))
         assert.equal(result.success, true)
@@ -173,7 +216,12 @@ export function createDesktopScenario(options) {
         const saved = await rpc('runtime.stand_in.personal.get', { userId })
         assert.equal(saved.primary.model.model_id, model.model_id)
         assert.ok(!JSON.stringify(saved).includes(MODEL_API_KEY))
+        primaryAddressReady = new Promise(resolve => {
+          resolvePrimaryAddress = resolve
+        })
         const address = await rpc('runtime.stand_in.conversation', { userId, message: CHAT })
+        primaryTaskId = address.taskId
+        resolvePrimaryAddress()
         await until(
           () => rpc('runtime.tasks.get', { taskId: address.taskId }),
           result => {
