@@ -758,5 +758,5 @@ def test_reinstall_waits_for_an_ack_that_survives_a_newer_cleanup_intent(
     assert generations == ([7, 9] if superseded_attempts == 1 else [7, 9, 11])
     if superseded_attempts == 3:
         assert response.json()["sync"]["errors"] == [
-            {"code": "plugin_sync_superseded", "stage": "plugin_ack"}
+            {"code": "plugin_write_conflict", "stage": "plugin_ack"}
         ]

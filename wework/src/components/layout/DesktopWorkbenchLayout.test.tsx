@@ -1971,6 +1971,7 @@ describe('DesktopWorkbenchLayout', () => {
       closeOtherTabs: vi.fn(),
       restoreClosedTab: vi.fn(),
       moveTab: vi.fn(),
+      updateTab: vi.fn(),
       updateActiveTab: vi.fn(),
     } as unknown as WorkspaceTabsContextValue
 
@@ -2060,6 +2061,7 @@ describe('DesktopWorkbenchLayout', () => {
       closeOtherTabs: vi.fn(),
       restoreClosedTab: vi.fn(),
       moveTab: vi.fn(),
+      updateTab: vi.fn(),
       updateActiveTab: vi.fn(),
     }
     const workspaceTabs = (activeTab: typeof boardTab | typeof taskTab) => ({
@@ -2167,6 +2169,7 @@ describe('DesktopWorkbenchLayout', () => {
         closeOtherTabs: vi.fn(),
         restoreClosedTab: vi.fn(),
         moveTab: vi.fn(),
+        updateTab: vi.fn(),
         updateActiveTab: vi.fn(),
       }) as unknown as WorkspaceTabsContextValue
 
@@ -6611,6 +6614,7 @@ describe('DesktopWorkbenchLayout', () => {
       closeOtherTabs: vi.fn(),
       restoreClosedTab: vi.fn(),
       moveTab: vi.fn(),
+      updateTab: vi.fn(),
       updateActiveTab: vi.fn(),
     } satisfies WorkspaceTabsContextValue
     const installed = {

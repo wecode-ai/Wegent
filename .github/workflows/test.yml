@@ -708,7 +708,7 @@ jobs:
           sandbox_path="$(pnpm --dir wework/electron exec node -p 'require("node:path").join(require("node:path").dirname(require("electron")), "chrome-sandbox")')"
           sudo chown root:root "$sandbox_path"
           sudo chmod 4755 "$sandbox_path"
-          xvfb-run -a node --test wework/e2e/desktop/modules/upgrade-request-route.test.mjs
+          dbus-run-session -- xvfb-run -a node --test wework/e2e/desktop/modules/upgrade-request-route.test.mjs
 
       - name: Verify measured Wework test sharding
         if: matrix.shard == 1

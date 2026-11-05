@@ -26,6 +26,10 @@ import {
   verifyInteractionArchiving,
 } from '../modules/human-interaction-dismiss.mjs'
 import { verifyPendingInteractionsTab } from '../modules/pending-interactions-tab.mjs'
+import {
+  handleArchivedTaskInteractionModel,
+  verifyArchivedTaskInteractionCleanup,
+} from '../modules/human-interaction-archived-task.mjs'
 import { verifyPendingAnswerComposition } from '../modules/human-interaction-composition.mjs'
 import { createPersistentInteractionNoticeCase } from '../modules/human-interaction-persistent-notice.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
@@ -108,6 +112,7 @@ export function createDesktopScenario({
       if (handleEmptyReplyPrediction(body, response)) return true
       assert.ok(JSON.stringify(body).includes(PROMPT), 'Unexpected model request')
       response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
+      if (handleArchivedTaskInteractionModel(body, response)) return true
       if (persistentNotice.handleModel(body, response)) return true
       if (handleArchiveInteractionModel(body, response)) return true
       if (JSON.stringify(body.input).includes(FOLLOWUP)) {
@@ -885,6 +890,7 @@ export function createDesktopScenario({
         await verifyInteractionArchiving(control, modelResponseTimeoutMs, originalTaskId)
         await control.command('click', `${page} [data-testid="interaction-open-original"]`)
         await persistentNotice.verify(control, modelResponseTimeoutMs)
+        await verifyArchivedTaskInteractionCleanup(control, modelResponseTimeoutMs)
       }
     },
   }
