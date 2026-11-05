@@ -4,7 +4,11 @@ import { verifyAssignmentActivityReceipts } from '../modules/assignment-activity
 import { verifyIssueWebLink, verifyLocalIssueHasNoWebLink } from '../modules/issue-web-link.mjs'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { createLocalCollaborationProject, reloadMainWindow } from '../modules/workspace-flows.mjs'
+import {
+  createLocalCollaborationProject,
+  reloadMainWindow,
+  selectCollaborationProjectView,
+} from '../modules/workspace-flows.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const PROJECT_NAME = '负责人分配动态验收'
@@ -138,7 +142,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
   async function verifyLocalProject(control) {
     await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
     await createLocalCollaborationProject(control, CONTENT, LOCAL_PROJECT)
-    await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+    await selectCollaborationProjectView(control, CONTENT, 'board')
     await control.command('click', scoped('[data-testid="collaboration-empty-project-create"]'))
     await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), {
       value: LOCAL_ISSUE,

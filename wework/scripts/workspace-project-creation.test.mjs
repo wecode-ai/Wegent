@@ -8,7 +8,35 @@ import {
   openProjectAgentCreator,
   expandCollaborationWorkspace,
   selectCollaborationIssueAgent,
+  selectCollaborationProjectView,
 } from '../e2e/desktop/modules/workspace-flows.mjs'
+
+test.each(['expanded', 'compact'])(
+  'selects the requested view when the %s project switcher mounts',
+  async layout => {
+    let mounted = false
+    let selected = null
+    const control = {
+      async command(action, selector, options) {
+        if (action === 'waitFor') {
+          mounted = true
+        } else if (action === 'getElementCount') {
+          return Number(mounted && layout === 'compact')
+        } else if (action === 'select') {
+          assert.ok(mounted && layout === 'compact')
+          selected = options.value
+        } else if (action === 'clickWhenEnabled') {
+          assert.equal(layout, 'expanded', 'Compact projects have no tab buttons')
+          selected = selector.includes('collaboration-tab-manage') ? 'manage' : null
+        } else {
+          throw new Error(`Unexpected action: ${action}`)
+        }
+      },
+    }
+    await selectCollaborationProjectView(control, 'main', 'manage')
+    assert.equal(selected, 'manage')
+  }
+)
 
 function projectCreationControl({ menuTrigger = false, menuCount = 0, dialogError } = {}) {
   const calls = []

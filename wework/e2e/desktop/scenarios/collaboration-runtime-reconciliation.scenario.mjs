@@ -360,12 +360,6 @@ export async function createDesktopScenario({
     const projectRow = `${CONTENT} [data-testid="collaboration-workspace-project-${project.id}"]`
     await control.command('waitFor', projectRow, { visible: true, timeoutMs: uiTimeoutMs })
     await control.command('click', projectRow, { visible: true })
-    const boardTab = `${CONTENT} [data-testid="collaboration-tab-board"]`
-    const compactView = `${CONTENT} [data-testid="collaboration-project-view-select"]`
-    await control.command('waitFor', `${boardTab}, ${compactView}`, {
-      visible: true,
-      timeoutMs: uiTimeoutMs,
-    })
     await selectCollaborationProjectView(control, CONTENT, 'board')
     const card = `${CONTENT} [data-testid="cloud-todo-card-${testCase.issue.id}"]`
     await control.command('waitFor', card)
@@ -398,7 +392,7 @@ export async function createDesktopScenario({
     await control.command('click', `${CONTENT} [data-testid="cloud-todo-detail-close"]`)
     // Fixed workspace tabs keep effects alive. The files view unmounts board cards,
     // whose transcript reads would otherwise submit uncontrolled Runtime snapshots.
-    await control.command('click', `${CONTENT} [data-testid="collaboration-tab-files"]`)
+    await selectCollaborationProjectView(control, CONTENT, 'files')
     await until(
       () => control.command('getElementCount', `${CONTENT} [data-testid^="cloud-todo-card-"]`),
       count => Number(count) === 0,

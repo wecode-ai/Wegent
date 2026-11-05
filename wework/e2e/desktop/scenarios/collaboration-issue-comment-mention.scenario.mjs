@@ -4,6 +4,7 @@ import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automa
 import {
   createLocalCollaborationProject,
   configureFirstProjectExecutionEnvironment,
+  selectCollaborationProjectView,
 } from '../modules/workspace-flows.mjs'
 
 const PROJECT_NAME = '评论提及成员回归'
@@ -84,7 +85,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         timeoutMs: uiTimeoutMs,
       })
       await configureFirstProjectExecutionEnvironment(control, ACTIVE_CONTENT, uiTimeoutMs)
-      await control.command('click', board('[data-testid="collaboration-tab-board"]'))
+      await selectCollaborationProjectView(control, ACTIVE_CONTENT, 'board')
 
       await control.command(
         'clickWhenEnabled',

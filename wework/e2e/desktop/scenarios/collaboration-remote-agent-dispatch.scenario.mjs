@@ -37,6 +37,7 @@ import {
 import {
   configureFirstProjectExecutionEnvironment,
   selectCollaborationDomain,
+  selectCollaborationProjectView,
   waitForControlValue,
 } from '../modules/workspace-flows.mjs'
 
@@ -340,7 +341,7 @@ async function verifyConfiguredExecutionEnvironment(
   timeoutMs,
   captureScreenshot
 ) {
-  await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
+  await selectCollaborationProjectView(control, CONTENT, 'manage')
   await control.command(
     'click',
     scoped('[data-testid="collaboration-project-settings-environments"]')
