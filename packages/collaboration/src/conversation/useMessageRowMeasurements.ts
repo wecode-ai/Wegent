@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect } from 'react'
+import { useCallback, useLayoutEffect, useRef } from 'react'
 import type { RefObject } from 'react'
 import type { ConversationVirtualizer } from './useConversationVirtualizer'
 import type { VirtualMessageMeasurement } from './MessageList'
@@ -65,8 +65,10 @@ export function useMessageRowMeasure(
 export function useMessageRowMeasurements(
   listRef: RefObject<HTMLDivElement | null>,
   virtualizer: ConversationVirtualizer,
-  enabled: boolean
+  enabled: boolean,
+  layoutSignatures?: ReadonlyMap<string, string>
 ) {
+  const measuredRows = useRef(new WeakMap<HTMLElement, { index: number; signature?: string }>())
   const measureRows = useCallback(
     (rows: HTMLElement[]) => {
       if (!enabled) return
@@ -78,6 +80,10 @@ export function useMessageRowMeasurements(
         // Commit the same DOM measurement before paint; measureElement otherwise
         // defers it until ResizeObserver and exposes the estimated row for a frame.
         const index = Number(row.dataset.index)
+        measuredRows.current.set(row, {
+          index,
+          signature: layoutSignatures?.get(String(virtualizer.options.getItemKey(index))),
+        })
         const size = virtualizer.options.measureElement(row, undefined, virtualizer)
         const item = virtualizer.getVirtualItems().find(item => item.index === index)
         if (item && item.size !== size) virtualizer.resizeItem(index, size)
@@ -85,7 +91,7 @@ export function useMessageRowMeasurements(
         initialBounds.delete(row)
       })
     },
-    [enabled, listRef, virtualizer]
+    [enabled, layoutSignatures, listRef, virtualizer]
   )
 
   useLayoutEffect(() => {
@@ -94,11 +100,18 @@ export function useMessageRowMeasurements(
     const rows = Array.from(
       listRef.current?.querySelectorAll<HTMLElement>('[data-message-row][data-index]') ?? []
     )
-    const changed = rows.filter(
-      row =>
-        virtualizer.elementsCache.get(virtualizer.options.getItemKey(Number(row.dataset.index))) !==
-        row
-    )
+    const changed = rows.filter(row => {
+      const index = Number(row.dataset.index)
+      const key = virtualizer.options.getItemKey(index)
+      const measured = measuredRows.current.get(row)
+      // React retains row DOM when native history or streaming updates its content.
+      // Registration alone cannot prove that its cached height describes this commit.
+      return (
+        virtualizer.elementsCache.get(key) !== row ||
+        measured?.index !== index ||
+        measured.signature !== layoutSignatures?.get(String(key))
+      )
+    })
     if (changed.length) measureRows(changed)
   })
   const measureRow = useCallback((row: HTMLElement) => measureRows([row]), [measureRows])

@@ -649,6 +649,22 @@ function and TanStack writer in the layout phase, then register ongoing observat
 An outstanding native scroll event must not defer the initial size until another
 frame and expose a streaming estimate in place of a short reply.
 
+已挂载的消息行保持在正常文档流中，估算高度仅为未挂载内容留位。不能用缓存行高
+绝对定位可见消息或固定整个列表高度，否则列宽变化后，真实换行会越过旧行坐标，
+造成叠字，并让输入框进入正文区域。
+
+Mounted message rows stay in normal document flow; estimates reserve space only
+for unmounted content. Cached heights must not absolutely position visible rows
+or fix the entire list height: wrapping after a column resize can cross stale
+coordinates, overlap messages and put the composer inside the transcript.
+
+复用消息行 DOM 时，原生历史或流式内容的排版签名变化也必须在布局阶段重新测量。
+DOM 已注册并不代表缓存高度有效；内容不变的行不重复测量，避免滚动时全量读布局。
+
+Retained row DOM must be remeasured in the layout phase when its native-history
+or streaming layout signature changes. Registration does not validate cached
+heights. Unchanged rows must not be remeasured on every scroll commit.
+
 跟随动画从实际滚动位置开始，持有连续位置计算下一帧；浏览器取整后的显示位置
 不能覆盖未完成的亚像素进度。内容缩短时将连续位置限制到新的实际底部，弹簧收敛后
 精确写入底部。用户输入、导航、暂停或会话切换均清除位置、速度和时钟。
