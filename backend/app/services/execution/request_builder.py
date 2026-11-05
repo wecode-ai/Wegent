@@ -372,20 +372,6 @@ class TaskRequestBuilder:
             context=binding_context,
         )
         for skill_ref in user_default_skill_refs:
-            shells = skill_ref.get("bind_shells")
-            runtime_shell = (
-                self._resolve_shell_info(bot, team.user_id)["shell_type"]
-                if shells
-                else None
-            )
-            if shells and runtime_shell not in shells:
-                logger.info(
-                    "Excluded automatic Skill binding from execution: name=%s skill_id=%s shell=%s",
-                    skill_ref.get("name"),
-                    skill_ref.get("skill_id"),
-                    runtime_shell,
-                )
-                continue
             if skill_ref.get("force_preload"):
                 effective_preload_skills.append(skill_ref)
             else:
@@ -458,18 +444,12 @@ class TaskRequestBuilder:
                 team=team,
                 user=user,
             )
-        self._filter_runtime_skills(
+        self._merge_runtime_skills(
             bot_configs=bot_config,
             resolved_skills=resolved_skills,
             skill_refs=skill_refs,
-            preload_skills=[*resolved_preload_skills, *(user_selected_skills or [])],
-            collaboration_model=collaboration_model,
             team=team,
         )
-
-        from app.services.skill_runtime import validate_skill_shells
-
-        validate_skill_shells(bot_config or [], skill_refs)
 
         # Generate task-scoped identities before finalizing MCP capabilities.
         auth_token = self._generate_auth_token(task, subtask, user)
@@ -885,9 +865,6 @@ class TaskRequestBuilder:
             if skill_name not in existing_skill_names
         ]
         if not missing_skill_names:
-            from app.services.skill_runtime import validate_skill_shells
-
-            validate_skill_shells(request.bot or [], request.skill_refs)
             apply_provider_configuration_guidance(request)
             return request
 
@@ -941,12 +918,10 @@ class TaskRequestBuilder:
                 user=user,
             )
 
-        self._filter_runtime_skills(
+        self._merge_runtime_skills(
             bot_configs=request.bot,
             resolved_skills=resolved_skills,
             skill_refs=skill_refs,
-            preload_skills=resolved_preload_skills,
-            collaboration_model=request.collaboration_model,
             team=team,
         )
 
@@ -2369,19 +2344,15 @@ class TaskRequestBuilder:
 
         return bot_configs
 
-    def _filter_runtime_skills(
+    def _merge_runtime_skills(
         self,
         *,
         bot_configs: list[dict] | None,
         resolved_skills: list[dict],
         skill_refs: dict[str, dict],
-        preload_skills: list[str],
-        collaboration_model: str,
         team: Kind,
     ) -> None:
-        """Resolve exact identities before filtering optional runtime capabilities."""
-        from app.services.skill_runtime import select_runtime_skill_names
-
+        """Merge resolved Skills while preserving each Bot's exact references."""
         if not bot_configs:
             return
         leader = bot_configs[0]
@@ -2391,12 +2362,6 @@ class TaskRequestBuilder:
             )
         )
         leader["skill_refs"] = {**(leader.get("skill_refs") or {}), **skill_refs}
-        execution_shell = (
-            leader.get("shell_type")
-            if collaboration_model == "coordinate"
-            and leader.get("shell_type") in {"ClaudeCode", "Codex"}
-            else None
-        )
         for index, config in enumerate(bot_configs):
             references = config.setdefault("skill_refs", {})
             for name in config.get("skills") or []:
@@ -2416,21 +2381,6 @@ class TaskRequestBuilder:
                     skill = self._find_skill(name, team)
                     if skill:
                         references[name] = build_skill_ref_meta(skill)
-            selected = select_runtime_skill_names(
-                config,
-                required_skills=preload_skills if index == 0 else (),
-                execution_shell=execution_shell,
-            )
-            config["skills"] = selected
-            config["skill_refs"] = {
-                name: references[name] for name in selected if name in references
-            }
-        active = set(leader["skills"])
-        if execution_shell:
-            active.update(name for config in bot_configs for name in config["skills"])
-        resolved_skills[:] = [s for s in resolved_skills if s["name"] in active]
-        for name in set(skill_refs) - active:
-            del skill_refs[name]
 
     @staticmethod
     def _sync_skill_refs_to_bot_configs(
