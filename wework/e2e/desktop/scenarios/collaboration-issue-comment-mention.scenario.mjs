@@ -104,25 +104,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
           timeoutMs: uiTimeoutMs,
         }
       )
-      const boardSnapshot = await (async () => {
-        const deadline = Date.now() + uiTimeoutMs
-        while (Date.now() < deadline) {
-          const snapshot = JSON.parse(await control.command('snapshot', ACTIVE_BOARD))
-          const item = snapshot.testIds.find(
-            testId =>
-              testId.startsWith('collaboration-issue-') &&
-              !testId.startsWith('collaboration-issue-create') &&
-              !testId.startsWith('collaboration-issue-detail')
-          )
-          if (item) return { item, snapshot }
-          await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
-        }
-        assert.fail('The Issue detail fixture did not create an Issue card')
-      })()
-      await control.command('click', board(`[data-testid="${boardSnapshot.item}"]`), {
-        visible: true,
-      })
       await control.command('waitFor', board('[data-testid="cloud-todo-detail"]'), {
+        text: ISSUE_NAME,
+        visible: true,
         timeoutMs: uiTimeoutMs,
       })
 
