@@ -139,15 +139,14 @@ async function verifyShortConversationLayout({ composerSelector, control, restar
     4,
     'The unified virtual list did not mount every short-conversation turn'
   )
-  assert.equal(
-    await control.command(
-      'getStyle',
-      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll-content"] [data-index]`,
-      { value: 'position' }
-    ),
-    'absolute',
-    'Short conversations did not use the unified virtual row layout'
-  )
+  for (const [index, row] of virtualRows.entries()) {
+    assert.ok(row.height > 0, `Short-conversation virtual row ${index} has no layout height`)
+    if (index > 0)
+      assert.ok(
+        row.top >= virtualRows[index - 1].bottom - 1,
+        `Short-conversation virtual rows overlap: ${JSON.stringify({ previous: virtualRows[index - 1], row })}`
+      )
+  }
   const conversationSnapshot = JSON.parse(
     await control.command(
       'snapshot',
