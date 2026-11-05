@@ -381,6 +381,47 @@ async def test_install_does_not_repeat_failed_or_already_confirmed_sync(
     )
 
 
+@pytest.mark.asyncio
+async def test_later_dispatch_exception_cannot_reuse_a_superseded_success(
+    test_db, test_user, monkeypatch
+):
+    from app.services import plugin_device_sync as module
+
+    installed = _installed(test_db, test_user.id, "dispatch-failure")
+    _device_row(test_db, installed, state="uninstalling")
+    user_id, installed_id = test_user.id, installed.id
+    snapshot = _payload(test_db, installed)
+    newer = deepcopy(snapshot)
+    newer["plugin_sync"]["generation"] += 1
+    register_plugin_snapshot_intent(
+        lambda: nullcontext(test_db),
+        user_id=user_id,
+        device_id="device",
+        payload=newer,
+    )
+    response = DeviceCapabilitySyncService()._aggregate_response(
+        [_result(snapshot)], skipped=0, mode="merge"
+    )
+    dispatch = AsyncMock(side_effect=[response, RuntimeError("transport unavailable")])
+    monkeypatch.setattr(
+        module.device_capability_sync_service,
+        "sync_installed_plugin_to_device_result",
+        dispatch,
+    )
+
+    result = await module.sync_installed_plugin_on_device(
+        test_db, user_id=user_id, device_id="device", installed_id=installed_id
+    )
+
+    assert dispatch.await_count == 2
+    assert result.success is False
+    assert result.failed >= 1
+    assert result.errors[-1] == {
+        "code": "plugin_device_sync_failed",
+        "stage": "snapshot",
+    }
+
+
 def test_newer_other_plugin_intent_does_not_fence_independent_ack(test_db, test_user):
     installed = _installed(test_db, test_user.id, "target")
     other = _installed(test_db, test_user.id, "other")

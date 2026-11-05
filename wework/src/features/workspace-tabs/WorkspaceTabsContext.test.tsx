@@ -715,6 +715,7 @@ describe('WorkspaceTabsProvider routing', () => {
       />
     )
     const board = context!.activeTab
+    const finishProjectLookup = context!.updateTab
     act(() => {
       context!.openTab('task')
     })
@@ -722,7 +723,7 @@ describe('WorkspaceTabsProvider routing', () => {
     const taskUrl = window.location.href
     const projectRoute = '/todo?projectStore=local&projectId=late-project'
 
-    act(() => context!.updateTab(board.id, { title: 'Late project', contentRoute: projectRoute }))
+    act(() => finishProjectLookup(board.id, { title: 'Late project', contentRoute: projectRoute }))
 
     expect(context!.activeTabId).toBe(taskId)
     expect(window.location.href).toBe(taskUrl)
@@ -732,8 +733,10 @@ describe('WorkspaceTabsProvider routing', () => {
     act(() => context!.closeTab(board.id))
     const remainingIds = context!.tabs.map(tab => tab.id)
     expect(remainingIds).not.toContain(board.id)
-    act(() => context!.updateTab(board.id, { contentRoute: '/todo?projectId=closed-project' }))
+    const remainingUrl = window.location.href
+    act(() => finishProjectLookup(board.id, { contentRoute: '/todo?projectId=closed-project' }))
     expect(context!.tabs.map(tab => tab.id)).toEqual(remainingIds)
+    expect(window.location.href).toBe(remainingUrl)
   })
 
   test('does not restore a stale route when route labels change after active-tab navigation', () => {

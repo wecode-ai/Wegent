@@ -626,13 +626,14 @@ export function WorkspaceTabsProvider({
 
   const updateTab = useCallback(
     (tabId: string, updates: Partial<Pick<WorkspaceTab, 'title' | 'contentRoute'>>) => {
-      const currentTab = state.tabs.find(tab => tab.id === tabId)
+      const current = stateRef.current
+      const currentTab = current.tabs.find(tab => tab.id === tabId)
       if (!currentTab) return
       const updated = { ...currentTab, ...updates }
       flushSync(() => dispatch({ type: 'update', tabId, updates }))
-      if (tabId === state.activeTabId) replaceTo(workspaceTabRoute(updated))
+      if (tabId === current.activeTabId) replaceTo(workspaceTabRoute(updated))
     },
-    [state.activeTabId, state.tabs]
+    []
   )
   const updateActiveTab = useCallback(
     (updates: Partial<Pick<WorkspaceTab, 'title' | 'contentRoute'>>) =>

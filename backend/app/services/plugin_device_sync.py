@@ -421,7 +421,13 @@ async def _sync_installed_plugin_once(
             device_id,
             installed_id,
         )
-        return previous
+        return deferred_plugin_sync(
+            PluginWriteError("plugin_device_sync_failed"),
+            user_id=user_id,
+            device_id=device_id,
+            previous=previous,
+            stage="snapshot",
+        )
     finally:
         db.close()
     return await record_sync_response(
