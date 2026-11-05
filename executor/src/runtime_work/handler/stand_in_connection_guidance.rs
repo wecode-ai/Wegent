@@ -172,7 +172,7 @@ mod tests {
             json!({"existing":{"kind":"application","value":"Keep"}}),
         );
         let guide = json!({"providerId":"mail","assistance":{"observe":["new mail"]}});
-        install_guidance(&mut request, &[guide.clone()]).unwrap();
+        install_guidance(&mut request, std::slice::from_ref(&guide)).unwrap();
         let current = request.extra["additionalContext"].clone();
         assert_eq!(current["wework.connection-guidance"]["kind"], "untrusted");
         assert_eq!(
