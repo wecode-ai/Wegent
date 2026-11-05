@@ -369,9 +369,6 @@ async function assignGroup(control, groupId, timeoutMs) {
     'click',
     `[data-testid="cloud-todo-detail-assignee-option-group:${groupId}"]`
   )
-  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
-    timeoutMs,
-  })
   await control.command('waitFor', scoped('[data-testid="cloud-todo-state-assignee"]'), {
     text: GROUP,
     timeoutMs,

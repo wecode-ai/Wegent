@@ -108,7 +108,6 @@ projectTest(
       .getByTestId(`cloud-todo-card-${created.id}`)
       .click()
     await page.getByTestId('cloud-todo-detail-status').selectOption('in_progress')
-    await page.getByTestId('cloud-todo-save').click()
     await expect(page.getByTestId('cloud-todo-save-error')).toContainText(
       /项目授权|project-authorized/
     )

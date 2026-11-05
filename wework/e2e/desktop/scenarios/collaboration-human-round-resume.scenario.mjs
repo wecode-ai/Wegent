@@ -348,9 +348,6 @@ async function createAndAssignIssue(control, request, projectId, uiTimeoutMs) {
     uiTimeoutMs
   )
   await control.command('click', `[data-testid="${groupOption}"]`)
-  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
-    timeoutMs: uiTimeoutMs,
-  })
   return issue
 }
 

@@ -205,6 +205,25 @@ An Issue can appear in both its matching status and tag lanes. After a cross-typ
 
 Existing projects keep the base board without converting historical Issue statuses or tags. Concurrent configuration changes produce a conflict message and refresh the latest configuration. Older clients cannot edit unknown view formats created by newer versions.
 
+## Quick tag filters
+
+Choose **All tags** in the board toolbar, type to find tags, and select one or more.
+An Issue matches if it contains any selected tag. The filter preserves lane grouping
+and combines with board search and saved-view conditions. Clear the selection to show
+all tags; switching projects or views resets it. Filtering does not change shared views.
+
+## Edit Issue properties
+
+Tags, status, priority, assignee, parent, date range, and milestone save immediately
+for existing Issues. Press Enter or leave the title field to save a title change.
+Type in the milestone picker to search; choose **Not set** to remove its association.
+New Issue properties are still submitted together when creating the Issue.
+
+Only the description requires **Save**. Saving properties never submits an unsaved
+description, and cancelling description editing does not revert saved properties.
+Failures display an error and a retry action. Consecutive changes are saved in order;
+submitted changes continue to finish after leaving the detail view.
+
 ## Sub-issue progress on cards
 
 Issue cards with sub-issues show a progress ring and **Sub-issues 2/5**, meaning 2 of 5 direct sub-issues are completed. The ring turns green when all are complete. Select this control to enter the Issue's sub-issue board without opening its details.
