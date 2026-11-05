@@ -1004,11 +1004,9 @@
       "emptyCompany": "No accessible company knowledge bases",
       "emptyCompanyHint": "Company knowledge bases you can access appear here.",
       "libraryFilter": "Knowledge base filter",
-      "anyScope": "Any",
-      "searchLibraryFilters": "Search spaces or teams",
+      "anyScope": "All spaces",
+      "searchLibraryFilters": "Search space names or identifiers",
       "noMatchingFilters": "No matching filters",
-      "sourceSpace": "Source space",
-      "associatedTeams": "Associated teams",
       "typeAndSort": "Type and sort"
     },
     "creation": {

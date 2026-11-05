@@ -23,8 +23,3 @@ export function collectNavigationKnowledge(
   response.organization.knowledge_bases.forEach(row => add(row))
   return [...records.values()].sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at))
 }
-
-export function matchesKnowledgeTeam(kb: KnowledgeBaseWithGroupInfo, groupId: string): boolean {
-  const name = groupId.startsWith('group-') ? groupId.slice(6) : groupId
-  return kb.team_ids?.includes(name) ?? false
-}

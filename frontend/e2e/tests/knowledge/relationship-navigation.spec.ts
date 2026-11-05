@@ -13,7 +13,7 @@ async function selectKnowledgeTeam(page: Page, groupId: string) {
   await page.getByTestId('knowledge-team-option-' + groupId).click()
 }
 
-test('relationship navigation deduplicates libraries and filters every receiving team', async ({
+test('relationship navigation deduplicates libraries and filters by owning space instead of receiving teams', async ({
   page,
   request,
   baseURL,
@@ -80,10 +80,10 @@ test('relationship navigation deduplicates libraries and filters every receiving
     await expect(page.getByTestId(`kb-row-${native}`)).toHaveCount(1)
     await expect(page.getByTestId(`kb-row-${unrelated}`)).toHaveCount(1)
     const count = await page.getByTestId('nav-personal-item').innerText()
-    for (const name of names.slice(0, 2)) {
+    for (const [index, name] of names.slice(0, 2).entries()) {
       await selectKnowledgeTeam(page, `group-${name}`)
-      await expect(page.getByTestId(`kb-row-${shared}`)).toHaveCount(1)
-      await expect(page.getByTestId(`kb-row-${shared}`)).not.toContainText(name)
+      await expect(page.getByTestId(`kb-row-${shared}`)).toHaveCount(0)
+      await expect(page.getByTestId(`kb-row-${native}`)).toHaveCount(index === 0 ? 1 : 0)
       await expect(page.getByTestId(`kb-row-${unrelated}`)).toHaveCount(0)
       await expect(page.getByTestId('nav-personal-item')).toHaveText(count)
     }

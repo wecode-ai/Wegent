@@ -1004,11 +1004,9 @@
       "emptyCompany": "暂无可访问的公司知识库",
       "emptyCompanyHint": "这里展示你有权限访问的公司知识库。",
       "libraryFilter": "知识库筛选",
-      "anyScope": "不限",
-      "searchLibraryFilters": "搜索空间或团队",
+      "anyScope": "全部空间",
+      "searchLibraryFilters": "搜索空间名称或标识",
       "noMatchingFilters": "无匹配的筛选项",
-      "sourceSpace": "空间归属",
-      "associatedTeams": "关联团队",
       "typeAndSort": "类型与排序"
     },
     "creation": {

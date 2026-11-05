@@ -295,7 +295,7 @@ describe('KnowledgeGroupListPage category filter', () => {
   })
 })
 
-it('filters all receiving teams, preserves real space, and keeps an empty relationship empty', async () => {
+it('filters only the real owning space and keeps an empty relationship empty', async () => {
   const shared = {
     ...createKnowledgeBase(88, 'Multi-team library', 'notebook'),
     group_id: 'alpha',
@@ -321,11 +321,11 @@ it('filters all receiving teams, preserves real space, and keeps an empty relati
       groupType: 'group' as const,
     }),
   }
-  const { rerender } = render(<KnowledgeGroupListPage {...props} filterGroupId="group-beta" />)
+  const { rerender } = render(<KnowledgeGroupListPage {...props} filterGroupId="group-origin" />)
   expect(screen.getByTestId('kb-row-88')).toHaveTextContent('Real space')
   expect(screen.getByRole('heading')).toHaveTextContent('Shared with me')
   expect(screen.getByTestId('knowledge-result-count')).toHaveTextContent('1')
-  rerender(<KnowledgeGroupListPage {...props} filterGroupId="group-gamma" />)
+  rerender(<KnowledgeGroupListPage {...props} filterGroupId="group-beta" />)
   expect(screen.queryByTestId('kb-row-88')).not.toBeInTheDocument()
   rerender(
     <KnowledgeGroupListPage {...props} knowledgeBases={[shared]} knowledgeBasesWithGroupInfo={[]} />
@@ -352,6 +352,8 @@ it('reports the search result count without changing the relationship title', as
 it('counts teams from the deduplicated current scope and recovers filtered empty results', async () => {
   const row = {
     ...createKnowledgeBase(101, 'Scoped notebook', 'notebook'),
+    namespace: 'alpha',
+    namespace_level: 'group',
     group_id: 'default',
     group_name: 'Personal',
     group_type: 'personal' as const,
@@ -405,8 +407,16 @@ it('counts teams from the deduplicated current scope and recovers filtered empty
 
 it('applies the current type to team counts before applying the team selection', async () => {
   const rows = [
-    { ...createKnowledgeBase(111, 'Notebook', 'notebook'), team_ids: ['alpha'] },
-    { ...createKnowledgeBase(112, 'Repository', 'code_wiki'), team_ids: ['beta'] },
+    {
+      ...createKnowledgeBase(111, 'Notebook', 'notebook'),
+      namespace: 'alpha',
+      team_ids: ['alpha'],
+    },
+    {
+      ...createKnowledgeBase(112, 'Repository', 'code_wiki'),
+      namespace: 'beta',
+      team_ids: ['beta'],
+    },
   ].map(kb => ({
     ...kb,
     group_id: 'default',
@@ -503,8 +513,8 @@ it('keeps mobile secondary controls in filters and clears a hidden type conditio
 it('filters same-name teams by identity, clears the filter, and sorts through shared selects', async () => {
   const onFilter = jest.fn()
   const libraries = [
-    { ...createKnowledgeBase(91, 'Alpha', 'notebook'), team_ids: ['a'] },
-    { ...createKnowledgeBase(92, 'Beta', 'notebook'), team_ids: ['b'] },
+    { ...createKnowledgeBase(91, 'Alpha', 'notebook'), namespace: 'a', team_ids: ['a'] },
+    { ...createKnowledgeBase(92, 'Beta', 'notebook'), namespace: 'b', team_ids: ['b'] },
   ]
   function PageWithFilters() {
     const [team, setTeam] = useState<string | null>(null)
@@ -674,4 +684,27 @@ it('filters personal provenance independently of the creator and sharing destina
   await user.keyboard('{Escape}')
   await user.click(screen.getByTestId('knowledge-clear-filters'))
   expect(screen.getAllByTestId(/^kb-row-/)).toHaveLength(6)
+})
+
+it.each([false, true])('ignores stale space filters on the company page (mobile=%s)', mobile => {
+  render(
+    <KnowledgeGroupListPage
+      mobile={mobile}
+      groupId="organization"
+      groupName="Company"
+      isAllMode
+      knowledgeBases={[
+        { ...createKnowledgeBase(301, 'Company guide', 'notebook'), namespace: 'company' },
+      ]}
+      isLoading={false}
+      onSelectKb={jest.fn()}
+      onCreateKb={jest.fn()}
+      filterGroupId="space:personal"
+      onFilterGroupChange={jest.fn()}
+    />
+  )
+  expect(screen.queryByTestId('knowledge-team-filter')).not.toBeInTheDocument()
+  expect(screen.getByTestId('kb-row-301')).toBeInTheDocument()
+  expect(screen.getByTestId('knowledge-search')).toBeInTheDocument()
+  expect(screen.queryByTestId('knowledge-clear-filters')).not.toBeInTheDocument()
 })

@@ -362,3 +362,64 @@ it('returns focus to the create action when authorization is skipped', async () 
   await userEvent.setup().click(await screen.findByTestId('finish-created-authorization'))
   await waitFor(() => expect(trigger).toHaveFocus())
 })
+
+it('keeps team filtering within each relationship and clears it when opening company knowledge', async () => {
+  const owned = row({ ...baseKb, id: 31, name: 'Owned team library', namespace: 'team' }, 'group')
+  const shared = row(
+    { ...baseKb, id: 32, name: 'Shared team library', namespace: 'team', user_id: 2 },
+    'group'
+  )
+  const personal = row({ ...baseKb, id: 33, name: 'Personal shared library', user_id: 2 })
+  const company = row(
+    { ...baseKb, id: 34, name: 'Company guide', namespace: 'company', user_id: 2 },
+    'organization'
+  )
+  data.groups = [
+    {
+      group_name: 'team',
+      group_display_name: 'Team',
+      kb_count: 2,
+      knowledge_bases: [owned, shared, personal, data.personal.created_by_me[0]],
+    },
+  ]
+  data.personal.shared_with_me = [personal]
+  data.organization.knowledge_bases = [company]
+  render(<KnowledgeDocumentPageMobile />)
+  await screen.findByTestId('kb-row-31')
+  const user = userEvent.setup()
+  async function openEntry(id: string) {
+    await user.click(screen.getByTestId('knowledge-mobile-navigation-toggle'))
+    await user.click(screen.getByTestId(id))
+  }
+  await openEntry('nav-personal-item')
+  await user.click(screen.getByTestId('knowledge-team-filter'))
+  expect(screen.getByTestId('knowledge-team-count-group-team')).toHaveTextContent('1')
+  await user.click(screen.getByTestId('knowledge-team-option-group-team'))
+  expect(screen.getByTestId('kb-row-31')).toBeInTheDocument()
+  expect(screen.queryByTestId('kb-row-32')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('kb-row-7')).not.toBeInTheDocument()
+  await openEntry('nav-shared-item')
+  expect(screen.getByTestId('knowledge-team-filter')).toHaveTextContent(
+    'document.navigation.filters'
+  )
+  expect(screen.getByTestId('kb-row-33')).toBeInTheDocument()
+  await user.click(screen.getByTestId('knowledge-team-filter'))
+  expect(screen.getByTestId('knowledge-team-count-group-team')).toHaveTextContent('1')
+  await user.click(screen.getByTestId('knowledge-team-option-group-team'))
+  expect(screen.getByTestId('kb-row-32')).toBeInTheDocument()
+  expect(screen.queryByTestId('kb-row-31')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('kb-row-33')).not.toBeInTheDocument()
+  await openEntry('nav-organization-item')
+  expect(screen.queryByTestId('knowledge-team-filter')).not.toBeInTheDocument()
+  expect(screen.getByTestId('kb-row-34')).toBeInTheDocument()
+  expect(screen.getByTestId('knowledge-search')).toBeInTheDocument()
+  await user.click(screen.getByTestId('knowledge-mobile-filters'))
+  expect(screen.getByTestId('knowledge-sort')).toBeInTheDocument()
+  await user.keyboard('{Escape}')
+  await openEntry('nav-personal-item')
+  expect(screen.getByTestId('knowledge-team-filter')).toHaveTextContent(
+    'document.navigation.filters'
+  )
+  expect(screen.getByTestId('kb-row-7')).toBeInTheDocument()
+  expect(screen.getByTestId('kb-row-31')).toBeInTheDocument()
+})

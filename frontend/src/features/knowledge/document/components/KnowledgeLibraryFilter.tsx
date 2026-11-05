@@ -9,7 +9,6 @@ import { Button } from '@/components/ui/button'
 import {
   Command,
   CommandEmpty,
-  CommandGroup,
   CommandInput,
   CommandItem,
   CommandList,
@@ -122,60 +121,54 @@ export function KnowledgeLibraryFilter({
                 </CommandItem>
               )}
               {showPersonal && (
-                <CommandGroup heading={t('document.navigation.sourceSpace')}>
-                  <CommandItem
-                    value={PERSONAL_SPACE_FILTER}
-                    data-testid="knowledge-space-option-personal"
-                    data-current={value === PERSONAL_SPACE_FILTER}
-                    className="min-h-11"
-                    onSelect={() => select(PERSONAL_SPACE_FILTER)}
+                <CommandItem
+                  value={PERSONAL_SPACE_FILTER}
+                  data-testid="knowledge-space-option-personal"
+                  data-current={value === PERSONAL_SPACE_FILTER}
+                  className="min-h-11"
+                  onSelect={() => select(PERSONAL_SPACE_FILTER)}
+                >
+                  <Check
+                    className={value === PERSONAL_SPACE_FILTER ? 'text-primary' : 'opacity-0'}
+                  />
+                  <span className="min-w-0 flex-1">{personalLabel}</span>
+                  <span
+                    className="shrink-0 text-xs tabular-nums text-text-muted"
+                    data-testid="knowledge-space-count-personal"
                   >
-                    <Check
-                      className={value === PERSONAL_SPACE_FILTER ? 'text-primary' : 'opacity-0'}
-                    />
-                    <span className="min-w-0 flex-1">{personalLabel}</span>
-                    <span
-                      className="shrink-0 text-xs tabular-nums text-text-muted"
-                      data-testid="knowledge-space-count-personal"
-                    >
-                      {personalCount}
+                    {personalCount}
+                  </span>
+                </CommandItem>
+              )}
+              {visibleGroups.map(group => (
+                <CommandItem
+                  key={group.id}
+                  value={group.id}
+                  data-testid={`knowledge-team-option-${group.id}`}
+                  data-current={value === group.id}
+                  className="min-h-11"
+                  onSelect={() => select(group.id)}
+                >
+                  <Check className={value === group.id ? 'text-primary' : 'opacity-0'} />
+                  <span className="flex min-w-0 flex-1 flex-col">
+                    <span className="break-words [overflow-wrap:anywhere]">
+                      {group.displayName}
                     </span>
-                  </CommandItem>
-                </CommandGroup>
-              )}
-              {visibleGroups.length > 0 && (
-                <CommandGroup heading={t('document.navigation.associatedTeams')}>
-                  {visibleGroups.map(group => (
-                    <CommandItem
-                      key={group.id}
-                      value={group.id}
-                      data-testid={`knowledge-team-option-${group.id}`}
-                      data-current={value === group.id}
-                      className="min-h-11"
-                      onSelect={() => select(group.id)}
-                    >
-                      <Check className={value === group.id ? 'text-primary' : 'opacity-0'} />
-                      <span className="flex min-w-0 flex-1 flex-col">
-                        <span className="break-words [overflow-wrap:anywhere]">
-                          {group.displayName}
-                        </span>
-                        {group.displayName !== group.name && (
-                          <span className="break-all text-xs text-text-muted">{group.name}</span>
-                        )}
-                      </span>
-                      <span
-                        className="shrink-0 text-xs tabular-nums text-text-muted"
-                        aria-label={t('document.navigation.teamKnowledgeCount', {
-                          count: group.kbCount,
-                        })}
-                        data-testid={`knowledge-team-count-${group.id}`}
-                      >
-                        {group.kbCount}
-                      </span>
-                    </CommandItem>
-                  ))}
-                </CommandGroup>
-              )}
+                    {group.displayName !== group.name && (
+                      <span className="break-all text-xs text-text-muted">{group.name}</span>
+                    )}
+                  </span>
+                  <span
+                    className="shrink-0 text-xs tabular-nums text-text-muted"
+                    aria-label={t('document.navigation.teamKnowledgeCount', {
+                      count: group.kbCount,
+                    })}
+                    data-testid={`knowledge-team-count-${group.id}`}
+                  >
+                    {group.kbCount}
+                  </span>
+                </CommandItem>
+              ))}
             </div>
           </CommandList>
         </Command>

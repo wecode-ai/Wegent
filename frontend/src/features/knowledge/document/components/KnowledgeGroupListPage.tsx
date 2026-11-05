@@ -14,7 +14,7 @@
 'use client'
 
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
-import { matchesKnowledgeTeam, PERSONAL_SPACE_FILTER } from '../navigation'
+import { PERSONAL_SPACE_FILTER } from '../navigation'
 import { Input } from '@/components/ui/input'
 import { getKbShareSourceText } from '@/features/knowledge/utils/share-source'
 import {
@@ -176,6 +176,14 @@ function formatDateTime(dateStr: string | undefined, locale: string): string {
   }
 }
 
+function matchesSpaceFilter(kb: KbDataItem, spaceId: string): boolean {
+  const level = 'namespace_level' in kb ? kb.namespace_level : null
+  if (spaceId === PERSONAL_SPACE_FILTER) {
+    return level ? level === 'personal' : kb.namespace === 'default'
+  }
+  return (!level || level === 'group') && kb.namespace === spaceId.replace(/^group-/, '')
+}
+
 export function KnowledgeGroupListPage({
   mobile = false,
   onViewPermissions,
@@ -217,6 +225,8 @@ export function KnowledgeGroupListPage({
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
   const [category, setCategory] = useState<KnowledgeBaseCategory>('all')
   const searchQuery = search.trim().toLocaleLowerCase()
+  const supportsSpaceFilter = isAllMode && groupId !== 'organization'
+  const spaceFilter = supportsSpaceFilter ? filterGroupId : null
   // Determine which data source to use
   // Prefer knowledgeBasesWithGroupInfo when available (has my_role field)
   const dataSource = useMemo(() => {
@@ -320,41 +330,22 @@ export function KnowledgeGroupListPage({
     })
   }, [dataSource, filterByCategory, searchQuery])
 
-  const matchesFilter = useCallback(
-    (kb: KbDataItem, groupId: string) => {
-      if (groupId === PERSONAL_SPACE_FILTER) {
-        const level = 'namespace_level' in kb ? kb.namespace_level : null
-        return level ? level === 'personal' : kb.namespace === 'default'
-      }
-      if ('group_id' in kb) return matchesKnowledgeTeam(kb, groupId)
-      return (
-        getKbGroupInfo?.(kb).groupId === groupId || kb.namespace === groupId.replace(/^group-/, '')
-      )
-    },
-    [getKbGroupInfo]
-  )
-
   const filterGroups = useMemo(
     () =>
       (availableGroups ?? []).map(group => ({
         ...group,
-        kbCount: candidateKbs.filter(kb => matchesFilter(kb, group.id)).length,
+        kbCount: candidateKbs.filter(kb => matchesSpaceFilter(kb, group.id)).length,
       })),
-    [availableGroups, candidateKbs, matchesFilter]
+    [availableGroups, candidateKbs]
   )
 
   const filteredKbs = useMemo(
-    () =>
-      sortKbs(
-        candidateKbs.filter(kb => !isAllMode || !filterGroupId || matchesFilter(kb, filterGroupId))
-      ),
-    [candidateKbs, isAllMode, filterGroupId, matchesFilter, sortKbs]
+    () => sortKbs(candidateKbs.filter(kb => !spaceFilter || matchesSpaceFilter(kb, spaceFilter))),
+    [candidateKbs, spaceFilter, sortKbs]
   )
-  const hasActiveFilters = Boolean(
-    searchQuery || category !== 'all' || (isAllMode && filterGroupId)
-  )
+  const hasActiveFilters = Boolean(searchQuery || category !== 'all' || spaceFilter)
   const canClearFilters = Boolean(
-    searchQuery || category !== 'all' || (isAllMode && filterGroupId && onFilterGroupChange)
+    searchQuery || category !== 'all' || (spaceFilter && onFilterGroupChange)
   )
   const clearFilters = () => {
     setSearch('')
@@ -785,16 +776,22 @@ export function KnowledgeGroupListPage({
             placeholder={t('document.navigation.search')}
             value={search}
             onChange={event => setSearch(event.target.value)}
-            className={mobile ? 'min-h-11 w-full' : 'h-9 w-48'}
+            className={
+              mobile
+                ? groupId === 'organization'
+                  ? 'min-h-11 min-w-0 flex-1'
+                  : 'min-h-11 w-full'
+                : 'h-9 w-48'
+            }
           />
-          {onFilterGroupChange && (
+          {supportsSpaceFilter && onFilterGroupChange && (
             <div className={mobile ? 'min-w-0 flex-1' : undefined}>
               <KnowledgeLibraryFilter
                 groups={filterGroups}
                 personalCount={
-                  candidateKbs.filter(kb => matchesFilter(kb, PERSONAL_SPACE_FILTER)).length
+                  candidateKbs.filter(kb => matchesSpaceFilter(kb, PERSONAL_SPACE_FILTER)).length
                 }
-                value={filterGroupId ?? null}
+                value={spaceFilter ?? null}
                 onValueChange={onFilterGroupChange}
                 mobile={mobile}
               />
