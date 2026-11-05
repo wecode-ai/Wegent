@@ -63,6 +63,22 @@ describe('unified human response', () => {
     }
   })
 
+  it('preserves the expanded reminder and draft when native window focus changes', async () => {
+    view()
+    await screen.findByTestId('runtime-interaction-notice')
+    fireEvent.click(screen.getByTestId('interaction-notice-reply'))
+    fireEvent.click(screen.getByTestId('interaction-other-answer'))
+    const input = screen.getByTestId('interaction-reply-input')
+    fireEvent.change(input, { target: { value: 'unfinished reply' } })
+    act(() => harness.focusListeners.forEach(listener => listener(false)))
+    expect(screen.getByTestId('interaction-reply-input')).toBe(input)
+    expect(input).toHaveValue('unfinished reply')
+    act(() => harness.focusListeners.forEach(listener => listener(true)))
+    expect(screen.getByTestId('interaction-reply-input')).toBe(input)
+    expect(input).toHaveValue('unfinished reply')
+    expect(harness.send).not.toHaveBeenCalled()
+  })
+
   it('dismisses one request durably without sending a runtime answer or hiding later requests', async () => {
     const first = view()
     await waitFor(() => expect(context!.pending).toHaveLength(1))

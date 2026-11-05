@@ -20,7 +20,7 @@ Delivery reaches only the recipient's connected private IM channels that configu
 
 ## Pending interaction reminders
 
-When AI needs your input, the reminder in the upper-right corner stays visible. It does not close after a timeout, when the pointer moves away, or when you open the pending interactions page. Clicking its close button dismisses only the popup; the request remains pending. Resolving that request in the original conversation, the pending interactions page, or another surface automatically removes the reminder.
+When AI needs your input, the reminder in the upper-right corner stays visible. It does not close after a timeout, when the pointer moves away, when the window loses focus, or when you open the pending interactions page. Its expanded reply form and draft are preserved as well. Clicking its close button dismisses only the popup; the request remains pending. Resolving that request in the original conversation, the pending interactions page, or another surface automatically removes the reminder.
 
 ## Mentioning members in comments
 

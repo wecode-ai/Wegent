@@ -697,9 +697,7 @@ function RuntimeInteractionsState({
     source?.services?.runtimeWorkApi,
   ])
 
-  const notice = focused
-    ? (noticeIds.map(id => pending.find(item => item.id === id)).find(Boolean) ?? null)
-    : null
+  const notice = noticeIds.map(id => pending.find(item => item.id === id)).find(Boolean) ?? null
   useEffect(() => {
     if (import.meta.env.VITE_WEWORK_E2E === 'true')
       console.info(

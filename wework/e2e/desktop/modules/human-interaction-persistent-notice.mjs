@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { selectE2EModel } from './shared.mjs'
 import {
   assistantMessage,
   createSse,
@@ -43,6 +44,9 @@ export function createPersistentInteractionNoticeCase() {
       return true
     },
     async verify(control, modelResponseTimeoutMs) {
+      // The preceding dismissal intentionally leaves its original runtime question unanswered.
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await selectE2EModel(control)
       await control.command('waitFor', COMPOSER, { visible: true })
       await control.command('fill', COMPOSER, { value: PROMPT })
       await control.command(
