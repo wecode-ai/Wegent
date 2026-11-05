@@ -6586,7 +6586,8 @@ async fn stand_in_worker_cold_and_loaded_resume_register_only_general_read_tools
         mcp_config::configure_task_mcp(&request, &mut launch).unwrap();
         let mut params = Map::from_iter([("threadId".into(), json!("worker-thread"))]);
         append_thread_launch_params(&mut params, &launch);
-        let configuration = mcp_reload::mcp_thread_configuration(&Value::Object(params.clone()));
+        let configuration =
+            mcp_reload::thread_context_configuration(&Value::Object(params.clone()));
         let plan = CodexThreadPlan {
             start: CodexThreadStart::Request {
                 operation: "thread/resume",

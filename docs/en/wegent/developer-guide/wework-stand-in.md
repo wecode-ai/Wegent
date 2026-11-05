@@ -158,6 +158,12 @@ Automatic extraction and consolidation, cross-device synchronization, and execut
 
 Scene roles can be deleted with confirmation from role settings, including the last scene role. The primary identity, work records, and memories remain. Deletion removes the selected role from saved settings without applying unrelated draft edits.
 
+### Per-turn Codex runtime policy
+
+Updating `thread/resume.developerInstructions` or the locally saved system prompt alone does not guarantee refreshed model-visible context in an existing history. The host atomically supplies its complete effective developer policy through the existing `turn/start.additionalContext` application entries; user drafts and business messages stay unchanged. UTF-8-safe bodies are at most 3,000 bytes, keeping each versioned fragment and its wrapper below the native 4,000-byte value budget. The host removes forged reserved entries and publishes the complete SHA, part count, and current manifest last. The current version supersedes earlier Wework runtime policy, including initial flat developer instructions; old revisions and excess historical parts are inactive. This does not physically delete history or override higher-priority system instructions or independent native permissions. An unchanged policy produces identical complete context values for native key/value merging.
+
+Resume configuration identity includes both MCP configuration and the effective developer-policy SHA. Policy changes use the existing close/reload gate to refresh live configuration, so compaction rebuilds the current policy. A known policy change in a directly loaded temporary session stops explicitly, preserves history, and requires a new temporary session instead of rebuilding or downgrading it. Live steering does not change runtime policy and filters caller-supplied entries in its reserved namespace. Coordinator `tools/list` diagnostics include only tool names, schema property names, and schema/description fingerprints, never policy text, event bodies, authentication data, or paths.
+
 ## Merge and split work
 
 Drop one work card onto another to merge its messages. Expand work and drag a message into the separate-work area to split it out. Drop targets preview the operation. Merge, Split, and Move buttons provide keyboard and touch alternatives; destinations are selected directly in the work list, without dropdowns, configuration dialogs, or AI correction prompts. Successful operations offer one-step undo.

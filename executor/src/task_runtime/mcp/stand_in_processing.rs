@@ -18,6 +18,19 @@ pub(super) fn tools() -> Vec<Value> {
     tools
 }
 
+pub(in crate::task_runtime::mcp) fn tool_contract_diagnostics(tools: &[Value]) -> Value {
+    use sha2::{Digest, Sha256};
+    json!(tools.iter().filter(|tool| matches!(tool["name"].as_str(),
+        Some("read_intake" | "read_work" | "continue_work")))
+        .map(|tool| json!({
+            "tool":tool["name"],
+            "schemaFields":tool["inputSchema"]["properties"].as_object()
+                .map(|fields| fields.keys().cloned().collect::<Vec<_>>()).unwrap_or_default(),
+            "schemaFingerprint":format!("{:x}", Sha256::digest(tool["inputSchema"].to_string().as_bytes())),
+            "descriptionFingerprint":format!("{:x}", Sha256::digest(tool["description"].as_str().unwrap_or_default().as_bytes()))
+        })).collect::<Vec<_>>())
+}
+
 pub(super) fn call(
     store: &LocalTaskStore,
     identity: &StandInMcpIdentity,
@@ -529,5 +542,31 @@ mod continuation_contract_tests {
         let description = descriptor["description"].as_str().unwrap();
         assert!(description.contains("connection, work_state or followup"));
         assert!(description.contains("existing read grants and confirmation policy"));
+    }
+}
+
+#[cfg(test)]
+mod diagnostic_tests {
+    use super::*;
+
+    #[test]
+    fn tool_contract_diagnostics_expose_schema_fields_and_fingerprints_without_contents() {
+        let mut descriptors = tools();
+        let diagnostics = tool_contract_diagnostics(&descriptors);
+        let intake = diagnostics
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["tool"] == "read_intake")
+            .unwrap();
+        assert_eq!(intake["schemaFields"], json!(["eventId", "payloadOffset"]));
+        assert_eq!(intake["descriptionFingerprint"].as_str().unwrap().len(), 64);
+        let old = intake["descriptionFingerprint"].clone();
+        descriptors[0]["description"] =
+            json!("Private host policy must never appear in diagnostics");
+        let updated = tool_contract_diagnostics(&descriptors);
+        assert_ne!(updated[0]["descriptionFingerprint"], old);
+        assert!(!updated.to_string().contains("Private host policy"));
+        assert_eq!(updated[0]["schemaFingerprint"], intake["schemaFingerprint"]);
     }
 }

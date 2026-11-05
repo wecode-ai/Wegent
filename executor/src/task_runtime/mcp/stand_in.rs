@@ -4,6 +4,7 @@ use crate::task_runtime::LocalTaskStore;
 
 #[path = "stand_in_processing.rs"]
 mod processing;
+pub(super) use processing::tool_contract_diagnostics;
 
 #[path = "stand_in_connections.rs"]
 mod connections;
