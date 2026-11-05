@@ -265,6 +265,21 @@ async function clickBridgeNavigation(identity, selector, expectedUrl, timeoutMs,
   }
 }
 
+async function waitForBridgePageReady(identity, selector, timeoutMs, message) {
+  const result = await callBridge(identity, {
+    action: 'waitFor',
+    options: {
+      condition: {
+        selectorAttached: selector,
+        waitUntil: 'pageStable',
+      },
+      quietMs: 500,
+    },
+    timeoutMs,
+  })
+  assert.equal(result.ok, true, `${message}; last wait=${JSON.stringify(result)}`)
+}
+
 async function callBridgeResponse(identity, payload, label = BROWSER_LABEL) {
   const response = await fetch(`${identity.baseUrl}/browser`, {
     method: 'POST',
@@ -1811,12 +1826,12 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs, wo
       )
 
       const nestedDirectoryUrl = `${pathToFileURL(join(localDirectoryPath, 'nested')).href}/`
-      const nestedLinkReady = await bridgeCall({
-        action: 'waitFor',
-        selector: 'a[href$="nested/"]',
-        timeoutMs: 5_000,
-      })
-      assert.equal(nestedLinkReady.ok, true, 'The nested directory link did not become ready')
+      await waitForBridgePageReady(
+        bridgeIdentity,
+        'a[href$="nested/"]',
+        5_000,
+        'The nested directory link did not become ready'
+      )
       const nestedDirectoryState = await clickBridgeNavigation(
         bridgeIdentity,
         'a[href$="nested/"]',
@@ -1837,12 +1852,12 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs, wo
       )
 
       const parentDirectoryUrl = `${pathToFileURL(localDirectoryPath).href}/`
-      const parentLinkReady = await bridgeCall({
-        action: 'waitFor',
-        selector: '[data-testid="embedded-browser-directory-parent"]',
-        timeoutMs: 5_000,
-      })
-      assert.equal(parentLinkReady.ok, true, 'The parent directory link did not become ready')
+      await waitForBridgePageReady(
+        bridgeIdentity,
+        '[data-testid="embedded-browser-directory-parent"]',
+        5_000,
+        'The parent directory link did not become ready'
+      )
       const parentDirectoryState = await clickBridgeNavigation(
         bridgeIdentity,
         '[data-testid="embedded-browser-directory-parent"]',
