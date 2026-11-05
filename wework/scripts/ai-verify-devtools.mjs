@@ -289,7 +289,24 @@ export async function stopPerformanceRecording(client, directory, target, output
   const state = JSON.parse(await readFile(statePath, 'utf8'))
   const command = (method, params) => client({ action: 'command', target, method, params })
   const { profile } = await command('Profiler.stop')
-  await command('Tracing.end')
+  let failure
+  let tracingEnded = false
+  try {
+    await command('Tracing.end')
+    tracingEnded = true
+    return await finishPerformanceRecording(client, command, target, state, profile, outputPath)
+  } catch (error) {
+    failure = error
+    throw error
+  } finally {
+    if (!tracingEnded) await command('Tracing.end').catch(() => {})
+    await rm(statePath, { force: true }).catch(error => {
+      if (!failure) throw error
+    })
+  }
+}
+
+async function finishPerformanceRecording(client, command, target, state, profile, outputPath) {
   const events = []
   let cursor = state.after
   let lost = 0
@@ -344,7 +361,6 @@ export async function stopPerformanceRecording(client, directory, target, output
     ],
   }
   await writeDiagnosticFile(outputPath, report)
-  await rm(statePath)
   return {
     outputPath,
     evidencePath: outputPath + '.evidence.json',

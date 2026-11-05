@@ -1,4 +1,5 @@
 import { synchronizeRuntimeConversation } from '../runtimeConversationSynchronization'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import { syncRuntimeGoal } from '@/features/workbench/runtimeTaskLifecycle/goalSynchronization'
 import { useEffect, useMemo } from 'react'
 import {
@@ -91,6 +92,12 @@ export function RuntimeTaskLifecycleStreamCoordinator({
     let reconciliation: Promise<void> | null = null
     let pendingReason: ReconciliationReason | null = null
     const replacedAddresses: RuntimeTaskAddress[] = []
+    const diagnose = (stage: string, details: Record<string, unknown> = {}) => {
+      if (import.meta.env.VITE_WEWORK_E2E === 'true') {
+        logRuntimeTaskCreateStage('lifecycle-reconciliation', { phase: stage, ...details }, 'debug')
+      }
+    }
+    diagnose('subscribed')
 
     const reconcileRuntimeGoal = async (
       address: RuntimeTaskAddress,
@@ -127,7 +134,12 @@ export function RuntimeTaskLifecycleStreamCoordinator({
         pendingReason = null
         try {
           const recoveryAddresses = runtimeRecoveryAddresses(store, replacedAddresses.splice(0))
+          diagnose('list-start', {
+            reason,
+            taskIds: recoveryAddresses.map(address => address.taskId),
+          })
           const runtimeWork = await executorClient.runtime.listRuntimeWork()
+          diagnose('list-resolved', { reason, disposed })
           if (!disposed) {
             store.syncRuntimeWork(runtimeWork)
             const addresses = runtimeRecoveryAddresses(store, recoveryAddresses)
@@ -139,6 +151,11 @@ export function RuntimeTaskLifecycleStreamCoordinator({
                   const queriedClientUserMessageIds = getRuntimeConversationQueuedMessages(address)
                     .filter(message => message.status === 'sending')
                     .map(message => message.id)
+                  diagnose('transcript-start', {
+                    reason,
+                    taskId: address.taskId,
+                    receiptCount: queriedClientUserMessageIds.length,
+                  })
                   const transcript = await synchronizeRuntimeConversation(
                     (request, options) =>
                       executorClient.runtime.getRuntimeTranscript(request, options),
@@ -203,6 +220,7 @@ export function RuntimeTaskLifecycleStreamCoordinator({
     }
 
     const reconcile = (reason: ReconciliationReason) => {
+      diagnose('requested', { reason, disposed, alreadyRunning: Boolean(reconciliation) })
       if (disposed) return
       if (reconciliation) {
         pendingReason = reason
@@ -365,6 +383,7 @@ export function RuntimeTaskLifecycleStreamCoordinator({
     })
 
     return () => {
+      diagnose('disposed', { reconciliationPending: Boolean(reconciliation), pendingReason })
       disposed = true
       reads.abort()
       unsubscribeSystemResume()

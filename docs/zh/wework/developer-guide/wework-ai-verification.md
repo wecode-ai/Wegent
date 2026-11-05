@@ -158,3 +158,5 @@ CPU 位置通过脚本声明的 source map 映射到原始文件、行、列；�
 ```bash
 pnpm --filter wework e2e:desktop --segment devtools-performance
 ```
+
+CPU 录制成功停止后，即使 trace 读取、解析或报告写入失败，也会清理录制状态并保留原始错误，允许下一次按需录制。若停止 profiler 本身失败，则保留尚未消费的录制状态。`devtools-performance` 还会制造真实的报告目录写入失败，验证随后可以重新开始并完成录制。

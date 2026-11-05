@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -133,6 +133,20 @@ export async function verifyDevtoolsPerformance(
       )
     )
     assert.equal(report.evidence.traceDataLoss, false)
+    const blockedOutput = join(directory, 'devtools-blocked-output')
+    await writeFile(blockedOutput, 'This file cannot contain a report directory')
+    await startPerformanceRecording(client, directory, target)
+    await assert.rejects(
+      stopPerformanceRecording(client, directory, target, join(blockedOutput, 'report.json')),
+      error => ['EEXIST', 'ENOTDIR'].includes(error.code)
+    )
+    await startPerformanceRecording(client, directory, target)
+    await stopPerformanceRecording(
+      client,
+      directory,
+      target,
+      join(directory, 'devtools-recovered-report.json')
+    )
     // Read page DOM, attach a worker child session and use a domain absent from the recording workflow.
     assert.ok((await command('DOM.getDocument')).root.nodeId)
     await command('Target.setAutoAttach', {
@@ -192,7 +206,7 @@ export async function verifyDevtoolsPerformance(
   }
 }
 
-export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
+export function createDesktopScenario({ resultDir, uiTimeoutMs, workbenchReadyTimeoutMs }) {
   return {
     appEnvironment: { WEWORK_DESKTOP_CONTROL_REGISTRY_DIR: join(resultDir, 'desktop-control') },
     async handleHttp(request, response, url) {
@@ -202,6 +216,9 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
       return true
     },
     async verify(control) {
+      await control.command('waitFor', '[data-testid="settings-button"]', {
+        timeoutMs: workbenchReadyTimeoutMs,
+      })
       return verifyDevtoolsPerformance(
         resultDir,
         control.url + FIXTURE_PATH,

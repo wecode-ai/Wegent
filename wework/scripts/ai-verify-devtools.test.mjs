@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, test } from 'vitest'
 import { SourceMap } from 'node:module'
-import { mkdtemp, mkdir, writeFile, symlink, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, writeFile, symlink, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -13,9 +13,65 @@ import {
   readProtocolStream,
   sourceLocation,
   readLocalSourceMap,
+  startPerformanceRecording,
+  stopPerformanceRecording,
 } from './ai-verify-devtools.mjs'
 
 describe('DevTools evidence analysis', () => {
+  test.each(['trace-parse', 'report-write', 'profiler-stop'])(
+    'recovers recording state after %s failure',
+    async stage => {
+      const directory = await mkdtemp(join(tmpdir(), 'devtools-recovery-'))
+      const statePath = join(directory, 'performance-1.json')
+      await writeFile(
+        statePath,
+        JSON.stringify({ target: 1, after: 0, metadata: [], baseline: {}, startedAt: Date.now() })
+      )
+      const calls = []
+      const client = async input => {
+        calls.push(input.method ?? input.action)
+        if (input.action === 'events')
+          return {
+            events: [
+              { sequence: 1, method: 'Tracing.tracingComplete', params: { stream: 'trace' } },
+            ],
+            next: 1,
+            latest: 1,
+            lost: 0,
+            attached: true,
+          }
+        if (input.method === 'Profiler.stop') {
+          if (stage === 'profiler-stop') throw new Error('Profiler stop failed')
+          return { profile: { nodes: [], samples: [], timeDeltas: [] } }
+        }
+        if (input.method === 'IO.read')
+          return {
+            data: stage === 'trace-parse' ? 'invalid trace' : '{"traceEvents":[]}',
+            eof: true,
+          }
+        return {}
+      }
+      try {
+        const blocked = join(directory, 'blocked')
+        await writeFile(blocked, 'a file cannot be an output directory')
+        await expect(
+          stopPerformanceRecording(client, directory, 1, join(blocked, 'report.json'))
+        ).rejects.toThrow()
+        if (stage === 'profiler-stop') {
+          expect(await readFile(statePath, 'utf8')).toContain('target')
+          expect(calls).not.toContain('Tracing.end')
+        } else {
+          await expect(readFile(statePath)).rejects.toMatchObject({ code: 'ENOENT' })
+          expect(calls).toContain('IO.close')
+          await expect(startPerformanceRecording(client, directory, 1)).resolves.toMatchObject({
+            recording: true,
+          })
+        }
+      } finally {
+        await rm(directory, { recursive: true, force: true })
+      }
+    }
+  )
   test('loads repository maps without following a page-declared map outside the workspace', async () => {
     const root = await mkdtemp(join(tmpdir(), 'devtools-maps-'))
     const workspace = join(root, 'workspace')
