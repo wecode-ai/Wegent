@@ -45,6 +45,7 @@ export function createPersistentInteractionNoticeCase() {
     },
     async verify(control, modelResponseTimeoutMs) {
       // The preceding dismissal intentionally leaves its original runtime question unanswered.
+      await control.command('waitFor', '[data-testid="new-chat-button"]', { visible: true })
       await control.command('click', '[data-testid="new-chat-button"]')
       await selectE2EModel(control)
       await control.command('waitFor', COMPOSER, { visible: true })
