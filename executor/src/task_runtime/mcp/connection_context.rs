@@ -108,7 +108,7 @@ mod tests {
         let mut offset = 0;
         loop {
             let page = work_messages(
-                &[original.clone()],
+                std::slice::from_ref(&original),
                 &json!({"messageId":"record","payloadOffset":offset}),
             )
             .unwrap();
@@ -119,7 +119,11 @@ mod tests {
             }
         }
         assert_eq!(serde_json::from_str::<Value>(&chunks).unwrap(), original);
-        assert!(work_messages(&[original.clone()], &json!({"messageId":"foreign"})).is_err());
+        assert!(work_messages(
+            std::slice::from_ref(&original),
+            &json!({"messageId":"foreign"})
+        )
+        .is_err());
         assert!(work_messages(
             &[original],
             &json!({"messageId":"event","payloadOffset":-1})
