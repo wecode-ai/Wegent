@@ -1095,3 +1095,11 @@ path = "/api/internal/callback"
 [[routes]]
 methods = ["POST"]
 path = "/api/v1/responses"
+
+# Project milestone management is Rust-owned.
+[[routes]]
+methods = ["GET", "POST"]
+path = "/api/v1/cloud-projects/:project_id/milestones"
+[[routes]]
+methods = ["PATCH", "DELETE"]
+path = "/api/v1/cloud-projects/:project_id/milestones/:milestone_id"

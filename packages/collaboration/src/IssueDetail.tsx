@@ -247,6 +247,7 @@ export function IssueCreate({
           defaults?.status ?? project.board_config?.statuses?.[0]?.id ?? "inbox"
         }
         initialTags={defaults?.tags}
+        initialMilestoneId={defaults?.milestoneId}
         draftScope={defaults?.draftScope}
         onClose={onClose}
         onCreated={onCreated}

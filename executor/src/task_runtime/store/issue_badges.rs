@@ -165,6 +165,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    milestone_id: None,
                     version: task.version,
                     description: Some("removed".into()),
                     ..Default::default()
@@ -204,6 +205,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    milestone_id: None,
                     version: task.version,
                     status: Some("pending".into()),
                     ..Default::default()

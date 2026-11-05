@@ -39,6 +39,7 @@ class LoopItemCreate(BaseModel):
     priority: Literal["none", "low", "medium", "high", "urgent"] = "none"
     start_at: datetime | None = None
     due_at: datetime | None = None
+    milestone_id: str | None = Field(default=None, max_length=64)
     parent_id: str | None = Field(default=None, max_length=64)
     tags: list[TagName] = Field(default_factory=list, max_length=MAX_TAGS_PER_ITEM)
     workflow: IssueWorkflowInstance | None = None
@@ -87,6 +88,7 @@ class LoopItemUpdate(BaseModel):
     priority: Literal["none", "low", "medium", "high", "urgent"] | None = None
     start_at: datetime | None = None
     due_at: datetime | None = None
+    milestone_id: str | None = Field(default=None, max_length=64)
     parent_id: str | None = Field(default=None, max_length=64)
     tags: list[TagName] | None = Field(default=None, max_length=MAX_TAGS_PER_ITEM)
     workflow: IssueWorkflowInstance | None = None
@@ -190,6 +192,7 @@ class LoopItemResponse(BaseModel):
     start_at: datetime | None = None
     due_at: datetime | None
     sort_order: int
+    milestone_id: str | None = None
     tags: list[str] = []
     created_by_user_id: int
     created_by_user_name: str | None = None
@@ -282,6 +285,7 @@ class LoopItemResponse(BaseModel):
             return {
                 **value,
                 "badges": value.get("badges", metadata.get("badges", [])),
+                "milestone_id": value.get("milestone_id", metadata.get("milestone_id")),
                 "tags": _normalize_tags(metadata.get("tags")),
                 "ai_state": ai_state,
                 "execution_state": (

@@ -31,6 +31,7 @@ pub use model::{
     TaskAttachment, TaskBinding, TaskCreate, TaskProviderKind, TaskReorder, TaskSearch, TaskUpdate,
 };
 pub use router::TaskRuntime;
+pub(crate) use store::milestones::MilestoneInput;
 pub use store::{LocalTaskStore, TaskRuntimeError};
 
 const COLLABORATION_MEMBER_RESULT_INSTRUCTIONS: &str = "\

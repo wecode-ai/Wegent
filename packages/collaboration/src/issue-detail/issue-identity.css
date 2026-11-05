@@ -57,6 +57,11 @@
   container-type: inline-size;
 }
 
+.task-detail-milestone-property {
+  display: flex;
+  margin-bottom: 16px;
+}
+
 .issue-detail-property-line,
 .issue-detail-owner-control {
   display: flex;
@@ -190,18 +195,18 @@
   padding: 0;
 }
 
-.issue-identity-follow[aria-pressed="true"] {
+.issue-identity-follow[aria-pressed='true'] {
   background: rgb(var(--color-focus) / 10%);
   color: rgb(var(--color-focus));
 }
 
-.issue-identity-follow[aria-pressed="true"]:not(:disabled):hover {
+.issue-identity-follow[aria-pressed='true']:not(:disabled):hover {
   background: rgb(var(--color-focus) / 16%);
 }
 
 .issue-identity-person-picker:not(:disabled):hover,
 .issue-identity-self-assign:not(:disabled):hover,
-.issue-identity-follow[aria-pressed="false"]:not(:disabled):hover,
+.issue-identity-follow[aria-pressed='false']:not(:disabled):hover,
 .issue-detail-header-icon:hover,
 .issue-detail-menu-action:hover {
   background: rgb(var(--color-bg-muted));
@@ -239,7 +244,7 @@
   cursor: pointer;
 }
 
-:where(html:not([data-input-modality="pointer"]))
+:where(html:not([data-input-modality='pointer']))
   :is(
     .issue-identity-person-picker,
     .issue-identity-self-assign,

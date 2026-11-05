@@ -81,6 +81,7 @@ pub struct ProjectTagChange {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TaskCreate {
+    pub milestone_id: Option<String>,
     pub title: String,
     #[serde(default)]
     pub description: String,
@@ -103,6 +104,8 @@ pub struct TaskCreate {
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct TaskUpdate {
+    #[serde(default, deserialize_with = "deserialize_optional_group_id")]
+    pub milestone_id: Option<Option<String>>,
     pub position: Option<TaskPosition>,
     pub version: i64,
     pub title: Option<String>,

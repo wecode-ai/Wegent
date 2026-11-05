@@ -167,6 +167,7 @@ const APP_IPC_RENDERER_METHODS: &[&str] = &[
     "external_todos.*",
     "files.*",
     "projects.*",
+    "milestones.*",
     "runtime.*",
     "runtime_tasks.*",
     "todos.*",
@@ -891,7 +892,8 @@ impl AppIpcServer {
             return self.handle_device_command(params).await;
         }
 
-        if method.starts_with("projects.")
+        if method.starts_with("milestones.")
+            || method.starts_with("projects.")
             || method.starts_with("external_projects.")
             || method.starts_with("dws.")
             || method.starts_with("aitable.")
@@ -1959,6 +1961,38 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                     .import_code_project(project_key, name, &roots)
                     .map_err(task_runtime_error)?,
             )
+        }
+        "milestones.list" => serialize_task_value(
+            runtime
+                .list_milestones(required_task_string(&params, "project_id")?)
+                .map_err(task_runtime_error)?,
+        ),
+        "milestones.create" | "milestones.update" => {
+            let project = required_task_string(&params, "project_id")?;
+            let id = if method == "milestones.update" {
+                Some(required_task_string(&params, "milestone_id")?)
+            } else {
+                None
+            };
+            let input = task_input::<crate::task_runtime::MilestoneInput>(&params, "milestone")?;
+            serialize_task_value(
+                runtime
+                    .save_milestone(project, id, input)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "milestones.delete" => {
+            let version = params["version"]
+                .as_i64()
+                .ok_or_else(|| AppIpcError::new("bad_request", "version is required"))?;
+            runtime
+                .delete_milestone(
+                    required_task_string(&params, "project_id")?,
+                    required_task_string(&params, "milestone_id")?,
+                    version,
+                )
+                .map_err(task_runtime_error)?;
+            Ok(json!({}))
         }
         "projects.update" => {
             let project_id = required_task_string(&params, "project_id")?;

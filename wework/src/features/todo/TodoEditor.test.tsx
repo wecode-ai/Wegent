@@ -55,6 +55,78 @@ function versionedIssueUpdates(initial: CloudLoopItem) {
 }
 
 describe('TodoEditor external item sync', () => {
+  it('clears a deleted draft milestone only after a successful catalog read', async () => {
+    const key = 'wework-todo-draft:11:inbox'
+    localStorage.setItem(key, JSON.stringify({ title: 'Keep this draft', milestoneId: 'deleted' }))
+    const pending = deferred<[]>()
+    const createApi = { ...api, listMilestones: vi.fn(() => pending.promise) } as never
+    render(
+      <TodoEditor
+        mode="create"
+        project={{ ...project, task_provider: 'local', access_role: 'Owner' }}
+        initialParent={null}
+        initialStatus="inbox"
+        allItems={[]}
+        onCreated={vi.fn()}
+        onClose={vi.fn()}
+        api={createApi}
+        currentUserId={1}
+      />
+    )
+    expect(screen.getByTestId('issue-milestone')).toHaveValue('deleted')
+    await act(async () => pending.resolve([]))
+    await waitFor(() => expect(screen.getByTestId('issue-milestone')).toHaveValue(''))
+    expect(screen.getByTestId('cloud-todo-title')).toHaveValue('Keep this draft')
+    await waitFor(() =>
+      expect(JSON.parse(localStorage.getItem(key)!)).toMatchObject({ milestoneId: null })
+    )
+    localStorage.removeItem(key)
+  })
+
+  it('restores a selected milestone when reopening an Issue creation draft', async () => {
+    const user = userEvent.setup({ delay: null })
+    const createApi = {
+      ...api,
+      listMilestones: vi.fn(async () => [
+        {
+          id: 'ms-draft',
+          project_id: '11',
+          title: 'Draft release',
+          state: 'open',
+          version: 1,
+          open_issues: 0,
+          closed_issues: 0,
+        },
+      ]),
+    } as never
+    const props = {
+      mode: 'create' as const,
+      project: { ...project, task_provider: 'local', access_role: 'Owner' },
+      initialParent: null,
+      initialStatus: 'inbox' as const,
+      allItems: [],
+      onCreated: vi.fn(),
+      onClose: vi.fn(),
+      api: createApi,
+      currentUserId: 1,
+    }
+    const first = render(<TodoEditor {...props} />)
+    await screen.findByText('Draft release')
+    await user.selectOptions(screen.getByTestId('issue-milestone'), 'ms-draft')
+    await waitFor(() =>
+      expect(JSON.parse(localStorage.getItem('wework-todo-draft:11:inbox')!)).toMatchObject({
+        milestoneId: 'ms-draft',
+      })
+    )
+    first.unmount()
+    render(<TodoEditor {...props} />)
+    await waitFor(() =>
+      expect(screen.getByTestId('issue-milestone')).toHaveDisplayValue('Draft release')
+    )
+    expect(screen.getByTestId('issue-milestone')).toHaveValue('ms-draft')
+    localStorage.removeItem('wework-todo-draft:11:inbox')
+  })
+
   it.each(['draft', 'source'] as const)(
     'preserves newer %s status changes when a pending save is rejected',
     async change => {
@@ -1041,7 +1113,11 @@ describe('TodoEditor external item sync', () => {
     expect(screen.getByText('较早完成的任务')).toBeInTheDocument()
     expect(toggle).toHaveTextContent('收起')
     expect(toggle).toHaveAttribute('aria-expanded', 'true')
-    await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
+    expect(screen.queryByTestId('cloud-todo-create-task')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-tasks')).toContainElement(
+      screen.getByTestId('cloud-todo-personal-task-start')
+    )
+    await userEvent.click(screen.getByTestId('cloud-todo-personal-task-start'))
     expect(onCreateTask).toHaveBeenCalledOnce()
   })
 
@@ -1972,3 +2048,40 @@ describe('TodoEditor shared attachments', () => {
     )
   })
 })
+
+it.each(['modal', 'workspace-panel'] as const)(
+  'groups milestone properties and puts child Issues after the description in %s',
+  async presentation => {
+    render(
+      <TodoEditor
+        mode="edit"
+        item={baseItem}
+        project={{ ...project, task_provider: 'local' }}
+        allItems={[baseItem]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        presentation={presentation}
+        onOpenRelatedIssue={vi.fn()}
+        onAddChild={vi.fn()}
+        api={{ ...api, listMilestones: vi.fn(async () => []) } as never}
+      />
+    )
+    const picker = await screen.findByTestId('issue-milestone')
+    expect(screen.getByTestId('issue-title-properties').contains(picker)).toBe(true)
+    expect(picker.closest('header')).toBeNull()
+    if (presentation === 'workspace-panel') {
+      const primary = screen.getByTestId('cloud-todo-state-summary')
+      expect(primary).toHaveTextContent('负责人')
+      expect(primary).toContainElement(
+        screen.getByRole('button', { name: '时间范围', exact: true })
+      )
+      expect(primary).not.toContainElement(screen.getByTestId('cloud-todo-detail-status'))
+      expect(primary).not.toContainElement(picker)
+    }
+    const description = screen.getByTestId('cloud-todo-detail-description')
+    const children = screen.getByTestId('issue-hierarchy-summary')
+    expect(
+      description.compareDocumentPosition(children) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+  }
+)

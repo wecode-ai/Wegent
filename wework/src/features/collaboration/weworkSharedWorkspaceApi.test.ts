@@ -1030,6 +1030,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
         'gitRepositories',
         'projects',
         'myWork',
+        'milestones',
         'issues',
         'comments',
         'assignments',

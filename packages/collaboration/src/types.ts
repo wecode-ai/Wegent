@@ -124,6 +124,7 @@ export type BackendCollaborationProject = CollaborationProject & {
 };
 
 export interface CollaborationIssue {
+  milestone_id?: string | null;
   id: string;
   cloud_project_id: CollaborationProjectId;
   sequence_number: number;
@@ -509,6 +510,7 @@ export interface CollaborationDefaultAssistant {
 }
 
 export type CollaborationView =
+  | "milestones"
   | "board"
   | "calendar"
   | "gantt"

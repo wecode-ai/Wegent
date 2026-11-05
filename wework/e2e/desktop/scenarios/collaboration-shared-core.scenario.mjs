@@ -848,10 +848,20 @@ export function createDesktopScenario({
           text: '关联任务',
           timeoutMs: uiTimeoutMs,
         })
-        await control.command('waitFor', scoped('[data-testid="cloud-todo-create-task"]'), {
-          text: '新建任务',
+        await control.command('waitFor', scoped('[data-testid="cloud-todo-personal-task-start"]'), {
+          text: '创建任务',
           timeoutMs: uiTimeoutMs,
         })
+        assert.equal(
+          Number(
+            await control.command(
+              'getElementCount',
+              scoped('[data-testid="cloud-todo-create-task"]')
+            )
+          ),
+          0,
+          'Personal task creation must have one entry in the linked Tasks section'
+        )
         const personalTaskSnapshot = await snapshot(control)
         assert.ok(
           personalTaskSnapshot.testIds.includes('cloud-task-activity-composer'),
@@ -889,7 +899,7 @@ export function createDesktopScenario({
           previousBindings.map(binding => binding.taskId ?? binding.task_id)
         )
 
-        await control.command('click', scoped('[data-testid="cloud-todo-create-task"]'))
+        await control.command('click', scoped('[data-testid="cloud-todo-personal-task-start"]'))
         await control.command('waitFor', scoped('[data-testid="ai-chat-modal"]'), {
           timeoutMs: uiTimeoutMs,
         })

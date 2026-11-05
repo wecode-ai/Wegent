@@ -127,3 +127,17 @@ describe('board progress activation', () => {
     expect(trigger).toHaveFocus()
   })
 })
+
+it('passes milestone metadata through the desktop card and hides it with unavailable details', () => {
+  const props = {
+    item,
+    display: minimalDisplay,
+    onClick: vi.fn(),
+    onArchive: vi.fn(),
+    metadata: <span data-testid="test-card-milestone">Release target</span>,
+  }
+  const view = render(<CloudTodoBoardCard {...props} />)
+  expect(screen.getByTestId('test-card-milestone')).toHaveTextContent('Release target')
+  view.rerender(<CloudTodoBoardCard {...props} item={{ ...item, can_view_detail: false }} />)
+  expect(screen.queryByTestId('test-card-milestone')).not.toBeInTheDocument()
+})

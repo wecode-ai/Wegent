@@ -1,3 +1,4 @@
+import type { Milestone, MilestoneInput } from '@wegent/collaboration'
 import type { IssueAssignmentReceipt } from '@/api/deliveries'
 import type { WeworkNotification } from '@/api/notifications'
 import type { RunnerSelection } from '@wegent/collaboration'
@@ -931,6 +932,8 @@ function localTask(
     start_at:
       typeof record.metadata.start_at === 'string' ? record.metadata.start_at || null : null,
     due_at: typeof record.metadata.due_at === 'string' ? record.metadata.due_at || null : null,
+    milestone_id:
+      typeof record.metadata.milestone_id === 'string' ? record.metadata.milestone_id : null,
     tags: visibleLoopItemTags(storedTags),
     sort_order: record.sort_order,
     current_delivery_id: record.current_delivery_id,
@@ -1257,10 +1260,30 @@ export function createLocalDeliveryApi(
         notification_id: notificationId,
       })
     },
+    getMilestonesCacheScope() {
+      return request
+    },
+    listMilestones(projectId: string) {
+      return request<Milestone[]>('milestones.list', { project_id: projectId })
+    },
+    createMilestone(projectId: string, input: MilestoneInput) {
+      return request<Milestone>('milestones.create', { project_id: projectId, milestone: input })
+    },
+    updateMilestone(projectId: string, id: string, input: MilestoneInput & { version: number }) {
+      return request<Milestone>('milestones.update', {
+        project_id: projectId,
+        milestone_id: id,
+        milestone: input,
+      })
+    },
+    async deleteMilestone(projectId: string, id: string, version: number) {
+      await request('milestones.delete', { project_id: projectId, milestone_id: id, version })
+    },
     async createLoopItem(
       projectId: CloudProjectId,
       data: {
         title: string
+        milestone_id?: string | null
         description?: string
         status?: CloudLoopItem['status']
         priority?: CloudLoopItem['priority']
@@ -1290,6 +1313,7 @@ export function createLocalDeliveryApi(
         project_id: projectId,
         actor_user_id: currentUserId,
         todo: {
+          milestone_id: data.milestone_id,
           title: data.title,
           description: data.description ?? '',
           status: data.status ?? 'inbox',
