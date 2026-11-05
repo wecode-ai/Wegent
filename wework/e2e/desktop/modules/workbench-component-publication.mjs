@@ -104,6 +104,7 @@ fs.symlink = async (source, target, type) => {
       (parent === compositionRoot || parent === runtimeRoot)) {
     const file = parent === compositionRoot
       ? join('wework-app', 'client.js') : 'runtime.json'
+    assert.equal((await fs.stat(join(source, file))).isFile(), true)
     await holdFile(source)
     await assert.rejects(fs.rename(source, source + '.blocked'), error =>
       ['EPERM', 'EACCES', 'EBUSY'].includes(error.code))

@@ -28,6 +28,7 @@ import {
   openDirectProjectCreation,
   configureFirstProjectExecutionEnvironment,
   selectCollaborationDomain,
+  selectCollaborationProjectView,
 } from '../modules/workspace-flows.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -252,10 +253,7 @@ async function createIssue(
   title = ISSUE,
   { notifyAssignee = true, beforeSave } = {}
 ) {
-  await control.command('waitFor', scoped('[data-testid="collaboration-tab-board"]'), {
-    timeoutMs: uiTimeoutMs,
-  })
-  await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+  await selectCollaborationProjectView(control, CONTENT, 'board', uiTimeoutMs)
   await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-issue-create"]'))
   await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), { value: title })
   await control.command('fill', scoped('[data-testid="cloud-todo-detail-description"]'), {

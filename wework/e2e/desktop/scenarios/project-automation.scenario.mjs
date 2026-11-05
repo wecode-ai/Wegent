@@ -6,6 +6,7 @@ import {
   openDirectProjectCreation,
   openProjectAgentCreator,
   selectCollaborationDomain,
+  selectCollaborationProjectView,
   waitForTestIdByText,
 } from '../modules/workspace-flows.mjs'
 import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
@@ -301,10 +302,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           scoped(`[data-testid="collaboration-workspace-project-${project.id}"]`),
           { timeoutMs: uiTimeoutMs }
         )
-        await control.command('waitFor', scoped('[data-testid="collaboration-tab-manage"]'), {
-          timeoutMs: uiTimeoutMs,
-        })
-        await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
+        await selectCollaborationProjectView(
+          control,
+          ACTIVE_WORKBENCH_SELECTOR,
+          'manage',
+          uiTimeoutMs
+        )
         await control.command(
           'waitFor',
           scoped('[data-testid="project-settings-shell-group-ai-team"]'),
