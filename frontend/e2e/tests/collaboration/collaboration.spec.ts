@@ -343,6 +343,17 @@ test.describe('Collaboration module', () => {
     await page.getByTestId('collaboration-issue-comment-submit').click()
     await expect(page.getByTestId('collaboration-comments')).toContainText(assignmentComment)
     await expect(page.getByTestId('collaboration-comments')).toContainText(assignedMemberName)
+    await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute('data-value', '')
+    await page.getByTestId('cloud-todo-detail-assignee').click()
+    await page
+      .getByTestId(`cloud-todo-detail-assignee-option-user:${assignedMember.user_id}`)
+      .click()
+    await page.getByTestId('cloud-todo-save').click()
+    await expect(page.getByTestId('cloud-todo-save')).toHaveCount(0)
+    await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute(
+      'data-value',
+      `user:${assignedMember.user_id}`
+    )
     await capture(page, testInfo, '02-issue-activity')
 
     await page.getByTestId('cloud-todo-detail-close').click()
@@ -362,6 +373,9 @@ test.describe('Collaboration module', () => {
     await expect(page).toHaveURL(new RegExp(`${escaped(projectPath)}\\?view=table$`))
     await expect(page.getByTestId(`collaboration-issue-table-row-${issueId}`)).toContainText(
       updatedIssueTitle
+    )
+    await expect(page.getByTestId(`collaboration-issue-table-row-${issueId}`)).toContainText(
+      assignedMemberName
     )
 
     await selectCollaborationProjectView(page, 'board')
