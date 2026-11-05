@@ -9,6 +9,8 @@ import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
 import { reloadMainWindow } from '../modules/workspace-flows.mjs'
 import {
   assistantMessage,
+  codexRequestKind,
+  codexRequestMetadata,
   createSse,
   delegatedTaskResultEvents,
   handleEmptyReplyPrediction,
@@ -38,6 +40,7 @@ export function createDesktopScenario(options) {
   let primaryAddressReady
   let resolvePrimaryAddress
   let modelCalls = 0
+  const interfaceRequests = []
   return {
     ...existing,
     async prepareCloud(cloud) {
@@ -86,6 +89,19 @@ export function createDesktopScenario(options) {
       const body = await readRequestBody(request)
       assert.equal(request.headers.authorization, `Bearer ${MODEL_API_KEY}`)
       assert.equal(body.model, MODEL)
+      const latestUser = (Array.isArray(body.input) ? body.input : [])
+        .filter(item => item.role === 'user')
+        .at(-1)
+      const latestText = JSON.stringify(latestUser ?? '')
+      interfaceRequests.push({
+        kind: codexRequestKind(body),
+        source: codexRequestMetadata(body)?.thread_source ?? null,
+        toolCount: body.tools?.length ?? 0,
+        tools: (body.tools ?? []).slice(0, 32).map(tool => ({ type: tool.type, name: tool.name })),
+        latestUserHasWork: latestText.includes(WORK),
+        latestUserHasChat: latestText.includes(CHAT),
+      })
+      if (interfaceRequests.length > 20) interfaceRequests.shift()
       if (handleModelMaintenanceRequest(body, response)) return true
       if (handleEmptyReplyPrediction(body, response)) return true
       const resultEvents = delegatedTaskResultEvents(body)
@@ -98,10 +114,7 @@ export function createDesktopScenario(options) {
       modelCalls++
       const input = JSON.stringify(body.input ?? [])
       // Tool output may quote primary chat markers; it cannot change the acting task.
-      const latestUserInput = JSON.stringify(
-        (Array.isArray(body.input) ? body.input : []).filter(item => item.role === 'user').at(-1) ??
-          []
-      )
+      const latestUserInput = latestText
       const worker = latestUserInput.includes(WORK)
       if (!worker && (input.includes(CHAT) || input.includes(RESUME_CHAT))) {
         assert.ok(
@@ -189,6 +202,9 @@ export function createDesktopScenario(options) {
       response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
       response.end(createSse([responseCreated(id), ...events, responseCompleted(id)]))
       return true
+    },
+    diagnostics() {
+      return { ...existing.diagnostics?.(), interfaceRequests }
     },
     async verify(control) {
       await existing.verify(control)
