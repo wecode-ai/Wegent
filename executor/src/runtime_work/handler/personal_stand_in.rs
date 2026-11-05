@@ -10,9 +10,9 @@ impl RuntimeWorkRpcHandler {
         &self,
         payload: Value,
     ) -> Result<Value, AppIpcError> {
-        self.verify_stand_in_user(&payload).await?;
+        self.verify_runtime_user(&payload).await?;
         let resources = self
-            .stand_in_http(reqwest::Method::GET, "/v1/resources", None)
+            .runtime_http(reqwest::Method::GET, "/v1/resources", None)
             .await?;
         let items: Vec<Value> = resources["agents"]
             .as_array()
@@ -50,7 +50,7 @@ impl RuntimeWorkRpcHandler {
         }) && self.backend_connection_snapshot()?.is_some()
         {
             match self
-                .stand_in_http(reqwest::Method::GET, "/v1/cloud-projects", None)
+                .runtime_http(reqwest::Method::GET, "/v1/cloud-projects", None)
                 .await
             {
                 Ok(value) => value["items"].as_array().cloned().unwrap_or_default(),

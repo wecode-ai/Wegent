@@ -59,6 +59,7 @@ async fn a_waiting_assessment_retires_only_after_the_original_question_is_resolv
             resume_thread_id: None,
             initial_thread_goal: None,
         },
+        owner_resolution: None,
         native: None,
     };
     handler

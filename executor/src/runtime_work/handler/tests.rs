@@ -32,7 +32,7 @@ use crate::runtime_work::codex_transcript_page::CodexTranscriptNavigationTurn;
 
 #[path = "native_history_test_support.rs"]
 mod native_history_test_support;
-use native_history_test_support::install_native_history;
+pub(super) use native_history_test_support::install_native_history;
 
 #[path = "command_recovery_tests.rs"]
 mod command_recovery_tests;

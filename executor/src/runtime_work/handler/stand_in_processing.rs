@@ -1,6 +1,6 @@
 //! One durable background conversation coordinates device-owned stand-in work.
+use super::runtime_owner::runtime_user;
 use super::stand_in::settings_error;
-use super::stand_in_work::stand_in_user;
 use super::*;
 use crate::task_runtime::personal_stand_in::{
     stand_in_collection_connection, stand_in_connection, stand_in_identities,
@@ -48,7 +48,7 @@ fn due(event: &Value, now: chrono::DateTime<chrono::Utc>) -> bool {
 
 impl RuntimeWorkRpcHandler {
     pub(super) fn stand_in_processing_status(&self, payload: Value) -> Result<Value, AppIpcError> {
-        let user = stand_in_user(&payload)?;
+        let user = runtime_user(&payload)?;
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
         let mut state = store
             .stand_in_processing_state(user)
@@ -82,7 +82,7 @@ impl RuntimeWorkRpcHandler {
         &self,
         payload: Value,
     ) -> Result<Value, AppIpcError> {
-        let user = stand_in_user(&payload)?;
+        let user = runtime_user(&payload)?;
         self.coordination_rpc(
             "runtime.coordination.wake",
             json!({"contextId":format!("personal:{user}")}),
@@ -318,7 +318,7 @@ impl RuntimeWorkRpcHandler {
         Ok(())
     }
 
-    async fn execute_coordinator_actions(
+    pub(super) async fn execute_coordinator_actions(
         &self,
         store: &LocalTaskStore,
         user: i64,
@@ -341,6 +341,10 @@ impl RuntimeWorkRpcHandler {
                 .execute_coordinator_action(store, user, settings, &action)
                 .await;
             match result {
+                Ok(Some(value)) if value["state"] == "abandoned" && action["kind"] == "assess" => {
+                    self.retire_abandoned_assessment(store, user, &mut action, value)?;
+                    continue;
+                }
                 Ok(Some(value)) => {
                     action["status"] = json!("succeeded");
                     action["result"] = value;
@@ -363,6 +367,24 @@ impl RuntimeWorkRpcHandler {
                 .save_stand_in_action(user, &action)
                 .map_err(settings_error)?;
         }
+        Ok(())
+    }
+
+    fn retire_abandoned_assessment(
+        &self,
+        store: &LocalTaskStore,
+        user: i64,
+        action: &mut Value,
+        receipt: Value,
+    ) -> Result<(), AppIpcError> {
+        *action = store
+            .retire_abandoned_stand_in_assessment(
+                user,
+                &self.device_id,
+                action["id"].as_str().unwrap_or_default(),
+                receipt,
+            )
+            .map_err(settings_error)?;
         Ok(())
     }
 
@@ -750,8 +772,8 @@ impl RuntimeWorkRpcHandler {
                 serde_json::to_value(store.get_task(project, issue_id).map_err(settings_error)?)
                     .unwrap()
             } else {
-                self.verify_stand_in_user(&json!({"userId":user})).await?;
-                self.stand_in_http(
+                self.verify_runtime_user(&json!({"userId":user})).await?;
+                self.runtime_http(
                     reqwest::Method::GET,
                     &format!("/v1/loop-items/{issue_id}"),
                     None,

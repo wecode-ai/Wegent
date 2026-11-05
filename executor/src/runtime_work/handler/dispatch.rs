@@ -264,6 +264,9 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.commands.get" => {
                 boxed_rpc(move || async move { self.command_receipt(payload).await })
             }
+            "runtime.tasks.commands.resolve" => {
+                boxed_rpc(move || async move { self.resolve_command_owner(payload).await })
+            }
             "runtime.tasks.send" => {
                 boxed_rpc(move || async move { self.send_message(payload).await })
             }

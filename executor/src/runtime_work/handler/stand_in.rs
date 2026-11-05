@@ -74,83 +74,6 @@ pub(super) fn issue_assignment_event_id(binding: &Value) -> Result<&str, AppIpcE
 }
 
 impl RuntimeWorkRpcHandler {
-    pub(super) async fn stand_in_request(
-        &self,
-        method: reqwest::Method,
-        path: &str,
-        body: Option<&Value>,
-    ) -> Result<reqwest::Response, AppIpcError> {
-        let connection = self
-            .backend_connection_snapshot()?
-            .filter(|value| !value.backend_url.is_empty() && !value.auth_token.is_empty())
-            .ok_or_else(|| {
-                AppIpcError::new(
-                    "cloud_unavailable",
-                    "Connect this Executor to your cloud account",
-                )
-            })?;
-        Self::stand_in_request_on(&connection, method, path, body).await
-    }
-
-    pub(super) async fn stand_in_request_on(
-        connection: &ConnectionConfig,
-        method: reqwest::Method,
-        path: &str,
-        body: Option<&Value>,
-    ) -> Result<reqwest::Response, AppIpcError> {
-        let client = crate::agents::backend_url::backend_http_client()
-            .map_err(|error| AppIpcError::new("cloud_unavailable", error.to_string()))?;
-        let mut request = client
-            .request(
-                method,
-                format!("{}/api{path}", connection.backend_url.trim_end_matches('/')),
-            )
-            .bearer_auth(&connection.auth_token)
-            .timeout(Duration::from_secs(10));
-        if let Some(body) = body {
-            request = request.json(body);
-        }
-        request
-            .send()
-            .await
-            .map_err(|error| AppIpcError::new("cloud_unavailable", error.to_string()))
-    }
-
-    pub(super) async fn stand_in_http(
-        &self,
-        method: reqwest::Method,
-        path: &str,
-        body: Option<&Value>,
-    ) -> Result<Value, AppIpcError> {
-        let response = self.stand_in_request(method, path, body).await?;
-        if !response.status().is_success() {
-            return Err(AppIpcError::new(
-                "cloud_request_failed",
-                format!("Issue synchronization returned {}", response.status()),
-            ));
-        }
-        if response.status() == reqwest::StatusCode::NO_CONTENT {
-            return Ok(Value::Null);
-        }
-        response
-            .json()
-            .await
-            .map_err(|error| AppIpcError::new("cloud_response_invalid", error.to_string()))
-    }
-
-    pub(super) async fn verify_stand_in_user(&self, config: &Value) -> Result<(), AppIpcError> {
-        let user = self
-            .stand_in_http(reqwest::Method::GET, "/users/me", None)
-            .await?;
-        if user["id"] != config["userId"] {
-            return Err(AppIpcError::new(
-                "permission_denied",
-                "Stand-in can only handle the connected user's assignments",
-            ));
-        }
-        Ok(())
-    }
-
     pub(super) async fn stand_in_settings(
         &self,
         payload: Value,
@@ -244,7 +167,7 @@ impl RuntimeWorkRpcHandler {
         config["executionDeviceId"] = json!(self.device_id);
         config["manual"] = json!(true);
         if !local {
-            self.verify_stand_in_user(&config).await?;
+            self.verify_runtime_user(&config).await?;
         }
         let gate = self.task_send_gate(&format!("stand-in-issue:{project}:{issue_id}"));
         let _guard = gate.lock().await;
@@ -256,7 +179,7 @@ impl RuntimeWorkRpcHandler {
             )
             .unwrap()
         } else {
-            self.stand_in_http(
+            self.runtime_http(
                 reqwest::Method::GET,
                 &format!("/v1/loop-items/{issue_id}"),
                 None,
@@ -284,7 +207,7 @@ impl RuntimeWorkRpcHandler {
                 )
                 .unwrap()
             } else {
-                self.stand_in_http(reqwest::Method::POST, &format!("/v1/cloud-projects/{project}/loop-items/{issue_id}/assign"), Some(&json!({"version":issue["version"],"assigneeType":"user","assigneeId":user.to_string(),"notifyAssignee":false}))).await?
+                self.runtime_http(reqwest::Method::POST, &format!("/v1/cloud-projects/{project}/loop-items/{issue_id}/assign"), Some(&json!({"version":issue["version"],"assigneeType":"user","assigneeId":user.to_string(),"notifyAssignee":false}))).await?
             };
         }
         if issue["cloud_project_id"] != project || issue["assignee_user_id"] != user {
@@ -602,7 +525,7 @@ impl RuntimeWorkRpcHandler {
             return Ok(());
         }
         let assignments = self
-            .stand_in_http(
+            .runtime_http(
                 reqwest::Method::GET,
                 &format!("/v1/loop-items/{issue_id}/assignments"),
                 None,
@@ -643,7 +566,7 @@ impl RuntimeWorkRpcHandler {
             return Ok(());
         }
         let existing = self
-            .stand_in_http(
+            .runtime_http(
                 reqwest::Method::GET,
                 &format!("/v1/loop-items/{issue_id}/tasks"),
                 None,
@@ -768,7 +691,7 @@ impl RuntimeWorkRpcHandler {
                     .and_then(|store| store.unbind_task(&self.device_id, &task_id, Some(issue_id)))
                     .map_err(settings_error)
             } else {
-                self.stand_in_http(
+                self.runtime_http(
                     reqwest::Method::DELETE,
                     &format!("/v1/loop-items/{issue_id}/tasks"),
                     Some(&binding),
@@ -834,7 +757,7 @@ impl RuntimeWorkRpcHandler {
         binding: &Value,
     ) -> Result<Value, AppIpcError> {
         if config["projectStore"] == "cloud" {
-            self.verify_stand_in_user(config).await?;
+            self.verify_runtime_user(config).await?;
         }
         let project = config["projectId"].as_str().unwrap_or_default();
         let issue_id = issue["id"].as_str().unwrap_or_default();

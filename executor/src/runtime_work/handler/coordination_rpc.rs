@@ -42,7 +42,7 @@ fn context_user(payload: &Value) -> Result<i64, AppIpcError> {
 impl RuntimeWorkRpcHandler {
     async fn coordination_identity(&self, user: i64) -> Result<(), AppIpcError> {
         if self.backend_connection_snapshot()?.is_some() {
-            self.verify_stand_in_user(&json!({"userId":user})).await?;
+            self.verify_runtime_user(&json!({"userId":user})).await?;
         }
         Ok(())
     }
@@ -526,6 +526,8 @@ impl RuntimeWorkRpcHandler {
                 store
                     .save_stand_in_action(user, &action)
                     .map_err(settings_error)?;
+            } else if receipt["state"] == "abandoned" {
+                self.retire_abandoned_assessment(store, user, &mut action, receipt)?;
             } else if matches!(receipt["state"].as_str(), Some("failed" | "cancelled")) {
                 action["status"] = json!("cancelled");
                 action["result"] = receipt;
@@ -556,7 +558,9 @@ impl RuntimeWorkRpcHandler {
             .command_receipt(json!({"taskId":id,"commandId":command,"userId":user}))
             .await
         {
-            Ok(receipt) if receipt["state"] == "settled" => return Ok(Some(receipt)),
+            Ok(receipt) if matches!(receipt["state"].as_str(), Some("settled" | "abandoned")) => {
+                return Ok(Some(receipt))
+            }
             Ok(receipt) => {
                 if matches!(
                     receipt["state"].as_str(),

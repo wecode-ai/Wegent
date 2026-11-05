@@ -1,4 +1,5 @@
 //! Work execution and correction reuse ordinary Runtime tasks, streams and approvals.
+use super::runtime_owner::runtime_user;
 use super::stand_in::settings_error;
 use super::*;
 use crate::runtime_work::response::local_task_json;
@@ -228,7 +229,7 @@ impl RuntimeWorkRpcHandler {
         &self,
         payload: Value,
     ) -> Result<Value, AppIpcError> {
-        let user = stand_in_user(&payload)?;
+        let user = runtime_user(&payload)?;
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
         let mut items = store
             .list_stand_in_work(user, payload["roleId"].as_str())
@@ -261,7 +262,7 @@ impl RuntimeWorkRpcHandler {
         &self,
         payload: Value,
     ) -> Result<Value, AppIpcError> {
-        let user = stand_in_user(&payload)?;
+        let user = runtime_user(&payload)?;
         let work = string_field(&payload, "workId")
             .ok_or_else(|| AppIpcError::new("bad_request", "workId is required"))?;
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
@@ -272,7 +273,7 @@ impl RuntimeWorkRpcHandler {
         &self,
         payload: Value,
     ) -> Result<Value, AppIpcError> {
-        let user = stand_in_user(&payload)?;
+        let user = runtime_user(&payload)?;
         let work = string_field(&payload, "workId")
             .ok_or_else(|| AppIpcError::new("bad_request", "workId is required"))?;
         if payload["confirmThisRun"] == true {
@@ -529,7 +530,7 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) fn retry_connection_source(&self, payload: Value) -> Result<Value, AppIpcError> {
-        let user = stand_in_user(&payload)?;
+        let user = runtime_user(&payload)?;
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
         let settings = store
             .personal_stand_in(user, &self.device_id)
@@ -560,7 +561,7 @@ impl RuntimeWorkRpcHandler {
         &self,
         payload: Value,
     ) -> Result<Value, AppIpcError> {
-        let user = stand_in_user(&payload)?;
+        let user = runtime_user(&payload)?;
         let work = string_field(&payload, "workId")
             .ok_or_else(|| AppIpcError::new("bad_request", "workId is required"))?;
         let target = payload["targetWorkId"].as_str();
@@ -592,7 +593,7 @@ impl RuntimeWorkRpcHandler {
         &self,
         payload: Value,
     ) -> Result<Value, AppIpcError> {
-        let user = stand_in_user(&payload)?;
+        let user = runtime_user(&payload)?;
         let work = string_field(&payload, "workId")
             .ok_or_else(|| AppIpcError::new("bad_request", "workId is required"))?;
         let message = string_field(&payload, "messageId")
@@ -611,13 +612,6 @@ impl RuntimeWorkRpcHandler {
             .adjust_stand_in_message(user, &work, &message, target)
             .map_err(settings_error)
     }
-}
-
-pub(super) fn stand_in_user(payload: &Value) -> Result<i64, AppIpcError> {
-    payload["userId"]
-        .as_i64()
-        .filter(|user| *user >= 0)
-        .ok_or_else(|| AppIpcError::new("bad_request", "userId is required"))
 }
 
 fn dingtalk_client_id(work: &str, ids: &[String]) -> String {

@@ -21,7 +21,7 @@ impl RuntimeWorkRpcHandler {
                 ));
             }
             let team = self
-                .stand_in_http(reqwest::Method::GET, &format!("/teams/{id}"), None)
+                .runtime_http(reqwest::Method::GET, &format!("/teams/{id}"), None)
                 .await?;
             let entries = team["bots"].as_array().ok_or_else(|| {
                 AppIpcError::new("agent_unavailable", "The personal agent has no bots")
@@ -80,7 +80,7 @@ impl RuntimeWorkRpcHandler {
             serde_json::to_value(agents)
                 .map_err(|error| AppIpcError::new("invalid_agent", error.to_string()))?
         } else {
-            self.stand_in_http(
+            self.runtime_http(
                 reqwest::Method::GET,
                 &format!("/v1/cloud-projects/{project}/chat-agents"),
                 None,
@@ -132,7 +132,7 @@ impl RuntimeWorkRpcHandler {
         {
             // Cloud policies identify a Device resource; local routing uses its Executor id.
             let devices = self
-                .stand_in_http(reqwest::Method::GET, "/devices/online", None)
+                .runtime_http(reqwest::Method::GET, "/devices/online", None)
                 .await?;
             let matches = devices["items"]
                 .as_array()

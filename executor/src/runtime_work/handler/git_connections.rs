@@ -264,10 +264,10 @@ impl RuntimeWorkRpcHandler {
         let operation = payload["operation"].as_str().unwrap_or("");
         let base = "/v1/git-connections/subscriptions";
         if operation == "list" {
-            return self.stand_in_http(reqwest::Method::GET, base, None).await;
+            return self.runtime_http(reqwest::Method::GET, base, None).await;
         }
         if operation == "boundary" {
-            let result = self.stand_in_http(reqwest::Method::GET, base, None).await?;
+            let result = self.runtime_http(reqwest::Method::GET, base, None).await?;
             let row = result["items"]
                 .as_array()
                 .and_then(|items| {
@@ -304,7 +304,7 @@ impl RuntimeWorkRpcHandler {
                 .ok_or_else(|| {
                     AppIpcError::new("git_connection_invalid", "Missing repository path")
                 })?;
-            let mut response=self.stand_in_http(reqwest::Method::POST,base,Some(&json!({"deviceId":self.device_id,"source":{"provider":provider,"instance":instance,"accountId":profile[1],"profile":result["profile"],"repositoryId":repository_id,"repositoryPath":path}}))).await?;
+            let mut response=self.runtime_http(reqwest::Method::POST,base,Some(&json!({"deviceId":self.device_id,"source":{"provider":provider,"instance":instance,"accountId":profile[1],"profile":result["profile"],"repositoryId":repository_id,"repositoryPath":path}}))).await?;
             let connection = self.backend_connection_snapshot()?.ok_or_else(|| {
                 AppIpcError::new("cloud_unavailable", "Cloud connection unavailable")
             })?;
@@ -320,7 +320,7 @@ impl RuntimeWorkRpcHandler {
                 .as_str()
                 .filter(|s| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit()))
                 .ok_or_else(|| AppIpcError::new("bad_request", "Invalid subscription ID"))?;
-            let mut result=self.stand_in_http(reqwest::Method::POST,&format!("{base}/{id}/configuration"),Some(&json!({"deviceId":self.device_id,"generation":payload["generation"],"reveal":true}))).await?;
+            let mut result=self.runtime_http(reqwest::Method::POST,&format!("{base}/{id}/configuration"),Some(&json!({"deviceId":self.device_id,"generation":payload["generation"],"reveal":true}))).await?;
             let connection = self
                 .backend_connection_snapshot()?
                 .ok_or_else(|| AppIpcError::new("cloud_unavailable", "Cloud unavailable"))?;
@@ -349,6 +349,6 @@ impl RuntimeWorkRpcHandler {
                 ))
             }
         };
-        self.stand_in_http(method, &path, Some(&body)).await
+        self.runtime_http(method, &path, Some(&body)).await
     }
 }

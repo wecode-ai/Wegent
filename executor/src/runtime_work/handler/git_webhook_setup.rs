@@ -192,7 +192,7 @@ impl RuntimeWorkRpcHandler {
             }
         }
         let subscription = source["subscriptionId"].as_str().unwrap();
-        let config=self.stand_in_http(reqwest::Method::POST,&format!("/v1/git-connections/subscriptions/{subscription}/configuration"),Some(&json!({"deviceId":self.device_id,"generation":source["generation"],"reveal":!plan}))).await?;
+        let config=self.runtime_http(reqwest::Method::POST,&format!("/v1/git-connections/subscriptions/{subscription}/configuration"),Some(&json!({"deviceId":self.device_id,"generation":source["generation"],"reveal":!plan}))).await?;
         let connection = self
             .backend_connection_snapshot()?
             .ok_or_else(|| AppIpcError::new("cloud_unavailable", "Cloud unavailable"))?;

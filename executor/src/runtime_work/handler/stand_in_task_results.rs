@@ -652,6 +652,7 @@ mod tests {
             fingerprint: "accepted-before-parent-model-change".into(),
             state: super::super::command_journal::CommandState::Settled,
             accepted_at: 1,
+            owner_resolution: None,
             native: None,
             turn: SpawnTurnRequest {
                 task_kind: None,

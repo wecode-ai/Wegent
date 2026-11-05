@@ -175,6 +175,57 @@ impl LocalTaskStore {
         write(&connection, EVENT, event)
     }
 
+    /// Retire the assessed command and its recovery gate in one transaction.
+    pub fn retire_abandoned_stand_in_assessment(
+        &self,
+        user: i64,
+        device: &str,
+        action_id: &str,
+        receipt: Value,
+    ) -> Result<Value, TaskRuntimeError> {
+        let mut guard = self.connection()?;
+        let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut action = get_item_from(&connection, action_id, ACTION)?
+            .map(|row| row.metadata)
+            .ok_or(TaskRuntimeError::TaskNotFound)?;
+        if action["userId"] != user
+            || action["kind"] != "assess"
+            || !matches!(action["status"].as_str(), Some("sending" | "cancelled"))
+            || receipt["state"] != "abandoned"
+            || receipt["commandId"] != action["id"]
+            || receipt["taskId"] != format!("stand-in-coordinator-{user}")
+            || receipt["nativeOutcome"] != "unknown"
+            || receipt["ownerResolution"]["userId"] != user
+            || receipt["ownerResolution"]["deviceId"] != device
+        {
+            return Err(TaskRuntimeError::Invalid(
+                "Owner resolution does not match this execution".into(),
+            ));
+        }
+        action["status"] = json!("cancelled");
+        action["resolution"] = json!("owner_abandoned");
+        action["result"] = receipt;
+        action["error"] = Value::Null;
+        write(&connection, ACTION, &action)?;
+        let id = format!("stand-in-processing:{user}");
+        let mut state = get_item_from(&connection, &id, STATE)?
+            .map(|row| row.metadata)
+            .ok_or(TaskRuntimeError::TaskNotFound)?;
+        if state["error"]["commandId"] == action["id"]
+            && state["error"]["code"] == "coordination_recovery_required"
+        {
+            state["error"] = Value::Null;
+        }
+        if state["batchId"] == action["batchId"] {
+            state["batchId"] = Value::Null;
+            state["snapshot"] = Value::Null;
+            state["routerSnapshot"] = Value::Null;
+        }
+        write(&connection, STATE, &state)?;
+        connection.commit()?;
+        Ok(action)
+    }
+
     pub fn stand_in_processing_state(&self, user: i64) -> Result<Value, TaskRuntimeError> {
         let connection = self.connection()?;
         Ok(get_item_from(&connection, &format!("stand-in-processing:{user}"), STATE)?.map(|row| row.metadata).unwrap_or_else(|| json!({"id":format!("stand-in-processing:{user}"),"userId":user,"history":[]})))

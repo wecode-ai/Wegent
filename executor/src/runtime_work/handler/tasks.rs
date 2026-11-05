@@ -1041,7 +1041,7 @@ impl RuntimeWorkRpcHandler {
             return Ok(None);
         }
         let origin = &payload["executionRequest"]["origin"];
-        let user = super::stand_in_work::stand_in_user(origin)?;
+        let user = super::runtime_owner::runtime_user(origin)?;
         let store = LocalTaskStore::open(self.task_store_path.as_ref())
             .map_err(super::stand_in::settings_error)?;
         let state = store

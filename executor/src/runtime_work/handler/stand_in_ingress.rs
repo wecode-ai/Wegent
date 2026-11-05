@@ -42,7 +42,7 @@ impl RuntimeWorkRpcHandler {
                 continue;
             }
             if self.backend_connection_snapshot()?.is_some() {
-                self.verify_stand_in_user(&json!({"userId":user})).await?;
+                self.verify_runtime_user(&json!({"userId":user})).await?;
             }
             for (source, roles) in sources.values() {
                 let mut state = store

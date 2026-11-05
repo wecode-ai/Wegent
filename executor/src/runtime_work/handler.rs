@@ -162,6 +162,7 @@ mod queries_projection;
 mod robot_queue_rpc;
 mod runner_catalog;
 mod runner_cloud_models;
+mod runtime_owner;
 mod sidebar;
 mod stand_in;
 mod stand_in_agent;
@@ -777,10 +778,13 @@ impl RuntimeWorkRpcHandler {
                 turns::RuntimeTurnQueueState::default()
             });
         for command in persisted_turns.commands.values_mut() {
-            if matches!(
-                command.state,
-                command_journal::CommandState::Dispatching | command_journal::CommandState::Started
-            ) {
+            if command.is_owner_abandoned()
+                || matches!(
+                    command.state,
+                    command_journal::CommandState::Dispatching
+                        | command_journal::CommandState::Started
+                )
+            {
                 command.state = command_journal::CommandState::RecoveryRequired;
             }
         }
@@ -799,10 +803,13 @@ impl RuntimeWorkRpcHandler {
             else {
                 return false;
             };
-            if matches!(
-                command.state,
-                command_journal::CommandState::Cancelled | command_journal::CommandState::Failed
-            ) {
+            if command.is_owner_abandoned()
+                || matches!(
+                    command.state,
+                    command_journal::CommandState::Cancelled
+                        | command_journal::CommandState::Failed
+                )
+            {
                 return false;
             }
             let known_native = command.native.is_some()

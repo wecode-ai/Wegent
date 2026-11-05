@@ -41,7 +41,7 @@ impl RuntimeWorkRpcHandler {
                 )
             })?;
         if self.backend_connection_snapshot()?.is_some() {
-            self.verify_stand_in_user(&json!({"userId":user})).await?;
+            self.verify_runtime_user(&json!({"userId":user})).await?;
         }
         let store = LocalTaskStore::open(self.task_store_path.as_ref())
             .map_err(super::stand_in::settings_error)?;
