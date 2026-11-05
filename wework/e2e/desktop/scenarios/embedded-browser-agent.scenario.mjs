@@ -54,6 +54,7 @@ const LOCAL_MARKDOWN_TEXT = 'Local Markdown Browser Fixture'
 const LOCAL_PLAINTEXT_TEXT = '中文无扩展名文本'
 const LOCAL_TOAST_TEXT = '此文件无法预览'
 const LOCAL_DIRECTORY_TEXT = 'local-directory-readme.txt'
+const NESTED_DIRECTORY_TEXT = 'nested-directory-entry.txt'
 const BROWSER_DATA_COOKIE_PATH = '/embedded-browser-data-cookie-fixture'
 const BROWSER_DATA_CACHE_PATH = '/embedded-browser-data-cache-fixture'
 const BROWSER_DATA_CACHE_RESOURCE_PATH = '/embedded-browser-data-cache-resource.js'
@@ -1796,6 +1797,11 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs, wo
       const localDirectoryPath = join(resultDir, 'local-directory-fixture')
       await mkdir(join(localDirectoryPath, 'nested'), { recursive: true })
       await writeFile(join(localDirectoryPath, LOCAL_DIRECTORY_TEXT), 'directory fixture', 'utf8')
+      await writeFile(
+        join(localDirectoryPath, 'nested', NESTED_DIRECTORY_TEXT),
+        'nested directory fixture',
+        'utf8'
+      )
       const localDirectoryOpenResult = await bridgeCall({
         action: 'open',
         url: pathToFileURL(localDirectoryPath).href,
@@ -1840,6 +1846,16 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs, wo
         'Clicking the nested directory did not open its preview'
       )
       assert.equal(nestedDirectoryState.navigationError, null)
+      const nestedDirectoryContentReady = await bridgeCall({
+        action: 'waitFor',
+        options: { condition: { textVisible: NESTED_DIRECTORY_TEXT } },
+        timeoutMs: 5_000,
+      })
+      assert.equal(
+        nestedDirectoryContentReady.ok,
+        true,
+        'The nested directory preview did not finish rendering'
+      )
       const nestedDirectoryInspect = await bridgeCall({
         action: 'inspect',
         options: { interactiveOnly: false, includeTextBlocks: true, maxNodes: 40 },
@@ -1847,7 +1863,8 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs, wo
       })
       assert.ok(
         nestedDirectoryInspect.inspectText.includes('Index of') &&
-          nestedDirectoryInspect.inspectText.includes('Parent directory'),
+          nestedDirectoryInspect.inspectText.includes('Parent directory') &&
+          nestedDirectoryInspect.inspectText.includes(NESTED_DIRECTORY_TEXT),
         `Nested directory preview was not rendered: ${nestedDirectoryInspect.inspectText}`
       )
 
