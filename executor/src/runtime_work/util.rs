@@ -316,6 +316,23 @@ pub(crate) fn restore_origin(request: &mut ExecutionRequest, runtime_handle: &Va
     let Some(stored_origin) = runtime_origin(runtime_handle) else {
         return;
     };
+    if matches!(
+        stored_origin["type"].as_str(),
+        Some("dingtalk_work" | "connection_work")
+    ) {
+        // Continuations retain the host-recorded source set. The caller cannot
+        // select different records, and live authorization is checked afterward.
+        match runtime_handle.pointer("/executionRequest/standInSourceBindings") {
+            Some(bindings) => {
+                request
+                    .extra
+                    .insert("standInSourceBindings".into(), bindings.clone());
+            }
+            None => {
+                request.extra.remove("standInSourceBindings");
+            }
+        }
+    }
     if stored_origin["initiatedBy"] == "stand_in"
         || stored_origin["initiatedBy"] == "stand_in_identity"
         || stored_origin["type"] == "issue_dispatch"

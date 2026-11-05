@@ -208,6 +208,78 @@ fn source_confirmation_rejects_a_different_host_task_address() {
     assert_eq!(request.extra["origin"]["askBeforeAct"], true);
 }
 
+#[tokio::test]
+async fn manual_source_followup_restores_host_bindings_before_queueing() {
+    let (root, mut handler, _store, _settings, mut request) = source_confirmation_fixture();
+    handler.turn_queue_path = Arc::new(root.path().join("turn-queue.json"));
+    handler.worktrees = WorktreeManager::new(root.path().join("worktrees.json"));
+    handler.turn_scheduler.lock().unwrap().queued_turns.clear();
+    handler
+        .refresh_stand_in_confirmation(&request.task_id.clone(), &mut request)
+        .unwrap();
+    let original = original_source_task(&mut request);
+    let id = original.local_task_id.clone();
+    handler.upsert_local_task(original);
+    let (cancel, _cancelled) = tokio::sync::oneshot::channel();
+    let (_stopped, stopped) = tokio::sync::oneshot::channel();
+    let execution = handler.start_local_task_execution(id.clone(), cancel, stopped);
+    let response = handler
+        .send_message(json!({
+            "taskId":id, "message":"Try another way", "queueIfBusy":true,
+            "executionRequest":{"prompt":"Try another way"}
+        }))
+        .await
+        .unwrap();
+    assert_eq!(response["accepted"], true, "{response}");
+    assert_eq!(response["status"], "queued");
+    {
+        let scheduler = handler.turn_scheduler.lock().unwrap();
+        let queued = scheduler.queued_turns.front().unwrap();
+        assert_eq!(queued.local_task_id, id);
+        assert_eq!(
+            queued.request.extra["standInSourceBindings"],
+            request.extra["standInSourceBindings"]
+        );
+        assert_eq!(queued.request.extra["origin"]["askBeforeAct"], false);
+    }
+    assert!(handler.remove_queued_turn(&id).await.unwrap());
+    assert!(handler.finish_local_task_execution(&id, execution));
+}
+
+#[tokio::test]
+async fn manual_source_followup_cannot_replace_a_missing_host_binding() {
+    let (_root, handler, _store, _settings, mut request) = source_confirmation_fixture();
+    let supplied_bindings = request.extra.remove("standInSourceBindings").unwrap();
+    let original = original_source_task(&mut request);
+    let id = original.local_task_id.clone();
+    handler.upsert_local_task(original);
+    let error = handler.send_message(json!({
+        "taskId":id, "message":"Try another way",
+        "executionRequest":{"prompt":"Try another way","standInSourceBindings":supplied_bindings}
+    })).await.unwrap_err();
+    assert_eq!(error.code, "source_removed");
+    assert_eq!(handler.queued_local_task_position(&id), None);
+}
+
+#[tokio::test]
+async fn manual_source_followup_rechecks_live_authorization_after_restoring_bindings() {
+    let (_root, handler, store, mut settings, mut request) = source_confirmation_fixture();
+    let original = original_source_task(&mut request);
+    let id = original.local_task_id.clone();
+    handler.upsert_local_task(original);
+    settings["roles"][0]["connections"][0]["policy"]["automatic"] = json!(false);
+    store.save_personal_stand_in(7, "mac", settings).unwrap();
+    let error = handler
+        .send_message(json!({
+            "taskId":id, "message":"Try another way",
+            "executionRequest":{"prompt":"Try another way"}
+        }))
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "source_removed");
+    assert_eq!(handler.queued_local_task_position(&id), None);
+}
+
 #[test]
 fn source_confirmation_uses_only_the_current_work_and_live_authorization() {
     let (_root, handler, store, mut settings, mut request) = source_confirmation_fixture();
