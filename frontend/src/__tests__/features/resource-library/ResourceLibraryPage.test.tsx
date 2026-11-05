@@ -54,18 +54,50 @@ jest.mock('@/features/resource-library/components/SkillMarketplaceSearch', () =>
   SkillMarketplaceSearch: ({
     provider,
     namespace,
+    initialKeyword,
+    onKeywordChange,
   }: {
     provider: { key: string; name: string }
     namespace: string
+    initialKeyword?: string
+    onKeywordChange?: (keyword: string) => void
   }) => (
-    <div data-testid={`external-skill-marketplace-${provider.key}`} data-namespace={namespace}>
+    <div
+      data-testid={`external-skill-marketplace-${provider.key}`}
+      data-namespace={namespace}
+      data-initial-keyword={initialKeyword ?? ''}
+    >
       {provider.name}
+      <button
+        type="button"
+        data-testid={`external-skill-marketplace-search-${provider.key}`}
+        onClick={() => onKeywordChange?.('spreadsheet')}
+      >
+        Search
+      </button>
     </div>
   ),
 }))
 
 jest.mock('@/features/resource-library/components/McpMarketplace', () => ({
-  McpMarketplace: () => <div data-testid="mcp-marketplace">MCP 市场</div>,
+  McpMarketplace: ({
+    initialKeyword,
+    onKeywordChange,
+  }: {
+    initialKeyword?: string
+    onKeywordChange?: (keyword: string) => void
+  }) => (
+    <div data-testid="mcp-marketplace" data-initial-keyword={initialKeyword ?? ''}>
+      MCP 市场
+      <button
+        type="button"
+        data-testid="mcp-marketplace-clear-keyword"
+        onClick={() => onKeywordChange?.('')}
+      >
+        Clear
+      </button>
+    </div>
+  ),
 }))
 
 jest.mock('@/features/resource-library/components/MyResources', () => ({
@@ -402,6 +434,40 @@ describe('ResourceLibraryPage', () => {
     expect(screen.queryByTestId('discover-resources')).not.toBeInTheDocument()
   })
 
+  it('passes the deep-link keyword to the MCP marketplace', () => {
+    mockSearchParams = new URLSearchParams('type=mcp&keyword=商品数据对比')
+    render(<ResourceLibraryPage />)
+
+    expect(screen.getByTestId('mcp-marketplace')).toHaveAttribute(
+      'data-initial-keyword',
+      '商品数据对比'
+    )
+  })
+
+  it('clears the MCP keyword from the URL when the filter is reset', async () => {
+    const user = userEvent.setup()
+    mockSearchParams = new URLSearchParams('type=mcp&keyword=商品数据对比')
+    render(<ResourceLibraryPage />)
+
+    await user.click(screen.getByTestId('mcp-marketplace-clear-keyword'))
+
+    expect(mockReplace).toHaveBeenCalledWith('/resource-library?type=mcp', { scroll: false })
+  })
+
+  it('leaves an external marketplace when opening collaboration templates', async () => {
+    const user = userEvent.setup()
+    mockedListSkillMarketProviders.mockResolvedValue([{ key: 'weibo', name: 'SkillHub' }])
+    mockSearchParams = new URLSearchParams('type=skill&marketplace=weibo&keyword=PDF')
+    render(<ResourceLibraryPage />)
+
+    await screen.findByTestId('external-skill-marketplace-weibo')
+    await user.click(screen.getByTestId('resource-type-template-filter'))
+
+    expect(mockReplace).toHaveBeenCalledWith('/resource-library?type=template', {
+      scroll: false,
+    })
+  })
+
   it('shows only system resources in the skill marketplace', () => {
     mockSearchParams = new URLSearchParams('type=skill')
     render(<ResourceLibraryPage />)
@@ -429,6 +495,51 @@ describe('ResourceLibraryPage', () => {
     expect(screen.getByTestId('external-skill-marketplace-partner')).toHaveAttribute(
       'data-namespace',
       'default'
+    )
+  })
+
+  it('opens an external marketplace from a deep link with its search keyword', async () => {
+    mockedListSkillMarketProviders.mockResolvedValue([{ key: 'weibo', name: 'SkillHub' }])
+    mockSearchParams = new URLSearchParams('type=skill&marketplace=skillhub&keyword=PDF')
+
+    render(<ResourceLibraryPage />)
+
+    expect(await screen.findByTestId('external-skill-marketplace-weibo')).toHaveAttribute(
+      'data-initial-keyword',
+      'PDF'
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('resource-library-header-search-input')).toHaveValue('')
+    )
+  })
+
+  it('stores the selected external marketplace in the URL', async () => {
+    const user = userEvent.setup()
+    mockedListSkillMarketProviders.mockResolvedValue([{ key: 'weibo', name: 'SkillHub' }])
+    mockSearchParams = new URLSearchParams('type=skill&tag=daily_work')
+
+    render(<ResourceLibraryPage />)
+
+    await user.click(await screen.findByTestId('marketplace-external-source-weibo'))
+
+    expect(mockReplace).toHaveBeenCalledWith(
+      '/resource-library?type=skill&tag=daily_work&marketplace=weibo',
+      { scroll: false }
+    )
+  })
+
+  it('keeps external marketplace searches shareable through the URL', async () => {
+    const user = userEvent.setup()
+    mockedListSkillMarketProviders.mockResolvedValue([{ key: 'weibo', name: 'SkillHub' }])
+    mockSearchParams = new URLSearchParams('type=skill&marketplace=weibo')
+
+    render(<ResourceLibraryPage />)
+
+    await user.click(await screen.findByTestId('external-skill-marketplace-search-weibo'))
+
+    expect(mockReplace).toHaveBeenCalledWith(
+      '/resource-library?type=skill&marketplace=weibo&keyword=spreadsheet',
+      { scroll: false }
     )
   })
 

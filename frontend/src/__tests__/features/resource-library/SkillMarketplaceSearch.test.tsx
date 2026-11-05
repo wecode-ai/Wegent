@@ -169,4 +169,75 @@ describe('SkillMarketplaceSearch', () => {
     expect(await screen.findByTestId('skill-marketplace-previous-partner')).toBeInTheDocument()
     expect(screen.getByTestId('skill-marketplace-next-partner')).toBeInTheDocument()
   })
+
+  it('runs the keyword supplied by a deep link on mount', async () => {
+    render(
+      <SkillMarketplaceSearch provider={{ key: 'weibo', name: 'SkillHub' }} initialKeyword="PDF" />
+    )
+
+    expect(screen.getByTestId('skill-marketplace-search-input-weibo')).toHaveValue('PDF')
+    await waitFor(() =>
+      expect(mockedSearchSkills).toHaveBeenCalledWith('weibo', {
+        keyword: 'PDF',
+        page: 1,
+        pageSize: 20,
+      })
+    )
+  })
+
+  it('re-runs the search when the URL keyword changes', async () => {
+    const { rerender } = render(
+      <SkillMarketplaceSearch provider={{ key: 'weibo', name: 'SkillHub' }} initialKeyword="PDF" />
+    )
+
+    await waitFor(() =>
+      expect(mockedSearchSkills).toHaveBeenCalledWith(
+        'weibo',
+        expect.objectContaining({ keyword: 'PDF' })
+      )
+    )
+
+    rerender(
+      <SkillMarketplaceSearch
+        provider={{ key: 'weibo', name: 'SkillHub' }}
+        initialKeyword="Excel"
+      />
+    )
+
+    expect(screen.getByTestId('skill-marketplace-search-input-weibo')).toHaveValue('Excel')
+    await waitFor(() =>
+      expect(mockedSearchSkills).toHaveBeenCalledWith(
+        'weibo',
+        expect.objectContaining({ keyword: 'Excel' })
+      )
+    )
+  })
+
+  it('reports submitted keywords so the page can keep the deep link shareable', async () => {
+    const user = userEvent.setup()
+    const onKeywordChange = jest.fn()
+    render(
+      <SkillMarketplaceSearch
+        provider={{ key: 'weibo', name: 'SkillHub' }}
+        initialKeyword="PDF"
+        onKeywordChange={onKeywordChange}
+      />
+    )
+
+    await waitFor(() => expect(mockedSearchSkills).toHaveBeenCalledTimes(1))
+
+    const input = screen.getByTestId('skill-marketplace-search-input-weibo')
+    await user.clear(input)
+    await user.type(input, 'Excel')
+    await user.click(screen.getByTestId('skill-marketplace-search-button-weibo'))
+
+    expect(onKeywordChange).toHaveBeenCalledWith('Excel')
+    await waitFor(() =>
+      expect(mockedSearchSkills).toHaveBeenLastCalledWith('weibo', {
+        keyword: 'Excel',
+        page: 1,
+        pageSize: 20,
+      })
+    )
+  })
 })

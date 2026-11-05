@@ -103,6 +103,13 @@ test.describe('Capability Center', () => {
     await expect(page.getByTestId('skill-upload-dialog')).toBeVisible()
   })
 
+  test('opens the MCP marketplace pre-filtered from a deep link', async ({ page }) => {
+    await page.goto('/resource-library?type=mcp&keyword=商品数据对比')
+
+    await expect(page.getByTestId('mcp-marketplace')).toBeVisible()
+    await expect(page.getByTestId('mcp-marketplace-search-input')).toHaveValue('商品数据对比')
+  })
+
   test('filters discovery by a configured marketplace tag and restores it from the URL', async ({
     page,
   }) => {

@@ -38,6 +38,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Skeleton } from '@/components/ui/skeleton'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useToast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
@@ -56,6 +57,10 @@ import { ResourceTypeFilter } from './components/ResourceTypeFilter'
 import { CollaborationTemplateMarketplace } from './CollaborationTemplateMarketplace'
 import { SkillMarketplaceSearch } from './components/SkillMarketplaceSearch'
 import type { ManagedResourceType, ResourceNavigationType } from './types'
+import {
+  EXTERNAL_MARKETPLACE_PARAM,
+  resolveExternalMarketplaceKey,
+} from './externalMarketplaceDeepLink'
 import { getResourceSearchPlaceholderKey } from './resourceSearch'
 import { useTeamCapabilityGroups } from './useTeamCapabilityGroups'
 import {
@@ -198,8 +203,10 @@ function ResourceLibraryContent() {
   const fallbackSource: MineSource = supportsCreatedByMeSource ? 'mine' : 'personal'
   const effectiveSource = isUnsupportedSource ? fallbackSource : source
   const keywordParam = searchParams.get('keyword') || ''
+  const requestedMarketplaceParam = searchParams.get(EXTERNAL_MARKETPLACE_PARAM)
   const isMarketplaceSearch =
     !isMineView &&
+    !requestedMarketplaceParam &&
     (resourceType === 'agent' || resourceType === 'skill') &&
     Boolean(keywordParam.trim())
   const selectedGroupName = searchParams.get('group')
@@ -227,6 +234,7 @@ function ResourceLibraryContent() {
   const [isAdvancedCreateOpen, setIsAdvancedCreateOpen] = useState(false)
   const [skillMarketProviders, setSkillMarketProviders] = useState<SkillMarketProvider[]>([])
   const [skillMarketProvidersError, setSkillMarketProvidersError] = useState('')
+  const [skillMarketProvidersLoading, setSkillMarketProvidersLoading] = useState(false)
   const [activeSkillMarketProviderKey, setActiveSkillMarketProviderKey] = useState<string | null>(
     null
   )
@@ -234,6 +242,8 @@ function ResourceLibraryContent() {
     (ResourceCreateRequest & { type: ManagedResourceType }) | null
   >(null)
   const createRequestId = useRef(0)
+  const isExternalSkillMarketActive = Boolean(activeSkillMarketProviderKey)
+  const headerKeywordParam = isExternalSkillMarketActive ? '' : keywordParam
 
   const replaceParams = useCallback(
     (updates: Record<string, string | null | undefined>) => {
@@ -254,6 +264,12 @@ function ResourceLibraryContent() {
   useEffect(() => {
     const updates: Record<string, string | null> = {}
     if (typeParam && typeParam !== resourceType) updates.type = resourceType
+    if (requestedMarketplaceParam && !isMineView && resourceType !== 'skill') {
+      updates.type = 'skill'
+    }
+    if (requestedMarketplaceParam && isMineView) {
+      updates[EXTERNAL_MARKETPLACE_PARAM] = null
+    }
     if (isLegacyTeamView) {
       updates.tab = 'mine'
       updates.source = 'group'
@@ -266,7 +282,9 @@ function ResourceLibraryContent() {
     if (Object.keys(updates).length > 0) replaceParams(updates)
   }, [
     isLegacyTeamView,
+    isMineView,
     legacySource,
+    requestedMarketplaceParam,
     replaceParams,
     resourceType,
     sourceParam,
@@ -276,18 +294,27 @@ function ResourceLibraryContent() {
   ])
 
   useEffect(() => {
-    setSearchInput(keywordParam)
-  }, [keywordParam])
+    setSearchInput(headerKeywordParam)
+  }, [headerKeywordParam])
+
+  // Keep the selected external marketplace in sync with the `marketplace` URL param.
+  useEffect(() => {
+    setActiveSkillMarketProviderKey(
+      resolveExternalMarketplaceKey(skillMarketProviders, requestedMarketplaceParam)
+    )
+  }, [requestedMarketplaceParam, skillMarketProviders])
 
   useEffect(() => {
     if (isMineView || resourceType !== 'skill' || isMarketplaceSearch) {
       setSkillMarketProviders([])
       setSkillMarketProvidersError('')
+      setSkillMarketProvidersLoading(false)
       setActiveSkillMarketProviderKey(null)
       return
     }
 
     let isMounted = true
+    setSkillMarketProvidersLoading(true)
     setSkillMarketProvidersError('')
     listSkillMarketProviders()
       .then(providers => {
@@ -299,6 +326,10 @@ function ResourceLibraryContent() {
         setSkillMarketProvidersError(
           loadError instanceof Error ? loadError.message : skillMarketProvidersLoadFailedLabel
         )
+      })
+      .finally(() => {
+        if (!isMounted) return
+        setSkillMarketProvidersLoading(false)
       })
 
     return () => {
@@ -365,6 +396,7 @@ function ResourceLibraryContent() {
       scope: null,
       mode: null,
       tag: null,
+      [EXTERNAL_MARKETPLACE_PARAM]: null,
       teamAction: null,
       action: null,
       modelCategory: null,
@@ -381,7 +413,6 @@ function ResourceLibraryContent() {
     event.preventDefault()
     if (!isMineView) {
       const nextKeyword = searchInput.trim()
-      setActiveSkillMarketProviderKey(null)
       replaceParams({
         keyword: nextKeyword || null,
         tag: nextKeyword ? null : undefined,
@@ -389,6 +420,18 @@ function ResourceLibraryContent() {
       return
     }
     replaceParams({ keyword: searchInput.trim() || null })
+  }
+
+  const handleExternalMarketplaceChange = (key: string | null) => {
+    setActiveSkillMarketProviderKey(key)
+    // Leaving a marketplace through the tag row is written together with the
+    // tag by DiscoverResources, so only entering a marketplace updates the URL here.
+    if (key) {
+      replaceParams({
+        [EXTERNAL_MARKETPLACE_PARAM]: key,
+        keyword: null,
+      })
+    }
   }
 
   const handleViewToggle = () => {
@@ -399,6 +442,7 @@ function ResourceLibraryContent() {
         source: null,
         group: null,
         keyword: null,
+        [EXTERNAL_MARKETPLACE_PARAM]: null,
         sort: null,
         mode: null,
         modelCategory: null,
@@ -412,13 +456,21 @@ function ResourceLibraryContent() {
       source: null,
       group: null,
       keyword: null,
+      [EXTERNAL_MARKETPLACE_PARAM]: null,
       teamAction: null,
     })
   }
 
   const handleTypeChange = (nextType: ResourceNavigationType | 'all') => {
     if (nextType === 'template') {
-      replaceParams({ type: 'template', tab: null, keyword: null, source: null, group: null })
+      replaceParams({
+        type: 'template',
+        tab: null,
+        keyword: null,
+        source: null,
+        group: null,
+        [EXTERNAL_MARKETPLACE_PARAM]: null,
+      })
       return
     }
     if (nextType === 'all') return
@@ -438,6 +490,7 @@ function ResourceLibraryContent() {
       source: shouldResetSource ? nextFallbackSource : undefined,
       group: effectiveSource === 'group' ? undefined : null,
       keyword: null,
+      [EXTERNAL_MARKETPLACE_PARAM]: null,
       sort: null,
       mode: null,
       modelCategory: null,
@@ -451,6 +504,7 @@ function ResourceLibraryContent() {
       source: nextSource,
       group: nextSource === 'group' ? undefined : null,
       keyword: null,
+      [EXTERNAL_MARKETPLACE_PARAM]: null,
       teamAction: null,
     })
   }
@@ -474,9 +528,29 @@ function ResourceLibraryContent() {
 
   const renderContent = () => {
     if (!isMineView) {
-      if (resourceType === 'mcp') return <McpMarketplace />
+      if (resourceType === 'mcp') {
+        return (
+          <McpMarketplace
+            initialKeyword={keywordParam}
+            onKeywordChange={nextKeyword => replaceParams({ keyword: nextKeyword || null })}
+          />
+        )
+      }
       if (isMarketplaceSearch) {
         return <DiscoverResources resourceType={resourceType} hideSearch />
+      }
+      if (resourceType === 'skill' && requestedMarketplaceParam && skillMarketProvidersLoading) {
+        return (
+          <div
+            className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
+            aria-label={t('states.loading')}
+            data-testid="skill-marketplace-providers-loading"
+          >
+            {Array.from({ length: 8 }).map((_, index) => (
+              <Skeleton key={index} className="h-[180px] rounded-lg" />
+            ))}
+          </div>
+        )
       }
       return (
         <>
@@ -516,6 +590,10 @@ function ResourceLibraryContent() {
                         key={provider.key}
                         provider={provider}
                         namespace="default"
+                        initialKeyword={keywordParam}
+                        onKeywordChange={nextKeyword =>
+                          replaceParams({ keyword: nextKeyword || null })
+                        }
                         onSkillsChange={() => setManagedRevision(revision => revision + 1)}
                       />
                     ),
@@ -523,7 +601,7 @@ function ResourceLibraryContent() {
                 : []
             }
             activeExternalMarketplaceKey={activeSkillMarketProviderKey}
-            onExternalMarketplaceChange={setActiveSkillMarketProviderKey}
+            onExternalMarketplaceChange={handleExternalMarketplaceChange}
           />
         </>
       )

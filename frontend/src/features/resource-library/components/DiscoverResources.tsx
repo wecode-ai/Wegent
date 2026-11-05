@@ -19,6 +19,7 @@ import {
 } from '@/features/tasks/components/selector/team-selector-utils'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
+import { EXTERNAL_MARKETPLACE_PARAM } from '../externalMarketplaceDeepLink'
 import { getResourceSearchPlaceholderKey } from '../resourceSearch'
 import type { ResourceLibraryListing, ResourceLibraryTypeFilter } from '../types'
 import { getMarketplaceTagLabel, useMarketplaceTags } from '../useMarketplaceTags'
@@ -106,9 +107,13 @@ export function DiscoverResources({
   const isExternalMarketplaceActive = Boolean(activeExternalMarketplace)
 
   const replaceMarketplaceParams = useCallback(
-    (updates: { keyword?: string; tag?: string }) => {
+    (updates: { keyword?: string; tag?: string; leaveExternalMarketplace?: boolean }) => {
       const params = new URLSearchParams(searchParams.toString())
 
+      if (updates.leaveExternalMarketplace) {
+        params.delete(EXTERNAL_MARKETPLACE_PARAM)
+        params.delete(MARKETPLACE_KEYWORD_PARAM)
+      }
       if (updates.keyword !== undefined) {
         if (updates.keyword) {
           params.set(MARKETPLACE_KEYWORD_PARAM, updates.keyword)
@@ -261,7 +266,7 @@ export function DiscoverResources({
   const handleTagChange = (tag: string) => {
     onExternalMarketplaceChange?.(null)
     setSelectedTag(tag)
-    replaceMarketplaceParams({ tag })
+    replaceMarketplaceParams({ tag, leaveExternalMarketplace: true })
   }
 
   const handleLoadMore = useCallback(() => {

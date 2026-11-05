@@ -23,6 +23,10 @@ interface SkillMarketplaceSearchProps {
   provider: SkillMarketProvider
   onSkillsChange?: () => void
   namespace?: string
+  /** Keyword supplied by the URL so deep links can open a marketplace pre-searched. */
+  initialKeyword?: string
+  /** Reports user-initiated searches so the page can keep the URL shareable. */
+  onKeywordChange?: (keyword: string) => void
 }
 
 interface InstallingSkill {
@@ -35,12 +39,15 @@ export function SkillMarketplaceSearch({
   provider,
   onSkillsChange,
   namespace = 'default',
+  initialKeyword = '',
+  onKeywordChange,
 }: SkillMarketplaceSearchProps) {
   const { t } = useTranslation('resource-library')
   const { toast } = useToast()
+  const normalizedInitialKeyword = initialKeyword.trim()
 
   // Search state
-  const [keyword, setKeyword] = useState('')
+  const [keyword, setKeyword] = useState(normalizedInitialKeyword)
   const [searching, setSearching] = useState(false)
   const [skills, setSkills] = useState<MarketSkill[]>([])
   const [total, setTotal] = useState(0)
@@ -48,19 +55,23 @@ export function SkillMarketplaceSearch({
   const [pageSize] = useState(20)
   const [hasSearched, setHasSearched] = useState(false)
   const initiallyLoadedProviderRef = useRef<string | null>(null)
+  const lastInitialKeywordRef = useRef(normalizedInitialKeyword)
+  const submittedKeywordRef = useRef<string | null>(null)
+  const onKeywordChangeRef = useRef(onKeywordChange)
+  onKeywordChangeRef.current = onKeywordChange
 
   // Installation state
   const [installingSkills, setInstallingSkills] = useState<Map<string, InstallingSkill>>(new Map())
 
   // Search skills
   const handleSearch = useCallback(
-    async (searchPage = 1) => {
+    async (searchKeyword: string, searchPage = 1) => {
       setSearching(true)
       setHasSearched(true)
 
       try {
         const result = await searchSkills(provider.key, {
-          keyword: keyword || undefined,
+          keyword: searchKeyword || undefined,
           page: searchPage,
           pageSize,
         })
@@ -83,19 +94,38 @@ export function SkillMarketplaceSearch({
         setSearching(false)
       }
     },
-    [keyword, pageSize, provider.key, toast, t]
+    [pageSize, provider.key, toast, t]
   )
 
   // Handle page change
   const handlePageChange = (newPage: number) => {
-    handleSearch(newPage)
+    void handleSearch(keyword.trim(), newPage)
+  }
+
+  const submitSearch = () => {
+    const nextKeyword = keyword.trim()
+    // Remember the local submission so the page writing it back to the URL does
+    // not trigger a duplicate request. Re-submitting the current URL keyword
+    // cannot change the prop, so there is nothing to suppress.
+    submittedKeywordRef.current = nextKeyword === lastInitialKeywordRef.current ? null : nextKeyword
+    void handleSearch(nextKeyword, 1)
+    onKeywordChangeRef.current?.(nextKeyword)
   }
 
   useEffect(() => {
-    if (initiallyLoadedProviderRef.current === provider.key) return
+    const providerChanged = initiallyLoadedProviderRef.current !== provider.key
+    const initialKeywordChanged = lastInitialKeywordRef.current !== normalizedInitialKeyword
+    lastInitialKeywordRef.current = normalizedInitialKeyword
+    if (!providerChanged && !initialKeywordChanged) return
+    if (!providerChanged && submittedKeywordRef.current === normalizedInitialKeyword) {
+      submittedKeywordRef.current = null
+      return
+    }
+    submittedKeywordRef.current = null
     initiallyLoadedProviderRef.current = provider.key
-    void handleSearch(1)
-  }, [handleSearch, provider.key])
+    setKeyword(normalizedInitialKeyword)
+    void handleSearch(normalizedInitialKeyword, 1)
+  }, [handleSearch, normalizedInitialKeyword, provider.key])
 
   // Install skill
   const handleInstallSkill = async (skill: MarketSkill) => {
@@ -166,7 +196,7 @@ export function SkillMarketplaceSearch({
   // Handle key down in search input
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
-      handleSearch(1)
+      submitSearch()
     }
   }
 
@@ -202,7 +232,7 @@ export function SkillMarketplaceSearch({
           data-testid={`skill-marketplace-search-button-${provider.key}`}
           variant="primary"
           className="h-11 min-w-[44px] px-4 sm:h-10"
-          onClick={() => handleSearch(1)}
+          onClick={submitSearch}
           disabled={searching}
         >
           {searching ? (
