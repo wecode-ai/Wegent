@@ -421,6 +421,8 @@ async def _sync_installed_plugin_once(
             device_id,
             installed_id,
         )
+        if previous is None:
+            return None
         return deferred_plugin_sync(
             PluginWriteError("plugin_device_sync_failed"),
             user_id=user_id,
