@@ -14,6 +14,7 @@ import {
   ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_SEND_BUTTON_SELECTOR,
   ACTIVE_WORKBENCH_SELECTOR,
+  BlockingNetworkProxy,
   COMPOSER_READY_STABILITY_MS,
   CONNECTOR_AUTH_MARKER_NAME,
   CONNECTOR_AUTH_UNMATCHED_RESUME_COMPLETION_TEXT,
@@ -1007,7 +1008,6 @@ async function waitForMarketplaceInstallStateAfterUninstall(control, pluginId) {
 }
 
 async function verifyMarketplacePluginLifecycle({
-  blockingNetworkProxy,
   codexHome,
   control,
   executorHome,
@@ -1078,6 +1078,8 @@ async function verifyMarketplacePluginLifecycle({
   await captureVerificationScreenshot(control, 'marketplace-plugins-00-import.png')
   await control.command('click', '[data-testid="plugin-import-close"]')
 
+  const blockingNetworkProxy = new BlockingNetworkProxy()
+  await blockingNetworkProxy.start()
   blockingNetworkProxy.block()
   const blockedRequestCount = blockingNetworkProxy.requests.length
   const importStartedAt = Date.now()
@@ -1143,6 +1145,7 @@ async function verifyMarketplacePluginLifecycle({
   } finally {
     blockingNetworkProxy.release()
     await control.command('setLocalProxyUrl', 'body', { value: '' })
+    await blockingNetworkProxy.stop()
   }
 
   await control.command('click', '[data-testid="plugins-create-button"]')
