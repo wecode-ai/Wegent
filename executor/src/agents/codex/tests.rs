@@ -6647,7 +6647,15 @@ async fn stand_in_worker_cold_and_loaded_resume_register_only_general_read_tools
             .iter()
             .map(|tool| tool["name"].as_str().unwrap())
             .collect();
-        assert_eq!(names, vec!["list_tasks", "read_task"]);
+        assert_eq!(
+            names,
+            vec![
+                "list_tasks",
+                "read_task",
+                "list_connection_providers",
+                "read_source"
+            ]
+        );
         let denied=client.post(&url).header("Authorization",&launch.env["WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION"]).header("Mcp-Session-Id",&session)
             .json(&json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"create_task","arguments":{}}})).send().await.unwrap().json::<Value>().await.unwrap();
         assert_eq!(denied["result"]["isError"], true);
