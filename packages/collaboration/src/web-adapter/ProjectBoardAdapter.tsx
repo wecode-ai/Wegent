@@ -36,6 +36,7 @@ import {
   isExecutionBoardColumn,
   ProjectBoardGroupPicker,
   useStandardCloudBoardController,
+  useBoardTagFilter,
   useParentIssueBoard,
   useSavedBoardViews,
   savedBoardColumns,
@@ -306,7 +307,13 @@ export function ProjectBoardAdapter({
     }),
     [project],
   );
+  const tagFilter = useBoardTagFilter({
+    scope: `${project.project_store}:${project.id}:${savedViews.view?.id ?? "default"}`,
+    tags: availableTags,
+    translate,
+  });
   const controller = useStandardCloudBoardController({
+    tagFilter: tagFilter.tags,
     tagLimitError: translate(
       "todo.tag_limit_exceeded",
       "最多添加 20 个不同标签",
@@ -427,7 +434,12 @@ export function ProjectBoardAdapter({
             translate={translate}
           />
         }
-        filterAction={filterAction}
+        filterAction={
+          <>
+            {tagFilter.control}
+            {filterAction}
+          </>
+        }
         toolbarAction={
           <>
             {parentBoard.toggle}

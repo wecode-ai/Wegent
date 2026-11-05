@@ -13,6 +13,14 @@ import {
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const scoped = testId => `${CONTENT} [data-testid="${testId}"]`
 
+async function selectMilestone(control, value) {
+  await control.command('clickWhenEnabled', scoped('issue-milestone'))
+  await control.command(
+    'clickWhenEnabled',
+    `[data-testid="issue-milestone-option-${value || 'empty'}"]`
+  )
+}
+
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenchReadyTimeoutMs }) {
   let cloud
   let workspace
@@ -391,7 +399,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await control.command('click', scoped('collaboration-tab-board'))
       await control.command('clickWhenEnabled', scoped('collaboration-issue-create'))
       await control.command('waitFor', `${scoped('issue-milestone')}:enabled`)
-      await control.command('select', scoped('issue-milestone'), { value: localId })
+      await selectMilestone(control, localId)
       await control.command('fill', scoped('cloud-todo-title'), { value: 'Local milestone Issue' })
       await control.command('fill', scoped('cloud-todo-detail-description'), {
         value: 'Describe the local delivery scope before splitting it into child Issues.',
@@ -399,7 +407,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await control.command('click', scoped('cloud-todo-modal-close'))
       await control.command('clickWhenEnabled', scoped('collaboration-issue-create'))
       await control.command('waitFor', `${scoped('issue-milestone')}:enabled`)
-      assert.equal(await control.command('getValue', scoped('issue-milestone')), localId)
+      assert.equal(
+        await control.command('getAttribute', scoped('issue-milestone'), { value: 'data-value' }),
+        localId
+      )
       const assigneeLabel = `${scoped('cloud-todo-create-assignee')} strong`
       assert.equal(await control.command('getText', assigneeLabel), '未指派')
       const [unassigned] = JSON.parse(await control.command('getElementMetrics', assigneeLabel))
@@ -416,16 +427,22 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await control.command('waitFor', `${scoped('issue-milestone')}:enabled`, {
         timeoutMs: uiTimeoutMs,
       })
-      assert.equal(await control.command('getValue', scoped('issue-milestone')), localId)
-      await control.command('select', scoped('issue-milestone'), { value: '' })
+      assert.equal(
+        await control.command('getAttribute', scoped('issue-milestone'), { value: 'data-value' }),
+        localId
+      )
+      await selectMilestone(control, '')
       await control.command('waitFor', `${scoped('issue-milestone')}:enabled`, {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('select', scoped('issue-milestone'), { value: localId })
+      await selectMilestone(control, localId)
       await control.command('waitFor', `${scoped('issue-milestone')}:enabled`, {
         timeoutMs: uiTimeoutMs,
       })
-      assert.equal(await control.command('getValue', scoped('issue-milestone')), localId)
+      assert.equal(
+        await control.command('getAttribute', scoped('issue-milestone'), { value: 'data-value' }),
+        localId
+      )
       const [properties] = JSON.parse(
         await control.command('getElementMetrics', scoped('issue-title-properties'))
       )
@@ -512,18 +529,24 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await control.command('click', scoped(`milestone-open-${followUp.id}`))
       await control.command('click', scoped('collaboration-issue-table-empty-create'))
       await control.command('waitFor', `${scoped('issue-milestone')}:enabled`)
-      assert.equal(await control.command('getValue', scoped('issue-milestone')), followUp.id)
+      assert.equal(
+        await control.command('getAttribute', scoped('issue-milestone'), { value: 'data-value' }),
+        followUp.id
+      )
       await control.command('fill', scoped('cloud-todo-title'), {
         value: 'Remaining local delivery',
       })
-      await control.command('select', scoped('issue-milestone'), { value: '' })
+      await selectMilestone(control, '')
       await control.command('click', scoped('cloud-todo-modal-close'))
       await control.command('click', scoped('collaboration-issue-table-empty-create'))
       await control.command('waitFor', `${scoped('issue-milestone')}:enabled`)
-      assert.equal(await control.command('getValue', scoped('issue-milestone')), '')
-      await control.command('select', scoped('issue-milestone'), { value: followUp.id })
+      assert.equal(
+        await control.command('getAttribute', scoped('issue-milestone'), { value: 'data-value' }),
+        ''
+      )
+      await selectMilestone(control, followUp.id)
       await waitForValue(
-        () => control.command('getValue', scoped('issue-milestone')),
+        () => control.command('getAttribute', scoped('issue-milestone'), { value: 'data-value' }),
         value => value === followUp.id,
         'The selected milestone must appear before capturing the creation draft',
         uiTimeoutMs
@@ -653,7 +676,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await control.command('waitFor', `${scoped('issue-milestone')}:enabled`, {
         timeoutMs: uiTimeoutMs,
       })
-      assert.equal(await control.command('getValue', scoped('issue-milestone')), '')
+      assert.equal(
+        await control.command('getAttribute', scoped('issue-milestone'), { value: 'data-value' }),
+        ''
+      )
       await control.command('click', scoped('cloud-todo-detail-close'))
       await control.command('navigate', 'body', { value: '/settings/appearance' })
       await control.command('waitFor', '[data-testid="appearance-mode-dark"]')

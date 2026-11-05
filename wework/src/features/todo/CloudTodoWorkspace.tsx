@@ -100,6 +100,7 @@ import {
   ProjectBoardBody,
   ProjectBoardGroupPicker,
   useStandardCloudBoardController,
+  useBoardTagFilter,
   type ProjectBoardColumn,
   type ProjectBoardGroupBy,
   type StandardCloudBoardMutation,
@@ -1981,7 +1982,13 @@ export function CloudTodoWorkspace({
   const canManageViews =
     selectedProject?.location === 'local' ||
     ['Owner', 'Maintainer'].includes(selectedProject?.access_role ?? '')
+  const tagFilter = useBoardTagFilter({
+    scope: `${selectedProjectKey}:${savedViews.view?.id ?? 'default'}`,
+    tags: availableTags,
+    translate: boardTranslate,
+  })
   const standardBoardController = useStandardCloudBoardController({
+    tagFilter: tagFilter.tags,
     tagLimitError: boardTranslate('todo.tag_limit_exceeded', '最多添加 20 个不同标签'),
     view: savedViews.view,
     viewScope: `${selectedProjectKey}:${savedViews.view?.id ?? 'default'}`,
@@ -4711,6 +4718,11 @@ export function CloudTodoWorkspace({
                   ) : null,
                   board: (
                     <ProjectBoardBody<LocatedLoopItem>
+                      filterAction={
+                        !isAITableProject && !isExternalGitBoard && !isMyTasksBoard
+                          ? tagFilter.control
+                          : undefined
+                      }
                       toolbarAction={parentIssueBoard.toggle}
                       parentRows={
                         parentIssueBoard.active
