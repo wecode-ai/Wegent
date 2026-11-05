@@ -54,8 +54,13 @@ pub(crate) fn stand_in_identity(request: &ExecutionRequest) -> Option<StandInMcp
     Some(StandInMcpIdentity {
         review: origin["type"] == "stand_in_schedule",
         readonly_worker: origin["type"] == "stand_in_task",
-        task_id: origin["runtimeTaskId"]
-            .as_str()
+        // Local executions may have no Backend task ID; the host binds their address each turn.
+        task_id: request
+            .extra
+            .get("runtimeLocalTaskId")
+            .and_then(Value::as_str)
+            .filter(|id| !id.is_empty())
+            .or_else(|| origin["runtimeTaskId"].as_str())
             .unwrap_or(&request.task_id)
             .to_owned(),
         user,
@@ -655,6 +660,32 @@ mod memory_tests {
         revoked["roles"][0]["connections"] = json!([]);
         store.save_personal_stand_in(7, "mac", revoked).unwrap();
         assert!(read_connected_work(&runtime, &identity, &arguments).is_err());
+    }
+
+    #[test]
+    fn stand_in_identity_uses_host_local_task_id_with_empty_backend_ids() {
+        let mut request: ExecutionRequest = serde_json::from_value(json!({
+            "task_id":"", "subtask_id":"", "runtimeLocalTaskId":"local-worker",
+            "origin":{"type":"stand_in_task","userId":7,"deviceId":"mac",
+                "standInId":"@primary","sourceTaskId":"primary"}
+        }))
+        .unwrap();
+        let identity = stand_in_identity(&request).unwrap();
+        assert_eq!(identity.task_id, "local-worker");
+        assert!(identity.readonly_worker);
+        assert!(request.task_id.is_empty() && request.subtask_id.is_empty());
+        request.extra.get_mut("origin").unwrap()["runtimeTaskId"] = json!("stale-worker");
+        assert_eq!(stand_in_identity(&request).unwrap().task_id, "local-worker");
+        request.extra.remove("runtimeLocalTaskId");
+        assert_eq!(stand_in_identity(&request).unwrap().task_id, "stale-worker");
+        request
+            .extra
+            .get_mut("origin")
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .remove("runtimeTaskId");
+        assert!(stand_in_identity(&request).unwrap().task_id.is_empty());
     }
 
     #[tokio::test]
