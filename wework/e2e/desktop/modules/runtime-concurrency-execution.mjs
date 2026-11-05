@@ -100,6 +100,7 @@ export function createConcurrencyExecutionVerification({ workspacePath, uiTimeou
                     type: 'stand_in_identity',
                     initiatedBy: 'stand_in_identity',
                     userId: 9001,
+                    deviceId: personal.executionDeviceId,
                     standInId: `concurrency-${index}`,
                   }
                 : kind === 'agent'
