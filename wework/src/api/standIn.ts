@@ -12,6 +12,7 @@ import type {
 } from '@wegent/collaboration'
 import type { RuntimeTaskSummary } from '@/types/api'
 import type { Automation } from '@/types/automation'
+import { createRuntimeTaskCommandsApi, type RuntimeTaskCommandsApi } from './runtimeTaskCommands'
 
 export interface StandInOnboardingResult {
   settings?: PersonalStandInSettings | null
@@ -81,7 +82,7 @@ export interface StandInProcessingStatus {
   running: boolean
   nextCheckAt?: string
   lastCheckAt?: string
-  error?: { code: string; message: string } | null
+  error?: { code: string; message: string; taskId?: string; commandId?: string } | null
   actions: Array<{
     id: string
     kind: string
@@ -198,6 +199,7 @@ export interface StandInExecutorApi {
     update?: ProjectCoordinationUpdate
   ): Promise<ProjectCoordinationState>
   processingStatus(userId: number, deviceId: string): Promise<StandInProcessingStatus>
+  taskCommands: RuntimeTaskCommandsApi
   checkProcessing(userId: number, deviceId: string): Promise<StandInProcessingStatus>
   configureTelemetry(
     userId: number,
@@ -381,6 +383,7 @@ export function createStandInExecutorApi(
     }
   }
   return {
+    taskCommands: createRuntimeTaskCommandsApi(request),
     gitConnection: (deviceId, input) => {
       const { channel, ...payload } = input
       if (channel === 'auth') {

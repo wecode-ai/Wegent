@@ -4,8 +4,13 @@ import { expect, it, vi } from 'vitest'
 import type { StandInExecutorApi, StandInProcessingStatus } from '@/api/standIn'
 import '@/i18n'
 import { StandInProcessingNotice } from './StandInProcessingNotice'
+import type { RuntimeCommandReceipt } from '@/api/runtimeTaskCommands'
 
-function fixture(code: string | null, overrides: Partial<StandInProcessingStatus> = {}) {
+function fixture(
+  code: string | null,
+  overrides: Partial<StandInProcessingStatus> = {},
+  taskCommands?: StandInExecutorApi['taskCommands']
+) {
   const status: StandInProcessingStatus = {
     pendingCount: 1,
     running: false,
@@ -18,6 +23,7 @@ function fixture(code: string | null, overrides: Partial<StandInProcessingStatus
   const api = {
     processingStatus: vi.fn(async () => status),
     checkProcessing,
+    taskCommands,
   } as unknown as StandInExecutorApi
   const onOpenTask = vi.fn()
   render(
@@ -69,6 +75,55 @@ it('an unconfirmed execution offers its original task without authorizing a retr
   expect(screen.queryByTestId('stand-in-processing-check')).toBeNull()
   expect(checkProcessing).not.toHaveBeenCalled()
   expect(screen.getByRole('alert').textContent).not.toContain('Internal diagnostic detail')
+})
+
+it('offers owner recovery as an inline review, with no check before explicit resolution', async () => {
+  const receipt: RuntimeCommandReceipt = {
+    success: true,
+    accepted: true,
+    taskId: 'stand-in-coordinator-7',
+    commandId: 'private-command',
+    taskTitle: '后台事件处理',
+    commandFingerprint: 'private-fingerprint',
+    native: null,
+    state: 'recovery_required',
+    acceptedAt: 1,
+    runtime: 'codex',
+    requiresUserReview: true,
+    nativeOutcome: 'unknown',
+  }
+  const taskCommands = {
+    get: vi.fn().mockResolvedValue(receipt),
+    resolve: vi.fn().mockResolvedValue({ ...receipt, state: 'abandoned' }),
+  }
+  const { checkProcessing } = fixture(
+    'coordination_recovery_required',
+    {
+      error: {
+        code: 'coordination_recovery_required',
+        message: 'inspect original coordinator',
+        commandId: 'private-command',
+      },
+    },
+    taskCommands
+  )
+  await userEvent.click(await screen.findByTestId('stand-in-processing-recover'))
+  await screen.findByTestId('runtime-command-recovery-confirm')
+  expect(screen.queryByRole('dialog')).toBeNull()
+  expect(screen.queryByTestId('stand-in-processing-check')).toBeNull()
+  expect(checkProcessing).not.toHaveBeenCalled()
+  expect(screen.getByTestId('stand-in-processing-notice')).not.toHaveTextContent('private-command')
+  expect(screen.getByRole('alert')).not.toHaveTextContent('inspect original coordinator')
+  expect(screen.getByRole('heading', { name: '核对中断的执行' })).toHaveFocus()
+  await userEvent.click(screen.getByTestId('runtime-command-recovery-cancel'))
+  expect(screen.getByTestId('stand-in-processing-recover')).toHaveFocus()
+  expect(taskCommands.resolve).not.toHaveBeenCalled()
+  expect(checkProcessing).not.toHaveBeenCalled()
+  await userEvent.click(screen.getByTestId('stand-in-processing-recover'))
+  await screen.findByTestId('runtime-command-recovery-confirm')
+  await userEvent.click(screen.getByTestId('runtime-command-recovery-confirm'))
+  await waitFor(() => expect(checkProcessing).toHaveBeenCalledOnce())
+  expect(taskCommands.resolve).toHaveBeenCalledOnce()
 })
 
 it.each(['coordination_stopped', 'coordinator_failed'])(

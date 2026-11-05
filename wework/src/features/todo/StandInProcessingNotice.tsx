@@ -2,8 +2,11 @@ import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import type { StandInExecutorApi } from '@/api/standIn'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useStandInProcessingStatus } from './useStandInProcessingStatus'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { CircleAlert, Clock } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { RuntimeCommandRecoveryReview } from '@/components/common/RuntimeCommandRecoveryReview'
+import type { RuntimeCommandTarget } from '@/api/runtimeTaskCommands'
 
 export function StandInProcessingNotice({
   api,
@@ -24,6 +27,20 @@ export function StandInProcessingNotice({
   const local = useStandInProcessingStatus(api, userId, deviceId, !snapshot)
   const { status, error, setStatus, setError } = snapshot ?? local
   const [checking, setChecking] = useState(false)
+  const scope = `${userId}:${deviceId}`
+  const [reviewing, setReviewing] = useState<{
+    scope: string
+    target: RuntimeCommandTarget
+  } | null>(null)
+  const currentReview = reviewing?.scope === scope ? reviewing : null
+  const recoveryButton = useRef<HTMLButtonElement>(null)
+  const restoreFocus = useRef(false)
+  useEffect(() => {
+    if (!currentReview && restoreFocus.current) {
+      restoreFocus.current = false
+      recoveryButton.current?.focus()
+    }
+  }, [currentReview])
   const backgroundModelUnavailable = status?.error?.code === 'model_unavailable'
   const recovery = status?.error?.code === 'coordination_recovery_required'
   const review =
@@ -47,9 +64,11 @@ export function StandInProcessingNotice({
     (status?.error
       ? backgroundModelUnavailable
         ? t('standIn.processing.background_model_unavailable')
-        : getStandInErrorMessage(status.error)
+        : recovery
+          ? t('runtimeCommandRecovery.notice')
+          : getStandInErrorMessage(status.error)
       : undefined)
-  if (!failure && !status?.awaitingUser) return null
+  if (!failure && !status?.awaitingUser && !currentReview) return null
   return (
     <div
       className="mx-5 my-2 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/60 px-3 py-2 text-sm"
@@ -64,9 +83,31 @@ export function StandInProcessingNotice({
         className="min-w-0 flex-1 leading-relaxed text-text-primary"
         role={failure ? 'alert' : 'status'}
       >
-        {failure ?? t('standIn.processing.needs_input')}
+        {failure ??
+          t(currentReview ? 'runtimeCommandRecovery.title' : 'standIn.processing.needs_input')}
       </span>
       <div className="ml-auto flex shrink-0 flex-wrap items-center gap-2">
+        {recovery && api?.taskCommands && status?.error?.commandId && status.taskId && (
+          <Button
+            ref={recoveryButton}
+            size="sm"
+            className="min-h-11 md:min-h-8"
+            data-testid="stand-in-processing-recover"
+            disabled={!!currentReview}
+            onClick={() =>
+              setReviewing({
+                scope,
+                target: {
+                  userId,
+                  taskId: status.error?.taskId ?? status.taskId!,
+                  commandId: status.error!.commandId!,
+                },
+              })
+            }
+          >
+            {t('runtimeCommandRecovery.open')}
+          </Button>
+        )}
         {(status?.awaitingUser || review) && status?.taskId && onOpenTask && (
           <button
             type="button"
@@ -99,6 +140,24 @@ export function StandInProcessingNotice({
           </button>
         )}
       </div>
+      {currentReview && api?.taskCommands && (
+        <RuntimeCommandRecoveryReview
+          key={`${scope}:${currentReview.target.taskId}:${currentReview.target.commandId}`}
+          commands={api.taskCommands}
+          deviceId={deviceId}
+          target={currentReview.target}
+          onCancel={() => {
+            restoreFocus.current = true
+            setReviewing(null)
+          }}
+          onContinue={async () => {
+            const next = await api.checkProcessing(userId, deviceId)
+            setStatus(next)
+            setError(null)
+            if (next.error) throw new Error('Subsequent processing is still blocked')
+          }}
+        />
+      )}
     </div>
   )
 }
