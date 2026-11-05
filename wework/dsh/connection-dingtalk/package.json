@@ -152,7 +152,9 @@
               "New mentions of the user or direct messages within the selected chats; use the actual sender, quoted message and topic to understand the request."
             ],
             "prepare": [
-              "Read authorized surrounding context, distinguish questions from chatter, and draft a grounded answer or concrete next step without inventing commitments."
+              "Read authorized surrounding context, distinguish questions from chatter, and draft a grounded answer or concrete next step without inventing commitments.",
+              "In managed Wework executions, invoke the documented DingTalk business operation through the plugin wrapper or a declared native business tool first. Do not run ensure-dws-ready.sh, plugin-health, local-dws-ready.sh, installers or auth status as a business-work preflight, even if the standalone Skill setup recipe recommends them: these helpers can start interactive login. Wework already owns installation and native connector authorization.",
+              "If the actual DingTalk business operation reports missing or expired authentication, preserve its exact declared connector identity and use Wework’s native user-initiated authorization card. Never run auth login or OAuth inside the worker. A .dws file-lock failure or operation-not-permitted error is a permission failure, not proof that login expired; do not relabel it as auth-required, copy or relocate credentials, or broaden sandbox access. Preserve the existing native approval path for the actual operation."
             ],
             "notifyWhen": [
               "An urgent request, unresolved blocker or decision needs the user, or a useful reply draft is ready for the user to approve. Avoid separate notifications for repeated messages about an unchanged issue.",
