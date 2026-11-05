@@ -90,7 +90,9 @@ test('relationship navigation deduplicates libraries and filters by owning space
       await expect(page.getByTestId(`kb-row-${shared}`)).toHaveCount(0)
       await expect(page.getByTestId(`kb-row-${native}`)).toHaveCount(index === 0 ? 1 : 0)
       await expect(page.getByTestId(`kb-row-${unrelated}`)).toHaveCount(0)
-      await expect(page.getByTestId('nav-personal-item')).toHaveText(count)
+      await expect(page.getByTestId('nav-personal-item')).toHaveText(count, {
+        useInnerText: true,
+      })
     }
     await selectKnowledgeTeam(page, `group-${names[2]}`)
     await expect(page.getByTestId(`kb-row-${shared}`)).toHaveCount(0)
@@ -188,6 +190,18 @@ test('read-only permissions stay scoped on mobile and desktop without exposing m
       if (mobile) {
         const permission = page.getByRole('menuitem').and(page.getByTestId('permission-kb-' + id))
         await expect(permission).toBeVisible()
+        // Visibility does not mean the menu's entry zoom has reached its final size.
+        await expect
+          .poll(() =>
+            page
+              .getByRole('menu')
+              .evaluate(element =>
+                element
+                  .getAnimations()
+                  .every(animation => ['finished', 'idle'].includes(animation.playState))
+              )
+          )
+          .toBe(true)
         const menuBounds = await permission.boundingBox()
         expect(menuBounds!.width).toBeGreaterThanOrEqual(44)
         expect(menuBounds!.height).toBeGreaterThanOrEqual(44)
