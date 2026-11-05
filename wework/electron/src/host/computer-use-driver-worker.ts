@@ -23,6 +23,7 @@ port.on('message', ({ data }: { data: DriverRequest }) => {
   )
 })
 
+/** Keep cancellation controllers in the process that owns their native calls. */
 async function handleRequest(request: Exclude<DriverRequest, { method: 'abort' }>) {
   if (request.method === 'start') {
     driver = CuaDriver.create(undefined)

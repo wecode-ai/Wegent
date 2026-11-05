@@ -17,6 +17,7 @@ export class ComputerUseDriverProcess {
     { resolve: (result: Result) => void; reject: (error: Error) => void }
   >()
 
+  /** Bind generation-scoped replies and observe native worker termination. */
   private constructor(
     private readonly child: UtilityProcess,
     private readonly onExit: (error: Error) => void
@@ -36,6 +37,7 @@ export class ComputerUseDriverProcess {
     })
   }
 
+  /** Start a host-owned native process and wait until its driver is ready. */
   static async create(onExit: (error: Error) => void): Promise<ComputerUseDriverProcess> {
     const child = utilityProcess.fork(
       fileURLToPath(new URL('./computer-use-driver-worker.js', import.meta.url)),
@@ -53,10 +55,12 @@ export class ComputerUseDriverProcess {
     }
   }
 
+  /** Read the SDK catalog without maintaining a second tool registry. */
   async listToolsJson(): Promise<string> {
     return (await this.request({ id: ++this.nextId, method: 'listTools' })) as string
   }
 
+  /** Forward cancellation to this request and await the native call's result. */
   async callTool(
     name: string,
     argumentsJson: string,
@@ -82,6 +86,7 @@ export class ComputerUseDriverProcess {
     }
   }
 
+  /** Stop the runtime and terminate its process even when native cleanup fails. */
   async shutdown(): Promise<void> {
     if (this.stopped) return
     this.stopped = true
@@ -92,6 +97,7 @@ export class ComputerUseDriverProcess {
     }
   }
 
+  /** Bound lifecycle operations without imposing that budget on desktop actions. */
   private async lifecycle(method: 'start' | 'shutdown'): Promise<void> {
     let timer: ReturnType<typeof setTimeout> | undefined
     try {
@@ -109,6 +115,7 @@ export class ComputerUseDriverProcess {
     }
   }
 
+  /** Correlate a trusted worker reply with its caller within this generation. */
   private request(message: DriverRequest): Promise<Result> {
     if (this.failure) return Promise.reject(this.failure)
     if (this.stopped && message.method !== 'shutdown') {
@@ -125,6 +132,7 @@ export class ComputerUseDriverProcess {
     })
   }
 
+  /** Reject outstanding work once, preserving unknown outcomes without replay. */
   private fail(error: Error): void {
     if (this.failure) return
     this.failure = error

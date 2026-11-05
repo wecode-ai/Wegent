@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 
+/** Invoke a real native tool through the authenticated loopback bridge. */
 async function callTool(record, name, args) {
   const response = await fetch(`http://${record.address}/computer`, {
     method: 'POST',
@@ -16,6 +17,7 @@ async function callTool(record, name, args) {
   return body.data
 }
 
+/** Exercise host-window AX focus and verify that a refused menu leaves it usable. */
 export async function verifyComputerUseHostMenu(control, record, timeoutMs) {
   await control.command('focusMainWindow', 'body')
   const state = JSON.parse(await control.command('getNativeWindowState', 'body'))
