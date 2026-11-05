@@ -2,6 +2,42 @@
 use super::stand_in::settings_error;
 use super::*;
 
+const EXECUTION_POLICY: &str = "Complete the user's requested outcome within the existing authorization. A failed read or query does not prove the source is empty or unavailable. Before declaring an input blocked, make a small, bounded recovery attempt using already-declared and already-authorized read operations on the same permitted account and resources. Use returned tool schemas and documentation, and prefer a narrower valid query, enumeration followed by reading matching records, or relevant source-backed evidence already available with its actual freshness. Do not guess endpoints, expand resource or time scope, add subscriptions, change accounts, request credentials, repeat unchanged failures, or wait indefinitely. If an operation is denied by permissions or native approval, stop that operation; never use another tool, route or argument to evade the denial. Missing or expired authentication must use its exact native authorization flow. Read recovery never authorizes an external write or retry of an unknown delivery. Finish with the useful verified outcome, its sources and material remaining uncertainty; an execution being accepted or completed is not the user's requested outcome. Explain unresolved coverage limits in business terms and ask the user to act only when an available user control can actually resolve the blocker.";
+
+fn refresh_execution_policy(request: &mut ExecutionRequest) -> Result<(), String> {
+    let origin = &request.extra.get("origin").cloned().unwrap_or(Value::Null);
+    let applies = matches!(
+        origin["type"].as_str(),
+        Some("stand_in_identity" | "stand_in_task" | "connection_work" | "dingtalk_work")
+    ) || (origin["type"] == "issue_dispatch" && origin["initiatedBy"] == "stand_in")
+        || request
+            .extra
+            .get("standInDelegation")
+            .is_some_and(Value::is_object);
+    if !applies {
+        if let Some(context) = request
+            .extra
+            .get_mut("additionalContext")
+            .and_then(Value::as_object_mut)
+        {
+            context.remove("wework.execution-policy");
+        }
+        return Ok(());
+    }
+    let context = request
+        .extra
+        .entry("additionalContext")
+        .or_insert_with(|| json!({}));
+    let context = context
+        .as_object_mut()
+        .ok_or("Invalid additional context")?;
+    context.insert(
+        "wework.execution-policy".into(),
+        json!({"kind":"application","value":EXECUTION_POLICY}),
+    );
+    Ok(())
+}
+
 impl RuntimeWorkRpcHandler {
     pub(super) fn stand_in_memory(
         &self,
@@ -41,6 +77,7 @@ impl RuntimeWorkRpcHandler {
         &self,
         request: &mut ExecutionRequest,
     ) -> Result<(), String> {
+        refresh_execution_policy(request)?;
         self.refresh_connection_guidance(request)?;
         let Some(origin) = request.extra.get("origin") else {
             return Ok(());
@@ -159,6 +196,35 @@ fn bounded_memories(memories: Vec<Value>) -> Vec<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn delegated_read_recovery_policy_refreshes_without_adding_memory_or_permissions() {
+        let root = tempfile::tempdir().unwrap();
+        let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+        handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+        let mut request:ExecutionRequest=serde_json::from_value(json!({
+            "prompt":"Prepare the requested result", "runtime_permission_profile":":read-only",
+            "origin":{"type":"stand_in_task","initiatedBy":"stand_in","userId":7,"deviceId":"mac","standInId":"@primary"}
+        })).unwrap();
+        handler.refresh_stand_in_context(&mut request).unwrap();
+        let context = request.extra["additionalContext"].clone();
+        assert_eq!(
+            context["wework.execution-policy"]["value"],
+            EXECUTION_POLICY
+        );
+        assert!(context.get("wework.stand-in").is_none());
+        assert_eq!(request.extra["runtime_permission_profile"], ":read-only");
+        assert_eq!(request.prompt, "Prepare the requested result");
+        handler.refresh_stand_in_context(&mut request).unwrap();
+        assert_eq!(request.extra["additionalContext"], context);
+        request
+            .extra
+            .insert("origin".into(), json!({"type":"ordinary"}));
+        handler.refresh_stand_in_context(&mut request).unwrap();
+        assert!(request.extra["additionalContext"]
+            .get("wework.execution-policy")
+            .is_none());
+    }
 
     #[test]
     fn primary_delegation_refreshes_each_turn_without_restricting_concrete_work() {

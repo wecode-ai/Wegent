@@ -30,7 +30,7 @@ impl RuntimeWorkRpcHandler {
         }));
     }
 
-    async fn stand_in_task_operation(
+    pub(super) async fn stand_in_task_operation(
         &self,
         identity: StandInMcpIdentity,
         name: &str,
@@ -174,6 +174,12 @@ impl RuntimeWorkRpcHandler {
         link: &RuntimeTaskLink,
     ) -> Result<(), AppIpcError> {
         let origin = &link.runtime_handle["origin"];
+        if !origin["deviceId"].is_null() && origin["deviceId"] != self.device_id {
+            return Err(AppIpcError::new(
+                "task_device_mismatch",
+                "This task belongs to another execution device. Continue it on its original device, or start a new task on this device using its existing evidence; the original task was not changed or started.",
+            ));
+        }
         if origin["initiatedBy"] != "stand_in"
             || !matches!(
                 origin["type"].as_str(),

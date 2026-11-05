@@ -265,6 +265,128 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn personal_continuation_rejects_foreign_devices_and_finishes_to_its_parent_outbox() {
+        use crate::task_runtime::mcp::StandInMcpIdentity;
+        let (root, handler, _) = completion_fixture();
+        let parent = "stand-in-chat-7-primary";
+        handler.upsert_local_task(RuntimeTaskLink {
+            local_task_id:parent.into(),runtime:"codex".into(),thread_id:Some("parent-thread".into()),
+            runtime_handle:json!({"origin":{"type":"stand_in_identity","userId":7,"deviceId":"mac"},"executionRequest":{"user_id":7}}),
+            ..Default::default()
+        });
+        handler.store.update_task("child", |child| {
+            child.thread_id = Some("child-thread".into());
+            child.workspace_path = root.path().display().to_string();
+            child.runtime_handle["origin"]["deviceId"] = json!("old-device");
+        });
+        let identity = StandInMcpIdentity {
+            task_id: parent.into(),
+            user: 7,
+            device: "mac".into(),
+            role: None,
+            work: None,
+            project: None,
+            review: false,
+            readonly_worker: false,
+            ask_before_act: false,
+            coordinator_batch: None,
+        };
+        let args = json!({"taskId":"child","message":"Continue the existing request","requestId":"new-generation"});
+        let before = handler.local_task_link("child").unwrap();
+        let error = handler
+            .stand_in_task_operation(identity.clone(), "continue_task", args.clone())
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "task_device_mismatch");
+        assert_eq!(
+            handler.local_task_link("child").unwrap().runtime_handle,
+            before.runtime_handle
+        );
+        assert!(handler.command_journal.lock().unwrap().is_empty());
+        assert!(handler
+            .turn_scheduler
+            .lock()
+            .unwrap()
+            .queued_turns
+            .is_empty());
+
+        // A task already owned by this device uses the ordinary accepted queue
+        // and completion boundary; no historical identity is migrated.
+        handler.store.update_task("child", |child| {
+            child.runtime_handle["origin"]["deviceId"] = json!("mac")
+        });
+        handler.record_stand_in_completion_outbox("child", "done");
+        let old_result =
+            handler.local_task_link("child").unwrap().runtime_handle["standInResult"].clone();
+        let (cancel, _cancelled) = oneshot::channel();
+        let (_stopped, stopped) = oneshot::channel();
+        let prior_execution = handler.start_local_task_execution("child".into(), cancel, stopped);
+        let accepted = handler
+            .stand_in_task_operation(identity, "continue_task", args)
+            .await
+            .unwrap();
+        assert_eq!(accepted["accepted"], true);
+        assert_eq!(accepted["status"], "queued");
+        assert!(handler
+            .stand_in_result_delivery(&handler.local_task_link("child").unwrap())
+            .is_none());
+        let turn = handler
+            .turn_scheduler
+            .lock()
+            .unwrap()
+            .queued_turns
+            .pop_front()
+            .unwrap();
+        assert_ne!(turn.request.extra["runtime_command_id"], "initial-command");
+        assert!(handler.finish_local_task_execution("child", prior_execution));
+        handler.store.update_task("child", |child| {
+            store_runtime_execution_request(&mut child.runtime_handle, &turn.request);
+        });
+        assert!(handler
+            .stand_in_result_delivery(&handler.local_task_link("child").unwrap())
+            .is_none());
+        let (cancel, _cancelled) = oneshot::channel();
+        let (_stopped, stopped) = oneshot::channel();
+        let execution = handler.start_local_task_execution("child".into(), cancel, stopped);
+        handler.register_thread_event_route(
+            "child-thread",
+            "child".into(),
+            turn.request.clone(),
+            false,
+        );
+        for (method, status) in [
+            ("turn/started", "inProgress"),
+            ("turn/completed", "completed"),
+        ] {
+            handler.route_codex_notification(
+                json!({"method":method,"params":{"threadId":"child-thread",
+                "turn":{"id":"continuation-turn","status":status,"agent_path":"/root"}}}),
+            );
+        }
+        assert!(handler.finish_local_task("child", execution, Some("child-thread".into()), "done"));
+        let completed = handler.local_task_link("child").unwrap();
+        assert_ne!(
+            completed.runtime_handle["standInResult"]["generation"],
+            old_result["generation"]
+        );
+        let delivery = handler.stand_in_result_delivery(&completed).unwrap();
+        assert_eq!(delivery["taskId"], parent);
+        assert!(delivery["message"]
+            .as_str()
+            .unwrap()
+            .contains("status=done"));
+        assert!(delivery["message"]
+            .as_str()
+            .unwrap()
+            .contains(turn.request.extra["runtime_command_id"].as_str().unwrap()));
+        let mut foreign_completion = completed;
+        foreign_completion.runtime_handle["origin"]["deviceId"] = json!("old-device");
+        assert!(handler
+            .stand_in_result_delivery(&foreign_completion)
+            .is_none());
+    }
+
+    #[tokio::test]
     async fn completion_outbox_retains_native_and_preparation_start_failure_after_restart() {
         for native_start in [false, true] {
             let (_root, mut handler, path) = completion_fixture();
