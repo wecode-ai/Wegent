@@ -256,7 +256,8 @@ test('DingTalk declares only its five read operations against its exact dependen
   assert.deepEqual(declaration.operations.listProfiles.command, ['profile', 'list'])
   assert.equal(declaration.operations.listMentions.parameters.group, '--group')
   assert.deepEqual(declaration.outputArgs, ['--format', 'json'])
-  assert.equal(declaration.connectorSlug, 'dingtalk')
+  assert.equal(declaration.toolId, 'dws')
+  assert.equal(declaration.connectorSlug, undefined)
   for (const mutate of [
     p => {
       p.cliReadTools.other = p.cliReadTools.dingtalk

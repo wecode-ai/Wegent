@@ -1833,6 +1833,12 @@ async function verifyExistingTaskBoardAssociation(
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command('click', '[data-testid="work-item-change-board"]')
+  await control.command('waitFor', '[data-testid="work-item-context-menu"]', {
+    text: targetProjectName,
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('click', '[data-testid="work-item-open-board-menu"]')
   const movedBoardContentSelector = await requireActiveCollaborationTab(
     control,
@@ -1853,6 +1859,20 @@ async function verifyExistingTaskBoardAssociation(
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command(
+    'waitFor',
+    `${movedBoardContentSelector} [data-testid="collaboration-issue-detail"]`,
+    {
+      text: 'WEWORK_DESKTOP_E2E_TASK',
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  assert.equal(
+    Number(await control.command('getElementCount', '[data-testid="work-item-context-menu"]')),
+    0,
+    'Opening the linked Issue board must unmount the project-space picker'
+  )
   if (captureScreenshots) {
     await captureVerificationScreenshot(
       control,
@@ -2398,12 +2418,12 @@ async function verifyWorkspaceTabIsolation(control, restartDesktopApp) {
   assert.ok(fourthTaskTestId, 'The fourth task tab identity was not observable')
   const fourthTaskId = fourthTaskTestId.slice('workspace-tab-'.length)
   const fourthTaskContent = `[data-testid="workspace-tab-content-${fourthTaskId}"]`
-  await control.command('waitFor', `${fourthTaskContent} [data-testid="automation-button"]`, {
+  await control.command('waitFor', `${fourthTaskContent} [data-testid="plugins-button"]`, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('click', `${fourthTaskContent} [data-testid="automation-button"]`)
-  await control.command('waitFor', '[data-testid="create-automation-button"]', {
+  await control.command('click', `${fourthTaskContent} [data-testid="plugins-button"]`)
+  await control.command('waitFor', '[data-testid="plugins-workspace"]', {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })

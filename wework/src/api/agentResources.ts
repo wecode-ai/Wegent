@@ -38,6 +38,7 @@ export interface CreatedAgentResource {
 
 /** The editable Agent resource behind a Team plus its leader Bot. */
 export interface AgentResourceDetail {
+  botCount?: number
   teamId: number
   botId: number
   name: string
@@ -257,6 +258,7 @@ export function createAgentResourceApi(
       const config = bot.agent_config ?? {}
       const shellName = bot.shell_name ?? ''
       return {
+        botCount: team.bots?.length ?? 0,
         teamId: team.id,
         botId: bot.id,
         name: team.name,

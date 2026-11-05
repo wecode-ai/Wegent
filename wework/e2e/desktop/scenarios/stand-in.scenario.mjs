@@ -264,6 +264,7 @@ export async function createDesktopScenario({
       assert.equal(saved.enabled, true)
       assert.ok(saved.executionDeviceId)
       assert.equal(saved.prompt, MARKER)
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await control.command('waitFor', `${CONTENT} [data-testid="stand-in-project-${project.id}"]`)
       // The project header reloads after saving; the sidebar can already be visible.
       await control.command('waitFor', `${CONTENT} [data-testid="stand-in-enabled"]`)
@@ -352,6 +353,12 @@ export async function createDesktopScenario({
       await control.command('click', `${CONTENT} [data-testid="collaboration-tab-board"]`)
       await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`)
       await control.command('waitFor', '[data-testid="stand-in-auto"][aria-checked="true"]')
+      // Establish a dirty draft before the concurrent write. Clean settings
+      // may legitimately refresh while workbench services are recreated.
+      await control.command('fill', '[data-testid="stand-in-prompt"]', {
+        value: `${MARKER} 保留草稿`,
+      })
+      await control.command('waitFor', '[data-testid="stand-in-pending-save"]')
       const concurrentSettings = await requestExecutor(
         control,
         'runtime.stand_in.get',
@@ -373,9 +380,6 @@ export async function createDesktopScenario({
         },
         uiTimeoutMs
       )
-      await control.command('fill', '[data-testid="stand-in-prompt"]', {
-        value: `${MARKER} 保留草稿`,
-      })
       await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
       await control.command('waitFor', '[data-testid="stand-in-settings"] [role="alert"]')
       assert.equal(
@@ -385,6 +389,7 @@ export async function createDesktopScenario({
       await discardStandInDraft(control)
       // Personal settings close independently of the project board. Re-enter
       // the fixture project before using its project-scoped stand-in control.
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await control.command(
         'click',
         `${CONTENT} [data-testid="collaboration-workspace-project-${project.id}"]`
@@ -460,6 +465,7 @@ export async function createDesktopScenario({
       await control.command('waitFor', '[data-testid="stand-in-auto"][aria-checked="true"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await control.command(
         'waitFor',
         `${CONTENT} [data-testid="stand-in-project-${project.id}"]`,
@@ -714,6 +720,7 @@ export async function createDesktopScenario({
         },
         uiTimeoutMs
       )
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await control.command('click', `${CONTENT} [data-testid="stand-in-open"]`)
       await control.command('waitFor', '[data-testid="stand-in-project-select"]')
       await control.command('select', '[data-testid="stand-in-project-select"]', { value: '__new' })
@@ -735,7 +742,8 @@ export async function createDesktopScenario({
       assert.equal(newRole.enabled, false)
       assert.equal(newRole.collaboration.allProjects, false)
       assert.deepEqual(newRole.collaboration.projects, [{ id: project.id, store: 'local' }])
-      await control.command('click', `${CONTENT} [data-testid="collaboration-primary-stand-in"]`)
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
+      await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
       await control.command('waitFor', '[data-testid="stand-in-overview"]')
       await control.command('waitFor', '[data-testid="stand-in-overview-status"]')
       await control.command('waitFor', '[data-testid="stand-in-overview-role-default"]')
@@ -744,7 +752,7 @@ export async function createDesktopScenario({
       await captureScreenshot(control, 'stand-in-project-05-overview.png')
       await control.command('waitFor', `[data-testid="stand-in-overview-role-${newRole.id}"]`)
       await control.command('click', `[data-testid="stand-in-overview-role-${newRole.id}"]`)
-      await control.command('click', '[data-testid="stand-in-settings-open"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
       await control.command('waitFor', '[data-testid="stand-in-role-name"]')
       assert.equal(
         await control.command('getElementCount', '[data-testid="stand-in-role-select"]'),
@@ -784,7 +792,7 @@ export async function createDesktopScenario({
         await control.command('getText', '[data-testid="stand-in-settings-open"]'),
         '设置'
       )
-      await control.command('click', '[data-testid="stand-in-settings-open"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
       await control.command('waitFor', '[data-testid="stand-in-role-name"]')
       assert.equal(await control.command('getValue', '[data-testid="stand-in-role-name"]'), renamed)
       await control.command('fill', '[data-testid="stand-in-role-name"]', { value: '未保存的名字' })

@@ -95,6 +95,9 @@ const APP_IPC_AUTH_TIMEOUT_SECONDS: u64 = 5;
 const APP_IPC_MAX_AUTH_FRAME_BYTES: usize = 4096;
 const APP_IPC_BULK_WRITE_BUFFER_CAPACITY: usize = 65_535;
 const APP_IPC_CAPABILITIES: &[&str] = &[
+    "runtime.command-receipts-v1",
+    "runtime.coordination-v1",
+    "runtime.coordination-arrangements-v1",
     "device.command",
     "executor.backend",
     "executor.codex_home",
@@ -1264,6 +1267,16 @@ impl AppIpcServer {
                     let response_tx = priority_write_tx.clone();
                     let (request_id, method, command_key) =
                         app_ipc_request_metadata(&request_line);
+                    if matches!(command_key.as_deref(), Some("home_dir" | "ls_dirs")) {
+                        log_app_ipc_request(
+                            "app IPC request received",
+                            request_id.as_deref(),
+                            method.as_deref(),
+                            command_key.as_deref(),
+                            None,
+                            None,
+                        );
+                    }
                     tokio::spawn(async move {
                         let started_at = Instant::now();
                         log_app_ipc_request(
@@ -1966,6 +1979,37 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                 .archive_project(project_id, version)
                 .map_err(task_runtime_error)?;
             Ok(json!({}))
+        }
+        "projects.automation.run" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let rule_id = required_task_string(&params, "automation_id")?;
+            let issue_id = optional_nullable_task_string(&params, "issue_id")?.flatten();
+            runtime
+                .run_project_automation(project_id, rule_id, issue_id.as_deref())
+                .map_err(task_runtime_error)
+        }
+        "projects.automation.runs" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let rule_id = required_task_string(&params, "automation_id")?;
+            serialize_task_value(
+                runtime
+                    .list_project_automation_runs(project_id, rule_id)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "projects.automation.cancel" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let run_id = required_task_string(&params, "run_id")?;
+            runtime
+                .cancel_project_automation_run(project_id, run_id)
+                .map_err(task_runtime_error)
+        }
+        "projects.automation.retry" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let run_id = required_task_string(&params, "run_id")?;
+            runtime
+                .retry_project_automation_run(project_id, run_id)
+                .map_err(task_runtime_error)
         }
         "external_projects.configure" => {
             let project = task_input::<ProjectDescriptor>(&params, "project")?;
@@ -3335,13 +3379,13 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
         "mkdir_p" => Some(command_definition("mkdir -p", &["mkdir", "-p"], None)),
         "path_exists" => Some(command_definition("test -e", &["test", "-e"], None)),
         "git_branch" => Some(command_definition(
-            "git branch --show-current",
-            &["git", "branch", "--show-current"],
+            "git symbolic-ref --quiet --short HEAD",
+            super::command::GIT_CURRENT_BRANCH_ARGV,
             None,
         )),
         "git_branch_list" => Some(command_definition(
-            "git branch --format=%(refname:short)",
-            &["git", "branch", "--format=%(refname:short)"],
+            "git for-each-ref --format=%(refname:short) refs/heads/",
+            super::command::GIT_BRANCH_LIST_ARGV,
             None,
         )),
         "git_checkout" => Some(command_definition("git checkout", &["git", "checkout"], None)),
@@ -3730,6 +3774,10 @@ where
     writer.write_all(&bytes).await?;
     writer.flush().await
 }
+
+#[cfg(test)]
+#[path = "app_ipc_automation_tests.rs"]
+mod automation_tests;
 
 #[cfg(test)]
 mod tests {

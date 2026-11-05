@@ -20,6 +20,7 @@ fn turn_with_setup(id: &str, command: &str) -> SpawnTurnRequest {
     )
     .unwrap();
     SpawnTurnRequest {
+        task_kind: None,
         local_task_id: id.into(),
         runtime: "codex".into(),
         request,
@@ -107,6 +108,17 @@ fn project_preparation_failure_keeps_snapshot_and_retry_succeeds() {
             "ready"
         );
         assert!(handler.local_task_link("retry").unwrap().runtime_handle["executionRequest"][DEFERRED_ENVIRONMENT].is_null());
+        // Preparing the request precedes completion of the detached provider turn.
+        let _settled = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let settled = handler.turn_queue_operation.lock().await;
+                if handler.turn_scheduler.lock().unwrap().active_task_ids.is_empty() {
+                    break settled;
+                }
+                drop(settled);
+                sleep(Duration::from_millis(10)).await;
+            }
+        }).await.unwrap();
         fs::remove_dir_all(root).unwrap();
     });
 }
@@ -231,10 +243,21 @@ fn project_preparation_accepts_without_blocking_and_can_be_cancelled() {
         assert!(handler.is_busy_local_task("cancel-preparation"));
         assert!(handler.cancel_preparing_worktree_turn("cancel-preparation"));
         assert!(handler.wait_for_worktree_preparation_to_finish("cancel-preparation").await);
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while handler.local_task_link("cancel-preparation").unwrap().status != "cancelled" {
+                sleep(Duration::from_millis(10)).await;
+            }
+        }).await.unwrap();
+        // Cancellation is projected before the queue writer finishes settlement.
+        let _settled =
+            tokio::time::timeout(Duration::from_secs(5), handler.turn_queue_operation.lock())
+                .await
+                .unwrap();
         let link = handler.local_task_link("cancel-preparation").unwrap();
         assert_eq!(link.status, "cancelled");
         assert!(link.thread_id.is_none());
         assert!(!handler.is_busy_local_task("cancel-preparation"));
+        assert!(handler.turn_scheduler.lock().unwrap().active_task_ids.is_empty());
         fs::remove_dir_all(root).unwrap();
     });
 }
@@ -285,7 +308,18 @@ fn project_preparation_runs_for_restored_and_force_started_turns() {
             })
             .await
             .unwrap();
+            // Failure is projected before the queue writer finishes settlement.
+            let _settled =
+                tokio::time::timeout(Duration::from_secs(5), handler.turn_queue_operation.lock())
+                    .await
+                    .unwrap();
             let link = handler.local_task_link("pending").unwrap();
+            assert!(handler
+                .turn_scheduler
+                .lock()
+                .unwrap()
+                .active_task_ids
+                .is_empty());
             assert_eq!(
                 fs::read_to_string(path.join("attempted")).unwrap(),
                 "attempted"

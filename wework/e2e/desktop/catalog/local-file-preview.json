@@ -1,0 +1,12 @@
+{
+  "order": 197000,
+  "scenario": "./scenarios/local-file-preview.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 145000,
+      "shard": 6,
+      "position": 8000
+    }
+  }
+}

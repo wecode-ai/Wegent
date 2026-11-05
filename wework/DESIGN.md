@@ -616,6 +616,48 @@ recipe closely:
   changes keep the grabbed thumb point under that pointer. Disable both row and
   text compensation during the drag; release samples the new reading position.
 
+切换任务只恢复该任务的视口，不播放滚动动画。离开时正在阅读历史内容，切回后保持同一
+文字在视口中的位置，主动回到底部后才继续跟随；离开时已经贴底，则切回后保持贴底。
+实时阅读和切换恢复共用消息、运行时条目与 Markdown 分块内的文字锚点。占位文本与实际
+Markdown 的字符数不同，不能把整段内容中的字符偏移当作稳定阅读位置。
+后台在同一段尾追加文字时，保留已采样文字的字符位置。
+
+Task switching restores the task's viewport without scroll animation. Preserve a
+reader's text position until they explicitly return to the bottom; restore bottom
+pinning when the task was already pinned. Live reading and saved restoration use
+the same text anchor within its message, runtime item and Markdown chunk. A
+whole-item character offset is unstable when chunks switch between raw Markdown
+placeholders and rendered markup.
+Appending to the anchored paragraph preserves its sampled character position.
+
+虚拟列表的排版输入来自稳定的正文样式和根字号，不能从当前已挂载的消息段落取样。
+计划预览等紧凑卡片有不同的行高；滚动导致它们成为首个段落时，不得清空整份列表的
+测量缓存，否则会形成估算、挂载和滚动相互触发的布局循环，使输入框也离开底部。
+
+Virtual layout inputs come from stable body styles and the root font size, never
+from whichever message paragraph happens to be mounted. Compact plan previews
+use another line height. Their appearance in the virtual range must not invalidate
+all row measurements and create an estimate, mount and scroll feedback loop that
+also displaces the composer.
+
+恢复任务或挂载 Markdown 时，行高在布局阶段用同一测量函数提交给 TanStack，再注册
+后续尺寸观察。原生滚动事件尚未结束不代表行高可以延迟到下一帧，否则短回复会先以
+流式估算高度出现，再把文字推回实际位置。
+
+Restore and Markdown mount commit actual row sizes through the same measurement
+function and TanStack writer in the layout phase, then register ongoing observation.
+An outstanding native scroll event must not defer the initial size until another
+frame and expose a streaming estimate in place of a short reply.
+
+已挂载的消息行保持在正常文档流中，估算高度仅为未挂载内容留位。不能用缓存行高
+绝对定位可见消息或固定整个列表高度，否则列宽变化后，真实换行会越过旧行坐标，
+造成叠字，并让输入框进入正文区域。
+
+Mounted message rows stay in normal document flow; estimates reserve space only
+for unmounted content. Cached heights must not absolutely position visible rows
+or fix the entire list height: wrapping after a column resize can cross stale
+coordinates, overlap messages and put the composer inside the transcript.
+
 跟随动画从实际滚动位置开始，持有连续位置计算下一帧；浏览器取整后的显示位置
 不能覆盖未完成的亚像素进度。内容缩短时将连续位置限制到新的实际底部，弹簧收敛后
 精确写入底部。用户输入、导航、暂停或会话切换均清除位置、速度和时钟。
@@ -1059,6 +1101,39 @@ focus behavior, such as revealing actions. Handwritten CSS uses the equivalent
     Desktop --> Services
     Services --> Markdown
     Content --> Composer
+  ```
+
+  桌面端数学公式由共享 `AssistantMarkdown` 统一排版。参考 Codex 的
+  KaTeX 路径，支持 `\(…\)`、`\[…\]`、`$…$`、`$$…$$` 和 `math`
+  代码块。解析器先识别真正的数学节点，再将 TeX 分隔符转换为 Streamdown
+  支持的美元分隔符；保留引用、列表缩进、代码示例与链接目标。单美元公式
+  不接受两端空白或紧随数字的结束符，避免将常见金额识别为公式。
+  展示公式只在可容纳块的 Markdown 容器中展开；表格、标题、强调与链接
+  标签中的公式保留行内形式，不能插入换行破坏容器。
+  KaTeX 使用其开源发行包的专用数学字体、HTML 与 MathML 输出；禁用可信
+  HTML 命令。长行间公式在消息内横向滚动，原始消息及复制内容保持不变。
+
+  Desktop math belongs to shared `AssistantMarkdown`. Like Codex, it uses
+  KaTeX for inline and display TeX, dollar delimiters and `math` fences. Only
+  parsed math nodes have their TeX delimiters normalized before Streamdown's
+  block splitting and streaming completion. Quotes, list indentation, code,
+  link destinations and common currency text retain their Markdown meaning.
+  Display delimiters expand only in block-capable Markdown containers. Table
+  cells, headings, emphasis and link labels retain inline math without inserted
+  line breaks.
+  KaTeX's open-source math fonts, HTML and MathML are bundled locally, with
+  trusted HTML commands disabled. Display equations scroll horizontally within
+  the message; stored messages and message-copy content remain unchanged.
+
+  ```mermaid
+  flowchart LR
+    Source[Original message] --> Parse[Markdown parser with math delimiters]
+    Parse --> Normalize[Normalize parsed TeX using block and inline container boundaries]
+    Normalize --> Streamdown[Streamdown blocks and streaming completion]
+    Streamdown --> Math[Remark math nodes]
+    Math --> Sanitize[Existing HTML sanitization]
+    Sanitize --> KaTeX[KaTeX HTML and MathML]
+    Parse --> Literal[Code, links and escaped text remain literal]
   ```
 
   `RuntimeExecutionDetails` owns the desktop execution dialog chrome, status
@@ -2005,6 +2080,14 @@ implementation and WCAG conflict.
 - Native title-bar drag regions must not geometrically overlap visible
   interactive controls. Explicitly carve controls out of the drag region even
   when they declare `no-drag`.
+- 标题栏内绝对定位的拖拽区必须以标题栏为定位边界；调试面板展开时停用
+  底下的原生拖拽区，收起或关闭后恢复。
+- Anchor absolutely positioned title-bar drag regions to the title bar. Disable
+  underlying native drag regions while the debug panel is expanded, and restore
+  them when it collapses or closes.
+- 刷新期间收到的原生工作区菜单操作必须在工作区挂载后执行一次。
+- Replay native workspace-menu actions received during refresh once the workspace
+  mounts, without executing consumed actions again after a remount.
 - Respect macOS traffic-light safe areas, Windows controls, system scaling, and
   actual platform shortcuts.
 - Use the platform modifier in both behavior and visible shortcut labels.

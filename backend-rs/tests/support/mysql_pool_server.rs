@@ -51,6 +51,7 @@ pub(crate) async fn handshake(stream: &mut TcpStream) {
 async fn serve_connection(
     mut stream: TcpStream,
     queries: tokio::sync::mpsc::UnboundedSender<String>,
+    record_controls: bool,
 ) {
     handshake(&mut stream).await;
     while let Some(request) = read_packet(&mut stream).await {
@@ -73,22 +74,64 @@ async fn serve_connection(
                 "unexpected command: {}",
                 request[0]
             );
+            let sql = String::from_utf8_lossy(&request[1..]).trim().to_string();
             // SQLx verifies SERVER_STATUS_IN_TRANS after START TRANSACTION.
-            let begins_transaction = request[0] == 0x03
-                && String::from_utf8_lossy(&request[1..])
-                    .trim()
-                    .eq_ignore_ascii_case("BEGIN");
-            let status = if begins_transaction { 3 } else { 2 };
+            let begins_transaction = request[0] == 0x03 && sql.eq_ignore_ascii_case("BEGIN");
+            // A nested savepoint begins and releases like the source's
+            // session: the connection keeps its in-transaction status.
+            let savepoint_control =
+                record_controls && request[0] == 0x03 && is_savepoint_control(&sql);
+            if record_controls
+                && (begins_transaction || savepoint_control)
+                && queries.send(sql).is_err()
+            {
+                return;
+            }
+            let status = if begins_transaction || savepoint_control {
+                3
+            } else {
+                2
+            };
             packet(&mut stream, 1, &[0, 0, 0, status, 0, 0, 0]).await;
         }
     }
+}
+
+/// The transaction-control statements a nested SQLx scope issues.
+fn is_savepoint_control(sql: &str) -> bool {
+    let keyword = sql.split_whitespace().next().unwrap_or_default();
+    ["SAVEPOINT", "RELEASE", "ROLLBACK"]
+        .iter()
+        .any(|control| keyword.eq_ignore_ascii_case(control))
 }
 
 /// Keep transaction connections alive through rollback; the caller stops the
 /// server after its operation completes, rather than after its first query.
 pub(crate) async fn capture_queries_until(
     listener: TcpListener,
+    stop: tokio::sync::oneshot::Receiver<()>,
+) -> Vec<String> {
+    capture_until(listener, stop, false).await
+}
+
+/// Like [`capture_queries_until`], but also records the transaction-control
+/// `COM_QUERY` statements (`BEGIN`, `SAVEPOINT`, ...) in wire order, so a test
+/// can assert how the SDK enters and releases a nested savepoint scope.
+#[allow(
+    dead_code,
+    reason = "the internal crate includes this module only for the routed pool check"
+)]
+pub(crate) async fn capture_controls_until(
+    listener: TcpListener,
+    stop: tokio::sync::oneshot::Receiver<()>,
+) -> Vec<String> {
+    capture_until(listener, stop, true).await
+}
+
+async fn capture_until(
+    listener: TcpListener,
     mut stop: tokio::sync::oneshot::Receiver<()>,
+    record_controls: bool,
 ) -> Vec<String> {
     let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
     let mut connections = tokio::task::JoinSet::new();
@@ -97,7 +140,7 @@ pub(crate) async fn capture_queries_until(
         tokio::select! {
             accepted = listener.accept() => {
                 let (stream, _) = accepted.unwrap();
-                connections.spawn(serve_connection(stream, sender.clone()));
+                connections.spawn(serve_connection(stream, sender.clone(), record_controls));
             }
             query = receiver.recv() => queries.push(query.unwrap()),
             _ = &mut stop => break,

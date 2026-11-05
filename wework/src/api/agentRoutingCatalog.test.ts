@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, it, vi } from 'vitest'
 import { createAgentRoutingCatalog } from './agentRoutingCatalog'
 import type { HttpClient } from './http'
@@ -15,7 +17,7 @@ const runner: RunnerEnvironment = {
   models: [],
 }
 
-function setup(deviceType = 'remote') {
+function setup(deviceType = 'remote', deviceOverrides: Record<string, unknown> = {}) {
   let scope = 1
   const get = vi.fn(async (path: string) => {
     if (path === '/devices')
@@ -28,6 +30,7 @@ function setup(deviceType = 'remote') {
             name: 'Runner',
             status: 'online',
             bind_shell: 'claudecode',
+            ...deviceOverrides,
           },
         ],
       }
@@ -81,6 +84,19 @@ describe('agent routing catalogs', () => {
     await api.listNativeModels(rows[0])
     expect(get).toHaveBeenCalledWith('/v1/resources/execution-environments')
     expect(read).not.toHaveBeenCalled()
+  })
+
+  it('keeps APP device aliases available for template routing', async () => {
+    const { api } = setup('app', {
+      device_id: 'local-device',
+      app_device_id: 'electron-current',
+      socket_device_id: 'app-record-42',
+    })
+    const rows = await api.listEnvironments()
+    expect(rows[0]).toMatchObject({
+      device_key: 'local-device',
+      app_device_id: 'electron-current',
+    })
   })
 
   it('retries native failures without poisoning the cache', async () => {

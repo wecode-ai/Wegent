@@ -163,7 +163,10 @@ function loadPersistedTabs(
     return { tabs: defaultTabs, activeTabId: defaultTabs[0].id, closedTabs: [] }
   }
   const kind = inferWorkspaceTabKind(pathname)
-  const matchingDefault = defaultTabs.find(tab => tab.kind === kind)
+  const matchingDefault = defaultTabs.find(
+    tab =>
+      tab.kind === kind && (kind !== 'auxiliary' || tab.contentRoute.split('?', 1)[0] === pathname)
+  )
   const routeTab = createWorkspaceTab(kind, labels, {
     id: location.tabId ?? matchingDefault?.id,
     title: location.tabTitle ?? workspaceTabTitle(kind, location.contentRoute, labels),
@@ -420,9 +423,11 @@ export function WorkspaceTabsProvider({
         if (!localStorage.getItem(key)) return
         flushSync(() => {
           dispatch({ type: 'receive', tab: receivedTab })
-          acceptWorkspaceTabTransfer(receivedTab.id)
         })
         navigateTo(workspaceTabRoute(receivedTab))
+        // Preference synchronization may have mounted this tab before its return.
+        // Commit its received drafts before acknowledging the source window.
+        flushSync(() => acceptWorkspaceTabTransfer(receivedTab.id))
         localStorage.removeItem(key)
       })().catch(error => {
         console.error('Failed to accept returned workspace tab', error)
@@ -460,9 +465,13 @@ export function WorkspaceTabsProvider({
   }, [labels, pathname, search])
 
   useEffect(() => {
-    if (startupTabApplied.current || (!startupTabKind && !startupTabId)) return
+    if (startupTabApplied.current) return
     const location = parseWorkspaceLocation(pathname, search)
-    if (pathname !== '/' || location.tabId || location.contentRoute !== '/') return
+    if (pathname !== '/' || location.tabId || location.contentRoute !== '/') {
+      startupTabApplied.current = true
+      return
+    }
+    if (!startupTabKind && !startupTabId) return
     if (
       startupTabId &&
       fixedTabs.some(tab => tab.id === startupTabId) &&

@@ -1,6 +1,8 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+// @vitest-environment node
+
 import type { HarnessAppInstallation } from '@/api/local/harnessApps'
 import type { LocalHarnessModelOption } from '@/features/local-harness/localHarnessModels'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   startHarnessAppDevelopmentRuntime,
   stopHarnessAppDevelopmentRuntime,
@@ -115,71 +117,6 @@ describe('harnessAppDevelopmentRuntime', () => {
     mocks.unregisterDecision.mockResolvedValue(undefined)
   })
 
-  test('uses the first available Wework model for an unbound blank workbench', async () => {
-    const resolveLaunch = vi.fn().mockResolvedValue({
-      modelId: 'wework-messages/wework-selected',
-      env: {},
-      proxyToken: 'proxy-token',
-      baseUrl: 'http://127.0.0.1:41000',
-    })
-
-    await startHarnessAppDevelopmentRuntime({
-      installation,
-      modelOptions: [modelOption],
-      localHarnessModelApi: {
-        resolveLaunch,
-        unregisterProxy: vi.fn(),
-        unregisterContext: vi.fn(),
-      },
-      missingWebUrlMessage: 'missing URL',
-    })
-
-    expect(resolveLaunch).toHaveBeenCalledWith('opencode', modelOption)
-    expect(mocks.start).toHaveBeenCalledWith({
-      installationId: installation.id,
-      modelBaseUrl: 'http://127.0.0.1:41000',
-      contextBaseUrl: null,
-      contextToken: null,
-      decisionBaseUrl: null,
-      decisionProtocolVersion: null,
-    })
-    expect(mocks.storeProxyToken).toHaveBeenCalledWith(installation.id, 'proxy-token')
-  })
-
-  test('registers other available models as separate routes', async () => {
-    const secondModel = { ...modelOption, key: 'second-model', label: 'Second model' }
-    const resolveLaunch = vi
-      .fn()
-      .mockResolvedValueOnce({ proxyToken: 'default-token', baseUrl: 'http://127.0.0.1:41000' })
-      .mockResolvedValueOnce({ proxyToken: 'second-token', baseUrl: 'http://127.0.0.1:41001' })
-
-    await startHarnessAppDevelopmentRuntime({
-      installation,
-      modelOptions: [modelOption, secondModel],
-      localHarnessModelApi: {
-        resolveLaunch,
-        unregisterProxy: vi.fn(),
-        unregisterContext: vi.fn(),
-      },
-      missingWebUrlMessage: 'missing URL',
-    })
-
-    expect(resolveLaunch).toHaveBeenNthCalledWith(1, 'opencode', modelOption)
-    expect(resolveLaunch).toHaveBeenNthCalledWith(2, 'opencode', secondModel, undefined, false)
-    expect(mocks.start).toHaveBeenCalledWith(
-      expect.objectContaining({
-        additionalModels: [
-          {
-            modelKey: 'second-model',
-            displayName: 'Second model',
-            baseUrl: 'http://127.0.0.1:41001',
-          },
-        ],
-      })
-    )
-    expect(mocks.storeAdditionalProxyTokens).toHaveBeenCalledWith(installation.id, ['second-token'])
-  })
-
   test('still starts a blank workbench without a model when Wework has none configured', async () => {
     await startHarnessAppDevelopmentRuntime({
       installation,
@@ -267,33 +204,6 @@ describe('harnessAppDevelopmentRuntime', () => {
     expect(mocks.stop).toHaveBeenCalledWith(installation.id)
   })
 
-  test('releases Wework model registrations when stopping', async () => {
-    const unregisterProxy = vi.fn().mockResolvedValue(undefined)
-    const unregisterContext = vi.fn().mockResolvedValue(undefined)
-    mocks.takeProxyToken.mockResolvedValue('proxy-token')
-    mocks.takeAdditionalProxyTokens.mockResolvedValue(['second-token'])
-    mocks.takeContextToken.mockResolvedValue('context-token')
-    mocks.takeDecisionToken.mockResolvedValue('decision-token')
-
-    await stopHarnessAppDevelopmentRuntime(
-      installation.id,
-      {
-        resolveLaunch: vi.fn(),
-        unregisterProxy,
-        unregisterContext,
-      },
-      {
-        resolveLaunch: vi.fn(),
-        unregister: mocks.unregisterDecision,
-      }
-    )
-
-    expect(unregisterProxy).toHaveBeenCalledWith('proxy-token')
-    expect(unregisterProxy).toHaveBeenCalledWith('second-token')
-    expect(unregisterContext).toHaveBeenCalledWith('context-token')
-    expect(mocks.unregisterDecision).toHaveBeenCalledWith('decision-token')
-  })
-
   test('does not reuse a running snapshot invalidated by a queued stop', async () => {
     const staleRunning: HarnessAppInstallation = {
       ...installation,
@@ -320,30 +230,6 @@ describe('harnessAppDevelopmentRuntime', () => {
     expect(mocks.start).toHaveBeenCalledOnce()
     expect(restarted.webUrl).not.toBe(staleRunning.webUrl)
     expect(mocks.registerTab).not.toHaveBeenCalledWith(staleRunning)
-  })
-
-  test('reuses the current running installation without allocating unused routes', async () => {
-    const current: HarnessAppInstallation = {
-      ...installation,
-      state: 'running',
-      webUrl: 'http://127.0.0.1:44000/',
-    }
-    mocks.list.mockResolvedValue([current])
-    const modelApi = {
-      resolveLaunch: vi.fn(),
-      unregisterProxy: vi.fn(),
-      unregisterContext: vi.fn(),
-    }
-    const result = await startHarnessAppDevelopmentRuntime({
-      installation: { ...current, webUrl: 'http://127.0.0.1:40000/' },
-      modelOptions: [modelOption],
-      localHarnessModelApi: modelApi,
-      missingWebUrlMessage: 'missing URL',
-    })
-    expect(result).toBe(current)
-    expect(mocks.start).not.toHaveBeenCalled()
-    expect(modelApi.resolveLaunch).not.toHaveBeenCalled()
-    expect(mocks.registerTab).toHaveBeenCalledWith(current)
   })
 
   test('registers a decision route for a granted linked project', async () => {

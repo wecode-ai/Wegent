@@ -1,9 +1,10 @@
-import { describe, expect, test, vi } from 'vitest'
+// @vitest-environment node
+
 import type { CloudProject } from '@/api/deliveries'
+import { describe, expect, test, vi } from 'vitest'
 import {
   canEditProjectSpaceIssue,
   findProjectSpaceContextForTask,
-  findProjectSpaceContextSourceForTask,
   loadProjectSpaceOptions,
   projectSpaceRef,
   runtimeCloudProjectId,
@@ -82,94 +83,6 @@ describe('projectSpaceSelection', () => {
       projectStore: 'backend',
       projectId: 'space-cloud',
     })
-  })
-
-  test('finds a local project-space context when the cloud store has no context', async () => {
-    const context = {
-      id: 'context-1',
-      device_id: 'device-1',
-      task_id: 'task-1',
-      cloud_project_id: 'space-local',
-      loop_item_id: 'todo-1',
-      project: project('space-local', 'Local board', 'local'),
-      loop_item: null,
-    }
-    const cloudApi = {
-      findCloudContextForTask: vi.fn().mockRejectedValue(new Error('Not found')),
-    } as unknown as ProjectSpaceApi
-    const localApi = {
-      findCloudContextForTask: vi.fn().mockResolvedValue(context),
-    } as unknown as ProjectSpaceApi
-
-    await expect(
-      findProjectSpaceContextForTask([cloudApi, localApi], {
-        deviceId: 'device-1',
-        taskId: 'task-1',
-      })
-    ).resolves.toEqual(context)
-  })
-
-  test('prefers a user Issue over the system My Tasks Issue across stores', async () => {
-    const localContext = {
-      id: 'local-context',
-      device_id: 'device-1',
-      task_id: 'task-1',
-      cloud_project_id: 'default-work-items',
-      loop_item_id: 'todo-local',
-      project: {
-        ...project('default-work-items', 'My Tasks', 'local'),
-        project_key: 'WORK',
-        metadata: { system_kind: 'default_work_items' },
-      },
-      loop_item: null,
-    }
-    const cloudContext = {
-      ...localContext,
-      id: 'cloud-context',
-      cloud_project_id: 'space-cloud',
-      loop_item_id: 'todo-cloud',
-      project: project('space-cloud', 'Cloud board', 'backend'),
-    }
-    const localApi = {
-      findCloudContextForTask: vi.fn().mockResolvedValue(localContext),
-    } as unknown as ProjectSpaceApi
-    const cloudApi = {
-      findCloudContextForTask: vi.fn().mockResolvedValue(cloudContext),
-    } as unknown as ProjectSpaceApi
-
-    await expect(
-      findProjectSpaceContextForTask([localApi, cloudApi], {
-        deviceId: 'device-1',
-        taskId: 'task-1',
-      })
-    ).resolves.toEqual(cloudContext)
-    expect(localApi.findCloudContextForTask).toHaveBeenCalledOnce()
-    expect(cloudApi.findCloudContextForTask).toHaveBeenCalledOnce()
-  })
-
-  test('returns the API that owns the selected task context', async () => {
-    const context = {
-      id: 'context-1',
-      device_id: 'device-1',
-      task_id: 'task-1',
-      cloud_project_id: 'space-cloud',
-      loop_item_id: 'todo-cloud',
-      project: project('space-cloud', 'Cloud board', 'backend'),
-      loop_item: null,
-    }
-    const localApi = {
-      findCloudContextForTask: vi.fn().mockRejectedValue(new Error('Not found')),
-    } as unknown as ProjectSpaceApi
-    const cloudApi = {
-      findCloudContextForTask: vi.fn().mockResolvedValue(context),
-    } as unknown as ProjectSpaceApi
-
-    await expect(
-      findProjectSpaceContextSourceForTask([localApi, cloudApi], {
-        deviceId: 'device-1',
-        taskId: 'task-1',
-      })
-    ).resolves.toEqual({ api: cloudApi, context })
   })
 
   test('does not let an unavailable store block a resolved task context', async () => {

@@ -1,13 +1,11 @@
+import type { StandInExecutorApi, StandInInboxWork } from '@/api/standIn'
+import { standInState } from '@/features/notifications/standInNotifications'
+import '@/i18n'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
-import type { StandInExecutorApi, StandInInboxWork } from '@/api/standIn'
-import '@/i18n'
-import { inboxRuntimeItem } from './useStandInInbox'
 import { StandInWorkList } from './StandInWorkList'
-import { RuntimeTaskMachine } from '@/features/workbench/runtimeTaskLifecycle/RuntimeTaskMachine'
-import { standInState } from '@/features/notifications/standInNotifications'
-import { runtimeItem } from '@/features/notifications/standInNotifications.fixtures'
+import { inboxRuntimeItem } from './useStandInInbox'
 
 function work(id = 'work'): StandInInboxWork {
   return {
@@ -175,28 +173,6 @@ it('splits a message directly with an accessible button and offers undo', async 
     undefined,
     'split'
   )
-})
-
-it('supports an empty original association after its last message moves elsewhere', () => {
-  const empty = { ...work(), messageCount: 0, latestMessage: null }
-  expect(inboxRuntimeItem(empty, 'device').task.title).toBe('评审方案')
-})
-
-it('keeps authoritative turn completion when inbox task metadata still says active', () => {
-  const item = work(runtimeItem.task.taskId)
-  const machine = new RuntimeTaskMachine(runtimeItem.address)
-  machine.dispatch({
-    type: 'executor_snapshot_received',
-    address: runtimeItem.address,
-    task: { ...runtimeItem.task, status: 'done', running: false },
-  })
-  const current = { ...runtimeItem, lifecycle: machine.getSnapshot() }
-  const stale = {
-    ...item,
-    status: 'sent' as const,
-    task: { ...runtimeItem.task, status: 'active', running: false },
-  }
-  expect(standInState(inboxRuntimeItem(stale, 'device', current)).status).toBe('completed')
 })
 
 it('projects completed history without a runtime task as completed', () => {

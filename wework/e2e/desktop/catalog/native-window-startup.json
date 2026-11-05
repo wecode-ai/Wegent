@@ -1,0 +1,12 @@
+{
+  "order": 166000,
+  "scenario": "./scenarios/native-window-startup.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 111000,
+      "shard": 5,
+      "position": 13000
+    }
+  }
+}

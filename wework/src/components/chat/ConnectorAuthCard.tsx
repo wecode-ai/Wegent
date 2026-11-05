@@ -205,7 +205,10 @@ function ConnectorAuthCardSession({
     t,
     onSuccess,
   })
-  const verificationUrl = githubVerificationUrl(status?.verificationUrl)
+  const verificationUrl =
+    !error && status?.status === 'waiting_browser'
+      ? githubVerificationUrl(status.verificationUrl, status.userCode)
+      : null
 
   const handleCancel = () => {
     cancelActiveSession()

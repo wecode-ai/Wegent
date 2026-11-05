@@ -6,6 +6,8 @@ sidebar_position: 9
 
 Settings cover language and startup behavior, the top-level tab activated when the main workspace opens, appearance, local Codex and compatible models, cloud models configured in Wegent and synchronized to Wework, proxies, local coding harnesses, context and default principles for the personal supervisor, quick phrases, keybindings, worktrees, browser data, and archived conversations.
 
+The startup tab preference applies only when the main workspace starts at its home route. After opening an explicit address or restoring the pending interactions page, choosing **New task** opens the task composer without reapplying that startup preference.
+
 The context indicator beside the task composer shows the current model's context usage. The ratio
 is measured against the context available to the input, which is the model's maximum context minus
 its configured maximum output; upstream providers charge the completion budget against the same
@@ -29,6 +31,22 @@ Under **Settings → General → General**, choose the Wework feature mode:
 The preference stays on the current device. Switching modes automatically restarts the managed
 Core DSH runtime so the plugin state takes effect immediately. Mode controls the Git plugin, so it
 cannot be enabled or disabled separately from the plugin management page.
+
+## Record performance data
+
+Enable **Record performance data** under **Settings → General → Runtime** to retain resource
+measurements for investigating computer slowdowns. The switch is off by default. Enabling it starts
+sampling immediately, then starts another sample about five seconds after each sample completes.
+Records include system CPU, memory, swap, and resource usage by Wework, the executor, and child
+processes. The preference stays on this device and remains active after restarting Wework. Turning
+it off stops recording and preserves existing logs.
+
+Performance logs stay on the device. Each file is limited to 5 MiB, with the current file and three
+rotated files retained for a total limit of 20 MiB. The log retention policy under
+[Automatic storage cleanup](#automatic-storage-cleanup) also applies. After a slowdown, note its
+time and open **Feedback**. Select standard diagnostics including **Runtime logs**, preview the
+bundle, and choose **Confirm export**. The exported performance logs help compare system pressure
+and per-process resource changes around that time.
 
 ## Archived conversations and worktree cleanup
 

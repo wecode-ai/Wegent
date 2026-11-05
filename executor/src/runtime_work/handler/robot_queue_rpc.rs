@@ -53,6 +53,7 @@ impl RuntimeWorkRpcHandler {
                 if ticks % LOCAL_ISSUE_HEARTBEAT_TICKS == 0 {
                     handler.heartbeat_local_issue_executions();
                 }
+                handler.reconcile_local_project_coordination().await;
                 handler.drain_local_issue_queue().await;
             }
         });
@@ -65,11 +66,7 @@ impl RuntimeWorkRpcHandler {
                     .turn_scheduler
                     .lock()
                     .expect("runtime turn scheduler lock should not be poisoned");
-                scheduler.max_concurrent_tasks.saturating_sub(
-                    scheduler
-                        .active_tasks
-                        .saturating_add(scheduler.queued_turns.len()),
-                )
+                scheduler.available(RuntimeTaskKind::Agent)
             };
             if available == 0 {
                 return;
@@ -250,7 +247,7 @@ impl RuntimeWorkRpcHandler {
                 .expect("runtime turn scheduler lock should not be poisoned");
             scheduler
                 .active_task_ids
-                .iter()
+                .keys()
                 .cloned()
                 .chain(
                     scheduler

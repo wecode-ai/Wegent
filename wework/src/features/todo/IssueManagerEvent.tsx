@@ -2,6 +2,7 @@ import {
   createCollaborationTranslator,
   formatIssueTimestamp,
   managerActivityPresentation,
+  executionDisplayStatus,
 } from '@wegent/collaboration'
 import type { ProjectChatMessage } from '@/api/backend/projectChatSocket'
 import type { CloudLoopItem } from '@/api/deliveries'
@@ -25,13 +26,10 @@ export function IssueManagerEvent({
   const { i18n } = useTranslation('common')
   const t = createCollaborationTranslator(i18n.language.startsWith('zh') ? 'zh-CN' : 'en')
   const status = resolveMessageRunStatus(task.ai_state, message)
-  const failed = status === 'failed'
-  const cancelled = status === 'cancelled' || status === 'interrupted'
-  const completed = status === 'completed' || status === 'succeeded'
   const presentation = managerActivityPresentation(
     t,
     message.metadata,
-    failed ? 'failed' : cancelled ? 'cancelled' : completed ? 'completed' : 'running'
+    executionDisplayStatus(status) ?? 'unknown'
   )
   return (
     <div

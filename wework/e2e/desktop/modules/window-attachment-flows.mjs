@@ -15,6 +15,7 @@ import {
 } from './conversation-navigation.mjs'
 
 import { waitForBlankConversation } from './memory-tool-flows.mjs'
+import { logDesktopE2eSignal } from '../process-lifecycle.mjs'
 
 import {
   ACTIVE_SWITCH_MODEL_RETRY_SELECTOR,
@@ -895,6 +896,7 @@ async function verifyBackgroundTaskWindowLifecycle({
     assert.ok(forcedExitDshPid > 0, 'Core DSH PID was unavailable before forced Electron exit')
     assert.ok(forcedExitExecutorPid > 0, 'Executor PID was unavailable before forced Electron exit')
 
+    logDesktopE2eSignal({ action: 'force-exit-app', pid: forcedExitApp.pid, signal: 'SIGKILL' })
     process.kill(forcedExitApp.pid, 'SIGKILL')
     await Promise.all([
       waitForProcessExit(forcedExitApp.pid, 'Wework remained alive after the forced Electron exit'),

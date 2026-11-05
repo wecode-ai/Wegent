@@ -81,3 +81,15 @@ fn max_message_id_matches_the_recorded_statement() {
              \nWHERE subtasks_0383.task_id = ?"
     );
 }
+
+/// `subtask_store.update_fields` for a failed terminal event writes the
+/// Source's column order (`chat/storage/db.py` flush): `status`, `result`,
+/// `error_message`, `updated_at`, `completed_at`.
+#[test]
+fn failed_terminal_update_keeps_the_source_column_order() {
+    assert_eq!(
+        update_subtask_terminal_statement("subtasks_0025", true, true, false),
+        "UPDATE subtasks_0025 SET status=?, result=?, error_message=?, updated_at=?, \
+         completed_at=? WHERE subtasks_0025.id = ?"
+    );
+}

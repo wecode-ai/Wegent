@@ -1091,7 +1091,8 @@ def test_provider_skill_frontmatter_matches_runtime_mcp_resolution(
     expected_mcp_name: str,
 ) -> None:
     skill_path = (
-        Path(__file__).resolve().parents[3]
+        Path(__file__).resolve().parents[3].parent
+        / "backend-rs"
         / "init_data"
         / "skills"
         / skill_name
@@ -1145,7 +1146,8 @@ def test_connector_managed_skill_keeps_the_legacy_personal_url() -> None:
 
 def test_wegent_skill_does_not_broaden_selected_knowledge_queries() -> None:
     skill_path = (
-        Path(__file__).resolve().parents[3]
+        Path(__file__).resolve().parents[3].parent
+        / "backend-rs"
         / "init_data"
         / "skills"
         / "wegent-knowledge"
@@ -1163,7 +1165,8 @@ def test_wegent_skill_does_not_broaden_selected_knowledge_queries() -> None:
 
 def test_dingtalk_skill_only_describes_provider_adapter_behavior() -> None:
     skill_path = (
-        Path(__file__).resolve().parents[3]
+        Path(__file__).resolve().parents[3].parent
+        / "backend-rs"
         / "init_data"
         / "skills"
         / "dingtalk-docs"

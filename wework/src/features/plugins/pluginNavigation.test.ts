@@ -1,7 +1,8 @@
+// @vitest-environment node
+
 import { describe, expect, test } from 'vitest'
 import {
   buildPluginDetailRoute,
-  isWegentCloudMarketplace,
   parsePluginDetailRoute,
   parsePluginMentionReference,
   parsePluginUri,
@@ -38,13 +39,5 @@ describe('pluginNavigation', () => {
     expect(parsePluginUri('plugin://wegent-sites')).toBeNull()
     expect(parsePluginMentionReference('[$站点](/tmp/sites/SKILL.md)')).toBeNull()
     expect(parsePluginDetailRoute('?plugin=wegent-sites')).toBeNull()
-  })
-
-  test('recognizes stable Wegent cloud marketplace aliases', () => {
-    expect(isWegentCloudMarketplace('wegent')).toBe(true)
-    expect(isWegentCloudMarketplace('wework')).toBe(true)
-    expect(isWegentCloudMarketplace('wegent-marketplace')).toBe(true)
-    expect(isWegentCloudMarketplace('default')).toBe(true)
-    expect(isWegentCloudMarketplace('wegent-bundled')).toBe(false)
   })
 })

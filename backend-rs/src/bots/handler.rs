@@ -6,7 +6,7 @@
 //! resolution, the paginated Bot lookup with a batched Ghost/Shell/Model
 //! preload, and response assembly
 //! (`app/api/endpoints/adapter/bots.py::list_bots`).
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::Serialize;
 
@@ -16,6 +16,8 @@ use crate::state::AppState;
 use crate::teams::group_membership::{ErpContext, effective_roles, user_group_memberships};
 use crate::teams::public_model_access::allowed_public_models;
 use crate::teams::teams_repository::KindRow;
+use crate::v1_resources::repository::OwnedKindRow;
+use crate::v1_resources::shell_resolution;
 
 use super::conversion::{BotItem, RefKey, bot_item, bot_keys, bot_spec, resolve};
 use super::repository::{self as repo, BotRow};
@@ -195,7 +197,8 @@ async fn bots_list(
         .zip(specs.iter())
         .map(|(bot, spec)| {
             let keys = bot_keys(spec);
-            let (ghost, shell, model) = resolve(&maps.ghosts, &maps.shells, &maps.models, &keys);
+            let (ghost, shell, model) =
+                resolve(&maps.ghosts, &maps.shells, &maps.models, &keys, bot.user_id);
             bot_item(bot, ghost, shell, model)
         })
         .collect();
@@ -222,7 +225,7 @@ async fn bots_list(
 /// The batch Ghost/Shell/Model caches (`_get_bot_components_batch`).
 struct ComponentMaps {
     ghosts: HashMap<RefKey, KindRow>,
-    shells: HashMap<RefKey, KindRow>,
+    shells: HashMap<(i64, String, String), KindRow>,
     models: HashMap<RefKey, KindRow>,
 }
 
@@ -237,7 +240,7 @@ async fn preload_components(
 ) -> Result<ComponentMaps, FastApiError> {
     let mut personal_ghost_keys: Vec<RefKey> = Vec::new();
     let mut group_ghost_keys: Vec<RefKey> = Vec::new();
-    let mut shell_keys: Vec<RefKey> = Vec::new();
+    let mut shell_keys: Vec<(i64, String, String)> = Vec::new();
     let mut personal_model_keys: Vec<RefKey> = Vec::new();
     let mut group_model_keys: Vec<RefKey> = Vec::new();
     let mut all_model_keys: Vec<RefKey> = Vec::new();
@@ -254,7 +257,10 @@ async fn preload_components(
             push_unique(target, key);
         }
         if let Some(key) = shell {
-            push_unique(&mut shell_keys, key);
+            let owned_key = (bot.user_id, key.0, key.1);
+            if !shell_keys.contains(&owned_key) {
+                shell_keys.push(owned_key);
+            }
         }
         if let Some(key) = model {
             push_unique(&mut all_model_keys, key.clone());
@@ -281,24 +287,108 @@ async fn preload_components(
         ghosts.insert((row.kinds_name.clone(), row.kinds_namespace.clone()), row);
     }
 
-    let mut shells: HashMap<RefKey, KindRow> = HashMap::new();
-    for row in repo::user_shells(&state.mysql, user_id, &shell_keys)
-        .await
-        .map_err(database_error)?
-    {
-        shells.insert((row.kinds_name.clone(), row.kinds_namespace.clone()), row);
+    let mut shell_keys_by_owner: HashMap<i64, Vec<RefKey>> = HashMap::new();
+    for (owner_id, name, namespace) in &shell_keys {
+        shell_keys_by_owner
+            .entry(*owner_id)
+            .or_default()
+            .push((name.clone(), namespace.clone()));
     }
-    let missing_shells: Vec<RefKey> = shell_keys
+    let mut shells: HashMap<(i64, String, String), KindRow> = HashMap::new();
+    for (owner_id, owner_keys) in &shell_keys_by_owner {
+        for row in repo::user_shells(&state.mysql, *owner_id, owner_keys)
+            .await
+            .map_err(database_error)?
+        {
+            shells.insert(
+                (
+                    *owner_id,
+                    row.kinds_name.clone(),
+                    row.kinds_namespace.clone(),
+                ),
+                row,
+            );
+        }
+    }
+    let missing_shells: Vec<(i64, String, String)> = shell_keys
         .iter()
         .filter(|key| !shells.contains_key(*key))
         .cloned()
         .collect();
-    if !missing_shells.is_empty() {
-        for row in repo::public_shells(&state.mysql, &missing_shells)
+    resolve_missing_shell_references(&state.mysql, &missing_shells, &mut shells).await?;
+
+    let missing_group_shells: Vec<(i64, String, String)> = shell_keys
+        .iter()
+        .filter(|(_, _, namespace)| namespace != "default")
+        .filter(|key| !shells.contains_key(*key))
+        .cloned()
+        .collect();
+    if !missing_group_shells.is_empty() {
+        let owners: HashSet<i64> = missing_group_shells
+            .iter()
+            .map(|(owner_id, _, _)| *owner_id)
+            .collect();
+        let mut owner_groups: HashMap<i64, HashSet<String>> = HashMap::new();
+        for owner_id in owners {
+            owner_groups.insert(
+                owner_id,
+                sorted_group_names(state, owner_id)
+                    .await?
+                    .into_iter()
+                    .collect(),
+            );
+        }
+        let mut group_keys: Vec<RefKey> = Vec::new();
+        for (owner_id, name, namespace) in &missing_group_shells {
+            if owner_groups
+                .get(owner_id)
+                .is_some_and(|groups| groups.contains(namespace))
+            {
+                let key = (name.clone(), namespace.clone());
+                if !group_keys.contains(&key) {
+                    group_keys.push(key);
+                }
+            }
+        }
+        let mut group_rows: HashMap<RefKey, KindRow> = HashMap::new();
+        if !group_keys.is_empty() {
+            for row in repo::group_shells(&state.mysql, &group_keys)
+                .await
+                .map_err(database_error)?
+            {
+                group_rows.insert((row.kinds_name.clone(), row.kinds_namespace.clone()), row);
+            }
+        }
+        insert_group_shell_rows(
+            &missing_group_shells,
+            &owner_groups,
+            &group_rows,
+            &mut shells,
+        );
+    }
+
+    let missing_public_shells: Vec<(i64, String, String)> = shell_keys
+        .iter()
+        .filter(|key| !shells.contains_key(*key))
+        .cloned()
+        .collect();
+    let mut seen_public_names = HashSet::new();
+    let mut public_names = Vec::new();
+    for (_, name, _) in &missing_public_shells {
+        if seen_public_names.insert(name.clone()) {
+            public_names.push(name.clone());
+        }
+    }
+    if !public_names.is_empty() {
+        for row in repo::public_shells_by_names(&state.mysql, &public_names)
             .await
             .map_err(database_error)?
         {
-            shells.insert((row.kinds_name.clone(), row.kinds_namespace.clone()), row);
+            for (owner_id, name, namespace) in &missing_public_shells {
+                if name == &row.kinds_name {
+                    shells.insert((*owner_id, name.clone(), namespace.clone()), row.clone());
+                }
+            }
         }
     }
 
@@ -341,6 +431,67 @@ async fn preload_components(
     })
 }
 
+/// Populate each owner's group fallback without inheriting another owner's access.
+fn insert_group_shell_rows(
+    missing_keys: &[(i64, String, String)],
+    owner_groups: &HashMap<i64, HashSet<String>>,
+    group_rows: &HashMap<RefKey, KindRow>,
+    shells: &mut HashMap<(i64, String, String), KindRow>,
+) {
+    for (owner_id, name, namespace) in missing_keys {
+        if owner_groups
+            .get(owner_id)
+            .is_some_and(|groups| groups.contains(namespace))
+            && let Some(row) = group_rows.get(&(name.clone(), namespace.clone()))
+        {
+            shells.insert((*owner_id, name.clone(), namespace.clone()), row.clone());
+        }
+    }
+}
+
+/// Resolve Shell capability references for keys that have no direct Shell row
+/// in their requested namespace.
+async fn resolve_missing_shell_references<M>(
+    mysql: &M,
+    missing_keys: &[(i64, String, String)],
+    shells: &mut HashMap<(i64, String, String), KindRow>,
+) -> Result<(), FastApiError>
+where
+    M: brz_mysql::Mysql,
+{
+    let mut names_by_owner_namespace: HashMap<(i64, String), HashSet<&str>> = HashMap::new();
+    for (owner_id, name, namespace) in missing_keys {
+        names_by_owner_namespace
+            .entry((*owner_id, namespace.clone()))
+            .or_default()
+            .insert(name.as_str());
+    }
+    for ((owner_id, namespace), names) in names_by_owner_namespace {
+        let referenced_shells = shell_resolution::referenced_shells(mysql, owner_id, &namespace)
+            .await
+            .map_err(database_error)?;
+        for row in referenced_shells {
+            if names.contains(row.name.as_str()) {
+                shells
+                    .entry((owner_id, row.name.clone(), namespace.clone()))
+                    .or_insert_with(|| kind_row_from_referenced_shell(row));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Convert a referenced Shell row into the Bot list response row.
+fn kind_row_from_referenced_shell(row: OwnedKindRow) -> KindRow {
+    KindRow {
+        kinds_id: row.id,
+        kinds_user_id: row.user_id,
+        kinds_name: row.name,
+        kinds_namespace: row.namespace,
+        kinds_json: brz_mysql::Json(brz_json::OpaqueJson::from(row.json.0)),
+    }
+}
+
 /// Append a key if not already present, preserving first-seen order (the
 /// source collects these into Python sets, whose iteration order is hash-seed
 /// dependent).
@@ -380,7 +531,7 @@ async fn sorted_group_names(state: &AppState, user_id: i64) -> Result<Vec<String
         erp: state.erp.as_ref(),
         redis: state.redis.as_ref(),
     };
-    let resolved = user_group_memberships(&state.mysql, &erp, user_id)
+    let resolved = user_group_memberships(&state.mysql, &erp, &state.entity_resolvers, user_id)
         .await
         .map_err(database_error)?;
     let mut names: Vec<String> = effective_roles(&resolved.memberships, &resolved.active_names)
@@ -468,5 +619,123 @@ mod tests {
                 ("b".to_string(), "default".to_string()),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn missing_shell_references_use_capability_reference_lookup() {
+        let mysql = crate::sql_test_support::KindQueryCapture::default();
+        let missing = vec![
+            (74, "group-claude".to_string(), "default".to_string()),
+            (74, "other-claude".to_string(), "default".to_string()),
+        ];
+        let mut shells = HashMap::new();
+
+        resolve_missing_shell_references(&mysql, &missing, &mut shells)
+            .await
+            .unwrap();
+
+        let queries = mysql.queries();
+        assert_eq!(
+            queries
+                .iter()
+                .filter(|query| query
+                    .sql
+                    .contains("resource_members.resource_type = 'Shell'"))
+                .count(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn shell_references_are_scoped_by_bot_owner() {
+        let mysql = crate::sql_test_support::KindQueryCapture::default();
+        let missing = vec![
+            (74, "group-claude".to_string(), "default".to_string()),
+            (75, "group-claude".to_string(), "default".to_string()),
+        ];
+        let mut shells = HashMap::new();
+
+        resolve_missing_shell_references(&mysql, &missing, &mut shells)
+            .await
+            .unwrap();
+
+        let queries = mysql.queries();
+        assert_eq!(
+            queries
+                .iter()
+                .filter(|query| query
+                    .sql
+                    .contains("resource_members.resource_type = 'Shell'"))
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn referenced_shell_conversion_preserves_source_payload() {
+        let timestamp = chrono::NaiveDate::from_ymd_opt(2026, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
+        let row = OwnedKindRow {
+            id: 10,
+            user_id: 74,
+            kind: "Shell".to_string(),
+            name: "group-claude".to_string(),
+            namespace: "source-group".to_string(),
+            json: brz_mysql::Json(serde_json::json!({
+                "spec": {"shellType": "ClaudeCode"}
+            })),
+            is_active: 1,
+            created_at: timestamp,
+            updated_at: timestamp,
+        };
+
+        let converted = kind_row_from_referenced_shell(row);
+
+        assert_eq!(converted.kinds_id, 10);
+        assert_eq!(converted.kinds_name, "group-claude");
+        assert_eq!(converted.kinds_namespace, "source-group");
+        assert_eq!(
+            converted.kinds_json.0.to_value()["spec"]["shellType"],
+            "ClaudeCode"
+        );
+    }
+
+    /// One authorized owner must not expose a same-key group Shell to other owners.
+    #[test]
+    fn group_shell_rows_do_not_share_owner_permissions() {
+        let key = ("shared-shell".to_string(), "shell-group".to_string());
+        let missing: Vec<_> = [74, 75, 76]
+            .into_iter()
+            .map(|owner| (owner, key.0.clone(), key.1.clone()))
+            .collect();
+        let owner_groups =
+            HashMap::from([(74, HashSet::from([key.1.clone()])), (75, HashSet::new())]);
+        let row = KindRow {
+            kinds_id: 10,
+            kinds_user_id: 77,
+            kinds_name: key.0.clone(),
+            kinds_namespace: key.1.clone(),
+            kinds_json: brz_mysql::Json(brz_json::OpaqueJson::from(serde_json::json!({
+                "spec": {"shellType": "Agno"}
+            }))),
+        };
+        let group_rows = HashMap::from([(key.clone(), row)]);
+        let mut shells = HashMap::new();
+
+        insert_group_shell_rows(&missing, &owner_groups, &group_rows, &mut shells);
+
+        assert_eq!(shells.len(), 1);
+        assert_eq!(shells[&missing[0]].kinds_id, 10);
+        assert!(!shells.contains_key(&missing[1]));
+        assert!(!shells.contains_key(&missing[2]));
+        // Denied owners remain unresolved so the caller can apply the public fallback.
+        let unresolved: Vec<_> = missing
+            .iter()
+            .filter(|key| !shells.contains_key(*key))
+            .map(|key| key.0)
+            .collect();
+        assert_eq!(unresolved, [75, 76]);
     }
 }

@@ -37,22 +37,8 @@ import {
   isDefaultLocalAgentName,
 } from '@/features/collaboration/defaultLocalAgent'
 import { sha256Hex } from '@/api/fileHash'
+import { loadWorkspaceCatalog } from './localWorkspaceCatalog'
 export const LOCAL_WORKSPACE_ID = 'wework-local-workspace'
-
-async function loadWorkspaceCatalog<T>(catalog: string, request: Promise<T>): Promise<T> {
-  try {
-    return await request
-  } catch (error) {
-    console.error(
-      '[Wework] Local workspace catalog failed',
-      JSON.stringify({
-        catalog,
-        reason: error instanceof Error ? error.message : String(error),
-      })
-    )
-    throw error
-  }
-}
 
 function assertValidCollaborationGroup(
   leader: CollaborationGroup['leader'],
@@ -270,11 +256,10 @@ export function createLocalWorkspaceApi(
   }
   const workspace = async (): Promise<CollaborationWorkspace> => {
     const [items, environments, agents, backingProject] = await Promise.all([
-      loadWorkspaceCatalog('projects', projects()),
-      loadWorkspaceCatalog('execution-environments', executionEnvironments()),
-      loadWorkspaceCatalog('agents', localAgentResources()),
-      loadWorkspaceCatalog(
-        'workspace-settings',
+      loadWorkspaceCatalog('projects', projects),
+      loadWorkspaceCatalog('execution-environments', executionEnvironments),
+      loadWorkspaceCatalog('agents-summary', localAgentResources),
+      loadWorkspaceCatalog('workspace-settings', () =>
         delivery.projects.get(DEFAULT_WORK_ITEM_PROJECT_ID)
       ),
     ])
@@ -336,25 +321,21 @@ export function createLocalWorkspaceApi(
     options?: { forceRefresh?: boolean }
   ) => {
     const listedAgents = projectAgentApi
-      ? await (
+      ? await loadWorkspaceCatalog('agents', () =>
           options?.forceRefresh
             ? projectAgentApi.list(DEFAULT_WORK_ITEM_PROJECT_ID, { forceRefresh: true })
             : projectAgentApi.list(DEFAULT_WORK_ITEM_PROJECT_ID)
-        ).catch(error => {
-          console.warn('[Wework] Failed to list local Agents', error)
-          return []
-        })
+        ).catch(() => [])
       : []
     const defaultAgent = projectAgentApi
-      ? await ensureDefaultLocalAgent(
-          projectAgentApi,
-          DEFAULT_WORK_ITEM_PROJECT_ID,
-          locale,
-          listedAgents
-        ).catch(error => {
-          console.warn('[Wework] Failed to ensure the default local Agent', error)
-          return null
-        })
+      ? await loadWorkspaceCatalog('default-agent', () =>
+          ensureDefaultLocalAgent(
+            projectAgentApi,
+            DEFAULT_WORK_ITEM_PROJECT_ID,
+            locale,
+            listedAgents
+          )
+        ).catch(() => null)
       : null
     const agents =
       defaultAgent && !listedAgents.some(agent => agent.id === defaultAgent.id)
@@ -369,6 +350,8 @@ export function createLocalWorkspaceApi(
       version: agent.version,
       capability_description: agent.capabilityDescription,
       system_prompt: agent.systemPrompt,
+      systemPrompt: agent.systemPrompt,
+      capabilityDescription: agent.capabilityDescription,
       runtime: agent.runtime,
       owner_type: 'workspace' as const,
       owner_id: LOCAL_WORKSPACE_ID,
@@ -656,7 +639,7 @@ export function createLocalWorkspaceApi(
         }
       : {}),
     workspaces: {
-      list: async () => [await workspace()],
+      list: () => loadWorkspaceCatalog('navigation-workspaces', async () => [await workspace()]),
       get: workspace,
       create: unavailable,
       async update(_workspaceId, input) {
@@ -675,6 +658,22 @@ export function createLocalWorkspaceApi(
       addMember: unavailable,
       updateMember: unavailable,
       removeMember: unavailable,
+      createTemplateAgent: async (_workspaceId, agent, routing) => {
+        if (!projectAgentApi) return unavailable()
+        return toProjectAgent(
+          await projectAgentApi.create(DEFAULT_WORK_ITEM_PROJECT_ID, {
+            ...routing,
+            name: agent.name,
+            runtime: agent.runtime,
+            systemPrompt: agent.systemPrompt,
+            capabilityDescription: agent.capabilityDescription,
+            capabilityMode: 'follow_device',
+            workspacePolicy: agent.workspacePolicy ?? 'project',
+            executionMode: agent.executionMode,
+            maxConcurrentExecutions: agent.maxConcurrentExecutions,
+          })
+        )
+      },
       listAgents: localAgentResources,
       addAgent: unavailable,
       removeAgent: unavailable,
@@ -801,7 +800,7 @@ export function createLocalWorkspaceApi(
         },
     projects: {
       ...delivery.projects,
-      list: projects,
+      list: () => loadWorkspaceCatalog('navigation-projects', projects),
       get: async projectId => decorateProject(await delivery.projects.get(projectId)),
       create: async input => {
         const { includeDefaultAgent = false, ...projectInput } = input

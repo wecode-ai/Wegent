@@ -19,7 +19,7 @@ pub(crate) fn environment() -> BTreeMap<String, String> {
     environment_for(&workbench, &home, managed_device)
 }
 
-fn environment_for(
+pub(super) fn environment_for(
     workbench: &Path,
     home: &Path,
     managed_device: bool,

@@ -2,6 +2,8 @@ import type { InteractionHistory } from './RuntimeInteractionsContext'
 import {
   interactionId,
   interactionOriginalScheme,
+  interactionSource,
+  isInteractionSource,
   type RuntimeInteraction,
 } from './runtimeInteractions'
 import { parseWeworkScheme } from './scheme'
@@ -59,11 +61,16 @@ export function readPendingInteractionCache(key: string): RuntimeInteraction[] {
         requestKey: row.requestKey,
         task,
         question: row.question,
-        context: '',
         createdAt: row.createdAt,
         payload: { kind: 'request_user_input' },
         answered: false,
         cached: true,
+        source: isInteractionSource(row.source) ? row.source : undefined,
+        sourceMessageIds:
+          Array.isArray(row.sourceMessageIds) &&
+          row.sourceMessageIds.every(id => typeof id === 'string')
+            ? row.sourceMessageIds
+            : undefined,
         originalUrl:
           typeof row.originalUrl === 'string' && parseWeworkScheme(row.originalUrl)
             ? row.originalUrl
@@ -77,12 +84,14 @@ export function pendingInteractionCache(items: RuntimeInteraction[]) {
   return items.map(item => ({
     address: { deviceId: item.task.address.deviceId, taskId: item.task.address.taskId },
     requestKey: item.requestKey,
+    source: interactionSource(item),
     title: item.task.task.title,
     runtime: item.task.task.runtime,
     workspacePath: item.task.task.workspacePath,
     question: item.question,
     createdAt: item.createdAt,
     originalUrl: interactionOriginalScheme(item),
+    sourceMessageIds: item.sourceMessageIds,
   }))
 }
 
@@ -94,6 +103,7 @@ export function readInteractionHistory(key: string): InteractionHistory[] {
       (row): row is InteractionHistory =>
         record(row) &&
         typeof row.id === 'string' &&
+        (row.source === undefined || isInteractionSource(row.source)) &&
         typeof row.title === 'string' &&
         typeof row.question === 'string' &&
         typeof row.answeredAt === 'number' &&
@@ -101,6 +111,9 @@ export function readInteractionHistory(key: string): InteractionHistory[] {
         record(row.address) &&
         typeof row.address.deviceId === 'string' &&
         typeof row.address.taskId === 'string' &&
+        (row.sourceMessageIds === undefined ||
+          (Array.isArray(row.sourceMessageIds) &&
+            row.sourceMessageIds.every(id => typeof id === 'string'))) &&
         (row.originalUrl === undefined || typeof row.originalUrl === 'string')
     )
     .sort((a, b) => b.answeredAt - a.answeredAt)

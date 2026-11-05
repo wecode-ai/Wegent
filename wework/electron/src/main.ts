@@ -65,6 +65,11 @@ import { resolveDownloadsDirectory } from './host/downloads-directory.js'
 import { SystemSleepController } from './host/system-sleep-controller.js'
 import { PreferencesStore } from './host/preferences-store.js'
 import {
+  DesktopPreferencesController,
+  resolvePopoutShortcut,
+} from './host/desktop-preferences-controller.js'
+import { PerformanceRecorder } from './host/performance-recorder.js'
+import {
   initializeWorkbenchModePreference,
   normalizeWorkbenchMode,
 } from './runtime/workbench-mode.js'
@@ -235,7 +240,6 @@ const applicationId =
   packageMetadata.weworkAppId?.trim() ||
   'io.wecode.wework'
 const developmentDockIdentity = resolveDevelopmentDockIdentity(process.env)
-const DEFAULT_POPOUT_WINDOW_SHORTCUT = 'Alt+Shift+Space'
 const startupStartedAt = performance.now()
 const pluginDevelopmentInstance = process.env.WEWORK_INSTANCE_MODE === 'core-dsh-plugin-development'
 const pluginDevelopmentCommand = commandLineValue(
@@ -368,6 +372,8 @@ let shutdownPromise: Promise<void> | null = null
 let dockVisible = true
 let e2eForegroundActivationAllowed = false
 let preferences: PreferencesStore | null = null
+let desktopPreferences: DesktopPreferencesController | null = null
+let performanceRecorder: PerformanceRecorder | null = null
 let rendererStorage: RendererStorageStore | null = null
 let cloudCredentials: CloudCredentialService | null = null
 let windowClosePolicy: WindowClosePolicy | null = null
@@ -484,10 +490,30 @@ const conversationSearchDiagnosticsLog = new RuntimeDiagnosticsLog(
   join(app.getPath('logs'), 'conversation-search.log'),
   '[Wework] Conversation search diagnostic '
 )
+const localWorkspaceCatalogLog = new RuntimeDiagnosticsLog(
+  join(app.getPath('logs'), 'local-workspace-catalog.log'),
+  '[Wework] Local workspace catalog '
+)
 app.on('web-contents-created', (_event, contents) => {
   const logLoadEvent = (event: string) => () => {
-    console.info('[renderer-load]', { event, webContentsId: contents.id })
+    const address = contents.getURL()
+    const route =
+      process.env.VITE_WEWORK_E2E === 'true' && URL.canParse(address) ? new URL(address) : null
+    console.info('[renderer-load]', {
+      event,
+      webContentsId: contents.id,
+      ...(route?.pathname.startsWith('/wework/app')
+        ? {
+            pathname: route.pathname,
+            projectId: route.searchParams.get('projectId'),
+            projectStore: route.searchParams.get('projectStore'),
+            workspaceTab: route.searchParams.get('workspaceTab'),
+          }
+        : {}),
+    })
   }
+  if (process.env.VITE_WEWORK_E2E === 'true')
+    contents.on('did-navigate-in-page', logLoadEvent('did-navigate-in-page'))
   contents.on('did-start-loading', logLoadEvent('did-start-loading'))
   contents.on('dom-ready', logLoadEvent('dom-ready'))
   contents.on('did-finish-load', logLoadEvent('did-finish-load'))
@@ -506,6 +532,17 @@ app.on('web-contents-created', (_event, contents) => {
     if (process.env.VITE_WEWORK_E2E === 'true' && message.startsWith('[desktop-e2e-key] ')) {
       console.info(redactLog(message).slice(0, 1024))
     }
+    if (
+      process.env.VITE_WEWORK_E2E === 'true' &&
+      message.startsWith('[process-explorer-snapshot] ')
+    ) {
+      console.info('[process-explorer-renderer]', {
+        webContentsId: contents.id,
+        message: redactLog(message).slice(0, 1024),
+      })
+    }
+    if (process.env.VITE_WEWORK_E2E === 'true' && message.startsWith('[interaction-focus-state]'))
+      console.info(redactLog(message).slice(0, 4096))
     if (process.env.VITE_WEWORK_E2E === 'true' && level === 3) {
       recordReleaseDiagnostic('renderer-error', {
         message: redactLog(message).slice(0, 4096),
@@ -545,6 +582,9 @@ app.on('web-contents-created', (_event, contents) => {
     })
     void conversationSearchDiagnosticsLog.record(contents.id, message).catch(error => {
       console.warn('[Wework] Failed to write conversation search diagnostics', error)
+    })
+    void localWorkspaceCatalogLog.record(contents.id, message).catch(() => {
+      console.warn('[Wework] Failed to write local workspace catalog diagnostics')
     })
   })
 })
@@ -732,12 +772,12 @@ function secureDshContents(contents: WebContents, dshUrl: string): void {
       delete params.partition
       webPreferences.session = contents.session
       webPreferences.preload = isolatedSurfacePreloadPath
-      webPreferences.backgroundThrottling = workbenchBackgroundThrottling(process.platform)
     } else {
       params.partition = EMBEDDED_BROWSER_PARTITION
       webPreferences.session = session.fromPartition(EMBEDDED_BROWSER_PARTITION)
       webPreferences.preload = browserAnnotationPreloadPath
     }
+    webPreferences.backgroundThrottling = workbenchBackgroundThrottling(process.platform)
     delete params.allowpopups
     delete params.disablewebsecurity
     delete params.webpreferences
@@ -1369,32 +1409,11 @@ async function togglePopoutWindow(): Promise<void> {
   await showPopoutWindow()
 }
 
-function resolvePopoutShortcut(preferenceRecord: Record<string, unknown>): string | null {
-  if (!Object.prototype.hasOwnProperty.call(preferenceRecord, 'popoutWindowShortcut')) {
-    return DEFAULT_POPOUT_WINDOW_SHORTCUT
-  }
-  const value = preferenceRecord.popoutWindowShortcut
-  return typeof value === 'string' && value.trim() ? value.trim() : null
-}
-
 async function updateDesktopPreferences(
   patch: Record<string, unknown>
 ): Promise<Record<string, unknown>> {
-  const store = requiredPreferences()
-  if (!Object.prototype.hasOwnProperty.call(patch, 'popoutWindowShortcut')) {
-    return store.update(patch)
-  }
-
-  const previousPreferences = await store.read()
-  const previousShortcut = resolvePopoutShortcut(previousPreferences)
-  const nextShortcut = resolvePopoutShortcut(patch)
-  popoutShortcut?.configure(nextShortcut)
-  try {
-    return await store.update(patch)
-  } catch (error) {
-    popoutShortcut?.configure(previousShortcut)
-    throw error
-  }
+  if (!desktopPreferences) throw new Error('Desktop preferences are unavailable')
+  return desktopPreferences.update(patch)
 }
 
 async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
@@ -1542,7 +1561,6 @@ async function holdStartupSplashForDesktopE2e(): Promise<void> {
 async function startupSplashInspection() {
   return {
     ...(await inspectStartupSplash(startupSplashWindow)),
-    progress: startupProgress.currentUpdate(),
     failure: lastStartupFailure,
     logDirectory: app.getPath('logs'),
   }
@@ -1731,6 +1749,7 @@ function installApplicationMenu(): void {
     },
     openDevTools: window => openWindowDevTools(window),
     openLogDirectory: openApplicationLogDirectory,
+    openProcessExplorer: openProcessExplorerWindow,
     showMain: reactivateMainWindow,
     quit: () => requestApplicationShutdown(() => app.quit()),
     openExternal: url => shell.openExternal(url),
@@ -1795,6 +1814,7 @@ async function startupDiagnosticsText(): Promise<string> {
     mainProcessLog.flush(),
     startupRendererLog.flush(),
     runtimeDiagnosticsLog.flush(),
+    localWorkspaceCatalogLog.flush(),
   ])
   return buildStartupDiagnostics({
     appName: app.getName(),
@@ -1818,6 +1838,8 @@ async function startupDiagnosticsText(): Promise<string> {
 
 function installIpc(): void {
   if (process.env.VITE_WEWORK_E2E === 'true' && process.env.WEWORK_E2E_CONTROL_URL) {
+    const downloadsPath = process.env.WEWORK_E2E_DOWNLOADS_DIR?.trim()
+    if (downloadsPath) app.setPath('downloads', resolve(downloadsPath))
     ipcMain.handle('e2e:runtime-request', (event, input) => {
       if (!dshWindowLabels.has(event.sender.id) || event.senderFrame !== event.sender.mainFrame) {
         throw new Error('Runtime verification requires a Wework main frame')
@@ -1961,6 +1983,12 @@ async function shutdown(): Promise<void> {
   await traceShutdownStep('child-runtime-stopping', () =>
     pluginDevelopmentChildRuntime?.writeState('stopping')
   )
+  await traceShutdownStep('performance-recording', async () => {
+    await performanceRecorder?.stop().catch(error => {
+      console.error('[performance] Failed to flush performance recording during shutdown', error)
+    })
+    performanceRecorder = null
+  })
   await traceShutdownStep('log-retention', () => logRetention.stop())
   await traceShutdownStep('mcp-apps', async () => {
     try {
@@ -2016,6 +2044,9 @@ async function shutdown(): Promise<void> {
     traceShutdownStep('plugin-development', () => development?.stop()),
     traceShutdownStep('desktop-runtime', () => desktopRuntime?.stop()),
   ])
+  await localWorkspaceCatalogLog.flush().catch(() => {
+    console.warn('[Wework] Failed to flush local workspace catalog diagnostics')
+  })
   const stopFailures = stoppedServices.filter(result => result.status === 'rejected')
   if (stopFailures.length)
     throw new AggregateError(
@@ -2134,7 +2165,8 @@ async function configureDesktopRuntime(): Promise<void> {
   })
   embeddedBrowserBridge = new EmbeddedBrowserBridge(
     embeddedBrowser,
-    environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
+    environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework'),
+    async () => (await preferences?.read())?.browserFullControl === true
   )
   startupProgress.report('services')
   logStartupStep('embedded-browser-bridge', 'started')
@@ -2186,6 +2218,18 @@ async function configureDesktopRuntime(): Promise<void> {
         ),
       }
     },
+  })
+  await performanceRecorder?.stop()
+  performanceRecorder = new PerformanceRecorder({
+    logPath: join(app.getPath('logs'), 'performance.log'),
+    appVersion: app.getVersion(),
+    processSnapshot: () => processExplorerService.snapshot(),
+  })
+  await desktopPreferences?.restorePerformanceRecording().catch(error => {
+    console.error(
+      '[performance] Could not resume performance recording; recording is disabled',
+      error
+    )
   })
   desktopRuntime = new DesktopRuntime({
     environment,
@@ -2591,6 +2635,15 @@ if (hasSingleInstanceLock) {
       dockVisible = false
     }
     preferences = new PreferencesStore(app.getPath('userData'))
+    desktopPreferences = new DesktopPreferencesController(preferences, {
+      isShuttingDown: () => quitting,
+      configurePopoutShortcut: shortcut => popoutShortcut?.configure(shortcut),
+      setPerformanceRecordingEnabled: async enabled => {
+        if (quitting && enabled) throw new Error('The application is shutting down')
+        if (!performanceRecorder) throw new Error('Performance recorder is unavailable')
+        await performanceRecorder.setEnabled(enabled)
+      },
+    })
     rendererStorage = new RendererStorageStore(app.getPath('userData'))
     logStartupStep('desktop-stores-create', 'completed')
     if (!pluginDevelopmentInstance) {
@@ -2754,9 +2807,19 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
   const runtimeRoot = configuredRuntimeRoot
     ? configuredRuntimeRoot
     : components
-      ? await materializeBundledRuntimes(components.coreDsh, packagedHarnessRuntimePaths().cache, [
-          'core',
-        ])
+      ? await materializeBundledRuntimes(
+          components.coreDsh,
+          packagedHarnessRuntimePaths().cache,
+          ['core'],
+          {
+            onProgress: ({ stage, phase, elapsedMs, role, archiveBytes }) =>
+              logStartupStep(`core-runtime-${stage}`, phase, {
+                phaseElapsedMs: elapsedMs,
+                role,
+                archiveBytes,
+              }),
+          }
+        )
       : developmentRuntimeRoot
   logStartupStep('core-runtime-materialize', 'completed')
   logStartupStep('node-runtime-prepare', 'started')

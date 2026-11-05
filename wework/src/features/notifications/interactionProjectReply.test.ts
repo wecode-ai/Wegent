@@ -12,7 +12,6 @@ function setup(store: 'local' | 'backend' = 'backend') {
     task: interactionTask,
     payload: interactionQuestion,
     question: 'Keep old behavior?',
-    context: '',
     createdAt: 1,
     answered: false,
     project: { projectId: 'project', issueId: 'issue', rootCommentId: 'root', store },
@@ -38,6 +37,7 @@ function setup(store: 'local' | 'backend' = 'backend') {
   const services = {
     [store === 'local' ? 'localProjectChatClient' : 'projectChatClient']: client,
     runtimeWorkApi: { sendRuntimeMessage: bareSend },
+    taskApi: {},
     deviceApi: { listDevices: vi.fn().mockResolvedValue([]) },
   } as unknown as WorkbenchServices
   return { item, send, execute, subscribe, unsubscribe, services, root, run, bareSend }
@@ -197,4 +197,44 @@ it('never falls back to bare runtime sending when the Issue write is denied', as
   expect(h.execute).not.toHaveBeenCalled()
   expect(h.bareSend).not.toHaveBeenCalled()
   expect(h.unsubscribe).toHaveBeenCalledOnce()
+})
+
+it('loads authenticated aliases through the executor registry before checking Issue ownership', async () => {
+  const h = setup()
+  h.subscribe.mockResolvedValue({
+    snapshot: {
+      messages: [
+        h.root,
+        {
+          ...h.run,
+          runtimeAddress: {
+            deviceId: 'app-record-70',
+            taskId: interactionTask.address.taskId,
+          },
+        },
+      ],
+    },
+    unsubscribe: h.unsubscribe,
+  })
+  const device = {
+    id: 70,
+    device_id: 'app-record-70',
+    app_device_id: interactionTask.address.deviceId,
+    runtime_instance_id: 'same-runtime',
+    status: 'online',
+    device_type: 'app',
+  }
+  const entry = { deviceId: device.device_id, status: 'online', device }
+  const registry = {
+    refresh: vi.fn(async () => [entry]),
+    resolve: vi.fn(async () => entry),
+    list: () => [entry],
+  }
+  h.services.executorClient = { registry } as unknown as NonNullable<
+    WorkbenchServices['executorClient']
+  >
+  await replyToInteractionProject(h.item, 'Keep old behavior', 'reply-once', h.services, 'Failed')
+  expect(registry.resolve).toHaveBeenCalledWith('app-record-70')
+  expect(h.send).toHaveBeenCalledOnce()
+  expect(h.execute).toHaveBeenCalledOnce()
 })

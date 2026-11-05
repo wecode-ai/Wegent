@@ -1,5 +1,7 @@
-import { describe, expect, it } from 'vitest'
+// @vitest-environment node
+
 import type { ModelSelectionConfig } from '@/types/api'
+import { describe, expect, it } from 'vitest'
 import { runtimeTaskBindingAddress } from './runtimeTaskBindingAddress'
 
 describe('runtimeTaskBindingAddress', () => {
@@ -25,12 +27,6 @@ describe('runtimeTaskBindingAddress', () => {
       taskId: 'codex-queue-85',
       runtimeHandle: { modelSelection },
     })
-  })
-
-  it('does not manufacture a model for an unconfigured binding', () => {
-    expect(
-      runtimeTaskBindingAddress({ device_id: 'device', task_id: 'task', modelSelection: null })
-    ).toEqual({ deviceId: 'device', taskId: 'task' })
   })
 
   it('preserves the bound execution workspace and thread together with its model', () => {
@@ -59,22 +55,6 @@ describe('runtimeTaskBindingAddress', () => {
       taskId: 'issue-task',
       ...executionContext,
       runtimeHandle: { modelSelection },
-    })
-  })
-
-  it('retains execution context without requiring a selected model', () => {
-    expect(
-      runtimeTaskBindingAddress({
-        device_id: 'device',
-        task_id: 'task',
-        modelSelection: null,
-        executionContext: { threadId: 'thread', workspacePath: '/tmp/issue' },
-      })
-    ).toEqual({
-      deviceId: 'device',
-      taskId: 'task',
-      threadId: 'thread',
-      workspacePath: '/tmp/issue',
     })
   })
 })

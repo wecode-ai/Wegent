@@ -118,6 +118,9 @@ export class TransportFaultProxy {
     this.capabilitySyncGate = null
     this.stopPromise = null
     this.server = createServer((request, response) => this.forward(request, response))
+    // Only configured faults may interrupt healthy traffic. Teardown closes
+    // tracked sockets; an idle timer must not race the next package request.
+    this.server.keepAliveTimeout = 0
     this.server.on('connection', socket => this.track(socket))
     this.server.on('upgrade', (request, socket, head) => this.upgrade(request, socket, head))
   }
@@ -144,7 +147,12 @@ export class TransportFaultProxy {
   forward(request, response) {
     const url = new URL(request.url, this.target)
     // Retain no headers, tokens, request bodies or device query strings.
-    const entry = { method: request.method, path: url.pathname, unscoped: !url.search }
+    const entry = {
+      method: request.method,
+      path: url.pathname,
+      unscoped: !url.search,
+      receivedAt: new Date().toISOString(),
+    }
     const requestId = request.headers['x-request-id']
     if (typeof requestId === 'string') {
       entry.requestIdFingerprint = createHash('sha256').update(requestId).digest('hex')
@@ -152,6 +160,7 @@ export class TransportFaultProxy {
     this.requests.push(entry)
     response.once('finish', () => {
       entry.responseCompleted = true
+      entry.completedAt = new Date().toISOString()
     })
     const fault = this.rule(entry, request)
     entry.fault = fault
@@ -227,7 +236,21 @@ export class TransportFaultProxy {
               }
               response.once('finish', () => resolve(true))
               response.once('close', () => resolve(entry.responseCompleted === true))
-              response.writeHead(reply.status, reply.headers)
+              let headers = reply.headers
+              if (entry.responseTimingId) {
+                assert.match(entry.responseTimingId, /^[a-zA-Z0-9-]+$/)
+                headers = {
+                  ...headers,
+                  'server-timing': [
+                    headers['server-timing'],
+                    `wework-e2e-response;desc="${entry.responseTimingId}"`,
+                  ]
+                    .filter(Boolean)
+                    .join(', '),
+                  'timing-allow-origin': request.headers.origin ?? '*',
+                }
+              }
+              response.writeHead(reply.status, headers)
               response.end(reply.body)
               entry.released = true
             })

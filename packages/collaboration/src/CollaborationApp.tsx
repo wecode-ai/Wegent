@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import { projectStatuses } from './board'
 import { ProjectTemplateSettings } from "./templates/ProjectTemplateSettings";
 import { useCollaborationTemplateStore } from "./templates/context";
 import { templateMessages } from "./templates/messages";
@@ -16,7 +17,6 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   collaborationMessages,
   createCollaborationTranslator,
-  localizeStandardStatuses,
   type CollaborationLocale,
 } from "./i18n";
 import { collaborationTestIds } from "./testIds";
@@ -25,6 +25,7 @@ import { IssueCreate, IssueDetail } from "./IssueDetail";
 import { IssueExecutionEnvironmentNotice } from "./execution-environment/IssueExecutionEnvironmentNotice";
 import { useProjectExecutionEnvironmentReadiness } from "./execution-environment/issueEnvironmentReadiness";
 import { IssueArchiveDialog, IssueArchiveDrawer } from "./issue-archive";
+import { prepareIssueArchiveSubtree } from "./issue-archive/prepareIssueArchive";
 import {
   CollaborationProjectViewShell,
   ProjectLoadingSkeleton,
@@ -51,7 +52,6 @@ import type {
   CollaborationIssue,
   CollaborationProject,
   ProjectSettingsSectionId,
-  CollaborationStatus,
   CollaborationView,
 } from "./types";
 import type {
@@ -85,7 +85,7 @@ export interface CollaborationIssueDetailRenderContext {
   onOpenRelatedIssue(issue: CollaborationIssue): void;
   onAddChild?(): void;
   onCreateTask?(): void;
-  /** Present only for completed Issues when archiving is enabled. */
+  /** Present for editable Issues when archiving is enabled. */
   onDelete?(): void;
 }
 
@@ -99,7 +99,7 @@ interface CollaborationAppProps {
   createProjectRequestKey?: number;
   refreshProjectRequestKey?: number;
   showProjectBack?: boolean;
-  /** Enables completed-Issue archive actions and the project archive box. */
+  /** Enables Issue archive actions and the project archive box. */
   issueArchiveEnabled?: boolean;
   onProjectChange?(project: CollaborationProject): void;
   /**
@@ -115,29 +115,6 @@ interface CollaborationAppProps {
       onMarkRead(): Promise<void>;
     },
   ): ReactNode;
-}
-
-function projectStatuses(
-  project: CollaborationProject,
-  messages:
-    | (typeof collaborationMessages)["zh-CN"]
-    | (typeof collaborationMessages)["en"],
-  translate: ReturnType<typeof createCollaborationTranslator>,
-): CollaborationStatus[] {
-  const statuses = project.board_config?.statuses;
-  return statuses && statuses.length > 0
-    ? localizeStandardStatuses(statuses, translate)
-    : [
-        { id: "inbox", name: messages.statusInbox, color: "gray" },
-        { id: "pending", name: messages.statusPending, color: "blue" },
-        {
-          id: "in_progress",
-          name: messages.statusInProgress,
-          color: "orange",
-        },
-        { id: "in_review", name: messages.statusInReview, color: "purple" },
-        { id: "completed", name: messages.statusCompleted, color: "green" },
-      ];
 }
 
 export function CollaborationApp({
@@ -315,7 +292,7 @@ export function CollaborationApp({
     setArchiveIssueError(null);
     const results = await Promise.allSettled(
       archiveIssueTargets.map(async (issue) => {
-        await onPrepareIssueArchive?.(issue);
+        await prepareIssueArchiveSubtree(issues, issue, onPrepareIssueArchive);
         const archived = await commands.archiveIssue(issue.id, {
           throwOnError: true,
         });
@@ -1026,6 +1003,9 @@ export function CollaborationApp({
                               testId: "collaboration-project-settings-sharing",
                               content: (
                                 <ProjectTemplateSettings
+                                  agentConfiguration={
+                                    host.projectAgentConfiguration
+                                  }
                                   key={project.id}
                                   onChange={commands.replaceProject}
                                   api={api}
@@ -1080,6 +1060,15 @@ export function CollaborationApp({
                         ),
                         groupsContent: api.projects.listCollaborationGroups ? (
                           <ProjectCollaborationGroups
+                            agentConfiguration={host.projectAgentConfiguration}
+                            agentResourceContext={
+                              host.projectAgentResourceContext
+                            }
+                            location={
+                              project.project_store === "local"
+                                ? "local"
+                                : "cloud"
+                            }
                             onProjectChanged={commands.replaceProject}
                             api={api}
                             currentUserId={templateStore?.library.ownerId}
@@ -1256,7 +1245,6 @@ export function CollaborationApp({
                   : undefined,
                 onDelete:
                   issueArchiveAvailable &&
-                  selectedIssue.status === "completed" &&
                   canEditCollaborationIssue(selectedIssue)
                     ? () => requestIssueArchive(selectedIssue)
                     : undefined,
@@ -1302,7 +1290,6 @@ export function CollaborationApp({
                 }
                 onDelete={
                   issueArchiveAvailable &&
-                  selectedIssue.status === "completed" &&
                   canEditCollaborationIssue(selectedIssue)
                     ? () => requestIssueArchive(selectedIssue)
                     : undefined

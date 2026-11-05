@@ -1457,11 +1457,17 @@
 }
 
 .collaboration-project-create-footer {
-  display: flex;
-  justify-content: flex-end;
+  display: grid;
+  flex-shrink: 0;
   gap: 8px;
   border-top: 1px solid rgb(var(--color-border));
   padding: 14px 20px;
+}
+
+.collaboration-project-create-footer-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .collaboration-project-create-footer button:not(.collaboration-primary-button) {
@@ -1536,7 +1542,7 @@
   resize: vertical;
 }
 
-.collaboration-dialog footer,
+.collaboration-dialog footer:where(:not(.collaboration-project-create-footer)),
 .collaboration-issue-detail footer {
   display: flex;
   justify-content: flex-end;

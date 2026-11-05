@@ -1,121 +1,79 @@
-import { Profiler, type ProfilerOnRenderCallback } from 'react'
 import { render, screen } from '@testing-library/react'
-import { describe, expect, test, vi } from 'vitest'
-import type { PluginMarketplaceItem } from '@/types/api'
+import { expect, test, vi } from 'vitest'
+import '@/i18n'
+import type { PluginMarketplaceRowProps } from './pluginMarketplaceRowEquality'
 import { PluginMarketplaceRow } from './PluginMarketplaceRow'
-import { arePluginMarketplaceRowPropsEqual } from './pluginMarketplaceRowEquality'
 
-const labels = {
-  install: '安装',
-  installing: '正在安装',
-  uninstalling: '正在卸载',
-  retry: '重试安装',
-  syncing: '同步中...',
-  try: '立即对话',
-  manage: '管理',
-  uninstall: '卸载',
-  copy: '复制到我的插件',
-}
-
-function makeItem(overrides: Partial<PluginMarketplaceItem> = {}): PluginMarketplaceItem {
-  return {
-    id: '101',
-    name: 'documents',
-    displayName: 'Documents',
-    description: 'Docs plugin',
-    version: '1.0.0',
-    installed: false,
-    installedLocally: false,
-    enabled: false,
+const props: PluginMarketplaceRowProps = {
+  item: {
+    id: 'dingtalk',
+    remotePluginId: 'dingtalk',
+    name: 'dingtalk',
+    displayName: '钉钉',
+    description: '',
     visibility: 'public',
-    ...overrides,
-  } as PluginMarketplaceItem
+    featured: false,
+    installed: false,
+    enabled: true,
+    sourceType: 'marketplace',
+    components: {
+      skills: [],
+      commands: [],
+      agents: [],
+      hooks: [],
+      mcps: [],
+      lsps: [],
+      monitors: [],
+      bins: [],
+    },
+    manifest: {},
+    ownerUserId: 0,
+    currentDeviceInstallation: {
+      deviceId: 'device',
+      state: 'uninstalling',
+      desiredReleaseId: 1,
+      attemptCount: 0,
+      updatedAt: '2026-11-04T00:00:00Z',
+    },
+  },
+  isLoggedIn: true,
+  isReconciling: false,
+  isInstalling: false,
+  isUninstalling: false,
+  allowPendingRetry: false,
+  labels: {
+    install: '安装',
+    installing: '正在安装',
+    uninstalling: '正在卸载',
+    syncing: '同步中',
+    retry: '重试',
+    try: '使用',
+    manage: '管理',
+    uninstall: '卸载',
+    copy: '复制',
+  },
+  onAction: vi.fn(),
 }
 
-describe('PluginMarketplaceRow', () => {
-  test('keeps a server-reported uninstall pending without offering installation', () => {
-    render(
-      <PluginMarketplaceRow
-        item={makeItem({
-          currentDeviceInstallation: {
-            deviceId: 'current-device',
-            state: 'uninstalling',
-            desiredReleaseId: 1,
-            actualReleaseId: 1,
-            errorCode: null,
-            errorMessage: null,
-            attemptCount: 0,
-            lastSyncAt: null,
-            updatedAt: '2026-11-01T12:00:00',
-          },
-        })}
-        isLoggedIn
-        isReconciling={false}
-        isInstalling={false}
-        isUninstalling={false}
-        allowPendingRetry
-        labels={labels}
-        onAction={vi.fn()}
-      />
-    )
-    expect(screen.getByTestId('plugin-marketplace-install-101')).toHaveTextContent('正在卸载')
-    expect(screen.queryByRole('button', { name: '安装' })).not.toBeInTheDocument()
-  })
+test('a reinstall takes precedence over the previous device uninstall snapshot', () => {
+  const { rerender } = render(<PluginMarketplaceRow {...props} />)
+  expect(screen.getByRole('status', { name: '正在卸载 钉钉' })).toHaveTextContent('正在卸载')
 
-  test('treats identical row props as equal for memo', () => {
-    const onAction = vi.fn()
-    const item = makeItem()
-    const props = {
-      item,
-      isLoggedIn: true,
-      isReconciling: false,
-      isInstalling: false,
-      isUninstalling: false,
-      allowPendingRetry: true,
-      labels,
-      onAction,
-    }
-    expect(arePluginMarketplaceRowPropsEqual(props, { ...props })).toBe(true)
-    expect(
-      arePluginMarketplaceRowPropsEqual(props, {
-        ...props,
-        isInstalling: true,
-      })
-    ).toBe(false)
-    expect(arePluginMarketplaceRowPropsEqual(props, { ...props, isReconciling: true })).toBe(false)
-  })
+  rerender(<PluginMarketplaceRow {...props} isInstalling />)
+  expect(screen.getByRole('status', { name: '正在安装 钉钉' })).toHaveTextContent('正在安装')
+  expect(screen.queryByText('正在卸载')).not.toBeInTheDocument()
 
-  test('does not commit a new render when parent re-renders with the same props', () => {
-    const onAction = vi.fn()
-    const item = makeItem()
-    let actualDurationTotal = 0
-    const onRender: ProfilerOnRenderCallback = (_id, phase, actualDuration) => {
-      if (phase === 'update') actualDurationTotal += actualDuration
-    }
+  rerender(
+    <PluginMarketplaceRow
+      {...props}
+      item={{
+        ...props.item,
+        currentDeviceInstallation: { ...props.item.currentDeviceInstallation!, state: 'pending' },
+      }}
+    />
+  )
+  expect(screen.getByRole('status', { name: '同步中 钉钉' })).toHaveTextContent('同步中')
 
-    function Parent({ tick }: { tick: number }) {
-      return (
-        <Profiler id="plugin-marketplace-row" onRender={onRender}>
-          <span data-testid="parent-tick">{tick}</span>
-          <PluginMarketplaceRow
-            item={item}
-            isLoggedIn
-            isReconciling={false}
-            isInstalling={false}
-            isUninstalling={false}
-            allowPendingRetry
-            labels={labels}
-            onAction={onAction}
-          />
-        </Profiler>
-      )
-    }
-
-    const { rerender } = render(<Parent tick={1} />)
-    expect(screen.getByTestId('plugin-marketplace-row-101')).toHaveTextContent('Documents')
-    rerender(<Parent tick={2} />)
-    expect(screen.getByTestId('parent-tick')).toHaveTextContent('2')
-    expect(screen.getByTestId('plugin-marketplace-row-101')).toBeInTheDocument()
-    expect(actualDurationTotal).toBeGreaterThanOrEqual(0)
-  })
+  rerender(<PluginMarketplaceRow {...props} isUninstalling />)
+  expect(screen.getByRole('status', { name: '正在卸载 钉钉' })).toHaveTextContent('正在卸载')
 })

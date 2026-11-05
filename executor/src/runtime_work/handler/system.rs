@@ -104,7 +104,10 @@ impl RuntimeWorkRpcHandler {
                         &[("local_task_id", task_id)],
                     );
                 }
-                if let Err(error) = self.persist_turn_queue(remaining_queued_turns, None).await {
+                if let Err(error) = self
+                    .persist_turn_queue(remaining_queued_turns, None, &[])
+                    .await
+                {
                     log_executor_event(
                         "runtime turn queue reconciliation persistence failed",
                         &[("error", error.message)],
@@ -170,46 +173,82 @@ impl RuntimeWorkRpcHandler {
             .turn_scheduler
             .lock()
             .expect("runtime turn scheduler lock should not be poisoned");
-        Ok(json!({
-            "limit": scheduler.max_concurrent_tasks,
-            "active": scheduler.active_tasks,
-            "active_task_ids": scheduler.active_task_ids,
-            "queued": scheduler.queued_turns.len(),
-        }))
+        let ids = scheduler.active_task_ids.keys().collect::<Vec<_>>();
+        let mut result = serde_json::to_value(&scheduler.settings).expect("settings serialize");
+        result.as_object_mut().expect("settings object").extend(
+            json!({
+                "limit": scheduler.settings.total_limit(),
+                "active": ids.len(),
+                "active_task_ids": ids,
+                "queued": scheduler.queued_turns.len(),
+                "categories": {
+                    "personal": scheduler.capacity(RuntimeTaskKind::Personal),
+                    "standIn": scheduler.capacity(RuntimeTaskKind::StandIn),
+                    "agent": scheduler.capacity(RuntimeTaskKind::Agent),
+                },
+            })
+            .as_object()
+            .expect("capacity object")
+            .clone(),
+        );
+        Ok(result)
     }
 
     pub(super) async fn get_runtime_settings(&self) -> Result<Value, AppIpcError> {
-        let max_concurrent_tasks = self
+        let scheduler = self
             .turn_scheduler
             .lock()
-            .expect("runtime turn scheduler lock should not be poisoned")
-            .max_concurrent_tasks;
-        Ok(json!({ "maxConcurrentTasks": max_concurrent_tasks }))
+            .expect("runtime scheduler poisoned");
+        Ok(serde_json::to_value(&scheduler.settings).expect("settings serialize"))
     }
 
     pub(super) async fn update_runtime_settings(
         &self,
         payload: Value,
     ) -> Result<Value, AppIpcError> {
-        let max_concurrent_tasks = payload
-            .get("maxConcurrentTasks")
-            .or_else(|| payload.get("max_concurrent_tasks"))
-            .and_then(Value::as_u64)
-            .map(|value| value as usize)
-            .ok_or_else(|| AppIpcError::new("bad_request", "maxConcurrentTasks is required"))?;
-        if !(MIN_MAX_CONCURRENT_TASKS..=MAX_MAX_CONCURRENT_TASKS).contains(&max_concurrent_tasks) {
+        let gate = self.task_send_gate("runtime-settings");
+        let _guard = gate.lock().await;
+        let mut settings = self
+            .turn_scheduler
+            .lock()
+            .expect("runtime scheduler poisoned")
+            .settings
+            .clone();
+        let mut changed = false;
+        for (camel, snake, target) in [
+            (
+                "maxConcurrentTasks",
+                "max_concurrent_tasks",
+                &mut settings.max_concurrent_tasks,
+            ),
+            (
+                "maxConcurrentStandInTasks",
+                "max_concurrent_stand_in_tasks",
+                &mut settings.max_concurrent_stand_in_tasks,
+            ),
+            (
+                "maxConcurrentAgentTasks",
+                "max_concurrent_agent_tasks",
+                &mut settings.max_concurrent_agent_tasks,
+            ),
+        ] {
+            if let Some(value) = payload.get(camel).or_else(|| payload.get(snake)) {
+                let limit = value.as_u64().filter(|limit| (MIN_MAX_CONCURRENT_TASKS as u64..=MAX_MAX_CONCURRENT_TASKS as u64).contains(limit))
+                    .ok_or_else(|| AppIpcError::new("bad_request", format!("{camel} must be between {MIN_MAX_CONCURRENT_TASKS} and {MAX_MAX_CONCURRENT_TASKS}")))?;
+                *target = limit as usize;
+                changed = true;
+            }
+        }
+        if !changed {
             return Err(AppIpcError::new(
                 "bad_request",
-                format!(
-                    "maxConcurrentTasks must be between {MIN_MAX_CONCURRENT_TASKS} and {MAX_MAX_CONCURRENT_TASKS}"
-                ),
+                "At least one concurrency setting is required",
             ));
         }
-        write_runtime_settings(&RuntimeSettings {
-            max_concurrent_tasks,
-        })?;
-        self.update_max_concurrent_tasks(max_concurrent_tasks).await;
-        Ok(json!({ "maxConcurrentTasks": max_concurrent_tasks }))
+        write_runtime_settings(&settings)?;
+        let result = serde_json::to_value(&settings).expect("settings serialize");
+        self.update_concurrency_settings(settings).await;
+        Ok(result)
     }
 
     pub(super) async fn search_workspace(&self, payload: Value) -> Result<Value, AppIpcError> {
@@ -1132,11 +1171,7 @@ pub(super) fn read_runtime_settings() -> RuntimeSettings {
             return RuntimeSettings::default();
         }
     };
-    RuntimeSettings {
-        max_concurrent_tasks: settings
-            .max_concurrent_tasks
-            .clamp(MIN_MAX_CONCURRENT_TASKS, MAX_MAX_CONCURRENT_TASKS),
-    }
+    settings
 }
 
 fn write_runtime_settings(settings: &RuntimeSettings) -> Result<(), AppIpcError> {

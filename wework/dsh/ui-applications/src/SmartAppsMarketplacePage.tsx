@@ -36,6 +36,7 @@ import type {
   SmartAppAccessTarget,
   SmartAppMarketplaceItem,
   SmartAppMarketplaceTag,
+  SmartAppSubmissionMetadata,
   SmartAppsApi,
 } from '@/api/smartApps'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
@@ -136,6 +137,7 @@ function formatUpdatedAt(value: string, language: string): string {
 
 function SmartAppFilePicker({
   accept,
+  emptyText,
   files,
   inputTestId,
   label,
@@ -143,6 +145,7 @@ function SmartAppFilePicker({
   onChange,
 }: {
   accept: string
+  emptyText?: string
   files: File[]
   inputTestId: string
   label: string
@@ -153,7 +156,7 @@ function SmartAppFilePicker({
   const inputRef = useRef<HTMLInputElement>(null)
   const selectionText =
     files.length === 0
-      ? t('workbench.smart_apps_no_file_selected', '未选择文件')
+      ? (emptyText ?? t('workbench.smart_apps_no_file_selected', '未选择文件'))
       : files.length === 1
         ? files[0].name
         : t('workbench.smart_apps_files_selected', '已选择 {{count}} 个文件').replace(
@@ -2564,7 +2567,7 @@ function SmartAppShareDialog({
   )
 }
 
-function SmartAppPublishDialog({
+export function SmartAppPublishDialog({
   api,
   item,
   installation,
@@ -2633,7 +2636,13 @@ function SmartAppPublishDialog({
     }
   }
   async function publish() {
-    if ((!file && !installation) || !manifest || !icon || !summary.trim() || !selectedTags.length) {
+    if (
+      (!file && !installation) ||
+      !manifest ||
+      (!icon && !item?.iconUrl) ||
+      !summary.trim() ||
+      !selectedTags.length
+    ) {
       setError(
         t('workbench.smart_apps_publish_fields_required', '请完整填写发布包、简介、标签和图标')
       )
@@ -2645,7 +2654,7 @@ function SmartAppPublishDialog({
       )
       return
     }
-    const iconError = validatePublishImage(icon, 'icon', t)
+    const iconError = icon ? validatePublishImage(icon, 'icon', t) : null
     if (iconError) {
       setError(iconError)
       return
@@ -2661,6 +2670,17 @@ function SmartAppPublishDialog({
     setError(null)
     const attempt = beginSmartAppPublication()
     try {
+      const imageErrorMessage = t(
+        'workbench.smart_apps_error_image_invalid',
+        '图片无法读取，请重新选择有效的图片文件。'
+      )
+      const iconDataUrl = icon ? await readDataUrl(icon, imageErrorMessage) : undefined
+      const screenshotDataUrls =
+        screenshots.length || !item
+          ? await Promise.all(
+              screenshots.slice(0, 5).map(value => readDataUrl(value, imageErrorMessage))
+            )
+          : undefined
       const metadataBase = {
         name: manifest.name,
         displayName: manifest.displayName,
@@ -2668,32 +2688,31 @@ function SmartAppPublishDialog({
         summary: summary.trim(),
         descriptionMd: description,
         tags: selectedTags,
-        iconDataUrl: await readDataUrl(
-          icon,
-          t('workbench.smart_apps_error_image_invalid', '图片无法读取，请重新选择有效的图片文件。')
-        ),
-        screenshotDataUrls: await Promise.all(
-          screenshots
-            .slice(0, 5)
-            .map(value =>
-              readDataUrl(
-                value,
-                t(
-                  'workbench.smart_apps_error_image_invalid',
-                  '图片无法读取，请重新选择有效的图片文件。'
-                )
-              )
-            )
-        ),
         releaseNotes: notes,
       }
-      const metadata = item
-        ? { ...metadataBase, smartAppId: item.id, targets: [] }
-        : {
-            ...metadataBase,
-            scope,
-            targets: scope === 'restricted' ? targets : [],
-          }
+      let metadata: SmartAppSubmissionMetadata
+      if (item) {
+        metadata = {
+          ...metadataBase,
+          smartAppId: item.id,
+          targets: [],
+          ...(iconDataUrl ? { iconDataUrl } : {}),
+          ...(screenshotDataUrls ? { screenshotDataUrls } : {}),
+        }
+      } else {
+        if (!iconDataUrl) {
+          throw new Error(
+            t('workbench.smart_apps_publish_fields_required', '请完整填写发布包、简介、标签和图标')
+          )
+        }
+        metadata = {
+          ...metadataBase,
+          scope,
+          targets: scope === 'restricted' ? targets : [],
+          iconDataUrl,
+          ...(screenshotDataUrls ? { screenshotDataUrls } : {}),
+        }
+      }
       if (installation) {
         const exported = await harnessAppsApi.export(installation.id)
         if (exported.sizeBytes > MAX_SMART_APP_PACKAGE_BYTES) {
@@ -2860,12 +2879,44 @@ function SmartAppPublishDialog({
               ))}
             </div>
           </fieldset>
+          {item && (item.iconUrl || item.screenshotUrls.length) ? (
+            <div className="rounded-xl bg-surface p-3">
+              <p className="text-xs text-text-muted">
+                {t(
+                  'workbench.smart_apps_inherit_assets_hint',
+                  '不重新选择时，将沿用当前图标和截图。'
+                )}
+              </p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                {item.iconUrl ? (
+                  <img
+                    src={item.iconUrl}
+                    alt=""
+                    data-testid="smart-app-publish-current-icon"
+                    className="h-12 w-12 rounded-lg border border-border/40 object-cover"
+                  />
+                ) : null}
+                {item.screenshotUrls.map((url, index) => (
+                  <img
+                    key={url}
+                    src={url}
+                    alt=""
+                    data-testid={`smart-app-publish-current-screenshot-${index}`}
+                    className="h-12 w-20 rounded-md border border-border/40 object-cover"
+                  />
+                ))}
+              </div>
+            </div>
+          ) : null}
           <div className="text-sm font-medium">
             <span>{t('workbench.smart_apps_icon', '方形图标（PNG/WebP）')}</span>
             <SmartAppFilePicker
               inputTestId="smart-app-publish-icon"
               label={t('workbench.smart_apps_icon', '方形图标（PNG/WebP）')}
               accept="image/png,image/webp"
+              emptyText={
+                item ? t('workbench.smart_apps_keep_current_icon', '沿用当前图标') : undefined
+              }
               files={icon ? [icon] : []}
               onChange={files => setIcon(files[0] ?? null)}
             />
@@ -2877,6 +2928,16 @@ function SmartAppPublishDialog({
               label={t('workbench.smart_apps_screenshots', '截图（最多 5 张）')}
               accept="image/png,image/webp,image/jpeg"
               multiple
+              emptyText={
+                item
+                  ? item.screenshotUrls.length
+                    ? t(
+                        'workbench.smart_apps_keep_current_screenshots',
+                        '沿用当前 {{count}} 张截图'
+                      ).replace('{{count}}', String(item.screenshotUrls.length))
+                    : t('workbench.smart_apps_no_file_selected', '未选择文件')
+                  : undefined
+              }
               files={screenshots}
               onChange={files => setScreenshots(files.slice(0, 5))}
             />
@@ -2945,7 +3006,11 @@ function SmartAppPublishDialog({
           <Button variant="ghost" onClick={onClose}>
             {t('common.cancel', '取消')}
           </Button>
-          <Button disabled={publishing} onClick={() => void publish()}>
+          <Button
+            data-testid="smart-app-publish-submit"
+            disabled={publishing}
+            onClick={() => void publish()}
+          >
             {publishing ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin" />

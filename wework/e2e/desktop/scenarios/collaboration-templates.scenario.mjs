@@ -7,6 +7,38 @@ const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const scoped = selector => `${CONTENT} ${selector}`
 const testId = name => scoped(`[data-testid="${name}"]`)
 
+export async function fillTemplateRoleBindings(control, count) {
+  if (
+    Number(
+      await control.command(
+        'getElementCount',
+        scoped('details:not([open]):has(> [data-testid="template-customize-main"])')
+      )
+    ) > 0
+  ) {
+    await control.command('click', testId('template-customize-main'))
+  }
+  await control.command('waitFor', testId('template-role-main-role-0'), {
+    text: '当前设备智能体',
+  })
+  // This scenario covers an explicit human coordinator; lifecycle coverage uses the agent default.
+  const human = await control.command(
+    'getAttribute',
+    testId('template-role-main-role-0') + ' option[value^="human:"]',
+    { value: 'value' }
+  )
+  await control.command('select', testId('template-role-main-role-0'), { value: human })
+  for (let index = 1; index < count; index++) {
+    await control.command('waitFor', testId(`template-role-main-role-${index}`), {
+      text: '当前设备智能体',
+    })
+    await control.command('select', testId(`template-role-main-role-${index}`), {
+      by: 'label',
+      value: '当前设备智能体',
+    })
+  }
+}
+
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenchReadyTimeoutMs }) {
   let cloud
   let source
@@ -31,26 +63,20 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
   const click = (control, name) => control.command('click', testId(name))
   const wait = (control, name, text) =>
     control.command('waitFor', testId(name), { text, timeoutMs: uiTimeoutMs })
-  const fillRoles = async (control, count) => {
-    await wait(control, 'template-role-main-role-0', '当前设备智能体')
-    // This scenario covers an explicit human coordinator; lifecycle coverage uses the agent default.
-    const human = await control.command(
-      'getAttribute',
-      testId('template-role-main-role-0') + ' option[value^="human:"]',
-      { value: 'value' }
-    )
-    await control.command('select', testId('template-role-main-role-0'), { value: human })
-    for (let index = 1; index < count; index++) {
-      const select = testId(`template-role-main-role-${index}`)
-      await control.command('waitFor', `${select} option`, {
-        text: '当前设备智能体',
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('select', select, {
-        by: 'label',
-        value: '当前设备智能体',
-      })
+  const openTemplateProject = async (control, text) => {
+    await click(control, 'template-use')
+    const workspace = testId('collaboration-project-workspace-wework-local-workspace')
+    const templateSection = testId('project-create-template-section')
+    await control.command('waitFor', `${workspace}, ${templateSection}`, {
+      timeoutMs: uiTimeoutMs,
+    })
+    if (Number(await control.command('getElementCount', workspace)) > 0) {
+      await control.command('clickWhenEnabled', workspace, { timeoutMs: uiTimeoutMs })
     }
+    await control.command('waitFor', templateSection, {
+      ...(text ? { text } : {}),
+      timeoutMs: uiTimeoutMs,
+    })
   }
 
   const applyBindings = async control => {
@@ -285,12 +311,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       )
       await capture(control, '00-account-available')
       await click(control, `template-details-${accountTemplate.id}`)
-      await click(control, 'template-use')
-      await wait(
-        control,
-        'project-create-template-section',
-        accountTemplate.document.spec.displayName
-      )
+      // Singleton workspace routing requires the independently loaded local catalog.
+      await wait(control, 'collaboration-workspace-wework-local-workspace')
+      await openTemplateProject(control, accountTemplate.document.spec.displayName)
       await capture(control, '00-account-download')
       await control.command(
         'click',
@@ -309,8 +332,19 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await click(control, 'template-details-product-lifecycle')
       await wait(control, 'collaboration-template-preview', '发布交付')
       await capture(control, '02-preview')
-      await click(control, 'template-use')
-      await wait(control, 'project-create-template-section')
+      await openTemplateProject(control)
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            testId('collaboration-project-create-confirm') + ':disabled'
+          )
+        ),
+        0,
+        'A self-contained template must be ready without selecting existing Agents'
+      )
+      await click(control, 'template-customize-main')
+      await control.command('select', testId('template-role-main-role-1'), { value: '' })
       assert.equal(
         Number(
           await control.command(
@@ -321,7 +355,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         1,
         'Unbound roles did not block project creation'
       )
-      await fillRoles(control, 6)
+      await fillTemplateRoleBindings(control, 6)
       await control.command('fill', testId('collaboration-project-name-input'), {
         value: projectName,
       })
@@ -357,7 +391,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       })
       await click(control, 'template-details-research-analysis')
       await click(control, 'template-use')
-      await fillRoles(control, 3)
+      await fillTemplateRoleBindings(control, 3)
       await capture(control, '08-import-bindings')
       await applyBindings(control)
       await click(control, 'collaboration-project-settings-groups')
@@ -376,7 +410,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await click(control, 'group-template-create')
       await click(control, 'template-details-content-creation')
       await click(control, 'template-use')
-      await fillRoles(control, 3)
+      await fillTemplateRoleBindings(control, 3)
       await applyBindings(control)
       await wait(control, 'collaboration-group-detail-name')
       assert.equal(

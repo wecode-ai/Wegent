@@ -43,7 +43,10 @@ impl RuntimeWorkRpcHandler {
                     &thread,
                     &link,
                 );
-                if link.ephemeral {
+                if link.ephemeral
+                    || (link.runtime_handle["origin"]["type"] == "stand_in_coordinator"
+                        && link.interaction_status.is_none())
+                {
                     continue;
                 }
                 if self.archived_link_is_deleted(&link) {
@@ -131,7 +134,10 @@ impl RuntimeWorkRpcHandler {
             if self.archived_link_is_deleted(&link) {
                 continue;
             }
-            if link.ephemeral {
+            if link.ephemeral
+                || (link.runtime_handle["origin"]["type"] == "stand_in_coordinator"
+                    && link.interaction_status.is_none())
+            {
                 continue;
             }
             let link_archived = link.status == "archived";
@@ -1005,16 +1011,26 @@ impl RuntimeWorkRpcHandler {
             .and_then(|execution| execution.codex_turn.clone())
     }
 
-    pub(super) async fn wait_for_active_codex_turn(
+    pub(super) async fn wait_for_guidance_turn(
         &self,
         local_task_id: &str,
-    ) -> Option<ActiveCodexTurn> {
+    ) -> Option<(String, String)> {
+        use crate::runtime_work::lifecycle::{native_execution_state, NativeExecutionPhase};
+
+        // Native Goal continuations outlive the local request's execution control.
         for attempt in 0..=ACTIVE_CODEX_TURN_WAIT_ATTEMPTS {
-            if let Some(turn) = self.active_codex_turn(local_task_id) {
-                return Some(turn);
+            let link = self.local_task_link(local_task_id)?;
+            if link.runtime != "codex" {
+                return None;
             }
-            if !self.is_active_local_task(local_task_id)
-                || attempt == ACTIVE_CODEX_TURN_WAIT_ATTEMPTS
+            let state = native_execution_state(&link)?;
+            if state.phase == NativeExecutionPhase::Running {
+                return Some((link.thread_id?, state.turn_id?));
+            }
+            if !matches!(
+                state.phase,
+                NativeExecutionPhase::Starting | NativeExecutionPhase::Continuing
+            ) || attempt == ACTIVE_CODEX_TURN_WAIT_ATTEMPTS
             {
                 return None;
             }

@@ -25,6 +25,30 @@ const entry = (index: number): InteractionHistory => ({
 
 beforeEach(() => localStorage.clear())
 
+it('retains source grouping across offline cache and handled-history reloads', async () => {
+  const [item] = await readRuntimeInteractions(interactionTask, {
+    getRuntimeTranscript: vi.fn().mockResolvedValue(interactionTranscript()),
+  } as unknown as NonNullable<WorkbenchServices['runtimeWorkApi']>)
+  item.source = 'stand_in'
+  saveInteractionState('pending', pendingInteractionCache([item]))
+  expect(readPendingInteractionCache('pending')[0].source).toBe('stand_in')
+  saveInteractionState('history', [{ ...entry(1), source: item.source }])
+  expect(readInteractionHistory('history')[0].source).toBe('stand_in')
+})
+
+it('keeps native source message locators in the offline cache and handled history', async () => {
+  const [item] = await readRuntimeInteractions(interactionTask, {
+    getRuntimeTranscript: vi.fn().mockResolvedValue(interactionTranscript()),
+  } as unknown as NonNullable<WorkbenchServices['runtimeWorkApi']>)
+  item.sourceMessageIds = ['original-comment']
+  saveInteractionState('pending', pendingInteractionCache([item]))
+  expect(readPendingInteractionCache('pending')[0].sourceMessageIds).toEqual(['original-comment'])
+  saveInteractionState('history', [{ ...entry(1), sourceMessageIds: item.sourceMessageIds }])
+  expect(readInteractionHistory('history')[0].sourceMessageIds).toEqual(['original-comment'])
+  saveInteractionState('history', [{ ...entry(1), sourceMessageIds: [42] }])
+  expect(readInteractionHistory('history')).toEqual([])
+})
+
 it('restores only last-known display metadata, never cached answers or runtime credentials', async () => {
   const task = {
     ...interactionTask,

@@ -25,10 +25,58 @@ neither host may duplicate shared business views.
 
 ## Objective
 
+### Multiple comment assignment target types
+
+The comment assignment menu shares the Issue property candidates and persistence
+flow: members, project bots, workspace Agents, Wegent Agents, and collaboration
+groups. Member eligibility and Viewer restrictions still apply. Keeping the
+current assignee does not change ownership. Mentions suggest a target without
+filling the selector. A compact hint beside the attachment control offers a check
+action to fill the selector and a dismiss action. Clicking a blue mention chip
+switches or reopens its suggestion. Manual A remains selected after mentioning B
+until B is accepted. Selection and acceptance never call assignment APIs.
+With a selected target, Send and assign saves the comment before assignment;
+an empty draft offers Assign without creating a comment. With no selected target,
+sending only posts the comment and preserves an unaccepted suggestion. Dismissed
+suggestions do not return after sending. Assignment failures retain the target
+for retry without reposting a successfully saved and cleared comment.
+
+Focused component tests cover target selection, saving with the latest Issue
+version, permissions, and send failure recovery. The existing
+`collaboration-shared-core` checkpoint adds real Electron coverage using its
+project and bot fixtures plus an isolated Issue and human-led group. It assigns
+the bot, group, and member through the comment menu, verifies real persisted
+fields and mutual exclusion after each transfer. The existing
+`collaboration-issue-assignment-activity` checkpoint verifies mention selection,
+dismissal and reopening, acceptance without persistence, and final submission.
+The test completes and archives
+the added Issue before removing its group and returning to the
+original Issue. Use the checkpoint environment and command below; only model
+services are simulated.
+
+### Long-history follow-ups and background execution
+
+`follow-up-task-switch` runs isolated Electron with the real Executor and Codex, replacing only model responses.
+Native Goal continuations create paginated history; after restarting, the latest page must contain only assistant replies.
+
+1. Submit a new Goal while reading history, wait for real tool execution, progress and a plan, then switch away and back through the sidebar task list.
+2. Native history must already contain the accepted request. Its entire user message must appear inside the viewport above the composer before tool completion or another model response.
+3. A second task completes an initial reply, opens the real Wework built-in browser beside a narrow conversation, and starts another Goal. Its background progress must remain visible on return.
+4. Read upward and then scroll to the bottom after returning; the latest request must remain reachable. Component tests also preserve the reading position when paging prepends an older user message.
+5. Reuse one child agent across two native turns and exceed the latest-page budget in the new turn. After returning, the older reply must retain its original turn identity instead of merging into the follow-up.
+
+A child thread identity cannot establish that two execution turns are aliases. When native history lacks an older terminal record, only the latest native turn displays a live timer; the original historical status stays unchanged and no end time is invented.
+Component tests verify that historical timing stops while the current timer advances, without mutating native history.
+
+Run `pnpm --filter wework e2e:desktop --segment follow-up-task-switch`.
+The checkpoint belongs to the shared desktop runner and Core CI. Screenshots, logs and isolated history stay under `wework/test-results/`.
+
 ### Parent issues and parallel board work
 
-Wework adds a personal **By parent** layout to the existing board toolbar, preserving columns and
-saved views. The ordinary board keeps its current-level projection. Parent rows show direct children,
+Web collaboration and Wework offer the same personal **By parent** layout in the existing board
+toolbar, preserving columns and saved views. Web platform component tests cover the visible toggle,
+grouping child issues by parent, and returning to the ordinary board when toggled off.
+The ordinary board keeps its current-level projection. Parent rows show direct children,
 standalone issues, and navigation to deeper levels. Completion and parallel counts include only
 readable direct children, deduplicated by issue ID. Search and column filters affect card projections
 without changing overall parent counts. Details expose parent links, children, and child creation.

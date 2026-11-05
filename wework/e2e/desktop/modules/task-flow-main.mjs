@@ -13,6 +13,7 @@ import { verifyLocalBoardUnread } from './local-board-unread.mjs'
 import { verifyMcpElicitationInFullAccess } from './mcp-elicitation-flow.mjs'
 import { MCP_URL_TIMEOUT_MS, MCP_FORM_TIMEOUT_MS } from './mcp-elicitation-evidence.mjs'
 import { verifyPendingTaskAcrossTabs } from './pending-task-tab-flow.mjs'
+import { prepareStandInOnboardingFixture } from './stand-in-onboarding-fixture.mjs'
 
 import {
   createCheckpointTaskFixture,
@@ -145,7 +146,7 @@ import {
   observeWindowsSocketExhaustion,
 } from './windows-network-diagnostics.mjs'
 import { collectCodexSqliteDiagnostics } from './codex-sqlite-diagnostics.mjs'
-
+import { captureFailureFollowup } from './failure-followup.mjs'
 import {
   ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_SWITCH_MODEL_RETRY_SELECTOR,
@@ -1712,6 +1713,14 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
 
     if (desktopScenario && DESKTOP_SCENARIO_ONLY) {
       phase = 'desktop-extension-scenario'
+      if (
+        !desktopScenario.verifiesStandInOnboarding &&
+        (DESKTOP_SEGMENT.startsWith('stand-in') ||
+          DESKTOP_SEGMENT === 'application-menu' ||
+          DESKTOP_SEGMENT.startsWith('coordination-'))
+      ) {
+        await prepareStandInOnboardingFixture(control, cloudEnvironment, WORKBENCH_READY_TIMEOUT_MS)
+      }
       await desktopScenario.verify(control)
       if (DESKTOP_SEGMENT === 'local-harness') {
         await writeLocalHarnessDiagnostics(control, resultDir)
@@ -4767,6 +4776,13 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       )}\n`,
       'utf8'
     )
+    try {
+      // Record whether the observed state settled after the step timeout so
+      // slow asynchronous updates are distinguishable from stuck states.
+      await captureFailureFollowup(control, resultDir)
+    } catch {
+      // The follow-up is best-effort evidence; never mask the original failure.
+    }
     throw error
   } finally {
     const teardownFailures = []

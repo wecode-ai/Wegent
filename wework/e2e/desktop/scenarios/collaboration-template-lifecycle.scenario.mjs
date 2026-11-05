@@ -2,7 +2,13 @@ import assert from 'node:assert/strict'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { fetchJson } from '../modules/shared.mjs'
+import { accountCommandResult } from '../modules/account-auth-command.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import {
+  shellCommandPollResponse,
+  shellCommandResponse,
+} from '../modules/shell-command-response.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   createLocalCollaborationProject,
@@ -15,14 +21,11 @@ import {
   assistantMessage,
   codexRequestKind,
   createSse,
-  functionCall,
   mcpToolRequestEvents,
   readRequestBody,
   responseCompleted,
   responseCreated,
   requestContainsToolOutput,
-  selectShellToolCommand,
-  toolOutputText,
 } from '../modules/response-protocol.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -70,32 +73,6 @@ async function addAgent(control, name, prompt, timeoutMs) {
   })
 }
 
-function shellEvents(body, callId, command, workspacePath) {
-  const namespace = [
-    ...(body.tools ?? []),
-    ...(body.input ?? [])
-      .filter(item => item.type === 'additional_tools')
-      .flatMap(item => item.tools ?? []),
-  ].find(tool => tool.type === 'namespace' && tool.tools?.some(child => child.name === 'exec'))
-  if (namespace)
-    return [
-      {
-        type: 'response.output_item.done',
-        output_index: 0,
-        item: {
-          id: callId,
-          type: 'custom_tool_call',
-          call_id: callId,
-          namespace: namespace.name,
-          name: 'exec',
-          input: `text(await tools.exec_command(${JSON.stringify({ cmd: command, workdir: workspacePath, yield_time_ms: 1000 })}))`,
-        },
-      },
-    ]
-  const selection = selectShellToolCommand(body, command, workspacePath)
-  return functionCall(callId, selection.name, selection.arguments)
-}
-
 export function createDesktopScenario({
   resultDir,
   captureScreenshot,
@@ -129,6 +106,11 @@ export function createDesktopScenario({
   const wait = (name, text) =>
     control.command('waitFor', selector(name), { text, timeoutMs: uiTimeoutMs })
   const capture = async (name, description) => {
+    assert.equal(
+      Number(await control.command('getElementCount', selector('collaboration-navigation-error'))),
+      0,
+      'Lifecycle evidence must not contain a navigation load failure'
+    )
     await captureScreenshot(control, `template-lifecycle-${name}.png`, CONTENT)
     evidence.push({ file: `template-lifecycle-${name}.png`, description })
   }
@@ -136,6 +118,13 @@ export function createDesktopScenario({
     requestExecutor(control, 'todos.get', { project_id: projectId, task_id: task.id }, uiTimeoutMs)
 
   return {
+    requiresCloudEnvironment: true,
+    async prepareCloud(environment) {
+      await fetchJson(`${environment.backendUrl}/api/admin/setup-complete`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${environment.authToken}` },
+      })
+    },
     async handleHttp(request, response, url) {
       if (
         !active ||
@@ -171,8 +160,13 @@ export function createDesktopScenario({
         memberStarted = index
         await releases[index].promise
         const callId = `${MARKER}-artifact-${index}`
-        if (requestContainsToolOutput(body, callId)) {
-          const output = toolOutputText(body, callId)
+        const result = accountCommandResult(body.input, callId)
+        if (result?.sessionId) {
+          respond(response, id, shellCommandPollResponse(body, result.pollId, result.sessionId))
+          return true
+        }
+        if (result) {
+          const output = result.output
           assert.match(
             output,
             /Exit code: 0|exit_code\W*0|Process exited with code 0/,
@@ -204,7 +198,11 @@ export function createDesktopScenario({
         // A script file preserves quotes and Unicode across native Windows and POSIX shells.
         const scriptName = `template-stage-${index + 1}.cjs`
         await writeFile(join(nativeWorkspace, scriptName), script)
-        respond(response, id, shellEvents(body, callId, `node ${scriptName}`, nativeWorkspace))
+        respond(
+          response,
+          id,
+          shellCommandResponse(body, callId, `node ${scriptName}`, nativeWorkspace)
+        )
         return true
       }
       const index = phase
@@ -320,6 +318,10 @@ export function createDesktopScenario({
       await wait('template-project-defaults', '新')
       await capture('01-preview', '产品全流程模板说明智能体负责人、自动分配和阶段标签')
       await click('template-use')
+      await control.command('clickWhenEnabled', selector('template-customize-main'), {
+        timeoutMs: uiTimeoutMs,
+      })
+      await wait('template-role-main-role-0')
       const leaderValue = await control.command('getValue', selector('template-role-main-role-0'))
       assert.ok(leaderValue.startsWith('agent:'), 'Default coordinator must be an agent')
       await control.command('select', selector('template-role-main-role-0'), {

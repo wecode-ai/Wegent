@@ -4,6 +4,8 @@
 
 from unittest.mock import AsyncMock
 
+import pytest
+
 from app.schemas.device_chat_task import DeviceChatTaskResponse
 
 
@@ -253,6 +255,7 @@ def test_create_device_chat_task_endpoint_rejects_invalid_api_key(
     service_mock.assert_not_awaited()
 
 
+@pytest.mark.xdist_group("production_openapi")
 def test_create_device_chat_task_endpoint_documents_authentication_schemes(
     test_client,
 ):

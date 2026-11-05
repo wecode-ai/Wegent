@@ -1,0 +1,141 @@
+{
+  "revision": "d9e0f1a2b3c4",
+  "parents": [
+    "c8d9e0f1a2b3"
+  ],
+  "source": "20260815_d9e0f1a2b3c4_add_execution_truth_columns.py",
+  "upgrade": [
+    {
+      "sql": [
+        "ALTER TABLE loop_item_executions ADD COLUMN attempt_no INTEGER NOT NULL COMMENT 'Attempt number within the execution scope' DEFAULT '1'"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE loop_item_executions ADD COLUMN previous_execution_id BIGINT NOT NULL COMMENT 'Previous attempt id; 0 means none' DEFAULT '0'"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE loop_item_executions ADD COLUMN execution_scope VARCHAR(160) NOT NULL COMMENT 'Concurrency and retry scope for the execution' DEFAULT ''"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE loop_item_executions ADD COLUMN observed_state VARCHAR(24) NOT NULL COMMENT 'Latest verified Runtime state' DEFAULT 'unconfirmed'"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE loop_item_executions ADD COLUMN sync_state VARCHAR(16) NOT NULL COMMENT 'Runtime observation freshness and consistency' DEFAULT 'pending'"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE loop_item_executions ADD COLUMN claimed_at DATETIME NOT NULL COMMENT 'Queue claim time; epoch means unset' DEFAULT '1970-01-01 00:00:00'"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE loop_item_executions ADD COLUMN start_requested_at DATETIME NOT NULL COMMENT 'Time a Runtime start command may have been delivered' DEFAULT '1970-01-01 00:00:00'"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE loop_item_executions ADD COLUMN observed_at DATETIME NOT NULL COMMENT 'Last verified Runtime observation time' DEFAULT '1970-01-01 00:00:00'"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE loop_item_executions ADD COLUMN cancel_requested_at DATETIME NOT NULL COMMENT 'Cancellation intent time; epoch means unset' DEFAULT '1970-01-01 00:00:00'"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE loop_item_executions ADD COLUMN last_event_seq BIGINT NOT NULL COMMENT 'Greatest accepted Runtime event sequence' DEFAULT '0'"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE loop_item_executions ADD COLUMN termination_reason VARCHAR(64) NOT NULL COMMENT 'Machine-readable terminal reason' DEFAULT ''"
+      ]
+    },
+    {
+      "sql": [
+        "UPDATE loop_item_executions SET runtime_task_id = CONCAT('codex-queue-', id) WHERE COALESCE(runtime_task_id, '') = ''"
+      ]
+    },
+    {
+      "sql": [
+        "UPDATE loop_item_executions SET attempt_no = COALESCE(retry_attempt, 0) + 1, execution_scope = CASE WHEN COALESCE(agent_id, '') <> '' THEN CONCAT('project_robot:', loop_item_id) WHEN COALESCE(automation_run_id, '') <> '' THEN CONCAT('automation_manager:', automation_run_id) ELSE CONCAT('automation_manager:', id) END, observed_state = CASE status WHEN 'running' THEN 'running' WHEN 'completed' THEN 'succeeded' WHEN 'failed' THEN 'failed' WHEN 'cancelled' THEN 'cancelled' ELSE 'unconfirmed' END, sync_state = CASE WHEN status IN ('completed', 'failed', 'cancelled') THEN 'in_sync' WHEN status = 'running' THEN 'stale' ELSE 'pending' END, claimed_at = CASE WHEN started_at > '1970-01-01 00:00:00' THEN started_at ELSE '1970-01-01 00:00:00' END, start_requested_at = CASE WHEN status IN ('running', 'completed', 'failed') AND started_at > '1970-01-01 00:00:00' THEN started_at ELSE '1970-01-01 00:00:00' END, observed_at = CASE WHEN status IN ('completed', 'failed', 'cancelled') AND completed_at > '1970-01-01 00:00:00' THEN completed_at WHEN status = 'running' AND heartbeat_at > '1970-01-01 00:00:00' THEN heartbeat_at ELSE '1970-01-01 00:00:00' END"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX idx_exec_scope_status ON loop_item_executions (execution_scope, status)"
+      ]
+    }
+  ],
+  "downgrade": [
+    {
+      "sql": [
+        "DROP INDEX idx_exec_scope_status ON loop_item_executions"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE loop_item_executions DROP COLUMN termination_reason"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE loop_item_executions DROP COLUMN last_event_seq"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE loop_item_executions DROP COLUMN cancel_requested_at"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE loop_item_executions DROP COLUMN observed_at"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE loop_item_executions DROP COLUMN start_requested_at"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE loop_item_executions DROP COLUMN claimed_at"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE loop_item_executions DROP COLUMN sync_state"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE loop_item_executions DROP COLUMN observed_state"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE loop_item_executions DROP COLUMN execution_scope"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE loop_item_executions DROP COLUMN previous_execution_id"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE loop_item_executions DROP COLUMN attempt_no"
+      ]
+    }
+  ]
+}

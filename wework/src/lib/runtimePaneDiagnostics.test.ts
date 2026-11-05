@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { expect, it } from 'vitest'
 import type { RuntimePaneDebugSnapshot } from './debugPanel'
 import {

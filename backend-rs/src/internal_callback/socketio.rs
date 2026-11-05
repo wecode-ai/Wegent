@@ -11,7 +11,7 @@
 //! channel used by every migrated emit), and the positional arguments are
 //! serialized with CPython's `json.dumps` (`super::py_json::python_dumps`).
 use brz_redis::{Redis, RedisResult};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use super::py_json::python_dumps;
 use crate::socketio_emit::{SOCKETIO_CHANNEL, emit_message};
@@ -25,6 +25,27 @@ pub(crate) async fn publish_emit<R: Redis>(
 ) -> RedisResult<i64> {
     let room = format!("task:{task_id}");
     publish_emit_in_room(redis, event, &room, payload).await
+}
+
+/// `WebPageSocketEmitter.emit_chat_start`: the `chat:start` frame the
+/// dispatcher emits after the executor acknowledgement
+/// (`webpage_websocket_chat_emitter.py:88-99`).
+pub(crate) async fn publish_chat_start<R: Redis>(
+    redis: &R,
+    task_id: i64,
+    subtask_id: i64,
+    bot_name: Value,
+    shell_type: &str,
+    message_id: Option<i64>,
+) -> RedisResult<i64> {
+    let payload = json!({
+        "task_id": task_id,
+        "subtask_id": subtask_id,
+        "bot_name": bot_name,
+        "shell_type": shell_type,
+        "message_id": message_id,
+    });
+    publish_emit(redis, "chat:start", task_id, payload).await
 }
 
 /// Publish one Socket.IO emit for the `/chat` namespace into an explicit room.

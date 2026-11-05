@@ -7,6 +7,7 @@ import {
 import { McpAppSessions } from './mcp-app-sessions.js'
 import { MCP_APP_SCHEME, McpAppDocuments } from './mcp-app-documents.js'
 import { setReducedMotion } from './e2e-media-preferences.js'
+import { focusE2EWindow } from './e2e-window-focus.js'
 import { withDebuggerSession } from './debugger-session.js'
 import { McpDiscoveryNetworkFault } from './e2e-mcp-discovery-fault.js'
 import { controlInlineVisualizationFrame } from './e2e-inline-visualization.js'
@@ -26,7 +27,7 @@ import {
   type SaveDialogOptions,
 } from 'electron'
 import { stat, writeFile } from 'node:fs/promises'
-import { cpus } from 'node:os'
+import { cpuLoadRatioBetween, cpuTimeSample } from './system-cpu.js'
 import { availableMemoryRatio } from './maintenance-memory.js'
 import { basename, join, resolve } from 'node:path'
 import {
@@ -45,7 +46,10 @@ import { LocalAttachmentStore } from './local-attachment-store.js'
 import { readLocalFileChunk } from './local-file-reader.js'
 import { registerWorkspaceFileActions } from './workspace-file-actions.js'
 import { getElectronProcessSnapshot } from './process-diagnostics.js'
-import type { ProcessSnapshot } from '../vendor/process-explorer/contract.js'
+import type {
+  ProcessExplorerClient,
+  ProcessSnapshotOptions,
+} from '../vendor/process-explorer/contract.js'
 import type { ProcessExplorerWindowSnapshot } from './process-explorer-window-snapshot.js'
 import { BACKGROUND_TIMER_THROTTLING_SWITCH } from './window-background-policy.js'
 import { sendE2EKey, sendE2EText, type E2EKeyPhase } from './e2e-keyboard.js'
@@ -138,9 +142,7 @@ function assertE2EEnabled(control: string): void {
 }
 
 /** Host-side process explorer the capability router exposes to the renderer. */
-export interface ProcessExplorerHostService {
-  snapshot: () => Promise<ProcessSnapshot>
-}
+export type ProcessExplorerHostService = ProcessExplorerClient
 
 export interface ElectronDesktopServices {
   registerMcpAppCleanup?: (cleanup: () => Promise<void>) => void
@@ -739,9 +741,12 @@ export function createElectronCapabilityRouter(
     const target = requiredWindow(window)
     if (target.isMinimized()) target.restore()
     target.show()
-    target.focus()
-    const primaryContents = e2eHost.captureTarget('main')
-    if (primaryContents && !primaryContents.isDestroyed()) primaryContents.focus()
+    await focusE2EWindow(target, () => {
+      app.focus({ steal: true })
+      target.focus()
+      const primaryContents = e2eHost.captureTarget('main')
+      if (primaryContents && !primaryContents.isDestroyed()) primaryContents.focus()
+    })
   })
   router.register('e2e.focusWindow', params => {
     e2eHost.focusWindow(optionalStringParam(params, 'windowLabel') ?? 'main')
@@ -840,11 +845,14 @@ export function createElectronCapabilityRouter(
   })
   // Windows restores precision-touchpad input only while the native window
   // keeps Chromium's default visibility lifecycle; see window-background-policy.
-  router.register('e2e.getWindowBackgroundPolicy', () => {
+  router.register('e2e.getWindowBackgroundPolicy', params => {
     const target = requiredWindow(window)
+    const browserLabel = optionalStringParam(params, 'browserLabel')
     return {
       platform: process.platform,
-      backgroundThrottling: target.webContents.getBackgroundThrottling(),
+      backgroundThrottling: browserLabel
+        ? browser.backgroundThrottling(browserLabel)
+        : target.webContents.getBackgroundThrottling(),
       backgroundTimerThrottlingDisabled: app.commandLine.hasSwitch(
         BACKGROUND_TIMER_THROTTLING_SWITCH
       ),
@@ -1498,7 +1506,32 @@ export function registerDesktopServiceCapabilities(
   router.register('processExplorer.setAlwaysOnTop', params =>
     developer.setProcessExplorerAlwaysOnTop(booleanParam(params, 'alwaysOnTop') ?? false)
   )
-  router.register('diagnostics.processSnapshot', () => services.processExplorer.snapshot())
+  router.register('diagnostics.processSnapshot', async (options: ProcessSnapshotOptions = {}) => {
+    const snapshotOptions = { waitForSystemProcesses: options?.waitForSystemProcesses !== false }
+    if (process.env.VITE_WEWORK_E2E !== 'true')
+      return services.processExplorer.snapshot(snapshotOptions)
+    const startedAt = Date.now()
+    console.info('[process-explorer-host]', { stage: 'requested', startedAt })
+    try {
+      const snapshot = await services.processExplorer.snapshot(snapshotOptions)
+      console.info('[process-explorer-host]', {
+        stage: 'completed',
+        startedAt,
+        elapsedMs: Date.now() - startedAt,
+        processCount: snapshot.processes.length,
+        degraded: snapshot.degraded.map(item => item.code),
+      })
+      return snapshot
+    } catch (error) {
+      console.info('[process-explorer-host]', {
+        stage: 'failed',
+        startedAt,
+        elapsedMs: Date.now() - startedAt,
+        errorName: error instanceof Error ? error.name : typeof error,
+      })
+      throw error
+    }
+  })
   router.register('maintenance.cleanupTemporaryImages', () =>
     services.cleanupStaleTemporaryImages()
   )
@@ -1587,32 +1620,15 @@ function unavailableOwnerCapture(): HostCapabilityError {
   )
 }
 
-interface CpuTimeSample {
-  idle: number
-  total: number
-}
-
-function cpuTimeSample(): CpuTimeSample {
-  return cpus().reduce<CpuTimeSample>(
-    (sample, cpu) => ({
-      idle: sample.idle + cpu.times.idle,
-      total:
-        sample.total +
-        cpu.times.user +
-        cpu.times.nice +
-        cpu.times.sys +
-        cpu.times.idle +
-        cpu.times.irq,
-    }),
-    { idle: 0, total: 0 }
-  )
-}
-
-export function cpuLoadRatioBetween(before: CpuTimeSample, after: CpuTimeSample): number {
-  const totalDelta = after.total - before.total
-  if (totalDelta <= 0) return 0
-  const idleDelta = Math.max(0, after.idle - before.idle)
-  return Math.min(1, Math.max(0, 1 - idleDelta / totalDelta))
+export function e2eSystemPressureOverride(environment: NodeJS.ProcessEnv = process.env) {
+  if (
+    environment.VITE_WEWORK_E2E !== 'true' ||
+    !environment.WEWORK_E2E_CONTROL_URL?.trim() ||
+    environment.WEWORK_E2E_SYSTEM_PRESSURE !== 'idle'
+  ) {
+    return null
+  }
+  return { cpuLoadRatio: 0.1, freeMemoryRatio: 0.5, userIdleSeconds: 60 }
 }
 
 export async function systemPressureSnapshot(): Promise<{
@@ -1620,6 +1636,8 @@ export async function systemPressureSnapshot(): Promise<{
   freeMemoryRatio: number
   userIdleSeconds: number
 }> {
+  const override = e2eSystemPressureOverride()
+  if (override) return override
   const cpuBefore = cpuTimeSample()
   await new Promise(resolve => setTimeout(resolve, 100))
   const cpuAfter = cpuTimeSample()

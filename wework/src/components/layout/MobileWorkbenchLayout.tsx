@@ -44,7 +44,11 @@ import { useWorkbenchPaneSession } from './useWorkbenchPaneSession'
 import { useWorkbenchPaneEnvironment } from './useWorkbenchPaneEnvironment'
 import { useWorkbenchProjectWorkControls } from './useWorkbenchProjectWorkControls'
 import { useRuntimeTaskContinueInIm } from './useRuntimeTaskContinueInIm'
-import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
+import {
+  pendingRequestUserInputPayload,
+  pendingRequestUserInputPayloads,
+  pendingRequestUserInputResponses,
+} from './requestUserInputOverlay'
 import { SubagentStatusIndicator } from './SubagentStatusIndicator'
 import { BufferedChatInput } from './BufferedChatInput'
 import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
@@ -508,6 +512,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                         requestUserInputPayloadKey(pendingRequestUserInput) ?? 'implementation-plan'
                       }
                       payload={pendingRequestUserInput}
+                      messages={paneMessages}
                       onSubmit={response => {
                         const isImplementationPlanRequest =
                           isImplementationPlanRequestUserInput(pendingRequestUserInput)
@@ -515,11 +520,23 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                           isImplementationPlanRequest &&
                           isImplementationPlanConfirmationResponse(response)
                         return paneSession.sendRequestUserInputResponse(response, {
+                          requestUserInputResponses: pendingRequestUserInputResponses(
+                            response,
+                            paneMessages,
+                            paneSession.answeredRequestUserInputIds
+                          ),
                           appendUserMessage: isImplementationPlanRequest,
                           forceDefaultCollaborationMode: shouldImplementPlan,
                         })
                       }}
-                      onIgnore={() => paneSession.ignoreRequestUserInput(pendingRequestUserInput)}
+                      onIgnore={() =>
+                        paneSession.ignoreRequestUserInput(
+                          pendingRequestUserInputPayloads(
+                            paneMessages,
+                            paneSession.answeredRequestUserInputIds
+                          )
+                        )
+                      }
                     />
                   ) : (
                     <BufferedChatInput

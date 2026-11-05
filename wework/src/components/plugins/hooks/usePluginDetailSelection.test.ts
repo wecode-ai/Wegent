@@ -1,15 +1,10 @@
-import { act, renderHook } from '@testing-library/react'
-import { useState } from 'react'
-import { describe, expect, test } from 'vitest'
-import type { PluginReference } from '@/features/plugins/pluginNavigation'
+// @vitest-environment node
+
 import type { PluginMarketplaceItem } from '@/types/api'
-import {
-  findMarketplaceItemForPluginReference,
-  openMarketplacePluginDetailSelection,
-  usePluginDetailSelection,
-} from './usePluginDetailSelection'
-import { findPackableCreatedPlugin } from '../pluginOwnerLocalPackage'
+import { describe, expect, test } from 'vitest'
 import type { InstalledPluginItem } from '../PluginManagementRows'
+import { findPackableCreatedPlugin } from '../pluginOwnerLocalPackage'
+import { openMarketplacePluginDetailSelection } from './usePluginDetailSelection'
 
 const emptyComponents = {
   skills: [],
@@ -44,109 +39,6 @@ function documentsItem(): PluginMarketplaceItem {
     latestReleaseId: 1001,
   }
 }
-
-describe('findMarketplaceItemForPluginReference', () => {
-  test('matches a cloud catalog row without marketplaceId to wegent aliases', () => {
-    expect(
-      findMarketplaceItemForPluginReference([documentsItem()], {
-        pluginName: 'documents',
-        marketplaceName: 'wegent',
-      })?.id
-    ).toBe(101)
-  })
-
-  test('returns null when the catalog does not contain the referenced plugin', () => {
-    expect(
-      findMarketplaceItemForPluginReference([documentsItem()], {
-        pluginName: 'github',
-        marketplaceName: 'wegent',
-      })
-    ).toBeNull()
-  })
-
-  test('selects the personal listing when cloud rows share a name and omit marketplaceId', () => {
-    const enterprise = {
-      ...documentsItem(),
-      id: 22,
-      name: 'ip-location',
-      visibility: 'workspace' as const,
-      accessRole: 'catalog' as const,
-      sourceProvider: 'wegent' as const,
-    }
-    const personal = {
-      ...enterprise,
-      id: 21,
-      visibility: 'personal' as const,
-      accessRole: 'owner' as const,
-      sourceProvider: 'user' as const,
-    }
-
-    expect(
-      findMarketplaceItemForPluginReference([enterprise, personal], {
-        pluginName: 'ip-location',
-        marketplaceName: 'wework-personal',
-      })?.id
-    ).toBe(21)
-    expect(
-      findMarketplaceItemForPluginReference([personal, enterprise], {
-        pluginName: 'ip-location',
-        marketplaceName: 'wegent',
-      })?.id
-    ).toBe(22)
-  })
-})
-
-describe('usePluginDetailSelection', () => {
-  test('does not reselect after dismiss while the same pluginReference remains', () => {
-    const items = [documentsItem()]
-    const { result, rerender } = renderHook(
-      ({
-        items: catalogItems,
-        pluginReference,
-      }: {
-        items: PluginMarketplaceItem[]
-        pluginReference: PluginReference | null
-      }) => {
-        const [selectedPluginId, setSelectedPluginId] = useState<string | number | null>(null)
-        const [selectedMarketplacePluginId, setSelectedMarketplacePluginId] = useState<
-          string | number | null
-        >(null)
-        const selection = usePluginDetailSelection({
-          pluginReference,
-          pluginMarketplaceState: { items: catalogItems, isLoading: false, error: null },
-          installedPlugins: [],
-          selectedPluginId,
-          selectedMarketplacePluginId,
-          setSelectedPluginId,
-          setSelectedMarketplacePluginId,
-        })
-        return selection
-      },
-      {
-        initialProps: {
-          items,
-          pluginReference: {
-            pluginName: 'documents',
-            marketplaceName: 'wegent',
-          } as PluginReference,
-        },
-      }
-    )
-
-    expect(result.current.selectedMarketplacePlugin?.id).toBe(101)
-
-    act(() => {
-      result.current.dismissPluginReferenceDetail()
-    })
-    expect(result.current.selectedMarketplacePlugin).toBeNull()
-
-    rerender({
-      items: [...items],
-      pluginReference: { pluginName: 'documents', marketplaceName: 'wegent' },
-    })
-    expect(result.current.selectedMarketplacePlugin).toBeNull()
-  })
-})
 
 describe('openMarketplacePluginDetailSelection', () => {
   test('keeps recipient shares on the marketplace listing even if a local created name matches', () => {

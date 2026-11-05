@@ -60,6 +60,8 @@ action = sys.argv[1]
 with (Path.home() / "conversation-qr-events.jsonl").open("a") as log:
     log.write(json.dumps({"action": action, "revision": sys.argv[2] if len(sys.argv) > 2 else "original"}) + "\\n")
 if action == "health":
+    if (Path.home() / "conversation-qr-health-fail").exists() and (Path.home() / "conversation-qr-health-fail").read_text() == "throw":
+        raise RuntimeError("E2E_QR_HEALTH_FAILED")
     result = {"status": "error", "hint": "E2E_QR_HEALTH_FAILED"} if (Path.home() / "conversation-qr-health-fail").exists() else {"status": "ok" if approval.exists() else "need_login"}
 elif action == "logout":
     approval.unlink(missing_ok=True)
