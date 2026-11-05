@@ -309,7 +309,12 @@ impl RuntimeWorkRpcHandler {
         let store = LocalTaskStore::open(self.task_store_path.as_ref())
             .map_err(super::stand_in::settings_error)?;
         let scope = self.conversation_scope(identity, &store)?;
-        for key in ["cursor", "beforeCursor", "afterCursor"] {
+        for key in [
+            "cursor",
+            "beforeCursor",
+            "afterCursor",
+            "messageContentCursor",
+        ] {
             if args.get(key).is_some_and(|value| !value.is_string()) {
                 return Err(AppIpcError::new(
                     "bad_request",
@@ -336,9 +341,9 @@ impl RuntimeWorkRpcHandler {
                 .local_task_link(id)
                 .filter(|link| self.conversation_visible(link, identity, &scope, &store))
                 .ok_or_else(denied)?;
-            let mut page = self.transcript(json!({"taskId":link.local_task_id,"limit":limit,"includeFullContent":false,"beforeCursor":args["beforeCursor"],"afterCursor":args["afterCursor"]})).await?;
-            filter_history_page(&mut page, since, until);
-            return Ok(page);
+            return self
+                .read_bounded_history(identity, &link, args, limit, since, until)
+                .await;
         }
         let mut links: Vec<_> = self
             .local_task_links(true)
