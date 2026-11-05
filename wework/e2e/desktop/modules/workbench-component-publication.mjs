@@ -14,7 +14,7 @@ export async function verifyWindowsComponentPublication({ resources, environment
     `
 param([string]$Path, [int]$ReleaseAfterMs = 0)
 $ErrorActionPreference = 'Stop'
-$prefix = [string]::Concat([char]92, [char]92, '?', [char]92)
+$prefix = '{0}{0}?{0}' -f [char]92
 $nativePath = if ($Path.StartsWith($prefix)) { $Path } else { $prefix + $Path }
 if ([System.IO.Directory]::Exists($nativePath)) {
   Add-Type -TypeDefinition @'
