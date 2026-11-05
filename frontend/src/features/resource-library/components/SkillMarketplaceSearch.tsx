@@ -35,6 +35,7 @@ interface InstallingSkill {
   error?: string
 }
 
+/** Search UI for one external skill marketplace provider. */
 export function SkillMarketplaceSearch({
   provider,
   onSkillsChange,
@@ -56,6 +57,7 @@ export function SkillMarketplaceSearch({
   const [hasSearched, setHasSearched] = useState(false)
   const initiallyLoadedProviderRef = useRef<string | null>(null)
   const lastInitialKeywordRef = useRef(normalizedInitialKeyword)
+  const committedKeywordRef = useRef(normalizedInitialKeyword)
   const submittedKeywordRef = useRef<string | null>(null)
   const searchRequestIdRef = useRef(0)
   const onKeywordChangeRef = useRef(onKeywordChange)
@@ -103,12 +105,13 @@ export function SkillMarketplaceSearch({
 
   // Handle page change
   const handlePageChange = (newPage: number) => {
-    void handleSearch(keyword.trim(), newPage)
+    void handleSearch(committedKeywordRef.current, newPage)
   }
 
   /** Runs a user-initiated search and reports the keyword back to the page. */
   const submitSearch = () => {
     const nextKeyword = keyword.trim()
+    committedKeywordRef.current = nextKeyword
     // Remember the local submission so the page writing it back to the URL does
     // not trigger a duplicate request. Re-submitting the current URL keyword
     // cannot change the prop, so there is nothing to suppress.
@@ -128,6 +131,7 @@ export function SkillMarketplaceSearch({
     }
     submittedKeywordRef.current = null
     initiallyLoadedProviderRef.current = provider.key
+    committedKeywordRef.current = normalizedInitialKeyword
     setKeyword(normalizedInitialKeyword)
     void handleSearch(normalizedInitialKeyword, 1)
   }, [handleSearch, normalizedInitialKeyword, provider.key])

@@ -306,4 +306,32 @@ describe('SkillMarketplaceSearch', () => {
     )
     expect(screen.getByTestId('skill-marketplace-card-weibo/Excel Skill')).toBeInTheDocument()
   })
+
+  it('paginates with the last submitted keyword instead of the draft input', async () => {
+    const user = userEvent.setup()
+    mockedSearchSkills.mockResolvedValue({
+      total: 40,
+      page: 1,
+      pageSize: 20,
+      skills: [],
+    })
+
+    render(
+      <SkillMarketplaceSearch provider={{ key: 'weibo', name: 'SkillHub' }} initialKeyword="PDF" />
+    )
+
+    const nextButton = await screen.findByTestId('skill-marketplace-next-weibo')
+    const input = screen.getByTestId('skill-marketplace-search-input-weibo')
+    await user.clear(input)
+    await user.type(input, 'draft')
+    await user.click(nextButton)
+
+    await waitFor(() =>
+      expect(mockedSearchSkills).toHaveBeenLastCalledWith('weibo', {
+        keyword: 'PDF',
+        page: 2,
+        pageSize: 20,
+      })
+    )
+  })
 })

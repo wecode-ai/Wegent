@@ -151,6 +151,7 @@ function TeamSkillResources({
   )
 }
 
+/** Routes collaboration templates to their dedicated marketplace page. */
 export function ResourceLibraryPage() {
   const searchParams = useSearchParams()
   return searchParams.get('type') === 'template' ? (
@@ -160,6 +161,7 @@ export function ResourceLibraryPage() {
   )
 }
 
+/** Resource library body with URL-driven marketplace search state. */
 function ResourceLibraryContent() {
   const { t } = useTranslation('resource-library')
   const { toast } = useToast()
@@ -261,9 +263,6 @@ function ResourceLibraryContent() {
     },
     [pathname, router, searchParams]
   )
-  const replaceParamsRef = useRef(replaceParams)
-  replaceParamsRef.current = replaceParams
-
   useEffect(() => {
     const updates: Record<string, string | null> = {}
     if (typeParam && typeParam !== resourceType) updates.type = resourceType
@@ -318,9 +317,10 @@ function ResourceLibraryContent() {
       skillMarketProvidersLoaded &&
       !skillMarketProvidersError
     ) {
-      replaceParamsRef.current({ [EXTERNAL_MARKETPLACE_PARAM]: null })
+      replaceParams({ [EXTERNAL_MARKETPLACE_PARAM]: null })
     }
   }, [
+    replaceParams,
     requestedMarketplaceParam,
     skillMarketProviders,
     skillMarketProvidersError,

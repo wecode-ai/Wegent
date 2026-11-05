@@ -23,6 +23,7 @@ interface McpMarketplaceProps {
   onKeywordChange?: (keyword: string) => void
 }
 
+/** MCP provider marketplace with a locally filtered server list. */
 export function McpMarketplace({ initialKeyword = '', onKeywordChange }: McpMarketplaceProps) {
   const { t } = useTranslation('resource-library')
   const normalizedInitialKeyword = initialKeyword.trim()

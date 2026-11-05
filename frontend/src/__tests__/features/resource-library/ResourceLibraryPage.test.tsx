@@ -14,6 +14,7 @@ import type { Team } from '@/types/api'
 
 const mockReplace = jest.fn()
 const mockPush = jest.fn()
+const mockRouter = { replace: mockReplace, push: mockPush }
 const mockToast = jest.fn()
 const mockSavedTeam = {
   id: 42,
@@ -24,7 +25,7 @@ const mockSavedTeam = {
 let mockSearchParams = new URLSearchParams()
 
 jest.mock('next/navigation', () => ({
-  useRouter: () => ({ replace: mockReplace, push: mockPush }),
+  useRouter: () => mockRouter,
   usePathname: () => '/resource-library',
   useSearchParams: () => mockSearchParams,
 }))
