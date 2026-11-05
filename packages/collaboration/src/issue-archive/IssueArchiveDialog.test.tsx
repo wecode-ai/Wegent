@@ -19,12 +19,29 @@ const translate: CollaborationTranslate = (key, fallback, options) => {
   }
   return text;
 };
+const originalDialogMethods = Object.getOwnPropertyDescriptors(
+  HTMLDialogElement.prototype,
+);
 
 describe("IssueArchiveDialog", () => {
   let container: HTMLDivElement;
   let root: Root;
 
   beforeEach(() => {
+    Object.defineProperties(HTMLDialogElement.prototype, {
+      showModal: {
+        configurable: true,
+        value(this: HTMLDialogElement) {
+          this.open = true;
+        },
+      },
+      close: {
+        configurable: true,
+        value(this: HTMLDialogElement) {
+          this.open = false;
+        },
+      },
+    });
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -33,6 +50,12 @@ describe("IssueArchiveDialog", () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+    for (const method of ["showModal", "close"]) {
+      const original = originalDialogMethods[method];
+      if (original)
+        Object.defineProperty(HTMLDialogElement.prototype, method, original);
+      else Reflect.deleteProperty(HTMLDialogElement.prototype, method);
+    }
   });
 
   async function renderDialog(
@@ -67,10 +90,25 @@ describe("IssueArchiveDialog", () => {
 
   it("describes subtree and batch archives", async () => {
     await renderDialog({ hasChildren: true });
-    expect(container.textContent).toContain("同批已完成子任务");
+    expect(container.textContent).toContain("及其子任务将从看板中归档");
+    expect(container.textContent).toContain("正在执行的 AI 运行会被停止");
 
     await renderDialog({ count: 3 });
     expect(container.textContent).toContain("归档 3 个已完成任务");
+  });
+
+  it("focuses Cancel and restores focus when the confirmation closes", async () => {
+    const trigger = container;
+    trigger.tabIndex = -1;
+    trigger.focus();
+    await renderDialog();
+    expect(document.activeElement).toBe(
+      container.querySelector(
+        `[data-testid="${collaborationTestIds.issueArchiveCancel}"]`,
+      ),
+    );
+    await act(async () => root.render(null));
+    expect(document.activeElement).toBe(trigger);
   });
 
   it("invokes callbacks and disables actions while busy", async () => {

@@ -66,6 +66,8 @@ Inside the assignee dropdown control, an outlined person with a check marks **Re
 
 Assigners and recipients can view the receipts, which refresh while details remain open. The latest active assignment in the activity timeline shows the same receipts and updates together with the assignee control, without polling historical entries separately. Reassignment moves the displayed receipts to the latest assignment activity; unassignment removes the former recipient's receipts. Reassignment starts a new receipt history. Older assignments without reliable evidence show “No receipt recorded.” Executors retain pending cloud receipts for up to 30 days, increasing failed retry intervals to at most one hour. Restarting preserves the retry delay. Local-project receipts stay on the owning Executor.
 
+Stand-ins save the recipient-owned device task binding and reception receipt before starting execution. Background handling records reception when the assignment enters its pending queue. Reception does not imply successful execution, and a later launch failure does not revoke it. Cloud acknowledgements still validate the active assignment, owned device and task binding; rejection diagnostics do not relax these checks.
+
 ## Calendar arrangements and project leaders
 
 Record a matter and its trigger time in **Settings → Connections → Calendar**, with one-time or recurring triggers. At that time, the owning stand-in receives the matter using its current responsibilities, device, model, and working directory. Processing is configured for the whole Calendar connection. Calendar entries save independently and protect unsaved edits when returning or closing. Open the corresponding work from its execution history.
@@ -73,3 +75,24 @@ Record a matter and its trigger time in **Settings → Connections → Calendar*
 **Scheduled** in the Tasks sidebar remains independent and retains its goal, target task, model, and execution environment settings without requiring experimental features. Scheduled tasks and Calendar connections manage separate lists, editors, and run histories. The stand-in work list contains concrete work.
 
 The project conversation uses the existing collaboration group leader. Its header identifies the group and leader, and settings use the existing group configuration. Automatic project event handling enables that leader on the selected device. Each project/group has exactly one active member/device binding, with explicit takeover required for switching. Private chat and memory remain private until selected content is explicitly published to an Issue.
+
+## Choose features on first use
+
+Opening My stand-in for the first time shows feature onboarding, including once
+for existing users after upgrading. Weekly work review is checked by default. It
+reviews your Wework tasks and conversations on this execution device over the
+preceding seven days, every Monday at 09:00 Beijing time. Adjust the time or
+uncheck the feature before selecting Get started. Maybe later creates nothing
+and leaves onboarding available on your next visit.
+
+Reviews use the existing calendar and produce at most three suggestions with
+task evidence, referring to previous reports and your feedback. Reports stay in
+their work conversations and disclose incomplete history. They do not
+automatically change memories, settings or code, or send reports externally.
+Execution inherits the primary stand-in's device, model and calendar processing
+policy. Selecting a review does not re-enable a paused primary stand-in.
+
+Edit, pause or delete Weekly work review under **Stand-in settings → Connections
+→ Calendar**. Deleted arrangements are not automatically restored; use the
+matching template to add one again. Choices are stored separately for each
+account and Executor, without combining history from other devices.

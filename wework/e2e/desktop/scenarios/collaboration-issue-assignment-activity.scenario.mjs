@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { verifyCommentAssignment } from '../modules/comment-assignment.mjs'
 import { verifyAssignmentActivityReceipts } from '../modules/assignment-activity-receipts.mjs'
+import { verifyIssueWebLink, verifyLocalIssueHasNoWebLink } from '../modules/issue-web-link.mjs'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { createLocalCollaborationProject, reloadMainWindow } from '../modules/workspace-flows.mjs'
@@ -186,6 +187,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     assert.equal(await control.command('getValue', title), LOCAL_ISSUE)
     await verifyAssignments(control, expected, null)
     await captureScreenshot(control, 'assignment-activity-02-local-persisted.png', CONTENT)
+    await verifyLocalIssueHasNoWebLink(control)
     await verifyAssignmentActivityReceipts(control, null)
   }
 
@@ -311,6 +313,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       assert.equal(String(persisted.assignee_user_id), String(owner.id))
       assert.deepEqual(await request(`/api/v1/loop-items/${issue.id}/tasks`), [])
       await captureScreenshot(control, 'assignment-activity-01-cloud-persisted.png', CONTENT)
+      await verifyIssueWebLink(control, { request, project, issue })
       await verifyCommentAssignment(control, { request, project, owner, member })
       await verifyLocalProject(control)
     },

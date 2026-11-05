@@ -340,20 +340,30 @@ function FileEditDurationText({
   const durationIsRunning = duration
     ? duration.completedAt === undefined
     : isRunning;
-  const text = useToolDuration(
-    duration?.startedAt ?? fallbackStartedAt,
-    duration?.completedAt ?? fallbackCompletedAt,
-    durationIsRunning,
-  );
-
   return (
     <span className="ml-auto shrink-0 pl-2 font-mono text-xs text-text-muted">
-      {text}
+      <ToolDurationText
+        startedAt={duration?.startedAt ?? fallbackStartedAt}
+        fallbackEndAt={duration?.completedAt ?? fallbackCompletedAt}
+        isRunning={durationIsRunning}
+      />
     </span>
   );
 }
 
-export function useToolDuration(
+export function ToolDurationText({
+  startedAt,
+  fallbackEndAt,
+  isRunning,
+}: {
+  startedAt: number
+  fallbackEndAt: number | undefined
+  isRunning: boolean
+}) {
+  return useToolDuration(startedAt, fallbackEndAt, isRunning)
+}
+
+function useToolDuration(
   startedAt: number,
   fallbackEndAt: number | undefined,
   isRunning: boolean,

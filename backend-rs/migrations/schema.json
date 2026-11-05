@@ -1,0 +1,471 @@
+{
+  "revision": "f3a7c9e1b2d4",
+  "tables": [
+    {
+      "table": "background_executions",
+      "statements": [
+        "CREATE TABLE background_executions (\n\tid INTEGER NOT NULL AUTO_INCREMENT, \n\tuser_id INTEGER NOT NULL, \n\tsubscription_id INTEGER NOT NULL, \n\ttask_id BIGINT NOT NULL, \n\tinbox_message_id INTEGER NOT NULL COMMENT 'Originating QueueMessage ID for inbox auto-processing' DEFAULT '0', \n\ttrigger_type VARCHAR(50) NOT NULL, \n\ttrigger_reason VARCHAR(500) NOT NULL, \n\tprompt TEXT NOT NULL, \n\tstatus VARCHAR(50) NOT NULL, \n\tresult_summary TEXT NOT NULL, \n\terror_message TEXT NOT NULL, \n\tretry_attempt INTEGER NOT NULL, \n\tversion INTEGER NOT NULL, \n\tstarted_at DATETIME NOT NULL, \n\tcompleted_at DATETIME NOT NULL, \n\tcreated_at DATETIME NOT NULL, \n\tupdated_at DATETIME NOT NULL, \n\tPRIMARY KEY (id)\n)CHARSET=utf8mb4 ENGINE=InnoDB COLLATE utf8mb4_unicode_ci",
+        "CREATE INDEX ix_background_executions_created_at ON background_executions (created_at)",
+        "CREATE INDEX ix_background_executions_inbox_message_id ON background_executions (inbox_message_id)",
+        "CREATE INDEX ix_background_executions_status ON background_executions (status)",
+        "CREATE INDEX ix_background_executions_subscription_id ON background_executions (subscription_id)",
+        "CREATE INDEX ix_background_executions_task_id ON background_executions (task_id)",
+        "CREATE INDEX ix_background_executions_user_id ON background_executions (user_id)",
+        "CREATE INDEX ix_bg_exec_subscription_created ON background_executions (subscription_id, created_at)",
+        "CREATE INDEX ix_bg_exec_user_created ON background_executions (user_id, created_at)",
+        "CREATE INDEX ix_bg_exec_user_status ON background_executions (user_id, status)"
+      ]
+    },
+    {
+      "table": "dingtalk_synced_nodes",
+      "statements": [
+        "CREATE TABLE dingtalk_synced_nodes (\n\tid INTEGER NOT NULL AUTO_INCREMENT, \n\tuser_id INTEGER NOT NULL, \n\tdingtalk_node_id VARCHAR(64) NOT NULL, \n\tname VARCHAR(500) NOT NULL, \n\tdoc_url VARCHAR(1024) NOT NULL, \n\tparent_node_id VARCHAR(64) NOT NULL, \n\tnode_type VARCHAR(32) NOT NULL, \n\tworkspace_id VARCHAR(64) NOT NULL, \n\tsource VARCHAR(16) NOT NULL, \n\tcontent_type VARCHAR(32) NOT NULL, \n\traw_metadata JSON, \n\tcontent_updated_at DATETIME NOT NULL, \n\tis_active BOOL NOT NULL, \n\tlast_synced_at DATETIME NOT NULL, \n\tcreated_at DATETIME NOT NULL, \n\tupdated_at DATETIME NOT NULL, \n\tPRIMARY KEY (id)\n)CHARSET=utf8mb4 ENGINE=InnoDB COMMENT='DingTalk synced document nodes' COLLATE utf8mb4_unicode_ci",
+        "CREATE UNIQUE INDEX ix_dingtalk_nodes_user_node_source ON dingtalk_synced_nodes (user_id, dingtalk_node_id, source)",
+        "CREATE INDEX ix_dingtalk_nodes_user_parent ON dingtalk_synced_nodes (user_id, parent_node_id)",
+        "CREATE INDEX ix_dingtalk_synced_nodes_user_id ON dingtalk_synced_nodes (user_id)"
+      ]
+    },
+    {
+      "table": "kinds",
+      "statements": [
+        "CREATE TABLE kinds (\n\tid INTEGER NOT NULL AUTO_INCREMENT, \n\tuser_id INTEGER NOT NULL, \n\tkind VARCHAR(50) NOT NULL, \n\tname VARCHAR(100) NOT NULL, \n\tnamespace VARCHAR(100) NOT NULL, \n\tjson JSON NOT NULL, \n\tis_active BOOL, \n\tcreated_at DATETIME, \n\tupdated_at DATETIME, \n\tPRIMARY KEY (id)\n)CHARSET=utf8mb4 ENGINE=InnoDB COLLATE utf8mb4_unicode_ci",
+        "CREATE INDEX idx_kinds_name_kind_ns_active ON kinds (name, kind, namespace, is_active)",
+        "CREATE INDEX ix_kinds_id ON kinds (id)",
+        "CREATE INDEX ix_kinds_kind ON kinds (kind)",
+        "CREATE INDEX ix_kinds_kind_ns_active ON kinds (kind, namespace, is_active)",
+        "CREATE INDEX ix_kinds_user_kind_ns_active ON kinds (user_id, kind, namespace, is_active)"
+      ]
+    },
+    {
+      "table": "knowledge_artifacts",
+      "statements": [
+        "CREATE TABLE knowledge_artifacts (\n\tartifact_id VARCHAR(36) NOT NULL COMMENT 'Artifact UUID', \n\tknowledge_base_id INTEGER NOT NULL COMMENT 'Owning knowledge base ID; 0 means unset' DEFAULT '0', \n\tartifact_type VARCHAR(32) NOT NULL COMMENT 'Artifact type: briefing or mind_map' DEFAULT 'briefing', \n\ttitle VARCHAR(255) NOT NULL COMMENT 'Artifact title' DEFAULT '', \n\tstatus VARCHAR(32) NOT NULL COMMENT 'Lifecycle status' DEFAULT 'queued', \n\ttask_id BIGINT NOT NULL COMMENT 'Related task ID; 0 means unset' DEFAULT '0', \n\tassistant_subtask_id BIGINT NOT NULL COMMENT 'Related assistant subtask ID; 0 means unset' DEFAULT '0', \n\tcontent TEXT NOT NULL COMMENT 'Generated content; empty means unavailable', \n\tsource_document_ids JSON NOT NULL COMMENT 'Source document ID list', \n\tgeneration_config JSON NOT NULL COMMENT 'Generation configuration', \n\terror_message VARCHAR(2000) NOT NULL COMMENT 'Failure message; empty means no error' DEFAULT '', \n\tuser_id INTEGER NOT NULL COMMENT 'Creator user ID; 0 means unset' DEFAULT '0', \n\tattempt INTEGER NOT NULL COMMENT 'Generation attempt number' DEFAULT '1', \n\tcreated_at DATETIME NOT NULL COMMENT 'Creation time' DEFAULT CURRENT_TIMESTAMP, \n\tupdated_at DATETIME NOT NULL COMMENT 'Last update time' DEFAULT CURRENT_TIMESTAMP, \n\tPRIMARY KEY (artifact_id)\n)CHARSET=utf8mb4 ENGINE=InnoDB COMMENT='Knowledge base generated artifacts'",
+        "CREATE INDEX idx_knowledge_artifacts_kb_created ON knowledge_artifacts (knowledge_base_id, created_at, artifact_id)"
+      ]
+    },
+    {
+      "table": "knowledge_document_external_sources",
+      "statements": [
+        "CREATE TABLE knowledge_document_external_sources (\n\tdocument_id INTEGER NOT NULL COMMENT '知识文档ID，关联knowledge_documents.id', \n\tkind_id INTEGER NOT NULL COMMENT '所属知识库ID，与知识文档的kind_id一致' DEFAULT '0', \n\texternal_provider VARCHAR(32) NOT NULL COMMENT '外部文档来源标识，如dingtalk；业务写入时不能为空' DEFAULT '', \n\texternal_resource_id VARCHAR(255) NOT NULL COMMENT '外部来源中的文档资源ID；业务写入时不能为空' DEFAULT '', \n\tPRIMARY KEY (document_id), \n\tCONSTRAINT uniq_knowledge_documents_external UNIQUE (kind_id, external_provider, external_resource_id)\n)CHARSET=utf8mb4 ENGINE=InnoDB COMMENT='知识文档外部身份表，仅外部导入文档有记录'"
+      ]
+    },
+    {
+      "table": "knowledge_documents",
+      "statements": [
+        "CREATE TABLE knowledge_documents (\n\tid INTEGER NOT NULL AUTO_INCREMENT, \n\tkind_id INTEGER NOT NULL, \n\tattachment_id INTEGER NOT NULL, \n\tname VARCHAR(255) NOT NULL, \n\tfile_extension VARCHAR(50) NOT NULL, \n\tfile_size BIGINT NOT NULL, \n\tstatus ENUM('enabled','disabled') NOT NULL, \n\tuser_id INTEGER NOT NULL, \n\tis_active BOOL NOT NULL, \n\tindex_status VARCHAR(32) NOT NULL, \n\tindex_generation INTEGER NOT NULL, \n\tsplitter_config JSON NOT NULL, \n\tsource_type VARCHAR(50) NOT NULL, \n\tsource_config JSON NOT NULL, \n\torigin VARCHAR(20) NOT NULL DEFAULT 'user', \n\tfolder_id INTEGER NOT NULL, \n\tsummary JSON, \n\tchunks JSON, \n\tcreated_at DATETIME NOT NULL, \n\tupdated_at DATETIME NOT NULL, \n\tPRIMARY KEY (id)\n)CHARSET=utf8mb4 ENGINE=InnoDB COMMENT='Knowledge document table for file metadata' COLLATE utf8mb4_unicode_ci",
+        "CREATE INDEX ix_knowledge_documents_attachment ON knowledge_documents (attachment_id)",
+        "CREATE INDEX ix_knowledge_documents_folder_id ON knowledge_documents (folder_id)",
+        "CREATE INDEX ix_knowledge_documents_id ON knowledge_documents (id)",
+        "CREATE INDEX ix_knowledge_documents_kind_active_created ON knowledge_documents (kind_id, is_active, created_at)",
+        "CREATE INDEX ix_knowledge_documents_kind_id ON knowledge_documents (kind_id)",
+        "CREATE INDEX ix_knowledge_documents_user_id ON knowledge_documents (user_id)"
+      ]
+    },
+    {
+      "table": "knowledge_folders",
+      "statements": [
+        "CREATE TABLE knowledge_folders (\n\tid INTEGER NOT NULL AUTO_INCREMENT, \n\tkind_id INTEGER NOT NULL, \n\tparent_id INTEGER NOT NULL, \n\tname VARCHAR(255) NOT NULL, \n\torigin VARCHAR(20) NOT NULL DEFAULT 'user', \n\tcreated_at DATETIME NOT NULL, \n\tupdated_at DATETIME NOT NULL, \n\tPRIMARY KEY (id)\n)CHARSET=utf8mb4 ENGINE=InnoDB COMMENT='Knowledge base folder hierarchy for multi-level document organization' COLLATE utf8mb4_unicode_ci",
+        "CREATE INDEX ix_knowledge_folders_id ON knowledge_folders (id)",
+        "CREATE INDEX ix_knowledge_folders_kind_id ON knowledge_folders (kind_id)",
+        "CREATE INDEX ix_knowledge_folders_parent ON knowledge_folders (kind_id, parent_id)"
+      ]
+    },
+    {
+      "table": "loop_item_executions",
+      "statements": [
+        "CREATE TABLE loop_item_executions (\n\tid BIGINT NOT NULL AUTO_INCREMENT, \n\tloop_item_id VARCHAR(64) NOT NULL DEFAULT '', \n\tcloud_project_id VARCHAR(64) NOT NULL DEFAULT '', \n\texecutor_owner_user_id INTEGER NOT NULL DEFAULT '0', \n\tagent_id VARCHAR(64) NOT NULL DEFAULT '', \n\tteam_id INTEGER NOT NULL COMMENT 'Executing Wegent Team id; 0 means none' DEFAULT '0', \n\tbackend_task_id BIGINT NOT NULL COMMENT 'Managed backend task id; 0 means none' DEFAULT '0', \n\tautomation_run_id VARCHAR(64) NOT NULL DEFAULT '', \n\texecution_environment VARCHAR(16) NOT NULL DEFAULT '', \n\texecution_device_id VARCHAR(100) NOT NULL DEFAULT '', \n\truntime_instance_id VARCHAR(100) NOT NULL DEFAULT '', \n\tassigner_user_id INTEGER NOT NULL DEFAULT '0', \n\tstatus VARCHAR(24) NOT NULL DEFAULT 'queued', \n\tpriority_weight INTEGER NOT NULL DEFAULT '0', \n\tqueued_at DATETIME NOT NULL DEFAULT '1970-01-01 00:00:00', \n\tstarted_at DATETIME NOT NULL DEFAULT '1970-01-01 00:00:00', \n\tcompleted_at DATETIME NOT NULL DEFAULT '1970-01-01 00:00:00', \n\tlease_expires_at DATETIME NOT NULL DEFAULT '1970-01-01 00:00:00', \n\theartbeat_at DATETIME NOT NULL DEFAULT '1970-01-01 00:00:00', \n\tattempt_no INTEGER NOT NULL DEFAULT '1', \n\tprevious_execution_id BIGINT NOT NULL DEFAULT '0', \n\texecution_scope VARCHAR(160) NOT NULL DEFAULT '', \n\tobserved_state VARCHAR(24) NOT NULL DEFAULT 'unconfirmed', \n\tsync_state VARCHAR(16) NOT NULL DEFAULT 'pending', \n\tclaimed_at DATETIME NOT NULL DEFAULT '1970-01-01 00:00:00', \n\tstart_requested_at DATETIME NOT NULL DEFAULT '1970-01-01 00:00:00', \n\tobserved_at DATETIME NOT NULL DEFAULT '1970-01-01 00:00:00', \n\tcancel_requested_at DATETIME NOT NULL DEFAULT '1970-01-01 00:00:00', \n\tlast_event_seq BIGINT NOT NULL DEFAULT '0', \n\ttermination_reason VARCHAR(64) NOT NULL DEFAULT '', \n\tretry_attempt INTEGER NOT NULL DEFAULT '0', \n\tmax_retries INTEGER NOT NULL DEFAULT '1', \n\terror_message TEXT NOT NULL, \n\texecution_note VARCHAR(500) NOT NULL DEFAULT '', \n\tapproval_status VARCHAR(16) NOT NULL DEFAULT '', \n\tapproved_by_user_id INTEGER NOT NULL DEFAULT '0', \n\tapproved_at DATETIME NOT NULL DEFAULT '1970-01-01 00:00:00', \n\trejected_reason VARCHAR(500) NOT NULL DEFAULT '', \n\truntime_device_id VARCHAR(255) NOT NULL DEFAULT '', \n\truntime_task_id VARCHAR(255) NOT NULL DEFAULT '', \n\texecution_payload TEXT NOT NULL, \n\tversion INTEGER NOT NULL DEFAULT '1', \n\tcreated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, \n\tupdated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, \n\tPRIMARY KEY (id)\n)CHARSET=utf8mb4 ENGINE=InnoDB",
+        "CREATE INDEX idx_exec_agent_status ON loop_item_executions (agent_id, status)",
+        "CREATE INDEX idx_exec_assigner_status ON loop_item_executions (assigner_user_id, status)",
+        "CREATE INDEX idx_exec_automation_run_id ON loop_item_executions (automation_run_id)",
+        "CREATE INDEX idx_exec_device_status_order ON loop_item_executions (executor_owner_user_id, execution_device_id, execution_environment, status, priority_weight, queued_at, id)",
+        "CREATE INDEX idx_exec_item_status ON loop_item_executions (loop_item_id, status)",
+        "CREATE INDEX idx_exec_runtime_capacity ON loop_item_executions (executor_owner_user_id, runtime_instance_id, status)",
+        "CREATE INDEX idx_exec_scope_status ON loop_item_executions (execution_scope, status)",
+        "CREATE INDEX idx_exec_status_device ON loop_item_executions (status, execution_device_id)",
+        "CREATE INDEX idx_exec_team_status ON loop_item_executions (team_id, status)"
+      ]
+    },
+    {
+      "table": "marketplace_resources",
+      "statements": [
+        "CREATE TABLE marketplace_resources (\n\tkind_id INTEGER NOT NULL COMMENT 'Associated Kind resource ID', \n\towner_user_id INTEGER NOT NULL COMMENT 'Owner user ID copied from the associated Kind resource' DEFAULT '0', \n\tresource_type VARCHAR(20) NOT NULL COMMENT 'Resource type: agent or skill' DEFAULT '', \n\trecommendation_score SMALLINT NOT NULL COMMENT 'Marketplace recommendation score from 0 to 100' DEFAULT '0', \n\tinstall_count INTEGER NOT NULL COMMENT 'Cumulative first-time marketplace installations' DEFAULT '0', \n\tpublished_at DATETIME NOT NULL COMMENT 'Initial marketplace publication time' DEFAULT CURRENT_TIMESTAMP, \n\tupdated_at DATETIME NOT NULL COMMENT 'Marketplace resource update time' DEFAULT CURRENT_TIMESTAMP, \n\tPRIMARY KEY (kind_id)\n)CHARSET=utf8mb4 ENGINE=InnoDB",
+        "CREATE INDEX idx_marketplace_resources_owner_type_updated ON marketplace_resources (owner_user_id, resource_type, updated_at, kind_id)",
+        "CREATE INDEX idx_marketplace_resources_type_installs ON marketplace_resources (resource_type, install_count, updated_at, kind_id)",
+        "CREATE INDEX idx_marketplace_resources_type_recommendation ON marketplace_resources (resource_type, recommendation_score, updated_at, kind_id)",
+        "CREATE INDEX idx_marketplace_resources_type_updated ON marketplace_resources (resource_type, updated_at, kind_id)"
+      ]
+    },
+    {
+      "table": "namespace",
+      "statements": [
+        "CREATE TABLE namespace (\n\tid INTEGER NOT NULL AUTO_INCREMENT, \n\tname VARCHAR(100) NOT NULL, \n\tdisplay_name VARCHAR(100), \n\towner_user_id INTEGER NOT NULL, \n\tvisibility VARCHAR(20) NOT NULL, \n\tdescription TEXT NOT NULL, \n\tlevel VARCHAR(20), \n\tis_active BOOL, \n\tcreated_at DATETIME, \n\tupdated_at DATETIME, \n\tPRIMARY KEY (id)\n)CHARSET=utf8mb4 ENGINE=InnoDB COMMENT='Group (Namespace) table for resource organization' COLLATE utf8mb4_unicode_ci",
+        "CREATE INDEX ix_namespace_id ON namespace (id)",
+        "CREATE INDEX ix_namespace_level ON namespace (level)",
+        "CREATE UNIQUE INDEX ix_namespace_name ON namespace (name)",
+        "CREATE INDEX ix_namespace_owner_user_id ON namespace (owner_user_id)"
+      ]
+    },
+    {
+      "table": "namespace_members",
+      "statements": [
+        "CREATE TABLE namespace_members (\n\tid INTEGER NOT NULL AUTO_INCREMENT, \n\tgroup_name VARCHAR(100) NOT NULL, \n\tuser_id INTEGER NOT NULL, \n\t`role` VARCHAR(20) NOT NULL, \n\tinvited_by_user_id INTEGER NOT NULL, \n\tis_active BOOL, \n\tcreated_at DATETIME, \n\tupdated_at DATETIME, \n\tPRIMARY KEY (id), \n\tCONSTRAINT idx_group_user UNIQUE (group_name, user_id)\n)CHARSET=utf8mb4 ENGINE=InnoDB COMMENT='Group membership table' COLLATE utf8mb4_unicode_ci",
+        "CREATE INDEX ix_namespace_members_group_name ON namespace_members (group_name)",
+        "CREATE INDEX ix_namespace_members_id ON namespace_members (id)",
+        "CREATE INDEX ix_namespace_members_user_id ON namespace_members (user_id)"
+      ]
+    },
+    {
+      "table": "oauth_refresh_tokens",
+      "statements": [
+        "CREATE TABLE oauth_refresh_tokens (\n\tid INTEGER NOT NULL COMMENT 'Primary key' AUTO_INCREMENT, \n\ttoken_hash VARCHAR(64) NOT NULL COMMENT 'SHA-256 hash of the refresh token' DEFAULT '', \n\ttoken_prefix VARCHAR(16) NOT NULL COMMENT 'Non-secret token prefix for diagnostics' DEFAULT '', \n\tfamily_id VARCHAR(36) NOT NULL COMMENT 'Refresh-token rotation family UUID' DEFAULT '', \n\tclient_kind_id INTEGER NOT NULL COMMENT 'OAuth client kinds.id; 0 means unset' DEFAULT '0', \n\tuser_id INTEGER NOT NULL COMMENT 'Authorizing users.id; 0 means unset' DEFAULT '0', \n\texpires_at DATETIME NOT NULL COMMENT 'Expiration time' DEFAULT '1970-01-01 00:00:00', \n\tused_at DATETIME NOT NULL COMMENT 'Rotation time; epoch means unused' DEFAULT '1970-01-01 00:00:00', \n\trevoked_at DATETIME NOT NULL COMMENT 'Revocation time; epoch means active' DEFAULT '1970-01-01 00:00:00', \n\treplaced_by_id INTEGER NOT NULL COMMENT 'Replacement token row id; 0 means unset' DEFAULT '0', \n\tcreated_at DATETIME NOT NULL COMMENT 'Creation time' DEFAULT CURRENT_TIMESTAMP, \n\tPRIMARY KEY (id), \n\tCONSTRAINT uniq_oauth_refresh_tokens_token_hash UNIQUE (token_hash)\n)CHARSET=utf8mb4 ENGINE=InnoDB COMMENT='OAuth refresh-token rotation and revocation records'",
+        "CREATE INDEX idx_oauth_refresh_tokens_client_kind_id ON oauth_refresh_tokens (client_kind_id)",
+        "CREATE INDEX idx_oauth_refresh_tokens_expires_at ON oauth_refresh_tokens (expires_at)",
+        "CREATE INDEX idx_oauth_refresh_tokens_family_id ON oauth_refresh_tokens (family_id)",
+        "CREATE INDEX idx_oauth_refresh_tokens_revoked_at ON oauth_refresh_tokens (revoked_at)",
+        "CREATE INDEX idx_oauth_refresh_tokens_user_id ON oauth_refresh_tokens (user_id)"
+      ]
+    },
+    {
+      "table": "plugin_device_installations",
+      "statements": [
+        "CREATE TABLE plugin_device_installations (\n\tid BIGINT NOT NULL COMMENT 'Device installation primary key' AUTO_INCREMENT, \n\tinstalled_kind_id INTEGER NOT NULL COMMENT 'InstalledPlugin kinds.id' DEFAULT '0', \n\tuser_id BIGINT NOT NULL COMMENT 'Account owner user ID' DEFAULT '0', \n\tdevice_id VARCHAR(100) NOT NULL COMMENT 'Target device identifier' DEFAULT '', \n\tdesired_release_id BIGINT NOT NULL COMMENT 'Desired release ID for the device' DEFAULT '0', \n\tactual_release_id BIGINT NOT NULL COMMENT 'Actually installed release ID; 0 means none' DEFAULT '0', \n\tstate VARCHAR(20) NOT NULL COMMENT 'Install state: pending, installed, failed, etc.' DEFAULT 'pending', \n\terror_code VARCHAR(100) NOT NULL COMMENT 'Last error code; empty means no error' DEFAULT '', \n\terror_message VARCHAR(1000) NOT NULL COMMENT 'Last error message; empty means no error' DEFAULT '', \n\tattempt_count INTEGER NOT NULL COMMENT 'Sync attempt count' DEFAULT '0', \n\tlast_sync_at DATETIME(6) NOT NULL COMMENT 'Last sync time; epoch means never synced' DEFAULT '1970-01-01 00:00:00.000000', \n\tupdated_at DATETIME(6) NOT NULL COMMENT 'Last update time', \n\tPRIMARY KEY (id), \n\tCONSTRAINT uniq_plugin_device_installation UNIQUE (installed_kind_id, device_id)\n)CHARSET=utf8mb4 ENGINE=InnoDB COMMENT='Per-device materialization of installed plugin state'",
+        "CREATE INDEX idx_plugin_device_device ON plugin_device_installations (device_id, updated_at)",
+        "CREATE INDEX idx_plugin_device_user_state ON plugin_device_installations (user_id, state)"
+      ]
+    },
+    {
+      "table": "plugin_publication_checks",
+      "statements": [
+        "CREATE TABLE plugin_publication_checks (\n\tid BIGINT NOT NULL AUTO_INCREMENT, \n\trevision_id BIGINT NOT NULL, \n\tstage VARCHAR(40) NOT NULL, \n\tcheck_code VARCHAR(100) NOT NULL, \n\ttitle VARCHAR(200) NOT NULL, \n\tseverity VARCHAR(20) NOT NULL, \n\tstatus VARCHAR(20) NOT NULL, \n\tsummary VARCHAR(1000) NOT NULL, \n\tevidence_json JSON NOT NULL, \n\texecution_environment VARCHAR(100) NOT NULL, \n\tjob_url VARCHAR(500) NOT NULL, \n\tacknowledgement_required BOOL NOT NULL, \n\tacknowledged BOOL NOT NULL, \n\tacknowledged_by_user_id BIGINT NOT NULL, \n\tcreated_at DATETIME(6) NOT NULL, \n\tupdated_at DATETIME(6) NOT NULL, \n\tPRIMARY KEY (id), \n\tCONSTRAINT uniq_plugin_publication_check UNIQUE (revision_id, check_code)\n)CHARSET=utf8mb4 ENGINE=InnoDB COMMENT='Publication check evidence by stable code'",
+        "CREATE INDEX idx_plugin_publication_check_status ON plugin_publication_checks (revision_id, status)"
+      ]
+    },
+    {
+      "table": "plugin_publication_events",
+      "statements": [
+        "CREATE TABLE plugin_publication_events (\n\tid BIGINT NOT NULL AUTO_INCREMENT, \n\trevision_id BIGINT NOT NULL, \n\tevent_type VARCHAR(100) NOT NULL, \n\tactor_type VARCHAR(30) NOT NULL, \n\tactor_id BIGINT NOT NULL, \n\tactor_name VARCHAR(200) NOT NULL, \n\tmessage VARCHAR(1000) NOT NULL, \n\tpayload_json JSON NOT NULL, \n\texternal_event_id VARCHAR(200) NOT NULL, \n\tcreated_at DATETIME(6) NOT NULL, \n\tPRIMARY KEY (id), \n\tCONSTRAINT uniq_plugin_publication_external_event UNIQUE (external_event_id)\n)CHARSET=utf8mb4 ENGINE=InnoDB COMMENT='Append-only publication workflow audit events'",
+        "CREATE INDEX idx_plugin_publication_event_timeline ON plugin_publication_events (revision_id, created_at)"
+      ]
+    },
+    {
+      "table": "plugin_publication_idempotency",
+      "statements": [
+        "CREATE TABLE plugin_publication_idempotency (\n\tid BIGINT NOT NULL AUTO_INCREMENT, \n\tprincipal_type VARCHAR(20) NOT NULL, \n\tprincipal_id BIGINT NOT NULL, \n\toperation VARCHAR(80) NOT NULL, \n\tidempotency_key VARCHAR(200) NOT NULL, \n\tresource_key VARCHAR(255) NOT NULL, \n\trequest_sha256 VARCHAR(64) NOT NULL, \n\tstatus VARCHAR(20) NOT NULL DEFAULT 'processing', \n\tresponse_json JSON NOT NULL, \n\tcreated_at DATETIME(6) NOT NULL, \n\tupdated_at DATETIME(6) NOT NULL, \n\tPRIMARY KEY (id), \n\tCONSTRAINT uniq_plugin_publication_idempotency UNIQUE (principal_type, principal_id, operation, idempotency_key)\n)CHARSET=utf8mb4 ENGINE=InnoDB COMMENT='Durable publication workflow idempotency bindings'",
+        "CREATE INDEX idx_plugin_publication_idempotency_status ON plugin_publication_idempotency (status, updated_at)"
+      ]
+    },
+    {
+      "table": "plugin_publication_requests",
+      "statements": [
+        "CREATE TABLE plugin_publication_requests (\n\tid BIGINT NOT NULL AUTO_INCREMENT, \n\tsource_plugin_id BIGINT NOT NULL, \n\ttarget_plugin_id BIGINT NOT NULL, \n\tsubmitter_user_id BIGINT NOT NULL, \n\tcurrent_revision_id BIGINT NOT NULL, \n\tcurrent_revision INTEGER NOT NULL, \n\taggregate_status VARCHAR(40) NOT NULL DEFAULT 'uploading', \n\trisk_level VARCHAR(20) NOT NULL DEFAULT 'none', \n\tsubmitted_at DATETIME(6) NOT NULL DEFAULT '1970-01-01 00:00:00.000000', \n\tcreated_at DATETIME(6) NOT NULL, \n\tupdated_at DATETIME(6) NOT NULL, \n\tPRIMARY KEY (id)\n)CHARSET=utf8mb4 ENGINE=InnoDB COMMENT='Enterprise plugin publication request aggregates'",
+        "CREATE INDEX idx_plugin_publication_request_owner ON plugin_publication_requests (submitter_user_id, aggregate_status, updated_at)",
+        "CREATE INDEX idx_plugin_publication_request_source ON plugin_publication_requests (source_plugin_id, aggregate_status)"
+      ]
+    },
+    {
+      "table": "plugin_publication_revisions",
+      "statements": [
+        "CREATE TABLE plugin_publication_revisions (\n\tid BIGINT NOT NULL AUTO_INCREMENT, \n\trequest_id BIGINT NOT NULL, \n\trevision INTEGER NOT NULL, \n\tsource_release_id BIGINT NOT NULL, \n\trequested_version VARCHAR(50) NOT NULL, \n\tsnapshot_sha256 VARCHAR(64) NOT NULL, \n\tsource_tree_sha256 VARCHAR(64) NOT NULL, \n\tstorage_key VARCHAR(500) NOT NULL, \n\tstaging_storage_key VARCHAR(500) NOT NULL, \n\tfilename VARCHAR(255) NOT NULL, \n\tsize_bytes BIGINT NOT NULL, \n\tmanifest_snapshot JSON NOT NULL, \n\tpackage_entries_json JSON NOT NULL, \n\tpackage_entry_count INTEGER NOT NULL, \n\tcapabilities_json JSON NOT NULL, \n\trisk_declaration JSON NOT NULL, \n\trelease_notes VARCHAR(4096) NOT NULL, \n\ttest_notes VARCHAR(4096) NOT NULL, \n\tsource_updated_at DATETIME(6) NOT NULL DEFAULT '1970-01-01 00:00:00.000000', \n\tstatus VARCHAR(40) NOT NULL DEFAULT 'uploading', \n\tgitlab_project_id VARCHAR(100) NOT NULL, \n\tgitlab_project_url VARCHAR(500) NOT NULL, \n\tsource_branch VARCHAR(255) NOT NULL, \n\tmerge_request_iid INTEGER NOT NULL, \n\tmerge_request_url VARCHAR(500) NOT NULL, \n\tmerge_request_status VARCHAR(40) NOT NULL, \n\tpipeline_id BIGINT NOT NULL, \n\tpipeline_url VARCHAR(500) NOT NULL, \n\tpipeline_status VARCHAR(40) NOT NULL, \n\tcommit_sha VARCHAR(64) NOT NULL, \n\tcreated_by_user_id BIGINT NOT NULL, \n\tcompleted_at DATETIME(6) NOT NULL DEFAULT '1970-01-01 00:00:00.000000', \n\tcreated_at DATETIME(6) NOT NULL, \n\tupdated_at DATETIME(6) NOT NULL, \n\tPRIMARY KEY (id), \n\tCONSTRAINT uniq_plugin_publication_revision UNIQUE (request_id, revision)\n)CHARSET=utf8mb4 ENGINE=InnoDB COMMENT='Immutable enterprise publication snapshots'",
+        "CREATE INDEX idx_plugin_publication_revision_gitlab ON plugin_publication_revisions (gitlab_project_id, merge_request_iid)",
+        "CREATE INDEX idx_plugin_publication_revision_status ON plugin_publication_revisions (status, updated_at)"
+      ]
+    },
+    {
+      "table": "plugin_release_idempotency",
+      "statements": [
+        "CREATE TABLE plugin_release_idempotency (\n\tid BIGINT NOT NULL AUTO_INCREMENT, \n\tidempotency_key VARCHAR(81) NOT NULL, \n\trequest_sha256 VARCHAR(64) NOT NULL, \n\tartifact_sha256 VARCHAR(64) NOT NULL, \n\tenvelope_json JSON NOT NULL, \n\tstatus VARCHAR(20) NOT NULL DEFAULT 'processing', \n\tresponse_json JSON NOT NULL, \n\tplugin_id BIGINT NOT NULL, \n\trelease_id BIGINT NOT NULL, \n\tlast_error VARCHAR(1000) NOT NULL, \n\tcreated_at DATETIME(6) NOT NULL, \n\tupdated_at DATETIME(6) NOT NULL, \n\tPRIMARY KEY (id), \n\tCONSTRAINT uniq_plugin_release_idempotency_key UNIQUE (idempotency_key)\n)CHARSET=utf8mb4 ENGINE=InnoDB COMMENT='Durable protected-pipeline release idempotency bindings'",
+        "CREATE INDEX idx_plugin_release_idempotency_status ON plugin_release_idempotency (status, updated_at)"
+      ]
+    },
+    {
+      "table": "plugin_releases",
+      "statements": [
+        "CREATE TABLE plugin_releases (\n\tid BIGINT NOT NULL COMMENT 'Release primary key' AUTO_INCREMENT, \n\tplugin_id BIGINT NOT NULL COMMENT 'Owning plugin ID' DEFAULT '0', \n\tversion VARCHAR(50) NOT NULL COMMENT 'Semver release version' DEFAULT '', \n\tmanifest_json JSON NOT NULL COMMENT 'Parsed package manifest JSON object; app writes {} when unset', \n\tinterface_json JSON NOT NULL COMMENT 'Release interface metadata JSON object; app writes {} when unset', \n\trelease_notes VARCHAR(4096) NOT NULL COMMENT 'Release notes; empty means unset' DEFAULT '', \n\tstorage_key VARCHAR(500) NOT NULL COMMENT 'Object storage key for the package zip' DEFAULT '', \n\tsha256 VARCHAR(64) NOT NULL COMMENT 'Package content SHA-256 hex digest' DEFAULT '', \n\tsize_bytes BIGINT NOT NULL COMMENT 'Package size in bytes' DEFAULT '0', \n\tstatus VARCHAR(20) NOT NULL COMMENT 'Release status: processing, ready, rejected, etc.' DEFAULT 'processing', \n\tscan_status VARCHAR(20) NOT NULL COMMENT 'Security scan status: pending, passed, failed' DEFAULT 'pending', \n\tscan_report_json JSON NOT NULL COMMENT 'Security scan report JSON object; app writes {} when unset', \n\tcreated_by_user_id BIGINT NOT NULL COMMENT 'Creator user ID; 0 means system / unset' DEFAULT '0', \n\tpublication_revision_id BIGINT NOT NULL COMMENT 'Publication revision that produced this release; 0 means none' DEFAULT '0', \n\tsource_commit_sha VARCHAR(64) NOT NULL COMMENT 'Protected source commit SHA; empty means not GitLab-published' DEFAULT '', \n\tcreated_at DATETIME(6) NOT NULL COMMENT 'Creation time', \n\tpublished_at DATETIME(6) NOT NULL COMMENT 'Publish time; epoch means unpublished' DEFAULT '1970-01-01 00:00:00.000000', \n\tPRIMARY KEY (id), \n\tCONSTRAINT uniq_plugin_release_version UNIQUE (plugin_id, version)\n)CHARSET=utf8mb4 ENGINE=InnoDB COMMENT='Immutable marketplace plugin release packages'",
+        "CREATE INDEX idx_plugin_releases_publication ON plugin_releases (publication_revision_id)",
+        "CREATE INDEX idx_plugin_releases_sha256 ON plugin_releases (sha256)",
+        "CREATE INDEX idx_plugin_releases_status ON plugin_releases (plugin_id, status, published_at)"
+      ]
+    },
+    {
+      "table": "plugin_submissions",
+      "statements": [
+        "CREATE TABLE plugin_submissions (\n\tid BIGINT NOT NULL COMMENT 'Submission primary key' AUTO_INCREMENT, \n\tplugin_id BIGINT NOT NULL COMMENT 'Target plugin ID' DEFAULT '0', \n\trelease_id BIGINT NOT NULL COMMENT 'Submitted release ID' DEFAULT '0', \n\tsubmitter_user_id BIGINT NOT NULL COMMENT 'Submitter user ID' DEFAULT '0', \n\tpurpose VARCHAR(30) NOT NULL COMMENT 'Submission purpose' DEFAULT 'marketplace_publish', \n\tstatus VARCHAR(20) NOT NULL COMMENT 'Review status: uploading, pending, approved, rejected' DEFAULT 'uploading', \n\treviewer_user_id BIGINT NOT NULL COMMENT 'Reviewer user ID; 0 means not reviewed' DEFAULT '0', \n\treview_note VARCHAR(2000) NOT NULL COMMENT 'Reviewer note; empty means unset' DEFAULT '', \n\tsubmitted_at DATETIME(6) NOT NULL COMMENT 'Submission time', \n\treviewed_at DATETIME(6) NOT NULL COMMENT 'Review time; epoch means not reviewed' DEFAULT '1970-01-01 00:00:00.000000', \n\tPRIMARY KEY (id), \n\tCONSTRAINT uniq_plugin_submission_release UNIQUE (release_id)\n)CHARSET=utf8mb4 ENGINE=InnoDB COMMENT='Marketplace plugin publish review requests'",
+        "CREATE INDEX idx_plugin_submissions_queue ON plugin_submissions (status, submitted_at)",
+        "CREATE INDEX idx_plugin_submissions_submitter ON plugin_submissions (submitter_user_id, status)"
+      ]
+    },
+    {
+      "table": "plugin_upstreams",
+      "statements": [
+        "CREATE TABLE plugin_upstreams (\n\tid BIGINT NOT NULL COMMENT 'Upstream primary key' AUTO_INCREMENT, \n\tplugin_id BIGINT NOT NULL COMMENT 'Mirrored local plugin ID' DEFAULT '0', \n\tprovider VARCHAR(50) NOT NULL COMMENT 'Upstream provider, e.g. codex' DEFAULT 'codex', \n\tmarketplace_name VARCHAR(100) NOT NULL COMMENT 'Remote marketplace name' DEFAULT '', \n\tremote_plugin_id VARCHAR(200) NOT NULL COMMENT 'Remote plugin identifier' DEFAULT '', \n\tupstream_url VARCHAR(500) NOT NULL COMMENT 'Package download URL' DEFAULT '', \n\tlicense_info VARCHAR(500) NOT NULL COMMENT 'Upstream license summary; empty means unset' DEFAULT '', \n\tsync_enabled BOOL NOT NULL COMMENT 'Whether automatic sync is enabled' DEFAULT '1', \n\tsync_policy VARCHAR(30) NOT NULL COMMENT 'Sync policy: auto_after_scan or review_required' DEFAULT 'auto_after_scan', \n\tlast_seen_version VARCHAR(50) NOT NULL COMMENT 'Last observed remote version; empty means none' DEFAULT '', \n\tlast_checked_at DATETIME(6) NOT NULL COMMENT 'Last check time; epoch means never checked' DEFAULT '1970-01-01 00:00:00.000000', \n\tlast_synced_at DATETIME(6) NOT NULL COMMENT 'Last successful sync time; epoch means never synced' DEFAULT '1970-01-01 00:00:00.000000', \n\tlast_error VARCHAR(1000) NOT NULL COMMENT 'Last sync error message; empty means no error' DEFAULT '', \n\tPRIMARY KEY (id), \n\tCONSTRAINT uniq_plugin_upstreams_plugin_id UNIQUE (plugin_id), \n\tCONSTRAINT uniq_plugin_upstream_source UNIQUE (provider, marketplace_name, remote_plugin_id)\n)CHARSET=utf8mb4 ENGINE=InnoDB COMMENT='Selective upstream mirror configuration'",
+        "CREATE INDEX idx_plugin_upstreams_sync ON plugin_upstreams (sync_enabled, provider)"
+      ]
+    },
+    {
+      "table": "plugins",
+      "statements": [
+        "CREATE TABLE plugins (\n\tid BIGINT NOT NULL COMMENT 'Plugin primary key' AUTO_INCREMENT, \n\tcatalog_namespace VARCHAR(100) NOT NULL COMMENT 'Server-owned catalog namespace for stable plugin identity' DEFAULT 'enterprise', \n\tslug VARCHAR(100) NOT NULL COMMENT 'Stable unique marketplace slug' DEFAULT '', \n\tname VARCHAR(100) NOT NULL COMMENT 'Canonical plugin name from manifest' DEFAULT '', \n\tdisplay_name VARCHAR(200) NOT NULL COMMENT 'Human-readable plugin title' DEFAULT '', \n\tsummary VARCHAR(500) NOT NULL COMMENT 'Short marketplace summary' DEFAULT '', \n\tdescription_md VARCHAR(8192) NOT NULL COMMENT 'Markdown description; empty means unset' DEFAULT '', \n\tlisting_type VARCHAR(20) NOT NULL COMMENT 'Listing type: plugin or skill' DEFAULT 'plugin', \n\tsource_type VARCHAR(20) NOT NULL COMMENT 'Source type: native, mirror, or submission' DEFAULT 'native', \n\tsource_provider VARCHAR(50) NOT NULL COMMENT 'Source provider label, e.g. wework or codex' DEFAULT 'wework', \n\towner_user_id BIGINT NOT NULL COMMENT 'Owner user ID; 0 means platform-owned / unset' DEFAULT '0', \n\torigin_plugin_id BIGINT NOT NULL COMMENT 'Source personal plugin ID; 0 means no linked origin' DEFAULT '0', \n\tcategory VARCHAR(50) NOT NULL COMMENT 'Marketplace category; empty means unset' DEFAULT '', \n\tkeywords_json JSON NOT NULL COMMENT 'Search keywords JSON array; app writes [] when unset', \n\tinterface_json JSON NOT NULL COMMENT 'Composer/UI interface metadata JSON object; app writes {} when unset', \n\tvisibility VARCHAR(20) NOT NULL COMMENT 'Visibility: personal, workspace, or public' DEFAULT 'workspace', \n\tallow_copy BOOL NOT NULL COMMENT 'Whether recipients may copy the plugin' DEFAULT '0', \n\tstatus VARCHAR(30) NOT NULL COMMENT 'Lifecycle status: draft, published, etc.' DEFAULT 'draft', \n\tlatest_release_id BIGINT NOT NULL COMMENT 'Latest ready release ID; 0 means none' DEFAULT '0', \n\tfeatured_rank INTEGER NOT NULL COMMENT 'Featured sort rank; 0 means not featured' DEFAULT '0', \n\tcreated_at DATETIME(6) NOT NULL COMMENT 'Creation time', \n\tupdated_at DATETIME(6) NOT NULL COMMENT 'Last update time', \n\tpublished_at DATETIME(6) NOT NULL COMMENT 'First publish time; epoch means unpublished' DEFAULT '1970-01-01 00:00:00.000000', \n\tPRIMARY KEY (id), \n\tCONSTRAINT uniq_plugins_catalog_namespace_slug UNIQUE (catalog_namespace, slug)\n)CHARSET=utf8mb4 ENGINE=InnoDB COMMENT='Marketplace plugin catalog identities'",
+        "CREATE INDEX idx_plugins_discovery ON plugins (status, visibility, featured_rank)",
+        "CREATE INDEX idx_plugins_listing_category ON plugins (listing_type, category, status)",
+        "CREATE INDEX idx_plugins_origin ON plugins (origin_plugin_id)",
+        "CREATE INDEX idx_plugins_source ON plugins (source_provider, source_type)"
+      ]
+    },
+    {
+      "table": "project_chat_messages",
+      "statements": [
+        "CREATE TABLE project_chat_messages (\n\tid BIGINT NOT NULL AUTO_INCREMENT, \n\tmessage_id VARCHAR(64) NOT NULL, \n\tclient_message_id VARCHAR(64) NOT NULL DEFAULT '', \n\tproject_id VARCHAR(64) NOT NULL DEFAULT '', \n\ttask_id VARCHAR(64) NOT NULL DEFAULT '', \n\tsender_type VARCHAR(16) NOT NULL DEFAULT '', \n\tsender_id VARCHAR(128) NOT NULL DEFAULT '', \n\tsender_name VARCHAR(255) NOT NULL DEFAULT '', \n\tmessage_type VARCHAR(32) NOT NULL DEFAULT 'text', \n\tcontent TEXT NOT NULL, \n\tmetadata JSON NOT NULL, \n\ttrigger_message_id VARCHAR(64) NOT NULL DEFAULT '', \n\treply_to_message_id VARCHAR(64) NOT NULL DEFAULT '', \n\tthread_root_message_id VARCHAR(64) NOT NULL DEFAULT '', \n\tagent_id VARCHAR(128) NOT NULL DEFAULT '', \n\truntime_device_id VARCHAR(255) NOT NULL DEFAULT '', \n\truntime_task_id VARCHAR(255) NOT NULL DEFAULT '', \n\truntime_activity_key VARCHAR(64) NOT NULL DEFAULT '', \n\tstatus VARCHAR(16) NOT NULL DEFAULT 'completed', \n\tcreated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, \n\tupdated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, \n\tdeleted_at DATETIME NOT NULL DEFAULT '1970-01-01 00:00:00', \n\tPRIMARY KEY (id), \n\tCONSTRAINT uniq_project_chat_message_id UNIQUE (message_id)\n)CHARSET=utf8mb4 ENGINE=InnoDB",
+        "CREATE INDEX idx_project_chat_client_message ON project_chat_messages (sender_type, sender_id, client_message_id)",
+        "CREATE INDEX idx_project_chat_project_order ON project_chat_messages (project_id, id)",
+        "CREATE INDEX idx_project_chat_runtime ON project_chat_messages (runtime_device_id, runtime_task_id, id)",
+        "CREATE INDEX idx_project_chat_task_order ON project_chat_messages (task_id, id)",
+        "CREATE INDEX idx_project_chat_thread_order ON project_chat_messages (thread_root_message_id, id)",
+        "CREATE INDEX idx_project_chat_trigger_agent ON project_chat_messages (trigger_message_id, agent_id)",
+        "CREATE UNIQUE INDEX uniq_project_chat_runtime_activity ON project_chat_messages (runtime_activity_key)"
+      ]
+    },
+    {
+      "table": "projects",
+      "statements": [
+        "CREATE TABLE projects (\n\tid INTEGER NOT NULL COMMENT 'Primary key' AUTO_INCREMENT, \n\tuser_id INTEGER NOT NULL COMMENT 'Project owner user ID', \n\tname VARCHAR(100) NOT NULL COMMENT 'Project name', \n\tdescription TEXT COMMENT 'Project description', \n\tcolor VARCHAR(20) COMMENT 'Project color identifier (e.g., #FF5733)', \n\tclient_origin VARCHAR(32) NOT NULL COMMENT 'Client surface that owns this project, e.g. frontend or wework' DEFAULT 'frontend', \n\tconfig JSON COMMENT 'Workspace project configuration. Empty means legacy task group.', \n\tsort_order INTEGER NOT NULL COMMENT 'Sort order for display', \n\tis_expanded BOOL NOT NULL COMMENT 'Whether the project is expanded in UI', \n\tis_active BOOL NOT NULL COMMENT 'Whether the project is active (soft delete)', \n\tcreated_at DATETIME NOT NULL COMMENT 'Creation timestamp', \n\tupdated_at DATETIME NOT NULL COMMENT 'Last update timestamp', \n\tPRIMARY KEY (id)\n)CHARSET=utf8mb4 ENGINE=InnoDB COMMENT='Projects table for task organization' COLLATE utf8mb4_unicode_ci",
+        "CREATE INDEX ix_projects_id ON projects (id)",
+        "CREATE INDEX ix_projects_user_id ON projects (user_id)"
+      ]
+    },
+    {
+      "table": "queue_messages",
+      "statements": [
+        "CREATE TABLE queue_messages (\n\tid INTEGER NOT NULL AUTO_INCREMENT, \n\tqueue_id INTEGER NOT NULL COMMENT 'Work queue ID (kinds.id)', \n\tsender_user_id INTEGER NOT NULL COMMENT 'Sender user ID', \n\trecipient_user_id INTEGER NOT NULL COMMENT 'Recipient user ID (queue owner)', \n\tsource_task_id BIGINT NOT NULL COMMENT 'Original task/conversation ID', \n\tsource_subtask_ids JSON NOT NULL COMMENT 'List of original message IDs (subtask IDs)', \n\tcontent_snapshot JSON NOT NULL COMMENT 'Snapshot of message content including text and attachments', \n\tnote TEXT NOT NULL COMMENT 'Sender''s note/comment', \n\tpriority ENUM('low','normal','high') NOT NULL, \n\tstatus ENUM('unread','read','processing','processed','archived','failed') NOT NULL, \n\tprocess_result JSON NOT NULL COMMENT 'AI processing result', \n\tprocess_task_id BIGINT NOT NULL COMMENT 'Task ID created for processing (0 = not processed)', \n\tprocess_subscription_id INTEGER NOT NULL COMMENT 'Subscription Kind.id used for processing (0 = none)', \n\tcreated_at DATETIME NOT NULL, \n\tupdated_at DATETIME NOT NULL, \n\tprocessed_at DATETIME NOT NULL COMMENT 'Processing completion time', \n\tPRIMARY KEY (id)\n)CHARSET=utf8mb4 ENGINE=InnoDB COLLATE utf8mb4_unicode_ci",
+        "CREATE INDEX ix_queue_messages_created_at ON queue_messages (created_at)",
+        "CREATE INDEX ix_queue_messages_id ON queue_messages (id)",
+        "CREATE INDEX ix_queue_messages_priority ON queue_messages (priority)",
+        "CREATE INDEX ix_queue_messages_queue_id ON queue_messages (queue_id)",
+        "CREATE INDEX ix_queue_messages_queue_status ON queue_messages (queue_id, status)",
+        "CREATE INDEX ix_queue_messages_recipient_status ON queue_messages (recipient_user_id, status)",
+        "CREATE INDEX ix_queue_messages_recipient_user_id ON queue_messages (recipient_user_id)",
+        "CREATE INDEX ix_queue_messages_sender_user_id ON queue_messages (sender_user_id)",
+        "CREATE INDEX ix_queue_messages_source_task_id ON queue_messages (source_task_id)",
+        "CREATE INDEX ix_queue_messages_status ON queue_messages (status)"
+      ]
+    },
+    {
+      "table": "recent_contacts",
+      "statements": [
+        "CREATE TABLE recent_contacts (\n\tid INTEGER NOT NULL AUTO_INCREMENT, \n\tuser_id INTEGER NOT NULL COMMENT 'User ID', \n\tcontact_user_id INTEGER NOT NULL COMMENT 'Contact user ID', \n\tlast_contact_at DATETIME NOT NULL COMMENT 'Last contact time', \n\tcontact_count INTEGER NOT NULL COMMENT 'Contact count', \n\tPRIMARY KEY (id)\n)CHARSET=utf8mb4 ENGINE=InnoDB COLLATE utf8mb4_unicode_ci",
+        "CREATE INDEX ix_recent_contacts_contact_user_id ON recent_contacts (contact_user_id)",
+        "CREATE INDEX ix_recent_contacts_id ON recent_contacts (id)",
+        "CREATE INDEX ix_recent_contacts_user_contact ON recent_contacts (user_id, contact_user_id)",
+        "CREATE INDEX ix_recent_contacts_user_id ON recent_contacts (user_id)"
+      ]
+    },
+    {
+      "table": "resource_members",
+      "statements": [
+        "CREATE TABLE resource_members (\n\tid INTEGER NOT NULL AUTO_INCREMENT, \n\tresource_type VARCHAR(50) NOT NULL COMMENT 'Polymorphic resource type', \n\tresource_id BIGINT NOT NULL COMMENT 'Resource ID', \n\tentity_type VARCHAR(20) NOT NULL COMMENT 'Entity type: user, namespace, workspace' DEFAULT 'user', \n\tentity_id VARCHAR(100) NOT NULL COMMENT 'Entity identifier: user_id for ''user'', external ID for others', \n\tentity_display_name VARCHAR(100) NOT NULL COMMENT 'Display name snapshot for entity-type members (group name, department name, etc.)' DEFAULT '', \n\tuser_id INTEGER NOT NULL COMMENT 'Member user ID (kept for backward compatibility, use entity_type+entity_id for new code)' DEFAULT '0', \n\t`role` VARCHAR(20) NOT NULL COMMENT 'Member role: Owner, Maintainer, Developer, Reporter' DEFAULT 'Reporter', \n\tstatus VARCHAR(20) NOT NULL COMMENT 'Status: pending, approved, rejected' DEFAULT 'pending', \n\tinvited_by_user_id INTEGER NOT NULL COMMENT 'Inviter user ID (0 = via link or owner)' DEFAULT '0', \n\tshare_link_id INTEGER NOT NULL COMMENT 'Associated share link ID (0 = not via link)' DEFAULT '0', \n\treviewed_by_user_id INTEGER NOT NULL COMMENT 'Reviewer user ID (0 = not yet reviewed or auto-approved)' DEFAULT '0', \n\treviewed_at DATETIME NOT NULL COMMENT 'Review timestamp (epoch = not reviewed)' DEFAULT '1970-01-01 00:00:00', \n\tcopied_resource_id BIGINT NOT NULL COMMENT 'Copied resource ID (0 = not copied, for Task copy behavior)' DEFAULT '0', \n\trequested_at DATETIME NOT NULL COMMENT 'Request timestamp', \n\tcreated_at DATETIME NOT NULL, \n\tupdated_at DATETIME NOT NULL, \n\tPRIMARY KEY (id), \n\tCONSTRAINT uniq_resource_members_entity UNIQUE (resource_type, resource_id, entity_type, entity_id)\n)CHARSET=utf8mb4 ENGINE=InnoDB COMMENT='Resource member permissions and access control' COLLATE utf8mb4_unicode_ci",
+        "CREATE INDEX idx_resource_members_entity_lookup ON resource_members (entity_type, entity_id, status, resource_type)",
+        "CREATE INDEX idx_resource_members_resource ON resource_members (resource_type, resource_id)",
+        "CREATE INDEX idx_resource_members_resource_status ON resource_members (resource_type, resource_id, status)",
+        "CREATE INDEX idx_resource_members_status ON resource_members (status)",
+        "CREATE INDEX ix_resource_members_id ON resource_members (id)",
+        "CREATE INDEX ix_resource_members_share_link_id ON resource_members (share_link_id)"
+      ]
+    },
+    {
+      "table": "share_links",
+      "statements": [
+        "CREATE TABLE share_links (\n\tid INTEGER NOT NULL AUTO_INCREMENT, \n\tresource_type VARCHAR(50) NOT NULL COMMENT 'Resource type: Team, Task, KnowledgeBase', \n\tresource_id BIGINT NOT NULL COMMENT 'Resource ID (kinds.id or tasks.id)', \n\tshare_token VARCHAR(512) NOT NULL COMMENT 'AES encrypted share token', \n\trequire_approval BOOL NOT NULL COMMENT 'Whether joining requires approval', \n\tdefault_role VARCHAR(20) NOT NULL COMMENT 'Default member role: Owner, Maintainer, Developer, Reporter' DEFAULT 'Reporter', \n\texpires_at DATETIME NOT NULL COMMENT 'Expiration time (far future = never expires)' DEFAULT '9999-12-31 23:59:59', \n\tcreated_by_user_id INTEGER NOT NULL COMMENT 'User who created the share link', \n\tis_active BOOL NOT NULL COMMENT 'Whether the link is active', \n\tcreated_at DATETIME NOT NULL, \n\tupdated_at DATETIME NOT NULL, \n\tPRIMARY KEY (id), \n\tUNIQUE (share_token)\n)CHARSET=utf8mb4 ENGINE=InnoDB COMMENT='Share link configurations for resources' COLLATE utf8mb4_unicode_ci",
+        "CREATE INDEX idx_share_links_active_resource ON share_links (resource_type, resource_id, is_active)",
+        "CREATE INDEX idx_share_links_resource ON share_links (resource_type, resource_id)",
+        "CREATE INDEX ix_share_links_id ON share_links (id)"
+      ]
+    },
+    {
+      "table": "smart_app_releases",
+      "statements": [
+        "CREATE TABLE smart_app_releases (\n\tid BIGINT NOT NULL COMMENT 'Smart app release primary key' AUTO_INCREMENT, \n\tsmart_app_id BIGINT NOT NULL COMMENT 'Owning Smart app ID; logical reference without database foreign key' DEFAULT '0', \n\tversion VARCHAR(50) NOT NULL COMMENT 'Immutable semantic version' DEFAULT '', \n\tmanifest_json JSON NOT NULL COMMENT 'Validated immutable runtime manifest snapshot' DEFAULT ('{}'), \n\trelease_notes VARCHAR(4096) NOT NULL COMMENT 'Release notes, limited to 4096 characters' DEFAULT '', \n\tstorage_key VARCHAR(500) NOT NULL COMMENT 'Immutable package object-storage key' DEFAULT '', \n\tsha256 VARCHAR(64) NOT NULL COMMENT 'Lowercase package SHA-256 hex digest' DEFAULT '', \n\tsize_bytes BIGINT NOT NULL COMMENT 'Package size in bytes' DEFAULT '0', \n\tscan_status VARCHAR(20) NOT NULL COMMENT 'Security scan status: passed or failed' DEFAULT 'passed', \n\tscan_report_json JSON NOT NULL COMMENT 'Security scan report snapshot' DEFAULT ('{}'), \n\textensions_json JSON NOT NULL COMMENT 'Versioned namespaced release extension fields' DEFAULT ('{}'), \n\tcreated_by_user_id BIGINT NOT NULL COMMENT 'Publisher user ID; 0 means official publisher' DEFAULT '0', \n\tcreated_at DATETIME(6) NOT NULL COMMENT 'Creation time' DEFAULT CURRENT_TIMESTAMP(6), \n\tpublished_at DATETIME(6) NOT NULL COMMENT 'Release publish time' DEFAULT CURRENT_TIMESTAMP(6), \n\tPRIMARY KEY (id), \n\tCONSTRAINT uniq_smart_app_release_version UNIQUE (smart_app_id, version)\n)CHARSET=utf8mb4 ENGINE=InnoDB COMMENT='Immutable Smart app package releases'",
+        "CREATE INDEX idx_smart_app_releases_app ON smart_app_releases (smart_app_id, published_at)"
+      ]
+    },
+    {
+      "table": "smart_app_submissions",
+      "statements": [
+        "CREATE TABLE smart_app_submissions (\n\tid BIGINT NOT NULL COMMENT 'Smart app submission primary key' AUTO_INCREMENT, \n\tsmart_app_id BIGINT NOT NULL COMMENT 'Target Smart app ID; logical reference without database foreign key' DEFAULT '0', \n\towner_user_id BIGINT NOT NULL COMMENT 'Submitting owner user ID' DEFAULT '0', \n\tversion VARCHAR(50) NOT NULL COMMENT 'Submitted semantic version' DEFAULT '', \n\tstatus VARCHAR(20) NOT NULL COMMENT 'Submission status: uploading, scanning, published, rejected, or cancelled' DEFAULT 'uploading', \n\tstaging_storage_key VARCHAR(500) NOT NULL COMMENT 'Temporary package object-storage key' DEFAULT '', \n\tsha256 VARCHAR(64) NOT NULL COMMENT 'Expected lowercase package SHA-256 hex digest' DEFAULT '', \n\tsize_bytes BIGINT NOT NULL COMMENT 'Expected package size in bytes' DEFAULT '0', \n\tmetadata_json JSON NOT NULL COMMENT 'Submission listing, asset, recipient, and extension snapshot' DEFAULT ('{}'), \n\terror_message VARCHAR(1000) NOT NULL COMMENT 'Rejected submission error; empty means no error' DEFAULT '', \n\tcreated_at DATETIME(6) NOT NULL COMMENT 'Creation time' DEFAULT CURRENT_TIMESTAMP(6), \n\tupdated_at DATETIME(6) NOT NULL COMMENT 'Last update time' DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6), \n\tPRIMARY KEY (id)\n)CHARSET=utf8mb4 ENGINE=InnoDB COMMENT='Two-phase Smart app publication submissions'",
+        "CREATE INDEX idx_smart_app_submissions_owner ON smart_app_submissions (owner_user_id, status)"
+      ]
+    },
+    {
+      "table": "smart_apps",
+      "statements": [
+        "CREATE TABLE smart_apps (\n\tid BIGINT NOT NULL COMMENT 'Smart app primary key' AUTO_INCREMENT, \n\towner_user_id BIGINT NOT NULL COMMENT 'Owner user ID; 0 means platform-owned official app' DEFAULT '0', \n\tname VARCHAR(100) NOT NULL COMMENT 'Canonical Smart app name from manifest' DEFAULT '', \n\tdisplay_name VARCHAR(200) NOT NULL COMMENT 'Human-readable Smart app title' DEFAULT '', \n\tsummary VARCHAR(500) NOT NULL COMMENT 'Short marketplace summary' DEFAULT '', \n\tdescription_md VARCHAR(8192) NOT NULL COMMENT 'Markdown marketplace description, limited to 8192 characters' DEFAULT '', \n\tsource_type VARCHAR(20) NOT NULL COMMENT 'Publisher source: official or user' DEFAULT 'user', \n\tvisibility VARCHAR(20) NOT NULL COMMENT 'Distribution scope: public, restricted, or private' DEFAULT 'restricted', \n\tstatus VARCHAR(20) NOT NULL COMMENT 'Catalog lifecycle status: draft or published' DEFAULT 'draft', \n\ttags_json JSON NOT NULL COMMENT 'Marketplace tag IDs as a JSON array' DEFAULT ('[]'), \n\ticon_storage_key VARCHAR(500) NOT NULL COMMENT 'Object-storage key for the active icon' DEFAULT '', \n\tscreenshots_json JSON NOT NULL COMMENT 'Object-storage keys for screenshots as a JSON array' DEFAULT ('[]'), \n\textensions_json JSON NOT NULL COMMENT 'Versioned namespaced application extension fields' DEFAULT ('{}'), \n\tlatest_release_id BIGINT NOT NULL COMMENT 'Latest published release ID; 0 means no release' DEFAULT '0', \n\tfeatured_rank BIGINT NOT NULL COMMENT 'Marketplace featured rank; 0 means not featured' DEFAULT '0', \n\tis_listed BOOL NOT NULL COMMENT 'Whether the Smart app is listed in the WeWork marketplace' DEFAULT '1', \n\tcreated_at DATETIME(6) NOT NULL COMMENT 'Creation time' DEFAULT CURRENT_TIMESTAMP(6), \n\tupdated_at DATETIME(6) NOT NULL COMMENT 'Last update time' DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6), \n\tpublished_at DATETIME(6) NOT NULL COMMENT 'First publish time; epoch means unpublished' DEFAULT '1970-01-01 00:00:00.000000', \n\tPRIMARY KEY (id), \n\tCONSTRAINT uniq_smart_app_owner_name UNIQUE (owner_user_id, name)\n)CHARSET=utf8mb4 ENGINE=InnoDB COMMENT='Smart app marketplace catalog identities'",
+        "CREATE INDEX idx_smart_apps_catalog ON smart_apps (status, source_type, featured_rank)"
+      ]
+    },
+    {
+      "table": "subscription_follows",
+      "statements": [
+        "CREATE TABLE subscription_follows (\n\tid INTEGER NOT NULL AUTO_INCREMENT, \n\tsubscription_id INTEGER NOT NULL, \n\tfollower_user_id INTEGER NOT NULL, \n\tfollow_type VARCHAR(20) NOT NULL, \n\tinvited_by_user_id INTEGER NOT NULL, \n\tinvitation_status VARCHAR(20) NOT NULL, \n\tinvited_at DATETIME NOT NULL, \n\tresponded_at DATETIME NOT NULL, \n\tcreated_at DATETIME NOT NULL, \n\tupdated_at DATETIME NOT NULL, \n\tconfig TEXT, \n\tPRIMARY KEY (id)\n)CHARSET=utf8mb4 ENGINE=InnoDB COLLATE utf8mb4_unicode_ci",
+        "CREATE INDEX ix_sub_follow_follower ON subscription_follows (follower_user_id)",
+        "CREATE INDEX ix_sub_follow_pending_invitations ON subscription_follows (follower_user_id, invitation_status)",
+        "CREATE INDEX ix_sub_follow_subscription ON subscription_follows (subscription_id)",
+        "CREATE UNIQUE INDEX ix_sub_follow_unique ON subscription_follows (subscription_id, follower_user_id)",
+        "CREATE INDEX ix_subscription_follows_follower_user_id ON subscription_follows (follower_user_id)",
+        "CREATE INDEX ix_subscription_follows_subscription_id ON subscription_follows (subscription_id)"
+      ]
+    },
+    {
+      "table": "subscription_share_namespaces",
+      "statements": [
+        "CREATE TABLE subscription_share_namespaces (\n\tid INTEGER NOT NULL AUTO_INCREMENT, \n\tsubscription_id INTEGER NOT NULL, \n\tnamespace_id INTEGER NOT NULL, \n\tshared_by_user_id INTEGER NOT NULL, \n\tcreated_at DATETIME NOT NULL, \n\tPRIMARY KEY (id)\n)CHARSET=utf8mb4 ENGINE=InnoDB COLLATE utf8mb4_unicode_ci",
+        "CREATE UNIQUE INDEX ix_sub_share_ns_unique ON subscription_share_namespaces (subscription_id, namespace_id)",
+        "CREATE INDEX ix_subscription_share_namespaces_namespace_id ON subscription_share_namespaces (namespace_id)",
+        "CREATE INDEX ix_subscription_share_namespaces_subscription_id ON subscription_share_namespaces (subscription_id)"
+      ]
+    },
+    {
+      "table": "subtask_contexts",
+      "statements": [
+        "CREATE TABLE subtask_contexts (\n\tid INTEGER NOT NULL AUTO_INCREMENT, \n\tsubtask_id BIGINT NOT NULL, \n\tuser_id INTEGER NOT NULL, \n\tcontext_type VARCHAR(50) NOT NULL, \n\tname VARCHAR(255) NOT NULL, \n\tstatus VARCHAR(20) NOT NULL, \n\terror_message TEXT NOT NULL, \n\tbinary_data LONGBLOB NOT NULL, \n\timage_base64 LONGTEXT NOT NULL, \n\textracted_text LONGTEXT NOT NULL, \n\ttext_length INTEGER NOT NULL, \n\ttype_data JSON NOT NULL, \n\tcreated_at DATETIME NOT NULL, \n\tupdated_at DATETIME NOT NULL, \n\tPRIMARY KEY (id)\n)CHARSET=utf8mb4 ENGINE=InnoDB COLLATE utf8mb4_unicode_ci",
+        "CREATE INDEX ix_subtask_contexts_context_type ON subtask_contexts (context_type)",
+        "CREATE INDEX ix_subtask_contexts_id ON subtask_contexts (id)",
+        "CREATE INDEX ix_subtask_contexts_status ON subtask_contexts (status)",
+        "CREATE INDEX ix_subtask_contexts_subtask_id ON subtask_contexts (subtask_id)",
+        "CREATE INDEX ix_subtask_contexts_user_id ON subtask_contexts (user_id)"
+      ]
+    },
+    {
+      "table": "subtasks",
+      "statements": [
+        "CREATE TABLE subtasks (\n\tid BIGINT NOT NULL AUTO_INCREMENT, \n\tuser_id INTEGER NOT NULL, \n\ttask_id BIGINT NOT NULL, \n\tteam_id INTEGER NOT NULL, \n\ttitle VARCHAR(256) NOT NULL, \n\tbot_ids JSON NOT NULL, \n\t`role` ENUM('USER','ASSISTANT') NOT NULL, \n\texecutor_namespace VARCHAR(100), \n\texecutor_name VARCHAR(100), \n\texecutor_deleted_at BOOL NOT NULL, \n\tprompt TEXT, \n\tmessage_id INTEGER NOT NULL, \n\tparent_id BIGINT, \n\tstatus ENUM('PENDING','RUNNING','COMPLETED','FAILED','CANCELLED','DELETE','PENDING_CONFIRMATION') NOT NULL, \n\tprogress INTEGER NOT NULL, \n\tresult JSON, \n\terror_message TEXT, \n\tcreated_at DATETIME, \n\tupdated_at DATETIME, \n\tcompleted_at DATETIME NOT NULL, \n\tsender_type VARCHAR(20) NOT NULL, \n\tsender_user_id INTEGER NOT NULL, \n\treply_to_subtask_id BIGINT NOT NULL, \n\tPRIMARY KEY (id)\n)CHARSET=utf8mb4 ENGINE=InnoDB COLLATE utf8mb4_unicode_ci",
+        "CREATE INDEX ix_subtasks_id ON subtasks (id)"
+      ]
+    },
+    {
+      "table": "system_configs",
+      "statements": [
+        "CREATE TABLE system_configs (\n\tid INTEGER NOT NULL AUTO_INCREMENT, \n\tconfig_key VARCHAR(100) NOT NULL, \n\tconfig_value VARCHAR(4096) NOT NULL, \n\tversion INTEGER NOT NULL, \n\tupdated_by INTEGER, \n\tcreated_at DATETIME, \n\tupdated_at DATETIME, \n\tPRIMARY KEY (id)\n)CHARSET=utf8mb4 ENGINE=InnoDB COLLATE utf8mb4_unicode_ci",
+        "CREATE UNIQUE INDEX ix_system_configs_config_key ON system_configs (config_key)",
+        "CREATE INDEX ix_system_configs_id ON system_configs (id)"
+      ]
+    },
+    {
+      "table": "tasks",
+      "statements": [
+        "CREATE TABLE tasks (\n\tid BIGINT NOT NULL COMMENT 'Primary key' AUTO_INCREMENT, \n\tuser_id INTEGER NOT NULL COMMENT 'User ID, references users.id', \n\tkind VARCHAR(50) NOT NULL COMMENT 'Resource type: Task/Workspace', \n\tname VARCHAR(100) NOT NULL COMMENT 'Resource name', \n\tnamespace VARCHAR(100) NOT NULL COMMENT 'Namespace', \n\tjson JSON NOT NULL COMMENT 'Resource-specific data (JSON)', \n\tis_active INTEGER NOT NULL COMMENT 'Task state: 0=deleted, 1=active, 2=subscription, 3=archived', \n\tcreated_at DATETIME NOT NULL COMMENT 'Creation time', \n\tupdated_at DATETIME NOT NULL COMMENT 'Update time', \n\tproject_id INTEGER NOT NULL COMMENT 'Project ID for task grouping', \n\tclient_origin VARCHAR(32) NOT NULL COMMENT 'Client surface that owns this task, e.g. frontend or wework' DEFAULT 'frontend', \n\tis_group_chat BOOL NOT NULL COMMENT 'Whether this task is a group chat (0 = false, 1 = true)', \n\tPRIMARY KEY (id), \n\tCONSTRAINT uniq_user_kind_name_namespace UNIQUE (user_id, kind, name, namespace)\n)CHARSET=utf8mb4 ENGINE=InnoDB COLLATE utf8mb4_unicode_ci",
+        "CREATE INDEX ix_tasks_created_at ON tasks (created_at)",
+        "CREATE INDEX ix_tasks_id ON tasks (id)",
+        "CREATE INDEX ix_tasks_is_group_chat ON tasks (is_group_chat)",
+        "CREATE INDEX ix_tasks_kind ON tasks (kind)",
+        "CREATE INDEX ix_tasks_project_id ON tasks (project_id)",
+        "CREATE INDEX ix_tasks_user_id ON tasks (user_id)"
+      ]
+    },
+    {
+      "table": "users",
+      "statements": [
+        "CREATE TABLE users (\n\tid INTEGER NOT NULL AUTO_INCREMENT, \n\tuser_name VARCHAR(50) NOT NULL, \n\tpassword_hash VARCHAR(256) NOT NULL, \n\temail VARCHAR(100), \n\tgit_info JSON, \n\tis_active BOOL, \n\t`role` VARCHAR(20) NOT NULL, \n\tauth_source VARCHAR(20) NOT NULL, \n\tpreferences VARCHAR(4096) NOT NULL, \n\tcreated_at DATETIME, \n\tupdated_at DATETIME, \n\tPRIMARY KEY (id), \n\tUNIQUE (user_name)\n)CHARSET=utf8mb4 ENGINE=InnoDB COLLATE utf8mb4_unicode_ci",
+        "CREATE INDEX ix_users_id ON users (id)"
+      ]
+    },
+    {
+      "table": "wework_notifications",
+      "statements": [
+        "CREATE TABLE wework_notifications (\n\tid VARCHAR(36) NOT NULL COMMENT 'Notification UUID', \n\tuser_id INTEGER NOT NULL COMMENT 'Recipient user ID' DEFAULT '0', \n\tactor_user_id INTEGER NOT NULL COMMENT 'Sender user ID' DEFAULT '0', \n\tkind VARCHAR(64) NOT NULL COMMENT 'Notification kind' DEFAULT 'message', \n\ttitle VARCHAR(256) NOT NULL COMMENT 'Notification title' DEFAULT '', \n\tbody TEXT NOT NULL COMMENT 'Notification body', \n\turl VARCHAR(2048) NOT NULL COMMENT 'Click destination; empty means no navigation' DEFAULT '', \n\tpayload JSON NOT NULL COMMENT 'Structured source context', \n\tcreated_at DATETIME NOT NULL COMMENT 'Creation time in UTC' DEFAULT CURRENT_TIMESTAMP, \n\tis_read BOOL NOT NULL COMMENT 'Read state: 0 unread, 1 read' DEFAULT '0', \n\tread_status_changed_at DATETIME NOT NULL COMMENT 'Read state transition time in UTC' DEFAULT CURRENT_TIMESTAMP, \n\tPRIMARY KEY (id)\n)CHARSET=utf8mb4 ENGINE=InnoDB COMMENT='Persistent Wework inbox notifications'",
+        "CREATE INDEX idx_wework_notifications_inbox ON wework_notifications (user_id, created_at, id)"
+      ]
+    },
+    {
+      "table": "wework_transcript_archives",
+      "statements": [
+        "CREATE TABLE wework_transcript_archives (\n\tid BIGINT NOT NULL COMMENT 'Wework transcript archive primary key' AUTO_INCREMENT, \n\ttranscript_db_id BIGINT NOT NULL COMMENT 'Owning transcript ID; logical reference without database foreign key' DEFAULT '0', \n\tfrom_sequence BIGINT NOT NULL COMMENT 'First turn sequence contained in the archive' DEFAULT '0', \n\tto_sequence BIGINT NOT NULL COMMENT 'Last turn sequence contained in the archive' DEFAULT '0', \n\tstorage_key VARCHAR(500) NOT NULL COMMENT 'Immutable object-storage key for the compressed archive' DEFAULT '', \n\tsha256 VARCHAR(64) NOT NULL COMMENT 'SHA-256 digest of the compressed archive' DEFAULT '', \n\tsize_bytes BIGINT NOT NULL COMMENT 'Compressed archive size in bytes' DEFAULT '0', \n\tformat VARCHAR(32) NOT NULL COMMENT 'Archive serialization and compression format' DEFAULT 'jsonl.zst', \n\tcreated_at DATETIME(6) NOT NULL COMMENT 'Creation time' DEFAULT CURRENT_TIMESTAMP(6), \n\tPRIMARY KEY (id), \n\tCONSTRAINT uniq_wework_transcript_archive_range UNIQUE (transcript_db_id, from_sequence, to_sequence)\n)CHARSET=utf8mb4 ENGINE=InnoDB COMMENT='Immutable archived Wework transcript segments'",
+        "CREATE INDEX idx_wework_transcript_archive_range ON wework_transcript_archives (transcript_db_id, from_sequence)"
+      ]
+    },
+    {
+      "table": "wework_transcript_turns",
+      "statements": [
+        "CREATE TABLE wework_transcript_turns (\n\tid BIGINT NOT NULL COMMENT 'Wework transcript turn primary key' AUTO_INCREMENT, \n\ttranscript_db_id BIGINT NOT NULL COMMENT 'Owning transcript ID; logical reference without database foreign key' DEFAULT '0', \n\tsequence BIGINT NOT NULL COMMENT 'Monotonic turn sequence within the transcript' DEFAULT '0', \n\tturn_id VARCHAR(100) NOT NULL COMMENT 'Device-independent finalized turn identity' DEFAULT '', \n\tpayload JSON NOT NULL COMMENT 'Finalized transcript turn payload', \n\tcreated_at DATETIME(6) NOT NULL COMMENT 'Creation time' DEFAULT CURRENT_TIMESTAMP(6), \n\tPRIMARY KEY (id), \n\tCONSTRAINT uniq_wework_transcript_turn_sequence UNIQUE (transcript_db_id, sequence), \n\tCONSTRAINT uniq_wework_transcript_turn_identity UNIQUE (transcript_db_id, turn_id)\n)CHARSET=utf8mb4 ENGINE=InnoDB COMMENT='Hot finalized turns awaiting transcript archival'",
+        "CREATE INDEX idx_wework_transcript_turn_range ON wework_transcript_turns (transcript_db_id, sequence)"
+      ]
+    },
+    {
+      "table": "wework_transcripts",
+      "statements": [
+        "CREATE TABLE wework_transcripts (\n\tid BIGINT NOT NULL COMMENT 'Wework transcript primary key' AUTO_INCREMENT, \n\tuser_id INTEGER NOT NULL COMMENT 'Owner user ID' DEFAULT '0', \n\ttranscript_id VARCHAR(100) NOT NULL COMMENT 'Device-independent transcript identity' DEFAULT '', \n\tparent_transcript_id VARCHAR(100) NOT NULL COMMENT 'Parent transcript identity; empty means this is a root transcript' DEFAULT '', \n\tforked_at_sequence BIGINT NOT NULL COMMENT 'Parent sequence used to fork; 0 means no parent fork point' DEFAULT '0', \n\ttitle VARCHAR(512) NOT NULL COMMENT 'Transcript display title' DEFAULT '', \n\tstate VARCHAR(20) NOT NULL COMMENT 'Transcript lifecycle state: active or archived' DEFAULT 'active', \n\tcurrent_sequence BIGINT NOT NULL COMMENT 'Latest synchronized hot turn sequence' DEFAULT '0', \n\tarchived_through_sequence BIGINT NOT NULL COMMENT 'Latest sequence moved to immutable archive storage' DEFAULT '0', \n\twriter_client_id VARCHAR(100) NOT NULL COMMENT 'Current writer device ID; empty means no active writer' DEFAULT '', \n\twriter_fencing_token BIGINT NOT NULL COMMENT 'Monotonic token fencing stale device writes' DEFAULT '0', \n\twriter_lease_expires_at DATETIME(6) NOT NULL COMMENT 'Writer lease expiry time; epoch means no active lease' DEFAULT '1970-01-01 00:00:00.000000', \n\tarchived_at DATETIME(6) NOT NULL COMMENT 'Archive time; epoch means the transcript is not archived' DEFAULT '1970-01-01 00:00:00.000000', \n\tcreated_at DATETIME(6) NOT NULL COMMENT 'Creation time' DEFAULT CURRENT_TIMESTAMP(6), \n\tupdated_at DATETIME(6) NOT NULL COMMENT 'Last update time' DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6), \n\tPRIMARY KEY (id), \n\tCONSTRAINT uniq_wework_transcript_user_identity UNIQUE (user_id, transcript_id)\n)CHARSET=utf8mb4 ENGINE=InnoDB COMMENT='Device-independent Wework transcript synchronization state'",
+        "CREATE INDEX idx_wework_transcript_parent ON wework_transcripts (user_id, parent_transcript_id)",
+        "CREATE INDEX idx_wework_transcript_user_updated ON wework_transcripts (user_id, updated_at)"
+      ]
+    },
+    {
+      "table": "wiki_projects",
+      "statements": [
+        "CREATE TABLE wiki_projects (\n\tid INTEGER NOT NULL AUTO_INCREMENT, \n\tproject_name VARCHAR(200) NOT NULL, \n\tproject_type VARCHAR(50) NOT NULL, \n\tsource_type VARCHAR(50) NOT NULL, \n\tsource_url VARCHAR(500) NOT NULL, \n\tsource_id VARCHAR(100) NOT NULL DEFAULT '', \n\tsource_domain VARCHAR(100) NOT NULL DEFAULT '', \n\tdescription TEXT NOT NULL, \n\text JSON NOT NULL COMMENT 'Project extension data', \n\tkind_id INTEGER NOT NULL COMMENT 'Code wiki knowledge base built from this repository; 0 = legacy' DEFAULT '0', \n\tis_active BOOL NOT NULL, \n\tcreated_at DATETIME, \n\tupdated_at DATETIME, \n\tPRIMARY KEY (id), \n\tCONSTRAINT uq_wiki_projects_source_url_kind_id UNIQUE (source_url, kind_id)\n)CHARSET=utf8mb4 ENGINE=InnoDB COLLATE utf8mb4_unicode_ci",
+        "CREATE INDEX ix_wiki_projects_id ON wiki_projects (id)",
+        "CREATE INDEX ix_wiki_projects_kind_id ON wiki_projects (kind_id)",
+        "CREATE INDEX ix_wiki_projects_project_name ON wiki_projects (project_name)",
+        "CREATE INDEX ix_wiki_projects_project_type ON wiki_projects (project_type)",
+        "CREATE INDEX ix_wiki_projects_source_type ON wiki_projects (source_type)"
+      ]
+    },
+    {
+      "table": "api_keys",
+      "statements": [
+        "CREATE TABLE api_keys (\n\tid INTEGER NOT NULL AUTO_INCREMENT, \n\tuser_id INTEGER NOT NULL, \n\tkey_hash VARCHAR(256) NOT NULL, \n\tkey_prefix VARCHAR(16) NOT NULL, \n\tname VARCHAR(100) NOT NULL, \n\tkey_type VARCHAR(20) NOT NULL, \n\tdescription VARCHAR(500) NOT NULL, \n\texpires_at DATETIME NOT NULL, \n\tlast_used_at DATETIME NOT NULL, \n\tis_active BOOL NOT NULL, \n\tcreated_at DATETIME NOT NULL, \n\tupdated_at DATETIME NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(user_id) REFERENCES users (id), \n\tUNIQUE (key_hash)\n)CHARSET=utf8mb4 ENGINE=InnoDB COLLATE utf8mb4_unicode_ci",
+        "CREATE INDEX ix_api_keys_id ON api_keys (id)",
+        "CREATE INDEX ix_api_keys_key_type ON api_keys (key_type)",
+        "CREATE INDEX ix_api_keys_user_id ON api_keys (user_id)"
+      ]
+    },
+    {
+      "table": "loop_items",
+      "statements": [
+        "CREATE TABLE loop_items (\n\tid VARCHAR(64) NOT NULL, \n\tresource_type VARCHAR(24) NOT NULL, \n\tproject_space VARCHAR(100) NOT NULL DEFAULT 'default', \n\tcloud_project_id VARCHAR(64), \n\tparent_id VARCHAR(64), \n\tloop_item_id VARCHAR(64), \n\tdelivery_id VARCHAR(64), \n\tpublic_id VARCHAR(36), \n\tproject_key VARCHAR(16), \n\tname VARCHAR(255), \n\ttitle VARCHAR(255), \n\tdescription TEXT NOT NULL, \n\tstorage_prefix VARCHAR(512), \n\tsequence_number INTEGER, \n\tnext_item_number INTEGER, \n\tcreated_by_user_id INTEGER, \n\tupdated_by_user_id INTEGER, \n\tassignee_user_id INTEGER, \n\tuser_id INTEGER, \n\tadded_by_user_id INTEGER, \n\tsource VARCHAR(20), \n\tstatus VARCHAR(32), \n\tpriority VARCHAR(20), \n\tstart_at DATETIME, \n\tdue_at DATETIME, \n\tsort_order INTEGER NOT NULL DEFAULT '0', \n\tcurrent_delivery_id VARCHAR(64), \n\tlocal_project_id INTEGER, \n\tdevice_id VARCHAR(100), \n\tis_default BOOL, \n\ttask_user_id INTEGER, \n\tassignee_agent_id VARCHAR(64) NOT NULL COMMENT 'Assigned project chat agent ID; empty when unassigned' DEFAULT '', \n\tassignee_team_id INTEGER COMMENT 'Assigned Wegent Team ID; null when the assignee is not a Team', \n\ttask_id VARCHAR(255), \n\ttask_title VARCHAR(255), \n\tbackend_task_id BIGINT, \n\tlinked_by_user_id INTEGER, \n\tlinked_at DATETIME, \n\tunlinked_at DATETIME, \n\tpath VARCHAR(700), \n\tkind VARCHAR(32), \n\tdisplay_name VARCHAR(255), \n\trelative_path VARCHAR(700), \n\tobject_key VARCHAR(1400), \n\tcontent_type VARCHAR(255), \n\tsize_bytes BIGINT, \n\tsha256 VARCHAR(64), \n\tsource_task_binding_id VARCHAR(64), \n\tsource_task_snapshot JSON, \n\tmarkdown_object_key VARCHAR(1024), \n\tchat_object_key VARCHAR(1024), \n\tmanifest_object_key VARCHAR(1024), \n\tmetadata JSON, \n\tversion INTEGER NOT NULL DEFAULT '1', \n\tcreated_at DATETIME NOT NULL, \n\tupdated_at DATETIME NOT NULL, \n\tcompleted_at DATETIME, \n\tdelivered_at DATETIME, \n\tdeleted_at DATETIME, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(cloud_project_id) REFERENCES loop_items (id) ON DELETE CASCADE, \n\tFOREIGN KEY(parent_id) REFERENCES loop_items (id) ON DELETE CASCADE, \n\tFOREIGN KEY(loop_item_id) REFERENCES loop_items (id) ON DELETE CASCADE, \n\tFOREIGN KEY(delivery_id) REFERENCES loop_items (id) ON DELETE CASCADE, \n\tUNIQUE (public_id), \n\tUNIQUE (project_key), \n\tUNIQUE (storage_prefix), \n\tFOREIGN KEY(local_project_id) REFERENCES projects (id) ON DELETE CASCADE, \n\tCONSTRAINT fk_loop_items_assignee_team_id_kinds FOREIGN KEY(assignee_team_id) REFERENCES kinds (id) ON DELETE SET NULL, \n\tFOREIGN KEY(backend_task_id) REFERENCES tasks (id) ON DELETE SET NULL\n)CHARSET=utf8mb4 ENGINE=InnoDB",
+        "CREATE INDEX idx_loop_items_assignee_agent_id ON loop_items (assignee_agent_id)",
+        "CREATE INDEX idx_loop_items_parent_type ON loop_items (parent_id, resource_type, sort_order)",
+        "CREATE INDEX idx_loop_items_project_path ON loop_items (cloud_project_id, path)",
+        "CREATE INDEX idx_loop_items_project_type ON loop_items (cloud_project_id, resource_type)",
+        "CREATE INDEX ix_loop_items_assignee_team_id ON loop_items (assignee_team_id)",
+        "CREATE INDEX ix_loop_items_assignee_user_id ON loop_items (assignee_user_id)",
+        "CREATE INDEX ix_loop_items_cloud_project_id ON loop_items (cloud_project_id)",
+        "CREATE INDEX ix_loop_items_created_by_user_id ON loop_items (created_by_user_id)",
+        "CREATE INDEX ix_loop_items_deleted_at ON loop_items (deleted_at)",
+        "CREATE INDEX ix_loop_items_delivery_id ON loop_items (delivery_id)",
+        "CREATE INDEX ix_loop_items_loop_item_id ON loop_items (loop_item_id)",
+        "CREATE INDEX ix_loop_items_parent_id ON loop_items (parent_id)",
+        "CREATE INDEX ix_loop_items_project_space ON loop_items (project_space)",
+        "CREATE INDEX ix_loop_items_resource_type ON loop_items (resource_type)",
+        "CREATE INDEX ix_loop_items_status ON loop_items (status)",
+        "CREATE INDEX ix_loop_items_user_id ON loop_items (user_id)"
+      ]
+    },
+    {
+      "table": "skill_binaries",
+      "statements": [
+        "CREATE TABLE skill_binaries (\n\tid INTEGER NOT NULL AUTO_INCREMENT, \n\tkind_id INTEGER NOT NULL, \n\tbinary_data MEDIUMBLOB NOT NULL, \n\tfile_size INTEGER NOT NULL, \n\tfile_hash VARCHAR(64) NOT NULL, \n\ttype VARCHAR(32) NOT NULL, \n\tfile_name VARCHAR(255) NOT NULL, \n\tcreated_at DATETIME, \n\tPRIMARY KEY (id), \n\tUNIQUE (kind_id), \n\tFOREIGN KEY(kind_id) REFERENCES kinds (id) ON DELETE CASCADE\n)CHARSET=utf8mb4 ENGINE=InnoDB COLLATE utf8mb4_unicode_ci",
+        "CREATE INDEX ix_skill_binaries_id ON skill_binaries (id)"
+      ]
+    },
+    {
+      "table": "wiki_generations",
+      "statements": [
+        "CREATE TABLE wiki_generations (\n\tid INTEGER NOT NULL AUTO_INCREMENT, \n\tproject_id INTEGER NOT NULL, \n\tkind_id INTEGER NOT NULL DEFAULT '0', \n\tuser_id INTEGER NOT NULL, \n\ttask_id BIGINT NOT NULL, \n\tteam_id INTEGER NOT NULL, \n\tgeneration_type ENUM('FULL','INCREMENTAL','CUSTOM') NOT NULL, \n\tsource_snapshot JSON NOT NULL COMMENT 'Source snapshot information', \n\tstatus ENUM('PENDING','RUNNING','COMPLETED','FAILED','CANCELLED') NOT NULL, \n\text JSON NOT NULL COMMENT 'Extension fields', \n\tcreated_at DATETIME, \n\tupdated_at DATETIME, \n\tcompleted_at DATETIME NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(project_id) REFERENCES wiki_projects (id) ON DELETE CASCADE\n)CHARSET=utf8mb4 ENGINE=InnoDB COLLATE utf8mb4_unicode_ci",
+        "CREATE INDEX idx_user_project ON wiki_generations (user_id, project_id)",
+        "CREATE INDEX ix_wiki_generations_created_at ON wiki_generations (created_at)",
+        "CREATE INDEX ix_wiki_generations_id ON wiki_generations (id)",
+        "CREATE INDEX ix_wiki_generations_kind_id ON wiki_generations (kind_id)",
+        "CREATE INDEX ix_wiki_generations_project_id ON wiki_generations (project_id)",
+        "CREATE INDEX ix_wiki_generations_status ON wiki_generations (status)",
+        "CREATE INDEX ix_wiki_generations_task_id ON wiki_generations (task_id)",
+        "CREATE INDEX ix_wiki_generations_user_id ON wiki_generations (user_id)"
+      ]
+    },
+    {
+      "table": "wiki_contents",
+      "statements": [
+        "CREATE TABLE wiki_contents (\n\tid INTEGER NOT NULL AUTO_INCREMENT, \n\tgeneration_id INTEGER NOT NULL, \n\ttype VARCHAR(50) NOT NULL, \n\ttitle VARCHAR(500) NOT NULL, \n\tcontent TEXT NOT NULL, \n\tparent_id INTEGER NOT NULL, \n\text JSON NOT NULL COMMENT 'Content extension data', \n\tcreated_at DATETIME, \n\tupdated_at DATETIME, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(generation_id) REFERENCES wiki_generations (id) ON DELETE CASCADE\n)CHARSET=utf8mb4 ENGINE=InnoDB COLLATE utf8mb4_unicode_ci",
+        "CREATE INDEX ix_wiki_contents_generation_id ON wiki_contents (generation_id)",
+        "CREATE INDEX ix_wiki_contents_id ON wiki_contents (id)",
+        "CREATE INDEX ix_wiki_contents_type ON wiki_contents (type)"
+      ]
+    }
+  ]
+}

@@ -1,4 +1,5 @@
 import { verifyCloudAssignmentReceipts } from '../modules/issue-assignment-receipts.mjs'
+import { verifyLocalCloudStandInReceipt } from '../modules/stand-in-local-cloud-receipts.mjs'
 import { openProjectStandIn } from '../modules/stand-in-flows.mjs'
 import { verifyRemoteStandInProjectScope } from '../modules/stand-in-project-connections.mjs'
 import assert from 'node:assert/strict'
@@ -41,6 +42,7 @@ export function createDesktopScenario({
   modelResponseTimeoutMs,
   workbenchReadyTimeoutMs,
   captureScreenshot,
+  workspacePath,
 }) {
   let backendUrl
   let cloudEnvironment
@@ -431,6 +433,11 @@ export function createDesktopScenario({
           ...settingsParams(),
           settings: { ...remoteSettings, enabled: false },
         })
+        await verifyLocalCloudStandInReceipt(
+          control,
+          { request, settingsParams, userId: user.id },
+          { workspacePath, marker: MARKER, uiTimeoutMs, modelResponseTimeoutMs, until }
+        )
       } finally {
         socket.disconnect()
       }

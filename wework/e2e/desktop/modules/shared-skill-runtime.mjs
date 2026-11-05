@@ -1,11 +1,16 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { lstat, readFile, readlink, readdir, realpath, stat, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { CLOUD_DEVICE_ID, CLOUD_PUBLIC_MODEL_NAME, CLOUD_PUBLIC_MODEL_OPTIONS } from './shared.mjs'
 import { createZipFixture } from './zip-fixtures.mjs'
+
+const { parse } = createRequire(join(import.meta.dirname, '../../../electron/package.json'))(
+  process.env.WEWORK_E2E_YAML_PARSER || 'yaml'
+)
 
 const digest = bytes => createHash('sha256').update(bytes).digest('hex')
 
@@ -34,6 +39,11 @@ export function createSharedSkillRuntime({
       writeText(response, `${turn.callId}-done`, turn.completion)
       return true
     }
+    assert.equal(
+      serialized.includes(`**${NAME}** [USER SELECTED - PRIORITIZE]`),
+      Boolean(turn.bindShells),
+      'Native Claude did not receive the configured skill preload guidance'
+    )
     const output = (body.input ?? []).find(
       item => item.type === 'function_call_output' && item.call_id === turn.callId
     )
@@ -50,6 +60,15 @@ export function createSharedSkillRuntime({
         JSON.stringify(output).includes(turn.content),
         'Claude read the wrong skill version'
       )
+      if (turn.bindShells) {
+        const frontmatter = output.output.match(/^---\r?\n([\s\S]*?)\r?\n---/m)?.[1]
+        assert.ok(frontmatter, 'Claude did not read the skill frontmatter')
+        assert.deepEqual(
+          parse(frontmatter).bindShells,
+          turn.bindShells,
+          'Claude did not consume the skill with its original Shell declaration'
+        )
+      }
       const mcpOutput = (body.input ?? []).find(
         item => item.type === 'function_call_output' && item.call_id === `${turn.callId}-mcp`
       )
@@ -110,7 +129,7 @@ export function createSharedSkillRuntime({
       )
       return response
     }
-    const upload = async (version, id) => {
+    const upload = async (version, id, bindShells = ['ClaudeCode', 'Codex']) => {
       const archivePath = join(resultDir, `${NAME}-${version}.zip`)
       const mcps =
         !isCodex && version === 'V1'
@@ -130,7 +149,7 @@ export function createSharedSkillRuntime({
             }
           : {}
       await createZipFixture(archivePath, {
-        [`${NAME}/SKILL.md`]: `---\nname: ${NAME}\ndescription: Shared skill ${version}\nbindShells: [ClaudeCode, Codex]\nmcpServers: ${JSON.stringify(mcps)}\n---\nWEWORK_SHARED_SKILL_${version}\n`,
+        [`${NAME}/SKILL.md`]: `---\nname: ${NAME}\ndescription: Shared skill ${version}\nbindShells: [${bindShells.join(', ')}]\nmcpServers: ${JSON.stringify(mcps)}\n---\nWEWORK_SHARED_SKILL_${version}\n`,
       })
       const bytes = await readFile(archivePath)
       const form = new FormData()
@@ -180,9 +199,10 @@ export function createSharedSkillRuntime({
       options: CLOUD_PUBLIC_MODEL_OPTIONS,
     }
     let address
-    const runTurn = async (version, index) => {
+    const runTurn = async (version, index, bindShells) => {
       turn = {
         index,
+        bindShells,
         prompt: `${promptPrefix}_TURN_${index}`,
         content: `WEWORK_SHARED_SKILL_${version}`,
         callId: `shared-skill-${index}`,
@@ -347,15 +367,38 @@ export function createSharedSkillRuntime({
     const after = await stat(packagePath(second), { bigint: true })
     assert.equal(after.ino, before.ino)
     assert.equal(after.mtimeNs, before.mtimeNs)
+    let chatBoundPackage
+    if (!isCodex) {
+      const chatBound = await upload('V3', skillId, ['Chat'])
+      assert.deepEqual(chatBound.spec.bindShells, ['Chat'])
+      const updatedBot = await (
+        await request(`bots/${bot.id}`, 'PUT', {
+          preload_skills: [NAME],
+          preload_skill_refs: {
+            [NAME]: { skill_id: skillId, namespace: 'default', is_public: false },
+          },
+        })
+      ).json()
+      assert.equal(updatedBot.shell_type, 'ClaudeCode')
+      assert.deepEqual(updatedBot.preload_skills, [NAME])
+      assert.equal(updatedBot.preload_skill_refs[NAME].skill_id, skillId)
+      await runTurn('V3', 4, ['Chat'])
+      await assertLayout(chatBound)
+      chatBoundPackage = packagePath(chatBound)
+    }
     await writeFile(
       join(resultDir, isCodex ? 'codex-shared-skill-runtime.json' : 'shared-skill-runtime.json'),
       JSON.stringify(
         {
           home,
-          sharedPackages: [packagePath(first), packagePath(second)],
+          sharedPackages: [
+            packagePath(first),
+            packagePath(second),
+            ...(chatBoundPackage ? [chatBoundPackage] : []),
+          ],
           relativeLink: await readlink(link),
           taskId: address.taskId,
-          turns: 3,
+          turns: isCodex ? 3 : 4,
           metadataDiffersFromDownloadedZip: true,
           unchangedVersionReused: true,
           ...(isCodex
@@ -365,6 +408,7 @@ export function createSharedSkillRuntime({
                 omittedSkillMcpRetained: true,
                 mcpContextRefreshed: true,
                 unchangedMcpConfig: true,
+                chatBoundPreloadConsumedByClaude: true,
               }),
         },
         null,

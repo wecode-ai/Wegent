@@ -19,7 +19,7 @@
 //! handle, and the `TaskStore` trait object requires a `Send` method future.
 //! The owning store supplies the resolved table names and (for a sharded
 //! deployment) the ids it allocated before the insert.
-use brz_mysql::{MysqlResult, MysqlRow, MysqlTransaction};
+use brz_mysql::{MysqlResult, MysqlRow, MysqlTransaction, MysqlTransactionService};
 use serde_json::{Map, Value};
 
 use crate::internal_callback::completion::task_column;
@@ -156,49 +156,30 @@ pub struct SubtaskPairInsert {
 
 /// `create_assistant_subtask` + `create_user_and_assistant_subtasks`: resolve
 /// the executor reference (locking task read, label consumption, fallback
-/// assistant read) and insert the paired rows inside `SAVEPOINT {savepoint}`,
-/// all in one transaction.
+/// assistant read) and insert the paired rows inside the Source's
+/// `begin_nested()` block, all in one transaction.
 pub async fn create_subtask_pair_with_executor_reference(
-    sql: &mut dyn RequestSql,
+    transaction: &mut MysqlTransactionService,
     tasks_table: &str,
     subtasks_table: &str,
-    savepoint: &str,
     with_id: bool,
     request: &CreateSubtasksRequest<'_>,
 ) -> MysqlResult<SubtaskPairInsert> {
-    let task_id = request.user_subtask.task_id;
-    let route = RouteKey::Task(task_id as u64);
-    let executor = resolve_executor_reference_on(sql, tasks_table, subtasks_table, task_id).await?;
-    let assistant_subtask = assistant_row_with_executor(&request.assistant_subtask, &executor);
-    sql.execute_statement(route, &format!("SAVEPOINT {savepoint}"), Vec::new())
-        .await?;
-    let user_subtask_id =
-        insert_subtask_row_on(sql, subtasks_table, with_id, &request.user_subtask).await?;
-    let assistant_subtask_id =
-        insert_subtask_row_on(sql, subtasks_table, with_id, &assistant_subtask).await?;
-    // `after_flush_postexec` reads the new assistant subtask's `created_at`;
-    // the ORM loads the expired timestamp pair on this same connection before
-    // the savepoint is released.
-    let timestamps = sql
-        .fetch_optional_row(
-            route,
-            &inserted_subtask_timestamps_statement(subtasks_table),
-            vec![StatementArg::Int(assistant_subtask_id)],
-        )
-        .await?;
-    let assistant_created_at = timestamps.as_ref().and_then(|row| {
-        row.get_at::<Option<chrono::NaiveDateTime>>(0)
-            .ok()
-            .flatten()
-    });
-    sql.execute_statement(route, &format!("RELEASE SAVEPOINT {savepoint}"), Vec::new())
-        .await?;
-    Ok(SubtaskPairInsert {
-        user_subtask_id,
-        assistant_subtask_id,
-        executor,
-        assistant_created_at,
-    })
+    let executor = resolve_executor_reference_on(
+        &mut *transaction,
+        tasks_table,
+        subtasks_table,
+        request.user_subtask.task_id,
+    )
+    .await?;
+    create_subtask_pair_with_resolved_executor(
+        transaction,
+        subtasks_table,
+        with_id,
+        request,
+        &executor,
+    )
+    .await
 }
 
 /// [`resolve_executor_reference`] on the caller's request transaction.
@@ -263,38 +244,43 @@ pub async fn resolve_executor_reference_on(
     })
 }
 
-/// The savepoint/insert half of [`create_subtask_pair_with_executor_reference`],
-/// given an executor already resolved by the caller. The Source emits the
-/// task's rename UPDATE between the executor reads and this block.
+/// The Source's subtask `begin_nested()` block, given an executor already
+/// resolved by the caller: the paired inserts and the `after_flush_postexec`
+/// timestamp read, all inside one nested `with_transaction` scope. The Source
+/// emits the task's rename UPDATE between the executor reads and this block.
 pub async fn create_subtask_pair_with_resolved_executor(
-    sql: &mut dyn RequestSql,
+    transaction: &mut MysqlTransactionService,
     subtasks_table: &str,
-    savepoint: &str,
     with_id: bool,
     request: &CreateSubtasksRequest<'_>,
     executor: &AssistantExecutor,
 ) -> MysqlResult<SubtaskPairInsert> {
     let assistant_subtask = assistant_row_with_executor(&request.assistant_subtask, executor);
     let route = RouteKey::Task(request.user_subtask.task_id as u64);
-    sql.execute_statement(route, &format!("SAVEPOINT {savepoint}"), Vec::new())
-        .await?;
-    let user_subtask_id =
-        insert_subtask_row_on(sql, subtasks_table, with_id, &request.user_subtask).await?;
-    let assistant_subtask_id =
-        insert_subtask_row_on(sql, subtasks_table, with_id, &assistant_subtask).await?;
-    let timestamps = sql
-        .fetch_optional_row(
-            route,
-            &inserted_subtask_timestamps_statement(subtasks_table),
-            vec![StatementArg::Int(assistant_subtask_id)],
-        )
-        .await?;
-    let assistant_created_at = timestamps.as_ref().and_then(|row| {
-        row.get_at::<Option<chrono::NaiveDateTime>>(0)
-            .ok()
-            .flatten()
-    });
-    sql.execute_statement(route, &format!("RELEASE SAVEPOINT {savepoint}"), Vec::new())
+    let (user_subtask_id, assistant_subtask_id, assistant_created_at) = transaction
+        .with_transaction(async |nested| {
+            let user_subtask_id =
+                insert_subtask_row_on(nested, subtasks_table, with_id, &request.user_subtask)
+                    .await?;
+            let assistant_subtask_id =
+                insert_subtask_row_on(nested, subtasks_table, with_id, &assistant_subtask).await?;
+            // `after_flush_postexec` reads the new assistant subtask's
+            // `created_at`; the ORM loads the expired timestamp pair on this
+            // same connection before the savepoint is released.
+            let timestamps = nested
+                .fetch_optional_row(
+                    route,
+                    &inserted_subtask_timestamps_statement(subtasks_table),
+                    vec![StatementArg::Int(assistant_subtask_id)],
+                )
+                .await?;
+            let assistant_created_at = timestamps.as_ref().and_then(|row| {
+                row.get_at::<Option<chrono::NaiveDateTime>>(0)
+                    .ok()
+                    .flatten()
+            });
+            Ok((user_subtask_id, assistant_subtask_id, assistant_created_at))
+        })
         .await?;
     Ok(SubtaskPairInsert {
         user_subtask_id,

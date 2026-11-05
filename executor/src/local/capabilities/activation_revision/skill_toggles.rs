@@ -101,7 +101,7 @@ fn strip_installed_selectors(value: &mut Value, keys: &BTreeMap<String, BTreeSet
     }
 }
 
-fn strip_skill_config(value: &mut Value, paths: &BTreeSet<PathBuf>) {
+pub(super) fn strip_skill_config(value: &mut Value, paths: &BTreeSet<PathBuf>) {
     let Some(skills) = value.get_mut("skills").and_then(Value::as_object_mut) else {
         return;
     };

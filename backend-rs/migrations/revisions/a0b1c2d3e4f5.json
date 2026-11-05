@@ -1,0 +1,32 @@
+{
+  "revision": "a0b1c2d3e4f5",
+  "parents": [
+    "c9900f078622"
+  ],
+  "source": "20260313_a0b1c2d3e4f5_add_is_group_chat_to_tasks.py",
+  "upgrade": [
+    {
+      "sql": [
+        "ALTER TABLE tasks ADD COLUMN is_group_chat BOOL NOT NULL COMMENT 'Whether this task is a group chat (0 = false, 1 = true)' DEFAULT '0'",
+        "UPDATE tasks \n                SET is_group_chat = 1 \n                WHERE JSON_EXTRACT(json, '$.spec.is_group_chat') = true",
+        "CREATE INDEX idx_tasks_is_group_chat ON tasks (is_group_chat)"
+      ],
+      "when": {
+        "query": "SELECT COUNT(*) AS n FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='tasks' AND COLUMN_NAME='is_group_chat'",
+        "nonzero": false
+      }
+    }
+  ],
+  "downgrade": [
+    {
+      "sql": [
+        "DROP INDEX idx_tasks_is_group_chat ON tasks",
+        "ALTER TABLE tasks DROP COLUMN is_group_chat"
+      ],
+      "when": {
+        "query": "SELECT COUNT(*) AS n FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='tasks' AND COLUMN_NAME='is_group_chat'",
+        "nonzero": true
+      }
+    }
+  ]
+}

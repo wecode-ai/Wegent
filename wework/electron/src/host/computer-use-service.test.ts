@@ -14,8 +14,11 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('@trycua/cua-driver', () => ({
-  CuaDriver: { create: mocks.create },
   currentMacOsPermissionStatus: mocks.currentPermissions,
+}))
+
+vi.mock('./computer-use-driver-process.js', () => ({
+  ComputerUseDriverProcess: { create: mocks.create },
 }))
 
 vi.mock('@trycua/cua-driver/electron', () => ({
@@ -52,7 +55,6 @@ describe('ComputerUseService', () => {
       callTool: mocks.callTool,
       listToolsJson: mocks.listToolsJson,
       shutdown: mocks.shutdown,
-      uniffiDestroy: vi.fn(),
     })
   })
 
@@ -211,6 +213,73 @@ describe('ComputerUseService', () => {
       error: 'aborted',
     })
     await expect(service.status()).resolves.toMatchObject({ currentTool: null })
+    await service.stop()
+  })
+
+  test('removes a crashed bridge and requires explicit re-enable without replaying actions', async () => {
+    const executorHome = await mkdtemp(join(tmpdir(), 'wework-computer-use-crash-'))
+    directories.push(executorHome)
+    const service = new ComputerUseService(executorHome, 'darwin')
+    const runtimePath = join(executorHome, 'runtime/computer-use-bridge.json')
+    await service.setEnabled(true)
+    const onExit = mocks.create.mock.calls[0][0] as (error: Error) => void
+    onExit(new Error('Computer use driver exited (5); action outcome is unknown'))
+
+    await vi.waitFor(async () => {
+      await expect(service.status()).resolves.toMatchObject({
+        enabled: true,
+        running: false,
+        error: expect.stringContaining('action outcome is unknown'),
+      })
+      await expect(readFile(runtimePath, 'utf8')).rejects.toThrow()
+    })
+    await service.status()
+    expect(mocks.create).toHaveBeenCalledOnce()
+    expect(mocks.callTool).not.toHaveBeenCalled()
+
+    await expect(service.setEnabled(true)).resolves.toMatchObject({ running: true, error: null })
+    expect(mocks.create).toHaveBeenCalledTimes(2)
+    await service.stop()
+  })
+
+  test('ignores exit notifications belonging to a stopped generation', async () => {
+    const executorHome = await mkdtemp(join(tmpdir(), 'wework-computer-use-generation-'))
+    directories.push(executorHome)
+    const service = new ComputerUseService(executorHome, 'darwin')
+    await service.setEnabled(true)
+    const onExit = mocks.create.mock.calls[0][0] as (error: Error) => void
+    await service.setEnabled(false)
+    mocks.create.mockReturnValue({
+      callTool: mocks.callTool,
+      listToolsJson: mocks.listToolsJson,
+      shutdown: mocks.shutdown,
+    })
+    await service.setEnabled(true)
+    onExit(new Error('Old driver exited'))
+    // Drain the service operation queue before checking the new generation.
+    await service.setEnabled(true)
+    await expect(service.status()).resolves.toMatchObject({ running: true, error: null })
+    await service.stop()
+  })
+
+  test('handles a driver exit during creation before the driver is assigned', async () => {
+    const executorHome = await mkdtemp(join(tmpdir(), 'wework-computer-use-early-exit-'))
+    directories.push(executorHome)
+    mocks.create.mockImplementationOnce((onExit: (error: Error) => void) => {
+      const error = new Error('Driver exited before readiness')
+      onExit(error)
+      return Promise.reject(error)
+    })
+    const service = new ComputerUseService(executorHome, 'darwin')
+    await expect(service.setEnabled(true)).resolves.toMatchObject({
+      running: false,
+      error: 'Driver exited before readiness',
+    })
+    await expect(service.status()).resolves.toMatchObject({
+      running: false,
+      error: 'Driver exited before readiness',
+    })
+    expect(mocks.create).toHaveBeenCalledOnce()
     await service.stop()
   })
 })

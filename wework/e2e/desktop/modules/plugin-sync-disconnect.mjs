@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { openComposerPluginPicker } from './conversation-layout.mjs'
+import { lifecyclePluginSlug, publishLifecycleRelease } from './plugin-lifecycle-package.mjs'
 import {
   assertInventory,
   assertSurfaces,
@@ -25,8 +26,9 @@ export async function verifyPluginSyncDisconnect({
   localDeviceId: backendDeviceId,
   evidence,
   timeoutMs,
+  resultDir,
 }) {
-  const slug = 'coordination-e2e-disconnect'
+  const slug = lifecyclePluginSlug('coordination-e2e-disconnect')
   const nextSkill = 'Plugin sync recovered after the real connection was interrupted'
   const executorStatus = JSON.parse(await control.command('getLocalExecutorStatus', 'body'))
   const rendererDeviceId = executorStatus.deviceId?.trim()
@@ -38,11 +40,19 @@ export async function verifyPluginSyncDisconnect({
     'The backend registration must belong to the renderer local Executor'
   )
   evidence.push({ case: 'plugin-sync-device-identity', backendDeviceId, rendererDeviceId })
-  const item = await installFixture(cloud, control, slug, backendDeviceId, timeoutMs)
+  const baseline = await publishLifecycleRelease(cloud, resultDir, {
+    slug,
+    version: '1.0.0',
+    skills: { [slug]: `Use ${slug} for desktop regression verification` },
+  })
+  const item = await installFixture(cloud, control, slug, backendDeviceId, timeoutMs, baseline)
   // Renderer single-flight keys use the IPC identity, not the backend registration ID.
   const diagnostics = async () =>
     JSON.parse(
-      await control.command('getPluginSyncDiagnostics', 'body', { value: rendererDeviceId })
+      await control.command('getPluginSyncDiagnostics', 'body', {
+        value: rendererDeviceId,
+        timeoutMs,
+      })
     )
   const starts = state => state.localCatalogReads.filter(read => read.phase === 'started')
   const installedVersion = async () => {
@@ -69,7 +79,8 @@ export async function verifyPluginSyncDisconnect({
       !state.inFlight &&
       starts(state).length ===
         state.localCatalogReads.filter(read => read.phase !== 'started').length,
-    'Initial plugin reconciliation did not settle before the update'
+    'Initial plugin reconciliation did not settle before the update',
+    timeoutMs
   )
   assert.ok(apiProxy.websockets.size > 0, 'Local connection bypassed the real fault proxy')
 
@@ -101,7 +112,7 @@ export async function verifyPluginSyncDisconnect({
       : null
   let held
   try {
-    const release = await cloud.publishPluginRelease({
+    const release = await publishLifecycleRelease(cloud, resultDir, {
       slug,
       version: '2.0.0',
       skills: { [slug]: nextSkill },
@@ -179,12 +190,15 @@ export async function verifyPluginSyncDisconnect({
     await until(
       diagnostics,
       state => {
-        if (state.inFlight) assertNoReconciliation(state)
+        // Reconnect can complete the original ACK before this probe returns;
+        // a later auto-update pass may already own a new device lease.
+        if (syncPosts()[0].status === undefined) assertNoReconciliation(state)
         return state.backend.connected && state.rendererConnected
       },
       'The real Executor did not reconnect after the transport recovered',
       timeoutMs
     )
+    const acknowledgementRecoveryStartedAt = Date.now()
     // Keep the remounted workspace open through recovery. Reconciliation must
     // resume automatically after synchronization, without a manual refresh.
     const recovered = await until(
@@ -206,7 +220,21 @@ export async function verifyPluginSyncDisconnect({
       'Mounted PluginsWorkspace did not resume reconciliation after the sync lock released',
       SYNC_ACK_RECOVERY_TIMEOUT_MS
     )
+    const catalogRecoveryMs = Date.now() - acknowledgementRecoveryStartedAt
+    const acknowledgementCompletedAt = Date.parse(syncPosts()[0].completedAt)
+    assert.ok(
+      Number.isFinite(acknowledgementCompletedAt),
+      'Missing the completed HTTP receipt time'
+    )
+    const acknowledgementRecoveryMs = Math.max(
+      0,
+      acknowledgementCompletedAt - acknowledgementRecoveryStartedAt
+    )
     assert.equal(syncPosts()[0].status, 200, 'The real sync request never completed')
+    assert.ok(
+      acknowledgementRecoveryMs < 60_000,
+      'A reconnected sync waited for the lost socket ACK instead of recovering on the current route'
+    )
     assert.equal(syncPosts().length, 1, 'Recovery repeated the foreground device sync')
     assert.equal(packageGets().length, 1, 'Reconnect downloaded the immutable package twice')
     await control.command('waitFor', testId(`plugin-marketplace-actions-${item.pluginId}`))
@@ -224,6 +252,7 @@ export async function verifyPluginSyncDisconnect({
     assert.equal(packageGets().length, 1, 'Reopening downloaded the installed package again')
     evidence.push({
       case: 'package-sync-disconnect-defers-local-catalog',
+      pluginKey: slug,
       installedId: item.installedId,
       releaseId: release.releaseId,
       initialStarts,
@@ -231,6 +260,8 @@ export async function verifyPluginSyncDisconnect({
       remounted,
       released,
       recovered,
+      acknowledgementRecoveryMs,
+      catalogRecoveryMs,
       syncRequests: syncPosts(),
       packageRequests: packageGets(),
     })

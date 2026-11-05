@@ -1,0 +1,12 @@
+{
+  "order": 203000,
+  "scenario": "./scenarios/harness-apps.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 150000,
+      "shard": 4,
+      "position": 2000
+    }
+  }
+}

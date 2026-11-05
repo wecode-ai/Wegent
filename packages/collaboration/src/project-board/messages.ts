@@ -4,6 +4,9 @@
 
 export const boardSortMessages: Record<'zh-CN' | 'en', Record<string, string>> = {
   'zh-CN': {
+    'todo.card_children_progress': '子任务 {{completed}}/{{total}}',
+    'todo.card_children_progress_hint':
+      '已完成 {{completed}}/{{total}} 个子任务，点击进入子任务看板',
     'todo.parent_board_layout': '按父事项',
     'todo.parent_board_summary': '{{parents}} 个父事项 · {{standalone}} 个独立事项',
     'todo.parent_board_nested_summary': '{{parents}} 个父事项 · {{children}} 个直属子事项',
@@ -37,6 +40,9 @@ export const boardSortMessages: Record<'zh-CN' | 'en', Record<string, string>> =
     'todo.board_sort_manual': '手动排序',
   },
   en: {
+    'todo.card_children_progress': 'Sub-issues {{completed}}/{{total}}',
+    'todo.card_children_progress_hint':
+      '{{completed}} of {{total}} sub-issues completed. Open the sub-issue board',
     'todo.parent_board_layout': 'By parent',
     'todo.parent_board_summary': '{{parents}} parent issues · {{standalone}} standalone issues',
     'todo.parent_board_nested_summary':

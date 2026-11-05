@@ -26,6 +26,7 @@ import {
   verifyInteractionArchiving,
 } from '../modules/human-interaction-dismiss.mjs'
 import { verifyPendingInteractionsTab } from '../modules/pending-interactions-tab.mjs'
+import { createPersistentInteractionNoticeCase } from '../modules/human-interaction-persistent-notice.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { readProjectChatMessages } from '../modules/project-chat-snapshot.mjs'
 import { waitForElementInsideScroller, waitForSnapshot } from '../modules/conversation-layout.mjs'
@@ -57,6 +58,7 @@ export function createDesktopScenario({
   uiTimeoutMs,
 }) {
   let held
+  const persistentNotice = createPersistentInteractionNoticeCase()
   let cloud
   let environment
   let issueFixture
@@ -105,6 +107,7 @@ export function createDesktopScenario({
       if (handleEmptyReplyPrediction(body, response)) return true
       assert.ok(JSON.stringify(body).includes(PROMPT), 'Unexpected model request')
       response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
+      if (persistentNotice.handleModel(body, response)) return true
       if (handleArchiveInteractionModel(body, response)) return true
       if (JSON.stringify(body.input).includes(FOLLOWUP)) {
         response.end(
@@ -730,11 +733,6 @@ export function createDesktopScenario({
           'The container must navigate to its original Issue',
           uiTimeoutMs
         )
-        await control.command('waitFor', `${ORIGINAL} [data-testid="cloud-todo-detail-title"]`, {
-          text: '判断旧客户订单兼容策略',
-          visible: true,
-          timeoutMs: modelResponseTimeoutMs,
-        })
         const originalContext = contextParagraph.replace(page, ORIGINAL)
         await control.command('waitFor', originalContext, {
           text: CONTEXT,
@@ -757,6 +755,16 @@ export function createDesktopScenario({
           JSON.stringify(originalReading, null, 2)
         )
         await captureScreenshot(control, '09-original-issue-thread-resumes.png')
+        // The comment deep link scrolls the original context into view first.
+        // Verify the heading through a real scroll after checking that landing.
+        const originalTitle = `${ORIGINAL} [data-testid="cloud-todo-detail-title"]`
+        await control.command('scrollIntoView', originalTitle)
+        await control.command('waitFor', originalTitle, {
+          text: '判断旧客户订单兼容策略',
+          visible: true,
+          timeoutMs: modelResponseTimeoutMs,
+        })
+        await captureScreenshot(control, '09a-original-issue-title.png')
         return
       }
       await control.command('click', `${page} [data-testid="interaction-open-original"]`)
@@ -873,6 +881,8 @@ export function createDesktopScenario({
       } else await captureScreenshot(control, '09-original-task-resumes.png')
       if (checkpoint === 'human-interactions') {
         await verifyInteractionArchiving(control, modelResponseTimeoutMs, originalTaskId)
+        await control.command('click', `${page} [data-testid="interaction-open-original"]`)
+        await persistentNotice.verify(control, modelResponseTimeoutMs)
       }
     },
   }

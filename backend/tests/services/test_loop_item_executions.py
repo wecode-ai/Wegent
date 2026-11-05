@@ -1936,9 +1936,7 @@ async def test_retry_processor_uses_only_executions_from_the_current_attempt(
 
     assert failed_run.metadata_json["retry_execution_floor_id"] == previous_execution.id
     assert (
-        project_automation_execution._project_robot_execution_for_run(
-            test_db, str(failed_run.id)
-        )
+        project_automation_execution._execution_for_run(test_db, str(failed_run.id))
         is None
     )
 
@@ -1951,9 +1949,7 @@ async def test_retry_processor_uses_only_executions_from_the_current_attempt(
     )
 
     assert (
-        project_automation_execution._project_robot_execution_for_run(
-            test_db, str(failed_run.id)
-        )
+        project_automation_execution._execution_for_run(test_db, str(failed_run.id))
         == current_execution
     )
 
@@ -3524,6 +3520,46 @@ def test_open_execution_activity_does_not_create_late_placeholder_for_completed_
         .count()
         == 0
     )
+
+
+@pytest.mark.parametrize("trigger_status", ["in_review", "completed"])
+def test_completed_status_trigger_can_open_its_execution_activity(
+    test_db: Session, test_user: User, trigger_status: str
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    item = _make_item(test_db, project, test_user)
+    execution = _make_execution(
+        test_db,
+        item,
+        bot,
+        test_user,
+        automation_context={
+            "run_id": "completed-status-run",
+            "event": {
+                "type": "task.status_changed",
+                "payload": {"status": trigger_status},
+            },
+        },
+    )
+    claimed = loop_item_execution_service.claim(
+        test_db,
+        agent_id=bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+    )
+    assert claimed is not None
+    item.status = "completed"
+    test_db.commit()
+
+    opened = loop_item_execution_service.open_execution_activity(
+        test_db, execution=claimed
+    )
+
+    assert (opened is not None) == (trigger_status == "completed")
+    assert item.status == "completed"
 
 
 def test_open_execution_activity_does_not_revive_terminal_activity_from_stale_execution(

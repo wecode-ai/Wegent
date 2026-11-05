@@ -1,0 +1,55 @@
+{
+  "revision": "a3b4c5d6e7f8",
+  "parents": [
+    "f1a2b3c4d5e6"
+  ],
+  "source": "20260817_a3b4c5d6e7f8_restore_execution_sentinel_contract.py",
+  "upgrade": null,
+  "downgrade": [
+    {
+      "sql": [
+        "ALTER TABLE loop_items MODIFY assignee_team_id INTEGER NULL"
+      ]
+    },
+    {
+      "sql": [
+        "UPDATE loop_items SET assignee_team_id = NULL WHERE assignee_team_id = 0"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE loop_items ADD CONSTRAINT fk_loop_items_assignee_team_id_kinds FOREIGN KEY(assignee_team_id) REFERENCES kinds (id) ON DELETE SET NULL"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE loop_item_executions MODIFY team_id INTEGER NULL"
+      ]
+    },
+    {
+      "sql": [
+        "UPDATE loop_item_executions SET team_id = NULL WHERE team_id = 0"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE loop_item_executions ADD CONSTRAINT fk_loop_item_executions_team_id_kinds FOREIGN KEY(team_id) REFERENCES kinds (id) ON DELETE SET NULL"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE loop_item_executions MODIFY backend_task_id BIGINT NULL"
+      ]
+    },
+    {
+      "sql": [
+        "UPDATE loop_item_executions SET backend_task_id = NULL WHERE backend_task_id = 0"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE loop_item_executions ADD CONSTRAINT fk_loop_item_executions_backend_task_id_tasks FOREIGN KEY(backend_task_id) REFERENCES tasks (id) ON DELETE SET NULL"
+      ]
+    }
+  ]
+}

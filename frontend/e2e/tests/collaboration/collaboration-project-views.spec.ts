@@ -4,12 +4,64 @@
 
 import { expect, test, type Page, type Request } from '@playwright/test'
 import { ADMIN_USER, REGULAR_USER } from '../../config/test-users'
+import { createApiClient } from '../../utils/api-client'
 import { projectTest, type Resource } from '../../utils/collaboration-project-fixture'
 import { dragCollaborationIssueToColumn, webApi } from '../../utils/collaboration-test-support'
 
 async function dragIssueToLane(page: Page, issueId: string, source: string, target: string) {
   return dragCollaborationIssueToColumn(page, issueId, target, source)
 }
+
+projectTest(
+  'rejects subtree archiving through an editable parent with a private descendant',
+  async ({ page, request, scheduledProject: { path, issueId } }) => {
+    const projectId = path.split('/').at(-1)!
+    const child = await webApi<Resource>(page, `/api/v1/cloud-projects/${projectId}/loop-items`, {
+      method: 'POST',
+      body: { title: 'Visible child', parent_id: issueId },
+    })
+    const createdGrandchild = await webApi<Resource>(
+      page,
+      `/api/v1/cloud-projects/${projectId}/loop-items`,
+      {
+        method: 'POST',
+        body: { title: 'Private grandchild', parent_id: child.id },
+      }
+    )
+    const grandchild = await webApi<Resource>(page, `/api/v1/loop-items/${createdGrandchild.id}`, {
+      method: 'PATCH',
+      body: { version: createdGrandchild.version, security_level: 'related' },
+    })
+    type ArchivedIssue = Resource & { status: string; parent_id: string | null }
+    const ids = [issueId, child.id, grandchild.id]
+    const readTree = () =>
+      Promise.all(ids.map(id => webApi<ArchivedIssue>(page, `/api/v1/loop-items/${id}`)))
+    const before = await readTree()
+    const member = createApiClient(request)
+    expect((await member.login(REGULAR_USER.username, REGULAR_USER.password, 1)).status).toBe(200)
+    expect(
+      (await member.get<{ can_edit: boolean }>(`/api/v1/loop-items/${issueId}`)).data?.can_edit
+    ).toBe(true)
+    expect((await member.get(`/api/v1/loop-items/${grandchild.id}`)).status).toBe(404)
+
+    expect((await member.delete(`/api/v1/loop-items/${issueId}`)).status).toBe(404)
+    const snapshot = (items: ArchivedIssue[]) =>
+      items.map(({ id, version, status, parent_id }) => ({ id, version, status, parent_id }))
+    expect(snapshot(await readTree())).toEqual(snapshot(before))
+
+    await webApi(page, `/api/v1/loop-items/${issueId}`, { method: 'DELETE' })
+    expect((await member.post(`/api/v1/loop-items/${issueId}/restore`)).status).toBe(404)
+    const restored = await webApi<{ items: ArchivedIssue[] }>(
+      page,
+      `/api/v1/loop-items/${issueId}/restore`,
+      { method: 'POST' }
+    )
+    expect(restored.items.map(item => item.id).sort()).toEqual([...ids].sort())
+    expect(restored.items.map(({ id, status, parent_id }) => ({ id, status, parent_id }))).toEqual(
+      expect.arrayContaining(before.map(({ id, status, parent_id }) => ({ id, status, parent_id })))
+    )
+  }
+)
 
 projectTest(
   'rejected robot starts preserve the board and detail status',

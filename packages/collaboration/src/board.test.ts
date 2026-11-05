@@ -2,70 +2,94 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from 'vitest'
 
-import { groupBoardIssues } from "./board";
-import type { CollaborationIssue, CollaborationProject } from "./types";
+import { groupBoardIssues, projectStatuses } from './board'
+import { collaborationMessages, createCollaborationTranslator } from './i18n'
+import type { CollaborationIssue, CollaborationProject } from './types'
 
 function issue(
   id: string,
   status: string,
-  overrides: Partial<CollaborationIssue> = {},
+  overrides: Partial<CollaborationIssue> = {}
 ): CollaborationIssue {
   return {
     id,
-    cloud_project_id: "project-1",
-    sequence_number: Number(id.replace(/\D/g, "")) || 1,
+    cloud_project_id: 'project-1',
+    sequence_number: Number(id.replace(/\D/g, '')) || 1,
     parent_id: null,
     created_by_user_id: 1,
     assignee_user_id: null,
     title: id,
-    description: "",
+    description: '',
     status,
-    priority: "none",
+    priority: 'none',
     due_at: null,
     tags: [],
     sort_order: 0,
     version: 1,
-    created_at: "",
-    updated_at: "",
+    created_at: '',
+    updated_at: '',
     completed_at: null,
     ...overrides,
-  };
+  }
 }
 
 const project = {
-  project_key: "COL",
+  project_key: 'COL',
   board_config: {
-    group_by: "status",
-    processing_start_status_id: "doing",
+    group_by: 'status',
+    processing_start_status_id: 'doing',
     statuses: [
-      { id: "todo", name: "Todo", color: "gray" },
-      { id: "doing", name: "Doing", color: "blue" },
+      { id: 'todo', name: 'Todo', color: 'gray' },
+      { id: 'doing', name: 'Doing', color: 'blue' },
     ],
   },
-} as CollaborationProject;
+} as CollaborationProject
 
-describe("groupBoardIssues", () => {
-  it("uses the persisted project grouping", () => {
+describe('groupBoardIssues', () => {
+  it('uses the persisted project grouping', () => {
     const grouped = groupBoardIssues(
       {
         ...project,
-        board_config: { ...project.board_config!, group_by: "assignee" },
+        board_config: { ...project.board_config!, group_by: 'assignee' },
       },
       [
-        issue("1", "todo", { assignee_name: "Ada" }),
-        issue("2", "doing", { assignee_name: "Ada" }),
-        issue("3", "doing"),
+        issue('1', 'todo', { assignee_name: 'Ada' }),
+        issue('2', 'doing', { assignee_name: 'Ada' }),
+        issue('3', 'doing'),
       ],
       project.board_config!.statuses,
-      "Unassigned",
-      "No tag",
-    );
+      'Unassigned',
+      'No tag'
+    )
 
-    expect(grouped.map((group) => [group.label, group.issues.length])).toEqual([
-      ["Ada", 2],
-      ["Unassigned", 1],
-    ]);
-  });
-});
+    expect(grouped.map(group => [group.label, group.issues.length])).toEqual([
+      ['Ada', 2],
+      ['Unassigned', 1],
+    ])
+  })
+})
+
+describe('projectStatuses', () => {
+  it('uses the same default statuses for boards and automation when board settings are absent', () => {
+    const statuses = projectStatuses(
+      { ...project, board_config: undefined },
+      collaborationMessages.en,
+      createCollaborationTranslator('en')
+    )
+    expect(statuses.map(status => [status.id, status.name])).toEqual([
+      ['inbox', 'Inbox'],
+      ['pending', 'To do'],
+      ['in_progress', 'In progress'],
+      ['in_review', 'In review'],
+      ['completed', 'Completed'],
+    ])
+  })
+
+  it('preserves the project custom statuses and their display names', () => {
+    expect(
+      projectStatuses(project, collaborationMessages.en, createCollaborationTranslator('en'))
+    ).toEqual(project.board_config!.statuses)
+  })
+})

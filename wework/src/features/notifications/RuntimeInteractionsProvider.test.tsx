@@ -38,6 +38,47 @@ describe('unified human response', () => {
     )
   })
 
+  it('keeps the reminder until manually closed, including after opening its destination', async () => {
+    view()
+    await screen.findByTestId('runtime-interaction-notice')
+    vi.useFakeTimers()
+    try {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000)
+      })
+      expect(screen.getByTestId('runtime-interaction-notice')).toBeInTheDocument()
+      fireEvent.click(screen.getByTestId('interaction-notice-open'))
+      expect(harness.tabs.openTab).toHaveBeenCalled()
+      expect(screen.getByTestId('runtime-interaction-notice')).toBeInTheDocument()
+      act(() => context!.open())
+      expect(screen.getByTestId('runtime-interaction-notice')).toBeInTheDocument()
+      act(() => context!.registerView('pending-page', context!.pending[0].id))
+      expect(screen.getByTestId('runtime-interaction-notice')).toBeInTheDocument()
+      fireEvent.click(screen.getByTestId('interaction-notice-dismiss'))
+      expect(screen.queryByTestId('runtime-interaction-notice')).not.toBeInTheDocument()
+      expect(context!.pending).toHaveLength(1)
+      expect(harness.send).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('preserves the expanded reminder and draft when native window focus changes', async () => {
+    view()
+    await screen.findByTestId('runtime-interaction-notice')
+    fireEvent.click(screen.getByTestId('interaction-notice-reply'))
+    fireEvent.click(screen.getByTestId('interaction-other-answer'))
+    const input = screen.getByTestId('interaction-reply-input')
+    fireEvent.change(input, { target: { value: 'unfinished reply' } })
+    act(() => harness.focusListeners.forEach(listener => listener(false)))
+    expect(screen.getByTestId('interaction-reply-input')).toBe(input)
+    expect(input).toHaveValue('unfinished reply')
+    act(() => harness.focusListeners.forEach(listener => listener(true)))
+    expect(screen.getByTestId('interaction-reply-input')).toBe(input)
+    expect(input).toHaveValue('unfinished reply')
+    expect(harness.send).not.toHaveBeenCalled()
+  })
+
   it('dismisses one request durably without sending a runtime answer or hiding later requests', async () => {
     const first = view()
     await waitFor(() => expect(context!.pending).toHaveLength(1))
@@ -69,6 +110,7 @@ describe('unified human response', () => {
     async interactionStatus => {
       view()
       await waitFor(() => expect(context!.pending).toHaveLength(1))
+      await screen.findByTestId('runtime-interaction-notice')
       const id = context!.pending[0].id
       harness.transcript.mockResolvedValue(
         interactionTranscript({ ...interactionQuestion, interactionStatus })
@@ -78,6 +120,7 @@ describe('unified human response', () => {
       })
       expect(context!.pending).toHaveLength(0)
       expect(context!.history[0].id).toBe(id)
+      expect(screen.queryByTestId('runtime-interaction-notice')).not.toBeInTheDocument()
       expect(harness.send).not.toHaveBeenCalled()
     }
   )
@@ -175,8 +218,8 @@ describe('unified human response', () => {
     await act(async () => {
       expect(await context!.respond(item, 'first answer')).toBe(true)
     })
-    const marker = Object.keys(localStorage).find(key => key.includes(':accepted:'))!
-    expect(marker).toBeTruthy()
+    const marker = `wework.interactions:test:1:accepted:${item.id}`
+    expect(localStorage.getItem(marker)).toBe('true')
     localStorage.removeItem(marker)
     act(() => context!.setDraft(item.id, 'stale second answer'))
     await act(async () => {
@@ -693,10 +736,10 @@ describe('unified human response', () => {
     })
     expect(harness.read).not.toHaveBeenCalled()
   })
-  it('suppresses a reminder only when its exact question is already visible', async () => {
+  it('keeps a delivered reminder when its question becomes visible in the pending page', async () => {
     view(interactionQuestion, interactionTask, true)
     await waitFor(() => expect(context!.pending).toHaveLength(1))
-    expect(screen.queryByTestId('runtime-interaction-notice')).not.toBeInTheDocument()
+    expect(await screen.findByTestId('runtime-interaction-notice')).toBeInTheDocument()
     act(() => context!.registerView('other-pane', 'another-question'))
     expect(context!.pending).toHaveLength(1)
   })

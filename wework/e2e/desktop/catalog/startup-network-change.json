@@ -1,0 +1,12 @@
+{
+  "order": 167000,
+  "scenario": "./scenarios/startup-network-change.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 112000,
+      "shard": 5,
+      "position": 14000
+    }
+  }
+}

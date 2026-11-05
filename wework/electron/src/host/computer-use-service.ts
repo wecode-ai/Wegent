@@ -2,28 +2,10 @@ import { randomBytes } from 'node:crypto'
 import { createServer, type Server } from 'node:http'
 import { chmod, mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import { ComputerUseDriverProcess } from './computer-use-driver-process.js'
 
 const RUNTIME_FILE = 'computer-use-bridge.json'
 const MAX_BODY_BYTES = 8 * 1024 * 1024
-
-interface CuaDriver {
-  callTool(
-    name: string,
-    argumentsJson: string,
-    options?: { signal?: AbortSignal }
-  ): Promise<{
-    text: string
-    images: Array<{ mimeType: string; dataBase64: string }>
-    structuredJson?: string
-    isError: boolean
-    errorCode?: string
-    degraded: boolean
-    rawJson: string
-  }>
-  listToolsJson(): Promise<string>
-  shutdown(): Promise<void>
-  uniffiDestroy?: () => void
-}
 
 interface PermissionStatus {
   accessibility: boolean
@@ -42,7 +24,8 @@ export interface ComputerUseStatus {
 }
 
 export class ComputerUseService {
-  private driver: CuaDriver | null = null
+  private driver: ComputerUseDriverProcess | null = null
+  private driverFailed = false
   private server: Server | null = null
   private runtimePath: string | null = null
   private currentTool: string | null = null
@@ -57,10 +40,12 @@ export class ComputerUseService {
   ) {}
 
   async status(): Promise<ComputerUseStatus> {
-    if (this.enabled && !this.driver && !this.server) {
-      await this.serial(() => this.start())
-    }
-    return this.snapshot()
+    return this.serial(async () => {
+      if (this.enabled && !this.driverFailed && !this.driver && !this.server) {
+        await this.start()
+      }
+      return this.snapshot()
+    })
   }
 
   private async snapshot(): Promise<ComputerUseStatus> {
@@ -111,9 +96,10 @@ export class ComputerUseService {
 
   private async start(): Promise<void> {
     if (this.driver && this.server) return
+    this.driverFailed = false
     this.error = null
     const runtimePath = this.runtimeRecordPath()
-    let driver: CuaDriver | null = null
+    let driver: ComputerUseDriverProcess | null = null
     let server: Server | null = null
     try {
       await rm(runtimePath, { force: true })
@@ -123,8 +109,14 @@ export class ComputerUseService {
       }
       const permissions = await this.permissions()
       if (!permissions.accessibility || !permissions.screenRecording) return
-      const { CuaDriver } = await import('@trycua/cua-driver')
-      const createdDriver = CuaDriver.create(undefined) as CuaDriver
+      const createdDriver = await ComputerUseDriverProcess.create(error => {
+        void this.serial(async () => {
+          if (!driver || this.driver !== driver) return
+          await this.stopInternal()
+          this.driverFailed = true
+          this.error = error.message
+        })
+      })
       driver = createdDriver
       const token = randomBytes(32).toString('base64url')
       const createdServer = createServer((request, response) => {
@@ -151,13 +143,13 @@ export class ComputerUseService {
       this.server = createdServer
       this.runtimePath = runtimePath
     } catch (error) {
+      this.driverFailed = true
       this.error = errorMessage(error)
       await Promise.allSettled([
         rm(runtimePath, { force: true }),
         server ? closeServer(server) : Promise.resolve(),
         driver?.shutdown(),
       ])
-      driver?.uniffiDestroy?.()
     }
   }
 
@@ -176,7 +168,6 @@ export class ComputerUseService {
       server ? closeServer(server) : Promise.resolve(),
       driver?.shutdown(),
     ])
-    driver?.uniffiDestroy?.()
   }
 
   private async permissions(): Promise<PermissionStatus> {
@@ -197,7 +188,7 @@ export class ComputerUseService {
     request: import('node:http').IncomingMessage,
     response: import('node:http').ServerResponse,
     token: string,
-    driver: CuaDriver
+    driver: ComputerUseDriverProcess
   ): Promise<void> {
     response.setHeader('content-type', 'application/json')
     if (request.headers.authorization !== `Bearer ${token}`) {

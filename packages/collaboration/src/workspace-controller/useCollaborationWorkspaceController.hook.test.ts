@@ -89,12 +89,16 @@ const hookRuntime = vi.hoisted(() => {
   };
 });
 
-vi.mock("react", () => ({
-  useEffect: hookRuntime.useEffect,
-  useMemo: hookRuntime.useMemo,
-  useReducer: hookRuntime.useReducer,
-  useRef: hookRuntime.useRef,
-}));
+vi.mock("react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react")>();
+  return {
+    ...actual,
+    useEffect: hookRuntime.useEffect,
+    useMemo: hookRuntime.useMemo,
+    useReducer: hookRuntime.useReducer,
+    useRef: hookRuntime.useRef,
+  };
+});
 
 import {
   type CollaborationWorkspaceController,
