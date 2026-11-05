@@ -52,7 +52,7 @@ pub(super) fn call(
             .map(|action| json!({"eventIds":action["arguments"]["eventIds"],"roleId":action["arguments"]["roleId"],"message":action["arguments"]["message"],"status":action["status"],"createdAt":action["createdAt"]}))
             .collect();
         return Ok(
-            json!({"snapshot":super::git_connections::summarize(state["snapshot"].clone()),"actions":actions.into_iter().rev().take(50).collect::<Vec<_>>(),"recentSuggestions":suggestions}),
+            json!({"snapshot":super::connection_context::summarize(state["snapshot"].clone()),"actions":actions.into_iter().rev().take(50).collect::<Vec<_>>(),"recentSuggestions":suggestions}),
         );
     }
     let events = arguments["eventIds"].as_array();
@@ -91,7 +91,7 @@ pub(super) fn call(
             } else {
                 Vec::new()
             };
-            return Ok(super::git_connections::summarize(
+            return Ok(super::connection_context::summarize(
                 json!({"work":work,"sourceMessages":messages}),
             ));
         }

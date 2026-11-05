@@ -9,79 +9,6 @@ pub(super) fn write_tool() -> Value {
     json!({"name":"git_write","title":"Publish GitHub/GitLab change","description":"Execute one exact gh/glab API mutation under this work's bound account and repository. Native one-time user approval includes the exact instance, account ID, repository, method, path and body. Read git_read identity first; never guess an account. Use a stable requestId; an unknown prior result cannot be retried automatically. For merges, explicit owner delegation is required and body.sha must equal the reviewed head SHA. This tool provides capability, not a fixed workflow.","inputSchema":{"type":"object","properties":{"requestId":{"type":"string"},"instance":{"type":"string"},"accountId":{"type":"string"},"repository":{"type":"string"},"method":{"type":"string","enum":["POST","PUT","PATCH","DELETE"]},"path":{"type":"string"},"body":{"type":"object"}},"required":["requestId","instance","accountId","repository","method","path","body"]},"annotations":{"readOnlyHint":false,"destructiveHint":true,"openWorldHint":true}})
 }
 
-pub(super) fn work_messages(
-    store: &crate::task_runtime::LocalTaskStore,
-    identity: &StandInMcpIdentity,
-    args: &Value,
-) -> Result<Value, String> {
-    let work = store
-        .stand_in_work(
-            identity.user,
-            identity.work.as_deref().ok_or("Source work required")?,
-        )
-        .map_err(|e| e.to_string())?;
-    if work["roleId"].as_str() != identity.role.as_deref() {
-        return Err("Work belongs to another role".into());
-    }
-    let mut messages = store
-        .stand_in_messages(identity.user, identity.work.as_deref().unwrap())
-        .map_err(|e| e.to_string())?;
-    if let Some(id) = args["messageId"].as_str() {
-        let message = messages
-            .iter()
-            .find(|m| m["id"] == id || m["recordId"] == id)
-            .ok_or("Unknown source message")?;
-        let payload = message["external"]["payload"].to_string();
-        let offset = args["payloadOffset"]
-            .as_u64()
-            .unwrap_or(0)
-            .min(2 * 1024 * 1024) as usize;
-        let total = payload.chars().count();
-        let text = payload.chars().skip(offset).take(12000).collect::<String>();
-        return Ok(
-            json!({"messageId":id,"payload":text,"offset":offset,"totalCharacters":total,"nextOffset":(offset+12000<total).then_some(offset+12000)}),
-        );
-    }
-    let total = messages.len();
-    let offset = args["offset"].as_u64().unwrap_or(0).min(total as u64) as usize;
-    messages = messages
-        .into_iter()
-        .skip(offset)
-        .take(50)
-        .map(summarize)
-        .collect();
-    Ok(
-        json!({"messages":messages,"hasMore":offset+50<total,"nextOffset":(offset+50<total).then_some(offset+50)}),
-    )
-}
-
-/// Project only model-visible Git messages; persisted source payloads stay intact.
-pub(crate) fn summarize(mut value: Value) -> Value {
-    fn visit(value: &mut Value) {
-        match value {
-            Value::Array(rows) => rows.iter_mut().for_each(visit),
-            Value::Object(row) => {
-                if row
-                    .get("external")
-                    .and_then(|v| v.get("platform"))
-                    .and_then(Value::as_str)
-                    .is_some_and(|p| matches!(p, "github" | "gitlab"))
-                {
-                    if let Some(external) = row.get_mut("external").and_then(Value::as_object_mut) {
-                        if external.remove("payload").is_some() {
-                            external.insert("payloadAvailable".into(), json!(true));
-                        }
-                    }
-                }
-                row.values_mut().for_each(visit);
-            }
-            _ => {}
-        }
-    }
-    visit(&mut value);
-    value
-}
-
 pub(super) async fn call(
     runtime: &TaskRuntime,
     identity: &StandInMcpIdentity,
@@ -251,21 +178,5 @@ mod tests {
             json!({"instance":"https://github.com","accountId":"8"})
         )
         .is_err());
-    }
-    #[test]
-    fn git_payload_projection_preserves_original_and_unrelated_sources() {
-        let original = json!({"events":[{"message":{"external":{"platform":"github","payload":{"secret":"untrusted large event"}}}},{"message":{"external":{"platform":"other","payload":{"keep":true}}}}]});
-        let projected = summarize(original.clone());
-        assert!(projected["events"][0]["message"]["external"]
-            .get("payload")
-            .is_none());
-        assert_eq!(
-            projected["events"][0]["message"]["external"]["payloadAvailable"],
-            true
-        );
-        assert_eq!(projected["events"][1], original["events"][1]);
-        assert!(original["events"][0]["message"]["external"]
-            .get("payload")
-            .is_some());
     }
 }

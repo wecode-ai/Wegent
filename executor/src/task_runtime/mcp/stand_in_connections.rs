@@ -2,7 +2,7 @@
 use super::*;
 
 pub(super) fn read_tool(bound_work: bool) -> Value {
-    let mut tool = json!({"name":"read_source","description":"Read bounded content from an exact source already connected to this identity. Discovery or a ready provider does not prove content was read. On the first page, since must be an RFC3339 timestamp within the past seven days; omit since for the past 24 hours. limit must be an integer from 1 through 20 and defaults to 20. The subscription enabledAfter is a collection boundary, not a read-window requirement; do not reuse an older boundary as since. Follow nextCursor on the same source until hasMore is false before deciding the outcome. A cursor preserves the original window and page size; omit since and limit when continuing. Returns actual read range and truncation; unsupported providers or missing connections fail explicitly. Never invent IDs or broaden scope.","inputSchema":{"type":"object","properties":{"source":{"type":"object","properties":{"providerId":{"type":"string"},"profile":{"type":"string"},"kind":{"type":"string"},"id":{"type":"string"}},"required":["providerId","profile","kind","id"]},"since":{"type":"string","format":"date-time"},"limit":{"type":"integer","minimum":1,"maximum":20},"cursor":{"type":"string","minLength":1,"maxLength":8192}},"required":["source"]}});
+    let mut tool = json!({"name":"read_source","description":"Read an exact source already connected to this identity. First inspect list_connection_providers for the selected provider's read.inputSchema, read.itemSchema and pagination. Supply only that provider's query fields; the plugin defines its query defaults and limits. Follow nextCursor on the same source until hasMore is false before deciding the outcome. Cursors are opaque; omit query on continuation unless preserving the original query exactly. Collection checkpoints and subscription boundaries are not read cursors. Read access does not grant actions or configuration changes. Never invent IDs or broaden scope.","inputSchema":{"type":"object","additionalProperties":false,"properties":{"source":{"type":"object","properties":{"providerId":{"type":"string"},"profile":{"type":"string"},"kind":{"type":"string"},"id":{"type":"string"}},"required":["providerId","profile","kind","id"]},"query":{"type":"object","description":"Provider-defined query from read.inputSchema; no framework business defaults."},"cursor":{"type":"string","minLength":1,"maxLength":8192}},"required":["source"]}});
     if bound_work {
         tool["inputSchema"]["required"] = json!([]);
         tool["description"] = json!(format!("{} In this source-bound work, omit source to read only the host-verified current work source; an explicit source must match that same resource. Use read_work for the original messages. This never grants access to the role's other connections.", tool["description"].as_str().unwrap_or_default()));
@@ -196,46 +196,73 @@ fn authorized_source(
 }
 
 fn source_read_input(source: Value, arguments: &Value) -> Result<Value, String> {
+    if !arguments.as_object().is_some_and(|fields| {
+        fields
+            .keys()
+            .all(|key| matches!(key.as_str(), "source" | "query" | "cursor"))
+    }) {
+        return Err(
+            "source_read_input_invalid: Supply source, provider query and opaque cursor only"
+                .into(),
+        );
+    }
+    let mut input = json!({"source":source});
+    if let Some(query) = arguments.get("query") {
+        if !query.is_object() || query.to_string().len() > 65536 {
+            return Err(
+                "source_read_query_invalid: Supply a query object of at most 65536 bytes".into(),
+            );
+        }
+        input["query"] = query.clone();
+    }
     if let Some(cursor) = arguments.get("cursor") {
         let cursor = cursor
             .as_str()
             .filter(|value| !value.trim().is_empty() && value.len() <= 8192)
             .ok_or("source_read_cursor_invalid: Supply a bounded opaque read cursor")?;
-        let mut input = json!({"source":source,"cursor":cursor});
-        if let Some(limit) = arguments.get("limit") {
-            let limit = limit
-                .as_u64()
-                .filter(|limit| (1..=20).contains(limit))
-                .ok_or("source_read_range_invalid: limit must be an integer from 1 to 20")?;
-            input["limit"] = json!(limit);
-        }
-        if let Some(since) = arguments.get("since") {
-            let since = since
-                .as_str()
-                .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
-                .ok_or("source_read_range_invalid: since must be an RFC3339 timestamp")?;
-            input["since"] = json!(since.to_rfc3339());
-        }
-        return Ok(input);
+        input["cursor"] = json!(cursor);
     }
-    let now = chrono::Utc::now();
-    let since = match arguments.get("since") {
-        None => now - chrono::Duration::days(1),
-        Some(value) => value
-            .as_str()
-            .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
-            .map(|value| value.with_timezone(&chrono::Utc))
-            .ok_or("source_read_range_invalid: since must be an RFC3339 timestamp")?,
+    Ok(input)
+}
+
+pub(super) fn scoped_provider_catalog(catalog: &Value, source: &Value) -> Value {
+    let items = catalog["items"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|provider| provider["id"] == source["providerId"])
+        .map(|provider| {
+            let mut item = json!({"id":provider["id"]});
+            for key in ["name", "label", "read", "actions"] {
+                if let Some(value) = provider.get(key) {
+                    item[key] = value.clone();
+                }
+            }
+            item
+        })
+        .collect::<Vec<_>>();
+    json!({"items":items})
+}
+
+pub(super) async fn list_providers(identity: &StandInMcpIdentity) -> Result<Value, String> {
+    let source = if identity.work.is_some() {
+        Some(
+            super::super::stand_in_tasks::call(
+                identity.clone(),
+                "authorize_source_read".into(),
+                Value::Null,
+            )
+            .await?,
+        )
+    } else {
+        None
     };
-    let limit = arguments
-        .get("limit")
-        .map_or(Some(20), Value::as_u64)
-        .filter(|limit| (1..=20).contains(limit))
-        .ok_or("source_read_range_invalid: limit must be an integer from 1 to 20")?;
-    if since < now - chrono::Duration::days(7) || since > now {
-        return Err("source_read_range_invalid: Read at most the past seven days".into());
-    }
-    Ok(json!({"source":source,"since":since.to_rfc3339(),"limit":limit}))
+    let catalog = crate::runtime_work::connection_host::call("catalog", None, json!({}))
+        .await
+        .map_err(|error| format!("{}: {}", error.code, error.message))?;
+    Ok(source.as_ref().map_or(catalog.clone(), |source| {
+        scoped_provider_catalog(&catalog, source)
+    }))
 }
 
 pub(super) async fn read_source(
@@ -455,21 +482,41 @@ mod tests {
     }
 
     #[test]
-    fn source_reads_are_bounded_without_modifying_the_intake_checkpoint() {
+    fn source_reads_forward_provider_queries_without_business_defaults() {
         let source = json!({"boundary":{"partition":"1","sequence":99}});
-        let input = source_read_input(source.clone(), &json!({})).unwrap();
-        assert_eq!(input["source"], source);
-        assert_eq!(input["limit"], 20);
+        assert_eq!(
+            source_read_input(source.clone(), &json!({})).unwrap(),
+            json!({"source":source})
+        );
+        let query = json!({"state":"failed","pageSize":75,"include":["checks"],"since":"2000-01-01T00:00:00Z"});
+        let input = source_read_input(source.clone(), &json!({"query":query})).unwrap();
+        assert_eq!(input, json!({"source":source,"query":query}));
         for arguments in [
-            json!({"limit":0}),
-            json!({"limit":21}),
-            json!({"limit":1.5}),
-            json!({"since":"invalid"}),
-            json!({"since":"2000-01-01T00:00:00Z"}),
-            json!({"since":"2099-01-01T00:00:00Z"}),
+            json!({"query":null}),
+            json!({"query":[]}),
+            json!({"query":"text"}),
+            json!({"query":{"value":"x".repeat(65536)}}),
+            json!({"since":"2026-01-01T00:00:00Z"}),
+            json!({"limit":20}),
         ] {
             assert!(source_read_input(source.clone(), &arguments).is_err());
         }
+    }
+
+    #[test]
+    fn bound_work_catalog_exposes_only_its_provider_capabilities() {
+        let read = json!({"inputSchema":{"type":"object","properties":{"state":{"type":"string"}}},"itemSchema":{"type":"object"},"pagination":"cursor"});
+        let catalog = json!({"items":[{"id":"@third-party/builds","read":read,"actions":[],"authTarget":{"private":"not needed"},"resourceQuerySchema":{"discovery":true}},{"id":"@other/mail","read":{"pagination":"none"}}]});
+        let scoped =
+            scoped_provider_catalog(&catalog, &json!({"providerId":"@third-party/builds"}));
+        assert_eq!(
+            scoped,
+            json!({"items":[{"id":"@third-party/builds","read":read,"actions":[]}]})
+        );
+        assert_eq!(
+            scoped_provider_catalog(&catalog, &json!({"providerId":"missing"})),
+            json!({"items":[]})
+        );
     }
 
     #[test]
@@ -478,14 +525,18 @@ mod tests {
         let input =
             source_read_input(source.clone(), &json!({"cursor":"opaque-read-page"})).unwrap();
         assert_eq!(input, json!({"source":source,"cursor":"opaque-read-page"}));
-        assert!(input.get("since").is_none());
-        assert!(input.get("limit").is_none());
+        assert!(input.get("query").is_none());
+        let query = json!({"offsets":["opaque-domain-position"],"pageSize":75});
+        assert_eq!(
+            source_read_input(source.clone(), &json!({"cursor":"page","query":query})).unwrap()
+                ["query"],
+            query
+        );
         for arguments in [
             json!({"cursor":""}),
             json!({"cursor":null}),
             json!({"cursor":"x".repeat(8193)}),
-            json!({"cursor":"page","limit":21}),
-            json!({"cursor":"page","since":"invalid"}),
+            json!({"cursor":"page","query":[]}),
         ] {
             assert!(source_read_input(source.clone(), &arguments).is_err());
         }

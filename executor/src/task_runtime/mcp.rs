@@ -34,6 +34,7 @@ use super::{
 };
 
 mod comments;
+pub(crate) mod connection_context;
 mod context;
 pub(crate) mod git_connections;
 mod parent_issue;
