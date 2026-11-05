@@ -4,6 +4,7 @@
 import { useState } from 'react'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { PermissionManagementTab } from '@/features/knowledge/permission/components/PermissionManagementTab'
 import { KnowledgeAccessDialog } from '@/features/knowledge/document/components/KnowledgeAccessDialog'
 import { knowledgePermissionApi } from '@/apis/knowledge-permission'
 
@@ -27,11 +28,21 @@ jest.mock('@/apis/client', () => ({
 jest.mock('@/apis/knowledge-permission', () => ({
   knowledgePermissionApi: {
     getMyPermissionSources: jest.fn(),
+    batchAddPermission: jest.fn(),
     listPermissions: jest.fn(),
     updatePermission: jest.fn(),
     deletePermission: jest.fn(),
     reviewPermission: jest.fn(),
   },
+}))
+
+jest.mock('@/apis/groups', () => ({
+  searchGroups: jest.fn(async () => ({
+    items: [
+      { id: 71, name: 'team-a', display_name: 'Team A' },
+      { id: 72, name: 'team-b', display_name: 'Team B' },
+    ],
+  })),
 }))
 
 const reader = {
@@ -305,3 +316,140 @@ it('keeps real pending requests actionable and compacts the section after approv
   })
   expect(await screen.findByTestId('knowledge-empty-pending')).toBeInTheDocument()
 })
+
+async function openGroupGrant() {
+  const user = userEvent.setup()
+  await user.click(await screen.findByTestId('perm-tab-namespace'))
+  await user.click(screen.getByTestId('permission-add-namespace'))
+  await user.click(screen.getByTestId('add-namespace-group-search'))
+  await user.click(await screen.findByRole('button', { name: /Team A/ }))
+  return user
+}
+
+it.each([false, true])(
+  'notifies the outer permission session on group grants (partial=%s)',
+  async partial => {
+    const callbacks = props()
+    jest
+      .mocked(knowledgePermissionApi.getMyPermissionSources)
+      .mockResolvedValue({ ...reader, effective_role: 'Maintainer' })
+    jest.mocked(knowledgePermissionApi.batchAddPermission).mockResolvedValueOnce({
+      succeeded: [{ entity_type: 'namespace', entity_id: '71', role: 'Reporter' }],
+      failed: partial ? [{ entity_type: 'namespace', entity_id: '72', error: 'retry' }] : [],
+    } as never)
+    render(<KnowledgeAccessDialog {...callbacks} canManage />)
+    const user = await openGroupGrant()
+    if (partial) {
+      await user.click(screen.getByTestId('add-namespace-group-search'))
+      await user.click(await screen.findByRole('button', { name: /Team B/ }))
+    }
+    await user.click(screen.getByTestId('submit-namespace-permissions'))
+    await waitFor(() => expect(callbacks.onChanged).toHaveBeenCalled())
+    if (partial) {
+      expect(screen.getByTestId('submit-namespace-permissions')).toBeInTheDocument()
+      jest.mocked(knowledgePermissionApi.batchAddPermission).mockResolvedValueOnce({
+        succeeded: [{ entity_type: 'namespace', entity_id: '72', role: 'Reporter' }],
+        failed: [],
+      } as never)
+      await user.click(screen.getByTestId('submit-namespace-permissions'))
+      expect(knowledgePermissionApi.batchAddPermission).toHaveBeenLastCalledWith(
+        27,
+        expect.objectContaining({ members: [expect.objectContaining({ entity_id: '72' })] })
+      )
+    }
+  }
+)
+
+it.each([
+  [403, true],
+  [403, false],
+  [404, true],
+  [404, false],
+] as const)(
+  'rechecks reading access after a group grant is denied (%s, read=%s)',
+  async (status, hasAccess) => {
+    const callbacks = props()
+    const { ApiError } = jest.requireMock('@/apis/client')
+    jest
+      .mocked(knowledgePermissionApi.getMyPermissionSources)
+      .mockResolvedValueOnce({ ...reader, effective_role: 'Maintainer' })
+      .mockResolvedValue({ ...reader, has_access: hasAccess })
+    jest
+      .mocked(knowledgePermissionApi.batchAddPermission)
+      .mockRejectedValueOnce(new ApiError('denied', status))
+    render(<KnowledgeAccessDialog {...callbacks} canManage />)
+    const user = await openGroupGrant()
+    await user.click(screen.getByTestId('submit-namespace-permissions'))
+    await waitFor(() => expect(callbacks.onChanged).toHaveBeenCalled())
+    await waitFor(() => expect(screen.queryByTestId('perm-tab-namespace')).not.toBeInTheDocument())
+    if (hasAccess) {
+      expect(callbacks.onAccessLost).not.toHaveBeenCalled()
+      expect(callbacks.onClose).not.toHaveBeenCalled()
+    } else {
+      await waitFor(() => expect(callbacks.onAccessLost).toHaveBeenCalled())
+      expect(callbacks.onClose).toHaveBeenCalled()
+    }
+  }
+)
+
+it('does not notify a new library session when an old group request finishes', async () => {
+  const callbacks = props()
+  jest
+    .mocked(knowledgePermissionApi.getMyPermissionSources)
+    .mockResolvedValue({ ...reader, effective_role: 'Maintainer' })
+  let finish!: (value: unknown) => void
+  jest.mocked(knowledgePermissionApi.batchAddPermission).mockImplementationOnce(
+    () =>
+      new Promise(resolve => {
+        finish = resolve
+      }) as never
+  )
+  const { rerender } = render(<KnowledgeAccessDialog {...callbacks} canManage />)
+  const user = await openGroupGrant()
+  await user.click(screen.getByTestId('submit-namespace-permissions'))
+  rerender(<KnowledgeAccessDialog {...callbacks} kbId={28} canManage />)
+  await act(async () =>
+    finish({
+      succeeded: [{ entity_type: 'namespace', entity_id: '71', role: 'Reporter' }],
+      failed: [],
+    })
+  )
+  expect(callbacks.onChanged).not.toHaveBeenCalled()
+})
+
+it.each(['success', 'denied'])(
+  'ignores late group notifications after the permission owner changes (%s)',
+  async outcome => {
+    let finish!: (value: unknown) => void
+    let fail!: (reason: Error) => void
+    const changed = jest.fn(),
+      denied = jest.fn()
+    jest.mocked(knowledgePermissionApi.batchAddPermission).mockImplementationOnce(
+      () =>
+        new Promise((resolve, reject) => {
+          finish = resolve
+          fail = reject
+        }) as never
+    )
+    const { rerender } = render(
+      <PermissionManagementTab kbId={27} onChanged={changed} onAccessDenied={denied} />
+    )
+    const user = await openGroupGrant()
+    await user.click(screen.getByTestId('submit-namespace-permissions'))
+    rerender(<PermissionManagementTab kbId={28} onChanged={changed} onAccessDenied={denied} />)
+    rerender(<PermissionManagementTab kbId={27} onChanged={changed} onAccessDenied={denied} />)
+    await act(async () => {
+      if (outcome === 'success')
+        finish({
+          succeeded: [{ entity_type: 'namespace', entity_id: '71', role: 'Reporter' }],
+          failed: [],
+        })
+      else {
+        const { ApiError } = jest.requireMock('@/apis/client')
+        fail(new ApiError('denied', 403))
+      }
+    })
+    expect(changed).not.toHaveBeenCalled()
+    expect(denied).not.toHaveBeenCalled()
+  }
+)

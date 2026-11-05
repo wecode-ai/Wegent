@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import client from '@/apis/client'
 import { useUser } from '@/features/common/UserContext'
 import { Check, X, UserPlus, Pencil, Trash2, User, Users, Clock } from 'lucide-react'
@@ -69,7 +69,31 @@ interface PermissionManagementTabProps {
 export function PermissionManagementTab(props: PermissionManagementTabProps) {
   const { user } = useUser()
   const scope = JSON.stringify([user?.id, client.getCacheScope(), props.kbId, props.kbNamespace])
-  return <PermissionManagementSession key={scope} {...props} />
+  const activeScope = useRef({ key: scope, version: 0 })
+  if (activeScope.current.key !== scope) {
+    activeScope.current = { key: scope, version: activeScope.current.version + 1 }
+  }
+  const version = activeScope.current.version
+  const alive = useRef(true)
+  useEffect(() => {
+    alive.current = true
+    return () => {
+      alive.current = false
+    }
+  }, [])
+  const current = () => alive.current && activeScope.current.version === version
+  return (
+    <PermissionManagementSession
+      key={scope}
+      {...props}
+      onChanged={() => {
+        if (current()) props.onChanged?.()
+      }}
+      onAccessDenied={() => {
+        if (current()) props.onAccessDenied?.()
+      }}
+    />
+  )
 }
 
 function PermissionManagementSession({
@@ -830,6 +854,8 @@ function PermissionManagementSession({
         onOpenChange={setShowAddNamespace}
         kbId={kbId}
         onSuccess={fetchPermissions}
+        onChanged={onChanged}
+        onAccessDenied={onAccessDenied}
         excludedNamespaceId={kbNamespace}
         boundNamespaceIds={boundNamespaceIds}
       />
