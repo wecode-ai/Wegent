@@ -120,6 +120,9 @@ describe('CollaborationPage platform routing', () => {
     const view = render(<CollaborationPage />)
     expect(screen.queryByTestId('shared-collaboration-main')).not.toBeInTheDocument()
     expect(capturedHost).toBeNull()
+    expect(screen.getByTestId('top-navigation')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('collaboration-back-to-workbench'))
+    expect(mockPush).toHaveBeenCalledWith('/chat')
     mockUserLoading = false
     view.rerender(<CollaborationPage />)
     expect(screen.getByTestId('shared-collaboration-main')).toBeInTheDocument()

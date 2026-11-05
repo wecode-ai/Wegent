@@ -425,7 +425,11 @@ export function CollaborationPage() {
     ]
   )
 
-  if (userLoading && !user) return <LoadingState message={t('loading')} />
+  if (userLoading && !user) {
+    return (
+      <CollaborationWebShell sidebar={<div />} main={<LoadingState message={t('loading')} />} />
+    )
+  }
 
   if (requestedTemplate && templateRequestError) {
     const m = templateMessages[templateLocale]

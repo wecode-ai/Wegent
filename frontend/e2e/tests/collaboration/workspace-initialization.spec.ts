@@ -38,6 +38,7 @@ test('workspace creation survives authenticated account initialization', async (
         })
     )
     expect(stayedLoading).toBe(true)
+    await expect(page.getByTestId('collaboration-back-to-workbench')).toBeVisible()
     releaseIdentity()
     await expect(page.getByTestId('collaboration-platform-root')).toBeVisible()
     await page.getByTestId('collaboration-workspace-create').click()
