@@ -106,8 +106,24 @@ test.describe('Capability Center', () => {
   test('opens the MCP marketplace pre-filtered from a deep link', async ({ page }) => {
     await page.goto('/resource-library?type=mcp&keyword=商品数据对比')
 
+    await expect(page.getByTestId('resource-type-mcp-filter')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
     await expect(page.getByTestId('mcp-marketplace')).toBeVisible()
     await expect(page.getByTestId('mcp-marketplace-search-input')).toHaveValue('商品数据对比')
+
+    await page.reload()
+    await expect(page.getByTestId('mcp-marketplace-search-input')).toHaveValue('商品数据对比')
+  })
+
+  test('clears an unknown marketplace deep link and resumes keyword search', async ({ page }) => {
+    await page.goto('/resource-library?type=skill&marketplace=missing-provider&keyword=文档')
+
+    await expect(page).toHaveURL(url => url.searchParams.get('marketplace') === null)
+    await expect(page.getByTestId('resource-library-header-search-input')).toHaveValue('文档')
+    await expect(page.getByTestId('marketplace-toolbar')).toBeVisible()
+    await expect(page.getByTestId('skill-marketplace-search')).toHaveCount(0)
   })
 
   test('filters discovery by a configured marketplace tag and restores it from the URL', async ({
