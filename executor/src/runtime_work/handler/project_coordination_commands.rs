@@ -130,7 +130,7 @@ impl RuntimeWorkRpcHandler {
                 .lock()
                 .expect("runtime scheduler lock")
                 .active_task_ids
-                .contains(&task);
+                .contains_key(&task);
             let queue_cancelled = self
                 .local_task_link(&task)
                 .and_then(|link| crate::runtime_work::lifecycle::native_execution_state(&link))

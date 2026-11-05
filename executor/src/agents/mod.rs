@@ -52,7 +52,7 @@ pub(crate) use codex::{
     configured_inference_model_provider, executor_home,
     mcp_server_elicitation_request_user_input_params, prepare_codex_runtime_notification,
     reload_skill_configuration, replace_config, select_wework_codex_user_instructions,
-    task_identity_thread_config, wework_codex_home, CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE,
+    wework_codex_home, CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE,
     CODEX_READ_ONLY_PERMISSION_PROFILE, CODEX_WORKSPACE_PERMISSION_PROFILE,
 };
 pub use codex::{

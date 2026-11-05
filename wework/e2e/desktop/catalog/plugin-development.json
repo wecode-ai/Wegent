@@ -1,0 +1,12 @@
+{
+  "order": 99000,
+  "scenario": "./scenarios/plugin-development.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 73000,
+      "shard": 10,
+      "position": 9000
+    }
+  }
+}

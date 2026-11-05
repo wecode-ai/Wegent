@@ -1,0 +1,12 @@
+{
+  "order": 149000,
+  "scenario": "./scenarios/codex-invalid-launch-cwd.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 98000,
+      "shard": 7,
+      "position": 13000
+    }
+  }
+}
