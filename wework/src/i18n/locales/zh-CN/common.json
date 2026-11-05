@@ -1300,6 +1300,7 @@
         "tool": "构建内部工具",
         "tool_prompt": "构建一个内部工具 "
       },
+      "review_add": "添加每周复盘",
       "review": {
         "label": "审查代码并提出修改建议",
         "changes": "审查我的更改",
@@ -5194,6 +5195,10 @@
     "automation_resume": "恢复",
     "automation_toggle": "启用或停用",
     "automation_actions": "自动化操作",
+    "automation_weekly_at": "每{{day}} {{time}}",
+    "automation_custom_schedule": "自定义时间安排",
+    "automation_waiting_schedule": "等待安排",
+    "automation_next_run_at": "下次运行：{{time}}",
     "automation_next_run": "下次运行",
     "automation_run_history": "运行记录",
     "automation_runs_load_failed": "运行记录加载失败",

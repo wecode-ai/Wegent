@@ -1301,6 +1301,7 @@
         "tool": "Build an internal tool",
         "tool_prompt": "Build an internal tool "
       },
+      "review_add": "Add weekly review",
       "review": {
         "label": "Review code and suggest changes",
         "changes": "Review my changes",
@@ -5199,6 +5200,10 @@
     "automation_resume": "Resume",
     "automation_toggle": "Enable or disable",
     "automation_actions": "Automation actions",
+    "automation_weekly_at": "Every {{day}} at {{time}}",
+    "automation_custom_schedule": "Custom schedule",
+    "automation_waiting_schedule": "Not scheduled yet",
+    "automation_next_run_at": "Next run: {{time}}",
     "automation_next_run": "Next run",
     "automation_run_history": "Run history",
     "automation_runs_load_failed": "Failed to load run history",
