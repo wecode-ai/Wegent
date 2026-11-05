@@ -43,6 +43,7 @@ export function KnowledgeCreateSpaceSelect({
 
   return (
     <Popover
+      modal
       open={open}
       onOpenChange={next => {
         if (next) setSearch('')

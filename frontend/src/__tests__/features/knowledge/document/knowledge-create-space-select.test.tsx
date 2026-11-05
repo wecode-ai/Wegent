@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useState } from 'react'
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { KnowledgeCreateSpaceSelect } from '@/features/knowledge/document/components/KnowledgeCreateSpaceSelect'
 import type { AvailableGroup } from '@/features/knowledge/document/components/CreateKnowledgeBaseDialog'
@@ -87,4 +87,41 @@ it('never reveals unauthorized company spaces through search and follows updated
   await user.click(screen.getByTestId('group-selector'))
   rerender(<KnowledgeCreateSpaceSelect {...props} spaces={spaces} />)
   expect(screen.queryByTestId('create-space-option-organization')).not.toBeInTheDocument()
+})
+
+it('allows wheel events to scroll the space list inside a modal creation dialog', async () => {
+  const { Dialog, DialogContent, DialogTitle } = await import('@/components/ui/dialog')
+  render(
+    <Dialog open>
+      <DialogContent aria-describedby={undefined}>
+        <DialogTitle>Create library</DialogTitle>
+        <KnowledgeCreateSpaceSelect spaces={spaces} value="personal" onValueChange={jest.fn()} />
+      </DialogContent>
+    </Dialog>
+  )
+  const user = userEvent.setup()
+  await user.click(screen.getByTestId('group-selector'))
+  const list = screen.getByRole('listbox')
+  // JSDOM has no layout; supply the overflow dimensions for the real scroll-lock handler.
+  Object.defineProperties(list, { clientHeight: { value: 100 }, scrollHeight: { value: 1000 } })
+  expect(fireEvent.wheel(list, { deltaY: 100, cancelable: true, bubbles: true })).toBe(true)
+  fireEvent.touchStart(list, {
+    touches: [{ clientX: 100, clientY: 200 }],
+    changedTouches: [{ clientX: 100, clientY: 200 }],
+  })
+  expect(
+    fireEvent.touchMove(list, {
+      touches: [{ clientX: 100, clientY: 100 }],
+      changedTouches: [{ clientX: 100, clientY: 100 }],
+      cancelable: true,
+      bubbles: true,
+    })
+  ).toBe(true)
+  expect(fireEvent.wheel(document.body, { deltaY: 100, cancelable: true, bubbles: true })).toBe(
+    false
+  )
+  await user.keyboard('{Escape}')
+  expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+  expect(screen.getByRole('dialog', { name: 'Create library' })).toBeVisible()
+  await waitFor(() => expect(screen.getByTestId('group-selector')).toHaveFocus())
 })
