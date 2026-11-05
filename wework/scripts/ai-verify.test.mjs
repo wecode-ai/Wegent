@@ -82,6 +82,7 @@ describe('AI_VERIFY_ACTIONS', () => {
       'verify-browser-inspector': 'verifyEmbeddedBrowserDetachedInspector',
       'wait-for': 'waitFor',
       'window-focus-snapshot': 'getWindowFocusSnapshot',
+      'window-size': 'setMainWindowSize',
       text: 'getText',
       value: 'getValue',
     })

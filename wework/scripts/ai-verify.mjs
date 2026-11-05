@@ -90,6 +90,7 @@ export const AI_VERIFY_ACTIONS = Object.freeze({
   'verify-browser-inspector': 'verifyEmbeddedBrowserDetachedInspector',
   'wait-for': 'waitFor',
   'window-focus-snapshot': 'getWindowFocusSnapshot',
+  'window-size': 'setMainWindowSize',
   text: 'getText',
   value: 'getValue',
 })
@@ -147,6 +148,7 @@ Options:
   --rollout PATH            Copy a real JSONL history into the isolated Rollout replay project
   --selector CSS_SELECTOR   Target selector (required by click, fill, press and wait-for)
   --window LABEL            Target window label (defaults to main)
+                            window-size uses --selector body --value '{"width":1280,"height":900}'
   --value TEXT_OR_JSON      Replacement value for fill or paste-text; JSON for
                             click-at, seed-local-project, archive-local-project,
                             paste-paths, or drop-paths
