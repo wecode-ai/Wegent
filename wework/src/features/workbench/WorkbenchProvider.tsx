@@ -2481,30 +2481,9 @@ export function WorkbenchProvider({
         window.setTimeout(() => {
           if (!isCurrent()) return
           const installedAtStart = snapshot.installedPlugins
-          if (
-            options?.supersedeInstalledRequest ||
-            !snapshot.appsFetchedAt ||
-            snapshot.appsFetchedAt + LOCAL_SKILLS_CACHE_TTL_MS <= Date.now()
-          )
-            void localPluginApi
-              .listApps({ includeInaccessible: true })
-              .then(remoteApps => {
-                if (!isCurrent() || !pluginInventoryReadIsCurrent(cacheKey, snapshot)) return
-                const current = getPluginMarketplaceCache(cacheKey)
-                if (!current || current.deviceId !== deviceId) return
-                writePluginInventory(cacheKey, deviceId, {
-                  apps: remoteApps,
-                })
-              })
-              .catch(error => {
-                if (isCurrent())
-                  console.warn('[Wework] Failed to enrich composer plugins from Codex apps.', error)
-              })
-
           if (!hasFreshInventory)
             void Promise.all([
               localPluginApi.listInstalledPlugins({
-                shareInflight: !options?.supersedeInstalledRequest,
                 requireComplete: true,
               }),
               cloudInstalled,

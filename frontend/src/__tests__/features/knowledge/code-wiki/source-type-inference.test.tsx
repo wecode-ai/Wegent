@@ -68,3 +68,28 @@ describe('code wiki source type inference', () => {
     expect(screen.getByTestId('code-wiki-source-type')).toBeInTheDocument()
   })
 })
+
+it('opens an existing wiki by ID without assuming its namespace', () => {
+  mockUser.mockReturnValue({ user: { git_info: [] } })
+  render(
+    <CodeWikiSourceFields
+      onChange={jest.fn()}
+      value={{
+        ...EMPTY,
+        resolution: {
+          exists: true,
+          visibility: 'public',
+          default_branch: 'main',
+          name: 'repo',
+          description: '',
+          access: 'public',
+          existing_wikis: [{ id: 42, name: 'Shared wiki', owner_name: 'Owner', accessible: true }],
+        },
+      }}
+    />
+  )
+  expect(screen.getByTestId('code-wiki-existing-open-42')).toHaveAttribute(
+    'href',
+    '/knowledge/document/42'
+  )
+})

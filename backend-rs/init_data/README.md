@@ -2,7 +2,11 @@
 
 ## Overview
 
-This directory contains YAML configuration files for initializing the Wegent system. The system automatically scans this directory on startup and applies all YAML resources using the batch service API.
+This is the canonical directory for Wegent's built-in YAML resources and Skills.
+The Rust executable initializes these resources before serving requests in hybrid
+mode; Python-only debugging reads the same directory. See the
+[MySQL migration guide](../../docs/en/wegent/developer-guide/rust-database-migrations.md)
+for schema preparation and startup ownership.
 
 **Note**: This directory is **built into the Docker image** by default. Users can deploy Wegent with just the `docker-compose.yml` file - no local code repository required.
 

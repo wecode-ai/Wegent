@@ -1,4 +1,10 @@
 {
+  "urlResolution": {
+    "not-found": "当前范围内未找到该知识库",
+    "ambiguous": "当前范围内存在多个同名知识库，无法通过此链接确定目标。",
+    "error": "知识库加载失败，请重试。",
+    "retry": "重试"
+  },
   "title": "知识库",
   "add_context": "添加背景信息",
   "tooltip": "知识库",

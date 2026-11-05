@@ -49,6 +49,7 @@ export function usePluginVersionSubmission(options: VersionSubmissionOptions) {
   const [scopeKey, setScopeKey] = useState(options.scopeKey)
   const submitting = useRef(false)
   const lifetime = useRef<symbol | null>(null)
+  const lastEligibilityDiagnostic = useRef('')
 
   if (scopeKey !== options.scopeKey) {
     setScopeKey(options.scopeKey)
@@ -183,7 +184,30 @@ export function usePluginVersionSubmission(options: VersionSubmissionOptions) {
 
   return {
     actionFor(plugin: InstalledPluginItem | null, listing: PluginMarketplaceItem | null) {
-      if (!plugin || !listing || !hasNewPersonalPluginVersion(plugin, listing)) return undefined
+      const eligible = hasNewPersonalPluginVersion(plugin, listing)
+      if (import.meta.env.VITE_WEWORK_E2E === 'true') {
+        const diagnostic = JSON.stringify({
+          listingId: listing?.id,
+          listingName: listing?.name,
+          accessRole: listing?.accessRole,
+          visibility: listing?.visibility,
+          releaseId: listing?.latestReleaseId,
+          catalogVersion: listing?.version,
+          sharedVersion: listing?.sharedVersion,
+          localId: plugin?.id,
+          localVersion: plugin?.version,
+          localOrigin: plugin?.origin,
+          localSourceType: plugin?.raw.spec.source.type,
+          localPluginKey: plugin?.raw.spec.source.pluginKey,
+          managedByWegent: plugin?.raw.spec.sourcePayload?.managedByWegent,
+          eligible,
+        })
+        if (diagnostic !== lastEligibilityDiagnostic.current) {
+          lastEligibilityDiagnostic.current = diagnostic
+          console.info('[plugin-version-eligibility]', diagnostic)
+        }
+      }
+      if (!plugin || !listing || !eligible) return undefined
       return {
         currentVersion: (listing.sharedVersion ?? listing.version)!,
         nextVersion: plugin.version!,

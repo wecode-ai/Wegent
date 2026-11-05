@@ -38,6 +38,7 @@ import type { StartHumanTaskFromReplyInput } from './TaskActivityView'
 import { createWeworkDeliverySharedWorkspaceApi } from '@/features/collaboration/weworkSharedWorkspaceApi'
 import { canEditProjectSpaceIssue } from './projectSpaceSelection'
 import { CloudFilePreviewDialog } from './CloudFilePreviewDialog'
+import { IssueWebLinkButton } from './IssueWebLinkButton'
 
 type DeliveryApi = NonNullable<WorkbenchServices['deliveryApi']>
 
@@ -349,7 +350,14 @@ export function TodoEditor(props: TodoEditorProps) {
     ) as SharedIssueDetailTaskBinding[] | undefined,
     taskExecutionStates: props.taskExecutionStates,
     deviceNamesById: props.deviceNamesById,
-    headerActions: props.headerActions,
+    headerActions: (
+      <>
+        {props.mode === 'edit' ? (
+          <IssueWebLinkButton key={props.item.id} project={props.project} issueId={props.item.id} />
+        ) : null}
+        {props.headerActions}
+      </>
+    ),
     canStartWork: false,
     selectedTaskId: props.selectedTaskId,
     currentAssignment: props.currentAssignment,

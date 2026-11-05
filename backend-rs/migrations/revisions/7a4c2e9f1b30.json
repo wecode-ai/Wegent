@@ -1,0 +1,26 @@
+{
+  "revision": "7a4c2e9f1b30",
+  "parents": [
+    "1e1d81b7b5f0"
+  ],
+  "source": "20260826_7a4c2e9f1b30_canonicalize_status_automation_triggers.py",
+  "upgrade": [
+    {
+      "sql": [
+        "UPDATE loop_items\nSET metadata = JSON_REMOVE(\n        JSON_SET(\n            COALESCE(metadata, JSON_OBJECT()),\n            '$.event_config.transition',\n            'entered_processing'\n        ),\n        '$.event_config.statuses'\n    ),\n    version = version + 1,\n    updated_at = CURRENT_TIMESTAMP\nWHERE resource_type = 'automation_rule'\n  AND deleted_at IS NULL\n  AND JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.event_type')) = 'task.status_changed'\n  AND (\n      JSON_UNQUOTE(\n          JSON_EXTRACT(metadata, '$.event_config.transition')\n      ) <> 'entered_processing'\n      OR JSON_EXTRACT(metadata, '$.event_config.transition') IS NULL\n      OR JSON_CONTAINS_PATH(metadata, 'one', '$.event_config.statuses') = 1\n  )"
+      ]
+    },
+    {
+      "sql": [
+        "UPDATE loop_items\nSET metadata = JSON_REMOVE(\n        COALESCE(metadata, JSON_OBJECT()),\n        '$.event_config.statuses',\n        '$.event_config.transition'\n    ),\n    version = version + 1,\n    updated_at = CURRENT_TIMESTAMP\nWHERE resource_type = 'automation_rule'\n  AND deleted_at IS NULL\n  AND COALESCE(\n      JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.event_type')),\n      ''\n  ) <> 'task.status_changed'\n  AND (\n      JSON_CONTAINS_PATH(metadata, 'one', '$.event_config.statuses') = 1\n      OR JSON_CONTAINS_PATH(metadata, 'one', '$.event_config.transition') = 1\n  )"
+      ]
+    }
+  ],
+  "downgrade": [
+    {
+      "sql": [
+        "UPDATE loop_items\nSET metadata = JSON_REMOVE(\n        JSON_SET(\n            COALESCE(metadata, JSON_OBJECT()),\n            '$.event_config.statuses',\n            JSON_ARRAY('pending', 'in_progress')\n        ),\n        '$.event_config.transition'\n    ),\n    version = version + 1,\n    updated_at = CURRENT_TIMESTAMP\nWHERE resource_type = 'automation_rule'\n  AND deleted_at IS NULL\n  AND JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.event_type')) = 'task.status_changed'\n  AND JSON_UNQUOTE(\n      JSON_EXTRACT(metadata, '$.event_config.transition')\n  ) = 'entered_processing'"
+      ]
+    }
+  ]
+}
