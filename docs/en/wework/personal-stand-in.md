@@ -14,7 +14,9 @@ Click **Board** in the Tasks sidebar, or select **Board** from its task view men
 
 Edit responsibilities and shared preferences in the primary profile, and role responsibilities and sources in the role profile. Preferences can be edited or deleted. Changes take effect only after saving.
 
-You can also describe a role or configuration change in conversation. AI creates a proposal showing the affected roles, source scopes, and handling policies. Review it and explicitly confirm before applying. Continue discussing to revise it, or dismiss it. A stale proposal cannot overwrite newer settings.
+You can also describe a role or configuration change in conversation. After AI creates a proposal, open **Pending settings** in the header to review the affected roles, source scopes, and handling policies. Explicitly confirm before applying. Closing the dialog only collapses the proposal; it neither accepts nor rejects it. Continue discussing to revise it, or dismiss it. A stale proposal cannot overwrite newer settings.
+
+The main conversation keeps the transcript and composer in focus. **Work list** shows the number of items needing attention and opens their details. Connection problems and nonblocking background failures appear under **Needs attention**, with their original review and retry actions. Proactive background updates have their own marker rather than appearing as messages sent by you.
 
 ## Model selection
 

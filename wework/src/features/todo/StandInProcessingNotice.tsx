@@ -11,20 +11,18 @@ export function StandInProcessingNotice({
   deviceId,
   onOpen,
   onOpenTask,
+  snapshot,
 }: {
   api: StandInExecutorApi | undefined
   userId: number
   deviceId: string
   onOpen(): void
   onOpenTask?(taskId: string): void
+  snapshot?: ReturnType<typeof useStandInProcessingStatus>
 }) {
   const { t } = useTranslation('common')
-  const { status, error, setStatus, setError } = useStandInProcessingStatus(
-    api,
-    userId,
-    deviceId,
-    true
-  )
+  const local = useStandInProcessingStatus(api, userId, deviceId, !snapshot)
+  const { status, error, setStatus, setError } = snapshot ?? local
   const [checking, setChecking] = useState(false)
   const backgroundModelUnavailable = status?.error?.code === 'model_unavailable'
   const recovery = status?.error?.code === 'coordination_recovery_required'
@@ -51,7 +49,7 @@ export function StandInProcessingNotice({
   if (!failure && !status?.awaitingUser) return null
   return (
     <div
-      className="mx-5 my-3 flex flex-wrap items-center gap-3 rounded-lg border border-border bg-muted/60 px-4 py-3 text-sm"
+      className="mx-5 my-2 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/60 px-3 py-2 text-sm"
       data-testid="stand-in-processing-notice"
     >
       {failure ? (

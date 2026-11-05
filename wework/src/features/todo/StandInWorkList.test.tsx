@@ -68,6 +68,87 @@ it('previews pending work without executing and starts it only through an explic
   expect(open).toHaveBeenCalledWith({ deviceId: 'device', taskId: 'work' })
 })
 
+it.each(['pending', 'failed', 'needs_grouping'] as const)(
+  'opens the original task awaiting input without restarting %s source work',
+  async status => {
+    const user = userEvent.setup()
+    const item: StandInInboxWork = {
+      ...work(),
+      status,
+      task: {
+        taskId: 'work',
+        title: '评审方案',
+        runtime: 'codex',
+        workspacePath: '/workspace',
+        status: 'running',
+        running: true,
+        interactionStatus: 'awaitingUserReply',
+        updatedAt: '2026-10-24T00:00:00Z',
+      },
+    }
+    const runWork = vi.fn(async () => ({ deviceId: 'device', taskId: 'unexpected-restart' }))
+    const open = vi.fn()
+    const api = {
+      runWork,
+      workMessages: vi.fn(async () => ({ messages: [item.latestMessage] })),
+    } as unknown as StandInExecutorApi
+    render(
+      <StandInWorkList
+        items={[inboxRuntimeItem(item, 'device')]}
+        inbox={[item]}
+        api={api}
+        userId={7}
+        deviceId="device"
+        onOpenTask={open}
+      />
+    )
+    await user.click(screen.getByTestId('stand-in-activity-task-work'))
+    await user.click(screen.getByTestId('stand-in-preview-open'))
+    expect(runWork).not.toHaveBeenCalled()
+    expect(open).toHaveBeenCalledExactlyOnceWith({ deviceId: 'device', taskId: 'work' })
+    expect(screen.getByTestId('stand-in-preview-open')).toHaveTextContent('进入工作处理')
+  }
+)
+
+it('retains the explicit retry action for a terminal failed task', async () => {
+  const item: StandInInboxWork = {
+    ...work(),
+    status: 'failed',
+    task: {
+      taskId: 'work',
+      title: '评审方案',
+      runtime: 'codex',
+      workspacePath: '/workspace',
+      status: 'failed',
+      running: false,
+      updatedAt: '2026-10-24T00:00:00Z',
+    },
+  }
+  const runWork = vi.fn(async () => ({ deviceId: 'device', taskId: 'work' }))
+  const open = vi.fn()
+  const api = {
+    runWork,
+    workMessages: vi.fn(async () => ({ messages: [item.latestMessage] })),
+  } as unknown as StandInExecutorApi
+  render(
+    <StandInWorkList
+      items={[inboxRuntimeItem(item, 'device')]}
+      inbox={[item]}
+      api={api}
+      userId={7}
+      deviceId="device"
+      onOpenTask={open}
+    />
+  )
+  await userEvent.click(screen.getByTestId('stand-in-activity-task-work'))
+  expect(runWork).not.toHaveBeenCalled()
+  const retry = screen.getByTestId('stand-in-preview-open')
+  expect(retry).toHaveTextContent('交给角色处理')
+  await userEvent.click(retry)
+  expect(runWork).toHaveBeenCalledExactlyOnceWith(7, 'device', 'work')
+  expect(open).toHaveBeenCalledWith({ deviceId: 'device', taskId: 'work' })
+})
+
 it('limits manual message moves to this role and sends the durable record ID', async () => {
   const user = userEvent.setup()
   const item = work()

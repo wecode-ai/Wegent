@@ -396,13 +396,17 @@ child.on('exit', (code, signal) => {
           row => row.source.subscriptionId === connection.subscriptionId
         )
         await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
-        await control.command('waitFor', `[data-testid="stand-in-attention-${work.taskId}"]`, {
-          timeoutMs: modelResponseTimeoutMs,
-        })
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-role-chat"]')
         await control.command(
           'clickWhenEnabled',
-          `[data-testid="stand-in-attention-${work.taskId}"]`
+          `[data-testid="stand-in-activity-task-${work.taskId}"]`
         )
+        await control.command('waitFor', '[data-testid="stand-in-work-open-pending"]', {
+          timeoutMs: modelResponseTimeoutMs,
+        })
+        await control.command('click', '[data-testid="stand-in-work-open-pending"]')
+        await control.command('waitFor', '[data-testid="interaction-open-original"]')
+        await control.command('click', '[data-testid="interaction-open-original"]')
         await control.command('waitFor', '[data-testid="request-user-input-card"]', {
           timeoutMs: modelResponseTimeoutMs,
         })
@@ -482,6 +486,7 @@ child.on('exit', (code, signal) => {
           `[data-testid="stand-in-overview-role-${live.roleId}"]`
         )
         await control.command('clickWhenEnabled', '[data-testid="stand-in-role-chat"]')
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-proposal-open"]')
         await control.command('waitFor', '[data-testid="stand-in-proposal-accept"]')
         await captureScreenshot(
           control,

@@ -168,6 +168,18 @@ export function UserMessage({
   const showGoalRequestBadge = message.runtimeGoalRequest === true
   const codeCommentCount = message.codeComments?.length ?? 0
 
+  if (message.role === 'user' && message.source?.source === 'stand_in_activity')
+    return (
+      <div
+        role="note"
+        data-testid="stand-in-activity-message"
+        className="flex w-full items-center justify-center gap-2 py-2 text-xs text-text-muted"
+      >
+        <MessageCircle aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+        <span>{t('workbench.stand_in_activity')}</span>
+      </div>
+    )
+
   return (
     <div
       className={[

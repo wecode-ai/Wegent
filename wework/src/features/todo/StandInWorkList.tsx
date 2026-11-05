@@ -59,7 +59,9 @@ export function StandInWorkList({
     (selectedWork?.roleId ?? selectedOrigin?.standInId) === '@primary' ? 'primary' : 'role'
   useStandInOpened('work', identity, active && !!selected, selected?.key)
   const needsStart =
-    selectedWork && ['pending', 'failed', 'needs_grouping'].includes(selectedWork.status)
+    selectedWork &&
+    selectedState?.status !== 'waiting' &&
+    ['pending', 'failed', 'needs_grouping'].includes(selectedWork.status)
   const statusLabel = (item: RuntimeTaskReminderItem) => {
     const work = inbox.find(value => value.taskId === item.task.taskId)
     return work && work.status !== 'sent'

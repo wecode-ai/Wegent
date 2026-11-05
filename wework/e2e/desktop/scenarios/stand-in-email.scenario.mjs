@@ -264,6 +264,10 @@ export function createDesktopScenario({
       assert.equal(saved.primary.connections[0].profile, accountId)
       assert.ok(!JSON.stringify(saved).includes(mail.config.password))
       mail.pauseImap()
+      await control.command('waitFor', '[data-testid="stand-in-status-open"]', {
+        timeoutMs: modelResponseTimeoutMs,
+      })
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-status-open"]')
       await control.command('waitFor', '[role="alert"]', {
         text: '将自动重试',
         timeoutMs: modelResponseTimeoutMs,
@@ -271,13 +275,14 @@ export function createDesktopScenario({
       const interrupted = await rpc(control, 'runtime.stand_in.work.list', { userId: USER })
       assert.equal(interrupted.sourceErrors[0].error.code, 'email_transport_failed')
       await captureScreenshot(control, '03a-incoming-connection-will-retry.png')
+      await control.command('click', '[data-testid="stand-in-status-dialog-close"]')
       mail.resumeImap()
       await mail.deliver(
         '邮箱接入验证',
         `${MARKER}\n请拟定邮件回复，发送前让我确认。`,
         '<new-email@example.com>'
       )
-      await control.command('waitFor', '[data-testid^="stand-in-attention-"]', {
+      await control.command('waitFor', '[data-testid="stand-in-work-attention-count"]', {
         timeoutMs: modelResponseTimeoutMs,
       })
       const works = await rpc(control, 'runtime.stand_in.work.list', { userId: USER })
@@ -289,8 +294,16 @@ export function createDesktopScenario({
       )
       assert.equal(works.items.length, 1, 'Historical mail must not create work')
       const work = works.items[0]
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-role-chat"]')
+      await control.command(
+        'clickWhenEnabled',
+        `[data-testid="stand-in-activity-task-${work.taskId}"]`
+      )
+      await control.command('waitFor', '[data-testid="stand-in-work-open-pending"]')
       await captureScreenshot(control, '04a-mail-work-needs-confirmation.png')
-      await control.command('click', `[data-testid="stand-in-attention-${work.taskId}"]`)
+      await control.command('click', '[data-testid="stand-in-work-open-pending"]')
+      await control.command('waitFor', '[data-testid="interaction-open-original"]')
+      await control.command('click', '[data-testid="interaction-open-original"]')
       await control.command('waitFor', CARD, { timeoutMs: modelResponseTimeoutMs })
       const preview = await control.command('getText', CARD, { visible: true })
       await writeFile(join(resultDir, 'native-approval-preview.txt'), preview)

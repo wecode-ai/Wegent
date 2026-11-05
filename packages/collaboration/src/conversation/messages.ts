@@ -3,6 +3,7 @@ export const conversationMessages: Record<
   Record<string, string>
 > = {
   "zh-CN": {
+    "conversation.workbench.stand_in_activity": "分身主动更新",
     "conversation.tool_activity.review_approved": "AI 审核已通过",
     "conversation.tool_activity.review_blocked":
       "操作未执行：AI 审核未通过或未完成",
@@ -391,6 +392,7 @@ export const conversationMessages: Record<
     "conversation.file_changes.review_failed": "加载文件变更失败",
   },
   en: {
+    "conversation.workbench.stand_in_activity": "Stand-in update",
     "conversation.tool_activity.review_approved": "AI review approved",
     "conversation.tool_activity.review_blocked":
       "Not executed: AI review denied or incomplete",

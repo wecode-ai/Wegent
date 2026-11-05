@@ -4,7 +4,7 @@ import {
   type PersonalStandInSettings,
   type StandInRole,
 } from '@/api/personalStandIn'
-import type { StandInInboxWork } from '@/api/standIn'
+import type { StandInInboxWork, StandInProposal } from '@/api/standIn'
 import { runtimeItem } from '@/features/notifications/standInNotifications.fixtures'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import type { WorkbenchContextValue } from '@/features/workbench/workbenchContextTypes'
@@ -446,6 +446,7 @@ it('preserves the mounted conversation when settings refresh fails', async () =>
   await screen.findByTestId('stand-in-overview-role-default')
   vi.mocked(api.personalGet).mockRejectedValue(new Error('settings unavailable'))
   act(() => publishPersonalStandIn(settings))
+  await userEvent.click(await screen.findByTestId('stand-in-status-open'))
   expect(await screen.findByRole('alert')).toHaveTextContent(
     '未能加载分身设置。请检查执行设备是否在线，再点击「重新加载」。'
   )
@@ -472,6 +473,7 @@ it('routes a pending background confirmation to its real Runtime task', async ()
   })
   const onOpenTask = vi.fn()
   render(<StandInOverviewPage {...props} onOpenTask={onOpenTask} />)
+  await userEvent.click(await screen.findByTestId('stand-in-status-open'))
   await userEvent.click(await screen.findByTestId('stand-in-processing-open-task'))
   expect(onOpenTask).toHaveBeenCalledWith({
     taskId: 'stand-in-coordinator-7',
@@ -503,7 +505,13 @@ it('shows plugin installation guidance for a failed source and clears it after r
   props.services.standInApi.retrySource = retrySource
   const user = userEvent.setup()
   render(<StandInOverviewPage {...props} />)
-  const guidance = await screen.findByText(/Example group · 来源所需插件尚未安装/)
+  const conversation = await screen.findByTestId('identity-conversation')
+  const status = await screen.findByTestId('stand-in-status-open')
+  expect(screen.queryByText(/来源所需插件尚未安装/)).not.toBeInTheDocument()
+  expect(screen.queryByText('Example group')).not.toBeInTheDocument()
+  await user.click(status)
+  expect(screen.getByText('Example group')).toBeInTheDocument()
+  const guidance = await screen.findByText(/来源所需插件尚未安装/)
   expect(guidance).toHaveTextContent('「连接」')
   expect(guidance).toHaveTextContent('「安装所需插件」')
   expect(guidance).toHaveTextContent('安装后重新加载')
@@ -511,9 +519,78 @@ it('shows plugin installation guidance for a failed source and clears it after r
   expect(retrySource).not.toHaveBeenCalled()
   await user.click(screen.getByTestId('stand-in-source-retry-group-1'))
   expect(retrySource).toHaveBeenCalledWith(7, 'device', source)
-  await waitFor(() =>
-    expect(screen.queryByText(/Example group · 来源所需插件尚未安装/)).not.toBeInTheDocument()
+  await waitFor(() => expect(screen.queryByText(/来源所需插件尚未安装/)).not.toBeInTheDocument())
+  expect(screen.getByTestId('identity-conversation')).toBe(conversation)
+  expect(screen.queryByTestId('stand-in-status-open')).not.toBeInTheDocument()
+})
+
+it('keeps attention work in the work list instead of stacking duplicate cards above the conversation', async () => {
+  const { props } = fixture()
+  const waiting = {
+    ...runtimeItem,
+    task: { ...runtimeItem.task, interactionStatus: 'awaitingUserReply' as const },
+  }
+  const context = {
+    runtimeTaskReminders: { items: [waiting] },
+  } as unknown as WorkbenchContextValue
+  render(
+    <WorkbenchContext.Provider value={context}>
+      <StandInOverviewPage {...props} />
+    </WorkbenchContext.Provider>
   )
+  const conversation = await screen.findByTestId('identity-conversation')
+  expect(screen.getByTestId('stand-in-work-attention-count')).toHaveTextContent('1')
+  expect(screen.queryByTestId('stand-in-important-work')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('stand-in-attention-task')).not.toBeInTheDocument()
+  await userEvent.click(screen.getByTestId('stand-in-role-chat'))
+  expect(await screen.findByTestId('stand-in-activity-task-task')).toBeVisible()
+  expect(conversation).not.toBeInTheDocument()
+})
+
+it('opens a pending configuration explicitly without resolving it when the dialog is closed', async () => {
+  const { props } = fixture()
+  const api = props.services.standInApi!
+  const current = await api.personalGet(7, 'device')
+  const proposal = {
+    id: 'pending-configuration',
+    summary: 'Follow only projects with a confirmed owner',
+    settings: { ...current, roles: [] },
+  } as StandInProposal
+  vi.mocked(api.proposal).mockResolvedValue(proposal)
+  api.resolveProposal = vi.fn(async () => ({ ...current }))
+  const user = userEvent.setup()
+  render(<StandInOverviewPage {...props} />)
+  await screen.findByTestId('identity-conversation')
+  const entry = await screen.findByTestId('stand-in-proposal-open')
+  expect(screen.queryByTestId('stand-in-proposal')).not.toBeInTheDocument()
+  expect(screen.queryByText(proposal.summary)).not.toBeInTheDocument()
+  await user.click(entry)
+  expect(await screen.findByTestId('stand-in-proposal')).toHaveTextContent(proposal.summary)
+  await user.click(screen.getByTestId('stand-in-proposal-dialog-close'))
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  expect(api.resolveProposal).not.toHaveBeenCalled()
+  expect(entry).toHaveFocus()
+  await user.click(entry)
+  await user.click(screen.getByTestId('stand-in-proposal-accept'))
+  expect(api.resolveProposal).toHaveBeenCalledWith(7, 'device', proposal.id, true)
+})
+
+it('keeps an outdated configuration visibly unconfirmable inside the review dialog', async () => {
+  const { props } = fixture()
+  const api = props.services.standInApi!
+  const current = await api.personalGet(7, 'device')
+  vi.mocked(api.proposal).mockResolvedValue({
+    id: 'old-configuration',
+    summary: 'An outdated proposal',
+    settings: { ...current, version: current.version - 1 },
+  } as StandInProposal)
+  api.resolveProposal = vi.fn()
+  render(<StandInOverviewPage {...props} />)
+  await userEvent.click(await screen.findByTestId('stand-in-proposal-open'))
+  expect(screen.getByTestId('stand-in-proposal-accept')).toBeDisabled()
+  expect(screen.getByTestId('stand-in-proposal-reject')).toBeEnabled()
+  await userEvent.click(screen.getByTestId('stand-in-proposal-dialog-close'))
+  expect(api.resolveProposal).not.toHaveBeenCalled()
 })
 
 it('keeps unsaved settings mounted when the menu requests scheduled work', async () => {

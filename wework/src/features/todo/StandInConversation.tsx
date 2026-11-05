@@ -1,6 +1,6 @@
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useStandInOpened } from '@/telemetry/useStandInOpened'
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState } from 'react'
 import { standInConversationTaskId } from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
@@ -15,7 +15,6 @@ export function StandInConversation({
   roleId,
   onOpenTask,
   active = true,
-  pendingConfiguration,
   hasPendingWork = false,
   draftRequest,
   onDraftRequestConsumed,
@@ -26,7 +25,6 @@ export function StandInConversation({
   roleId?: string
   onOpenTask?(address: RuntimeTaskAddress): Promise<void> | void
   active?: boolean
-  pendingConfiguration?: ReactNode
   hasPendingWork?: boolean
   draftRequest?: { id: number; text: string }
   onDraftRequestConsumed?(id: number): void
@@ -101,7 +99,6 @@ export function StandInConversation({
       showExecutionTools={false}
       expanded
       active={active}
-      composerHeader={pendingConfiguration}
       placeholder={t(roleId ? 'standIn.workspace.role_prompt' : 'standIn.workspace.primary_prompt')}
       emptyStateText={t(
         hasPendingWork
