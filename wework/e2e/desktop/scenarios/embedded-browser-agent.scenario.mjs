@@ -237,6 +237,34 @@ async function waitForBridgePageState(identity, predicate, timeoutMs, message) {
   assert.fail(`${message}; last state=${JSON.stringify(lastState)}`)
 }
 
+async function clickBridgeNavigation(identity, selector, expectedUrl, timeoutMs, message) {
+  let clickResult = null
+  let clickError = null
+  try {
+    clickResult = await callBridge({
+      action: 'click',
+      selector,
+      timeoutMs: 8_000,
+    })
+  } catch (error) {
+    clickError = error
+  }
+  try {
+    return await waitForBridgePageState(
+      identity,
+      state => state.url === expectedUrl,
+      timeoutMs,
+      message
+    )
+  } catch (error) {
+    assert.fail(
+      `${message}; click=${JSON.stringify(clickResult)}; ` +
+        `clickError=${clickError instanceof Error ? clickError.message : clickError}; ` +
+        `stateError=${error instanceof Error ? error.message : error}`
+    )
+  }
+}
+
 async function callBridgeResponse(identity, payload, label = BROWSER_LABEL) {
   const response = await fetch(`${identity.baseUrl}/browser`, {
     method: 'POST',
@@ -1783,19 +1811,10 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs, wo
       )
 
       const nestedDirectoryUrl = `${pathToFileURL(join(localDirectoryPath, 'nested')).href}/`
-      const nestedLinkResult = await bridgeCall({
-        action: 'click',
-        selector: 'a[href$="nested/"]',
-        timeoutMs: 8_000,
-      })
-      assert.equal(
-        nestedLinkResult.ok,
-        true,
-        `Directory link click failed: ${JSON.stringify(nestedLinkResult)}`
-      )
-      const nestedDirectoryState = await waitForBridgePageState(
+      const nestedDirectoryState = await clickBridgeNavigation(
         bridgeIdentity,
-        state => state.url === nestedDirectoryUrl,
+        'a[href$="nested/"]',
+        nestedDirectoryUrl,
         5_000,
         'Clicking the nested directory did not open its preview'
       )
@@ -1811,14 +1830,11 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs, wo
         `Nested directory preview was not rendered: ${nestedDirectoryInspect.inspectText}`
       )
 
-      await bridgeCall({
-        action: 'click',
-        selector: '[data-testid="embedded-browser-directory-parent"]',
-        timeoutMs: 8_000,
-      })
-      const parentDirectoryState = await waitForBridgePageState(
+      const parentDirectoryUrl = `${pathToFileURL(localDirectoryPath).href}/`
+      const parentDirectoryState = await clickBridgeNavigation(
         bridgeIdentity,
-        state => state.url === pathToFileURL(localDirectoryPath).href,
+        '[data-testid="embedded-browser-directory-parent"]',
+        parentDirectoryUrl,
         5_000,
         'Clicking the parent directory did not restore the original preview'
       )

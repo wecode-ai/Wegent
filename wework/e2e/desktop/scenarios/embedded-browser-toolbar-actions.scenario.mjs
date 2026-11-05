@@ -647,10 +647,8 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
       const localRoot = await mkdtemp(join(executorHome, 'browser-toolbar-local-'))
       const localDirectory = join(localRoot, 'directory')
       const localTextFile = join(localRoot, 'readme.txt')
-      const missingTextFile = join(localRoot, 'missing.txt')
       await mkdir(localDirectory, { recursive: true })
       await writeFile(localTextFile, 'local file fixture', 'utf8')
-      await writeFile(missingTextFile, 'removed before external open', 'utf8')
 
       const loadLocalUrl = async value => {
         await control.command('submit', BROWSER_INPUT_SELECTOR, { value })
@@ -708,14 +706,13 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
         )
         await stopLinuxProcess(externalProcess)
 
-        const missingFileUrl = pathToFileURL(missingTextFile).href
-        await loadLocalUrl(missingFileUrl)
-        await rm(missingTextFile)
+        const invalidFileUrl = 'file://wework-e2e-invalid-host/missing.txt'
+        await loadLocalUrl(invalidFileUrl)
         await control.command('click', BROWSER_OPEN_EXTERNAL_BUTTON_SELECTOR)
         await waitForBrowserError(
           control,
           uiTimeoutMs,
-          'A missing local file did not surface the external-open error'
+          'An invalid local file URL did not surface the external-open error'
         )
 
         await loadLocalUrl(directoryUrl)
