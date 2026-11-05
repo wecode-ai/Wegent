@@ -63,7 +63,32 @@ export function createConcurrencyExecutionVerification({ workspacePath, uiTimeou
       const catalog = await rpc(control, 'runtime.runner.catalog', {})
       const model = catalog.models.find(value => value.runtime === 'codex' && value.is_default)
       assert.ok(model, 'The concurrency fixture requires the configured real Codex model route')
+      const personal = await rpc(control, 'runtime.stand_in.personal.get', { userId: 9001 })
       try {
+        await rpc(control, 'runtime.stand_in.personal.save', {
+          userId: 9001,
+          settings: {
+            ...personal,
+            roles: [
+              ...personal.roles,
+              ...[1, 2].map(index => ({
+                id: `concurrency-${index}`,
+                name: `Concurrency ${index}`,
+                enabled: true,
+                prompt: '',
+                executionDeviceId: personal.executionDeviceId,
+                tags: [],
+                collaboration: {
+                  enabled: false,
+                  allProjects: false,
+                  projects: [],
+                  excludedProjects: [],
+                  tags: [],
+                },
+              })),
+            ],
+          },
+        })
         await rpc(control, 'runtime.settings.update', settings)
         for (const kind of ['personal', 'standIn', 'agent']) {
           for (const index of [1, 2]) {
@@ -195,6 +220,11 @@ export function createConcurrencyExecutionVerification({ workspacePath, uiTimeou
         for (const resolve of releases.values()) resolve()
         for (const taskId of taskIds) await rpc(control, 'runtime.tasks.cancel', { taskId })
         await rpc(control, 'runtime.settings.update', original)
+        const current = await rpc(control, 'runtime.stand_in.personal.get', { userId: 9001 })
+        await rpc(control, 'runtime.stand_in.personal.save', {
+          userId: 9001,
+          settings: { ...personal, version: current.version },
+        })
       }
     },
   }

@@ -481,9 +481,11 @@ fn save_collection_result(
                     .min(10);
                 next["failures"] = json!(failures);
                 next["error"]["retryable"] = json!(true);
+                // Apply the base delay on the first failure, then back off repeated failures.
                 next["retryAt"] = json!(
                     chrono::Utc::now().timestamp_millis()
-                        + ((30_000_i64 << failures.min(7)).min(3_600_000)).max(delay as i64)
+                        + ((30_000_i64 << failures.saturating_sub(1).min(7)).min(3_600_000))
+                            .max(delay as i64)
                 );
             } else {
                 next.as_object_mut().unwrap().remove("retryAt");

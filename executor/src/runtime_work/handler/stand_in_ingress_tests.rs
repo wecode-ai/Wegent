@@ -208,6 +208,63 @@ fn declared_transport_failure_retains_progress_and_retries_without_settings_chan
 }
 
 #[test]
+fn collection_retry_starts_at_the_declared_delay_and_backs_off_after_repeated_failures() {
+    let root = tempfile::tempdir().unwrap();
+    let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+    let source = json!({"providerId":"@test/calendar/events","profile":"account","kind":"calendar","id":"work"});
+    let version = json!(3);
+    let mut state = json!({"checkpoint":{"cursor":"page-two"}});
+    for expected_delay in [30_000, 60_000, 120_000] {
+        let before = chrono::Utc::now().timestamp_millis();
+        save_collection_result(
+            &store,
+            7,
+            &source,
+            &version,
+            &state,
+            Err(AppIpcError::new("transport_failed", "Offline").with_retry_after_ms(30_000)),
+        )
+        .unwrap();
+        let after = chrono::Utc::now().timestamp_millis();
+        state = store.stand_in_source(7, &source).unwrap();
+        let deadline = state["retryAt"].as_i64().unwrap();
+        assert!((before + expected_delay..=after + expected_delay).contains(&deadline));
+        assert_eq!(state["checkpoint"], json!({"cursor":"page-two"}));
+    }
+    let before = chrono::Utc::now().timestamp_millis();
+    save_collection_result(
+        &store,
+        7,
+        &source,
+        &version,
+        &json!({"failures":10}),
+        Err(AppIpcError::new("transport_failed", "Offline").with_retry_after_ms(30_000)),
+    )
+    .unwrap();
+    let after = chrono::Utc::now().timestamp_millis();
+    let deadline = store.stand_in_source(7, &source).unwrap()["retryAt"]
+        .as_i64()
+        .unwrap();
+    assert!((before + 3_600_000..=after + 3_600_000).contains(&deadline));
+
+    let before = chrono::Utc::now().timestamp_millis();
+    save_collection_result(
+        &store,
+        7,
+        &source,
+        &version,
+        &json!({}),
+        Err(AppIpcError::new("rate_limited", "Wait").with_retry_after_ms(90_000)),
+    )
+    .unwrap();
+    let after = chrono::Utc::now().timestamp_millis();
+    let deadline = store.stand_in_source(7, &source).unwrap()["retryAt"]
+        .as_i64()
+        .unwrap();
+    assert!((before + 90_000..=after + 90_000).contains(&deadline));
+}
+
+#[test]
 fn connection_host_restart_preserves_progress_and_allows_collection_to_resume() {
     let root = tempfile::tempdir().unwrap();
     let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
