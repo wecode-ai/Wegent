@@ -70,6 +70,15 @@ beforeEach(() => {
   mocks.request.mockReset()
   mocks.personalPath = ''
   mocks.request.mockImplementation(async (method: string, params?: { method?: string }) => {
+    if (method === 'executor.plugins.personal.list')
+      return {
+        marketplaceId: 'wework-personal',
+        marketplacePath: personal.path,
+        plugins: [
+          { name: membership.name, pluginPath: personal.path + '/plugins/' + membership.name },
+        ],
+      }
+    if (method === 'executor.codex_home.config.read') return { enabledPluginKeys: [membership.id] }
     if (method === 'executor.plugins.store.list')
       return { storePath: '/executor/store', plugins: [] }
     if (method === 'executor.plugins.links.list') return []

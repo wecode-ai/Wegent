@@ -523,7 +523,16 @@ impl RuntimeWorkStore {
         local_task_id: &str,
         updater: impl FnOnce(&mut RuntimeTaskLink),
     ) -> Option<RuntimeTaskLink> {
-        self.update_task_with_persistence(local_task_id, updater, true)
+        self.update_task_with_persistence(local_task_id, updater, true, Clone::clone)
+    }
+
+    /// Mutate metadata without copying the task's in-memory transcript into a discarded result.
+    pub fn update_task_without_snapshot(
+        &self,
+        local_task_id: &str,
+        updater: impl FnOnce(&mut RuntimeTaskLink),
+    ) -> Option<()> {
+        self.update_task_with_persistence(local_task_id, updater, true, |_| ())
     }
 
     pub fn rekey_task(
@@ -547,12 +556,13 @@ impl RuntimeWorkStore {
         Some(updated)
     }
 
-    fn update_task_with_persistence(
+    fn update_task_with_persistence<T>(
         &self,
         local_task_id: &str,
         updater: impl FnOnce(&mut RuntimeTaskLink),
         persist: bool,
-    ) -> Option<RuntimeTaskLink> {
+        snapshot: impl FnOnce(&RuntimeTaskLink) -> T,
+    ) -> Option<T> {
         self.refresh_index_from_disk_if_changed();
         let mut index = self.index.lock().ok()?;
         let task = index.tasks.get_mut(local_task_id)?;
@@ -596,7 +606,7 @@ impl RuntimeWorkStore {
         if lifecycle_changed {
             self.observe_stand_in(task);
         }
-        let updated = task.clone();
+        let updated = snapshot(task);
         let should_persist = persist && metadata_changed;
         drop(index);
         if should_persist {

@@ -5,13 +5,15 @@
     "https://github.com/wecode-ai/Wegent/actions/runs/40667094596",
     "https://github.com/wecode-ai/Wegent/actions/runs/40718345759",
     "https://github.com/wecode-ai/Wegent/actions/runs/40747839908",
-    "https://github.com/wecode-ai/Wegent/actions/runs/41393673619"
+    "https://github.com/wecode-ai/Wegent/actions/runs/41393673619",
+    "https://github.com/wecode-ai/Wegent/actions/runs/42048650293"
   ],
   "preparationSource": "https://github.com/wecode-ai/Wegent/actions/runs/40747839908/job/123040595116",
   "preparationDescription": "Successful conditional setup on a cold Windows runner; cache hits can reduce these costs.",
   "preparationSeconds": {
     "local-harness": 35,
-    "object-storage": 182
+    "object-storage": 182,
+    "dingtalk-protocol-fixture": 15
   },
   "seconds": {
     "application-menu": 40.5,
@@ -54,11 +56,15 @@
     "collaboration-local-agent-dispatch": 102,
     "collaboration-local-group-cancellation": 59.5,
     "collaboration-local-group-coordinate": 70.5,
+    "collaboration-milestones": 136,
+    "collaboration-parent-board": 97,
     "collaboration-remote-agent-dispatch": 140.5,
     "collaboration-remote-group-coordinate": 174,
     "collaboration-remote-group-planning-details": 112,
     "collaboration-runtime-reconciliation": 160,
     "collaboration-shared-core": 391.5,
+    "collaboration-template-agents": 92,
+    "collaboration-template-app-device-routing": 60,
     "collaboration-template-lifecycle": 102,
     "collaboration-templates": 91.5,
     "collaboration-worktree-policy": 68.5,
@@ -66,6 +72,8 @@
     "computer-use": 33.5,
     "context-compaction": 140.5,
     "conversation-state": 230,
+    "coordination-arrangements": 60,
+    "coordination-runtime": 76,
     "core-dsh-plugin-management": 57,
     "core-task-flow": 356.5,
     "device-artifact-declaration": 65,
@@ -75,6 +83,7 @@
     "environment-panel-scroll": 99.5,
     "executor-stream-recovery": 37.5,
     "external-content-import": 16,
+    "follow-up-task-switch": 80,
     "fork-provider-preservation": 43,
     "git-commit-generation": 34.5,
     "goal-lifecycle": 138,
@@ -107,6 +116,8 @@
     "project-ai-settings": 87.5,
     "project-assignment-notification": 211.5,
     "project-automation": 110.5,
+    "project-coordination": 100,
+    "project-coordinator-publication": 44,
     "project-member-overrides": 102,
     "project-space-tool-discovery": 77,
     "release-package-startup": 141.5,
@@ -126,11 +137,13 @@
     "split-workbench": 140,
     "stand-in": 149,
     "stand-in-action-confirmation": 42,
+    "stand-in-alternate-source": 34,
     "stand-in-assignment-notifications": 148,
     "stand-in-cli": 40,
     "stand-in-cloud": 106,
     "stand-in-connections": 46,
     "stand-in-controls": 50.5,
+    "stand-in-email": 84,
     "stand-in-identities": 49,
     "stand-in-list-confirmation": 157,
     "stand-in-mcp": 33.5,
@@ -139,6 +152,7 @@
     "stand-in-permissions": 54.5,
     "stand-in-personal-task": 76,
     "stand-in-plugin-bridge": 54,
+    "stand-in-processing": 65,
     "stand-in-profile-settings": 80.5,
     "stand-in-project-enable": 45.5,
     "stand-in-telemetry": 69.5,
@@ -169,7 +183,11 @@
     "workspace-tabs": 88
   },
   "refresh": {
-    "run": "https://github.com/wecode-ai/Wegent/actions/runs/41393673619",
-    "checkpoints": 153
+    "run": "https://github.com/wecode-ai/Wegent/actions/runs/42048650293",
+    "checkpoints": 12,
+    "note": "The added checkpoints passed. Core shard 3 exceeded its step deadline during cleanup after every checkpoint had passed."
+  },
+  "preparationSources": {
+    "dingtalk-protocol-fixture": "https://github.com/wecode-ai/Wegent/actions/runs/42048650293/job/127328527189"
   }
 }

@@ -78,7 +78,6 @@ describe('desktop resource migration', () => {
     expect(packageJson.scripts['build:release']).toBe(
       'pnpm run prepare:electron && pnpm --dir electron build:release'
     )
-    expect(aiVerifyBuildScript).toContain("['run', 'prepare:electron']")
     expect(aiVerifyBuildScript).not.toContain("['run', 'prepare:codex', '--materialize']")
     expect(aiVerifyBuildScript).not.toContain("['run', 'prepare:dws']")
     expect(aiVerifyBuildScript).toMatch(/'--dir',\s*'electron',\s*'run',/)

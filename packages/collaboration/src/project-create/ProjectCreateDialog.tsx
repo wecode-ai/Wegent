@@ -944,7 +944,8 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                   );
                 }
               }}
-              onChange={(drafts, selected) => {
+              onChange={(drafts, selected, document) => {
+                if (document) commands.setTemplateDocument(document);
                 setTemplateSelected(selected);
                 commands.setTemplatePending(selected && drafts === null);
                 commands.setCollaborationGroupDrafts(drafts ?? []);

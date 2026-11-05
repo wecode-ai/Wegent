@@ -18,6 +18,23 @@ Sidebar priority filtering also reads explicit `interactionStatus` through the
 lifecycle Store projection. A stale task-list snapshot must not override an
 accepted user reply in the view layer.
 
+## Needs Your Input Answer Drafts
+
+`RuntimeInteractionsProvider` directly owns and synchronously exposes account-scoped
+answer drafts. Every controlled input edit must update that state directly, rather
+than updating child state and publishing a snapshot through an effect. That extra
+publication step writes the previous draft back into the DOM at the end of the
+input event. Even if the new value returns immediately afterward, the write
+interrupts Chinese IME composition. Persistence may use effects; input values must
+not wait for persistence or snapshot publication. After an account switch, callbacks
+from the previous account must not update the current account's drafts.
+
+Regression tests inspect every application-side `value` write during composition,
+not only the final text. The desktop `human-interactions` checkpoint reuses a real
+question and answer submission flow to check that DOM composition events cause no
+stale value writes, focus loss, or input remounts. This automation does not verify
+the operating system's candidate window.
+
 ## New Conversations and Manual Sidebar Order
 
 Standalone conversations and project tasks share one ordering rule: when a manual
@@ -86,6 +103,8 @@ The project-space board Hover task panel is a split view of the original task co
 ## Runtime Event Flow
 
 The conversation stream coordinator retains exactly one subscription and prefers the active page's service instance. When the active page uses a different instance, it releases the old subscription before subscribing to the new instance so a hidden page's retained device routes cannot lose events. Moving active ownership within the same service instance preserves the subscription. Only the active page handles messages.
+
+The lifecycle coordinator must also continue unfinished event recovery when services are replaced. Recovery reasons and task addresses belong to the same lifecycle Store. After cancelling the old subscription's reads, the new subscription reads authoritative task and transcript snapshots, including pending-message receipts. A service-object change does not complete recovery, and an empty receipt does not confirm a send.
 
 1. A new message submit sets `sendPhase` to `submitting`.
 2. After runtime accepts the request, `sendPhase` becomes `awaiting_assistant`.

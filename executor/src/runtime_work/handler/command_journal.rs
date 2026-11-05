@@ -523,9 +523,18 @@ impl RuntimeWorkRpcHandler {
             Some(&cursor),
             1,
             false,
-        )
-        .await
-        .map_err(|error| {
+            false,
+        );
+        #[cfg(test)]
+        let page = match self.transcript_test_workers.clone() {
+            Some(workers) => {
+                crate::runtime_work::transcript_work::with_test_workers(workers, page).await
+            }
+            None => page.await,
+        };
+        #[cfg(not(test))]
+        let page = page.await;
+        let page = page.map_err(|error| {
             AppIpcError::new(
                 "command_recovery_unavailable",
                 format!("Native command history could not be verified: {error}"),

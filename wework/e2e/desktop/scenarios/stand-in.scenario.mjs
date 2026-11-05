@@ -8,6 +8,7 @@ import {
   createLocalCollaborationProject,
   configureFirstProjectExecutionEnvironment,
   reloadMainWindow,
+  selectCollaborationProjectView,
 } from '../modules/workspace-flows.mjs'
 import {
   assistantMessage,
@@ -142,7 +143,7 @@ export async function createDesktopScenario({
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await createLocalCollaborationProject(control, CONTENT, PROJECT)
       await configureFirstProjectExecutionEnvironment(control, CONTENT, uiTimeoutMs)
-      await control.command('click', `${CONTENT} [data-testid="collaboration-tab-board"]`)
+      await selectCollaborationProjectView(control, CONTENT, 'board')
       const projects = await requestExecutor(control, 'projects.list', {}, uiTimeoutMs)
       const project = projects.find(row => row.name === PROJECT)
       assert.ok(project)
@@ -279,11 +280,7 @@ export async function createDesktopScenario({
       await reloadMainWindow(control, 'Stand-in settings did not survive renderer reload')
       await control.command('waitFor', `${CONTENT} [data-testid="stand-in-project-${project.id}"]`)
       // Execution must not depend on the board being mounted or on composer navigation.
-      await control.command('waitFor', `${CONTENT} [data-testid="collaboration-tab-table"]`, {
-        visible: true,
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('click', `${CONTENT} [data-testid="collaboration-tab-table"]`)
+      await selectCollaborationProjectView(control, CONTENT, 'table', uiTimeoutMs)
       const issue = await requestExecutor(
         control,
         'todos.create',
@@ -350,7 +347,7 @@ export async function createDesktopScenario({
         },
         uiTimeoutMs
       )
-      await control.command('click', `${CONTENT} [data-testid="collaboration-tab-board"]`)
+      await selectCollaborationProjectView(control, CONTENT, 'board')
       await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`)
       await control.command('waitFor', '[data-testid="stand-in-auto"][aria-checked="true"]')
       // Establish a dirty draft before the concurrent write. Clean settings

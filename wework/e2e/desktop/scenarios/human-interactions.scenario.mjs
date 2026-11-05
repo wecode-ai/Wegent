@@ -26,6 +26,7 @@ import {
   verifyInteractionArchiving,
 } from '../modules/human-interaction-dismiss.mjs'
 import { verifyPendingInteractionsTab } from '../modules/pending-interactions-tab.mjs'
+import { verifyPendingAnswerComposition } from '../modules/human-interaction-composition.mjs'
 import { createPersistentInteractionNoticeCase } from '../modules/human-interaction-persistent-notice.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { readProjectChatMessages } from '../modules/project-chat-snapshot.mjs'
@@ -429,6 +430,7 @@ export function createDesktopScenario({
         JSON.stringify(focusDiagnostics.initialContext, null, 2)
       )
       assert.equal(await control.command('getValue', input), ANSWER)
+      if (!issueFixture) await verifyPendingAnswerComposition(control, input, ANSWER)
       assert.equal(
         Number(
           await control.command('getElementCount', `${ACTIVE} [data-testid="desktop-sidebar"]`)

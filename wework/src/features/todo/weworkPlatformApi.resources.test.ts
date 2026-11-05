@@ -28,6 +28,38 @@ function environment(
 }
 
 describe('mergeExecutionEnvironmentResources', () => {
+  it.each([true, false])(
+    'keeps distinct device records when historical records come first: %s',
+    historicalFirst => {
+      const local = environment({ device_id: 0, device_key: 'electron-current' })
+      const current = environment({
+        id: '42',
+        device_id: 42,
+        device_key: 'app-record-42',
+        app_device_id: 'electron-current',
+      })
+      const historical = environment({
+        id: '41',
+        device_id: 41,
+        device_key: 'electron-current',
+        status: 'offline',
+      })
+      const devices = historicalFirst ? [historical, current] : [current, historical]
+      const merged = mergeExecutionEnvironmentResources([local], devices)
+      expect(merged).toEqual(devices.map(device => ({ ...device, is_current_device: true })))
+      expect(
+        merged.filter(device => device.is_current_device && device.status === 'online')
+      ).toEqual([{ ...current, is_current_device: true }])
+    }
+  )
+
+  it('deduplicates repeated grants for the same cloud device record', () => {
+    const device = environment({ id: '42', device_id: 42 })
+    expect(mergeExecutionEnvironmentResources([], [device, { ...device, id: 'grant-42' }])).toEqual(
+      [device]
+    )
+  })
+
   it('uses the cloud record for the current local device and removes its duplicate', () => {
     const local = environment({
       id: 'device:APB22015038',

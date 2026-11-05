@@ -341,7 +341,12 @@ function localRuntimeModels(
   ]
 }
 
-type LocalExecutorRequest = <T>(method: string, params?: Record<string, unknown>) => Promise<T>
+type LocalExecutorRequest = <T>(
+  method: string,
+  params?: Record<string, unknown>,
+  deviceId?: string,
+  options?: { signal?: AbortSignal }
+) => Promise<T>
 type LocalExecutorSubscribe = (handler: (event: LocalExecutorEvent) => void) => Promise<() => void>
 
 interface LocalAppServicesDeps {
@@ -2485,7 +2490,12 @@ function adaptRuntimeWorkListResponse(
 }
 
 export function createRuntimeWorkApiFromIpc(
-  request: <T>(method: string, params?: Record<string, unknown>, deviceId?: string) => Promise<T>,
+  request: <T>(
+    method: string,
+    params?: Record<string, unknown>,
+    deviceId?: string,
+    options?: { signal?: AbortSignal }
+  ) => Promise<T>,
   getDefaultDeviceId: () => Promise<string>,
   options: RuntimeWorkIpcOptions = {}
 ) {
@@ -2508,7 +2518,8 @@ export function createRuntimeWorkApiFromIpc(
 
   const requestWithLocalDevice = async <TResponse, TRequest extends object>(
     method: string,
-    data: TRequest
+    data: TRequest,
+    requestOptions?: { signal?: AbortSignal }
   ): Promise<TResponse> => {
     const normalizedData = await normalizeRequest(data)
     const deviceId = await resolveDeviceId(normalizedData)
@@ -2521,7 +2532,9 @@ export function createRuntimeWorkApiFromIpc(
           runtimeHandle: runtimeHandleDebug(normalizedData),
         })
       }
-      const response = await request<TResponse>(method, normalizedData, deviceId)
+      const response = await (requestOptions
+        ? request<TResponse>(method, normalizedData, deviceId, requestOptions)
+        : request<TResponse>(method, normalizedData, deviceId))
       if (debugTranscript) {
         console.debug(`[Wework] ${transportLabel} runtime IPC transcript response`, {
           address: runtimeAddressDebug(normalizedData),
@@ -2745,6 +2758,25 @@ export function createRuntimeWorkApiFromIpc(
 
   return {
     prepareRuntimeModel,
+    async getRuntimeTask(
+      address: RuntimeTaskAddress,
+      options?: { signal?: AbortSignal }
+    ): Promise<RuntimeTaskSummary | null> {
+      // Bound project conversations must keep their project-authorized read path.
+      if (address.projectSession) return null
+      const response = await requestWithLocalDevice<
+        {
+          success: boolean
+          task?: unknown
+          error?: string
+        },
+        RuntimeTaskAddress
+      >('runtime.tasks.get', address, options)
+      if (!response.success) throw new Error(response.error || 'Runtime task lookup failed')
+      const task = normalizeRuntimeTaskSummary(response.task, address.workspacePath ?? '')
+      if (!task) throw new Error('Runtime task lookup returned an invalid task')
+      return task
+    },
     async listRuntimeWork(
       requestOptions?: RuntimeWorkListRequestOptions
     ): Promise<RuntimeWorkListResponse> {
@@ -2811,8 +2843,11 @@ export function createRuntimeWorkApiFromIpc(
     ): Promise<DeleteDeviceWorkspaceResponse> {
       return requestWithLocalDevice('runtime.workspaces.delete', data)
     },
-    getRuntimeTranscript(data: RuntimeTranscriptRequest): Promise<RuntimeTranscriptResponse> {
-      return requestWithLocalDevice('runtime.tasks.transcript', data)
+    getRuntimeTranscript(
+      data: RuntimeTranscriptRequest,
+      options?: { signal?: AbortSignal }
+    ): Promise<RuntimeTranscriptResponse> {
+      return requestWithLocalDevice('runtime.tasks.transcript', data, options)
     },
     searchRuntimeTranscript(
       data: RuntimeTranscriptSearchRequest
@@ -3947,7 +3982,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     },
   }
   const runtimeWorkApi = createRuntimeWorkApiFromIpc(
-    async (method, params) => {
+    async (method, params, _deviceId, requestOptions) => {
       if (
         (method === 'runtime.tasks.transcript' || method === 'runtime.tasks.transcript.search') &&
         (!params?.runtime || params.runtime === 'codex')
@@ -3955,7 +3990,9 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
         // Restored sessions may read Codex before model discovery initializes its proxy/catalog.
         await ensureStatus()
       }
-      return request(method, params)
+      return requestOptions
+        ? request(method, params, undefined, requestOptions)
+        : request(method, params)
     },
     getLocalDeviceId,
     {

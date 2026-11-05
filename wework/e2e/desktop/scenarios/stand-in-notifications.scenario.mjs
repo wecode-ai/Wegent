@@ -11,6 +11,7 @@ import { sendPrompt } from '../modules/conversation-navigation.mjs'
 import {
   createLocalCollaborationProject,
   configureFirstProjectExecutionEnvironment,
+  selectCollaborationProjectView,
 } from '../modules/workspace-flows.mjs'
 import {
   assistantMessage,
@@ -105,7 +106,7 @@ export function createDesktopScenario({
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await createLocalCollaborationProject(control, CONTENT, PROJECT)
       await configureFirstProjectExecutionEnvironment(control, CONTENT, uiTimeoutMs)
-      await control.command('click', `${CONTENT} [data-testid="collaboration-tab-board"]`)
+      await selectCollaborationProjectView(control, CONTENT, 'board')
       const projects = await requestExecutor(control, 'projects.list', {}, uiTimeoutMs)
       const project = projects.find(row => row.name === PROJECT)
       assert.ok(project)

@@ -97,7 +97,7 @@ export function createDesktopScenario({
       text: project.name,
     })
     // Await the real catalog before sending; elapsed startup time cannot hide this regression.
-    await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
+    await selectCollaborationProjectView(control, CONTENT, 'manage')
     await control.command(
       'click',
       scoped('[data-testid="collaboration-project-settings-environments"]')
