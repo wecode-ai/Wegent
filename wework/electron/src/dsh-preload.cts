@@ -36,11 +36,16 @@ contextBridge.exposeInMainWorld('weworkElectronLifecycle', {
 })
 
 contextBridge.exposeInMainWorld('weworkElectronCloudCredentials', {
-  getDevicePublicKey: () => ipcRenderer.invoke('cloud-credentials:get-device-public-key'),
-  claimAuthorization: (input: { apiBaseUrl: string; sessionId: string; pollToken: string }) =>
+  prepareAuthorization: (apiBaseUrl: string) =>
+    ipcRenderer.invoke('cloud-credentials:prepare-authorization', apiBaseUrl),
+  claimAuthorization: (input: { authorizationId: string; sessionId: string; pollToken: string }) =>
     ipcRenderer.invoke('cloud-credentials:claim-authorization', input),
-  refreshAccessToken: (apiBaseUrl: string) =>
-    ipcRenderer.invoke('cloud-credentials:refresh-access-token', apiBaseUrl),
+  commitAuthorization: (authorizationId: string, ownerUserId: number) =>
+    ipcRenderer.invoke('cloud-credentials:commit-authorization', authorizationId, ownerUserId),
+  discardAuthorization: (authorizationId: string) =>
+    ipcRenderer.invoke('cloud-credentials:discard-authorization', authorizationId),
+  refreshAccessToken: (apiBaseUrl: string, expectedUserId: number) =>
+    ipcRenderer.invoke('cloud-credentials:refresh-access-token', apiBaseUrl, expectedUserId),
   clear: () => ipcRenderer.invoke('cloud-credentials:clear'),
 })
 

@@ -82,6 +82,10 @@ describe('local plugin component settings updates', () => {
     })
     mocks.request.mockImplementation(
       async (method: string, args?: { method: string; params: Record<string, unknown> }) => {
+        if (method === 'executor.plugins.links.list') return []
+        if (method === 'executor.plugins.personal.list')
+          return { marketplaceId: 'wework-personal', marketplacePath: '/personal', plugins: [] }
+        if (method === 'executor.codex_home.config.read') return { enabledPluginKeys: [] }
         if (method === 'executor.plugins.store.list') return { storePath: fixtureRoot, plugins: [] }
         if (method === 'executor.plugins.manifest.read') return { connectors: [] }
         if (method !== 'codex.app_server_request')

@@ -1,6 +1,11 @@
 import { DEFAULT_WORK_ITEM_PROJECT_ID, type DeliveryApi } from '@/api/deliveries'
 import { ApiError } from '@/api/http'
 import { createLocalProjectChatAgentApi } from '@/api/local/localDelivery'
+import {
+  CloudConnectionContext,
+  DISCONNECTED_STATE,
+  type CloudConnectionContextValue,
+} from '@/features/cloud-connection/CloudConnectionContext'
 import { clearRuntimeConversationCacheForTests } from '@/features/workbench/runtimeConversationCache'
 import { RuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle'
 import type {
@@ -225,6 +230,7 @@ vi.mock('@wegent/collaboration', async importOriginal => {
       renderProject,
     }: {
       host: {
+        accountScope: string
         location: CollaborationPlatformLocation
         capabilities: {
           workspaceLocations?: readonly ('local' | 'cloud')[]
@@ -251,6 +257,7 @@ vi.mock('@wegent/collaboration', async importOriginal => {
         'div',
         {
           'data-testid': 'collaboration-platform-root',
+          'data-account-scope': host.accountScope,
           'data-navigation-source-count': navigationApis?.length ?? 0,
           'data-refresh-key': refreshKey ?? '',
           'data-workspace-locations': host.capabilities.workspaceLocations?.join(',') ?? '',
@@ -562,6 +569,47 @@ describe('Wework collaboration workspace API', () => {
       'local,cloud'
     )
   })
+
+  it.each([
+    ['https://first.example/api', null, 'https://first.example/api:local:7'],
+    ['https://first.example/api', 42, 'https://first.example/api:account:42'],
+    ['https://first.example/api', 43, 'https://first.example/api:account:43'],
+    ['https://second.example/api', 42, 'https://second.example/api:account:42'],
+  ] as const)(
+    'publishes the account scope for backend %s and cloud owner %s',
+    async (backend, ownerId, scope) => {
+      const cloudConnection: CloudConnectionContextValue = {
+        ...DISCONNECTED_STATE,
+        status: ownerId ? 'connected' : 'disconnected',
+        apiBaseUrl: backend,
+        token: ownerId ? 'synthetic-cloud-token' : null,
+        user: ownerId ? { id: ownerId, user_name: 'cloud-owner', email: '' } : null,
+        isConnected: Boolean(ownerId),
+        serviceKey: scope,
+        connectWithAuthorization: vi.fn(),
+        refreshUser: vi.fn(),
+        disconnect: vi.fn(),
+      }
+      await act(async () => {
+        render(
+          createElement(
+            CloudConnectionContext.Provider,
+            { value: cloudConnection },
+            createElement(WeworkCollaborationPlatform, {
+              user: { id: 7, user_name: 'local-owner', email: '' } as never,
+              localProjects: [],
+              services: { projectSpaceApis: { local: createLocalDeliveryApi() } } as never,
+            })
+          )
+        )
+      })
+
+      expect(screen.getByTestId('collaboration-platform-root')).toHaveAttribute(
+        'data-account-scope',
+        scope
+      )
+    }
+  )
 
   it('keeps local project data and Agent configuration independent of cloud resources', async () => {
     const createLocalAgent = vi.fn(async (_projectId: string, input: Record<string, unknown>) => ({

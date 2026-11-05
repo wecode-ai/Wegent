@@ -333,6 +333,7 @@ export function createDesktopScenario({
             count => count > 0,
             uiTimeoutMs
           )
+          database.exec('BEGIN IMMEDIATE')
           dueAt = Date.now() + 1000
           const changed = database
             .prepare(
@@ -340,6 +341,7 @@ export function createDesktopScenario({
             )
             .run(new Date(dueAt - 5 * 60000).toISOString(), USER, taskId)
           assert.ok(changed.changes > 0, 'The real completed work must produce durable feedback')
+          database.exec('COMMIT')
         } finally {
           database.close()
         }

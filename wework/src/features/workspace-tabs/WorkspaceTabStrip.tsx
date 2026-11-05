@@ -481,7 +481,7 @@ export function WorkspaceTabStrip({
   const addMenuKinds = (
     [
       ['task', CheckSquare2, t('workbench.workspace_tab_task', '任务')],
-      ['board', Columns3, t('workbench.workspace_tab_board', '协作 (Beta)')],
+      ['board', Columns3, t('workbench.workspace_tab_board', '协作')],
       ['agent', Bot, t('workbench.workspace_tab_agent', '智能体')],
     ] as const
   ).filter(([kind]) => availableKindSet.has(kind))
