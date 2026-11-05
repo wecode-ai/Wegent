@@ -1426,6 +1426,9 @@ impl RuntimeWorkRpcHandler {
         reason: &str,
         timeout: Duration,
     ) -> bool {
+        let Some(expected) = self.local_execution_reconciliation_guard(local_task_id) else {
+            return false;
+        };
         let thread =
             match tokio::time::timeout(timeout, self.read_codex_recent_turns(thread_id)).await {
                 Ok(Ok(thread)) => thread,
@@ -1451,14 +1454,19 @@ impl RuntimeWorkRpcHandler {
                     return false;
                 }
             };
-        let Some(status) = codex_thread_terminal_task_status(&thread) else {
+        let Some(status) = thread.terminal_task_status() else {
             return false;
         };
-        self.force_settle_local_task_execution(
+        let Some(confirmed_turn_id) = thread.latest_turn_id.as_deref() else {
+            return false;
+        };
+        self.reconcile_terminal_local_execution(
             local_task_id,
-            Some(thread_id.to_owned()),
+            thread_id,
             status,
             reason,
+            &expected,
+            confirmed_turn_id,
         )
     }
 
@@ -1473,8 +1481,8 @@ impl RuntimeWorkRpcHandler {
                 return false;
             }
         };
-        let Some(turn_id) = codex_thread_in_progress_turn_id(&thread) else {
-            return !codex_thread_has_in_progress_turn(&thread);
+        let Some(turn_id) = thread.active_turn_id.as_ref().cloned() else {
+            return thread.is_idle();
         };
         if let Err(error) = self
             .codex_app_server
@@ -1499,7 +1507,7 @@ impl RuntimeWorkRpcHandler {
         }
         for _ in 0..PROVIDER_TURN_INTERRUPT_WAIT_ATTEMPTS {
             match self.read_codex_recent_turns(thread_id).await {
-                Ok(thread) if !codex_thread_has_in_progress_turn(&thread) => return true,
+                Ok(thread) if thread.is_idle() => return true,
                 Ok(_) => {
                     sleep(Duration::from_millis(PROVIDER_TURN_INTERRUPT_WAIT_MS)).await;
                 }
@@ -1784,7 +1792,7 @@ impl RuntimeWorkRpcHandler {
             .read_codex_recent_turns_with_client(client, &thread_id)
             .await
         {
-            Ok(thread) => latest_codex_turn_id(&thread),
+            Ok(thread) => thread.latest_turn_id,
             Err(error) => return Ok(task_action_failure(link, error)),
         };
         log_executor_event(
@@ -2607,14 +2615,6 @@ fn retry_source_turn_id(payload: &Value) -> Option<String> {
     string_field(payload, "retrySourceTurnId")
         .or_else(|| string_field(payload, "retry_source_turn_id"))
         .filter(|turn_id| !turn_id.trim().is_empty())
-}
-
-fn latest_codex_turn_id(thread: &Value) -> Option<String> {
-    thread
-        .get("turns")
-        .and_then(Value::as_array)
-        .and_then(|turns| turns.last())
-        .and_then(|turn| string_field(turn, "id"))
 }
 
 #[cfg(test)]

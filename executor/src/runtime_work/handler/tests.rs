@@ -1217,6 +1217,7 @@ pub(super) fn isolated_runtime_work_handler(label: &str) -> (RuntimeWorkRpcHandl
     let root = temp_runtime_work_index_path(label).with_extension("directory");
     let runtime_work_dir = root.join("runtime-work");
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.transcript_test_workers = Some(Arc::new(tokio::sync::Semaphore::new(2)));
     handler.store = RuntimeWorkStore::new(runtime_work_dir.join("index.json"));
     handler.worktrees = WorktreeManager::new(runtime_work_dir.join("worktrees.json"));
     handler.turn_queue_path = Arc::new(runtime_work_dir.join("turn-queue.json"));
@@ -1250,6 +1251,15 @@ mod lifecycle_tests;
 
 #[path = "pre_admission_transcript_tests.rs"]
 mod pre_admission_transcript_tests;
+
+#[path = "active_transcript_responsiveness_tests.rs"]
+mod active_transcript_responsiveness_tests;
+
+#[path = "control_metadata_tests.rs"]
+mod control_metadata_tests;
+
+#[path = "execution_control_tests.rs"]
+mod execution_control_tests;
 
 impl RuntimeWorkRpcHandler {
     // Test the same route/publication/hook handoff used by the two real subscriptions.

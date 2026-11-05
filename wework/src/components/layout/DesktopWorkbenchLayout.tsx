@@ -1040,6 +1040,8 @@ export function DesktopWorkbenchLayout({
       devices={state.devices}
       cloudWorkStatus={cloudWorkStatus}
       runtimeWork={state.runtimeWork}
+      runtimeWorkLoad={state.runtimeWorkLoad}
+      onRetryRuntimeWork={refreshWorkLists}
       gitCloneOperations={gitCloneOperations}
       currentRuntimeTask={activeLocalHarnessSessionId ? null : state.currentRuntimeTask}
       splitGroupMemberships={splitGroups.memberships}
@@ -1436,7 +1438,7 @@ export function DesktopWorkbenchLayout({
                     }
                     if (!project) {
                       workspaceTabs.updateTab(ownedWorkspaceTab.id, {
-                        title: t('workbench.workspace_tab_board', '协作 (Beta)'),
+                        title: t('workbench.workspace_tab_board', '协作'),
                         contentRoute: '/todo',
                       })
                       return

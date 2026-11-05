@@ -118,6 +118,8 @@ export function MilestoneBulkAction({
           setFreshIssues({});
         }}
         label={m.bulk}
+        searchLabel={m.search}
+        emptyLabel={m.noMatches}
         placeholder={m.choose}
         noneLabel={m.unlink}
         errorLabel={m.error}

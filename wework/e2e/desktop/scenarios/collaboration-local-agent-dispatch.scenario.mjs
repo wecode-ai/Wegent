@@ -247,8 +247,8 @@ async function renameIssueWhileRunning(control, timeoutMs) {
   await control.command('fill', scoped('[data-testid="cloud-todo-detail-title"]'), {
     value: RENAMED_ISSUE,
   })
-  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
-    timeoutMs,
+  await control.command('press', scoped('[data-testid="cloud-todo-detail-title"]'), {
+    key: 'Enter',
   })
   await control.command('waitFor', scoped('[data-testid="cloud-todo-detail-title"]'), {
     text: RENAMED_ISSUE,

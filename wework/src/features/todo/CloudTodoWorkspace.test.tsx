@@ -2575,13 +2575,11 @@ describe('CloudTodoWorkspace', () => {
     await openIssueFromBoard()
     await userEvent.click(screen.getByTestId('cloud-todo-detail-parent'))
     await userEvent.click(await screen.findByTestId('cloud-todo-detail-parent-option-WEG-2'))
-    await userEvent.click(screen.getByTestId('cloud-todo-save'))
 
     await waitFor(() =>
       expect(workbenchServices.deliveryApi?.updateLoopItem).toHaveBeenCalledWith('WEG-1', {
         version: 1,
         parent_id: 'WEG-2',
-        tags: [],
       })
     )
   })
@@ -3481,13 +3479,12 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click(screen.getByTestId('cloud-todo-detail-title'))
     await userEvent.clear(screen.getByTestId('cloud-todo-detail-title'))
     await userEvent.type(screen.getByTestId('cloud-todo-detail-title'), 'Updated TODO')
-    await userEvent.click(screen.getByTestId('cloud-todo-save'))
+    await userEvent.keyboard('{Enter}')
 
     await waitFor(() =>
       expect(workbenchServices.deliveryApi?.updateLoopItem).toHaveBeenCalledWith('WEG-1', {
         version: 1,
         title: 'Updated TODO',
-        tags: [],
       })
     )
     expect((await screen.findAllByText('Updated TODO')).length).toBeGreaterThan(0)

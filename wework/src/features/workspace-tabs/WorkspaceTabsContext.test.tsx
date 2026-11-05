@@ -566,35 +566,38 @@ describe('WorkspaceTabsProvider routing', () => {
     expect(screen.getByTestId('tab-ids')).toHaveTextContent('fixed-task')
   })
 
-  test('renames the persisted default board tab without changing named project tabs', () => {
-    localStorage.setItem(
-      'wework.workspaceTabs.v3:context-test',
-      JSON.stringify({
-        activeTabId: 'board-default',
-        tabs: [
-          {
-            id: 'board-default',
-            kind: 'board',
-            title: '工作项',
-            contentRoute: '/todo?projectId=default-work-items',
-          },
-          {
-            id: 'board-project',
-            kind: 'board',
-            title: '产品规划',
-            contentRoute: '/todo?projectId=project-1',
-          },
-        ],
-      })
-    )
-    window.history.replaceState({}, '', '/todo?workspaceTab=board-default')
+  test.each(['工作项', '协作 (Beta)', 'Collaboration (Beta)'])(
+    'renames the persisted default board tab (%s) without changing named project tabs',
+    title => {
+      localStorage.setItem(
+        'wework.workspaceTabs.v3:context-test',
+        JSON.stringify({
+          activeTabId: 'board-default',
+          tabs: [
+            {
+              id: 'board-default',
+              kind: 'board',
+              title,
+              contentRoute: '/todo?projectId=default-work-items',
+            },
+            {
+              id: 'board-project',
+              kind: 'board',
+              title: '产品规划',
+              contentRoute: '/todo?projectId=project-1',
+            },
+          ],
+        })
+      )
+      window.history.replaceState({}, '', '/todo?workspaceTab=board-default')
 
-    render(<RoutingHarness />)
+      render(<RoutingHarness />)
 
-    expect(screen.getByTestId('active-tab-title')).toHaveTextContent('协作')
-    expect(screen.getByTestId('active-tab-route')).toHaveTextContent('/todo')
-    expect(screen.getByTestId('tab-count')).toHaveTextContent('2')
-  })
+      expect(screen.getByTestId('active-tab-title')).toHaveTextContent('协作')
+      expect(screen.getByTestId('active-tab-route')).toHaveTextContent('/todo')
+      expect(screen.getByTestId('tab-count')).toHaveTextContent('2')
+    }
+  )
 
   test('the explicit new-tab action still opens a separate tab', () => {
     render(<RoutingHarness />)

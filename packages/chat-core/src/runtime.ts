@@ -110,6 +110,8 @@ export interface CodexMemoryCitation {
 }
 
 export interface RuntimeTranscriptResponse {
+  /** Explicit executor receipts for the client IDs queried by a recovery read. */
+  acceptedClientUserMessageIds?: string[];
   runtimeTurns?: RuntimeTranscriptTurn[] | null;
   supersededTurnIds?: string[];
   origin?: import("./runtime-task-api-types").RuntimeTaskOrigin;
@@ -173,6 +175,8 @@ export type RuntimeTranscriptTurnItem = { position?: number | null } & (
 );
 
 export interface RuntimeTranscriptRequest extends RuntimeTaskAddress {
+  /** Query acceptance independently of which history bodies are loaded. */
+  reconcileClientUserMessageIds?: string[];
   limit?: number;
   beforeCursor?: string | null;
   afterCursor?: string | null;

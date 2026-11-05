@@ -150,7 +150,8 @@ import type {
   User as UserProfile,
 } from '@/types/api'
 import type { DockerRemoteDeviceCommandResponse } from '@/types/devices'
-import type { CloudWorkStatus } from '@/types/workbench'
+import type { CloudWorkStatus, RuntimeWorkLoadState } from '@/types/workbench'
+import { RuntimeWorkLoadStatus } from './RuntimeWorkLoadStatus'
 import type {
   ArchiveRuntimeConversationsResult,
   ArchiveRuntimeTaskOptions,
@@ -205,7 +206,11 @@ import {
   isRuntimeWorktreeTask,
   RUNTIME_PROJECT_TASK_PREVIEW_LIMIT,
 } from './runtimeTaskSidebarHelpers'
-import { debugRuntimeSidebarState } from '@/features/workbench/runtimeSidebarDiagnostics'
+import {
+  debugRuntimeSidebarState,
+  runtimeSidebarScrollMetrics,
+  RuntimeSidebarScrollDiagnostics,
+} from '@/features/workbench/runtimeSidebarDiagnostics'
 import { formatRelativeSidebarTime, useSidebarRelativeTimeRefresh } from './runtimeSidebarTime'
 import { useResizableSidebar } from './useResizableSidebar'
 import type { ProjectSpaceApi } from '@/features/todo/projectSpaceSelection'
@@ -218,6 +223,8 @@ interface DesktopSidebarProps {
   devices: DeviceInfo[]
   cloudWorkStatus?: CloudWorkStatus
   runtimeWork?: RuntimeWorkListResponse | null
+  runtimeWorkLoad?: RuntimeWorkLoadState
+  onRetryRuntimeWork?: () => Promise<void>
   gitCloneOperations?: GitCloneProjectOperation[]
   currentRuntimeTask?: RuntimeTaskAddress | null
   splitGroupMemberships?: Readonly<Record<string, WorkbenchSplitGroupMembership>>
@@ -2922,6 +2929,8 @@ export function DesktopSidebar({
   devices,
   cloudWorkStatus,
   runtimeWork,
+  runtimeWorkLoad,
+  onRetryRuntimeWork,
   gitCloneOperations = [],
   currentRuntimeTask,
   splitGroupMemberships = EMPTY_SPLIT_GROUP_MEMBERSHIPS,
@@ -3106,6 +3115,7 @@ export function DesktopSidebar({
   const runtimeTaskPinSnapshotRevisionRef = useRef(0)
   const runtimeTaskPersistedPinStatesRef = useRef(new Map<string, boolean>())
   const [sidebarScrolled, setSidebarScrolled] = useState(false)
+  const sidebarScrollDiagnosticsRef = useRef(new RuntimeSidebarScrollDiagnostics())
   const {
     scrollContainerRef: sidebarWorklistsScrollRef,
     dragOutsideSidebar: paneDragOutsideSidebar,
@@ -3737,6 +3747,7 @@ export function DesktopSidebar({
   const displayedProjectsExpanded = projectsExpanded
   const runtimeWorkCheck = cloudWorkStatus?.checks.runtimeWork
   const showEmptyProjectCreateAction =
+    (!runtimeWorkLoad || runtimeWorkLoad.phase === 'ready') &&
     runtimeWork !== null &&
     runtimeWork !== undefined &&
     runtimeWorkCheck !== null &&
@@ -3960,15 +3971,47 @@ export function DesktopSidebar({
     return () => window.removeEventListener('keydown', handleKeyDown, true)
   }, [collapseReadShortcut, collapseReadTaskView, priorityFilterShortcut, togglePriorityTaskView])
 
+  const autoScrollDependenciesRef = useRef<{
+    taskId: string | null
+    taskKey: string | null
+    rowVisible: boolean
+  } | null>(null)
   useEffect(() => {
-    if (!currentRuntimeTaskKey || !currentRuntimeTaskRowVisible) return
-
-    const taskRow = document.querySelector(
-      `[data-testid="runtime-local-task-row-${currentRuntimeTask?.taskId}"]`
+    const dependencies = {
+      taskId: currentRuntimeTask?.taskId ?? null,
+      taskKey: currentRuntimeTaskKey,
+      rowVisible: currentRuntimeTaskRowVisible,
+    }
+    const previousDependencies = autoScrollDependenciesRef.current
+    autoScrollDependenciesRef.current = dependencies
+    const changedDependencies = (['taskId', 'taskKey', 'rowVisible'] as const).filter(
+      key => previousDependencies?.[key] !== dependencies[key]
     )
-
+    const shouldScroll = Boolean(currentRuntimeTaskKey && currentRuntimeTaskRowVisible)
+    const taskRow = shouldScroll
+      ? document.querySelector(
+          `[data-testid="runtime-local-task-row-${currentRuntimeTask?.taskId}"]`
+        )
+      : null
+    const recordScroll = (phase: 'before' | 'after') =>
+      debugRuntimeSidebarState('active-task-auto-scroll', () => ({
+        phase,
+        dependencies,
+        previousDependencies,
+        changedDependencies,
+        willScroll: shouldScroll && taskRow !== null,
+        metrics: runtimeSidebarScrollMetrics(sidebarWorklistsScrollRef.current, taskRow),
+      }))
+    recordScroll('before')
+    if (!shouldScroll) return
     taskRow?.scrollIntoView({ block: 'nearest' })
-  }, [currentRuntimeTask?.taskId, currentRuntimeTaskKey, currentRuntimeTaskRowVisible])
+    recordScroll('after')
+  }, [
+    currentRuntimeTask?.taskId,
+    currentRuntimeTaskKey,
+    currentRuntimeTaskRowVisible,
+    sidebarWorklistsScrollRef,
+  ])
 
   return (
     <aside
@@ -4091,10 +4134,35 @@ export function DesktopSidebar({
             scrolled={sidebarScrolled}
             locked={paneDragOutsideSidebar}
             onScroll={event => {
-              if (preserveLockedScrollPosition(event)) return
-              setSidebarScrolled(event.currentTarget.scrollTop > 0)
+              const viewport = event.currentTarget
+              const scrollLocked = preserveLockedScrollPosition(event)
+              sidebarScrollDiagnosticsRef.current.record(
+                () =>
+                  runtimeSidebarScrollMetrics(
+                    viewport,
+                    currentRuntimeTask
+                      ? document.querySelector(
+                          `[data-testid="runtime-local-task-row-${currentRuntimeTask.taskId}"]`
+                        )
+                      : null
+                  ),
+                {
+                  taskId: currentRuntimeTask?.taskId ?? null,
+                  taskKey: currentRuntimeTaskKey,
+                  rowVisible: currentRuntimeTaskRowVisible,
+                  loadPhase: runtimeWorkLoad?.phase ?? null,
+                  scrollLocked,
+                }
+              )
+              if (scrollLocked) return
+              setSidebarScrolled(viewport.scrollTop > 0)
             }}
           >
+            <RuntimeWorkLoadStatus
+              load={runtimeWorkLoad}
+              hasSnapshot={runtimeWork != null}
+              onRetry={onRetryRuntimeWork}
+            />
             <nav className="mb-4 space-y-0.5">
               {sidebarNavigation.map(item => {
                 if (item.surface === 'module') {
@@ -4738,14 +4806,16 @@ export function DesktopSidebar({
                     <div className="space-y-0.5 pb-2">
                       {standaloneLocalHarnessSessions.length === 0 &&
                       regularChatTaskItems.length === 0 ? (
-                        <div
-                          data-testid="runtime-chat-empty"
-                          className="ml-2 rounded-md px-3 py-1.5 text-xs text-[rgb(var(--color-sidebar-text-muted))]"
-                        >
-                          {chatTaskItemsWithPinState.some(({ task }) => !task.pinned)
-                            ? t('workbench.read_conversations_collapsed', '已读会话已收起')
-                            : t('workbench.no_chats', '暂无会话')}
-                        </div>
+                        runtimeWorkLoad && runtimeWorkLoad.phase !== 'ready' ? null : (
+                          <div
+                            data-testid="runtime-chat-empty"
+                            className="ml-2 rounded-md px-3 py-1.5 text-xs text-[rgb(var(--color-sidebar-text-muted))]"
+                          >
+                            {chatTaskItemsWithPinState.some(({ task }) => !task.pinned)
+                              ? t('workbench.read_conversations_collapsed', '已读会话已收起')
+                              : t('workbench.no_chats', '暂无会话')}
+                          </div>
+                        )
                       ) : regularChatTaskItems.length > 0 ? (
                         <SidebarSortableList
                           testId="runtime-chat-task-sortable-list"

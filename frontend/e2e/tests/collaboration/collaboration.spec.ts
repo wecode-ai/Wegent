@@ -198,8 +198,16 @@ test.describe('Collaboration module', () => {
 
     await page.getByTestId('cloud-todo-detail-title').click()
     await page.getByTestId('cloud-todo-detail-title').fill(updatedIssueTitle)
+    await page.getByTestId('cloud-todo-detail-title').press('Enter')
+    const statusSaved = page.waitForResponse(
+      response =>
+        response.request().method() === 'PATCH' &&
+        new URL(response.url()).pathname === `/api/v1/loop-items/${issueId}` &&
+        response.request().postDataJSON()?.status === 'pending' &&
+        response.ok()
+    )
     await page.getByTestId('cloud-todo-detail-status').selectOption('pending')
-    await page.getByTestId('cloud-todo-save').click()
+    expect((await (await statusSaved).json()).status).toBe('pending')
     await expect(page.getByTestId('cloud-todo-save')).toHaveCount(0)
 
     await writeSharedComposer(page.getByTestId('collaboration-issue-comment'), comment)

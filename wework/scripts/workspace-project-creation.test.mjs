@@ -245,9 +245,12 @@ test('waits for the saved Issue editor before assigning a persisted Issue', asyn
           assigneeClickAction = action
         }
       }
-      if (action === 'click' && selector === option) selected = true
-      if (action === 'clickWhenEnabled' && selector.endsWith('[data-testid="cloud-todo-save"]')) {
-        assert.ok(rendered && selected, 'Assignment must be saved through the detail editor')
+      if (action === 'click' && selector === option) {
+        selected = true
+        assert.ok(
+          rendered && selected,
+          'Assignment must be selected through the persisted detail editor'
+        )
         saved = true
       }
     },
