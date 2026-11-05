@@ -133,7 +133,14 @@ export async function verifyRuntimeReceiptRecovery(
       params => requestExecutor(control, 'runtime.tasks.transcript', params, timeoutMs)
     )
     assert.deepEqual(accepted.acceptedClientUserMessageIds, [messageId])
-    assert.equal(accepted.turns.filter(turn => turn.clientUserMessageId === messageId).length, 1)
+    assert.equal(
+      accepted.turns.filter(turn =>
+        turn.items.some(
+          item => item.type === 'user_message' && item.message.clientUserMessageId === messageId
+        )
+      ).length,
+      1
+    )
   } finally {
     await gates.reset()
   }
