@@ -318,6 +318,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await captureScreenshot(control, 'milestones-02-cloud-archived-detail.png', 'body')
       await control.command('click', scoped('milestones-back'))
       await request(`/api/v1/loop-items/${issue.id}/restore`, 'POST')
+      await reloadMainWindow(control, 'The restored cloud fixture must be loaded by the board')
       await control.command('click', scoped('collaboration-tab-board'))
       await control.command('waitFor', scoped(`cloud-todo-card-milestone-${issue.id}`), {
         text: 'Cloud release',
