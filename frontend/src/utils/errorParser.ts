@@ -116,6 +116,16 @@ export function parseError(error: Error | string, backendType?: string): ParsedE
 function classifyByMessage(errorMessage: string): ParsedError {
   const lowerMessage = errorMessage.toLowerCase()
 
+  // Database driver errors (check first: the rendered SQL/statement text contains
+  // words such as "executor" that the container/executor rules below would match)
+  if (
+    lowerMessage.includes('[sql:') ||
+    lowerMessage.includes('sqlalchemy') ||
+    lowerMessage.includes('pymysql')
+  ) {
+    return buildResult('generic_error', errorMessage)
+  }
+
   // Context length exceeded (check before general LLM errors)
   if (
     lowerMessage.includes('prompt is too long') ||
