@@ -221,11 +221,13 @@ export class EmbeddedBrowserManager {
       isMainFrame?: boolean
     ) => {
       // Directory previews are generated local HTML pages; only their file links need re-routing.
+      // Remote pages must never turn a redirect into a host-driven local file load.
       if (
         isMainFrame === false ||
         !url.startsWith('file:') ||
         url === entry.previewDisplayUrl ||
-        isGeneratedLocalFilePreview(url)
+        isGeneratedLocalFilePreview(url) ||
+        !entry.contents.getURL().startsWith('file:')
       ) {
         return
       }

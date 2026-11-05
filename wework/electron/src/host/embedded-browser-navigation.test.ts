@@ -204,6 +204,34 @@ describe('EmbeddedBrowserManager navigation', () => {
     }
   })
 
+  test('does not route a remote page redirect to a local file', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
+    const manager = new EmbeddedBrowserManager(directory)
+    const contents = new FakeWebContents()
+    contents.loadURL.mockImplementation(async url => {
+      contents.commitUrl(url)
+      contents.emit('did-navigate', {}, url)
+    })
+    manager.attach('workspace-browser', contents as unknown as WebContents)
+
+    try {
+      await manager.open({
+        label: 'workspace-browser',
+        url: 'https://remote.test/',
+        bounds: { x: 0, y: 0, width: 800, height: 600 },
+        visible: true,
+        navigateExisting: true,
+      })
+      const event = { preventDefault: vi.fn() }
+      contents.emit('will-redirect', event, 'file:///tmp/private.txt', false, true)
+
+      expect(event.preventDefault).not.toHaveBeenCalled()
+      expect(contents.loadURL).toHaveBeenCalledOnce()
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   test('adopts a committed redirect and accepts later navigation to blank', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
     const manager = new EmbeddedBrowserManager(directory)
