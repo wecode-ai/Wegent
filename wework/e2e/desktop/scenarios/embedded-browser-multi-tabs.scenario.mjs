@@ -627,13 +627,11 @@ export function createDesktopScenario({ captureScreenshot, executorHome, resultD
         uiTimeoutMs,
         'The popup browser tab did not load the linked page'
       )
-      const popupTabText = await callBridge(bridgeIdentity, {
-        action: 'inspect',
-        options: { includeTextBlocks: true, interactiveOnly: false, maxNodes: 40 },
-        timeoutMs: 5000,
-      })
-      assert.ok(
-        popupTabText.inspectText.includes(FIXTURE_B_TEXT),
+      await waitForBridgeText(
+        bridgeIdentity,
+        firstBrowserLabel,
+        FIXTURE_B_TEXT,
+        uiTimeoutMs,
         'The popup browser tab did not retain the linked page state'
       )
       await control.command('hover', SECOND_BROWSER_TAB_SELECTOR)
