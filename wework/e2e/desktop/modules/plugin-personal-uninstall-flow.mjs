@@ -102,6 +102,7 @@ async function openPersonalPlugin(
     )
     await control.command('waitFor', `${testId('plugins-refresh-button')}:not(:disabled)`)
   } else if (refresh) {
+    await waitForPersonalPluginRuntimeRoute(control)
     await refreshPluginInventory(control, WORKBENCH_READY_TIMEOUT_MS)
   }
   await openPersonalPluginDetail(control, plugin)
@@ -187,8 +188,32 @@ async function waitForPersonalPluginConnection(control, deviceId) {
   await until(
     async () =>
       JSON.parse(await control.command('getPluginSyncDiagnostics', 'body', { value: deviceId })),
-    state => state.backend.configured && state.backend.connected && state.rendererConnected,
-    'The real Runtime Socket did not reconnect to the renderer',
+    state =>
+      state.backend.configured &&
+      state.backend.connected &&
+      state.rendererConnected &&
+      state.pluginRouteRegistered &&
+      !state.inFlight,
+    'The real Runtime Socket and personal plugin route did not finish reconnecting',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+}
+
+async function waitForPersonalPluginRuntimeRoute(control) {
+  const runtime = JSON.parse(await control.command('getLocalExecutorStatus', 'body'))
+  assert.ok(runtime.deviceId, 'Personal plugin refresh requires the existing local Runtime')
+  await until(
+    async () =>
+      JSON.parse(
+        await control.command('getPluginSyncDiagnostics', 'body', { value: runtime.deviceId })
+      ),
+    state =>
+      state.backend.configured &&
+      state.backend.connected &&
+      state.rendererConnected &&
+      state.pluginRouteRegistered &&
+      !state.inFlight,
+    'The personal plugin Runtime route did not register before catalog refresh',
     WORKBENCH_READY_TIMEOUT_MS
   )
 }
