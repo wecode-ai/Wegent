@@ -318,7 +318,9 @@ impl RuntimeWorkRpcHandler {
                     self.prepare_git_connection(source).await?;
                 }
                 let existing = before.and_then(|row| {
-                    crate::task_runtime::personal_stand_in::stand_in_connection(row, source)
+                    crate::task_runtime::personal_stand_in::stand_in_collection_connection(
+                        row, source,
+                    )
                 });
                 let boundary = existing
                     .filter(|row| {

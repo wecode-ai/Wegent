@@ -117,6 +117,15 @@ pub fn source_namespace(source: &Value) -> Value {
     }
 }
 
+/// Collection partitions are provider-owned cursors, never resource permissions.
+pub fn source_collection_namespace(source: &Value) -> Value {
+    let namespace = source_namespace(source);
+    match source.get("collectionKey") {
+        Some(key) => json!({"source":namespace,"collectionKey":key}),
+        None => namespace,
+    }
+}
+
 pub fn connection_memory_scope(source: &Value) -> Value {
     if source_provider(source) == DINGTALK_PROVIDER {
         json!({"kind":"dingtalk","id":source["id"],"profile":source["profile"],"conversationKind":source["kind"]})
@@ -352,6 +361,16 @@ fn validate_connections(role: &Value) -> Result<(), TaskRuntimeError> {
                             && row["kind"]
                                 .as_str()
                                 .is_some_and(|kind| !kind.is_empty() && kind.len() <= 128)
+                            && row.get("collectionKey").map_or(true, |key| {
+                                key.as_str().is_some_and(|key| {
+                                    !key.is_empty() && key.trim() == key && key.len() <= 256
+                                })
+                            })
+                            && row.get("configurationSummary").map_or(true, |summary| {
+                                summary.as_str().is_some_and(|text| {
+                                    !text.trim().is_empty() && text.len() <= 4096
+                                })
+                            })
                             && (all || row.get("scope").is_none())
                             && (all == (row["id"] == "*"))
                             && !rows.iter().any(|other| {
@@ -411,6 +430,15 @@ pub fn stand_in_connection<'a>(identity: &'a Value, source: &Value) -> Option<&'
             && row["kind"] == source["kind"]
             && row["transport"] == source["transport"]
     })
+}
+
+/// Intake must still belong to the currently configured collection partition.
+pub fn stand_in_collection_connection<'a>(
+    identity: &'a Value,
+    source: &Value,
+) -> Option<&'a Value> {
+    stand_in_connection(identity, source)
+        .filter(|connection| connection.get("collectionKey") == source.get("collectionKey"))
 }
 
 pub fn project_policy(role: &Value, project: &str, store: &str) -> Value {
@@ -637,6 +665,7 @@ pub(super) fn stamp_stand_in_connections(identity: &mut Value, previous: &Value)
                     && row["generation"] == source["generation"]
                     && row["subscriptionId"] == source["subscriptionId"]
                     && row["transport"] == source["transport"]
+                    && row.get("collectionKey") == source.get("collectionKey")
             })
         });
         source["enabledAfter"] = before
@@ -688,6 +717,75 @@ mod email_policy_tests {
         let role = json!({"connections":[cli.clone()]});
         assert!(stand_in_connection(&role, &cli).is_some());
         assert!(stand_in_connection(&role, &webhook).is_none());
+    }
+
+    #[test]
+    fn collection_partition_changes_start_a_new_receiving_boundary() {
+        let source = json!({"providerId":"example/events","profile":"account","kind":"resource","id":"shared","enabledAfter":"2020-01-01T00:00:00Z","collectionKey":"first"});
+        let previous = json!({"enabled":true,"connections":[source]});
+        let mut unchanged = previous.clone();
+        stamp_stand_in_connections(&mut unchanged, &previous);
+        assert_eq!(
+            unchanged["connections"][0]["enabledAfter"],
+            source["enabledAfter"]
+        );
+        let mut changed = previous.clone();
+        changed["connections"][0]["collectionKey"] = json!("second");
+        stamp_stand_in_connections(&mut changed, &previous);
+        assert_ne!(
+            changed["connections"][0]["enabledAfter"],
+            source["enabledAfter"]
+        );
+        changed["connections"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("collectionKey");
+        stamp_stand_in_connections(&mut changed, &previous);
+        assert_ne!(
+            changed["connections"][0]["enabledAfter"],
+            source["enabledAfter"]
+        );
+    }
+
+    #[test]
+    fn connection_collection_metadata_is_bounded_and_persisted_without_interpreting_provider_config(
+    ) {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        settings["roles"][0]["connections"] = json!([{
+            "providerId":"example/events","profile":"account","kind":"resource",
+            "id":"shared","name":"Shared","collectionKey":"selected:v1",
+            "configurationSummary":"Selected object 42", "providerOwned":{"objects":[42]},
+            "policy":{"automatic":true,"askBeforeAct":true}
+        }]);
+        let saved = store.save_personal_stand_in(7, "mac", settings).unwrap();
+        assert_eq!(
+            saved["roles"][0]["connections"][0]["providerOwned"],
+            json!({"objects":[42]})
+        );
+        assert_eq!(
+            saved["roles"][0]["connections"][0]["collectionKey"],
+            "selected:v1"
+        );
+        for invalid in [
+            Value::Null,
+            json!(7),
+            json!(""),
+            json!(" "),
+            json!(" padded "),
+            json!("x".repeat(257)),
+        ] {
+            let mut changed = saved.clone();
+            changed["roles"][0]["connections"][0]["collectionKey"] = invalid;
+            assert!(store.save_personal_stand_in(7, "mac", changed).is_err());
+        }
+        for invalid in [Value::Null, json!(7), json!(" "), json!("x".repeat(4097))] {
+            let mut changed = saved.clone();
+            changed["roles"][0]["connections"][0]["configurationSummary"] = invalid;
+            assert!(store.save_personal_stand_in(7, "mac", changed).is_err());
+        }
+        assert_eq!(store.personal_stand_in(7, "mac").unwrap(), saved);
     }
 
     #[test]

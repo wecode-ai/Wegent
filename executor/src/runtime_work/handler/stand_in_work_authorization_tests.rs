@@ -388,3 +388,35 @@ fn source_confirmation_cannot_be_downgraded_using_forged_or_missing_binding_fiel
         "source_removed"
     );
 }
+
+#[test]
+fn collection_partition_changes_do_not_change_existing_work_authority_or_live_confirmation() {
+    let (_root, handler, store, mut settings, mut request) = source_confirmation_fixture();
+    settings["roles"][0]["connections"][0]["collectionKey"] = json!("selected:first");
+    settings["roles"][0]["connections"][0]["policy"]["askBeforeAct"] = json!(true);
+    settings = store.save_personal_stand_in(7, "mac", settings).unwrap();
+    handler
+        .refresh_stand_in_confirmation(&request.task_id.clone(), &mut request)
+        .unwrap();
+    assert!(crate::runtime_work::stand_in_requires_confirmation(
+        &request
+    ));
+    settings["roles"][0]["connections"][0]["collectionKey"] = json!("selected:second");
+    settings["roles"][0]["connections"][0]["policy"]["askBeforeAct"] = json!(false);
+    settings = store.save_personal_stand_in(7, "mac", settings).unwrap();
+    handler
+        .refresh_stand_in_confirmation(&request.task_id.clone(), &mut request)
+        .unwrap();
+    assert!(!crate::runtime_work::stand_in_requires_confirmation(
+        &request
+    ));
+    settings["roles"][0]["connections"] = json!([]);
+    store.save_personal_stand_in(7, "mac", settings).unwrap();
+    assert_eq!(
+        handler
+            .refresh_stand_in_confirmation(&request.task_id.clone(), &mut request)
+            .unwrap_err()
+            .code,
+        "source_removed"
+    );
+}

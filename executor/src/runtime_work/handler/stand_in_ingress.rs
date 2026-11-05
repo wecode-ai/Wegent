@@ -2,7 +2,8 @@
 use super::stand_in::settings_error;
 use super::*;
 use crate::task_runtime::personal_stand_in::{
-    source_namespace, source_provider, stand_in_connection, stand_in_identities,
+    source_collection_namespace, source_provider, stand_in_collection_connection,
+    stand_in_identities,
 };
 use chrono::TimeZone;
 
@@ -36,23 +37,7 @@ impl RuntimeWorkRpcHandler {
             let user = settings["userId"].as_i64().unwrap_or_default();
             self.reconcile_git_disconnects(&store, user).await?;
             let identities = stand_in_identities(&settings);
-            let mut sources = std::collections::BTreeMap::<String, (Value, Vec<Value>)>::new();
-            for identity in identities
-                .iter()
-                .filter(|identity| identity["enabled"] == true)
-            {
-                for source in identity["connections"].as_array().into_iter().flatten() {
-                    let key =
-                        json!([source_namespace(source), source["kind"], source["id"]]).to_string();
-                    let entry = sources
-                        .entry(key)
-                        .or_insert_with(|| (source.clone(), Vec::new()));
-                    if source["enabledAfter"].as_str() < entry.0["enabledAfter"].as_str() {
-                        entry.0 = source.clone();
-                    }
-                    entry.1.push(identity.clone());
-                }
-            }
+            let sources = collection_sources(&identities);
             if sources.is_empty() {
                 continue;
             }
@@ -111,7 +96,7 @@ impl RuntimeWorkRpcHandler {
                 {
                     let source = &message["source"];
                     if message["dispatchStatus"] != "pending"
-                        || !stand_in_connection(role, source)
+                        || !stand_in_collection_connection(role, source)
                             .is_some_and(|connection| connection["policy"]["automatic"] == true)
                     {
                         continue;
@@ -216,7 +201,7 @@ impl RuntimeWorkRpcHandler {
                 let eligible: Vec<Value> = roles
                     .iter()
                     .filter(|role| {
-                        stand_in_connection(role, source).is_some_and(|connection| {
+                        stand_in_collection_connection(role, source).is_some_and(|connection| {
                             connection["policy"]["automatic"] == true
                                 && source_accepts_message(connection, &message)
                         })
@@ -244,7 +229,7 @@ impl RuntimeWorkRpcHandler {
                 }
             }
             for role in roles.iter().filter(|role| {
-                stand_in_connection(role, source).is_some_and(|connection| {
+                stand_in_collection_connection(role, source).is_some_and(|connection| {
                     connection["policy"]["automatic"] != true
                         && source_accepts_message(connection, &message)
                 })
@@ -305,7 +290,7 @@ impl RuntimeWorkRpcHandler {
                 (None, false, Some(error.message))
             }
         };
-        let connection = stand_in_connection(role, source)
+        let connection = stand_in_collection_connection(role, source)
             .ok_or_else(|| AppIpcError::new("source_removed", "Source was disconnected"))?;
         let mut connection = connection.clone();
         if connection["scope"] == "all" {
@@ -415,6 +400,33 @@ impl RuntimeWorkRpcHandler {
             decision["confident"] == true,
         ))
     }
+}
+
+fn collection_sources(
+    identities: &[Value],
+) -> std::collections::BTreeMap<String, (Value, Vec<Value>)> {
+    let mut sources = std::collections::BTreeMap::<String, (Value, Vec<Value>)>::new();
+    for identity in identities
+        .iter()
+        .filter(|identity| identity["enabled"] == true)
+    {
+        for source in identity["connections"].as_array().into_iter().flatten() {
+            let key = json!([
+                source_collection_namespace(source),
+                source["kind"],
+                source["id"]
+            ])
+            .to_string();
+            let entry = sources
+                .entry(key)
+                .or_insert_with(|| (source.clone(), Vec::new()));
+            if source["enabledAfter"].as_str() < entry.0["enabledAfter"].as_str() {
+                entry.0 = source.clone();
+            }
+            entry.1.push(identity.clone());
+        }
+    }
+    sources
 }
 
 fn concrete_connection_source(source: &Value, message: &Value) -> Result<Value, AppIpcError> {

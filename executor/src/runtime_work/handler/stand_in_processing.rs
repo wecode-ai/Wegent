@@ -2,7 +2,9 @@
 use super::stand_in::settings_error;
 use super::stand_in_work::stand_in_user;
 use super::*;
-use crate::task_runtime::personal_stand_in::{stand_in_connection, stand_in_identities};
+use crate::task_runtime::personal_stand_in::{
+    stand_in_collection_connection, stand_in_connection, stand_in_identities,
+};
 
 #[cfg(test)]
 #[path = "stand_in_suggestion_tests.rs"]
@@ -638,7 +640,7 @@ impl RuntimeWorkRpcHandler {
             }
         }
         if event["kind"] == "connection"
-            && !stand_in_connection(role, &event["source"])
+            && !stand_in_collection_connection(role, &event["source"])
                 .is_some_and(|source| source["policy"]["automatic"] == true)
         {
             return Err(AppIpcError::new(
@@ -647,7 +649,7 @@ impl RuntimeWorkRpcHandler {
             ));
         }
         if event["kind"] == "connection" {
-            let source = stand_in_connection(role, &event["source"]).unwrap();
+            let source = stand_in_collection_connection(role, &event["source"]).unwrap();
             if !super::stand_in_ingress::source_accepts_message(source, &event["message"]) {
                 return Err(AppIpcError::new(
                     "source_removed",

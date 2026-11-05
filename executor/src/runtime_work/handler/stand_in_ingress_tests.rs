@@ -494,3 +494,109 @@ async fn each_connected_role_keeps_its_own_messages_and_reply_thread() {
     }
     assert!(store.list_stand_in_work(8, None).unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn collection_partitions_isolate_role_intake_and_durable_cursors_without_changing_authority()
+{
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
+    let source = json!({"providerId":"example/events","profile":"account","kind":"resource","id":"shared","name":"Shared resource","enabledAfter":"2026-11-04T00:00:00Z","policy":{"automatic":true,"askBeforeAct":true}});
+    let mut selected = source.clone();
+    selected["collectionKey"] = json!("selection:v1:one");
+    let roles = vec![
+        json!({"id":"selected-a","enabled":true,"connections":[selected]}),
+        json!({"id":"all","enabled":true,"connections":[source]}),
+        json!({"id":"selected-b","enabled":true,"connections":[selected]}),
+    ];
+    let groups = collection_sources(&roles);
+    assert_eq!(groups.len(), 2);
+    assert_eq!(
+        groups.values().map(|(_, roles)| roles.len()).sum::<usize>(),
+        3
+    );
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    for (collected, grouped_roles) in groups.values() {
+        let partition = collected["collectionKey"].as_str().unwrap_or("all");
+        assert_eq!(grouped_roles.len(), if partition == "all" { 1 } else { 2 });
+        let message = json!({"id":partition,"text":"A new change","at":"2026-11-05T00:00:00Z"});
+        // Deliberately include all roles: intake itself must reject foreign partitions.
+        for _ in 0..2 {
+            let next = handler
+                .collect_connection_page(
+                    &store,
+                    7,
+                    collected,
+                    &roles,
+                    (
+                        vec![message.clone()],
+                        json!({"checkpoint":{"cursor":partition}}),
+                    ),
+                )
+                .await
+                .unwrap();
+            save_collection_result(&store, 7, collected, &json!(1), &Value::Null, Ok(next))
+                .unwrap();
+        }
+    }
+    let events = store.stand_in_events(7).unwrap();
+    assert_eq!(events.len(), 3);
+    for event in &events {
+        let selected_role = event["roleIds"][0] != "all";
+        assert_eq!(
+            event["source"].get("collectionKey").is_some(),
+            selected_role
+        );
+        assert_eq!(event["message"]["id"] == "selection:v1:one", selected_role);
+    }
+    drop(store);
+    let restored = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    assert_eq!(
+        restored.stand_in_source(7, &source).unwrap()["checkpoint"]["cursor"],
+        "all"
+    );
+    assert_eq!(
+        restored.stand_in_source(7, &selected).unwrap()["checkpoint"]["cursor"],
+        "selection:v1:one"
+    );
+    let mut changed = selected.clone();
+    changed["collectionKey"] = json!("selection:v1:two");
+    assert!(restored.stand_in_source(7, &changed).unwrap().is_null());
+    // Monitoring partitions must neither remove nor grant resource-level permissions.
+    for role in &roles {
+        assert!(
+            crate::task_runtime::personal_stand_in::stand_in_connection(role, &changed).is_some()
+        );
+        let mut foreign = changed.clone();
+        foreign["profile"] = json!("other-account");
+        assert!(
+            crate::task_runtime::personal_stand_in::stand_in_connection(role, &foreign).is_none()
+        );
+    }
+}
+
+#[tokio::test]
+async fn collection_partition_changes_cannot_reuse_another_partitions_ordered_boundary() {
+    let handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    let source = json!({"providerId":crate::task_runtime::personal_stand_in::EMAIL_PROVIDER,"profile":"account","kind":"inbox","id":"INBOX","collectionKey":"selected:first","boundary":{"partition":"mailbox","sequence":42}});
+    let previous = json!({"userId":7,"executionDeviceId":"mac","roles":[{"id":"reader","enabled":false,"connections":[source]}]});
+    let mut unchanged = previous.clone();
+    handler
+        .prepare_connection_boundaries(&mut unchanged, &previous)
+        .await
+        .unwrap();
+    assert_eq!(
+        unchanged["roles"][0]["connections"][0]["boundary"],
+        source["boundary"]
+    );
+    let mut changed = previous.clone();
+    changed["roles"][0]["connections"][0]["collectionKey"] = json!("selected:second");
+    handler
+        .prepare_connection_boundaries(&mut changed, &previous)
+        .await
+        .unwrap();
+    assert!(changed["roles"][0]["connections"][0]
+        .get("boundary")
+        .is_none());
+}

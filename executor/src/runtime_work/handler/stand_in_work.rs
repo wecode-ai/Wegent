@@ -2,7 +2,9 @@
 use super::stand_in::settings_error;
 use super::*;
 use crate::runtime_work::response::local_task_json;
-use crate::task_runtime::personal_stand_in::{stand_in_connection, stand_in_identities};
+use crate::task_runtime::personal_stand_in::{
+    stand_in_collection_connection, stand_in_connection, stand_in_identities,
+};
 use sha2::{Digest, Sha256};
 
 const CONFIRM_CONNECTION_WORK_ONCE: &str = "The owner requested native confirmation for this run only. Continue only the unfinished operation in this original work. Read its existing source context and execution history first. Do not resend anything already sent, do not replay all received messages, and never retry an unknown delivery. Prepare the exact recipient and complete contents and invoke the tool so the owner can confirm that specific operation. This does not change the source's persistent authorization.";
@@ -249,7 +251,7 @@ impl RuntimeWorkRpcHandler {
             .filter(|state| {
                 identities
                     .iter()
-                    .any(|role| stand_in_connection(role, &state["source"]).is_some())
+                    .any(|role| stand_in_collection_connection(role, &state["source"]).is_some())
             })
             .collect::<Vec<_>>();
         Ok(json!({"items":items,"sourceErrors":errors,"deviceId":self.device_id}))
@@ -535,7 +537,7 @@ impl RuntimeWorkRpcHandler {
         let source = &payload["source"];
         if !stand_in_identities(&settings)
             .iter()
-            .any(|role| stand_in_connection(role, source).is_some())
+            .any(|role| stand_in_collection_connection(role, source).is_some())
         {
             return Err(AppIpcError::new(
                 "source_removed",

@@ -760,3 +760,32 @@ async fn direct_connection_intake_supplies_a_native_dispatch_without_starting_as
     assert!(store.stand_in_actions(7).unwrap().is_empty());
     assert!(store.stand_in_processing_state(7).unwrap()["batchId"].is_null());
 }
+
+#[test]
+fn intake_rechecks_collection_partition_without_changing_resource_authority() {
+    let handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    let source = json!({"providerId":"example/events","profile":"account","kind":"resource","id":"shared","collectionKey":"selected:v1","enabledAfter":"2026-11-04T00:00:00Z","policy":{"automatic":true,"askBeforeAct":true}});
+    let role = json!({"id":"selected","connections":[source]});
+    let mut event = json!({"kind":"connection","roleIds":["selected"],"source":source,"message":{"at":"2026-11-05T00:00:00Z"}});
+    assert!(handler.validate_intake_role(&role, &event).is_ok());
+    event["source"]["collectionKey"] = json!("another:v1");
+    assert_eq!(
+        handler
+            .validate_intake_role(&role, &event)
+            .unwrap_err()
+            .code,
+        "source_removed"
+    );
+    event["source"]
+        .as_object_mut()
+        .unwrap()
+        .remove("collectionKey");
+    assert_eq!(
+        handler
+            .validate_intake_role(&role, &event)
+            .unwrap_err()
+            .code,
+        "source_removed"
+    );
+    assert!(stand_in_connection(&role, &event["source"]).is_some());
+}
