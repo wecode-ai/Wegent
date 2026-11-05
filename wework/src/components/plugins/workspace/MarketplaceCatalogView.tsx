@@ -28,7 +28,7 @@ import { Button } from '@/components/ui/button'
 import type { remoteCatalogErrorKind } from '@/features/plugins/remotePluginError'
 
 const SEARCH_VIRTUALIZE_THRESHOLD = 40
-const SEARCH_ROW_ESTIMATE_PX = 78
+const SEARCH_ROW_ESTIMATE_PX = 88
 const SEARCH_GRID_BREAKPOINT_PX = 1050
 
 function VirtualizedSearchGrid({
@@ -36,7 +36,7 @@ function VirtualizedSearchGrid({
   isLoggedIn,
   isReconciling,
   installingMarketplacePluginIds,
-  uninstallingPluginIds,
+  isLocallyUninstalling,
   allowPendingRetry,
   showPendingAsSyncing,
   rowLabels,
@@ -46,7 +46,7 @@ function VirtualizedSearchGrid({
   isLoggedIn: boolean
   isReconciling: boolean
   installingMarketplacePluginIds: Set<string | number>
-  uninstallingPluginIds: Set<string | number>
+  isLocallyUninstalling: (item: PluginMarketplaceItem) => boolean
   allowPendingRetry: boolean
   showPendingAsSyncing: boolean
   rowLabels: PluginMarketplaceRowLabels
@@ -60,6 +60,7 @@ function VirtualizedSearchGrid({
     count: rowCount,
     getScrollElement: () => listRef.current,
     estimateSize: () => SEARCH_ROW_ESTIMATE_PX,
+    gap: 8,
     overscan: 8,
     observeElementRect: (instance, callback) => {
       const element = instance.scrollElement
@@ -94,6 +95,8 @@ function VirtualizedSearchGrid({
           return (
             <div
               key={row.key}
+              ref={virtualizer.measureElement}
+              data-index={row.index}
               className="plugin-market-card-grid absolute left-0 top-0 w-full"
               style={{ transform: `translateY(${row.start}px)` }}
             >
@@ -104,7 +107,7 @@ function VirtualizedSearchGrid({
                   isLoggedIn={isLoggedIn}
                   isReconciling={isReconciling}
                   isInstalling={installingMarketplacePluginIds.has(item.id)}
-                  isUninstalling={uninstallingPluginIds.has(item.installedPluginId ?? item.id)}
+                  isUninstalling={isLocallyUninstalling(item)}
                   allowPendingRetry={allowPendingRetry}
                   showPendingAsSyncing={showPendingAsSyncing}
                   labels={rowLabels}
@@ -124,7 +127,7 @@ function MarketplaceCardGrid({
   isLoggedIn,
   isReconciling,
   installingMarketplacePluginIds,
-  uninstallingPluginIds,
+  isLocallyUninstalling,
   allowPendingRetry,
   showPendingAsSyncing,
   rowLabels,
@@ -134,7 +137,7 @@ function MarketplaceCardGrid({
   isLoggedIn: boolean
   isReconciling: boolean
   installingMarketplacePluginIds: Set<string | number>
-  uninstallingPluginIds: Set<string | number>
+  isLocallyUninstalling: (item: PluginMarketplaceItem) => boolean
   allowPendingRetry: boolean
   showPendingAsSyncing: boolean
   rowLabels: PluginMarketplaceRowLabels
@@ -147,7 +150,7 @@ function MarketplaceCardGrid({
         isLoggedIn={isLoggedIn}
         isReconciling={isReconciling}
         installingMarketplacePluginIds={installingMarketplacePluginIds}
-        uninstallingPluginIds={uninstallingPluginIds}
+        isLocallyUninstalling={isLocallyUninstalling}
         allowPendingRetry={allowPendingRetry}
         showPendingAsSyncing={showPendingAsSyncing}
         rowLabels={rowLabels}
@@ -164,7 +167,7 @@ function MarketplaceCardGrid({
           isLoggedIn={isLoggedIn}
           isReconciling={isReconciling}
           isInstalling={installingMarketplacePluginIds.has(item.id)}
-          isUninstalling={uninstallingPluginIds.has(item.installedPluginId ?? item.id)}
+          isUninstalling={isLocallyUninstalling(item)}
           allowPendingRetry={allowPendingRetry}
           showPendingAsSyncing={showPendingAsSyncing}
           labels={rowLabels}
@@ -202,7 +205,7 @@ export const MarketplaceCatalogView = memo(function MarketplaceCatalogView({
   isLoggedIn,
   isReconciling,
   installingMarketplacePluginIds,
-  uninstallingPluginIds,
+  isLocallyUninstalling,
   allowPendingRetry,
   showPendingAsSyncing,
   rowLabels,
@@ -244,7 +247,7 @@ export const MarketplaceCatalogView = memo(function MarketplaceCatalogView({
   isLoggedIn: boolean
   isReconciling: boolean
   installingMarketplacePluginIds: Set<string | number>
-  uninstallingPluginIds: Set<string | number>
+  isLocallyUninstalling: (item: PluginMarketplaceItem) => boolean
   allowPendingRetry: boolean
   showPendingAsSyncing: boolean
   rowLabels: PluginMarketplaceRowLabels
@@ -543,7 +546,7 @@ export const MarketplaceCatalogView = memo(function MarketplaceCatalogView({
                       isLoggedIn={isLoggedIn}
                       isReconciling={isReconciling}
                       installingMarketplacePluginIds={installingMarketplacePluginIds}
-                      uninstallingPluginIds={uninstallingPluginIds}
+                      isLocallyUninstalling={isLocallyUninstalling}
                       allowPendingRetry={allowPendingRetry}
                       showPendingAsSyncing={showPendingAsSyncing}
                       rowLabels={rowLabels}

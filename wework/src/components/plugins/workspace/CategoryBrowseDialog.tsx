@@ -11,7 +11,7 @@ import {
   type PluginMarketplaceRowLabels,
 } from './PluginMarketplaceRow'
 
-const CATEGORY_ROW_ESTIMATE_PX = 78
+const CATEGORY_ROW_ESTIMATE_PX = 88
 const CATEGORY_GRID_BREAKPOINT_PX = 1050
 
 export function CategoryBrowseDialog({
@@ -19,7 +19,7 @@ export function CategoryBrowseDialog({
   isLoggedIn,
   isReconciling,
   installingMarketplacePluginIds,
-  uninstallingPluginIds,
+  isLocallyUninstalling,
   allowPendingRetry,
   showPendingAsSyncing,
   rowLabels,
@@ -30,7 +30,7 @@ export function CategoryBrowseDialog({
   isLoggedIn: boolean
   isReconciling: boolean
   installingMarketplacePluginIds: Set<string | number>
-  uninstallingPluginIds: Set<string | number>
+  isLocallyUninstalling: (item: PluginMarketplaceItem) => boolean
   allowPendingRetry: boolean
   showPendingAsSyncing?: boolean
   rowLabels: PluginMarketplaceRowLabels
@@ -67,6 +67,7 @@ export function CategoryBrowseDialog({
     count: rowCount,
     getScrollElement: () => listRef.current,
     estimateSize: () => CATEGORY_ROW_ESTIMATE_PX,
+    gap: 8,
     overscan: 8,
     observeElementRect: (instance, callback) => {
       const element = instance.scrollElement
@@ -169,6 +170,8 @@ export function CategoryBrowseDialog({
             {rowItems.map(({ row, items }) => (
               <div
                 key={row.key}
+                ref={virtualizer.measureElement}
+                data-index={row.index}
                 className="plugin-market-card-grid absolute left-0 top-0 w-full"
                 style={{
                   transform: `translateY(${row.start}px)`,
@@ -181,7 +184,7 @@ export function CategoryBrowseDialog({
                     isLoggedIn={isLoggedIn}
                     isReconciling={isReconciling}
                     isInstalling={installingMarketplacePluginIds.has(item.id)}
-                    isUninstalling={uninstallingPluginIds.has(item.installedPluginId ?? item.id)}
+                    isUninstalling={isLocallyUninstalling(item)}
                     allowPendingRetry={allowPendingRetry}
                     showPendingAsSyncing={showPendingAsSyncing}
                     labels={rowLabels}

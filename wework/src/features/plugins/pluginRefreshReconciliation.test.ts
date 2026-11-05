@@ -36,6 +36,41 @@ function operations() {
 }
 
 describe('plugin refresh reconciliation', () => {
+  test('reports stages only as real operations advance', async () => {
+    const ops = operations()
+    const stages: string[] = []
+    let release!: () => void
+    ops.sync.mockImplementation(async () => {
+      expect(stages).toEqual(['reading', 'syncing'])
+      await new Promise<void>(resolve => {
+        release = resolve
+      })
+      return {
+        reconciled: true,
+        sync: { success: true, failed: 0, errors: [], plugins: [] },
+      } as unknown as PluginDeviceSyncResponse
+    })
+    const result = reconcilePluginRefresh({ ...ops, onProgress: stage => stages.push(stage) })
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'))
+    expect(stages).toEqual(['reading', 'syncing'])
+    release()
+    await result
+    expect(stages).toEqual(['reading', 'syncing', 'verifying'])
+  })
+
+  test('stops progress and mutations if the account changes during the inventory read', async () => {
+    const ops = operations()
+    const onProgress = vi.fn()
+    ops.readStore.mockImplementation(async () => {
+      ops.isCurrent.mockReturnValue(false)
+      return [plugin(12)]
+    })
+    await reconcilePluginRefresh({ ...ops, onProgress })
+    expect(onProgress).toHaveBeenCalledExactlyOnceWith('reading')
+    expect(ops.sync).not.toHaveBeenCalled()
+    expect(ops.invalidate).not.toHaveBeenCalled()
+  })
+
   test('does not report success for HTTP success with failed device synchronization', async () => {
     const ops = operations()
     ops.sync.mockResolvedValue({

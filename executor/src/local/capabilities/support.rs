@@ -745,6 +745,14 @@ pub(super) fn plugin_codex_link_name(spec: &PluginSyncSpec) -> String {
 }
 
 pub(super) fn link_or_copy_dir(target: &Path, link: &Path) -> Result<(), CapabilitySyncError> {
+    link_or_copy_dir_from(target, target, link)
+}
+
+pub(super) fn link_or_copy_dir_from(
+    target: &Path,
+    source: &Path,
+    link: &Path,
+) -> Result<(), CapabilitySyncError> {
     if link.exists() || link.is_symlink() {
         if link.is_symlink() || link.is_file() {
             crate::directory_link::remove(link)?;
@@ -757,7 +765,7 @@ pub(super) fn link_or_copy_dir(target: &Path, link: &Path) -> Result<(), Capabil
     }
     match symlink_dir(target, link) {
         Ok(()) => Ok(()),
-        Err(_) => copy_dir_recursive(target, link),
+        Err(_) => copy_dir_recursive(source, link),
     }
 }
 

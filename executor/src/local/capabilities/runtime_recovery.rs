@@ -18,6 +18,8 @@ mod materialization;
 mod ownership;
 #[path = "runtime_recovery_plan.rs"]
 mod plan;
+#[path = "runtime_reconciliation.rs"]
+mod reconciliation;
 use materialization::{
     runtime_tree_fingerprint, same_fingerprints, same_runtime_contents, tree_fingerprint,
 };
@@ -250,6 +252,7 @@ impl GlobalCapabilityStore {
             manifest,
             &recovery.timestamp,
             Some(&recovery),
+            None,
         );
         match result {
             Ok(()) => {
@@ -594,6 +597,24 @@ impl GlobalCapabilityStore {
             manifest,
             &now_rfc3339_like(),
             None,
+            None,
+        )
+    }
+
+    pub(super) fn install_prepared_plugin_runtime(
+        &self,
+        spec: &PluginSyncSpec,
+        store_path: &Path,
+        manifest: &mut Value,
+        prepared: Option<&mut plugin_preparation::PreparedRuntime>,
+    ) -> Result<(), CapabilitySyncError> {
+        self.install_plugin_runtime_metadata_at(
+            spec,
+            store_path,
+            manifest,
+            &now_rfc3339_like(),
+            None,
+            prepared,
         )
     }
 
@@ -604,6 +625,7 @@ impl GlobalCapabilityStore {
         manifest: &mut Value,
         timestamp: &str,
         publication: Option<&RecoveryJournal>,
+        mut prepared: Option<&mut plugin_preparation::PreparedRuntime>,
     ) -> Result<(), CapabilitySyncError> {
         validate_package_identity(store_path, spec)?;
         checked_spec(
@@ -662,7 +684,9 @@ impl GlobalCapabilityStore {
                 .unwrap_or(&Value::Null),
             manifest,
         )?;
-        let reused = if publication.is_none() {
+        let reused = if let Some(prepared) = &prepared {
+            prepared.reused.clone()
+        } else if publication.is_none() {
             self.unchanged_plugin_runtime_paths(spec, store_path)?
         } else {
             BTreeSet::new()
@@ -690,13 +714,19 @@ impl GlobalCapabilityStore {
                 self.publish_recovered_runtime_copies(spec, store_path)?;
                 publication.publish_files(self)?;
             } else {
+                let published = if let Some(prepared) = prepared.as_mut() {
+                    prepared.publish(self)?;
+                    prepared.paths()
+                } else {
+                    reused.clone()
+                };
                 if !self.codex_only_plugins {
                     self.install_claude_plugin_runtime_metadata_at(
-                        spec, store_path, timestamp, &reused,
+                        spec, store_path, timestamp, &published,
                     )?;
                 }
                 let codex = self.plugin_codex_link(spec);
-                if !reused.contains(&codex) {
+                if !published.contains(&codex) {
                     copy_dir_atomic(store_path, &codex)?;
                     ensure_dual_plugin_manifests(&codex)?;
                     ensure_plugin_hook_permissions(&codex)?;
@@ -707,7 +737,7 @@ impl GlobalCapabilityStore {
                     old.as_ref()
                         .and_then(|entry| entry.get("component_states"))
                         .unwrap_or(&json!({})),
-                    &reused,
+                    &published,
                 )?;
             }
             let codex = self.plugin_codex_link(spec);
@@ -861,7 +891,7 @@ fn checked_spec(key: &str, entry: &Value) -> Result<PluginSyncSpec, CapabilitySy
     Ok(spec)
 }
 
-fn validate_package_identity(
+pub(super) fn validate_package_identity(
     path: &Path,
     spec: &PluginSyncSpec,
 ) -> Result<(), CapabilitySyncError> {

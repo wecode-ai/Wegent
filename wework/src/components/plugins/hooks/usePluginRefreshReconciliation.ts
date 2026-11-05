@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { beginPluginDeviceSync } from '@/features/plugins/pluginDeviceAutoSync'
-import { reconcilePluginRefresh } from '@/features/plugins/pluginRefreshReconciliation'
+import {
+  reconcilePluginRefresh,
+  type PluginReconciliationStage,
+} from '@/features/plugins/pluginRefreshReconciliation'
 
 type ReconciliationOptions = Parameters<typeof reconcilePluginRefresh>[0]
 
@@ -10,7 +13,7 @@ export function usePluginRefreshReconciliation(options: {
   deviceId: string
   available: boolean
   busy: boolean
-  operations: Omit<ReconciliationOptions, 'isCurrent'>
+  operations: Omit<ReconciliationOptions, 'isCurrent' | 'onProgress'>
   onComplete: () => void
   onError: (error: unknown) => void
 }) {
@@ -20,7 +23,12 @@ export function usePluginRefreshReconciliation(options: {
   })
   const handled = useRef(0)
   const mounted = useRef(true)
-  const [active, setActive] = useState<{ accountKey: string; deviceId: string } | null>(null)
+  const [active, setActive] = useState<{
+    accountKey: string
+    deviceId: string
+    startedAt: number
+  } | null>(null)
+  const [stage, setStage] = useState<PluginReconciliationStage>('waiting')
   useEffect(() => {
     mounted.current = true
     return () => {
@@ -30,11 +38,16 @@ export function usePluginRefreshReconciliation(options: {
   useEffect(() => {
     const options = latest.current
     if (!options.request || handled.current === options.request) return
-    const owner = { accountKey: options.accountKey, deviceId: options.deviceId }
+    const owner = {
+      accountKey: options.accountKey,
+      deviceId: options.deviceId,
+      startedAt: Date.now(),
+    }
     const clearActive = () => {
       if (mounted.current) setActive(current => (current === owner ? null : current))
     }
     setActive(owner)
+    setStage('waiting')
     if (options.busy) return clearActive
     if (!options.available || !options.deviceId) {
       handled.current = options.request
@@ -50,7 +63,8 @@ export function usePluginRefreshReconciliation(options: {
     const isCurrent = () =>
       mounted.current &&
       latest.current.accountKey === accountKey &&
-      latest.current.deviceId === deviceId
+      latest.current.deviceId === deviceId &&
+      latest.current.request === request
     const start = () => {
       if (cancelled || !isCurrent()) return
       const release = beginPluginDeviceSync(deviceId)
@@ -67,7 +81,13 @@ export function usePluginRefreshReconciliation(options: {
       handled.current = request
       acquired = true
       const current = latest.current
-      void reconcilePluginRefresh({ ...current.operations, isCurrent })
+      void reconcilePluginRefresh({
+        ...current.operations,
+        isCurrent,
+        onProgress: nextStage => {
+          if (isCurrent()) setStage(nextStage)
+        },
+      })
         .then(() => {
           if (isCurrent()) latest.current.onComplete()
         })
@@ -86,7 +106,11 @@ export function usePluginRefreshReconciliation(options: {
       if (!acquired) clearActive()
     }
   }, [options.request, options.accountKey, options.deviceId, options.available, options.busy])
-  return Boolean(
-    active && active.accountKey === options.accountKey && active.deviceId === options.deviceId
-  )
+  return {
+    active: Boolean(
+      active && active.accountKey === options.accountKey && active.deviceId === options.deviceId
+    ),
+    stage,
+    startedAt: active?.startedAt ?? null,
+  }
 }

@@ -2,13 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use fs2::FileExt;
-use std::time::Instant;
 
 use super::*;
-use crate::services::workbench::{
-    link_package, publish_plugin_archive, publish_skill_archive, verify_published_package,
-    workbench_root, PackageKind,
-};
+#[cfg(test)]
+use crate::services::workbench::publish_plugin_archive;
+use crate::services::workbench::{link_package, publish_skill_archive, workbench_root};
 
 pub(super) struct PublicationLock(fs::File);
 
@@ -398,135 +396,6 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
             *manifest = original;
             return Err(error);
         }
-        Ok(())
-    }
-
-    pub(super) async fn try_sync_shared_plugin(
-        &self,
-        spec: &PluginSyncSpec,
-        manifest: &mut Value,
-    ) -> Result<(), PluginSyncFailure> {
-        let started = Instant::now();
-        let previous = manifest
-            .get("plugins")
-            .and_then(|plugins| plugins.get(&spec.key))
-            .cloned();
-        let mut installed_spec = spec.clone();
-        let root = self
-            .store
-            .shared_root()
-            .map_err(PluginSyncFailure::runtime_metadata)?;
-        // The server checksum, not a version label or signed download URL, is the
-        // authority for reuse. Unchecksummed URLs must still be downloaded.
-        let expected = spec.checksum.as_deref().or_else(|| {
-            if spec.download_path.is_none() {
-                previous.as_ref()?.get("checksum")?.as_str()
-            } else {
-                None
-            }
-        });
-        let verify_started = Instant::now();
-        let cached = {
-            let _binding = self
-                .plugin_sync_binding
-                .lock_active()
-                .map_err(PluginSyncFailure::runtime_metadata)?;
-            expected.and_then(|checksum| {
-                verify_published_package(&root, PackageKind::Plugin, checksum).ok()
-            })
-        };
-        let verify_ms = verify_started.elapsed().as_millis();
-        let cache_hit = cached.is_some();
-        let mut download_ms = 0;
-        let mut download_bytes = 0;
-        let mut package_ms = 0;
-        let downloaded = if cached.is_none() {
-            if let Some(download) = &spec.download_path {
-                let download_started = Instant::now();
-                let bytes = self
-                    .package_provider
-                    .download_plugin(download)
-                    .await
-                    .map_err(|error| {
-                        PluginSyncFailure::new("download", "PLUGIN_DOWNLOAD_FAILED", true, error)
-                    })?;
-                download_ms = download_started.elapsed().as_millis();
-                download_bytes = bytes.len();
-                Some(bytes)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-        // Rebinding uses this same lock, so a download cannot publish after its
-        // connection is replaced, including during the synchronous commit.
-        let _binding = self
-            .plugin_sync_binding
-            .lock_active()
-            .map_err(PluginSyncFailure::runtime_metadata)?;
-        let package = if let Some(package) = cached {
-            package
-        } else if let Some(bytes) = downloaded {
-            let package_started = Instant::now();
-            let package = publish_plugin_archive(&root, &bytes, spec.checksum.as_deref()).map_err(
-                |error| {
-                    PluginSyncFailure::new(
-                        "package",
-                        "PLUGIN_PACKAGE_INTEGRITY_FAILED",
-                        false,
-                        CapabilitySyncError::invalid_payload(error),
-                    )
-                },
-            )?;
-            package_ms = package_started.elapsed().as_millis();
-            package
-        } else {
-            return Err(PluginSyncFailure::new(
-                "package",
-                "PLUGIN_PACKAGE_UNAVAILABLE",
-                true,
-                CapabilitySyncError::invalid_payload(
-                    "Plugin has no verified package or download URL",
-                ),
-            ));
-        };
-        installed_spec.checksum = Some(package.archive_hash);
-        let store_path = package.path;
-        self.store
-            .prepare_relocated_runtime_ownership(&installed_spec, &store_path, manifest)
-            .map_err(PluginSyncFailure::runtime_metadata)?;
-        for (path, field) in self.store.plugin_runtime_targets(&installed_spec) {
-            if occupied_unmanaged(&path, previous.as_ref(), field)
-                && !owns_retained_plugin_runtime(manifest, &spec.key, &path)
-            {
-                return Err(PluginSyncFailure::runtime_metadata(
-                    CapabilitySyncError::invalid_payload(
-                        "Plugin path is occupied by an unmanaged item",
-                    ),
-                ));
-            }
-        }
-        let runtime_started = Instant::now();
-        self.store
-            .install_plugin_runtime_metadata(&installed_spec, &store_path, manifest)
-            .map_err(PluginSyncFailure::runtime_metadata)?;
-        crate::logging::log_executor_event(
-            "plugin_materialized",
-            &[
-                ("plugin", spec.key.clone()),
-                ("cache_hit", cache_hit.to_string()),
-                ("verify_ms", verify_ms.to_string()),
-                ("download_ms", download_ms.to_string()),
-                ("download_bytes", download_bytes.to_string()),
-                ("package_ms", package_ms.to_string()),
-                (
-                    "runtime_ms",
-                    runtime_started.elapsed().as_millis().to_string(),
-                ),
-                ("total_ms", started.elapsed().as_millis().to_string()),
-            ],
-        );
         Ok(())
     }
 }

@@ -339,21 +339,6 @@ function pluginCapabilitySummary(plugin: InstalledPluginItem): string {
   return componentTypes.join(', ') || 'Plugin'
 }
 
-function pluginDeviceSummary(plugin: InstalledPluginItem): string {
-  const devices = plugin.raw.status.devices ?? []
-  if (devices.length === 0) return ''
-  const installed = devices.filter(device => device.state === 'installed').length
-  const failed = devices.filter(device => device.state === 'failed').length
-  const pending = devices.length - installed - failed
-  return [
-    `${installed}/${devices.length} 已安装`,
-    pending > 0 ? `${pending} 等待同步` : '',
-    failed > 0 ? `${failed} 失败` : '',
-  ]
-    .filter(Boolean)
-    .join(' · ')
-}
-
 function componentTypeLabel(type: string, t: ReturnType<typeof useTranslation>['t']): string {
   switch (type) {
     case 'skill':
@@ -668,7 +653,6 @@ export function PluginDetailView({
   const version = formatPluginVersion(plugin.version)
   const description = pluginDisplayDescription(plugin)
   const guideExamples = pluginGuideExamples(plugin)
-  const deviceSummary = pluginDeviceSummary(plugin)
   const PrimaryActionIcon =
     primaryActionIcon === 'install' ? Plus : primaryActionIcon === 'try' ? MessageCircle : null
   const showMenuCopy = Boolean(tertiaryActionLabel && onTertiaryAction)
@@ -884,9 +868,6 @@ export function PluginDetailView({
               {headerMetadata.join(' · ')}
               {version ? ` · v${version}` : ''}
             </p>
-            {deviceSummary && (
-              <p className="mt-1 text-xs leading-4 text-text-muted">{deviceSummary}</p>
-            )}
             {submissionStatus === 'pending' && (
               <p
                 data-testid="plugin-detail-submission-status"

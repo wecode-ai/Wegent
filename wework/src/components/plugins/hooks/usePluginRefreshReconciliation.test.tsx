@@ -30,17 +30,21 @@ test('waits for an existing device operation and rejects old account completion'
   const release = beginPluginDeviceSync('device')!
   const initial = { ...options(), request: 1 }
   let finish!: () => void
+  let reportProgress!: (stage: 'syncing') => void
   vi.mocked(reconcilePluginRefresh).mockImplementation(
-    () =>
+    options =>
       new Promise(resolve => {
         finish = resolve
+        reportProgress = stage => options.onProgress?.(stage)
       })
   )
-  const { rerender } = renderHook(usePluginRefreshReconciliation, { initialProps: initial })
+  const { rerender, result } = renderHook(usePluginRefreshReconciliation, { initialProps: initial })
   expect(reconcilePluginRefresh).not.toHaveBeenCalled()
   release()
   await waitFor(() => expect(reconcilePluginRefresh).toHaveBeenCalledOnce())
   rerender({ ...initial, accountKey: 'other-account' })
+  act(() => reportProgress('syncing'))
+  expect(result.current.stage).toBe('waiting')
   await act(async () => finish())
   expect(initial.onComplete).not.toHaveBeenCalled()
   expect(initial.onError).not.toHaveBeenCalled()
@@ -59,12 +63,13 @@ test('clears queued refresh activity when the shared device lease times out', as
   const initial = { ...options(), request: 1 }
   const view = renderHook(usePluginRefreshReconciliation, { initialProps: initial })
   try {
-    expect(view.result.current).toBe(true)
+    expect(view.result.current.active).toBe(true)
+    expect(view.result.current.stage).toBe('waiting')
     await act(async () => vi.advanceTimersByTimeAsync(30_000))
     expect(initial.onError).toHaveBeenCalledExactlyOnceWith(
       new Error('Plugin synchronization is busy; refresh again')
     )
-    expect(view.result.current).toBe(false)
+    expect(view.result.current.active).toBe(false)
     expect(reconcilePluginRefresh).not.toHaveBeenCalled()
   } finally {
     view.unmount()

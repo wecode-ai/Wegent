@@ -8,7 +8,7 @@ mod template;
 use template::RuntimeTemplate;
 
 impl GlobalCapabilityStore {
-    pub(super) fn unchanged_plugin_runtime_paths(
+    pub(in crate::local::capabilities) fn unchanged_plugin_runtime_paths(
         &self,
         spec: &PluginSyncSpec,
         source: &Path,
@@ -39,13 +39,9 @@ impl GlobalCapabilityStore {
             return Ok(reused);
         }
         let template = RuntimeTemplate::read(source)?;
-        for path in candidates {
-            // Ownership was validated before this probe. Unreadable or symlinked
-            // contents still follow the existing whole-directory repair path.
-            if template.matches(&path).unwrap_or(false) {
-                reused.insert(path);
-            }
-        }
+        // Ownership was validated before this probe. Unreadable or symlinked
+        // contents still follow the existing whole-directory repair path.
+        reused.extend(template.matching_paths(&candidates)?);
         Ok(reused)
     }
 }
@@ -131,14 +127,14 @@ pub(super) fn same_fingerprints(
     mut left: BTreeMap<PathBuf, String>,
     right: &BTreeMap<PathBuf, String>,
 ) -> bool {
-    left.retain(|path, _| {
-        !(path
-            .components()
-            .any(|component| component.as_os_str() == "__pycache__")
-            && path.extension().is_some_and(|extension| extension == "pyc")
-            && !right.contains_key(path))
-    });
+    left.retain(|path, _| !is_runtime_bytecode(path) || right.contains_key(path));
     left == *right
+}
+
+fn is_runtime_bytecode(path: &Path) -> bool {
+    path.components()
+        .any(|component| component.as_os_str() == "__pycache__")
+        && path.extension().is_some_and(|extension| extension == "pyc")
 }
 
 #[cfg(test)]

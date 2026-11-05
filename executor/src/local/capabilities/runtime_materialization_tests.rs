@@ -5,10 +5,12 @@ use super::*;
 use std::cell::RefCell;
 
 thread_local! {
+    static READ_FILES: RefCell<Option<Vec<PathBuf>>> = const { RefCell::new(None) };
     static HASHED_FILES: RefCell<Option<Vec<PathBuf>>> = const { RefCell::new(None) };
 }
 
 pub(super) fn record_hash(path: &Path) {
+    record_read(path);
     HASHED_FILES.with_borrow_mut(|paths| {
         if let Some(paths) = paths {
             paths.push(path.to_owned());
@@ -16,23 +18,33 @@ pub(super) fn record_hash(path: &Path) {
     });
 }
 
-struct HashProbe;
+pub(super) fn record_read(path: &Path) {
+    READ_FILES.with_borrow_mut(|paths| {
+        if let Some(paths) = paths {
+            paths.push(path.to_owned());
+        }
+    });
+}
 
-impl HashProbe {
+struct ReadProbe;
+
+impl ReadProbe {
     fn start() -> Self {
+        READ_FILES.with_borrow_mut(|paths| *paths = Some(Vec::new()));
         HASHED_FILES.with_borrow_mut(|paths| *paths = Some(Vec::new()));
         Self
     }
 }
 
-impl Drop for HashProbe {
+impl Drop for ReadProbe {
     fn drop(&mut self) {
+        READ_FILES.with_borrow_mut(|paths| *paths = None);
         HASHED_FILES.with_borrow_mut(|paths| *paths = None);
     }
 }
 
 fn payload_reads() -> Vec<PathBuf> {
-    HASHED_FILES.with_borrow(|paths| {
+    READ_FILES.with_borrow(|paths| {
         paths
             .iter()
             .flatten()
@@ -128,7 +140,7 @@ impl Fixture {
 }
 
 #[test]
-fn reuse_hashes_payload_once_per_actual_tree_without_a_payload_template() {
+fn reuse_reads_payload_once_per_actual_tree_without_rehashing_or_a_payload_template() {
     for (codex_only, marketplace_copies) in
         [(true, false), (false, false), (true, true), (false, true)]
     {
@@ -141,7 +153,7 @@ fn reuse_hashes_payload_once_per_actual_tree_without_a_payload_template() {
                 expected_paths.push(path);
             }
         }
-        let _probe = HashProbe::start();
+        let _probe = ReadProbe::start();
 
         let reused = fixture.reused();
 
@@ -155,6 +167,15 @@ fn reuse_hashes_payload_once_per_actual_tree_without_a_payload_template() {
             actual, expected,
             "Every payload must be read only once, without a staging copy"
         );
+        HASHED_FILES.with_borrow(|paths| {
+            assert!(
+                paths
+                    .iter()
+                    .flatten()
+                    .all(|path| path.file_name().unwrap() != "payload.bin"),
+                "Runtime comparison must not recompute payload SHA256"
+            );
+        });
     }
 }
 
@@ -176,7 +197,7 @@ fn marketplace_directory_copies_are_verified_independently_of_the_runtime() {
 #[test]
 fn first_install_does_not_prepare_a_comparison_template() {
     let fixture = Fixture::new(true, &[CODEX_PLUGIN_MANIFEST_PATH]);
-    let _probe = HashProbe::start();
+    let _probe = ReadProbe::start();
 
     assert!(fixture.reused().is_empty());
 
@@ -211,6 +232,8 @@ fn normalized_manifests_and_hook_permissions_match_in_both_runtime_layouts() {
 fn corrupt_missing_and_unexpected_files_never_qualify_for_reuse() {
     for change in [
         "content",
+        "truncated",
+        "appended",
         "missing",
         "extra",
         "manifest",
@@ -227,6 +250,12 @@ fn corrupt_missing_and_unexpected_files_never_qualify_for_reuse() {
         let runtime = &fixture.runtimes()[0];
         match change {
             "content" => fs::write(runtime.join("payload.bin"), vec![43; 1024 * 1024]).unwrap(),
+            "truncated" => {
+                fs::write(runtime.join("payload.bin"), vec![42; 1024 * 1024 - 1]).unwrap()
+            }
+            "appended" => {
+                fs::write(runtime.join("payload.bin"), vec![42; 1024 * 1024 + 1]).unwrap()
+            }
             "missing" => fs::remove_file(runtime.join("payload.bin")).unwrap(),
             "extra" => fs::write(runtime.join("extra.txt"), "unexpected").unwrap(),
             "manifest" => fs::write(
