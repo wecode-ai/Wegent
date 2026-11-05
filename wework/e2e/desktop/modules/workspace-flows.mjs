@@ -237,7 +237,8 @@ export async function selectCollaborationProjectView(
   timeoutMs = DEFAULT_STEP_TIMEOUT_MS
 ) {
   const compact = `${contentSelector} [data-testid="collaboration-project-view-select"]`
-  const tab = `${contentSelector} [data-testid="collaboration-tab-${view}"]`
+  const tabId = view === 'milestones' ? 'collaboration-milestones-tab' : `collaboration-tab-${view}`
+  const tab = `${contentSelector} [data-testid="${tabId}"]`
   await control.command('waitFor', `${compact}, ${tab}`, {
     visible: true,
     timeoutMs,
