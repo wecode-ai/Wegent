@@ -26,6 +26,7 @@ CI_CONSUMER_PATHS=(
   '.github/scripts/publish-macos-e2e-runtime-oci.sh|wework_e2e'
   '.github/ci/wework-linux-checkpoint-durations.json|wework_e2e'
   '.github/scripts/order-wework-linux-e2e.*|wework_e2e'
+  '.github/scripts/core-runner-slots.*|wework_e2e'
   '.github/scripts/desktop-ci/*|wework_e2e'
   '.github/scripts/wework-core-e2e-transport.*|wework_e2e'
   '.github/scripts/verified-build-oci.mjs|platform_e2e wework_e2e'

@@ -73,7 +73,7 @@ independent integration commands embedded in workflows.
 
 New specs and checkpoints must have catalog entries. Missing files, unknown projects, unowned cases and
 duplicate spec ownership fail planning. Desktop filtering uses the original classifier's matrices.
-Platform bundles distribute specs within the existing four-shard limit; provider tests keep one worker.
+Platform bundles distribute specs within main's existing eight-shard limit. Provider tests keep one worker.
 A provider-only shard runs the existing setup first, preserving the provider command's `--no-deps` contract.
 
 Storage, replication, MySQL concurrency, knowledge, DingTalk document protocol, subscription and notification

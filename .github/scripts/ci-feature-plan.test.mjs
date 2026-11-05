@@ -410,6 +410,12 @@ test("registered CI consumers exercise their suites without requiring product la
       "false",
       "true",
     ],
+    [
+      ".github/scripts/core-runner-slots.mjs",
+      ["wework_e2e"],
+      "false",
+      "true",
+    ],
   ]) {
     const { plan, outputs } = planFor([path], []);
     assert.deepEqual(plan.errors, [], path);
@@ -462,7 +468,11 @@ test("ci:all, release, nightly and dispatch preserve complete existing matrices"
     assert.equal(outputs.platform_suite, "true");
     assert.equal(outputs.executor_suite, "true");
     assert.deepEqual(plan.checks, Object.keys(integrationChecks));
-    assert.equal(plan.platformMatrix.length, 4);
+    assert.equal(plan.platformMatrix.length, 8);
+    assert.deepEqual(
+      plan.platformMatrix.map((entry) => entry.providerShardIndex),
+      [3, 2, 1, 4, 5, 6, 7, 8],
+    );
   }
 });
 
@@ -512,8 +522,13 @@ test("partitioned platform plans execute each selected spec and independent comm
         .sort(),
       feature,
     );
-    assert(plan.platformMatrix.length <= 4);
+    assert(plan.platformMatrix.length <= 8);
     for (const entry of plan.platformMatrix) {
+      assert.equal(entry.shardTotal, 8);
+      assert.equal(
+        entry.providerShardIndex,
+        [3, 2, 1, 4, 5, 6, 7, 8][entry.shardIndex - 1],
+      );
       assert.equal(
         entry.dingtalkOAuth,
         entry.checks.includes("dingtalk_documents"),
@@ -578,14 +593,14 @@ test("provider-only shards provision auth and keep serial/no-deps execution", ()
     playwrightInvocation(plan, [
       "--project=chromium",
       "--project=api",
-      `--shard=${bucket.shardIndex}/4`,
+      `--shard=${bucket.shardIndex}/8`,
     ]),
     ["--project=setup"],
   );
   const args = playwrightInvocation(plan, [
     "--project=provider-native-chromium",
     "--workers=1",
-    `--shard=${bucket.providerShardIndex}/4`,
+    `--shard=${bucket.providerShardIndex}/8`,
     "--no-deps",
   ]);
   assert(args.includes("--workers=1"));
@@ -597,10 +612,10 @@ test("provider-only shards provision auth and keep serial/no-deps execution", ()
 test("unknown shards fail and full runs retain the exact Playwright shard command", () => {
   const { plan } = planFor([], ["ci:knowledge"]);
   assert.throws(
-    () => playwrightInvocation(plan, ["--project=api", "--shard=99/4"]),
+    () => playwrightInvocation(plan, ["--project=api", "--shard=99/8"]),
     /absent/,
   );
-  const args = ["--project=api", "--shard=1/4"];
+  const args = ["--project=api", "--shard=1/8"];
   assert.deepEqual(
     playwrightInvocation(planFor([], ["ci:all"]).plan, args),
     args,

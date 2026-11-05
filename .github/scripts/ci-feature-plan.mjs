@@ -16,6 +16,8 @@ import {
   readClassifier,
 } from "./ci-feature-catalog.mjs";
 
+const providerShardOrder = [3, 2, 1, 4, 5, 6, 7, 8];
+
 function matchesPath(path, pattern) {
   const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`^${escaped.replaceAll("\\*", ".*")}$`).test(path);
@@ -48,10 +50,11 @@ export function requiredFeatures(files, catalog) {
 }
 
 function buckets(specs, checks) {
-  const entries = Array.from({ length: 4 }, (_, index) => ({
+  const shardTotal = providerShardOrder.length;
+  const entries = providerShardOrder.map((providerShardIndex, index) => ({
     shardIndex: index + 1,
-    shardTotal: 4,
-    providerShardIndex: [3, 2, 1, 4][index],
+    shardTotal,
+    providerShardIndex,
     specs: [],
     provider: [],
     checks: [],
@@ -62,9 +65,13 @@ function buckets(specs, checks) {
   const provider = specs.filter(
     (spec) => spec.project === "provider-native-chromium",
   );
-  regular.forEach((spec, index) => entries[index % 4].specs.push(spec.file));
+  regular.forEach((spec, index) =>
+    entries[index % shardTotal].specs.push(spec.file),
+  );
   provider.forEach((spec, index) =>
-    entries[[2, 1, 0, 3][index % 4]].provider.push(spec.file),
+    entries[providerShardOrder.indexOf((index % shardTotal) + 1)].provider.push(
+      spec.file,
+    ),
   );
   for (const id of checks) {
     for (const shard of integrationChecks[id].shards)
@@ -168,12 +175,12 @@ export function buildPlan({
         ? catalog.all
         : filterDesktop(catalog.all, desktop, catalog.plugins);
   const platformMatrix = fullPlatform
-    ? [1, 2, 3, 4].map((index) => ({
-        shardIndex: index,
-        shardTotal: 4,
+    ? providerShardOrder.map((providerShardIndex, index) => ({
+        shardIndex: index + 1,
+        shardTotal: providerShardOrder.length,
         dingtalkOAuth:
-          integrationChecks.dingtalk_documents.shards.includes(index),
-        providerShardIndex: [3, 2, 1, 4][index - 1],
+          integrationChecks.dingtalk_documents.shards.includes(index + 1),
+        providerShardIndex,
       }))
     : buckets(specs, checks);
   const executor =
