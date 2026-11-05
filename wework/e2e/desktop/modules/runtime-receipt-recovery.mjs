@@ -9,6 +9,15 @@ import { runtimeTransportGates } from './runtime-transport-gates.mjs'
 import { ACTIVE_WORKBENCH_SELECTOR } from './shared.mjs'
 import { waitForTranscriptState } from './transcript-restoration.mjs'
 
+export function runtimeReceiptRecoveryGoalGate(address) {
+  return {
+    id: 'recovery-goal-after-receipt',
+    kind: 'response',
+    name: 'runtime.tasks.goal.get',
+    where: [{ path: 'params.address.taskId', equals: address.taskId }],
+  }
+}
+
 export async function verifyRuntimeReceiptRecovery(
   control,
   { address, prompt, completion, releaseActiveResponse, resultDir, timeoutMs }
@@ -17,7 +26,8 @@ export async function verifyRuntimeReceiptRecovery(
   const send = 'recovery-undispatched-send'
   const lagged = 'recovery-real-history-loss'
   const receipt = 'recovery-empty-receipt'
-  const goal = 'recovery-goal-after-receipt'
+  const goalRule = runtimeReceiptRecoveryGoalGate(address)
+  const goal = goalRule.id
   await gates.arm({
     id: send,
     kind: 'request',
@@ -101,12 +111,7 @@ export async function verifyRuntimeReceiptRecovery(
     const recovery = await gates.wait(lagged, undefined, timeoutMs)
     const confirmation = await gates.wait(receipt, undefined, timeoutMs)
     assert.deepEqual(confirmation.value.result.acceptedClientUserMessageIds, [])
-    await gates.arm({
-      id: goal,
-      kind: 'response',
-      name: 'runtime.tasks.goal.get',
-      where: [{ path: 'params.taskId', equals: address.taskId }],
-    })
+    await gates.arm(goalRule)
     const receiptAppliedAfter = Date.now()
     await gates.release(receipt)
     // Goal reconciliation follows application of the actual receipt response.
