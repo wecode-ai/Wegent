@@ -21,6 +21,12 @@ beforeEach(() => {
   container = document.createElement('div')
   document.body.append(container)
   root = createRoot(container)
+  HTMLDialogElement.prototype.showModal = function () {
+    this.open = true
+  }
+  HTMLDialogElement.prototype.close = function () {
+    this.open = false
+  }
 })
 
 afterEach(async () => {
@@ -159,4 +165,50 @@ it('passes the reduced template and drafts to project creation without changing 
     )
   ).toBe(true)
   expect(template.spec.resources.collaboration.groups[0].roles).toHaveLength(6)
+})
+
+it('resets removed roles when selecting a template with the same name and version', async () => {
+  const template = structuredClone(builtinCollaborationTemplates()[0].document)
+  template.metadata.namespace = 'another-namespace'
+  const store = new CollaborationTemplateStore({
+    scope: 'local:test',
+    ownerId: 7,
+    persistence: { read: async () => [], write: async () => {} },
+  })
+  const onChange = vi.fn()
+  await act(async () =>
+    root.render(
+      <CollaborationTemplateContext value={store}>
+        <TemplateCreateSection
+          setup={{
+            location: 'local',
+            currentUser: { id: 7, name: 'Owner' },
+            members: [],
+            agents: [],
+            groups: [],
+            configure: async () => {},
+          }}
+          locale="en"
+          initialTemplate={template}
+          onSelect={vi.fn()}
+          onChange={onChange}
+        />
+      </CollaborationTemplateContext>
+    )
+  )
+  for (const testId of [
+    'template-remove-role-main-role-1',
+    'project-create-choose-template',
+    'template-details-product-lifecycle',
+    'template-use',
+  ]) {
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>(`[data-testid="${testId}"]`)!.click()
+    )
+  }
+  const [drafts, , configured] = onChange.mock.lastCall!
+  expect(configured.metadata.namespace).toBe('system')
+  expect(drafts[0].members).toHaveLength(6)
+  expect(configured.spec.resources.collaboration.groups[0].roles).toHaveLength(6)
+  expect(container.querySelector('[data-testid="template-remove-role-main-role-1"]')).not.toBeNull()
 })

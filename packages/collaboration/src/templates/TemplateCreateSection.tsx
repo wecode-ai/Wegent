@@ -36,6 +36,7 @@ export function TemplateCreateSection({
   const store = useCollaborationTemplateStore()
   const m = templateMessages[locale]
   const [document, setDocument] = useState(initialTemplate ?? null)
+  const [selectionVersion, setSelectionVersion] = useState(0)
   const [open, setOpen] = useState(false)
   if (!store) return null
   const members = [
@@ -78,7 +79,7 @@ export function TemplateCreateSection({
       </div>
       {document && (
         <TemplateBindings
-          key={`${document.metadata.name}:${document.spec.version}`}
+          key={selectionVersion}
           document={document}
           locale={locale}
           disabled={disabled}
@@ -108,6 +109,7 @@ export function TemplateCreateSection({
             store={store}
             locale={locale}
             onUse={record => {
+              setSelectionVersion(current => current + 1)
               setDocument(record.document)
               onChange(null, true)
               onSelect(record.document)

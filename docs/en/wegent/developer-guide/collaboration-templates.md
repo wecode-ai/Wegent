@@ -154,6 +154,7 @@ roles and their stages while retaining the coordinator, so the group fits my wor
 | Saving or configuration is disabled | Attempt removal | Roles and stages remain unchanged | `TemplateBindings.test.tsx` |
 | A template includes coordinator and executor roles | Remove every executor role and create a project | Coordinator removal stays disabled; persist only the coordinator; create no removed Agents or stages | `collaboration-template-agents` |
 | Creating a project from a template | Remove a role | Both the template and group drafts passed to creation contain the reduced roles and stages | `TemplateBindings.test.tsx` |
+| Roles were removed before selecting a template again | Reselect the source or another template with the same name and version | Reset role configuration without retaining the previous selection's removed roles | `TemplateBindings.test.tsx`, `collaboration-template-agents` |
 
 The desktop case reuses the checkpoint's isolated accounts, local projects, real
 Electron, Executor and persistence. Only the model service uses deterministic responses.

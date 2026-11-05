@@ -414,6 +414,21 @@ export function createDesktopScenario({
         text: '将创建 6 个智能体',
       })
       await captureScreenshot(control, 'template-agents-07-dark-confirmation.png', CONTENT)
+      // Reselecting the same template starts a fresh role configuration.
+      await control.command('click', selector('template-remove-role-main-role-1'))
+      await control.command('waitFor', selector('template-agents-summary'), {
+        text: '将创建 5 个智能体',
+      })
+      await control.command('click', selector('project-create-choose-template'))
+      await control.command('click', pickerSelector('template-tab-mine'))
+      const savedDetails = pickerSelector(card.replace('template-card-', 'template-details-'))
+      await control.command('waitFor', savedDetails)
+      await control.command('click', savedDetails)
+      await control.command('click', pickerSelector('template-use'))
+      await control.command('waitFor', PICKER, { visible: false })
+      await control.command('waitFor', selector('template-agents-summary'), {
+        text: '将创建 6 个智能体',
+      })
       // Import a coordinator-only variant and verify removed roles and their stages stay absent.
       for (let index = 1; index < 6; index++) {
         await control.command('click', selector(`template-remove-role-main-role-${index}`))

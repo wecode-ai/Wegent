@@ -119,6 +119,7 @@ YAML 导入采用白名单，拒绝未知字段、重复键、别名、错误引
 | 正在保存或配置已禁用 | 点击移除按钮 | 角色和阶段不变 | `TemplateBindings.test.tsx` |
 | 模板包含负责人和执行角色 | 移除全部执行角色并创建项目 | 负责人移除按钮禁用；持久化小组只有负责人；不创建已移除角色的智能体或阶段 | `collaboration-template-agents` |
 | 从模板新建项目 | 移除角色 | 创建输入中的模板和小组草稿均使用裁剪后的角色及阶段 | `TemplateBindings.test.tsx` |
+| 已移除角色后重新选择模板 | 重新选择原模板或同名同版本的另一份模板 | 重置本次角色配置，不沿用上一份模板的移除状态 | `TemplateBindings.test.tsx`、`collaboration-template-agents` |
 
 桌面用例复用 checkpoint 的隔离账号、本地项目、真实 Electron、Executor 与存储，只有模型服务使用固定响应。
 运行 `pnpm --filter wework e2e:desktop --segment collaboration-template-agents`；用例沿用共享运行器清理隔离环境。
