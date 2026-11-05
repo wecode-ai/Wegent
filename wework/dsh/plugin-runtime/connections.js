@@ -1,9 +1,8 @@
 import { readFile } from 'node:fs/promises'
 import { validRange } from 'semver'
+import { boundedJson, compileSchema, validateSchema } from './connection-schema.js'
 
 const ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/
-const COMMAND_ARGUMENT =
-  /^(?:\+?[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}|--[a-zA-Z0-9][a-zA-Z0-9-]{0,63}=(?:true|false))$/
 const METHODS = ['check', 'listResources', 'validate', 'initialize', 'collect']
 const OPTIONAL_METHODS = ['readSource', 'executeAction']
 
@@ -130,10 +129,15 @@ export function parseConnections(manifest) {
       JSON.stringify(provider.collectionModes) === '["poll"]',
       'Only poll collection is supported'
     )
-    requireValue(
-      provider.readPagination === undefined || provider.readPagination === 'cursor',
-      'Unsupported source read pagination'
-    )
+    requireValue(provider.readPagination === undefined, 'Use the read capability declaration')
+    if (provider.read !== undefined) {
+      requireValue(
+        record(provider.read) && ['cursor', 'none'].includes(provider.read.pagination),
+        'Invalid source read capability'
+      )
+      compileSchema(provider.read.inputSchema, true)
+      compileSchema(provider.read.itemSchema, true)
+    }
     if (provider.assistance !== undefined) {
       const fields = ['observe', 'prepare', 'notifyWhen', 'confirmBefore']
       requireValue(
@@ -165,6 +169,8 @@ export function parseConnections(manifest) {
             action.resourceKinds.every(kind => provider.resourceKinds.includes(kind)),
           'Invalid or duplicate connection action'
         )
+        compileSchema(action.inputSchema, true)
+        compileSchema(action.resultSchema)
         actions.add(action.id)
       }
     }
@@ -223,7 +229,13 @@ export function parseConnections(manifest) {
               Array.isArray(spec.command) &&
               spec.command.length > 0 &&
               spec.command.length <= 8 &&
-              spec.command.every(part => typeof part === 'string' && COMMAND_ARGUMENT.test(part)),
+              spec.command.every(
+                part =>
+                  typeof part === 'string' &&
+                  part.length > 0 &&
+                  part.length <= 4096 &&
+                  !part.includes('\0')
+              ),
             'Invalid CLI read command'
           )
           requireValue(
@@ -300,8 +312,8 @@ export class ConnectionRegistry {
         `Missing connection action implementation: ${id}`
       )
       requireValue(
-        !provider.readPagination || typeof implementation.readSource === 'function',
-        `Missing paginated source read implementation: ${id}`
+        Boolean(provider.read) === (typeof implementation.readSource === 'function'),
+        `Source read declaration and implementation must match: ${id}`
       )
       return { id, definition, provider, implementation, controller: new AbortController() }
     })
@@ -405,14 +417,32 @@ export class ConnectionRegistry {
     if (this.entries.get(id) !== entry)
       throw new ConnectionError('connection_unavailable', 'Connection plugin was stopped')
     const context = this.contextFor(entry, dependencies)
+    boundedJson(input, 1024 * 1024, 'Connection input exceeds the JSON budget')
     const params = structuredClone(input)
     if (method === 'readSource' && params.cursor !== undefined) {
-      if (entry.provider.readPagination !== 'cursor')
+      if (entry.provider.read?.pagination !== 'cursor')
         throw new ConnectionError(
           'source_read_cursor_unsupported',
           'This provider does not support read cursors'
         )
       requireValue(validReadCursor(params.cursor), 'Invalid source read cursor')
+    }
+    if (method === 'readSource') {
+      requireValue(entry.provider.read, 'Source reads are not declared')
+      requireValue(
+        Object.keys(params).every(key => ['source', 'query', 'cursor'].includes(key)),
+        'Unknown source read parameter'
+      )
+      requireValue(
+        params.query === undefined || record(params.query),
+        'Source read query must be an object'
+      )
+      if (params.cursor === undefined || params.query !== undefined)
+        validateSchema(
+          entry.provider.read.inputSchema,
+          params.query ?? {},
+          'Invalid source read query'
+        )
     }
     if (method === 'listResources' && params.scope === 'all') {
       requireValue(
@@ -446,6 +476,11 @@ export class ConnectionRegistry {
           'Connection action is not declared for this resource'
         )
       }
+      if (method === 'executeAction') {
+        const declaration = entry.provider.actions.find(action => action.id === params.action)
+        const { source: _source, action: _action, ...values } = params
+        validateSchema(declaration.inputSchema, values, 'Invalid connection action input')
+      }
       await entry.implementation.validate(context, params.source)
       if (method === 'collect' && (params.checkpoint === null || params.checkpoint === undefined)) {
         params.checkpoint = await entry.implementation.initialize(context, params.source)
@@ -456,7 +491,7 @@ export class ConnectionRegistry {
     entry.controller.signal.throwIfAborted()
     const result = await entry.implementation[method](context, params)
     entry.controller.signal.throwIfAborted()
-    validateProviderResult(entry.provider, method, result)
+    validateProviderResult(entry.provider, method, result, params)
     if (method === 'collect' && source.scope === 'all') {
       requireValue(
         result.events.every(
@@ -506,36 +541,51 @@ export class ConnectionRegistry {
   }
 }
 
-function validateProviderResult(provider, method, result) {
+function validateProviderResult(provider, method, result, input) {
+  boundedJson(result, 8 * 1024 * 1024, 'Connection result exceeds the JSON budget')
+  if (method === 'executeAction')
+    validateSchema(
+      provider.actions.find(action => action.id === input.action).resultSchema,
+      result,
+      'Invalid connection action result'
+    )
   if (method === 'initialize') requireValue(record(result), 'Invalid connection checkpoint')
   if (method === 'readSource') {
     requireValue(
       record(result) &&
         Array.isArray(result.items) &&
-        result.items.length <= 20 &&
+        result.items.length <= 1000 &&
         result.items.every(
           item =>
             record(item) &&
             typeof item.id === 'string' &&
-            item.id.length > 0 &&
-            typeof item.at === 'string' &&
-            Number.isFinite(Date.parse(item.at)) &&
-            typeof item.text === 'string' &&
-            item.text.length <= 20000
+            item.id.trim().length > 0 &&
+            item.id.length <= 2048
         ) &&
         typeof result.hasMore === 'boolean',
       'Invalid source read result'
     )
+    for (const item of result.items)
+      validateSchema(provider.read.itemSchema, item, 'Invalid source read item')
     requireValue(
       result.nextCursor === undefined ||
-        (provider.readPagination === 'cursor' &&
+        (provider.read.pagination === 'cursor' &&
           result.hasMore &&
           validReadCursor(result.nextCursor)),
       'Invalid source read continuation'
     )
     requireValue(
-      provider.readPagination !== 'cursor' || !result.hasMore || validReadCursor(result.nextCursor),
+      provider.read.pagination !== 'cursor' ||
+        !result.hasMore ||
+        validReadCursor(result.nextCursor),
       'Missing source read continuation'
+    )
+    requireValue(
+      !result.hasMore ||
+        (provider.read.pagination === 'cursor' &&
+          validReadCursor(result.nextCursor) &&
+          result.nextCursor !== input.cursor),
+      'Source read continuation did not advance'
     )
   }
   if (method === 'collect') {

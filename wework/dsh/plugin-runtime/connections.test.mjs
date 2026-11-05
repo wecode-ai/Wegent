@@ -257,7 +257,26 @@ test('a new DSH connection plugin shares collection, reads, declared actions and
                 resourceLabels: { repository: 'Repository' },
                 eventTypes: ['build.failed'],
                 versionedEventTypes: [],
-                actions: [{ id: 'retry', resourceKinds: ['repository'] }],
+                read: {
+                  inputSchema: { type: 'object' },
+                  itemSchema: { type: 'object' },
+                  pagination: 'none',
+                },
+                actions: [
+                  {
+                    id: 'retry',
+                    resourceKinds: ['repository'],
+                    inputSchema: {
+                      type: 'object',
+                      properties: { authorization: { type: 'string' } },
+                    },
+                    resultSchema: {
+                      type: 'object',
+                      properties: { status: { const: 'completed' } },
+                      required: ['status'],
+                    },
+                  },
+                ],
               },
             ],
           },
@@ -647,11 +666,15 @@ test('every bundled external connection declares useful assistance for the unifi
 })
 
 test('read pagination is an explicit capability and never silently consumes unsupported cursors', async () => {
-  for (const pagination of [undefined, 'cursor']) {
+  for (const pagination of ['none', 'cursor']) {
     const root = await mkdtemp(join(tmpdir(), 'connection-read-pagination-'))
     const manifest = declaration()
     const descriptor = manifest.wework.connections.providers[0]
-    descriptor.readPagination = pagination
+    descriptor.read = {
+      inputSchema: { type: 'object' },
+      itemSchema: { type: 'object' },
+      pagination,
+    }
     const path = join(root, 'package.json')
     await writeFile(path, JSON.stringify(manifest))
     const registry = new ConnectionRegistry({
@@ -685,7 +708,7 @@ test('read pagination is an explicit capability and never silently consumes unsu
         kind: 'folder',
         id: 'selected',
       }
-      if (!pagination) {
+      if (pagination === 'none') {
         await assert.rejects(
           registry.call(source.providerId, 'readSource', { source, cursor: 'page' }),
           { code: 'source_read_cursor_unsupported' }

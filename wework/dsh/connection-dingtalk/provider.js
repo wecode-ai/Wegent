@@ -85,8 +85,8 @@ export function createProvider() {
         throw invalid('Read an exact connected conversation')
       const state =
         input.cursor === undefined
-          ? { ...readWindow(input), issuedAt: Date.now() }
-          : readCursors.decode(source, input)
+          ? { ...readWindow(input.query ?? {}), issuedAt: Date.now() }
+          : readCursors.decode(source, { ...input.query, cursor: input.cursor })
       const selfId = await ownIdentity(ctx, required(source, 'profile'), identities)
       const page = await readTool(
         ctx,

@@ -386,7 +386,7 @@ test('source history directly queries only the exact group or direct peer throug
   for (const kind of ['group', 'direct']) {
     const source = Object.freeze(readSource(kind))
     const fixture = readFixture([{ messages: [nativeMessage()] }])
-    const result = await createProvider().readSource(fixture.ctx, { source, limit: 2 })
+    const result = await createProvider().readSource(fixture.ctx, { source, query: { limit: 2 } })
     assert.equal(result.items.length, 1)
     assert.equal(result.contextComplete, true)
     assert.equal(result.readOnly, true)
@@ -434,7 +434,7 @@ test('SDK native continuation preserves precision and same-timestamp messages wi
     },
   ])
   const provider = createProvider()
-  const first = await provider.readSource(fixture.ctx, { source, limit: 1 })
+  const first = await provider.readSource(fixture.ctx, { source, query: { limit: 1 } })
   const second = await provider.readSource(fixture.ctx, { source, cursor: first.nextCursor })
   assert.equal(fixture.calls.at(-1).arguments.time, time)
   assert.deepEqual(second.range, first.range)
@@ -459,8 +459,7 @@ test('native history is bounded to its fixed window and page text budget', async
   ])
   const result = await createProvider().readSource(fixture.ctx, {
     source: readSource(),
-    since,
-    limit: 2,
+    query: { since, limit: 2 },
   })
   assert.equal(result.items.length, 1)
   assert.equal(result.items[0].text.length, 12000)
@@ -479,12 +478,12 @@ test('invalid scopes and ranges fail before any CLI operation', async () => {
     { source: { ...source, id: 'selected,other' } },
     { source: { ...source, kind: 'other' } },
     { source: { ...source, profile: '' } },
-    { source, since: '' },
-    { source, since: null },
-    { source, since: 0 },
-    { source, since: new Date(Date.now() - 8 * 86400000).toISOString() },
-    { source, since: new Date(Date.now() + 86400000).toISOString() },
-    ...[0, 21, 1.5, '2', null].map(limit => ({ source, limit })),
+    { source, query: { since: '' } },
+    { source, query: { since: null } },
+    { source, query: { since: 0 } },
+    { source, query: { since: new Date(Date.now() - 8 * 86400000).toISOString() } },
+    { source, query: { since: new Date(Date.now() + 86400000).toISOString() } },
+    ...[0, 21, 1.5, '2', null].map(limit => ({ source, query: { limit } })),
   ])
     await assert.rejects(createProvider().readSource(ctx, input), {
       code: 'dingtalk_response_invalid',
@@ -527,14 +526,18 @@ test('cursor rejects changed source, account, window, limit, tampering and proce
     },
   ])
   const provider = createProvider()
-  const first = await provider.readSource(fixture.ctx, { source, limit: 2 })
+  const first = await provider.readSource(fixture.ctx, { source, query: { limit: 2 } })
   const before = fixture.calls.length
   for (const input of [
     { source: { ...source, id: 'other' }, cursor: first.nextCursor },
     { source: { ...source, profile: 'another' }, cursor: first.nextCursor },
     { source, cursor: first.nextCursor + 'x' },
-    { source, cursor: first.nextCursor, since: new Date(Date.now() - 3600000).toISOString() },
-    { source, cursor: first.nextCursor, limit: 3 },
+    {
+      source,
+      cursor: first.nextCursor,
+      query: { since: new Date(Date.now() - 3600000).toISOString() },
+    },
+    { source, cursor: first.nextCursor, query: { limit: 3 } },
   ])
     await assert.rejects(provider.readSource(fixture.ctx, input), {
       code: 'source_read_cursor_invalid',

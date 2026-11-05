@@ -28,8 +28,12 @@ export interface ConnectionDescriptor {
   eventTypes: string[]
   /** Mutable event types must identify the object and its opaque source version. */
   versionedEventTypes: string[]
-  /** Opaque source-bound read cursors, separate from collection checkpoints. */
-  readPagination?: 'cursor'
+  /** Business schemas belong to this provider, not the host. */
+  read?: {
+    inputSchema: Record<string, unknown>
+    itemSchema: Record<string, unknown>
+    pagination: 'cursor' | 'none'
+  }
   /** Domain guidance, scoped to current connections; never permissions or global instructions. */
   assistance?: {
     observe: string[]
@@ -38,7 +42,12 @@ export interface ConnectionDescriptor {
     confirmBefore: string[]
   }
   /** Declared operations remain subject to native host authorization on every call. */
-  actions?: Array<{ id: string; resourceKinds: string[] }>
+  actions?: Array<{
+    id: string
+    resourceKinds: string[]
+    inputSchema: Record<string, unknown>
+    resultSchema: Record<string, unknown>
+  }>
   /** Read contract for existing tools without readOnlyHint; explicit false always wins. */
   mcpReadTools?: Record<string, Array<{ server: string; tool: string }>>
   cliReadTools?: Record<string, ConnectionCliDeclaration>
@@ -147,6 +156,7 @@ export interface ConnectionContext {
     ): Promise<ConnectionMcpResult>
   }
   cli: {
+    describe(dependency: string): Promise<{ pluginKey: string; connectorSlug: string }>
     callTool(
       dependency: string,
       input: { tool: string; arguments?: Record<string, string> }
@@ -192,21 +202,12 @@ export interface ConnectionProvider {
   ): Promise<unknown>
   readSource?(
     context: ConnectionContext,
-    input: { source: ConnectionSource; since?: string; limit?: number; cursor?: string }
+    input: { source: ConnectionSource; query?: Record<string, unknown>; cursor?: string }
   ): Promise<{
-    items: Array<{
-      id: string
-      at: string
-      text: string
-      subject?: string
-      from?: string
-      senderName?: string
-      truncated?: boolean
-    }>
+    items: Array<{ id: string; [key: string]: unknown }>
     hasMore: boolean
     nextCursor?: string
-    range?: { since: string; until: string }
-    readOnly?: true
+    [key: string]: unknown
   }>
   collect(
     context: ConnectionContext,

@@ -312,10 +312,10 @@ test('CLI declarations validate only the synthetic provider dependency and safe 
       p.cliReadTools.mail.operations.read.command = ['']
     },
     p => {
-      p.cliReadTools.mail.operations.read.command = ['record', '+read;touch']
+      p.cliReadTools.mail.operations.read.command = ['record', '\0']
     },
     p => {
-      p.cliReadTools.mail.operations.read.command = ['record', '--forward=$(touch)']
+      p.cliReadTools.mail.operations.read.command = ['record', 'x'.repeat(4097)]
     },
     p => {
       p.cliReadTools.mail.operations.read.parameters = { query: '--bad flag' }

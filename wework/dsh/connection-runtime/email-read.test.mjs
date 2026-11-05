@@ -90,7 +90,7 @@ test('reads bounded historical mail without advancing the real intake boundary o
   assert.deepEqual(f.source.boundary, boundary)
   assert.deepEqual(f.calls[0], ['open', 'INBOX', { readOnly: true }])
   assert.equal(f.calls.filter(call => call[0] === 'search').length, 1)
-  assert.equal(f.calls.find(call => call[0] === 'search')[1].uid, undefined)
+  assert.equal(f.calls.find(call => call[0] === 'search')[1].uid, '1:999')
   assert.deepEqual(f.calls.find(call => call[0] === 'fetch')[3], { uid: true })
 })
 
@@ -98,12 +98,12 @@ test('returns at most twenty messages and marks unread remainder rather than pre
   const f = await fixture({ count: 100 })
   const result = await f.registry.call(EMAIL_PROVIDER, 'readSource', {
     source: f.source,
-    limit: 20,
+    query: { limit: 20 },
   })
   assert.equal(result.items.length, 20)
   assert.equal(result.hasMore, true)
   const fetch = f.calls.find(call => call[0] === 'fetch')
-  assert.equal(fetch[1].length, 21)
+  assert.equal(fetch[1].length, 20)
   assert.equal(fetch[1][0], 100)
   assert.equal(fetch[2].source.maxLength, 262144)
 })
@@ -120,9 +120,11 @@ test('rejects invalid windows and bounds before making any IMAP request', async 
     { since: '2099-01-01T00:00:00Z' },
   ]) {
     await assert.rejects(
-      f.registry.call(EMAIL_PROVIDER, 'readSource', { source: f.source, ...options }),
+      f.registry.call(EMAIL_PROVIDER, 'readSource', { source: f.source, query: options }),
       {
-        code: 'email_read_range_invalid',
+        code: ['2000-01-01T00:00:00Z', '2099-01-01T00:00:00Z'].includes(options.since)
+          ? 'email_read_range_invalid'
+          : 'invalid_connection',
       }
     )
   }
@@ -138,7 +140,7 @@ test('filters the precise timestamp even when IMAP date search includes the star
   ]
   const result = await f.registry.call(EMAIL_PROVIDER, 'readSource', {
     source: f.source,
-    since: since.toISOString(),
+    query: { since: since.toISOString() },
   })
   assert.deepEqual(
     result.items.map(item => item.id),
@@ -163,13 +165,7 @@ test('missing accounts and transport failures stay failures rather than successf
 })
 
 test('optional reads do not make older providers invalid or bypass exact source validation', async () => {
-  const unsupported = await fixture({ read: false })
-  await assert.rejects(
-    unsupported.registry.call(EMAIL_PROVIDER, 'readSource', { source: unsupported.source }),
-    {
-      code: 'source_read_unsupported',
-    }
-  )
+  await assert.rejects(fixture({ read: false }), /declaration and implementation must match/)
   const f = await fixture()
   for (const patch of [{ providerId: 'other' }, { id: '*' }, { scope: 'all' }, { kind: 'other' }]) {
     await assert.rejects(
@@ -178,4 +174,80 @@ test('optional reads do not make older providers invalid or bypass exact source 
     )
   }
   assert.equal(f.calls.length, 0)
+})
+
+test('UID read cursors finish the fixed mailbox window without moving intake or including new mail', async () => {
+  const f = await fixture({ count: 5 })
+  const boundary = structuredClone(f.source.boundary)
+  const first = await f.registry.call(EMAIL_PROVIDER, 'readSource', {
+    source: f.source,
+    query: { limit: 2 },
+  })
+  assert.deepEqual(
+    first.items.map(item => item.id),
+    ['123:5', '123:4']
+  )
+  assert.equal(first.hasMore, true)
+  assert.equal(typeof first.nextCursor, 'string')
+  f.client.mailbox.uidNext = 1001
+  f.client.search = async () => [1, 2, 3, 4, 5, 1000]
+  const second = await f.registry.call(EMAIL_PROVIDER, 'readSource', {
+    source: f.source,
+    cursor: first.nextCursor,
+  })
+  const last = await f.registry.call(EMAIL_PROVIDER, 'readSource', {
+    source: f.source,
+    cursor: second.nextCursor,
+  })
+  assert.deepEqual(
+    second.items.map(item => item.id),
+    ['123:3', '123:2']
+  )
+  assert.deepEqual(
+    last.items.map(item => item.id),
+    ['123:1']
+  )
+  assert.equal(last.hasMore, false)
+  assert.deepEqual(last.range, first.range)
+  assert.deepEqual(f.source.boundary, boundary)
+  const queries = f.calls.filter(call => call[0] === 'fetch').map(call => call[1])
+  assert.deepEqual(queries, [[5, 4], [3, 2], [1]])
+  for (const query of [{ limit: 3 }, { since: new Date(Date.now() - 3600000).toISOString() }])
+    await assert.rejects(
+      f.registry.call(EMAIL_PROVIDER, 'readSource', {
+        source: f.source,
+        cursor: first.nextCursor,
+        query,
+      }),
+      { code: 'source_read_cursor_invalid' }
+    )
+  const other = await fixture()
+  await assert.rejects(
+    other.registry.call(EMAIL_PROVIDER, 'readSource', {
+      source: other.source,
+      cursor: first.nextCursor,
+    }),
+    { code: 'source_read_cursor_invalid' }
+  )
+  f.client.mailbox.uidValidity = 456n
+  await assert.rejects(
+    f.registry.call(EMAIL_PROVIDER, 'readSource', { source: f.source, cursor: first.nextCursor }),
+    { code: 'email_mailbox_reset' }
+  )
+})
+
+test('an expired UID read cursor cannot restart or widen a mailbox read', async t => {
+  const f = await fixture({ count: 3 })
+  const first = await f.registry.call(EMAIL_PROVIDER, 'readSource', {
+    source: f.source,
+    query: { limit: 1 },
+  })
+  const now = Date.now()
+  t.mock.method(Date, 'now', () => now + 31 * 60 * 1000)
+  const before = f.calls.length
+  await assert.rejects(
+    f.registry.call(EMAIL_PROVIDER, 'readSource', { source: f.source, cursor: first.nextCursor }),
+    { code: 'source_read_cursor_invalid' }
+  )
+  assert.equal(f.calls.length, before)
 })

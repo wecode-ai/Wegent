@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { imapSession, parseMail, mailError } from './email-client.js'
 
 export const EMAIL_PROVIDER = '@wegent/dsh-connection-runtime/email'
@@ -21,6 +22,9 @@ function readWindow({ since, limit = PAGE_SIZE }) {
 }
 
 export function createEmailProvider(accounts, network = { imapSession, parseMail }) {
+  const readCursors = new Map()
+  const binding = source =>
+    JSON.stringify([source.providerId, source.profile, source.kind, source.id, source.enabledAfter])
   const session = async (ctx, source, action) =>
     network.imapSession(
       await accounts.get(source.profile),
@@ -63,10 +67,32 @@ export function createEmailProvider(accounts, network = { imapSession, parseMail
       const { source } = input
       if (source?.providerId !== EMAIL_PROVIDER || source.kind !== 'inbox' || source.id !== 'INBOX')
         throw mailError()
-      const window = readWindow(input)
+      let state
+      if (input.cursor !== undefined) {
+        state = readCursors.get(input.cursor)
+        if (
+          !state ||
+          state.binding !== binding(source) ||
+          state.expiresAt < Date.now() ||
+          (input.query?.since !== undefined &&
+            Date.parse(input.query.since) !== state.window.since.getTime()) ||
+          (input.query?.limit !== undefined && input.query.limit !== state.window.limit)
+        )
+          throw mailError('source_read_cursor_invalid')
+      }
+      const window = state?.window ?? readWindow(input.query ?? {})
       return session(ctx, source, async client => {
-        const uids = await client.search({ since: window.since }, { uid: true })
-        const selected = [...uids].sort((a, b) => b - a).slice(0, window.limit + 1)
+        const partition = String(client.mailbox.uidValidity)
+        if (state && state.partition !== partition) throw mailError('email_mailbox_reset')
+        const ceiling = state?.ceiling ?? client.mailbox.uidNext - 1
+        const uids =
+          ceiling < 1
+            ? []
+            : await client.search({ since: window.since, uid: '1:' + ceiling }, { uid: true })
+        const selected = [...uids]
+          .filter(uid => uid <= ceiling)
+          .sort((a, b) => b - a)
+          .slice(0, window.limit)
         const rows = selected.length
           ? await client.fetchAll(
               selected,
@@ -97,10 +123,26 @@ export function createEmailProvider(accounts, network = { imapSession, parseMail
           })
         }
         items.sort((left, right) => right.at.localeCompare(left.at))
+        const hasMore = uids.some(uid => uid < selected.at(-1))
+        let nextCursor
+        if (hasMore) {
+          for (const [key, value] of readCursors)
+            if (value.expiresAt < Date.now()) readCursors.delete(key)
+          if (readCursors.size >= 1000) readCursors.delete(readCursors.keys().next().value)
+          nextCursor = randomUUID()
+          readCursors.set(nextCursor, {
+            binding: binding(source),
+            partition,
+            window,
+            ceiling: selected.at(-1) - 1,
+            expiresAt: state?.expiresAt ?? Date.now() + 30 * 60 * 1000,
+          })
+        }
         return {
           items: items.slice(0, window.limit),
           range: { since: window.since.toISOString(), until: window.until.toISOString() },
-          hasMore: uids.length > window.limit,
+          hasMore,
+          ...(nextCursor ? { nextCursor } : {}),
           readOnly: true,
         }
       })
