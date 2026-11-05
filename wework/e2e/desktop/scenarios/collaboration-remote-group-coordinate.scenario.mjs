@@ -19,6 +19,7 @@ import {
   selectCollaborationDomain,
   selectCloudAgentModel,
   waitForTestIdByText,
+  selectCollaborationProjectView,
 } from '../modules/workspace-flows.mjs'
 import { REMOTE_DOCKER_DEVICE_ID } from '../modules/shared.mjs'
 
@@ -340,7 +341,7 @@ async function createCoordinateGroup(control, request, projectId, timeoutMs) {
 }
 
 async function createIssue(control, request, projectId, timeoutMs) {
-  await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+  await selectCollaborationProjectView(control, CONTENT, 'board')
   await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-issue-create"]'))
   await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), {
     value: ISSUE,

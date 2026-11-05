@@ -3,10 +3,44 @@
 import { expect, test, vi } from 'vitest'
 
 import { fillTemplateRoleBindings } from '../../e2e/desktop/scenarios/collaboration-templates.scenario.mjs'
-import { configureFirstProjectExecutionEnvironment } from '../../e2e/desktop/modules/workspace-flows.mjs'
+import {
+  configureFirstProjectExecutionEnvironment,
+  selectCollaborationProjectView,
+} from '../../e2e/desktop/modules/workspace-flows.mjs'
 
 const role = (index: number) =>
   `[data-workspace-tab-content][aria-hidden="false"] [data-testid="template-role-main-role-${index}"]`
+
+test.each([
+  { view: 'board', tabId: 'collaboration-tab-board' },
+  { view: 'milestones', tabId: 'collaboration-milestones-tab' },
+])(
+  'waits for the rendered $view view before choosing its responsive control',
+  async ({ view, tabId }) => {
+    let releaseView!: () => void
+    const mounted = new Promise<void>(resolve => {
+      releaseView = resolve
+    })
+    const command = vi.fn(async (action: string) => {
+      if (action === 'waitFor') await mounted
+      return action === 'getElementCount' ? '1' : ''
+    })
+    const selecting = selectCollaborationProjectView({ command }, '#content', view, 1234)
+    expect(command).toHaveBeenCalledWith(
+      'waitFor',
+      `#content [data-testid="${tabId}"], #content [data-testid="collaboration-project-view-select"]`,
+      { visible: true, timeoutMs: 1234 }
+    )
+    expect(command).not.toHaveBeenCalledWith('getElementCount', expect.anything())
+    releaseView()
+    await selecting
+    expect(command).toHaveBeenCalledWith(
+      'select',
+      '#content [data-testid="collaboration-project-view-select"]',
+      { value: view }
+    )
+  }
+)
 
 test.each([true, false])(
   'opens execution settings through the rendered project view switcher (compact=%s)',

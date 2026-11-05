@@ -230,16 +230,20 @@ export async function selectAgentEnvironment(
   await control.command('waitFor', `${trigger}[data-value=${JSON.stringify(value)}]`, { timeoutMs })
 }
 
-export async function selectCollaborationProjectView(control, contentSelector, view) {
+export async function selectCollaborationProjectView(
+  control,
+  contentSelector,
+  view,
+  timeoutMs = DEFAULT_STEP_TIMEOUT_MS
+) {
+  const tabId = view === 'milestones' ? 'collaboration-milestones-tab' : `collaboration-tab-${view}`
+  const tab = `${contentSelector} [data-testid="${tabId}"]`
   const compact = `${contentSelector} [data-testid="collaboration-project-view-select"]`
+  await control.command('waitFor', `${tab}, ${compact}`, { visible: true, timeoutMs })
   if (Number(await control.command('getElementCount', compact)) > 0) {
     await control.command('select', compact, { value: view })
   } else {
-    await control.command(
-      'clickWhenEnabled',
-      `${contentSelector} [data-testid="collaboration-tab-${view}"]`,
-      { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
-    )
+    await control.command('clickWhenEnabled', tab, { timeoutMs })
   }
 }
 
@@ -1850,7 +1854,6 @@ async function verifyExistingTaskBoardAssociation(
     `${movedBoardContentSelector} [data-testid="cloud-project-header-title"]`,
     {
       text: targetProjectName,
-      visible: true,
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )

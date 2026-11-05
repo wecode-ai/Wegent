@@ -12,6 +12,7 @@ import {
   openProjectAgentCreator,
   selectProjectRunnerModel,
   waitForTestIdByText,
+  selectCollaborationProjectView,
 } from './workspace-flows.mjs'
 import { createZipFixture } from './zip-fixtures.mjs'
 import {
@@ -419,7 +420,7 @@ export async function verifyPluginDetailResilience({
   async function configureHealthyAgent(item, entry) {
     const name = `Detail isolation ${entry.name} ${process.pid}`
     await control.command('click', testId('workspace-tab-select-fixed-board'))
-    await control.command('click', scoped(testId('collaboration-tab-manage')))
+    await selectCollaborationProjectView(control, CONTENT, 'manage')
     await control.command('click', scoped(testId('collaboration-project-settings-agents')))
     await openProjectAgentCreator(control, scoped(testId('project-agent-add')), 10_000)
     await control.command('fill', testId(`${PREFIX}-display-name`), { value: name })

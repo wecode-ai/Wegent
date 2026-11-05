@@ -15,6 +15,7 @@ import {
   openProjectAgentCreator,
   reloadMainWindow,
   selectProjectRunnerModel,
+  selectCollaborationProjectView,
 } from '../modules/workspace-flows.mjs'
 import {
   assistantMessage,
@@ -64,7 +65,7 @@ function createStatusAutomation({ uiTimeoutMs, workbenchReadyTimeoutMs, modelRes
       todo: { version: (await issue()).version, ...values },
     })
   const openRules = async () => {
-    await click('collaboration-tab-manage')
+    await selectCollaborationProjectView(control, CONTENT, 'manage')
     await click('collaboration-project-settings-automatic-processing')
     await wait('automatic-processing')
   }
@@ -83,7 +84,8 @@ function createStatusAutomation({ uiTimeoutMs, workbenchReadyTimeoutMs, modelRes
         CONTENT
       )
     )
-    await wait('cloud-project-header-title', { text: PROJECT, visible: true })
+    await wait('cloud-project-header-title', { text: PROJECT })
+    await wait('cloud-project-header', { visible: true })
   }
   const saveRule = async () => {
     await control.command('clickWhenEnabled', scoped('automatic-processing-save'))
@@ -157,7 +159,7 @@ function createStatusAutomation({ uiTimeoutMs, workbenchReadyTimeoutMs, modelRes
       await configureFirstProjectExecutionEnvironment(control, CONTENT, uiTimeoutMs)
       projectId = (await rpc('projects.list')).find(candidate => candidate.name === PROJECT)?.id
       assert.ok(projectId, 'The scenario must create its own local project')
-      await click('collaboration-tab-manage')
+      await selectCollaborationProjectView(control, CONTENT, 'manage')
       await click('collaboration-project-settings-agents')
       await openProjectAgentCreator(control, scoped('project-agent-add'), uiTimeoutMs)
       await control.command('fill', '[data-testid="cloud-project-chat-agent-display-name"]', {
@@ -234,7 +236,7 @@ function createStatusAutomation({ uiTimeoutMs, workbenchReadyTimeoutMs, modelRes
       assert.equal(await control.command('getValue', scoped('automatic-processing-prompt')), PROMPT)
       await click('automatic-processing-cancel')
 
-      await click('collaboration-tab-board')
+      await selectCollaborationProjectView(control, CONTENT, 'board')
       await control.command('clickWhenEnabled', scoped(`cloud-todo-card-${issueId}`))
       await wait('collaboration-issue-detail', { text: MARKER })
       await control.command('select', scoped('cloud-todo-detail-status'), { value: 'acceptance' })

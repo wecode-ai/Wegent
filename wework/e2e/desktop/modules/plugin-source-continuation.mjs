@@ -12,6 +12,7 @@ import {
   selectProjectRunnerModel,
   waitForControlValueIncludes,
   waitForTestIdByText,
+  selectCollaborationProjectView,
 } from './workspace-flows.mjs'
 import { createZipFixture } from './zip-fixtures.mjs'
 
@@ -265,7 +266,7 @@ export async function verifyPluginSourceContinuation({
     projectId = projects.result.find(item => item.name === projectName)?.id
     assert.ok(projectId, 'The new local project is missing from the real project catalog')
     await configureFirstProjectExecutionEnvironment(control, CONTENT, workbenchReadyTimeoutMs)
-    await control.command('click', scoped(testId('collaboration-tab-manage')))
+    await selectCollaborationProjectView(control, CONTENT, 'manage')
     await control.command('click', scoped(testId('collaboration-project-settings-agents')))
     const normal = await phase('healthy-before-fault')
     assert.ok(normal.passed, 'The healthy personal plugin selection/save precondition failed')

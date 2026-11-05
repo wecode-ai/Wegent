@@ -1,3 +1,4 @@
+import { selectCollaborationProjectView } from './workspace-flows.mjs'
 import assert from 'node:assert/strict'
 
 function dateKey(value) {
@@ -243,7 +244,7 @@ export async function verifyCollaborationScheduleViews({
   )
   await capture(control, 'offline-local-project-space-03-gantt-schedule.png')
 
-  await control.command('click', scoped('[data-testid="collaboration-tab-table"]'))
+  await selectCollaborationProjectView(control, scoped('').trim(), 'table')
   await control.command('waitFor', scoped('[data-testid="collaboration-issue-table"]'), {
     text: issueTitle,
     visible: true,

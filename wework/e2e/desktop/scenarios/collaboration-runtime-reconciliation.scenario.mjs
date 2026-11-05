@@ -398,7 +398,7 @@ export async function createDesktopScenario({
     await control.command('click', `${CONTENT} [data-testid="cloud-todo-detail-close"]`)
     // Fixed workspace tabs keep effects alive. The files view unmounts board cards,
     // whose transcript reads would otherwise submit uncontrolled Runtime snapshots.
-    await control.command('click', `${CONTENT} [data-testid="collaboration-tab-files"]`)
+    await selectCollaborationProjectView(control, CONTENT, 'files')
     await until(
       () => control.command('getElementCount', `${CONTENT} [data-testid^="cloud-todo-card-"]`),
       count => Number(count) === 0,
