@@ -13,6 +13,7 @@ export class ComputerUseDriverProcess {
   private nextId = 0
   private stopped = false
   private failure: Error | null = null
+  private readonly exited: Promise<void>
   private readonly pending = new Map<
     number,
     { resolve: (result: Result) => void; reject: (error: Error) => void }
@@ -30,10 +31,14 @@ export class ComputerUseDriverProcess {
       if (message.ok) pending.resolve(message.result)
       else pending.reject(new Error(message.error))
     })
-    child.once('exit', (code, signal) => {
-      this.fail(
-        new Error(`Computer use driver exited (${signal ?? code}); action outcome is unknown`)
-      )
+    this.exited = new Promise(resolve => {
+      child.once('close', () => resolve())
+      child.once('exit', (code, signal) => {
+        resolve()
+        this.fail(
+          new Error(`Computer use driver exited (${signal ?? code}); action outcome is unknown`)
+        )
+      })
     })
     child.once('disconnect', () => {
       this.fail(new Error('Computer use driver IPC disconnected; action outcome is unknown'))
@@ -62,7 +67,8 @@ export class ComputerUseDriverProcess {
       return driver
     } catch (error) {
       driver.stopped = true
-      child.kill()
+      child.kill('SIGKILL')
+      await driver.exited
       throw error
     }
   }
@@ -116,12 +122,13 @@ export class ComputerUseDriverProcess {
 
   /** Stop the runtime and terminate its process even when native cleanup fails. */
   async shutdown(): Promise<void> {
-    if (this.stopped) return
+    if (this.stopped) return this.exited
     this.stopped = true
     try {
       if (!this.failure) await this.lifecycle('shutdown')
     } finally {
-      this.child.kill()
+      this.child.kill('SIGKILL')
+      await this.exited
     }
   }
 

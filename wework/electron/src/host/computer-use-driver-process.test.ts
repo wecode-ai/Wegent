@@ -148,6 +148,17 @@ describe('ComputerUseDriverProcess', () => {
     expect(child.kill).toHaveBeenCalledOnce()
   })
 
+  test('finishes startup failure cleanup when spawning closes without an exit event', async () => {
+    child.send.mockImplementation(() => true)
+    child.kill.mockImplementation(() => false)
+    const startup = ComputerUseDriverProcess.create(vi.fn())
+    const rejected = expect(startup).rejects.toThrow('Unable to spawn native worker')
+    child.emit('error', new Error('Unable to spawn native worker'))
+    child.emit('close', -2)
+    await rejected
+    expect(child.kill).toHaveBeenCalledWith('SIGKILL')
+  })
+
   test('handles fatal worker errors without an unhandled host error event', async () => {
     const onExit = vi.fn()
     const driver = await ComputerUseDriverProcess.create(onExit)
@@ -179,6 +190,22 @@ describe('ComputerUseDriverProcess', () => {
     const stopped = expect(driver.shutdown()).rejects.toThrow('shutdown timed out')
     await vi.advanceTimersByTimeAsync(10_000)
     await stopped
+    expect(child.kill).toHaveBeenCalledOnce()
+  })
+
+  test('does not finish shutdown before the native process actually exits', async () => {
+    const driver = await ComputerUseDriverProcess.create(vi.fn())
+    child.kill.mockImplementation(() => true)
+    let finished = false
+    const stopped = driver.shutdown().then(() => {
+      finished = true
+    })
+    await vi.waitFor(() => expect(child.kill).toHaveBeenCalledWith('SIGKILL'))
+    expect(finished).toBe(false)
+    child.emit('exit', 0)
+    await stopped
+    expect(finished).toBe(true)
+    await driver.shutdown()
     expect(child.kill).toHaveBeenCalledOnce()
   })
 

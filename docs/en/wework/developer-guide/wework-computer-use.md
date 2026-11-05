@@ -65,22 +65,31 @@ only through token-authenticated local HTTP requests. Mutating tools use
 not inherit write approval.
 
 Only one desktop action may run at a time. When the user clicks Stop or presses
-Escape, Electron cancels the active Driver call through an `AbortSignal`.
+Escape, Electron requests cancellation through an `AbortSignal`.
 Hiding the activity indicator while leaving the underlying action running is
 not sufficient.
 
 MCP continues reading input while tools run, including `notifications/cancelled`
 and ping. Cancellation or stdio EOF drops the corresponding HTTP request;
-Electron aborts the SDK call when the response connection closes prematurely.
+Electron requests SDK cancellation when the response connection closes prematurely.
 Tool execution and discovery have a 90-second host deadline, below the HTTP
-client's 120-second deadline. Timeouts return an error and abort the SDK call.
-Action admission stays occupied until that SDK call settles, and late results
-cannot replace timeout errors.
+client's 120-second deadline. Cancelling a dispatched tool call reports its
+original reason and `action outcome is unknown`; it does not prove the action
+was never executed. Pre-dispatch cancellation and discovery retain their original
+reason. Late results cannot replace cancellation errors.
+
+The worker derives read-only classification from the SDK catalog's `readOnlyHint`,
+without a handwritten tool registry. Read-only calls and discovery cancel their
+SDK Future directly. Mutating calls retain that Future: CUA 0.22.1 can otherwise
+leave native input running and skip release cleanup. Action admission remains
+occupied until the native call actually finishes or its process exits. Driver
+shutdown also waits for process exit before a replacement can be created.
 Discovery and tool calls share cancellation handling. If the worker has not
 replied within five seconds of cancellation, the host forcibly terminates it
 and reports an unknown action outcome. Recovery follows the existing worker
 failure flow: the user disables and re-enables computer use, without automatic
-action replay.
+action replay. Re-enabling only rebuilds the runtime; forced process termination
+does not prove that OS mouse-button or modifier-key state has been released.
 
 The main-process `[computer-use]` log records an operation ID, host and native
 worker PIDs, tool name, start, completion, cancellation, failure, and elapsed

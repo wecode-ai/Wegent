@@ -254,9 +254,11 @@ export class ComputerUseService {
     name: string,
     response: import('node:http').ServerResponse,
     operation: (signal: AbortSignal) => Promise<Result>,
-    controller = new AbortController()
+    actionController?: AbortController
   ): Promise<Result> {
+    const controller = actionController ?? new AbortController()
     const driver = this.driver
+    let operationStarted = false
     const startedAt = Date.now()
     const operationId = ++this.nextOperationId
     this.operationControllers.add(controller)
@@ -276,10 +278,15 @@ export class ComputerUseService {
         controller.abort(new Error('Computer use client disconnected'))
       }
     }
+    /** Cancellation cannot prove that a dispatched action had no native side effects. */
+    const cancellationMessage = (): string => {
+      const reason = errorMessage(controller.signal.reason)
+      return actionController && operationStarted ? `${reason}; action outcome is unknown` : reason
+    }
     /** Reply promptly while keeping shutdown errors out of a newer driver generation. */
     const aborted = (): void => {
       log('cancelled')
-      const message = errorMessage(controller.signal.reason)
+      const message = cancellationMessage()
       if (this.driver === driver) this.error = message
       writeResponse(response, 200, { ok: false, error: message })
     }
@@ -295,13 +302,14 @@ export class ComputerUseService {
     try {
       if (response.destroyed) disconnected()
       controller.signal.throwIfAborted()
+      operationStarted = true
       const result = await operation(controller.signal)
       controller.signal.throwIfAborted()
       log('completed')
       return result
     } catch (error) {
       log('failed')
-      throw controller.signal.aborted ? controller.signal.reason : error
+      throw controller.signal.aborted ? new Error(cancellationMessage(), { cause: error }) : error
     } finally {
       this.operationControllers.delete(controller)
       clearTimeout(timeout)
@@ -354,6 +362,7 @@ async function writeRuntimeRecord(path: string, record: Record<string, unknown>)
   await chmod(path, 0o600)
 }
 
+/** Ignore replies after cancellation or disconnection has already ended the response. */
 function writeResponse(
   response: import('node:http').ServerResponse,
   status: number,

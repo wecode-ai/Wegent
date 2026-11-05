@@ -235,7 +235,7 @@ describe('ComputerUseService', () => {
     await service.stopCurrentAction()
     await expect(actionResponse.then(response => response.json())).resolves.toMatchObject({
       ok: false,
-      error: 'Computer use action stopped by user',
+      error: 'Computer use action stopped by user; action outcome is unknown',
     })
     await expect(service.status()).resolves.toMatchObject({ currentTool: null })
     await service.stop()
@@ -265,6 +265,24 @@ describe('ComputerUseService', () => {
     await expect(service.setEnabled(true)).resolves.toMatchObject({ running: true, error: null })
     expect(mocks.create).toHaveBeenCalledTimes(2)
     await service.stop()
+  })
+
+  test('waits for the failed native generation to stop before creating a replacement', async () => {
+    const { service } = await openBridge()
+    let finish!: () => void
+    const pendingShutdown = new Promise<void>(resolve => {
+      finish = resolve
+    })
+    mocks.shutdown.mockReturnValueOnce(pendingShutdown)
+    const onExit = mocks.create.mock.calls[0][0] as (error: Error) => void
+    onExit(new Error('Native worker cancellation timed out; action outcome is unknown'))
+    await vi.waitFor(() => expect(mocks.shutdown).toHaveBeenCalledOnce())
+    const restarted = service.setEnabled(true)
+    expect(mocks.create).toHaveBeenCalledOnce()
+    finish()
+    await expect(restarted).resolves.toMatchObject({ enabled: true, running: true })
+    expect(mocks.create).toHaveBeenCalledTimes(2)
+    expect(mocks.callTool).not.toHaveBeenCalled()
   })
 
   test('ignores exit notifications belonging to a stopped generation', async () => {
@@ -323,7 +341,7 @@ describe('ComputerUseService', () => {
     const response = await call({ action: 'callTool', name: 'start_session' })
     await expect(response.json()).resolves.toMatchObject({
       ok: false,
-      error: 'Computer use start_session timed out after 30ms',
+      error: 'Computer use start_session timed out after 30ms; action outcome is unknown',
     })
     expect(signal.aborted).toBe(true)
     await expect(service.status()).resolves.toMatchObject({ currentTool: 'start_session' })
