@@ -782,7 +782,11 @@ describe('unified human response', () => {
     })
     view(interactionQuestion, interactionTask, false, undefined, false)
     await waitFor(() => expect(context!.pending).toHaveLength(1))
-    expect(harness.list).toHaveBeenCalledWith({ pendingOnly: true, deviceId: undefined })
+    expect(harness.list).toHaveBeenCalledWith({
+      pendingOnly: true,
+      preferCached: true,
+      deviceId: undefined,
+    })
     expect(context!.pending[0].task.address).toMatchObject({
       deviceId: interactionTask.address.deviceId,
       taskId: interactionTask.address.taskId,

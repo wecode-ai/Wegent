@@ -5896,7 +5896,7 @@ async fn cached_task_list_uses_the_existing_runtime_work_store() {
 
 #[tokio::test]
 async fn pending_task_list_discovers_filtered_work_without_changing_sidebar_visibility() {
-    let (handler, root) = isolated_runtime_work_handler("pending-task-list");
+    let (mut handler, root) = isolated_runtime_work_handler("pending-task-list");
     let project_index = CodexGlobalProjectIndex::from_test_payload(
         json!({"electron-saved-workspace-roots": ["/tmp/visible-project"]})
             .as_object()
@@ -5912,6 +5912,29 @@ async fn pending_task_list_discovers_filtered_work_without_changing_sidebar_visi
             ..RuntimeTaskLink::default()
         });
     }
+    for (id, interaction, recovering) in [
+        ("native-input", Some("waitingForUserInput"), false),
+        ("async-reply", Some("awaitingUserReply"), false),
+        ("recovery-pending", Some("awaitingUserReply"), true),
+        ("terminal", None, false),
+        ("recovery-without-question", None, true),
+    ] {
+        let mut link = RuntimeTaskLink {
+            local_task_id: id.into(),
+            runtime: "codex".into(),
+            thread_id: Some(format!("thread-{id}")),
+            workspace_path: "/tmp/hidden-project".into(),
+            interaction_status: interaction.map(str::to_owned),
+            goal_status: recovering.then(|| "active".into()),
+            goal_execution_status: recovering.then(|| "recovering".into()),
+            ..RuntimeTaskLink::default()
+        };
+        crate::runtime_work::lifecycle::begin_native_request(&mut link);
+        crate::runtime_work::lifecycle::settle_native_execution(&mut link, "completed");
+        handler.upsert_local_task(link);
+    }
+    // Pending interactions are durable even when the provider process is stopped.
+    handler.store = RuntimeWorkStore::new(root.join("runtime-work/index.json"));
     let visible = handler
         .list_tasks_with_project_index(
             &json!({"preferCached":true}),
@@ -5936,8 +5959,42 @@ async fn pending_task_list_discovers_filtered_work_without_changing_sidebar_visi
         .filter_map(|workspace| workspace["tasks"].as_array())
         .flatten()
         .collect::<Vec<_>>();
-    assert_eq!(tasks.len(), 1);
-    assert_eq!(tasks[0]["taskId"], "hidden-pending");
+    let ids: HashSet<_> = tasks
+        .iter()
+        .filter_map(|task| task["taskId"].as_str())
+        .collect();
+    assert_eq!(
+        ids,
+        HashSet::from([
+            "hidden-pending",
+            "native-input",
+            "async-reply",
+            "recovery-pending"
+        ])
+    );
+    assert!(tasks.iter().any(|task| task["taskId"] == "native-input"
+        && task["interactionStatus"] == "waitingForUserInput"));
+    assert!(tasks
+        .iter()
+        .any(|task| task["taskId"] == "recovery-pending"
+            && task["goalExecutionStatus"] == "recovering"));
+    handler.store.update_task("async-reply", |link| {
+        link.interaction_status = None;
+    });
+    handler.store.update_task("hidden-idle", |link| {
+        link.interaction_status = Some("waitingForUserInput".into());
+    });
+    let refreshed = handler
+        .list_tasks_with_project_index(
+            &json!({"preferCached":true, "pendingOnly":true}),
+            &project_index,
+            Instant::now(),
+        )
+        .await
+        .unwrap();
+    let refreshed = refreshed.to_string();
+    assert!(!refreshed.contains("async-reply"));
+    assert!(refreshed.contains("hidden-idle"));
     let _ = fs::remove_dir_all(root);
 }
 

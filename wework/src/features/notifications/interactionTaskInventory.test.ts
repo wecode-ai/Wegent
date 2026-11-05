@@ -27,7 +27,7 @@ it('discovers healthy local task requests when the cloud device catalog calls th
       runtimeWorkApi: { listRuntimeWork: list },
     },
   } as unknown as TaskSource)
-  expect(list).toHaveBeenCalledWith({ pendingOnly: true, deviceId: 'device' })
+  expect(list).toHaveBeenCalledWith({ pendingOnly: true, preferCached: true, deviceId: 'device' })
   expect(new Set(inventory.items.map(item => item.address.deviceId))).toEqual(
     new Set(['device', 'remote'])
   )
@@ -59,7 +59,7 @@ it('discovers authorized device requests independently and isolates a failed dev
   )
   expect(inventory.failedDevices).toEqual(new Set(['unavailable', 'offline']))
   expect(list).toHaveBeenCalledTimes(3)
-  expect(list).toHaveBeenCalledWith({ pendingOnly: true, deviceId: 'remote' })
+  expect(list).toHaveBeenCalledWith({ pendingOnly: true, preferCached: true, deviceId: 'remote' })
 })
 
 it('preserves per-device isolation through the canonical HTTP adapter', async () => {
