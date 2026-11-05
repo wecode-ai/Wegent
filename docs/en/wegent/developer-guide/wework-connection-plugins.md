@@ -97,6 +97,8 @@ Initial reads use `source` and optional `query`. Continuations use the same sour
 
 Read cursors, collection checkpoints, and action receipts are separate state. Reads cannot advance collection boundaries, modify processing state, or create intake events. The model should retrieve the context necessary for the current judgment. Useful delivery consists of verified findings or actual action results; creating a task, unfinished retrieval, or implementation limitations cannot substitute for that outcome.
 
+GitHub and GitLab repository sources implement this same read interface. Queries specify `entityKind` (`issue` or `change_request`), `number`, and `view`. Both provide details and comments; change requests additionally provide checks, commit statuses, and reviews. GitHub checks and legacy commit statuses are separate views. GitLab reviews return an approval-state object. No single view represents all merge requirements. Checks and statuses may select a commit SHA; the initially resolved commit remains fixed across continuation pages, while a new query resolves the current commit again. Every page verifies repository identity and preserves permission errors. Reading does not create a repository subscription.
+
 ## Provider contract
 
 | Method                          | Behavior                                                                                                                                                             |
