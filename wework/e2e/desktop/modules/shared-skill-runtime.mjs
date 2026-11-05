@@ -39,6 +39,11 @@ export function createSharedSkillRuntime({
       writeText(response, `${turn.callId}-done`, turn.completion)
       return true
     }
+    assert.equal(
+      serialized.includes(`**${NAME}** [USER SELECTED - PRIORITIZE]`),
+      Boolean(turn.bindShells),
+      'Native Claude did not receive the configured skill preload guidance'
+    )
     const output = (body.input ?? []).find(
       item => item.type === 'function_call_output' && item.call_id === turn.callId
     )
@@ -376,6 +381,7 @@ export function createSharedSkillRuntime({
       ).json()
       assert.equal(updatedBot.shell_type, 'ClaudeCode')
       assert.deepEqual(updatedBot.preload_skills, [NAME])
+      assert.equal(updatedBot.preload_skill_refs[NAME].skill_id, skillId)
       await runTurn('V3', 4, ['Chat'])
       await assertLayout(chatBound)
       chatBoundPackage = packagePath(chatBound)
