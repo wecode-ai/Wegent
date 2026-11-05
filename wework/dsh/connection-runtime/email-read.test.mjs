@@ -5,10 +5,9 @@ import { ConnectionRegistry } from '../plugin-runtime/connections.js'
 import { createEmailAccounts } from './email-accounts.js'
 import { createEmailProvider, EMAIL_PROVIDER } from './email-provider.js'
 
-async function fixture({ count = 2, read = true } = {}) {
+async function fixture({ count = 2, read = true, at = new Date(Date.now() - 60 * 1000) } = {}) {
   const values = new Map()
   const calls = []
-  const at = new Date(Date.now() - 60 * 1000)
   const client = {
     mailbox: { uidValidity: 123n, uidNext: 1000 },
     mailboxOpen: async (id, options) => calls.push(['open', id, options]),
@@ -70,6 +69,30 @@ async function fixture({ count = 2, read = true } = {}) {
   }
   return { registry, source, calls, client, at, accounts }
 }
+
+test('publishes priority guidance with historical read scope without authorizing external actions', async () => {
+  const yesterday = new Date(Date.now() - 36 * 60 * 60 * 1000)
+  const f = await fixture({ count: 1, at: yesterday })
+  const [provider] = await f.registry.catalog()
+  const preparation = provider.assistance.prepare.join('\n')
+  assert.match(preparation, /distinguish today's work from mail received today/)
+  assert.match(preparation, /older unfinished work/)
+  assert.match(preparation, /Unread status is a discovery signal/)
+  assert.match(preparation, /resolved or superseded/)
+  assert.match(provider.assistance.confirmBefore.join('\n'), /native single-use approval/)
+
+  const boundary = structuredClone(f.source.boundary)
+  const result = await f.registry.call(EMAIL_PROVIDER, 'readSource', {
+    source: f.source,
+    query: { since: new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString() },
+  })
+  assert.equal(result.items.length, 1)
+  assert.equal(result.items[0].at, yesterday.toISOString())
+  assert.ok(result.items[0].text.includes('IMAP protocol fixture'))
+  assert.equal(result.readOnly, true)
+  assert.deepEqual(f.source.boundary, boundary)
+  assert.deepEqual(f.calls[0], ['open', 'INBOX', { readOnly: true }])
+})
 
 test('reads bounded historical mail without advancing the real intake boundary or exposing credentials', async () => {
   const f = await fixture()
