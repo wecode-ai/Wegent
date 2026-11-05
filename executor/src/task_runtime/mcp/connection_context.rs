@@ -11,21 +11,9 @@ pub(super) fn work_messages(messages: &[Value], args: &Value) -> Result<Value, S
             .iter()
             .find(|message| message["id"] == id || message["recordId"] == id)
             .ok_or("Unknown source event")?;
-        let payload = message.to_string();
-        let offset = offset(args, "payloadOffset")?;
-        let total = payload.chars().count();
-        if offset > total {
-            return Err("payloadOffset is outside this event".into());
-        }
-        let text = payload
-            .chars()
-            .skip(offset)
-            .take(PAYLOAD_CHARS)
-            .collect::<String>();
-        return Ok(
-            json!({"messageId":id,"payload":text,"offset":offset,"totalCharacters":total,
-            "nextOffset":(offset+PAYLOAD_CHARS<total).then_some(offset+PAYLOAD_CHARS)}),
-        );
+        let mut chunk = payload_chunk(message, args)?;
+        chunk["messageId"] = json!(id);
+        return Ok(chunk);
     }
     let offset = offset(args, "offset")?;
     if offset > messages.len() {
@@ -41,6 +29,25 @@ pub(super) fn work_messages(messages: &[Value], args: &Value) -> Result<Value, S
     Ok(
         json!({"messages":page,"hasMore":offset+PAGE_SIZE<messages.len(),
         "nextOffset":(offset+PAGE_SIZE<messages.len()).then_some(offset+PAGE_SIZE)}),
+    )
+}
+
+/// Chunk the complete immutable record without interpreting provider-owned fields.
+pub(super) fn payload_chunk(record: &Value, args: &Value) -> Result<Value, String> {
+    let payload = record.to_string();
+    let offset = offset(args, "payloadOffset")?;
+    let total = payload.chars().count();
+    if offset > total {
+        return Err("payloadOffset is outside this event".into());
+    }
+    let text = payload
+        .chars()
+        .skip(offset)
+        .take(PAYLOAD_CHARS)
+        .collect::<String>();
+    Ok(
+        json!({"payload":text,"offset":offset,"totalCharacters":total,
+        "nextOffset":(offset+PAYLOAD_CHARS<total).then_some(offset+PAYLOAD_CHARS)}),
     )
 }
 
