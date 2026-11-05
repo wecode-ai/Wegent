@@ -76,7 +76,7 @@ export function ProjectRuleConnectionPicker({
             data-testid="project-rule-connection-close"
             aria-label={translate("common.close", "关闭")}
             onClick={onClose}
-            className="flex h-8 w-8 items-center justify-center rounded-md hover:bg-muted"
+            className="flex h-11 w-11 items-center justify-center rounded-md hover:bg-muted md:h-8 md:w-8"
           >
             <X aria-hidden="true" className="h-4 w-4" />
           </button>
@@ -144,7 +144,7 @@ export function ProjectRuleConnectionPicker({
                 type="button"
                 data-testid="project-rule-connection-retry"
                 onClick={() => setRevision((value) => value + 1)}
-                className="min-h-9 underline"
+                className="min-h-11 underline md:min-h-9"
               >
                 {translate("common.retry", "重试")}
               </button>

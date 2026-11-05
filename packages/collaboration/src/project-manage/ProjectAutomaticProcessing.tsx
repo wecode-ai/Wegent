@@ -714,7 +714,7 @@ export function ProjectAutomaticProcessing({
                 data-testid="automatic-processing-back"
                 disabled={saving}
                 aria-label={translate("automation_rules.back", "返回")}
-                className="mr-2 flex h-8 w-8 items-center justify-center rounded-md hover:bg-muted"
+                className="mr-2 flex h-11 w-11 items-center justify-center rounded-md hover:bg-muted md:h-8 md:w-8"
                 onClick={() => {
                   setEditing(false);
                   setChangingConnection(true);
@@ -736,7 +736,7 @@ export function ProjectAutomaticProcessing({
               </h2>
               <button
                 aria-label={translate("common.close", "关闭")}
-                className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted"
+                className="flex h-11 w-11 items-center justify-center rounded-lg text-text-secondary hover:bg-muted md:h-8 md:w-8"
                 disabled={saving}
                 onClick={() => {
                   setEditing(false);

@@ -31,7 +31,7 @@ export function ConnectionRuleFields({
         onToggle={(event) => setConditionsOpen(event.currentTarget.open)}
       >
         <summary
-          className="min-h-9 cursor-pointer text-sm text-text-secondary"
+          className="min-h-11 cursor-pointer text-sm text-text-secondary md:min-h-9"
           data-testid={`${testId}-conditions`}
         >
           {translate("automation_rules.conditions", "满足条件时")}

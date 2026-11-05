@@ -542,7 +542,7 @@ function ConnectionRulesWorkspace({
                 data-testid="connection-rule-back"
                 disabled={busy}
                 aria-label={translate("automation_rules.back", "返回")}
-                className="flex h-8 w-8 items-center justify-center rounded-md hover:bg-muted"
+                className="flex h-11 w-11 items-center justify-center rounded-md hover:bg-muted md:h-8 md:w-8"
                 onClick={() => {
                   if (step === "rule") setStep("connection");
                   else {
@@ -588,7 +588,7 @@ function ConnectionRulesWorkspace({
                 disabled={busy}
                 aria-label={translate("common.close", "关闭")}
                 onClick={() => setDraft(null)}
-                className="flex h-8 w-8 items-center justify-center rounded-md hover:bg-muted"
+                className="flex h-11 w-11 items-center justify-center rounded-md hover:bg-muted md:h-8 md:w-8"
               >
                 <X aria-hidden="true" className="h-4 w-4" />
               </button>
