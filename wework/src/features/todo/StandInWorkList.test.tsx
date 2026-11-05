@@ -142,6 +142,7 @@ it('retains the explicit retry action for a terminal failed task', async () => {
   )
   await userEvent.click(screen.getByTestId('stand-in-activity-task-work'))
   expect(runWork).not.toHaveBeenCalled()
+  expect(screen.getByTestId('stand-in-preview-confirm-once')).toBeInTheDocument()
   const retry = screen.getByTestId('stand-in-preview-open')
   expect(retry).toHaveTextContent('交给角色处理')
   await userEvent.click(retry)
@@ -261,3 +262,42 @@ it('projects completed history without a runtime task as completed', () => {
     'completed'
   )
 })
+
+it.each(['done', 'running'] as const)(
+  'does not offer to confirm and execute an already %s work',
+  async status => {
+    const user = userEvent.setup()
+    const item: StandInInboxWork = {
+      ...work(),
+      status: 'failed',
+      task: {
+        taskId: 'work',
+        title: '评审方案',
+        runtime: 'codex',
+        workspacePath: '/workspace',
+        status,
+        running: status === 'running',
+        updatedAt: '2026-10-24T00:00:00Z',
+        turnStatus: status === 'done' ? 'completed' : 'inProgress',
+      },
+    }
+    const runWork = vi.fn()
+    render(
+      <StandInWorkList
+        items={[inboxRuntimeItem(item, 'device')]}
+        inbox={[item]}
+        api={
+          {
+            runWork,
+            workMessages: vi.fn(async () => ({ messages: [item.latestMessage] })),
+          } as unknown as StandInExecutorApi
+        }
+        userId={0}
+        deviceId="device"
+      />
+    )
+    await user.click(screen.getByTestId('stand-in-activity-task-work'))
+    expect(screen.queryByTestId('stand-in-preview-confirm-once')).not.toBeInTheDocument()
+    expect(runWork).not.toHaveBeenCalled()
+  }
+)
