@@ -56,7 +56,10 @@ function fixture(compact, options = {}) {
         'collaboration-tab-board': 'board',
         'collaboration-tab-table': 'table',
         'collaboration-tab-manage': 'manage',
+        'collaboration-tab-files': 'files',
         'collaboration-gantt-tab': 'gantt',
+        'collaboration-calendar-tab': 'calendar',
+        'collaboration-milestones-tab': 'milestones',
       }
       const id = Object.keys(tabs).find(id => tabs[id] === input.value)
       assert.ok(id, `Wide layout does not render ${input.value}`)
@@ -65,7 +68,9 @@ function fixture(compact, options = {}) {
         `${CONTENT} [data-testid="collaboration-project-view-select"], ${CONTENT} [data-testid="${id}"]`
       )
       assert.ok(
-        (options.views ?? ['board', 'table', 'manage', 'gantt']).includes(input.value),
+        (
+          options.views ?? ['board', 'table', 'manage', 'gantt', 'files', 'calendar', 'milestones']
+        ).includes(input.value),
         'View is unavailable'
       )
       view = input.value
@@ -98,7 +103,7 @@ test.each([false, true])(
   }
 )
 
-for (const view of ['board', 'manage', 'table', 'gantt']) {
+for (const view of ['board', 'manage', 'table', 'gantt', 'files', 'calendar', 'milestones']) {
   test.each([false, true])(
     `selects ${view} through the actual layout, compact=%s`,
     async compact => {

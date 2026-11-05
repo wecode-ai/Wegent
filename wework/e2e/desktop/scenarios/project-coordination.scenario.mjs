@@ -18,6 +18,7 @@ import {
   responseCompleted,
   responseCreated,
 } from '../modules/response-protocol.mjs'
+import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 
 const USER = 9001
 const LOCAL_OWNER = 0
@@ -201,10 +202,7 @@ export function createDesktopScenario({
         'clickWhenEnabled',
         `[data-testid="collaboration-workspace-project-${project.id}"]`
       )
-      await control.command(
-        'clickWhenEnabled',
-        `${CONTENT} [data-testid="collaboration-tab-board"]`
-      )
+      await selectCollaborationProjectView(control, CONTENT, 'board')
       await control.command('clickWhenEnabled', '[data-testid="project-coordinator-open"]')
       await control.command('waitFor', '[data-testid="project-coordination-enable"]')
       assert.notEqual(

@@ -3,6 +3,10 @@ import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { expandCollaborationWorkspace, reloadMainWindow } from '../modules/workspace-flows.mjs'
+import {
+  collaborationProjectViewSelector,
+  selectCollaborationProjectView,
+} from '../modules/collaboration-project-navigation.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 
@@ -67,8 +71,8 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       'clickWhenEnabled',
       `${CONTENT} [data-testid="collaboration-workspace-project-${project.id}"]`
     )
-    await control.command('waitFor', `${CONTENT} [data-testid="collaboration-tab-board"]`)
-    await control.command('click', `${CONTENT} [data-testid="collaboration-tab-board"]`)
+    await control.command('waitFor', collaborationProjectViewSelector(CONTENT, 'board'))
+    await selectCollaborationProjectView(control, CONTENT, 'board')
     await control.command('waitFor', `${CONTENT} [data-testid="stand-in-open"]`)
   }
 

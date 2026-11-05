@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 
 import {
   assistantMessage,
@@ -125,9 +126,7 @@ async function addLocalAgent(control, timeoutMs) {
 }
 
 async function createIssueAndAssignAgent(control, agentId, timeoutMs) {
-  await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-tab-board"]'), {
-    timeoutMs,
-  })
+  await selectCollaborationProjectView(control, CONTENT, 'board', timeoutMs)
   await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-issue-create"]'))
   await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), {
     value: ASSIGNED_TASK,

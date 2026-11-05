@@ -6,6 +6,7 @@ import {
   createLocalCollaborationProject,
   configureFirstProjectExecutionEnvironment,
 } from '../modules/workspace-flows.mjs'
+import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const PROJECT = `分身独立控制-${process.pid}`
@@ -22,7 +23,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await createLocalCollaborationProject(control, CONTENT, PROJECT)
       await configureFirstProjectExecutionEnvironment(control, CONTENT, uiTimeoutMs)
-      await control.command('click', `${CONTENT} [data-testid="collaboration-tab-board"]`)
+      await selectCollaborationProjectView(control, CONTENT, 'board')
       await control.command('waitFor', `${CONTENT} [data-testid="collaboration-empty-project"]`, {
         timeoutMs: uiTimeoutMs,
       })

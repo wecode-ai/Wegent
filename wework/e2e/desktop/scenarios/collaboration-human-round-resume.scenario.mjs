@@ -22,6 +22,10 @@ import {
   selectCollaborationDomain,
   waitForTestIdByText,
 } from '../modules/workspace-flows.mjs'
+import {
+  collaborationProjectViewSelector,
+  selectCollaborationProjectView,
+} from '../modules/collaboration-project-navigation.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const MODEL = 'desktop-e2e-cloud-responses'
@@ -219,7 +223,7 @@ async function createWorkspaceAndProject(control, request, uiTimeoutMs) {
     uiTimeoutMs
   )
   assert.equal(project.task_provider, 'local', '端上创建的项目没有使用本地看板数据源')
-  await control.command('waitFor', scoped('[data-testid="collaboration-tab-manage"]'), {
+  await control.command('waitFor', collaborationProjectViewSelector(CONTENT, 'manage'), {
     timeoutMs: uiTimeoutMs,
   })
   return { project }
@@ -320,7 +324,7 @@ async function createGroup(control, request, projectId, ownerId, uiTimeoutMs) {
 }
 
 async function createAndAssignIssue(control, request, projectId, uiTimeoutMs) {
-  await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+  await selectCollaborationProjectView(control, CONTENT, 'board')
   await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-issue-create"]'))
   await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), { value: ISSUE })
   await control.command('fill', scoped('[data-testid="cloud-todo-detail-description"]'), {
@@ -355,7 +359,7 @@ async function createAndAssignIssue(control, request, projectId, uiTimeoutMs) {
 }
 
 async function authorizeRemoteEnvironment(control, remoteDevice, timeoutMs) {
-  await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
+  await selectCollaborationProjectView(control, CONTENT, 'manage')
   await control.command(
     'click',
     scoped('[data-testid="collaboration-project-settings-environments"]')
@@ -633,7 +637,7 @@ export function createDesktopScenario({
       assert.ok(remoteDevice?.id, 'The real remote Docker Executor device is unavailable')
       await authorizeRemoteEnvironment(control, remoteDevice, modelResponseTimeoutMs)
 
-      await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
+      await selectCollaborationProjectView(control, CONTENT, 'manage')
 
       await control.command(
         'click',

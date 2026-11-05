@@ -3,6 +3,10 @@ import { Buffer } from 'node:buffer'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { reloadMainWindow } from '../modules/workspace-flows.mjs'
+import {
+  collaborationProjectViewSelector,
+  selectCollaborationProjectView,
+} from '../modules/collaboration-project-navigation.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const PROJECT_NAME = `Issue 附件图片预览-${process.pid}`
@@ -199,9 +203,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       await control.command('openWeworkScheme', 'body', {
         value: `wework://boards/${project.id}`,
       })
-      const filesTab = `${CONTENT} [data-testid="collaboration-tab-files"]`
-      await control.command('waitFor', filesTab, { visible: true, timeoutMs: uiTimeoutMs })
-      await control.command('click', filesTab)
+      await control.command('waitFor', collaborationProjectViewSelector(CONTENT, 'files'), {
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
+      await selectCollaborationProjectView(control, CONTENT, 'files')
       const filesView = `${CONTENT} [data-testid="cloud-files-view"]`
       const shared = `${filesView} [data-testid="cloud-file-browser-entry-root:shared"] button`
       await control.command('waitFor', shared, { visible: true, timeoutMs: uiTimeoutMs })

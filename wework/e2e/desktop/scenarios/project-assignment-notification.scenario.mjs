@@ -29,6 +29,10 @@ import {
   configureFirstProjectExecutionEnvironment,
   selectCollaborationDomain,
 } from '../modules/workspace-flows.mjs'
+import {
+  collaborationProjectViewSelector,
+  selectCollaborationProjectView,
+} from '../modules/collaboration-project-navigation.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const MODEL = 'desktop-e2e-cloud-responses'
@@ -252,10 +256,10 @@ async function createIssue(
   title = ISSUE,
   { notifyAssignee = true, beforeSave } = {}
 ) {
-  await control.command('waitFor', scoped('[data-testid="collaboration-tab-board"]'), {
+  await control.command('waitFor', collaborationProjectViewSelector(CONTENT, 'board'), {
     timeoutMs: uiTimeoutMs,
   })
-  await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+  await selectCollaborationProjectView(control, CONTENT, 'board')
   await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-issue-create"]'))
   await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), { value: title })
   await control.command('fill', scoped('[data-testid="cloud-todo-detail-description"]'), {

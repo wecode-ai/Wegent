@@ -8,6 +8,7 @@ import {
 import { verifyWorkspaceTabReturn } from './workspace-tab-return.mjs'
 import { verifyNewTaskBoardAssociation } from './new-task-board-association.mjs'
 import {
+  waitForProjectIdentity,
   selectCollaborationProjectView,
   waitForLocalProjectNavigation,
 } from './collaboration-project-navigation.mjs'
@@ -1823,14 +1824,11 @@ async function verifyExistingTaskBoardAssociation(
     control,
     'The moved work-item navigation did not open its project-space tab'
   )
-  await control.command(
-    'waitFor',
-    `${movedBoardContentSelector} [data-testid="cloud-project-header-title"]`,
-    {
-      text: targetProjectName,
-      visible: true,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
+  await waitForProjectIdentity(
+    control,
+    movedBoardContentSelector,
+    targetProjectName,
+    DEFAULT_STEP_TIMEOUT_MS
   )
   const movedBoardSelector = `${movedBoardContentSelector} [data-testid="collaboration-board"]`
   await control.command('waitFor', movedBoardSelector, {

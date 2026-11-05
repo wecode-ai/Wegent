@@ -6,6 +6,10 @@ import {
   inCollaborationSidebar,
   selectCollaborationDomain,
 } from '../modules/workspace-flows.mjs'
+import {
+  selectCollaborationProjectView,
+  collaborationProjectViewSelector,
+} from '../modules/collaboration-project-navigation.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const PROJECT_NAME = '项目角色覆盖验收'
@@ -151,7 +155,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
 
   async function openMembers(control) {
     await openProject(control)
-    await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
+    await selectCollaborationProjectView(control, CONTENT, 'manage')
     await control.command('click', scoped('[data-testid="collaboration-project-settings-members"]'))
     await control.command('waitFor', memberControl('role'))
   }
@@ -434,16 +438,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         await openMembers(control)
         await control.command('select', memberControl('role'), { value: 'Viewer' })
         await waitForRole('Viewer', 'Viewer')
-        await control.command('waitFor', scoped('[data-testid="collaboration-tab-manage"]'), {
+        await control.command('waitFor', collaborationProjectViewSelector(CONTENT, 'manage'), {
           visible: false,
         })
         await control.command('waitFor', scoped('[data-testid="cloud-project-members-panel"]'), {
           visible: false,
         })
-        await control.command(
-          'waitFor',
-          scoped('[data-testid="collaboration-tab-board"][aria-current="page"]')
-        )
+        await control.command('waitFor', collaborationProjectViewSelector(CONTENT, 'board', true))
         await assertViewerDenials()
         await captureScreenshot(control, 'project-member-overrides-self-demoted.png', CONTENT)
         verifiedCases.push('self-demotion-immediately-exits-management-and-revokes-write-access')

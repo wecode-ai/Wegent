@@ -1,5 +1,23 @@
 import { DEFAULT_STEP_TIMEOUT_MS } from './shared.mjs'
 
+function projectViewTabId(view) {
+  return (
+    {
+      calendar: 'collaboration-calendar-tab',
+      gantt: 'collaboration-gantt-tab',
+      milestones: 'collaboration-milestones-tab',
+    }[view] ?? `collaboration-tab-${view}`
+  )
+}
+
+export function collaborationProjectViewSelector(contentSelector, view, selected = false) {
+  const option = `option[value=${JSON.stringify(view)}]${selected ? ':checked' : ''}`
+  const compact = `${contentSelector} [data-testid="collaboration-project-view-select"]:has(${option})`
+  const tabId = projectViewTabId(view)
+  const tab = `${contentSelector} [data-testid="${tabId}"]${selected ? '[aria-current="page"]' : ''}`
+  return `${compact}, ${tab}`
+}
+
 export async function selectCollaborationProjectView(
   control,
   contentSelector,
@@ -7,7 +25,7 @@ export async function selectCollaborationProjectView(
   timeoutMs = DEFAULT_STEP_TIMEOUT_MS
 ) {
   const compact = `${contentSelector} [data-testid="collaboration-project-view-select"]`
-  const tabId = view === 'gantt' ? 'collaboration-gantt-tab' : `collaboration-tab-${view}`
+  const tabId = projectViewTabId(view)
   // ResizeObserver can replace the navigation between controller round trips.
   await control.command(
     'selectOrClick',
@@ -20,7 +38,7 @@ export async function selectCollaborationProjectView(
   )
 }
 
-export async function waitForLocalProjectNavigation(
+export async function waitForProjectIdentity(
   control,
   contentSelector,
   projectName,
@@ -37,6 +55,15 @@ export async function waitForLocalProjectNavigation(
     visible: true,
     timeoutMs,
   })
+}
+
+export async function waitForLocalProjectNavigation(
+  control,
+  contentSelector,
+  projectName,
+  timeoutMs = DEFAULT_STEP_TIMEOUT_MS
+) {
+  await waitForProjectIdentity(control, contentSelector, projectName, timeoutMs)
   await selectCollaborationProjectView(control, contentSelector, 'board', timeoutMs)
   await control.command('waitFor', `${contentSelector} [data-testid="collaboration-board"]`, {
     visible: true,

@@ -5,6 +5,7 @@ import {
   createLocalCollaborationProject,
   configureFirstProjectExecutionEnvironment,
 } from '../modules/workspace-flows.mjs'
+import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 
 const PROJECT_NAME = '评论提及成员回归'
 const ISSUE_NAME = '评论 @ 成员必须弹出成员列表'
@@ -84,7 +85,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         timeoutMs: uiTimeoutMs,
       })
       await configureFirstProjectExecutionEnvironment(control, ACTIVE_CONTENT, uiTimeoutMs)
-      await control.command('click', board('[data-testid="collaboration-tab-board"]'))
+      await selectCollaborationProjectView(control, ACTIVE_BOARD, 'board')
 
       await control.command(
         'clickWhenEnabled',
