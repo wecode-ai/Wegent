@@ -414,6 +414,52 @@ export function createDesktopScenario({
         text: '将创建 6 个智能体',
       })
       await captureScreenshot(control, 'template-agents-07-dark-confirmation.png', CONTENT)
+      // Import a coordinator-only variant and verify removed roles and their stages stay absent.
+      for (let index = 1; index < 6; index++) {
+        await control.command('click', selector(`template-remove-role-main-role-${index}`))
+      }
+      await control.command('waitFor', selector('template-agents-summary'), {
+        text: '将创建 1 个智能体',
+      })
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            selector('template-remove-role-main-role-0') + ':disabled'
+          )
+        ),
+        1,
+        'The coordinator must remain required'
+      )
+      const reducedName = `模板精简角色-${process.pid}`
+      await control.command('fill', selector('collaboration-project-name-input'), {
+        value: reducedName,
+      })
+      await control.command('clickWhenEnabled', selector('collaboration-project-create-confirm'))
+      await control.command('waitFor', selector('cloud-project-header-title'), {
+        text: reducedName,
+        timeoutMs: workbenchReadyTimeoutMs,
+      })
+      const reduced = (await requestExecutor(control, 'projects.list', {}, uiTimeoutMs)).find(
+        project => project.name === reducedName
+      )
+      assert.ok(reduced, 'The reduced template must create a project')
+      const reducedAgents = await requestExecutor(
+        control,
+        'chat_agents.list',
+        {
+          project_id: reduced.id,
+        },
+        uiTimeoutMs
+      )
+      assert.equal(reducedAgents.length, 1, 'Removed roles must not create Agents')
+      const reducedGroup = reduced.metadata.collaboration_groups[0]
+      assert.equal(reducedGroup.members.length, 1)
+      assert.equal(reducedGroup.leader.id, reducedAgents[0].id)
+      assert.deepEqual(
+        reducedGroup.stages.map(stage => stage.name),
+        definitions.groups[0].stages.filter(stage => !stage.ownerRole).map(stage => stage.name)
+      )
     },
   }
 }

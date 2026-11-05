@@ -27,7 +27,11 @@ export function TemplateCreateSection({
   initialTemplate?: CollaborationTemplate | null
   disabled?: boolean
   onSelect(document: CollaborationTemplate | null): void
-  onChange(drafts: ProjectCreateCollaborationGroupDraft[] | null, selected: boolean): void
+  onChange(
+    drafts: ProjectCreateCollaborationGroupDraft[] | null,
+    selected: boolean,
+    document?: CollaborationTemplate
+  ): void
 }) {
   const store = useCollaborationTemplateStore()
   const m = templateMessages[locale]
@@ -95,7 +99,7 @@ export function TemplateCreateSection({
               responsibility: '',
             })),
           ]}
-          onChange={drafts => onChange(drafts, true)}
+          onChange={(drafts, configured) => onChange(drafts, true, configured)}
         />
       )}
       {open && (
