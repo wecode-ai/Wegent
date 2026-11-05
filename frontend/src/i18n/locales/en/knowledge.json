@@ -969,10 +969,6 @@
       "loadFailed": "Unable to refresh knowledge bases",
       "retry": "Retry",
       "search": "Search names in this list",
-      "teamFilter": "Filter by team",
-      "allTeams": "All teams",
-      "searchTeams": "Search team name or identifier",
-      "noMatchingTeams": "No matching teams",
       "teamKnowledgeCount": "Knowledge bases: {{count}}",
       "space": "Space",
       "unknownSpace": "Unknown space",
@@ -1006,7 +1002,14 @@
       "emptyShared": "No knowledge bases shared with you yet",
       "emptySharedHint": "Knowledge bases will appear here when someone shares them with you.",
       "emptyCompany": "No accessible company knowledge bases",
-      "emptyCompanyHint": "Company knowledge bases you can access appear here."
+      "emptyCompanyHint": "Company knowledge bases you can access appear here.",
+      "libraryFilter": "Knowledge base filter",
+      "anyScope": "Any",
+      "searchLibraryFilters": "Search spaces or teams",
+      "noMatchingFilters": "No matching filters",
+      "sourceSpace": "Source space",
+      "associatedTeams": "Associated teams",
+      "typeAndSort": "Type and sort"
     },
     "creation": {
       "created": "Library created",

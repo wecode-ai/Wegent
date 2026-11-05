@@ -3,6 +3,8 @@
 
 import type { AllGroupedKnowledgeResponse, KnowledgeBaseWithGroupInfo } from '@/types/knowledge'
 
+export const PERSONAL_SPACE_FILTER = 'space:personal'
+
 /** Merge display identity without losing any effective receiving team. */
 export function collectNavigationKnowledge(
   response: AllGroupedKnowledgeResponse

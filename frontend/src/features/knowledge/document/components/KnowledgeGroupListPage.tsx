@@ -14,7 +14,7 @@
 'use client'
 
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
-import { matchesKnowledgeTeam } from '../navigation'
+import { matchesKnowledgeTeam, PERSONAL_SPACE_FILTER } from '../navigation'
 import { Input } from '@/components/ui/input'
 import { getKbShareSourceText } from '@/features/knowledge/utils/share-source'
 import {
@@ -33,7 +33,7 @@ import {
   type KnowledgeBaseCategory,
 } from './KnowledgeBaseCategoryFilter'
 import { AdvancedKnowledgeToggle } from './AdvancedKnowledgeToggle'
-import { KnowledgeTeamFilter, type KnowledgeTeamOption } from './KnowledgeTeamFilter'
+import { KnowledgeLibraryFilter, type KnowledgeTeamOption } from './KnowledgeLibraryFilter'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -107,7 +107,7 @@ export interface KnowledgeGroupListPageProps {
   getKbGroupInfo?: (kb: KbDataItem) => KbGroupInfo
   /** Whether this is "All" mode */
   isAllMode?: boolean
-  /** Filter by group ID (for "All" mode) */
+  /** Selected team identity or personal-space filter (for "All" mode). */
   filterGroupId?: string | null
   /** Set filter group ID (for "All" mode) */
   onFilterGroupChange?: (groupId: string | null) => void
@@ -320,8 +320,12 @@ export function KnowledgeGroupListPage({
     })
   }, [dataSource, filterByCategory, searchQuery])
 
-  const matchesGroup = useCallback(
+  const matchesFilter = useCallback(
     (kb: KbDataItem, groupId: string) => {
+      if (groupId === PERSONAL_SPACE_FILTER) {
+        const level = 'namespace_level' in kb ? kb.namespace_level : null
+        return level ? level === 'personal' : kb.namespace === 'default'
+      }
       if ('group_id' in kb) return matchesKnowledgeTeam(kb, groupId)
       return (
         getKbGroupInfo?.(kb).groupId === groupId || kb.namespace === groupId.replace(/^group-/, '')
@@ -334,17 +338,17 @@ export function KnowledgeGroupListPage({
     () =>
       (availableGroups ?? []).map(group => ({
         ...group,
-        kbCount: candidateKbs.filter(kb => matchesGroup(kb, group.id)).length,
+        kbCount: candidateKbs.filter(kb => matchesFilter(kb, group.id)).length,
       })),
-    [availableGroups, candidateKbs, matchesGroup]
+    [availableGroups, candidateKbs, matchesFilter]
   )
 
   const filteredKbs = useMemo(
     () =>
       sortKbs(
-        candidateKbs.filter(kb => !isAllMode || !filterGroupId || matchesGroup(kb, filterGroupId))
+        candidateKbs.filter(kb => !isAllMode || !filterGroupId || matchesFilter(kb, filterGroupId))
       ),
-    [candidateKbs, isAllMode, filterGroupId, matchesGroup, sortKbs]
+    [candidateKbs, isAllMode, filterGroupId, matchesFilter, sortKbs]
   )
   const hasActiveFilters = Boolean(
     searchQuery || category !== 'all' || (isAllMode && filterGroupId)
@@ -785,8 +789,11 @@ export function KnowledgeGroupListPage({
           />
           {onFilterGroupChange && (
             <div className={mobile ? 'min-w-0 flex-1' : undefined}>
-              <KnowledgeTeamFilter
+              <KnowledgeLibraryFilter
                 groups={filterGroups}
+                personalCount={
+                  candidateKbs.filter(kb => matchesFilter(kb, PERSONAL_SPACE_FILTER)).length
+                }
                 value={filterGroupId ?? null}
                 onValueChange={onFilterGroupChange}
                 mobile={mobile}
@@ -798,11 +805,13 @@ export function KnowledgeGroupListPage({
               <PopoverTrigger asChild>
                 <Button
                   variant="outline"
-                  className="min-h-11 min-w-11 shrink-0"
+                  size="icon"
+                  className="min-h-11 min-w-11 w-auto shrink-0 px-2"
+                  aria-label={t('document.navigation.typeAndSort')}
+                  title={t('document.navigation.typeAndSort')}
                   data-testid="knowledge-mobile-filters"
                 >
                   <SlidersHorizontal className="h-4 w-4" />
-                  {t('document.navigation.filters')}
                   {category !== 'all' && (
                     <span className="rounded bg-primary/10 px-1.5 py-0.5 text-xs text-primary">
                       {t(`document.knowledgeBase.categoryFilter.${category}`)}
@@ -813,7 +822,7 @@ export function KnowledgeGroupListPage({
               <PopoverContent
                 align="end"
                 collisionPadding={8}
-                aria-label={t('document.navigation.filters')}
+                aria-label={t('document.navigation.typeAndSort')}
                 className="max-h-[var(--radix-popover-content-available-height)] w-80 max-w-[calc(100vw_-_2rem)] overflow-y-auto"
               >
                 <div className="space-y-4">{renderFilterControls()}</div>

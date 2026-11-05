@@ -969,10 +969,6 @@
       "loadFailed": "知识库列表加载失败",
       "retry": "重试",
       "search": "在此列表搜索库名",
-      "teamFilter": "按团队筛选",
-      "allTeams": "全部团队",
-      "searchTeams": "搜索团队名称或标识",
-      "noMatchingTeams": "没有匹配的团队",
       "teamKnowledgeCount": "知识库：{{count}}",
       "space": "所在空间",
       "unknownSpace": "未知空间",
@@ -1006,7 +1002,14 @@
       "emptyShared": "还没有与你共享的知识库",
       "emptySharedHint": "其他成员授权后，知识库会显示在这里。",
       "emptyCompany": "暂无可访问的公司知识库",
-      "emptyCompanyHint": "这里展示你有权限访问的公司知识库。"
+      "emptyCompanyHint": "这里展示你有权限访问的公司知识库。",
+      "libraryFilter": "知识库筛选",
+      "anyScope": "不限",
+      "searchLibraryFilters": "搜索空间或团队",
+      "noMatchingFilters": "无匹配的筛选项",
+      "sourceSpace": "空间归属",
+      "associatedTeams": "关联团队",
+      "typeAndSort": "类型与排序"
     },
     "creation": {
       "created": "库已创建",

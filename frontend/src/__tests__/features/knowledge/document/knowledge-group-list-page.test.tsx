@@ -607,3 +607,71 @@ it('uses readable vertical mobile rows with space, role, permission and migratio
   await userEvent.setup().click(screen.getByTestId('migrate-kb-71'))
   expect(migrate).toHaveBeenCalledWith(kb)
 })
+
+it('filters personal provenance independently of the creator and sharing destination', async () => {
+  const rows = [
+    {
+      ...createKnowledgeBase(201, 'Owned personal', 'notebook'),
+      namespace_level: 'personal',
+      user_id: 9,
+    },
+    {
+      ...createKnowledgeBase(202, 'Shared personal', 'notebook'),
+      namespace_level: 'personal',
+      user_id: 10,
+      team_ids: ['alpha'],
+    },
+    {
+      ...createKnowledgeBase(203, 'Owned team', 'notebook'),
+      namespace: 'alpha',
+      namespace_level: 'group',
+      user_id: 9,
+    },
+    {
+      ...createKnowledgeBase(204, 'Owned company', 'notebook'),
+      namespace: 'company',
+      namespace_level: 'organization',
+      user_id: 9,
+    },
+    {
+      ...createKnowledgeBase(205, 'Unknown space', 'notebook'),
+      namespace: 'unknown',
+      namespace_level: null,
+    },
+    createKnowledgeBase(206, 'Legacy personal', 'notebook'),
+  ].map(kb => ({ ...kb, group_id: 'alpha', group_name: 'Alpha', group_type: 'group' as const }))
+  function ScopedPage() {
+    const [filter, setFilter] = useState<string | null>(null)
+    return (
+      <KnowledgeGroupListPage
+        groupId="shared"
+        groupName="Shared"
+        isAllMode
+        knowledgeBases={[]}
+        knowledgeBasesWithGroupInfo={rows}
+        isLoading={false}
+        onSelectKb={jest.fn()}
+        onCreateKb={jest.fn()}
+        filterGroupId={filter}
+        onFilterGroupChange={setFilter}
+        availableGroups={[{ id: 'group-alpha', name: 'alpha', displayName: 'Alpha' }]}
+      />
+    )
+  }
+  render(<ScopedPage />)
+  const user = userEvent.setup()
+  await user.click(screen.getByTestId('knowledge-team-filter'))
+  expect(screen.getByTestId('knowledge-space-count-personal')).toHaveTextContent('3')
+  await user.click(screen.getByTestId('knowledge-space-option-personal'))
+  expect(screen.getAllByTestId(/^kb-row-/)).toHaveLength(3)
+  for (const id of [201, 202, 206]) expect(screen.getByTestId(`kb-row-${id}`)).toBeInTheDocument()
+  for (const id of [203, 204, 205])
+    expect(screen.queryByTestId(`kb-row-${id}`)).not.toBeInTheDocument()
+  await user.type(screen.getByTestId('knowledge-search'), 'company')
+  expect(screen.getByText('document.navigation.noFilteredKnowledge')).toBeVisible()
+  await user.click(screen.getByTestId('knowledge-team-filter'))
+  expect(screen.getByTestId('knowledge-space-count-personal')).toHaveTextContent('0')
+  await user.keyboard('{Escape}')
+  await user.click(screen.getByTestId('knowledge-clear-filters'))
+  expect(screen.getAllByTestId(/^kb-row-/)).toHaveLength(6)
+})
