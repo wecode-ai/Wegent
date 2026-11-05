@@ -6,6 +6,40 @@ import { parseError, getErrorDisplayMessage } from '@/utils/errorParser'
 
 describe('errorParser', () => {
   describe('parseError', () => {
+    describe('database driver errors', () => {
+      it('should detect MySQL error 1038 with SQL text as generic_error', () => {
+        // chat:send returns {"error": str(e)}, so the driver error arrives as text
+        const error =
+          "(pymysql.err.OperationalError) (1038, 'Out of sort memory, consider increasing server sort buffer size')\n" +
+          '[SQL: SELECT subtasks.id AS subtasks_id, subtasks.task_id AS subtasks_task_id, ' +
+          'subtasks.executor_namespace AS subtasks_executor_namespace, ' +
+          'subtasks.executor_name AS subtasks_executor_name FROM subtasks ' +
+          'WHERE subtasks.task_id = %(task_id_1)s ORDER BY subtasks.message_id DESC, subtasks.id DESC]'
+        const result = parseError(error)
+        expect(result.type).toBe('generic_error')
+        expect(result.retryable).toBe(true)
+      })
+
+      it('should detect SQL text mentioning container and timeout as generic_error', () => {
+        const error = '[SQL: SELECT executor_container, timeout_seconds FROM subtasks WHERE id = 1]'
+        const result = parseError(error)
+        expect(result.type).toBe('generic_error')
+      })
+
+      it('should still detect container errors that are not database errors', () => {
+        expect(parseError('Container has stopped running').type).toBe('container_error')
+        expect(parseError('executor disconnected').type).toBe('container_error')
+      })
+
+      it('should keep user-code OperationalError tracebacks as container_error', () => {
+        const error =
+          'Traceback (most recent call last):\n' +
+          '  sqlite3.OperationalError: no such table: foo\n' +
+          'executor exited with exit code 1'
+        expect(parseError(error).type).toBe('container_error')
+      })
+    })
+
     describe('forbidden/unauthorized errors', () => {
       it('should detect forbidden errors', () => {
         const error = new Error('forbidden')
