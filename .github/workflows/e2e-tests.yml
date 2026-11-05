@@ -1277,6 +1277,15 @@ jobs:
         run: |
           curl -f http://localhost:8100/health > /dev/null 2>&1 || (cat backend/chat_shell.log && exit 1)
 
+      - name: Prepare authenticated GitHub skill import fixture
+        working-directory: ./backend
+        env:
+          DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
+          SECRET_KEY: test-secret-key-for-ci-testing
+          GITHUB_TOKEN: ${{ github.token }}
+          PYTHONPATH: ..:.
+        run: uv run --no-sync python tests/e2e/prepare_github_skill_user.py
+
       - name: Run E2E tests (Sharded)
         # The chromium project auto-discovers every browser spec under
         # frontend/e2e/tests, including skill-management-scope.spec.ts.
