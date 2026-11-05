@@ -1,0 +1,47 @@
+{
+  "revision": "9d4be4601172",
+  "parents": [
+    "d4e5f6a7b810"
+  ],
+  "source": "20260519_9d4be4601172_add_resource_members_entity_lookup_index.py",
+  "upgrade": [
+    {
+      "sql": [
+        "DROP INDEX idx_resource_members_entity ON resource_members"
+      ],
+      "when": {
+        "query": "SELECT COUNT(*) AS n FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='resource_members' AND INDEX_NAME='idx_resource_members_entity'",
+        "nonzero": true
+      }
+    },
+    {
+      "sql": [
+        "CREATE INDEX idx_resource_members_entity_lookup ON resource_members (entity_type, entity_id, status, resource_type)"
+      ],
+      "when": {
+        "query": "SELECT COUNT(*) AS n FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='resource_members' AND INDEX_NAME='idx_resource_members_entity_lookup'",
+        "nonzero": false
+      }
+    }
+  ],
+  "downgrade": [
+    {
+      "sql": [
+        "DROP INDEX idx_resource_members_entity_lookup ON resource_members"
+      ],
+      "when": {
+        "query": "SELECT COUNT(*) AS n FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='resource_members' AND INDEX_NAME='idx_resource_members_entity_lookup'",
+        "nonzero": true
+      }
+    },
+    {
+      "sql": [
+        "CREATE INDEX idx_resource_members_entity ON resource_members (entity_type, entity_id, resource_type, status)"
+      ],
+      "when": {
+        "query": "SELECT COUNT(*) AS n FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='resource_members' AND INDEX_NAME='idx_resource_members_entity'",
+        "nonzero": false
+      }
+    }
+  ]
+}

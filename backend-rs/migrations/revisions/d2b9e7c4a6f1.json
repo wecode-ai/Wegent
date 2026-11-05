@@ -1,0 +1,29 @@
+{
+  "revision": "d2b9e7c4a6f1",
+  "parents": [
+    "c9d4e7f1a2b3"
+  ],
+  "source": "20260920_d2b9e7c4a6f1_index_kind_name_for_admin_device_lookup.py",
+  "upgrade": [
+    {
+      "sql": [
+        "CREATE INDEX idx_kinds_name_kind_ns_active ON kinds (name, kind, namespace, is_active)"
+      ],
+      "when": {
+        "query": "SELECT COUNT(*) AS n FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='kinds' AND INDEX_NAME='idx_kinds_name_kind_ns_active'",
+        "nonzero": false
+      }
+    }
+  ],
+  "downgrade": [
+    {
+      "sql": [
+        "DROP INDEX idx_kinds_name_kind_ns_active ON kinds"
+      ],
+      "when": {
+        "query": "SELECT COUNT(*) AS n FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='kinds' AND INDEX_NAME='idx_kinds_name_kind_ns_active'",
+        "nonzero": true
+      }
+    }
+  ]
+}

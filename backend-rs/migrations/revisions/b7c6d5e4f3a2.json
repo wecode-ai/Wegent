@@ -1,0 +1,15 @@
+{
+  "revision": "b7c6d5e4f3a2",
+  "parents": [
+    "8a4c1f2d9e70"
+  ],
+  "source": "20260813_b7c6d5e4f3a2_reset_plugin_device_failure_counts.py",
+  "upgrade": [
+    {
+      "sql": [
+        "UPDATE plugin_device_installations SET attempt_count = 0"
+      ]
+    }
+  ],
+  "downgrade": []
+}

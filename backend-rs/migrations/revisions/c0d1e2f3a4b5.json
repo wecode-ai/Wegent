@@ -1,0 +1,46 @@
+{
+  "revision": "c0d1e2f3a4b5",
+  "parents": [
+    "a8b9c0d1e2f3"
+  ],
+  "source": "20260803_c0d1e2f3a4b5_add_project_chat_messages.py",
+  "upgrade": [
+    {
+      "sql": [
+        "CREATE TABLE project_chat_messages (\n    id BIGINT NOT NULL COMMENT 'Primary key' AUTO_INCREMENT, \n    message_id VARCHAR(64) NOT NULL COMMENT 'Stable unique message id' DEFAULT '', \n    client_message_id VARCHAR(64) NOT NULL COMMENT 'Client message id for idempotency; empty when unset' DEFAULT '', \n    project_id VARCHAR(64) NOT NULL COMMENT 'Owning loop item id' DEFAULT '', \n    task_id VARCHAR(64) NOT NULL COMMENT 'Bound task loop item id; empty when unset' DEFAULT '', \n    sender_type VARCHAR(16) NOT NULL COMMENT 'Sender kind: user/agent' DEFAULT '', \n    sender_id VARCHAR(128) NOT NULL COMMENT 'Sender user or agent id' DEFAULT '', \n    sender_name VARCHAR(255) NOT NULL COMMENT 'Sender display name' DEFAULT '', \n    message_type VARCHAR(32) NOT NULL COMMENT 'Message type (text/agent_chunk)' DEFAULT 'text', \n    content TEXT NOT NULL COMMENT 'Message body' DEFAULT (''), \n    metadata JSON NOT NULL COMMENT 'Extension metadata (mentions, model, run state)' DEFAULT (JSON_OBJECT()), \n    trigger_message_id VARCHAR(64) NOT NULL COMMENT 'Source message that triggered an agent response; empty when unset' DEFAULT '', \n    agent_id VARCHAR(128) NOT NULL COMMENT 'Responding robot id; empty for user messages' DEFAULT '', \n    runtime_device_id VARCHAR(255) NOT NULL COMMENT 'Executor device id; empty when unset' DEFAULT '', \n    runtime_task_id VARCHAR(255) NOT NULL COMMENT 'Executor runtime task id; empty when unset' DEFAULT '', \n    reply_to_message_id VARCHAR(64) NOT NULL COMMENT 'Parent message id in a reply thread; empty when unset' DEFAULT '', \n    thread_root_message_id VARCHAR(64) NOT NULL COMMENT 'Thread root message id; empty when unset' DEFAULT '', \n    status VARCHAR(16) NOT NULL COMMENT 'Message status (streaming/running/completed/failed)' DEFAULT 'completed', \n    created_at DATETIME NOT NULL COMMENT 'Creation time' DEFAULT now(), \n    updated_at DATETIME NOT NULL COMMENT 'Last update time' DEFAULT now(), \n    deleted_at DATETIME NOT NULL COMMENT 'Soft delete time; 1970-01-01 00:00:00 means not deleted' DEFAULT '1970-01-01 00:00:00', \n    PRIMARY KEY (id), \n    CONSTRAINT uniq_project_chat_message_id UNIQUE (message_id)\n)CHARSET=utf8mb4 ENGINE=InnoDB"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX idx_project_chat_client_message ON project_chat_messages (sender_type, sender_id, client_message_id)"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX idx_project_chat_project_order ON project_chat_messages (project_id, id)"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX idx_project_chat_task_order ON project_chat_messages (task_id, id)"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX idx_project_chat_runtime ON project_chat_messages (runtime_device_id, runtime_task_id, id)"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX idx_project_chat_trigger_agent ON project_chat_messages (trigger_message_id, agent_id)"
+      ]
+    }
+  ],
+  "downgrade": [
+    {
+      "sql": [
+        "DROP TABLE project_chat_messages"
+      ]
+    }
+  ]
+}

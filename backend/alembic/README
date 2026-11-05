@@ -1,6 +1,9 @@
 # Alembic Database Migrations
 
 This directory contains database migration scripts for the Wegent Backend application.
+The historical versions now live in backend-rs/migrations/reference/versions,
+selected by alembic.ini. Native MySQL startup uses backend-rs/src/migrations;
+this Python environment is retained for Python-only operation and compatibility tests.
 
 ## Quick Reference
 
