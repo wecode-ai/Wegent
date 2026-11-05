@@ -266,9 +266,12 @@ function RuntimeInteractionsState({
         const retained = inventoryRef.current.filter(
           item => !discovered.refreshedDevices.has(item.address.deviceId)
         )
+        const archivedKeys = new Set(
+          current.items.filter(item => item.task.status === 'archived').map(item => item.key)
+        )
         const nextInventory = [
           ...new Map([...retained, ...discovered.items].map(item => [item.key, item])).values(),
-        ]
+        ].filter(item => item.task.status !== 'archived' && !archivedKeys.has(item.key))
         setInventory(nextInventory)
         const failedInventoryDevices = [...discovered.failedDevices].filter(
           deviceId =>

@@ -1,5 +1,6 @@
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 
+/** Persist pending-work failures through the existing redacted runtime diagnostic channel. */
 export function logInteractionLoadFailure(
   operation: 'local-identity' | 'inventory' | 'transcript' | 'archive',
   error: unknown,

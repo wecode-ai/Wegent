@@ -10,7 +10,7 @@ import {
 } from './runtimeInteractions.fixtures'
 
 describe('pending interaction membership and read cache', () => {
-  it.each(['removed', 'archived'])(
+  it.each(['removed', 'archived', 'stale-inventory'])(
     'retires cached questions and load errors for a %s task after a healthy inventory refresh',
     async status => {
       const rendered = view()
@@ -21,10 +21,17 @@ describe('pending interaction membership and read cache', () => {
       })
       expect(context!.errors[interactionTask.key]).toBe('interactions.load_failed')
       const reads = harness.transcript.mock.calls.length
+      if (status === 'stale-inventory') {
+        harness.list.mockResolvedValue({
+          projects: [],
+          chats: [{ ...interactionTask.workspace, tasks: [interactionTask.task] }],
+          totalTasks: 1,
+        })
+      }
       rendered.rerenderSource({
         ...rendered.taskSource,
         items:
-          status === 'archived'
+          status !== 'removed'
             ? [{ ...interactionTask, task: { ...interactionTask.task, status: 'archived' } }]
             : [],
         devices: [
