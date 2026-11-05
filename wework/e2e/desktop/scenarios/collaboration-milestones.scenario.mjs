@@ -582,20 +582,42 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         text: '协作交付目标',
       })
       await assertToolbarTypography(control)
+      await control.command('select', scoped('milestone-filter'), { value: 'all' })
       await control.command('click', scoped('cloud-board-parent-layout'))
       await control.command('waitFor', scoped('cloud-board-parent-rows'))
-      await control.command('waitFor', scoped(`cloud-todo-card-milestone-${localIssue}`), {
+      const parentHeader = `${scoped(`cloud-board-parent-row-${localIssue}`)} > header`
+      await control.command(
+        'waitFor',
+        `${parentHeader} [data-testid="cloud-board-parent-open-${localIssue}"]`
+      )
+      const parentMilestone = `${parentHeader} [data-testid="cloud-todo-card-milestone-${localIssue}"]`
+      await control.command('waitFor', parentMilestone, {
         text: '协作交付目标',
       })
-      await control.command('scrollIntoView', scoped(`cloud-todo-card-milestone-${localIssue}`))
+      await control.command('scrollIntoView', parentMilestone)
       await captureScreenshot(control, 'milestones-08g-parent-milestone.png', 'body')
       await control.command('click', scoped('cloud-board-parent-layout'))
+      await control.command('select', scoped('milestone-filter'), { value: localId })
       await control.command('waitFor', scoped(`cloud-todo-card-${localIssue}`))
       await control.command('scrollIntoView', scoped(`cloud-todo-card-milestone-${localIssue}`))
       await captureScreenshot(control, 'milestones-08h-board-milestone.png', 'body')
       await control.command('waitFor', scoped(`collaboration-issue-children-${localIssue}`), {
         text: '1/1',
       })
+      const childrenAction = scoped(`collaboration-issue-children-${localIssue}`)
+      const metadata = scoped(`cloud-todo-card-metadata-${localIssue}`)
+      assert.equal(
+        await style(control, `${childrenAction} > span`, 'font-size'),
+        await style(control, metadata, 'font-size'),
+        'Child progress must use the card metadata text size'
+      )
+      const [ring] = JSON.parse(
+        await control.command('getElementMetrics', `${childrenAction} > svg`)
+      )
+      const [metadataIcon] = JSON.parse(
+        await control.command('getElementMetrics', `${metadata} svg`)
+      )
+      assert.ok(ring.width <= metadataIcon.width, 'Child progress icon must match metadata density')
       assert.equal(
         Number(await control.command('getElementCount', scoped(`cloud-todo-card-${child.id}`))),
         0
