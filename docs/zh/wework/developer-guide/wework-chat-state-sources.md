@@ -573,6 +573,16 @@ Wework runtime task 与项目空间任务绑定后，状态同步只保留一条
 
 ## 后续维护规则
 
+### 展示计时的更新边界
+
+工具耗时只是展示状态：0.1 秒计时由 `ToolDurationText` 叶子组件维护，不能让标签、命令解析、展开的输出和整个工具列表随计时重渲染。非工具块以及没有展示耗时的分支不创建计时器。
+
+仅思考过程的汇总耗时由汇总头部维护，按显示精度每秒更新；有工具活动时，汇总耗时隐藏，不执行格式化或启动计时器。工具分类统计由列表统一计算并复用于汇总头部，数据行未变化时不重新分类。
+
+`packages/collaboration/src/conversation/ToolBlocks.performance.test.tsx` 在没有新业务数据时逐次推进时钟，断言分类、标签和展开详情不会重新计算，并覆盖输入输出更新、完成、恢复和卸载。真实 Electron 回归复用 `streaming-tools` 与 `streaming-timers` checkpoint；这些局部优化不代表整机 CPU 降幅，实际收益需在同一任务和录制条件下复测。
+
+### 生命周期状态
+
 - 原生生命周期转换先在 executor owner 中定义，再通过版本化快照进入 Store，由 `RuntimeTaskMachine` 派生 UI 字段。
 - 不要在布局、pane hook 或组件中重新计算任务运行、turn 活跃、busy 或未读状态。
 - 不要新增独立的 `isSending`、`isRunning`、`isStreaming` React state；新的外部事实必须通过 Store 事件路由进入状态机。

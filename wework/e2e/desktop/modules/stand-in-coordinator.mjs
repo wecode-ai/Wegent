@@ -220,7 +220,7 @@ export function createStandInCoordinatorVerification({
       await control.command('navigate', 'body', { value: '/stand-in' })
       await control.command('click', `[data-testid="stand-in-overview-role-${role.id}"]`)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
-      await control.command('click', '[data-testid="stand-in-connections-open"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-connections-open"]')
       await openConnectionTypePicker(control)
       await control.command('click', '[data-testid="stand-in-time-connections"]')
       await control.command('waitFor', '[data-testid="stand-in-calendar-empty"]')

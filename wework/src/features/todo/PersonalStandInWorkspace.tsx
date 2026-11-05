@@ -7,6 +7,8 @@ import { getStandInErrorMessage, reportStandInError } from '@/lib/stand-in-error
 import { createLocalWorkspaceApi } from './localWorkspaceApi'
 import { createWeworkPlatformApi } from './weworkPlatformApi'
 import { StandInOverviewPage } from './StandInOverviewPage'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
 
 export function PersonalStandInWorkspace({
   services,
@@ -33,6 +35,12 @@ export function PersonalStandInWorkspace({
   const [projects, setProjects] = useState<CollaborationProject[]>([])
   const [error, setError] = useState<string | null>(null)
   const [attempt, setAttempt] = useState(0)
+  useEffect(() => {
+    if (!active || !isElectronRuntime() || getDesktopWindowLabel() !== 'main') return
+    void invokeDesktopHost<void>('renderer.startupReady').catch(cause => {
+      console.error('[Wework] Failed to reveal the personal stand-in workspace', cause)
+    })
+  }, [active])
   const api = useMemo(
     () =>
       createWeworkPlatformApi(

@@ -18,7 +18,7 @@ pub(crate) mod robot;
 pub(crate) mod subscription;
 
 pub(crate) mod knowledge;
-mod plugins;
+pub(crate) mod plugins;
 pub(crate) mod project;
 pub mod video;
 

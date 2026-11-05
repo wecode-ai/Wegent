@@ -1135,3 +1135,28 @@ describe('DocumentDetailDialog manual source sync', () => {
     )
   })
 })
+
+it('copies the document URL with both the selected KB ID and document ID', async () => {
+  const user = userEvent.setup()
+  const writeText = jest.spyOn(navigator.clipboard, 'writeText')
+  render(
+    <DocumentDetailDialog
+      open={true}
+      onOpenChange={jest.fn()}
+      document={baseDocument}
+      knowledgeBaseId={21}
+      knowledgeBaseName="Same name"
+      knowledgeBaseNamespace="company"
+      isOrganization={true}
+    />
+  )
+  const displayedUrl = screen.getByText(text =>
+    text.startsWith('http://localhost/knowledge/public/')
+  )
+  const url = new URL(displayedUrl.textContent!)
+  expect(url.searchParams.get('kb')).toBe('21')
+  expect(url.searchParams.get('documentId')).toBe('11')
+  await user.click(screen.getByTestId('knowledge-document-copy-link'))
+  expect(writeText).toHaveBeenCalledWith(url.toString())
+  writeText.mockRestore()
+})

@@ -145,9 +145,6 @@ function RuntimeInteractionsState({
   const registerView = useCallback((owner: string, id: string | null) => {
     if (id) {
       views.current.set(owner, id)
-      setNoticeIds(current =>
-        current.includes(id) ? current.filter(value => value !== id) : current
-      )
     } else views.current.delete(owner)
   }, [])
 
@@ -216,6 +213,20 @@ function RuntimeInteractionsState({
       }
       fetching.current = true
       setLoading(true)
+      let stage = 'inventory'
+      const diagnosticTimer =
+        import.meta.env.VITE_WEWORK_E2E === 'true'
+          ? window.setTimeout(() => {
+              void navigator.locks
+                .query()
+                .then(locks =>
+                  console.info(
+                    '[interaction-refresh-stalled]',
+                    JSON.stringify({ window: getDesktopWindowLabel(), stage, locks })
+                  )
+                )
+            }, 5000)
+          : undefined
       try {
         const discovered = await readInteractionTaskInventory(current)
         if (!mounted.current || sourceRef.current?.services?.runtimeWorkApi !== api) return
@@ -295,6 +306,7 @@ function RuntimeInteractionsState({
               )
                 continue
               try {
+                stage = `transcript:${item.address.taskId}`
                 const requests = await readRuntimeInteractions(item, api)
                 if (!mounted.current || sourceRef.current?.services?.runtimeWorkApi !== api) return
                 successfulReads.current.set(item.key, {
@@ -308,6 +320,7 @@ function RuntimeInteractionsState({
                   return next
                 })
                 for (const answered of requests.filter(request => request.answered)) {
+                  stage = `archive:${answered.requestKey}`
                   await archive(answered)
                   localStorage.removeItem(acceptancePrefix + answered.id)
                 }
@@ -344,6 +357,7 @@ function RuntimeInteractionsState({
           })
         )
       } finally {
+        window.clearTimeout(diagnosticTimer)
         fetching.current = false
         if (mounted.current) setLoading(false)
       }
@@ -565,7 +579,6 @@ function RuntimeInteractionsState({
     (id?: string) => {
       const contentRoute = `${INTERACTIONS_PATH}${id ? `?${new URLSearchParams({ interaction: id })}` : ''}`
       openRuntimeInteractionsTab(tabs, t('interactions.title'), contentRoute)
-      setNoticeIds(current => (id ? current.filter(value => value !== id) : []))
     },
     [tabs, t]
   )
@@ -684,9 +697,7 @@ function RuntimeInteractionsState({
     source?.services?.runtimeWorkApi,
   ])
 
-  const notice = focused
-    ? (noticeIds.map(id => pending.find(item => item.id === id)).find(Boolean) ?? null)
-    : null
+  const notice = noticeIds.map(id => pending.find(item => item.id === id)).find(Boolean) ?? null
   useEffect(() => {
     if (import.meta.env.VITE_WEWORK_E2E === 'true')
       console.info(

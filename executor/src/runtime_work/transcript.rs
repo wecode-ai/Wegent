@@ -434,10 +434,11 @@ impl<'a> TurnTranscriptProjector<'a> {
             return false;
         };
         let item_id = item_id(item, "request-user-input");
-        let Some(render_payload) = async_question_render_payload(item_id.as_str(), questions)
+        let Some(mut render_payload) = async_question_render_payload(item_id.as_str(), questions)
         else {
             return false;
         };
+        render_payload["interactionScope"] = json!(self.turn_id);
         self.assistant.blocks.push(json!({
             "id": format!("request-user-input-{item_id}"),
             "subtaskId": self.subtask_id,
@@ -816,6 +817,9 @@ pub(crate) fn workbench_block_from_codex_item(
     }
     if is_likely_codex_tool_item_type(&item_type) || is_default_tool_item(item) {
         let mut block = tool_block(item, fallback_timestamp, options);
+        if block["render_payload"]["delivery"] == "async" {
+            block["render_payload"]["interactionScope"] = json!(turn_id);
+        }
         if let Some(object) = block
             .as_object_mut()
             .filter(|_| options.materialize_artifacts)

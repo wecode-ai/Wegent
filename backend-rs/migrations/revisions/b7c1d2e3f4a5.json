@@ -1,0 +1,31 @@
+{
+  "revision": "b7c1d2e3f4a5",
+  "parents": [
+    "a6d94c3e5217"
+  ],
+  "source": "20260724_b7c1d2e3f4a5_add_loop_items_deleted_at.py",
+  "upgrade": [
+    {
+      "sql": [
+        "ALTER TABLE loop_items ADD COLUMN deleted_at DATETIME"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX ix_loop_items_deleted_at ON loop_items (deleted_at)"
+      ]
+    }
+  ],
+  "downgrade": [
+    {
+      "sql": [
+        "DROP INDEX ix_loop_items_deleted_at ON loop_items"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE loop_items DROP COLUMN deleted_at"
+      ]
+    }
+  ]
+}

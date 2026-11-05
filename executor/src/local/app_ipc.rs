@@ -167,6 +167,7 @@ const APP_IPC_RENDERER_METHODS: &[&str] = &[
     "external_todos.*",
     "files.*",
     "projects.*",
+    "milestones.*",
     "runtime.*",
     "runtime_tasks.*",
     "todos.*",
@@ -891,7 +892,8 @@ impl AppIpcServer {
             return self.handle_device_command(params).await;
         }
 
-        if method.starts_with("projects.")
+        if method.starts_with("milestones.")
+            || method.starts_with("projects.")
             || method.starts_with("external_projects.")
             || method.starts_with("dws.")
             || method.starts_with("aitable.")
@@ -1960,6 +1962,38 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                     .map_err(task_runtime_error)?,
             )
         }
+        "milestones.list" => serialize_task_value(
+            runtime
+                .list_milestones(required_task_string(&params, "project_id")?)
+                .map_err(task_runtime_error)?,
+        ),
+        "milestones.create" | "milestones.update" => {
+            let project = required_task_string(&params, "project_id")?;
+            let id = if method == "milestones.update" {
+                Some(required_task_string(&params, "milestone_id")?)
+            } else {
+                None
+            };
+            let input = task_input::<crate::task_runtime::MilestoneInput>(&params, "milestone")?;
+            serialize_task_value(
+                runtime
+                    .save_milestone(project, id, input)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "milestones.delete" => {
+            let version = params["version"]
+                .as_i64()
+                .ok_or_else(|| AppIpcError::new("bad_request", "version is required"))?;
+            runtime
+                .delete_milestone(
+                    required_task_string(&params, "project_id")?,
+                    required_task_string(&params, "milestone_id")?,
+                    version,
+                )
+                .map_err(task_runtime_error)?;
+            Ok(json!({}))
+        }
         "projects.update" => {
             let project_id = required_task_string(&params, "project_id")?;
             let input = task_input::<ProjectUpdate>(&params, "project")?;
@@ -1979,6 +2013,37 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                 .archive_project(project_id, version)
                 .map_err(task_runtime_error)?;
             Ok(json!({}))
+        }
+        "projects.automation.run" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let rule_id = required_task_string(&params, "automation_id")?;
+            let issue_id = optional_nullable_task_string(&params, "issue_id")?.flatten();
+            runtime
+                .run_project_automation(project_id, rule_id, issue_id.as_deref())
+                .map_err(task_runtime_error)
+        }
+        "projects.automation.runs" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let rule_id = required_task_string(&params, "automation_id")?;
+            serialize_task_value(
+                runtime
+                    .list_project_automation_runs(project_id, rule_id)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "projects.automation.cancel" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let run_id = required_task_string(&params, "run_id")?;
+            runtime
+                .cancel_project_automation_run(project_id, run_id)
+                .map_err(task_runtime_error)
+        }
+        "projects.automation.retry" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let run_id = required_task_string(&params, "run_id")?;
+            runtime
+                .retry_project_automation_run(project_id, run_id)
+                .map_err(task_runtime_error)
         }
         "external_projects.configure" => {
             let project = task_input::<ProjectDescriptor>(&params, "project")?;
@@ -3743,6 +3808,10 @@ where
     writer.write_all(&bytes).await?;
     writer.flush().await
 }
+
+#[cfg(test)]
+#[path = "app_ipc_automation_tests.rs"]
+mod automation_tests;
 
 #[cfg(test)]
 mod tests {

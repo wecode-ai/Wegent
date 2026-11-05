@@ -1,0 +1,5 @@
+{
+  "order": 36000,
+  "scenario": "./scenarios/stand-in-model-execution.scenario.mjs",
+  "scenarioOnly": true
+}

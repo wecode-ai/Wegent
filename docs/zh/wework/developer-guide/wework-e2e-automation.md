@@ -153,7 +153,22 @@ node e2e/utils/mock-connector-upstream-server.mjs
 checkpoint。跳过上游时，每个 checkpoint 会自行建立最小前置 fixture，不依赖只有
 完整流程才创建的任务或 UI 状态。PR CI 会根据改动的功能路径组合最小 segment
 矩阵；共享桌面基础设施、merge queue、定时任务和 `ci:all` 仍运行完整桌面套件。
-Core 和 Cloud 的分片定义以 `.github/scripts/classify-wework-desktop-e2e.sh` 为准。
+场景注册、模块路径、执行模式和 Core/Cloud 分片统一来自
+`wework/e2e/desktop/catalog/<checkpoint>.json`；文件名就是 checkpoint ID。
+`checkpoints.mjs`、桌面 runner 和 CI 分类器自动读取同一份配置，不再分别维护清单。
+每个场景使用独立文件，新增场景无需修改公共注册表或把名称追加到分片长行。
+`order` 控制默认执行顺序，`ci.core` / `ci.cloud` 的 `shard`、`position`
+控制既有分片和片内顺序；`ci` 中的 `order` 保留分类目录顺序。排序值可在现有间隔中
+插入，相同值按 checkpoint ID 确定顺序，无需重排其他文件。Core 仍为 10 片，Cloud 仍为 8 片。
+`scenario` 指定场景模块，`scenarioOnly` 指定仅执行该模块；组合检查点通过 `members`
+引用成员，`ciHost` 表示复用其他检查点的 CI 生命周期。正式升级检查点继续由
+`upgrade-suite.mjs` 定义。
+
+配置文件自身的改动自动选择对应 CI 检查点；组合成员会选择其 CI 宿主。
+新增场景模块会自动匹配自身配置，也可在配置的 `paths` 数组中添加相关源码的 shell
+glob。`paths` 增加覆盖，保留已有路径规则选中的检查点。跨功能路径规则按优先级保留在
+`.github/scripts/desktop-ci/`，分类契约按功能拆在
+`.github/scripts/ci-classification-tests/`；测试入口自动发现该目录中的 `.sh` 文件。
 
 `collaboration-runtime-reconciliation` 是可独立运行的 Core checkpoint，自动建立隔离的云项目、Issue、智能体和真实 Executor。它通过透明 WebSocket 代理暂存真实完成事件，分别验证快照先到、最终事件先到，以及两个终态事务在真实 MySQL 行锁后交错提交。每种顺序都检查数据库中的完整最终文本、Issue 界面和刷新后的结果。续轮在模型响应暂停期间重放旧完成事件，覆盖重复、乱序、无序号和空内容；每次都等待后端真实确认，再检查新轮、工作流和执行容量未被旧事件改变。代理只调度传输，模型服务之外的组件均保持真实；清理时释放模型、事务锁和代理连接。
 
@@ -327,11 +342,10 @@ merge queue 会验证最终进入 `main` 的合并提交，因此合入后不再
 macOS 的 pre-push 检查通过 `caffeinate -is -w` 保持执行期间唤醒，hook 退出时自动释放，避免系统休眠造成测试超时。
 Windows 构建、分片和汇总检查共用同一个运行条件，预期任务被跳过时门禁失败。
 Issue MCP 附件场景在 Linux 和 Windows 均通过共享 `setup-minio-e2e` Action 构建并验证同一固定版本的真实 MinIO；仅 main 写入缓存，场景通过 `WEWORK_E2E_MINIO_BIN` 使用当前平台的可执行文件。
-macOS 内存检查直接调用 Node checkpoint runner，构建缓存命中时无需 pnpm。映射规则位于
-`.github/scripts/classify-wework-desktop-e2e.sh`，新增功能覆盖时
-必须同步登记对应 segment。新增 `DESKTOP_CHECKPOINTS` 检查点时，必须同时把它加入
-Core、Cloud 或正式发布 catalog，分配到对应 shard，为相关源码路径增加最小分类，
-并更新 `.github/scripts/test-classify-ci-changes.sh` 的矩阵期望和专用分类断言。
+macOS 内存检查直接调用 Node checkpoint runner，构建缓存命中时无需 pnpm。
+新增检查点时，在独立 catalog 文件中声明模块、执行方式、CI 分片和源码 `paths`，
+并在对应功能的分类契约文件中增加专用断言。跨功能行为改变时更新相应矩阵期望；
+无需再修改公共 runner、分片清单或测试入口。
 分类器会拒绝只注册在运行器、但没有 CI catalog 覆盖的检查点，避免本地可运行而
 GitHub CI 永远不执行的死覆盖。分段命令也可用于本地快速迭代：
 

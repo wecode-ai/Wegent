@@ -84,6 +84,10 @@ async function installPluginFromMarketCard(testId: string) {
   await waitFor(() => expect(screen.queryByTestId('install-plugin-dialog')).not.toBeInTheDocument())
 }
 
+vi.mock('@/api/local/runtimeAuthStatus', () => ({
+  getLocalCodexAuthStatus: vi.fn().mockResolvedValue({ sha256: 'test-account' }),
+}))
+
 vi.mock('@/desktop/localExecutor', async importOriginal => ({
   ...(await importOriginal<typeof import('@/desktop/localExecutor')>()),
   ensureLocalExecutorStarted: localExecutorMocks.ensureStarted,
@@ -4957,7 +4961,7 @@ describe('PluginsWorkspace', () => {
     await userEvent.click(screen.getByTestId('connector-auth-cancel'))
     await waitFor(() => {
       const manage = screen.getByTestId('plugin-connection-manage-connector:github')
-      expect(manage).toHaveTextContent('登录')
+      expect(manage).toHaveTextContent(/^登录$/)
       expect(manage).toBeEnabled()
     })
   })
@@ -4993,6 +4997,76 @@ describe('PluginsWorkspace', () => {
     expect(screen.queryByTestId('plugin-operation-notice')).not.toBeInTheDocument()
   })
 
+  test.each(['focus:error', 'focus:throw', 'auth:error', 'auth:throw'])(
+    'preserves a connected GitHub account and offline logout after refresh failure: %s',
+    async variant => {
+      vi.spyOn(window, 'confirm').mockReturnValue(true)
+      const health = vi.fn().mockResolvedValue({ status: 'ok' })
+      const logout = vi.fn().mockResolvedValue({ status: 'ok', connected: false })
+      await openGithubConnection(health, logout, false)
+      const button = screen.getByTestId('plugin-connection-manage-connector:github')
+      await waitFor(() => expect(button).toHaveTextContent(/^退出登录$/))
+      if (variant.endsWith('throw')) health.mockRejectedValue(new Error('Network unavailable'))
+      else health.mockResolvedValue({ status: 'error', errorCode: 'gh_health_failed' })
+      act(() => {
+        if (variant.startsWith('focus')) window.dispatchEvent(new Event('focus'))
+        else clearLocalConnectorAuthHealthCache()
+      })
+      expect(await screen.findByTestId('plugin-detail-action-error')).toHaveTextContent(
+        variant.endsWith('throw') ? 'Network unavailable' : '无法验证 GitHub CLI 登录状态'
+      )
+      expect(button).toHaveTextContent(/^退出登录$/)
+      const probes = health.mock.calls.length
+      logout.mockImplementation(async () => {
+        expect(health).toHaveBeenCalledTimes(probes)
+        return { status: 'ok', connected: false }
+      })
+      await userEvent.click(button)
+      await waitFor(() => expect(button).toHaveTextContent(/^登录$/))
+      expect(logout).toHaveBeenCalledOnce()
+      expect(screen.queryByTestId('plugin-github-cli-auth-dialog')).not.toBeInTheDocument()
+    }
+  )
+
+  test('clears a refresh error after successful health recovery and discards state when the detail closes', async () => {
+    const health = vi.fn().mockResolvedValue({ status: 'ok' })
+    await openGithubConnection(health, undefined, false)
+    const manage = 'plugin-connection-manage-connector:github'
+    await waitFor(() => expect(screen.getByTestId(manage)).toHaveTextContent(/^退出登录$/))
+    health.mockRejectedValue(new Error('Network unavailable'))
+    act(() => window.dispatchEvent(new Event('focus')))
+    expect(await screen.findByTestId('plugin-detail-action-error')).toHaveTextContent(
+      'Network unavailable'
+    )
+    health.mockResolvedValue({ status: 'need_login' })
+    act(() => window.dispatchEvent(new Event('focus')))
+    await waitFor(() => expect(screen.getByTestId(manage)).toHaveTextContent(/^登录$/))
+    expect(screen.queryByTestId('plugin-detail-action-error')).not.toBeInTheDocument()
+    health.mockResolvedValue({ status: 'ok' })
+    act(() => window.dispatchEvent(new Event('focus')))
+    await waitFor(() => expect(screen.getByTestId(manage)).toHaveTextContent(/^退出登录$/))
+    await userEvent.click(screen.getByTestId('plugin-detail-back-button'))
+    health.mockRejectedValue(new Error('Network unavailable'))
+    await userEvent.click(
+      await screen.findByTestId('plugin-marketplace-row-github@openai-curated-remote')
+    )
+    expect(await screen.findByTestId('plugin-detail-action-error')).toHaveTextContent(
+      'Network unavailable'
+    )
+    expect(screen.getByTestId(manage)).toHaveTextContent(/^管理连接$/)
+  })
+
+  test('refreshes the GitHub CLI connection after returning from an external account change', async () => {
+    const health = vi.fn().mockResolvedValue({ status: 'ok' })
+    await openGithubConnection(health, undefined, false)
+    const button = screen.getByTestId('plugin-connection-manage-connector:github')
+    await waitFor(() => expect(button).toHaveTextContent('退出登录'))
+    health.mockResolvedValue({ status: 'need_login' })
+    act(() => window.dispatchEvent(new Event('focus')))
+    await waitFor(() => expect(button).toHaveTextContent(/^登录$/))
+    expect(screen.queryByTestId('plugin-github-cli-auth-dialog')).not.toBeInTheDocument()
+  })
+
   test('logs out through the existing local connector flow and then offers login', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     const health = vi.fn().mockResolvedValue({ status: 'ok' })
@@ -5005,7 +5079,7 @@ describe('PluginsWorkspace', () => {
     await waitFor(() => expect(button).toHaveTextContent('退出登录'))
     health.mockRejectedValue(new Error('Network unavailable'))
     await userEvent.click(button)
-    await waitFor(() => expect(button).toHaveTextContent('登录'))
+    await waitFor(() => expect(button).toHaveTextContent(/^登录$/))
     expect(logout).toHaveBeenCalledOnce()
     expect(requestLocalExecutor).toHaveBeenCalledWith(
       'runtime.local_connector_auth.logout',
@@ -5038,7 +5112,7 @@ describe('PluginsWorkspace', () => {
         return { status: 'ok', connected: false }
       })
       await userEvent.click(button)
-      await waitFor(() => expect(button).toHaveTextContent('登录'))
+      await waitFor(() => expect(button).toHaveTextContent(/^登录$/))
       expect(screen.queryByTestId('plugin-detail-action-error')).not.toBeInTheDocument()
     }
   )
@@ -5076,9 +5150,9 @@ describe('PluginsWorkspace', () => {
     }
     await openGithubConnection(health, logout)
     const button = screen.getByTestId('plugin-connection-manage-connector:github')
-    await waitFor(() => expect(button).toHaveTextContent('登录'))
+    await waitFor(() => expect(button).toHaveTextContent(/^登录$/))
     await act(async () => resolveInitial({ status: 'ok' }))
-    expect(button).toHaveTextContent('登录')
+    expect(button).toHaveTextContent(/^登录$/)
   })
 
   test.each([
@@ -6391,6 +6465,28 @@ describe('PluginsWorkspace', () => {
       cacheKey: '/api|cloud-token',
     })
 
+    // A directory is reusable only after this runtime validates its account scope.
+    vi.mocked(requestLocalExecutor).mockResolvedValueOnce({
+      marketplaces: [
+        {
+          name: 'openai-curated-remote',
+          path: 'openai-curated-remote',
+          plugins: [
+            {
+              id: 'github@openai-curated-remote',
+              name: 'github',
+              installed: false,
+              enabled: false,
+              interface: { displayName: 'GitHub' },
+            },
+          ],
+        },
+      ],
+    })
+    await createLocalCodexPluginApi().readRemoteCatalog({
+      accountScope: pluginMarketplaceCacheKey('/api', 'cloud-token'),
+    })
+
     let resolveInstalled: ((value: unknown) => void) | null = null
     const pendingInstalled = new Promise(resolve => {
       resolveInstalled = resolve
@@ -6445,6 +6541,45 @@ describe('PluginsWorkspace', () => {
 
     await userEvent.click(screen.getByTestId('plugins-refresh-button'))
     await waitFor(() => expect(unrestrictedPluginListStarted).toBe(true))
+  })
+
+  test('refreshing a non-official marketplace never reads the official directory', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockSystemSkillsFetch({ deviceAutoSyncSucceeds: true })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+    const originalInvoke = vi.mocked(requestLocalExecutor).getMockImplementation()!
+    vi.mocked(requestLocalExecutor).mockImplementation(async (method, args) => {
+      const result = await originalInvoke(method, args)
+      return method === 'executor.plugins.store.list'
+        ? { ...(result as Record<string, unknown>), supportsPluginReconciliation: true }
+        : result
+    })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await screen.findByTestId('plugin-marketplace-install-101')
+    const refresh = screen.getByTestId('plugins-refresh-button')
+    await waitFor(() => expect(refresh).toBeEnabled())
+    const before = refresh.getAttribute('data-reconciliation-revision')
+    await userEvent.click(refresh)
+    await waitFor(() =>
+      expect(refresh.getAttribute('data-reconciliation-revision')).not.toBe(before)
+    )
+    await waitFor(() => expect(refresh).toBeEnabled())
+    const catalogs = vi
+      .mocked(requestLocalExecutor)
+      .mock.calls.filter(
+        ([method, payload]) =>
+          method === 'codex.app_server_request' &&
+          (payload as { method?: string })?.method === 'plugin/list'
+      )
+    expect(catalogs.length).toBeGreaterThan(0)
+    expect(
+      catalogs.every(
+        ([, payload]) =>
+          (
+            payload as { params?: { marketplaceKinds?: string[] } }
+          ).params?.marketplaceKinds?.join() === 'local'
+      )
+    ).toBe(true)
   })
 
   test('explicit refresh supersedes a pending plugin/installed request', async () => {
@@ -7636,7 +7771,11 @@ describe('PluginsWorkspace', () => {
       const logout = vi
         .spyOn(connectorCleanup, 'logoutLocalConnectorsForPlugin')
         .mockResolvedValue(undefined)
-      const view = render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+      // Complete the immediate inventory fixture before asserting catalog rows.
+      let view!: ReturnType<typeof render>
+      await act(async () => {
+        view = render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+      })
       try {
         expect(await screen.findByText('Superpowers')).toBeInTheDocument()
         await waitFor(() =>

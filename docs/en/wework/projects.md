@@ -337,3 +337,9 @@ Open a delivery from its Issue and select **Edit** to change its title, notes, f
 Local projects support offline editing. Cloud projects require access to the Issue and a Developer or higher project role. The Files tab shows the saved attachments.
 
 Desktop regression: `pnpm --filter wework e2e:desktop --segment collaboration-delivery-editing`. This independent Core CI checkpoint creates its own project and delivery and checks editing, cancellation, version conflicts, and persistence after reloading.
+
+## Copy an Issue web link
+
+Open an Issue in a cloud project space and click **Copy web link** in its detail header to copy its address on the connected Wegent website. The button confirms success with **Copied**; if copying fails, click again to retry. Recipients still need to sign in and have access to the project.
+
+Local project space Issues have no corresponding Wegent webpage, so this action is hidden. It is also hidden until the cloud website address is available.

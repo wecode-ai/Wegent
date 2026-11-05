@@ -76,6 +76,7 @@ function fixture(roles: StandInRole[] = [newStandInRole('device', 'default')]) {
       getLocalRuntimeSidebarIdentity: async () => ({ deviceId: 'device' }),
       modelApi: { listModels: async () => ({ data: [] }) },
       standInApi: {
+        onboarding: vi.fn(async () => ({ state: { version: 1, completed: true } })),
         connectionProviders: vi.fn(async () => ({ items: [] })),
         catalog: async () => ({ models: [] }),
         personalGet: vi.fn(async () => settings),

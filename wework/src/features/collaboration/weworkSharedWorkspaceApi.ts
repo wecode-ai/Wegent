@@ -67,6 +67,7 @@ export interface WeworkDeliverySharedWorkspaceApi {
   projects: Pick<SharedWorkspaceApi['projects'], ProjectMethod>
   myWork: NonNullable<SharedWorkspaceApi['myWork']>
   assignmentReceipts: NonNullable<SharedWorkspaceApi['assignmentReceipts']>
+  milestones: NonNullable<SharedWorkspaceApi['milestones']>
   issues: SharedWorkspaceApi['issues']
   attachments: SharedWorkspaceApi['attachments']
   collaborators: SharedWorkspaceApi['collaborators']
@@ -81,6 +82,7 @@ export const WEWORK_DELIVERY_SHARED_WORKSPACE_METHODS = {
   projects: ['list', 'get', 'create', 'update', 'archive'],
   myWork: ['list'],
   assignmentReceipts: ['list', 'acknowledge'],
+  milestones: ['getCacheScope', 'list', 'create', 'update', 'remove'],
   issues: [
     'list',
     'listPage',
@@ -478,6 +480,13 @@ export function createWeworkDeliverySharedWorkspaceApi(
         return (await deliveryApi.listMyWork()).items.map(toMyWorkItem)
       },
     },
+    milestones: {
+      getCacheScope: deliveryApi.getMilestonesCacheScope,
+      list: projectId => deliveryApi.listMilestones(projectId),
+      create: (projectId, input) => deliveryApi.createMilestone(projectId, input),
+      update: (projectId, id, input) => deliveryApi.updateMilestone(projectId, id, input),
+      remove: (projectId, id, version) => deliveryApi.deleteMilestone(projectId, id, version),
+    },
     issues: {
       async list(projectId, filters) {
         return (await deliveryApi.listLoopItems(projectId, filters)).items.map(toIssue)
@@ -514,6 +523,7 @@ export function createWeworkDeliverySharedWorkspaceApi(
               priority: input.priority,
               start_at: input.startAt,
               due_at: input.dueAt,
+              milestone_id: input.milestoneId,
               parent_id: input.parentId,
               tags: input.tags,
               local_project_id: input.localProjectId,
@@ -536,6 +546,7 @@ export function createWeworkDeliverySharedWorkspaceApi(
               description: input.description,
               status: input.status,
               priority: input.priority,
+              milestone_id: input.milestoneId,
               parent_id: input.parentId,
               assignee_user_id: input.assigneeUserId,
               assignee_group_id: input.assigneeGroupId,

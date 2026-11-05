@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useConversationTranslation } from '../ConversationTranslation'
 import {
   isRuntimeRateLimitWaitBlock,
@@ -30,7 +30,6 @@ import {
   useAnyPersistentProcessingExpansion,
   usePersistentProcessingExpansion,
 } from './processingExpansionState'
-import { getDurationText } from './processingDuration'
 import { getFileEditDurationsBySourceBlock, getFileEditDurationsForRows } from './fileEditDurations'
 import { SubagentActivityGroup } from './SubagentBlockItem'
 import { type ProcessingDisplayItem } from './processingDisplayTypes'
@@ -124,33 +123,6 @@ export function ToolBlocksDisplay({
   const [hasLocallyExpandedPreviewDetail, setHasLocallyExpandedPreviewDetail] = useState(false)
   const [mountedAt] = useState(() => Date.now())
   const turnStartedAt = startedAt ?? mountedAt
-  const [hasRenderedRunning, setHasRenderedRunning] = useState(isRunning)
-  const [completedAt, setCompletedAt] = useState<number | null>(null)
-  const [now, setNow] = useState(() => Date.now())
-
-  useEffect(() => {
-    if (!isRunning) return
-    const timer = window.setInterval(() => setNow(Date.now()), 100)
-    return () => window.clearInterval(timer)
-  }, [isRunning])
-
-  useEffect(() => {
-    if (isRunning) {
-      if (hasRenderedRunning && completedAt === null) return
-      const timer = window.setTimeout(() => {
-        setHasRenderedRunning(true)
-        setCompletedAt(null)
-      }, 0)
-      return () => window.clearTimeout(timer)
-    }
-
-    if (hasRenderedRunning && completedAt === null) {
-      const timer = window.setTimeout(() => setCompletedAt(Date.now()), 0)
-      return () => window.clearTimeout(timer)
-    }
-  }, [completedAt, hasRenderedRunning, isRunning])
-
-  const duration = getDurationText(blocks, turnStartedAt, now, completedAt, isRunning)
   const displayItems = useMemo(() => {
     const hiddenIds = hiddenRequestUserInputIds ?? EMPTY_HIDDEN_REQUEST_USER_INPUT_IDS
     const items: ProcessingDisplayItem[] = []
@@ -308,7 +280,7 @@ export function ToolBlocksDisplay({
       row.block.type === 'tool' ||
       row.block.type === 'file_changes'
   )
-  const activityStats = countProcessingActivityKinds(rows)
+  const activityStats = useMemo(() => countProcessingActivityKinds(rows), [rows])
   const hasOnlyEditActivity =
     activityStats.edit > 0 &&
     activityStats.command === 0 &&
@@ -332,7 +304,6 @@ export function ToolBlocksDisplay({
               })
             : t('tool_activity.summary', { count: toolCallCount })
         : t('thinking.completed')
-  const summaryDuration = hasToolActivity ? '' : duration.replace(/^已处理\s*/, '')
   const processingContent = useMemo(
     () =>
       expanded ? (
@@ -415,10 +386,11 @@ export function ToolBlocksDisplay({
       {showSummary ? (
         <ProcessingSummaryHeader
           canToggle={canToggleSummary}
-          duration={summaryDuration}
+          timing={hasToolActivity ? undefined : { blocks, startedAt: turnStartedAt, isRunning }}
           expanded={summaryExpanded}
           isRunning={isRunning && !hasClosedToolSegment && !retryWaiting}
           rows={rows}
+          stats={activityStats}
           onToggle={toggleSummary}
           title={summaryTitle}
           announceTitle={retryWaiting}

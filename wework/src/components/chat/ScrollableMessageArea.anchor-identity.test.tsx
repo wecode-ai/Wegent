@@ -226,8 +226,8 @@ describe('ScrollableMessageArea anchor node identity', () => {
     fireEvent.wheel(scroller, { deltaY: -1 })
     const sampled = createUserViewportAnchor(scroller, scroller)!
     expect(sampled.element).toBe(reader)
-    expect(sampled.item?.id).toBe('retained-process')
-    expect(sampled.item?.chunkIndex).toBe('1')
+    expect(sampled.itemId).toBe('retained-process')
+    expect(sampled.chunkIndex).toBe('1')
     const replacement = item.cloneNode(true) as HTMLElement
     replacement.querySelector('[data-markdown-chunk-index="0"]')!.append(semanticAnchor(-1100))
     const replacementReader = replacement.querySelector<HTMLElement>(

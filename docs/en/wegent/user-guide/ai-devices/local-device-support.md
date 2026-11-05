@@ -55,14 +55,20 @@ Before registering a local device, ensure you have:
 **macOS / Linux:**
 
 ```bash
-curl -fsSL https://github.com/wecode-ai/Wegent/releases/latest/download/local_executor_install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/executor/scripts/local_executor_install.sh | bash
 ```
 
 **Windows (PowerShell):**
 
 ```powershell
-irm https://github.com/wecode-ai/Wegent/releases/latest/download/local_executor_install.ps1 | iex
+irm https://raw.githubusercontent.com/wecode-ai/Wegent/main/executor/scripts/local_executor_install.ps1 | iex
 ```
+
+The installer selects a stable `vX.Y.Z` Wegent platform release independently of the Wework desktop release channel. Explicit version overrides remain supported. GitHub metadata failures or a missing artifact in the newest platform release stop installation with an error.
+
+The executor's built-in GitHub update checker uses the platform release channel too and matches the asset for the current operating system, including the `.exe` extension on Windows. It does not install an older release when the newest platform release lacks that asset.
+
+Server-side device version hints use the platform channel as well. Remote-process startup commands and the root installation script use the installer entry point above.
 
 The installation script will:
 
@@ -237,7 +243,7 @@ curl -fsSL https://github.com/wecode-ai/Wegent/releases/download/v1.0.0/local_ex
 **Windows (PowerShell):**
 
 ```powershell
-$env:WEGENT_VERSION='v1.0.0'; irm https://github.com/wecode-ai/Wegent/releases/latest/download/local_executor_install.ps1 | iex
+$env:WEGENT_VERSION='v1.0.0'; irm https://raw.githubusercontent.com/wecode-ai/Wegent/main/executor/scripts/local_executor_install.ps1 | iex
 ```
 
 #### Manual Installation (Development)

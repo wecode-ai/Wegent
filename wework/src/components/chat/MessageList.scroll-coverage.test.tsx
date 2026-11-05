@@ -74,16 +74,28 @@ test.each([true])('keeps mixed rows contiguous with scroll controller %s', async
   const engine = { current: null as ConversationVirtualizer | null }
   const viewport = document.createElement('div')
   document.body.append(viewport)
+  const flowHeight = (element: HTMLElement) =>
+    (Number.parseFloat(element.style.marginTop) || 0) +
+    (element.hasAttribute('data-message-row')
+      ? heights[Number(element.dataset.index)]
+      : Number.parseFloat(element.style.height) || 0)
+  const rowOffset = (row: HTMLElement) => {
+    let top = Number.parseFloat(row.style.marginTop) || 0
+    for (
+      let previous = row.previousElementSibling;
+      previous;
+      previous = previous.previousElementSibling
+    )
+      top += flowHeight(previous as HTMLElement)
+    return top
+  }
   const committedHeight = () => {
-    const rows = [...viewport.querySelectorAll<HTMLElement>('[data-message-row]')]
+    const list = viewport.querySelector('[data-message-row]')?.parentElement
     return Math.max(
       600,
-      Number.parseFloat(rows[0]?.parentElement?.style.height ?? '') || 0,
-      ...rows.map(
-        row =>
-          Number(row.style.transform.match(/translateY\(([-\d.]+)px\)/)?.[1] ?? 0) +
-          heights[Number(row.dataset.index)]
-      )
+      list
+        ? [...list.children].reduce((sum, element) => sum + flowHeight(element as HTMLElement), 0)
+        : 0
     )
   }
   let scrollTop = 0
@@ -122,7 +134,7 @@ test.each([true])('keeps mixed rows contiguous with scroll controller %s', async
     if (this === viewport) return new DOMRect(0, 0, 800, 600)
     const row = this.closest<HTMLElement>('[data-message-row][data-index]')
     const index = Number(row?.dataset.index)
-    const top = row ? Number(row.style.transform.match(/translateY\(([-\d.]+)px\)/)?.[1] ?? 0) : 0
+    const top = row ? rowOffset(row) : 0
     return new DOMRect(0, top - viewport.scrollTop, 800, row ? heights[index] : 0)
   })
   const scrollElementRef = { current: viewport }

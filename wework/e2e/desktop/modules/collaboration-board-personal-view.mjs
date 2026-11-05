@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 
-import { expandCollaborationWorkspace, reloadMainWindow } from './workspace-flows.mjs'
+import {
+  expandCollaborationWorkspace,
+  reloadMainWindow,
+  selectCollaborationProjectView,
+} from './workspace-flows.mjs'
 
 export async function openProjectBoard(control, scoped, project) {
   await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]')
@@ -17,7 +21,7 @@ export async function openProjectBoard(control, scoped, project) {
   await control.command('waitFor', scoped('[data-testid="cloud-project-header-title"]'), {
     text: project.name,
   })
-  await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+  await selectCollaborationProjectView(control, scoped('').trim(), 'board')
   await control.command('waitFor', scoped('[data-testid="collaboration-board"]'))
 }
 
