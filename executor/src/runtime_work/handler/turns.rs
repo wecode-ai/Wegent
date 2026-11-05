@@ -165,13 +165,27 @@ fn write_runtime_turn_state(
     fs::create_dir_all(parent)
         .map_err(|error| format!("Failed to create {}: {error}", parent.display()))?;
     let key = load_or_create_runtime_turn_queue_key(queue_path)?;
-    let plaintext = serde_json::to_vec(&RuntimeTurnQueuePayload {
+    let mut payload = RuntimeTurnQueuePayload {
         version: RUNTIME_TURN_QUEUE_VERSION,
         turns: turns.clone(),
         active_goal_turns: active_goal_turns.clone(),
         commands: commands.clone(),
-    })
-    .map_err(|error| format!("Failed to serialize runtime turn queue: {error}"))?;
+    };
+    for turn in payload
+        .turns
+        .iter_mut()
+        .chain(payload.active_goal_turns.values_mut())
+        .chain(
+            payload
+                .commands
+                .values_mut()
+                .map(|command| &mut command.turn),
+        )
+    {
+        submitted_model::redact_persisted_submitted_interface(turn);
+    }
+    let plaintext = serde_json::to_vec(&payload)
+        .map_err(|error| format!("Failed to serialize runtime turn queue: {error}"))?;
     let mut nonce = [0_u8; 12];
     getrandom::fill(&mut nonce)
         .map_err(|error| format!("Failed to generate runtime turn queue nonce: {error}"))?;

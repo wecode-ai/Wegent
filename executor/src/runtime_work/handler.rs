@@ -179,6 +179,7 @@ mod stand_in_tasks;
 mod stand_in_telemetry;
 mod stand_in_work;
 mod stand_in_workspace;
+mod submitted_model;
 mod supervisor;
 use concurrency::{RuntimeSettings, RuntimeTaskKind, RuntimeTurnScheduler};
 
@@ -539,6 +540,8 @@ pub struct RuntimeWorkRpcHandler {
     supervisor_evaluating: Arc<Mutex<HashSet<String>>>,
     supervisor_model_configs: Arc<Mutex<HashMap<String, Value>>>,
     runtime_model_configs: Arc<Mutex<HashMap<String, Value>>>,
+    submitted_model_bindings:
+        Arc<Mutex<HashMap<String, submitted_model::SubmittedInterfaceBinding>>>,
     local_runner_models: Arc<Mutex<Vec<Value>>>,
     active_collaboration_rounds: Arc<Mutex<HashSet<String>>>,
     thread_event_routing: Arc<Mutex<RuntimeThreadEventRouting>>,
@@ -897,6 +900,7 @@ impl RuntimeWorkRpcHandler {
             supervisor_evaluating: Arc::new(Mutex::new(HashSet::new())),
             supervisor_model_configs: Arc::new(Mutex::new(HashMap::new())),
             runtime_model_configs: Arc::new(Mutex::new(HashMap::new())),
+            submitted_model_bindings: Arc::new(Mutex::new(HashMap::new())),
             local_runner_models: Arc::new(Mutex::new(Vec::new())),
             active_collaboration_rounds: Arc::new(Mutex::new(HashSet::new())),
             thread_event_routing: Arc::new(Mutex::new(RuntimeThreadEventRouting::default())),
@@ -1091,6 +1095,7 @@ impl RuntimeWorkRpcHandler {
     }
 
     fn forget_runtime_model_config(&self, local_task_id: &str) {
+        self.forget_submitted_interfaces(local_task_id);
         self.runtime_model_configs
             .lock()
             .expect("runtime model config map lock should not be poisoned")

@@ -175,6 +175,9 @@ impl RuntimeWorkRpcHandler {
         request: &mut ExecutionRequest,
         local_task_id: &str,
     ) -> Result<(), AppIpcError> {
+        if self.resolve_submitted_interface(request, local_task_id)? {
+            return Ok(());
+        }
         let config = &request.model_config;
         let identity = config
             .get("wework_local_model_id")

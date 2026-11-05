@@ -461,6 +461,7 @@ fn store_runtime_execution_request(runtime_handle: &mut Value, request: &Executi
                 | "runtime_permission_profile"
                 | "runtimePermissionProfile"
                 | "runtime_command_id"
+                | "submittedModelBinding"
                 | "skill_names"
                 | "standaloneChatWorkspace"
                 | "standInDelegation"
