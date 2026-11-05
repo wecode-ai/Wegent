@@ -440,6 +440,10 @@ runs may restore the default-branch cache, but they do not save another copy:
 - The real Electron update-transport probe on Linux isolates both Xvfb and D-Bus
   sessions so an invalid inherited session-bus address cannot interfere with native
   startup or exit. Keep its startup count, lifecycle assertions, and timeouts unchanged.
+- Before parallel desktop checkpoints launch their Xvfb servers, the parent runner
+  prepares the shared X11 Unix socket directory to avoid concurrent `EEXIST` failures.
+  Redis readiness failures retain the last output, log-read error, and process state;
+  readiness deadlines are not extended to hide startup defects.
 
 `.github/workflows/ci-cache-warmup.yml` runs after related source, dependency
 lockfile, or cache implementation changes enter `main`, and rejects manual
