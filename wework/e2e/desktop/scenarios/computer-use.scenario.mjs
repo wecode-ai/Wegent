@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { access, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { verifyComputerUseHostMenu } from '../modules/computer-use-host-menu.mjs'
+import { verifyComputerUseCancellation } from '../modules/computer-use-cancellation.mjs'
 
 const PAGE_SELECTOR = '[data-testid="computer-use-settings-page"]'
 const TOGGLE_SELECTOR = '[data-testid="computer-use-enabled-toggle"]'
@@ -154,6 +155,7 @@ export function createDesktopScenario({ captureScreenshot, executorHome, uiTimeo
       if (runtime && nativeState.platform === 'darwin') {
         await verifyComputerUseHostMenu(control, runtime, uiTimeoutMs)
       }
+      if (runtime) await verifyComputerUseCancellation(control, runtime, uiTimeoutMs)
       if (nativeState.platform !== 'darwin') {
         assert.ok(runtime, 'Enabled computer use did not publish its private bridge')
       }
