@@ -1,11 +1,16 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { lstat, readFile, readlink, readdir, realpath, stat, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { CLOUD_DEVICE_ID, CLOUD_PUBLIC_MODEL_NAME, CLOUD_PUBLIC_MODEL_OPTIONS } from './shared.mjs'
 import { createZipFixture } from './zip-fixtures.mjs'
+
+const { parse } = createRequire(join(import.meta.dirname, '../../../electron/package.json'))(
+  process.env.WEWORK_E2E_YAML_PARSER || 'yaml'
+)
 
 const digest = bytes => createHash('sha256').update(bytes).digest('hex')
 
@@ -51,8 +56,11 @@ export function createSharedSkillRuntime({
         'Claude read the wrong skill version'
       )
       if (turn.bindShells) {
-        assert.ok(
-          JSON.stringify(output).includes(`bindShells: [${turn.bindShells.join(', ')}]`),
+        const frontmatter = output.output.match(/^---\r?\n([\s\S]*?)\r?\n---/m)?.[1]
+        assert.ok(frontmatter, 'Claude did not read the skill frontmatter')
+        assert.deepEqual(
+          parse(frontmatter).bindShells,
+          turn.bindShells,
           'Claude did not consume the skill with its original Shell declaration'
         )
       }
