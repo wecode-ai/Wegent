@@ -33,7 +33,7 @@ export async function verifyComputerUseCancellation(control, record, timeoutMs) 
       window_id: window.window_id,
       expect: [{ window: { exists: false } }],
       include_screenshot: false,
-      timeout_ms: 30_000,
+      timeout_ms: 10_000,
     },
     controller.signal
   ).then(

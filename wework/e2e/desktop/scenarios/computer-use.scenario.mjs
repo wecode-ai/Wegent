@@ -154,8 +154,8 @@ export function createDesktopScenario({ captureScreenshot, executorHome, uiTimeo
       }
       if (runtime && nativeState.platform === 'darwin') {
         await verifyComputerUseHostMenu(control, runtime, uiTimeoutMs)
-        await verifyComputerUseCancellation(control, runtime, uiTimeoutMs)
       }
+      if (runtime) await verifyComputerUseCancellation(control, runtime, uiTimeoutMs)
       if (nativeState.platform !== 'darwin') {
         assert.ok(runtime, 'Enabled computer use did not publish its private bridge')
       }
