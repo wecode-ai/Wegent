@@ -106,6 +106,7 @@ export function DiscoverResources({
   )
   const isExternalMarketplaceActive = Boolean(activeExternalMarketplace)
 
+  /** Updates marketplace URL params without dropping unrelated filters. */
   const replaceMarketplaceParams = useCallback(
     (updates: { keyword?: string; tag?: string; leaveExternalMarketplace?: boolean }) => {
       const params = new URLSearchParams(searchParams.toString())
@@ -263,6 +264,7 @@ export function DiscoverResources({
     replaceMarketplaceParams({ keyword: nextKeyword })
   }
 
+  /** Switches to a built-in tag filter and leaves any external marketplace. */
   const handleTagChange = (tag: string) => {
     onExternalMarketplaceChange?.(null)
     setSelectedTag(tag)

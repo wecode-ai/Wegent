@@ -235,6 +235,7 @@ function ResourceLibraryContent() {
   const [skillMarketProviders, setSkillMarketProviders] = useState<SkillMarketProvider[]>([])
   const [skillMarketProvidersError, setSkillMarketProvidersError] = useState('')
   const [skillMarketProvidersLoading, setSkillMarketProvidersLoading] = useState(false)
+  const [skillMarketProvidersLoaded, setSkillMarketProvidersLoaded] = useState(false)
   const [activeSkillMarketProviderKey, setActiveSkillMarketProviderKey] = useState<string | null>(
     null
   )
@@ -260,6 +261,8 @@ function ResourceLibraryContent() {
     },
     [pathname, router, searchParams]
   )
+  const replaceParamsRef = useRef(replaceParams)
+  replaceParamsRef.current = replaceParams
 
   useEffect(() => {
     const updates: Record<string, string | null> = {}
@@ -297,24 +300,46 @@ function ResourceLibraryContent() {
     setSearchInput(headerKeywordParam)
   }, [headerKeywordParam])
 
-  // Keep the selected external marketplace in sync with the `marketplace` URL param.
+  /**
+   * Keeps the selected external marketplace in sync with the URL. An unknown
+   * marketplace is dropped once provider discovery finishes so the normal
+   * keyword search can take over.
+   */
   useEffect(() => {
-    setActiveSkillMarketProviderKey(
-      resolveExternalMarketplaceKey(skillMarketProviders, requestedMarketplaceParam)
+    const resolvedKey = resolveExternalMarketplaceKey(
+      skillMarketProviders,
+      requestedMarketplaceParam
     )
-  }, [requestedMarketplaceParam, skillMarketProviders])
+    setActiveSkillMarketProviderKey(resolvedKey)
+
+    if (
+      requestedMarketplaceParam &&
+      !resolvedKey &&
+      skillMarketProvidersLoaded &&
+      !skillMarketProvidersError
+    ) {
+      replaceParamsRef.current({ [EXTERNAL_MARKETPLACE_PARAM]: null })
+    }
+  }, [
+    requestedMarketplaceParam,
+    skillMarketProviders,
+    skillMarketProvidersError,
+    skillMarketProvidersLoaded,
+  ])
 
   useEffect(() => {
     if (isMineView || resourceType !== 'skill' || isMarketplaceSearch) {
       setSkillMarketProviders([])
       setSkillMarketProvidersError('')
       setSkillMarketProvidersLoading(false)
+      setSkillMarketProvidersLoaded(false)
       setActiveSkillMarketProviderKey(null)
       return
     }
 
     let isMounted = true
     setSkillMarketProvidersLoading(true)
+    setSkillMarketProvidersLoaded(false)
     setSkillMarketProvidersError('')
     listSkillMarketProviders()
       .then(providers => {
@@ -330,6 +355,7 @@ function ResourceLibraryContent() {
       .finally(() => {
         if (!isMounted) return
         setSkillMarketProvidersLoading(false)
+        setSkillMarketProvidersLoaded(true)
       })
 
     return () => {
@@ -339,12 +365,18 @@ function ResourceLibraryContent() {
 
   const retrySkillMarketProviders = () => {
     setSkillMarketProvidersError('')
+    setSkillMarketProvidersLoading(true)
+    setSkillMarketProvidersLoaded(false)
     listSkillMarketProviders()
       .then(setSkillMarketProviders)
       .catch(loadError => {
         setSkillMarketProvidersError(
           loadError instanceof Error ? loadError.message : skillMarketProvidersLoadFailedLabel
         )
+      })
+      .finally(() => {
+        setSkillMarketProvidersLoading(false)
+        setSkillMarketProvidersLoaded(true)
       })
   }
 
@@ -409,6 +441,7 @@ function ResourceLibraryContent() {
     setManagedRevision(revision => revision + 1)
   }
 
+  /** Applies the header keyword to the active market and clears the tag filter. */
   const handleSearch = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (!isMineView) {
@@ -422,6 +455,7 @@ function ResourceLibraryContent() {
     replaceParams({ keyword: searchInput.trim() || null })
   }
 
+  /** Selects an external marketplace and persists it in the URL. */
   const handleExternalMarketplaceChange = (key: string | null) => {
     setActiveSkillMarketProviderKey(key)
     // Leaving a marketplace through the tag row is written together with the
@@ -434,6 +468,7 @@ function ResourceLibraryContent() {
     }
   }
 
+  /** Toggles between discovery and My Capabilities, resetting cross-view filters. */
   const handleViewToggle = () => {
     if (isMineView) {
       replaceParams({
@@ -461,6 +496,7 @@ function ResourceLibraryContent() {
     })
   }
 
+  /** Switches resource types while resetting filters that no longer apply. */
   const handleTypeChange = (nextType: ResourceNavigationType | 'all') => {
     if (nextType === 'template') {
       replaceParams({

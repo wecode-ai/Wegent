@@ -454,6 +454,18 @@ describe('ResourceLibraryPage', () => {
     expect(mockReplace).toHaveBeenCalledWith('/resource-library?type=mcp', { scroll: false })
   })
 
+  it('clears an unresolved marketplace parameter after provider discovery', async () => {
+    mockedListSkillMarketProviders.mockResolvedValue([{ key: 'weibo', name: 'SkillHub' }])
+    mockSearchParams = new URLSearchParams('type=skill&marketplace=missing&keyword=PDF')
+    render(<ResourceLibraryPage />)
+
+    await waitFor(() =>
+      expect(mockReplace).toHaveBeenCalledWith('/resource-library?type=skill&keyword=PDF', {
+        scroll: false,
+      })
+    )
+  })
+
   it('leaves an external marketplace when opening collaboration templates', async () => {
     const user = userEvent.setup()
     mockedListSkillMarketProviders.mockResolvedValue([{ key: 'weibo', name: 'SkillHub' }])

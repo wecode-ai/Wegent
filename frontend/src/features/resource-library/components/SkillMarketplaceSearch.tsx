@@ -57,15 +57,17 @@ export function SkillMarketplaceSearch({
   const initiallyLoadedProviderRef = useRef<string | null>(null)
   const lastInitialKeywordRef = useRef(normalizedInitialKeyword)
   const submittedKeywordRef = useRef<string | null>(null)
+  const searchRequestIdRef = useRef(0)
   const onKeywordChangeRef = useRef(onKeywordChange)
   onKeywordChangeRef.current = onKeywordChange
 
   // Installation state
   const [installingSkills, setInstallingSkills] = useState<Map<string, InstallingSkill>>(new Map())
 
-  // Search skills
+  /** Loads one result page, ignoring responses superseded by a newer search. */
   const handleSearch = useCallback(
     async (searchKeyword: string, searchPage = 1) => {
+      const requestId = ++searchRequestIdRef.current
       setSearching(true)
       setHasSearched(true)
 
@@ -76,10 +78,12 @@ export function SkillMarketplaceSearch({
           pageSize,
         })
 
+        if (requestId !== searchRequestIdRef.current) return
         setSkills(result.skills)
         setTotal(result.total)
         setPage(result.page)
       } catch (error) {
+        if (requestId !== searchRequestIdRef.current) return
         // Clear stale results on error to avoid showing outdated data
         setSkills([])
         setTotal(0)
@@ -91,7 +95,7 @@ export function SkillMarketplaceSearch({
             error instanceof Error ? error.message : t('external_skill_market.unknown_error'),
         })
       } finally {
-        setSearching(false)
+        if (requestId === searchRequestIdRef.current) setSearching(false)
       }
     },
     [pageSize, provider.key, toast, t]
@@ -102,6 +106,7 @@ export function SkillMarketplaceSearch({
     void handleSearch(keyword.trim(), newPage)
   }
 
+  /** Runs a user-initiated search and reports the keyword back to the page. */
   const submitSearch = () => {
     const nextKeyword = keyword.trim()
     // Remember the local submission so the page writing it back to the URL does

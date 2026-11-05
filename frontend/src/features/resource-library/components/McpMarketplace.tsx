@@ -147,6 +147,15 @@ export function McpMarketplace({ initialKeyword = '', onKeywordChange }: McpMark
     }
   }
 
+  /** Switches providers and clears the filter so the new catalog is visible. */
+  const handleProviderChange = (providerKey: string) => {
+    serverRequestId.current += 1
+    const hadKeyword = keyword !== '' || lastInitialKeywordRef.current !== ''
+    setKeyword('')
+    if (hadKeyword) onKeywordChangeRef.current?.('')
+    setActiveProviderKey(providerKey)
+  }
+
   return (
     <div className="flex flex-col gap-4" data-testid="mcp-marketplace">
       {providers.length > 1 && (
@@ -164,13 +173,7 @@ export function McpMarketplace({ initialKeyword = '', onKeywordChange }: McpMark
               variant={provider.key === activeProviderKey ? 'primary' : 'outline'}
               role="tab"
               aria-selected={provider.key === activeProviderKey}
-              onClick={() => {
-                serverRequestId.current += 1
-                const hadKeyword = keyword !== '' || lastInitialKeywordRef.current !== ''
-                setKeyword('')
-                if (hadKeyword) onKeywordChangeRef.current?.('')
-                setActiveProviderKey(provider.key)
-              }}
+              onClick={() => handleProviderChange(provider.key)}
               className="min-h-11 min-w-11 shrink-0 md:min-h-9 md:min-w-0"
               data-testid={`mcp-marketplace-provider-${provider.key}`}
             >
