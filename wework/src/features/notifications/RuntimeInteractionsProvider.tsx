@@ -286,6 +286,7 @@ function RuntimeInteractionsState({
         setInventory(nextInventory)
         const failedInventoryDevices = [...discovered.failedDevices].filter(
           deviceId =>
+            discovered.failedRequests.has(deviceId) ||
             nextInventory.some(item => item.address.deviceId === deviceId) ||
             currentItems.some(
               item => item.address.deviceId === deviceId && item.task.interactionStatus

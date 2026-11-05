@@ -63,6 +63,7 @@ it('discovers authorized device requests independently and isolates a failed dev
     new Set(['device', 'remote'])
   )
   expect(inventory.failedDevices).toEqual(new Set(['unavailable', 'offline']))
+  expect(inventory.failedRequests).toEqual(new Set(['unavailable']))
   expect(list).toHaveBeenCalledTimes(3)
   expect(list).toHaveBeenCalledWith({ pendingOnly: true, deviceId: 'remote' })
   expect(log).toHaveBeenCalledWith(

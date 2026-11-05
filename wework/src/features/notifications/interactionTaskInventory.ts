@@ -9,10 +9,17 @@ import {
 export async function readInteractionTaskInventory(source: TaskSource): Promise<{
   items: RuntimeTaskReminderItem[]
   failedDevices: Set<string>
+  failedRequests: Set<string>
   refreshedDevices: Set<string>
 }> {
   const api = source.services?.runtimeWorkApi
-  if (!api) return { items: [], failedDevices: new Set(), refreshedDevices: new Set() }
+  if (!api)
+    return {
+      items: [],
+      failedDevices: new Set(),
+      failedRequests: new Set(),
+      refreshedDevices: new Set(),
+    }
   const localIdentity = await source.services?.getLocalRuntimeSidebarIdentity?.().catch(error => {
     logInteractionLoadFailure('local-identity', error)
     return null
@@ -28,6 +35,7 @@ export async function readInteractionTaskInventory(source: TaskSource): Promise<
   if (!devices.length) devices.push(undefined)
   const items: RuntimeTaskReminderItem[] = []
   const refreshedDevices = new Set<string>()
+  const failedRequests = new Set<string>()
   const failedDevices = new Set(
     source.devices
       ?.filter(
@@ -49,9 +57,10 @@ export async function readInteractionTaskInventory(source: TaskSource): Promise<
         } catch (error) {
           logInteractionLoadFailure('inventory', error, { deviceId })
           failedDevices.add(deviceId ?? '')
+          failedRequests.add(deviceId ?? '')
         }
       }
     })
   )
-  return { items, failedDevices, refreshedDevices }
+  return { items, failedDevices, failedRequests, refreshedDevices }
 }

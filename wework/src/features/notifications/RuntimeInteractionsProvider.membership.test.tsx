@@ -15,6 +15,22 @@ import {
 } from './runtimeInteractions.fixtures'
 
 describe('pending interaction membership and read cache', () => {
+  it('reports a failed first device inventory read even when no pending work has been cached', async () => {
+    const rendered = view(interactionQuestion, interactionTask, false, undefined, false)
+    await waitFor(() => expect(context!.loading).toBe(false))
+    harness.list.mockRejectedValue(new Error('Inventory transport unavailable'))
+    rendered.rerenderSource({
+      ...rendered.taskSource,
+      devices: [
+        { device_id: 'device', status: 'online' } as NonNullable<TaskSource['devices']>[number],
+      ],
+    })
+    await act(async () => {
+      await context!.refresh()
+    })
+    expect(context!.errors['inventory:device']).toBe('interactions.load_failed')
+    expect(context!.pending).toHaveLength(0)
+  })
   it('removes confirmed archived work even when its device goes offline before inventory reconciliation', async () => {
     harness.list.mockResolvedValue({
       projects: [],
