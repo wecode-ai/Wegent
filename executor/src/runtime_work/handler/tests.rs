@@ -5998,6 +5998,56 @@ async fn pending_task_list_discovers_filtered_work_without_changing_sidebar_visi
     let _ = fs::remove_dir_all(root);
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn pending_inventory_does_not_spawn_codex_but_sidebar_bootstrap_still_does() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (mut handler, root) = isolated_runtime_work_handler("pending-inventory-spawn");
+    fs::create_dir_all(&root).unwrap();
+    let binary = root.join("codex-launch-probe");
+    fs::write(
+        &binary,
+        "#!/bin/sh\nprintf launched > \"$0.launched\"\nexit 1\n",
+    )
+    .unwrap();
+    fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
+    handler.codex_app_server =
+        CodexAppServerClient::isolated_for_test(binary.display().to_string(), root.join("codex"));
+    let (events, mut receiver) = broadcast::channel(16);
+    handler.event_tx = Some(events);
+    let project_index = CodexGlobalProjectIndex::from_test_payload(&Map::new());
+    handler
+        .list_tasks_with_project_index(
+            &json!({"preferCached":true,"pendingOnly":true}),
+            &project_index,
+            Instant::now(),
+        )
+        .await
+        .unwrap();
+    let reconciliation = tokio::time::timeout(Duration::from_secs(5), receiver.recv()).await;
+    assert!(
+        reconciliation.is_err(),
+        "Pending inventory unexpectedly reconciled provider threads: {reconciliation:?}"
+    );
+    assert!(!binary.with_extension("launched").exists());
+    handler
+        .list_tasks_with_project_index(
+            &json!({"preferCached":true}),
+            &project_index,
+            Instant::now(),
+        )
+        .await
+        .unwrap();
+    let event = tokio::time::timeout(Duration::from_secs(5), receiver.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(event["payload"]["taskId"], "runtime-work-bootstrap");
+    assert!(binary.with_extension("launched").exists());
+    let _ = fs::remove_dir_all(root);
+}
+
 #[tokio::test]
 async fn cached_task_list_keeps_tasks_linked_to_cloud_issues() {
     let (handler, root) = isolated_runtime_work_handler("cached-cloud-issue-task-list");

@@ -110,6 +110,7 @@ impl RuntimeWorkRpcHandler {
         started_at: Instant,
     ) -> Result<Value, AppIpcError> {
         let prefer_cached = bool_field(payload, "preferCached").unwrap_or(false);
+        let pending_only = bool_field(payload, "pendingOnly").unwrap_or(false);
         let stage_started_at = Instant::now();
         let collected_links = if prefer_cached {
             self.collect_cached_links(false)
@@ -126,7 +127,7 @@ impl RuntimeWorkRpcHandler {
             &[("links", collected_links.len().to_string())],
         );
         let stage_started_at = Instant::now();
-        let links = if bool_field(payload, "pendingOnly").unwrap_or(false) {
+        let links = if pending_only {
             collected_links
                 .into_iter()
                 .filter(|link| {
@@ -169,7 +170,8 @@ impl RuntimeWorkRpcHandler {
                 ("tasks", task_count.to_string()),
             ],
         );
-        if prefer_cached {
+        // Pending decisions are framework-owned state, not a provider discovery request.
+        if prefer_cached && !pending_only {
             self.reconcile_codex_threads_after_cached_list();
         }
         Ok(json!({
