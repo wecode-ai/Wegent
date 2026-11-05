@@ -73,6 +73,7 @@ import {
 import { executeVerificationControlCommand } from './verification-control'
 import { captureEmbeddedBrowserSnapshot, evalEmbeddedBrowserJson } from '@/lib/embedded-browser'
 import { selectDesktopControlOption } from './desktop-control-select'
+import { cloudIdentityFailure } from './cloud-identity-diagnostics'
 import { dispatchDesktopControlWheel } from './desktop-control-wheel'
 import {
   getAppPreferences,
@@ -572,7 +573,7 @@ async function seedDesktopE2ECloudConnection(
     headers: { Authorization: `Bearer ${token}` },
     signal: AbortSignal.timeout(10000),
   })
-  if (!response.ok) throw new Error(`E2E cloud identity returned ${response.status}`)
+  if (!response.ok) throw await cloudIdentityFailure(response, `${config.apiBaseUrl}/users/me`)
   const user = await response.json()
   const connection = {
     ...config,
@@ -3696,6 +3697,16 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         throw new Error(`Selector "${command.selector}" is not a select element`)
       }
       return selectDesktopControlOption(element, command.value ?? '', command.by)
+    }
+    case 'selectOrClick': {
+      return waitForDesktopControlElement({ ...command, enabled: true }, element => {
+        if (element instanceof HTMLSelectElement)
+          return selectDesktopControlOption(element, command.value ?? '', command.by)
+        if (!(element instanceof HTMLButtonElement))
+          throw new Error(`Selector "${command.selector}" is not a select or button`)
+        element.click()
+        return element.textContent?.trim() ?? ''
+      })
     }
     case 'submit': {
       const element = findDesktopControlElements(command.selector)[0]

@@ -12,7 +12,11 @@ test.each([true, false])(
     const command = vi.fn(async (action, selector) => {
       if (action === 'getAttribute') return 'true'
       if (action === 'getElementCount') return compact ? '1' : '0'
-      if (compact && selector.endsWith('[data-testid="collaboration-tab-board"]')) {
+      if (
+        compact &&
+        action !== 'selectOrClick' &&
+        selector.endsWith('[data-testid="collaboration-tab-board"]')
+      ) {
         throw new Error('Expanded tabs are not mounted in compact layout')
       }
       return ''
@@ -23,11 +27,9 @@ test.each([true, false])(
       workspace_id: 'workspace',
     })
     expect(command).toHaveBeenCalledWith(
-      compact ? 'select' : 'clickWhenEnabled',
-      compact
-        ? scoped('[data-testid="collaboration-project-view-select"]')
-        : scoped('[data-testid="collaboration-tab-board"]'),
-      compact ? { value: 'board' } : { visible: true, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+      'selectOrClick',
+      `${scoped('[data-testid="collaboration-project-view-select"]')}, ${scoped('[data-testid="collaboration-tab-board"]')}`,
+      { value: 'board', visible: true, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
     )
     expect(command).toHaveBeenLastCalledWith(
       'waitFor',

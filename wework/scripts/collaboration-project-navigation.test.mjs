@@ -17,7 +17,18 @@ function fixture(compact, options = {}) {
     if (action === 'getElementCount') return compact ? '1' : '0'
     if (action === 'waitFor') {
       assert.equal(input.timeoutMs, DEFAULT_STEP_TIMEOUT_MS)
-      if (selector.includes('cloud-project-header-title')) {
+      if (selector.includes(':has(')) {
+        assert.equal(input.visible, true)
+        assert.ok(selector.includes(':not(:has('))
+        assert.ok(selector.includes('[aria-current="page"]'))
+        if (compact)
+          assert.equal(
+            options.selectedProject ?? NAME,
+            input.text,
+            'Wrong selected sidebar project'
+          )
+        else assert.equal(options.titleVisible ?? true, true, 'Title is hidden')
+      } else if (selector.includes('cloud-project-header-title')) {
         assert.equal(options.title ?? NAME, input.text, 'Wrong active project title')
         if (input.visible) assert.equal(options.titleVisible ?? !compact, true, 'Title is hidden')
       } else if (selector.includes('aria-current="page"')) {
@@ -36,17 +47,7 @@ function fixture(compact, options = {}) {
       } else assert.fail(`Unexpected wait: ${selector}`)
       return ''
     }
-    if (action === 'select') {
-      assert.equal(compact, true, 'Wide layouts must use their visible tabs')
-      assert.ok(
-        (options.views ?? ['board', 'table', 'manage', 'gantt']).includes(input.value),
-        'View is unavailable'
-      )
-      view = input.value
-      return view
-    }
-    if (action === 'clickWhenEnabled') {
-      assert.equal(compact, false, 'Compact layouts do not render wide tab buttons')
+    if (action === 'selectOrClick') {
       assert.equal(options.navigationVisible ?? true, true, 'Navigation is hidden')
       assert.equal(options.navigationEnabled ?? true, true, 'Navigation is disabled')
       assert.equal(input.visible, true)
@@ -57,9 +58,17 @@ function fixture(compact, options = {}) {
         'collaboration-tab-manage': 'manage',
         'collaboration-gantt-tab': 'gantt',
       }
-      const id = /data-testid="([^"]+)"/.exec(selector)[1]
-      assert.ok(tabs[id], `Wide layout does not render ${id}`)
-      view = tabs[id]
+      const id = Object.keys(tabs).find(id => tabs[id] === input.value)
+      assert.ok(id, `Wide layout does not render ${input.value}`)
+      assert.equal(
+        selector,
+        `${CONTENT} [data-testid="collaboration-project-view-select"], ${CONTENT} [data-testid="${id}"]`
+      )
+      assert.ok(
+        (options.views ?? ['board', 'table', 'manage', 'gantt']).includes(input.value),
+        'View is unavailable'
+      )
+      view = input.value
       return view
     }
     assert.fail(`Unexpected action: ${action}`)
