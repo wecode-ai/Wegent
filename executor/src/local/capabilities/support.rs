@@ -18,7 +18,8 @@ use super::{CapabilitySyncError, PluginSyncSpec, DEFAULT_PLUGIN_MARKETPLACE, MAN
 
 pub(super) const CLAUDE_PLUGIN_MANIFEST_PATH: &str = ".claude-plugin/plugin.json";
 pub(super) const CODEX_PLUGIN_MANIFEST_PATH: &str = ".codex-plugin/plugin.json";
-const PLUGIN_MANIFEST_PATHS: [&str; 2] = [CODEX_PLUGIN_MANIFEST_PATH, CLAUDE_PLUGIN_MANIFEST_PATH];
+pub(super) const PLUGIN_MANIFEST_PATHS: [&str; 2] =
+    [CODEX_PLUGIN_MANIFEST_PATH, CLAUDE_PLUGIN_MANIFEST_PATH];
 const MAX_PACKAGE_ENTRY_COUNT: usize = 10_000;
 const MAX_EXPANDED_PACKAGE_SIZE_BYTES: u64 = 200 * 1024 * 1024;
 const UNIX_FILE_TYPE_MASK: u32 = 0o170_000;
@@ -404,7 +405,7 @@ fn ensure_plugin_hook_executable(
 }
 
 #[cfg(unix)]
-fn is_plugin_hook_path(path: &Path) -> bool {
+pub(super) fn is_plugin_hook_path(path: &Path) -> bool {
     path.components().next().is_some_and(|component| {
         component
             .as_os_str()
