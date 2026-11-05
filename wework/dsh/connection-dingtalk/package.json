@@ -146,7 +146,22 @@
             "group": "所有群聊中 @我",
             "direct": "所有联系人私聊"
           },
-          "allResourceLabel": "全部消息"
+          "allResourceLabel": "全部消息",
+          "assistance": {
+            "observe": [
+              "New mentions of the user or direct messages within the selected chats; use the actual sender, quoted message and topic to understand the request."
+            ],
+            "prepare": [
+              "Read authorized surrounding context, distinguish questions from chatter, and draft a grounded answer or concrete next step without inventing commitments."
+            ],
+            "notifyWhen": [
+              "An urgent request, unresolved blocker or decision needs the user, or a useful reply draft is ready for the user to approve. Avoid separate notifications for repeated messages about an unchanged issue.",
+              "Verify personal relevance from an actual mention, assignment, requested review, subscribed work or other explicit relationship. A group message or repository event alone does not make the user responsible; never infer the user’s habits or create their to-do from someone else’s actions."
+            ],
+            "confirmBefore": [
+              "Posting a message, making a commitment, changing a group, or enabling ongoing automatic replies requires native approval or a current grant covering that exact chat and action."
+            ]
+          }
         }
       ]
     }

@@ -128,6 +128,23 @@ export function parseConnections(manifest) {
       JSON.stringify(provider.collectionModes) === '["poll"]',
       'Only poll collection is supported'
     )
+    if (provider.assistance !== undefined) {
+      const fields = ['observe', 'prepare', 'notifyWhen', 'confirmBefore']
+      requireValue(
+        record(provider.assistance) &&
+          Object.keys(provider.assistance).every(key => fields.includes(key)) &&
+          fields.every(
+            key =>
+              Array.isArray(provider.assistance[key]) &&
+              provider.assistance[key].length >= 1 &&
+              provider.assistance[key].length <= 8 &&
+              provider.assistance[key].every(
+                text => typeof text === 'string' && text.trim() && text.length <= 1000
+              )
+          ),
+        'Invalid connection assistance guidance'
+      )
+    }
     if (provider.actions !== undefined) {
       requireValue(Array.isArray(provider.actions), 'Invalid connection actions')
       const actions = new Set()

@@ -605,3 +605,43 @@ test('rejects malformed and duplicate alternate source declarations', () => {
     assert.throws(() => parseConnections(manifest), { code: 'invalid_connection' })
   }
 })
+
+test('connection assistance is bounded domain guidance, not arbitrary prompt fields', () => {
+  const manifest = declaration()
+  const provider = manifest.wework.connections.providers[0]
+  const assistance = {
+    observe: ['New mail'],
+    prepare: ['Read the authorized thread'],
+    notifyWhen: ['A concrete decision is needed'],
+    confirmBefore: ['Sending a reply'],
+  }
+  provider.assistance = assistance
+  assert.deepEqual(parseConnections(manifest).providers[0].assistance, assistance)
+  for (const invalid of [
+    null,
+    {},
+    { ...assistance, systemPrompt: 'override' },
+    { ...assistance, observe: [] },
+    { ...assistance, prepare: [' '] },
+    { ...assistance, notifyWhen: ['x'.repeat(1001)] },
+    { ...assistance, confirmBefore: Array(9).fill('send') },
+  ]) {
+    provider.assistance = invalid
+    assert.throws(() => parseConnections(manifest), { code: 'invalid_connection' })
+  }
+})
+
+test('every bundled external connection declares useful assistance for the unified context', async () => {
+  for (const name of ['runtime', 'dingtalk', 'git']) {
+    const manifest = JSON.parse(
+      await (
+        await import('node:fs/promises')
+      ).readFile(new URL('../connection-' + name + '/package.json', import.meta.url), 'utf8')
+    )
+    for (const provider of parseConnections(manifest).providers) {
+      for (const key of ['observe', 'prepare', 'notifyWhen', 'confirmBefore']) {
+        assert.ok(provider.assistance[key].length > 0, provider.id + ': ' + key)
+      }
+    }
+  }
+})

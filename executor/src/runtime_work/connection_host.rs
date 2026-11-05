@@ -60,6 +60,23 @@ fn host_is_live(host: &Value) -> bool {
         .is_some_and(|at| chrono::Utc::now().timestamp() - at <= 15)
 }
 
+pub(crate) fn provider_guidance() -> Vec<Value> {
+    HOST.get()
+        .and_then(|host| host.lock().ok())
+        .and_then(|host| host.as_ref().map(live_provider_guidance))
+        .unwrap_or_default()
+}
+
+fn live_provider_guidance(host: &Value) -> Vec<Value> {
+    if !host_is_live(host) {
+        return Vec::new();
+    }
+    host["providerGuidance"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+}
+
 pub(crate) fn declared_dependency(
     provider: &str,
     source: &Value,
@@ -164,6 +181,17 @@ fn response_error(method: &str, error: &Value) -> AppIpcError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn connection_guidance_expires_with_the_registered_host() {
+        let mut host = json!({"registeredAt":chrono::Utc::now().timestamp(),"providerGuidance":[{"providerId":"mail","assistance":{"observe":["new mail"]}}]});
+        assert_eq!(live_provider_guidance(&host).len(), 1);
+        host["providerGuidance"] = json!([]);
+        assert!(live_provider_guidance(&host).is_empty());
+        host["providerGuidance"] = json!([{"providerId":"mail"}]);
+        host["registeredAt"] = json!(chrono::Utc::now().timestamp() - 30);
+        assert!(live_provider_guidance(&host).is_empty());
+    }
 
     #[test]
     fn collection_retry_metadata_is_bounded_and_never_authorizes_action_replay() {

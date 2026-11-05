@@ -15,6 +15,12 @@ const PACKAGE = '@test/connection-source'
 const PROVIDER = `${PACKAGE}/records`
 const MARKET = 'connection-fixture'
 const PLUGIN = `source@${MARKET}`
+const ASSISTANCE = {
+  observe: ['New authorized record versions'],
+  prepare: ['Read the selected record and identify the material change'],
+  notifyWhen: ['A personally relevant record change requires a user decision'],
+  confirmBefore: ['Changing a record requires native authorization'],
+}
 
 export function createDesktopScenario({
   resultDir,
@@ -117,6 +123,7 @@ export function createDesktopScenario({
                   resourceLabels: { record: 'Records' },
                   eventTypes: ['record.received'],
                   versionedEventTypes: ['record.received'],
+                  assistance: ASSISTANCE,
                 },
               ],
             },
@@ -152,6 +159,7 @@ export function createDesktopScenario({
       const ready = await rpc(control, 'runtime.connections.catalog', {})
       const provider = ready.items.find(item => item.id === PROVIDER)
       assert.equal(provider.availability.status, 'ready')
+      assert.deepEqual(provider.assistance, ASSISTANCE)
       const page = await rpc(control, 'runtime.connections.resources', {
         providerId: PROVIDER,
         kind: 'record',

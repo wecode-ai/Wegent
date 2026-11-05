@@ -53,6 +53,12 @@ export async function apply(ctx) {
       await client.request('runtime.connections.host', {
         url: `http://127.0.0.1:${port}${BASE_PATH}`,
         token,
+        providerGuidance: [...registry.entries.values()]
+          .filter(entry => entry.provider.assistance)
+          .map(entry => ({
+            providerId: entry.id,
+            assistance: entry.provider.assistance,
+          })),
         dependencyReferences: [...registry.entries.values()].flatMap(entry =>
           entry.provider.uses.flatMap(alias =>
             dependencySources(entry.definition.dependencies[alias]).map(source => ({

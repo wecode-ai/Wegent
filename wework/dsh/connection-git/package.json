@@ -68,6 +68,21 @@
             "required": [
               "instance"
             ]
+          },
+          "assistance": {
+            "observe": [
+              "New review requests, mentions, issue changes and check failures in the selected account or repository. Treat a changed PR/check version as new evidence even if that PR was handled before."
+            ],
+            "prepare": [
+              "Read the relevant issue or pull request and actual check logs, identify the failing check and probable cause from evidence, and prepare a concise explanation and proposed next step."
+            ],
+            "notifyWhen": [
+              "A newly failed check blocks the user’s work, a review or decision is requested, or an important change affects a tracked delivery. Suppress unchanged failures and unrelated repository activity.",
+              "Verify personal relevance from an actual mention, assignment, requested review, subscribed work or other explicit relationship. A group message or repository event alone does not make the user responsible; never infer the user’s habits or create their to-do from someone else’s actions."
+            ],
+            "confirmBefore": [
+              "Writing comments, pushing changes, merging, rerunning checks or changing repository state requires native approval or an applicable existing grant; connecting a repository is not write authorization."
+            ]
           }
         },
         {
@@ -114,6 +129,21 @@
             },
             "required": [
               "instance"
+            ]
+          },
+          "assistance": {
+            "observe": [
+              "New merge-request review requests, mentions, issue changes and pipeline failures within the selected GitLab instance and resources. Compare object versions rather than treating a handled MR as permanently complete."
+            ],
+            "prepare": [
+              "Read the actual merge request, job logs and related discussion, establish the failure or requested decision from evidence, and prepare an actionable summary with source links."
+            ],
+            "notifyWhen": [
+              "A new pipeline failure blocks relevant work, a review or decision needs the user, or a material delivery risk changes. Keep unchanged pipeline failures and irrelevant project activity quiet.",
+              "Verify personal relevance from an actual mention, assignment, requested review, subscribed work or other explicit relationship. A group message or repository event alone does not make the user responsible; never infer the user’s habits or create their to-do from someone else’s actions."
+            ],
+            "confirmBefore": [
+              "Commenting, pushing, merging, retrying jobs or modifying project state requires native approval or a current scoped grant. Access to one GitLab instance never implies access to another."
             ]
           }
         }

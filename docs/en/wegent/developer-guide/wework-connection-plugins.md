@@ -66,6 +66,21 @@ export async function apply(ctx) {
 
 The manifest supplies metadata; implementations follow their Cordis owner's lifetime. Installed disabled plugins are discovered from manifests without executing their entrypoints. Full provider identity is `package-name/provider-id`. Invalid declarations, duplicate identities and unsupported protocol versions fail explicitly. This release supports polling and does not execute arbitrary commands from manifests.
 
+## Connection domain guidance
+
+A provider may declare structured `assistance` to explain how the assistant should help after the connection becomes available. Each field contains 1–8 nonempty strings, at most 1000 characters each:
+
+- `observe`: relevant incoming events and object changes.
+- `prepare`: contextual reads and useful preparation within existing read permissions.
+- `notifyWhen`: findings, risks and user decisions worth an interruption; keep routine or unchanged information quiet.
+- `confirmBefore`: domain actions that require checking native single-use approval or a current continuing grant. This is a reminder, never a complete permission policy.
+
+Built-in Email, DingTalk, GitHub and GitLab providers all declare guidance. Collection-only providers may omit it; the framework does not invent capabilities for them. Arbitrary system prompts, tool grants and executable commands are not supported fields.
+
+The DSH host publishes guidance only for currently registered plugins. On every turn, Executor selects current saved connections for a manual identity conversation (pausing automatic processing does not revoke domain knowledge); delegated workers receive domain hints without account or source identities, never new read permissions; background assessment and source work receive only sources in their current batch or work that still belong to the current role and account. Stopping a plugin or revoking a connection removes the corresponding guidance from subsequent turns; pausing automatic processing removes background guidance without revoking manual domain hints. Plugin text is marked as untrusted context, with a separate host policy defining its bounds. User drafts remain business requests without injected rules.
+
+Connecting only makes the guidance available; it does not create a business reminder. Subsequent mail, mentions, PR changes and pipeline failures trigger assessment through the existing event protocol. Read-only preparation and useful findings remain distinct from external actions and ongoing responsibilities. Plugin guidance never expands existing authorization.
+
 ## Provider contract
 
 | Method                          | Behavior                                                                                         |

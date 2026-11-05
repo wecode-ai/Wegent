@@ -46,7 +46,22 @@
                 "inbox"
               ]
             }
-          ]
+          ],
+          "assistance": {
+            "observe": [
+              "New mail received after the saved connection boundary; distinguish a new message from already processed mail."
+            ],
+            "prepare": [
+              "Read the authorized message and relevant thread, identify the request, deadline and owner, and prepare a concise summary or reply draft. Verify dates and distinguish original amounts from current balances."
+            ],
+            "notifyWhen": [
+              "A message creates a concrete decision, imminent deadline, material risk or unanswered request relevant to the user. Explain the finding with a real source; keep routine mail quiet.",
+              "Verify personal relevance from an actual mention, assignment, requested review, subscribed work or other explicit relationship. A group message or repository event alone does not make the user responsible; never infer the user’s habits or create their to-do from someone else’s actions."
+            ],
+            "confirmBefore": [
+              "Sending or replying, deleting mail, changing external state, or taking on a new recurring responsibility requires the native single-use approval or an applicable current continuing grant."
+            ]
+          }
         }
       ]
     }

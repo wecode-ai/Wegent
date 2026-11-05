@@ -28,6 +28,13 @@ export interface ConnectionDescriptor {
   eventTypes: string[]
   /** Mutable event types must identify the object and its opaque source version. */
   versionedEventTypes: string[]
+  /** Domain guidance, scoped to current connections; never permissions or global instructions. */
+  assistance?: {
+    observe: string[]
+    prepare: string[]
+    notifyWhen: string[]
+    confirmBefore: string[]
+  }
   /** Declared operations remain subject to native host authorization on every call. */
   actions?: Array<{ id: string; resourceKinds: string[] }>
   /** Read contract for existing tools without readOnlyHint; explicit false always wins. */
