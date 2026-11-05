@@ -337,7 +337,7 @@ classify_path() {
       select_target "core:transcript-sync"
       select_target "core:environment-panel-scroll"
       ;;
-    backend/alembic/versions/*wework_transcript* | \
+    backend-rs/migrations/reference/versions/*wework_transcript* | \
       backend/app/api/endpoints/wework_transcripts.py | \
       backend/app/core/wework_transcript_encryption.py | \
       backend/app/models/wework_transcript.py | \
@@ -391,7 +391,7 @@ classify_path() {
     wework/e2e/desktop/scenarios/collaboration-templates.scenario.mjs | \
       packages/collaboration/src/templates/* | \
       backend-rs/src/collaboration_templates/* | \
-      backend/init_data/04-collaboration-templates.yaml | \
+      backend-rs/init_data/04-collaboration-templates.yaml | \
       shared/data/collaboration-templates.json)
       select_target "core:collaboration-templates"
       select_target "core:collaboration-template-lifecycle"

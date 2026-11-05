@@ -670,10 +670,14 @@ async fn claude_runtime_does_not_overwrite_regular_claude_md() {
 #[tokio::test]
 async fn claude_runtime_downloads_request_skills_before_process_start() {
     let _lock = env_lock().await;
-    let home = unique_dir("claude-runtime-skill-home");
-    let workspace_root = unique_dir("claude-runtime-skill-workspace");
-    let log_path = unique_dir("claude-runtime-skill-log").join("args.json");
-    let fake_claude = write_fake_claude(&log_path);
+    let temporary = tempfile::tempdir().unwrap();
+    let home = temporary.path().join("home");
+    let workspace_root = temporary.path().join("workspace");
+    let log_path = temporary.path().join("args.json");
+    let fake_claude = write_fake_claude_with_prelude(
+        &log_path,
+        r#"test "$(cat "$CLAUDE_CONFIG_DIR/skills/example-skill/SKILL.md")" = '# Example Skill' || exit 80"#,
+    );
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let backend_url = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async move {
@@ -708,7 +712,11 @@ async fn claude_runtime_downloads_request_skills_before_process_start() {
         }]),
         extra: serde_json::Map::from_iter([(
             "skill_refs".to_owned(),
-            json!({"example-skill": {"skill_id": 42, "namespace": "default"}}),
+            json!({"example-skill": {
+                "skill_id": 42,
+                "namespace": "default",
+                "bind_shells": ["Chat"]
+            }}),
         )]),
         model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
         ..ExecutionRequest::default()
@@ -886,10 +894,14 @@ async fn claude_runtime_does_not_start_when_required_skill_download_fails() {
 #[tokio::test]
 async fn claude_runtime_remaps_historical_skill_zip_root_to_skill_name() {
     let _lock = env_lock().await;
-    let home = unique_dir("claude-historical-skill-root-home");
-    let workspace_root = unique_dir("claude-historical-skill-root-workspace");
-    let log_path = unique_dir("claude-historical-skill-root-log").join("args.json");
-    let fake_claude = write_fake_claude(&log_path);
+    let temporary = tempfile::tempdir().unwrap();
+    let home = temporary.path().join("home");
+    let workspace_root = temporary.path().join("workspace");
+    let log_path = temporary.path().join("args.json");
+    let fake_claude = write_fake_claude_with_prelude(
+        &log_path,
+        r#"test "$(cat "$CLAUDE_CONFIG_DIR/skills/requested-skill/SKILL.md")" = '# Test Skill' || exit 80"#,
+    );
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let backend_url = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async move {
@@ -928,7 +940,8 @@ async fn claude_runtime_remaps_historical_skill_zip_root_to_skill_name() {
                 json!({
                     "requested-skill": {
                         "skill_id": 196659,
-                        "namespace": "default"
+                        "namespace": "default",
+                        "bind_shells": ["Chat"]
                     }
                 }),
             ),

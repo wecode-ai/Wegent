@@ -1867,12 +1867,6 @@ impl RuntimeWorkRpcHandler {
             "approvalPolicy".to_owned(),
             codex_runtime_approval_policy(&request),
         );
-        // A history read can cold-resume a thread before its next turn. Codex
-        // preserves that loaded thread's shell policy on subsequent resumes.
-        params.insert(
-            "config".to_owned(),
-            Value::Object(crate::agents::task_identity_thread_config(&request)),
-        );
         params.insert("excludeTurns".to_owned(), Value::Bool(true));
         if !link.workspace_path.trim().is_empty() {
             params.insert("cwd".to_owned(), Value::String(link.workspace_path.clone()));
@@ -1883,9 +1877,7 @@ impl RuntimeWorkRpcHandler {
 
         self.register_thread_event_route_from_store(thread_id);
         self.ensure_notification_router().await;
-        let response = client
-            .request("thread/resume", Value::Object(params))
-            .await?;
+        let response = client.resume_thread_for_action(&request, params).await?;
         Ok(response
             .get("thread")
             .and_then(|thread| string_field(thread, "id"))

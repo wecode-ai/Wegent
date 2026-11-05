@@ -329,7 +329,7 @@ impl<R: Redis> StatusUpdatingEmitter<R> {
                         Some(if failed { "error" } else { "done" }),
                         event.tool_output.as_ref(),
                         event.tool_input.as_ref(),
-                        None,
+                        event.data.get("render_payload"),
                         tool_protocol,
                         server_label,
                     )
@@ -483,6 +483,9 @@ impl<R: Redis> StatusUpdatingEmitter<R> {
                 }
                 if let Some(tool_input) = event.tool_input.as_ref() {
                     updates.insert("tool_input".into(), tool_input.clone());
+                }
+                if let Some(render_payload) = event.data.get("render_payload") {
+                    updates.insert("render_payload".into(), render_payload.clone());
                 }
                 updates.insert("status".into(), Value::String(status.into()));
                 let payload = block_update_payload(

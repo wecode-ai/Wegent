@@ -22,6 +22,7 @@ let capturedHost: CollaborationPlatformHostAdapter | null = null
 const mockGetProject = jest.fn()
 const mockListGroups = jest.fn()
 let mockTemplateStore: CollaborationTemplateStore | null = null
+let mockUserLoading = false
 jest.mock('@/features/resource-library/useCollaborationTemplates', () => ({
   useCollaborationTemplates: () => mockTemplateStore,
 }))
@@ -62,10 +63,13 @@ jest.mock('@/features/layout/components/UserFloatingMenu', () => ({
 
 jest.mock('@/features/common/UserContext', () => ({
   useUser: () => ({
-    user: {
-      id: 7,
-      user_name: 'current-user',
-    },
+    isLoading: mockUserLoading,
+    user: mockUserLoading
+      ? null
+      : {
+          id: 7,
+          user_name: 'current-user',
+        },
   }),
 }))
 
@@ -94,11 +98,8 @@ jest.mock('sonner', () => ({
 
 describe('CollaborationPage platform routing', () => {
   beforeEach(() => {
-    mockTemplateStore = new CollaborationTemplateStore({
-      scope: 'web-7',
-      ownerId: 7,
-      persistence: { read: async () => [], write: async () => {} },
-    })
+    mockUserLoading = false
+    mockTemplateStore = null
     mockPush.mockReset()
     mockReplace.mockReset()
     mockPathname = '/collaboration'
@@ -112,6 +113,20 @@ describe('CollaborationPage platform routing', () => {
     mockListGroups.mockReset()
     mockListGroups.mockReturnValue(new Promise(() => undefined))
     localStorage.clear()
+  })
+
+  it('waits for the authenticated owner before mounting the scoped workbench', () => {
+    mockUserLoading = true
+    const view = render(<CollaborationPage />)
+    expect(screen.queryByTestId('shared-collaboration-main')).not.toBeInTheDocument()
+    expect(capturedHost).toBeNull()
+    expect(screen.getByTestId('top-navigation')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('collaboration-back-to-workbench'))
+    expect(mockPush).toHaveBeenCalledWith('/chat')
+    mockUserLoading = false
+    view.rerender(<CollaborationPage />)
+    expect(screen.getByTestId('shared-collaboration-main')).toBeInTheDocument()
+    expect(capturedHost?.currentUser?.id).toBe(7)
   })
 
   it('renders the platform spaces root through the thin host shell', () => {
@@ -153,23 +168,6 @@ describe('CollaborationPage platform routing', () => {
     expect(screen.getByTestId('collaboration-context-sidebar')).toContainElement(
       screen.getByTestId('shared-collaboration-sidebar')
     )
-  })
-
-  it('waits for the account template scope before mounting interactive collaboration content', () => {
-    const readyStore = mockTemplateStore
-    mockTemplateStore = null
-    const { rerender } = render(<CollaborationPage />)
-
-    expect(capturedHost).toBeNull()
-    expect(screen.getByTestId('collaboration-account-loading')).toHaveAttribute('aria-busy', 'true')
-    expect(screen.queryByTestId('shared-collaboration-sidebar')).not.toBeInTheDocument()
-
-    mockTemplateStore = readyStore
-    rerender(<CollaborationPage />)
-
-    expect(capturedHost?.templateStore).toBe(readyStore)
-    expect(screen.getByTestId('shared-collaboration-sidebar')).toBeInTheDocument()
-    expect(screen.queryByTestId('collaboration-account-loading')).not.toBeInTheDocument()
   })
 
   it('opens the selected execution environment in device management', () => {

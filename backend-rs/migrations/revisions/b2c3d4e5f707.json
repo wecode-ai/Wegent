@@ -1,0 +1,43 @@
+{
+  "revision": "b2c3d4e5f707",
+  "parents": [
+    "a1b2c3d4e5f6"
+  ],
+  "source": "20260428_b2c3d4e5f707_add_dingtalk_synced_nodes_table.py",
+  "upgrade": [
+    {
+      "sql": [
+        "CREATE TABLE dingtalk_synced_nodes (\n    id INTEGER NOT NULL AUTO_INCREMENT, \n    user_id INTEGER NOT NULL, \n    dingtalk_node_id VARCHAR(64) NOT NULL, \n    name VARCHAR(500) NOT NULL, \n    doc_url VARCHAR(1024) NOT NULL, \n    parent_node_id VARCHAR(64) NOT NULL DEFAULT '', \n    node_type VARCHAR(32) NOT NULL, \n    workspace_id VARCHAR(64) NOT NULL DEFAULT '', \n    content_type VARCHAR(32) NOT NULL DEFAULT '', \n    content_updated_at DATETIME NOT NULL, \n    is_active BOOL NOT NULL DEFAULT 1, \n    last_synced_at DATETIME NOT NULL, \n    created_at DATETIME NOT NULL, \n    updated_at DATETIME NOT NULL, \n    PRIMARY KEY (id)\n)ENGINE=InnoDB CHARSET=utf8mb4 COMMENT='DingTalk synced document nodes'",
+        "CREATE UNIQUE INDEX ix_dingtalk_nodes_user_node ON dingtalk_synced_nodes (user_id, dingtalk_node_id)",
+        "CREATE INDEX ix_dingtalk_nodes_user_parent ON dingtalk_synced_nodes (user_id, parent_node_id)",
+        "CREATE INDEX ix_dingtalk_synced_nodes_id ON dingtalk_synced_nodes (id)"
+      ],
+      "when": {
+        "query": "SELECT COUNT(*) AS n FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='dingtalk_synced_nodes'",
+        "nonzero": false
+      }
+    }
+  ],
+  "downgrade": [
+    {
+      "sql": [
+        "DROP INDEX ix_dingtalk_synced_nodes_id ON dingtalk_synced_nodes"
+      ]
+    },
+    {
+      "sql": [
+        "DROP INDEX ix_dingtalk_nodes_user_parent ON dingtalk_synced_nodes"
+      ]
+    },
+    {
+      "sql": [
+        "DROP INDEX ix_dingtalk_nodes_user_node ON dingtalk_synced_nodes"
+      ]
+    },
+    {
+      "sql": [
+        "DROP TABLE dingtalk_synced_nodes"
+      ]
+    }
+  ]
+}

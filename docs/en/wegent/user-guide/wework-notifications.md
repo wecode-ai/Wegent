@@ -18,6 +18,10 @@ Human assignments offer Notify or Do not notify before saving, including assignm
 
 Delivery reaches only the recipient's connected private IM channels that configured a notification card, such as the DingTalk WegentBot. A connected channel without that configuration receives no IM push; the in-app entry is unaffected. IM failures do not remove the inbox entry or change the active IM task.
 
+## Pending interaction reminders
+
+When AI needs your input, the reminder in the upper-right corner stays visible. It does not close after a timeout, when the pointer moves away, when the window loses focus, or when you open the pending interactions page. Its expanded reply form and draft are preserved as well. Clicking its close button dismisses only the popup; the request remains pending. Resolving that request in the original conversation, the pending interactions page, or another surface automatically removes the reminder.
+
 ## Mentioning members in comments
 
 Typing `@` in an Issue comment opens the project member picker and inserts `@Member`. Only project members can be mentioned; mentioning a non-member is rejected. Mentioned members receive an inbox notification under Collaboration and a DingTalk push when connected, and both links open the Issue. Mentioning an agent is unchanged and still triggers execution.

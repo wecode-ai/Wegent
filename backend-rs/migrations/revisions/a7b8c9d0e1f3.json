@@ -1,0 +1,47 @@
+{
+  "revision": "a7b8c9d0e1f3",
+  "parents": [
+    "a0b1c2d3e4f5"
+  ],
+  "source": "20260314_a7b8c9d0e1f3_add_kinds_performance_indexes.py",
+  "upgrade": [
+    {
+      "sql": [
+        "CREATE INDEX ix_kinds_user_kind_ns_active ON kinds (user_id, kind, namespace, is_active)"
+      ],
+      "when": {
+        "query": "SELECT COUNT(*) AS n FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='kinds' AND INDEX_NAME='ix_kinds_user_kind_ns_active'",
+        "nonzero": false
+      }
+    },
+    {
+      "sql": [
+        "CREATE INDEX ix_kinds_kind_ns_active ON kinds (kind, namespace, is_active)"
+      ],
+      "when": {
+        "query": "SELECT COUNT(*) AS n FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='kinds' AND INDEX_NAME='ix_kinds_kind_ns_active'",
+        "nonzero": false
+      }
+    }
+  ],
+  "downgrade": [
+    {
+      "sql": [
+        "DROP INDEX ix_kinds_kind_ns_active ON kinds"
+      ],
+      "when": {
+        "query": "SELECT COUNT(*) AS n FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='kinds' AND INDEX_NAME='ix_kinds_kind_ns_active'",
+        "nonzero": true
+      }
+    },
+    {
+      "sql": [
+        "DROP INDEX ix_kinds_user_kind_ns_active ON kinds"
+      ],
+      "when": {
+        "query": "SELECT COUNT(*) AS n FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='kinds' AND INDEX_NAME='ix_kinds_user_kind_ns_active'",
+        "nonzero": true
+      }
+    }
+  ]
+}

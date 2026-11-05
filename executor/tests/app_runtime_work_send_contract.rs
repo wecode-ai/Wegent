@@ -288,11 +288,13 @@ async fn runtime_task_forwards_all_local_project_roots_to_codex() {
 #[tokio::test]
 async fn claude_runtime_task_uses_conversation_events_and_resumes_follow_up() {
     let _lock = env_lock().await;
-    let executor_home = temp_path("runtime-claude-home", "dir");
-    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
-    let workspace = temp_path("runtime-claude-workspace", "dir");
+    let claude_home = _lock._root.path().join("claude");
+    let _claude_home = EnvGuard::set("WEGENT_CLAUDE_HOME", claude_home.to_str().unwrap());
+    let _claude_config = EnvGuard::set("CLAUDE_CONFIG_DIR", claude_home.to_str().unwrap());
+    let _file_edit_hook = EnvGuard::remove("WEGENT_FILE_EDIT_HOOK_COMMAND");
+    let workspace = _lock._root.path().join("workspace");
     fs::create_dir_all(&workspace).unwrap();
-    let log_path = temp_path("runtime-claude-args", "jsonl");
+    let log_path = _lock._root.path().join("claude-args.jsonl");
     let fake_claude = write_fake_claude_runtime(&log_path);
     let (event_tx, mut events) = broadcast::channel(32);
     let handler = RuntimeWorkRpcHandler::with_event_sender("device-1", "/bin/false", event_tx);
@@ -373,6 +375,23 @@ async fn claude_runtime_task_uses_conversation_events_and_resumes_follow_up() {
         .map(|call| call.lines().collect::<Vec<_>>())
         .collect::<Vec<_>>();
     assert_eq!(calls.len(), 2);
+    let expected_config = format!("CONFIG_DIR={}", claude_home.display());
+    for (call, expected_prompt) in calls.iter().zip(["first turn", "second turn"]) {
+        assert!(call.contains(&expected_config.as_str()));
+        let input_format = call
+            .iter()
+            .position(|arg| *arg == "--input-format")
+            .expect("Claude should receive stream-json input");
+        assert_eq!(call[input_format + 1], "stream-json");
+        let stdin = call
+            .iter()
+            .position(|line| *line == "STDIN")
+            .expect("Claude should consume the request on stdin");
+        let query: Value = serde_json::from_str(call[stdin + 1]).unwrap();
+        assert_eq!(query["type"], "user");
+        assert_eq!(query["message"]["role"], "user");
+        assert_eq!(query["message"]["content"], expected_prompt);
+    }
     assert!(!calls[0].contains(&"--resume"));
     let second_args = &calls[1];
     let resume_index = second_args
@@ -5879,15 +5898,24 @@ done
 }
 
 fn write_fake_claude_runtime(log_path: &Path) -> PathBuf {
-    let path = temp_path("fake-claude-runtime-work", "sh");
+    let path = log_path.parent().unwrap().join("fake-claude-runtime.sh");
     let _ = fs::remove_file(log_path);
     let content = format!(
         r#"#!/bin/sh
 LOG_PATH='{}'
 printf 'CALL\n' >> "$LOG_PATH"
+previous_arg=''
+input_format=''
 for arg in "$@"; do
   printf '%s\n' "$arg" >> "$LOG_PATH"
+  if [ "$previous_arg" = '--input-format' ]; then input_format="$arg"; fi
+  previous_arg="$arg"
 done
+printf 'CONFIG_DIR=%s\n' "$CLAUDE_CONFIG_DIR" >> "$LOG_PATH"
+if [ "$input_format" = 'stream-json' ]; then
+  printf 'STDIN\n' >> "$LOG_PATH"
+  cat >> "$LOG_PATH"
+fi
 printf '%s\n' '{{"type":"system","subtype":"init","session_id":"session-runtime-task"}}'
 printf '%s\n' '{{"type":"assistant","message":{{"content":[{{"type":"text","text":"Claude reply"}}]}}}}'
 printf '%s\n' '{{"type":"result","subtype":"success","is_error":false,"session_id":"session-runtime-task"}}'

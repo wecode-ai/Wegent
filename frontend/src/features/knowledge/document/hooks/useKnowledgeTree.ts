@@ -107,6 +107,8 @@ export interface UseKnowledgeTreeReturn {
   selectedKbId: number | null
   /** Whether initial data is loading */
   loading: boolean
+  hasLoadError: boolean
+  groupKbErrors: Record<string, boolean>
   /** Expand/collapse state map */
   expandState: TreeExpandState
   /** Toggle expand/collapse for a node */
@@ -158,6 +160,8 @@ export function useKnowledgeTree(): UseKnowledgeTreeReturn {
 
   // Loading state
   const [loading, setLoading] = useState(true)
+  const [hasLoadError, setHasLoadError] = useState(false)
+  const [groupKbErrors, setGroupKbErrors] = useState<Record<string, boolean>>({})
 
   // Tree expand state (persisted)
   const [expandState, setExpandState] = useState<TreeExpandState>(loadTreeState)
@@ -169,6 +173,7 @@ export function useKnowledgeTree(): UseKnowledgeTreeReturn {
   // Load initial data in parallel
   const loadInitialData = useCallback(async () => {
     setLoading(true)
+    setHasLoadError(false)
     try {
       const [personalRes, groupsRes, orgRes, nsRes] = await Promise.all([
         knowledgeBaseApi.getPersonalGrouped(),
@@ -190,6 +195,7 @@ export function useKnowledgeTree(): UseKnowledgeTreeReturn {
           groupItems.find((group: Group) => group.level === 'organization')?.my_role
       )
     } catch (error) {
+      setHasLoadError(true)
       console.error('Failed to load knowledge tree data:', error)
     } finally {
       setLoading(false)
@@ -205,10 +211,12 @@ export function useKnowledgeTree(): UseKnowledgeTreeReturn {
   // Load group KBs on demand
   const loadGroupKbs = useCallback(async (groupName: string) => {
     setGroupKbLoading(prev => ({ ...prev, [groupName]: true }))
+    setGroupKbErrors(prev => ({ ...prev, [groupName]: false }))
     try {
       const res = await listKnowledgeBases('group', groupName)
       setGroupKbMap(prev => ({ ...prev, [groupName]: res.items || [] }))
     } catch (error) {
+      setGroupKbErrors(prev => ({ ...prev, [groupName]: true }))
       console.error(`Failed to load group KBs for ${groupName}:`, error)
     } finally {
       setGroupKbLoading(prev => ({ ...prev, [groupName]: false }))
@@ -221,12 +229,17 @@ export function useKnowledgeTree(): UseKnowledgeTreeReturn {
       groups.forEach(group => {
         const nodeId = `group-${group.name}`
         // If the group is expanded in persisted state and KBs haven't been loaded yet
-        if (expandState[nodeId] && !groupKbMap[group.name] && !groupKbLoading[group.name]) {
+        if (
+          expandState[nodeId] &&
+          !groupKbMap[group.name] &&
+          !groupKbLoading[group.name] &&
+          !groupKbErrors[group.name]
+        ) {
           loadGroupKbs(group.name)
         }
       })
     }
-  }, [groups, expandState, groupKbMap, groupKbLoading, loadGroupKbs])
+  }, [groups, expandState, groupKbMap, groupKbLoading, groupKbErrors, loadGroupKbs])
 
   // Toggle expand/collapse
   const toggleExpand = useCallback(
@@ -511,6 +524,8 @@ export function useKnowledgeTree(): UseKnowledgeTreeReturn {
     selectedKb,
     selectedKbId,
     loading,
+    hasLoadError,
+    groupKbErrors,
     expandState,
     toggleExpand,
     selectKb,

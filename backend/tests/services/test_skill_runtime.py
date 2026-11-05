@@ -8,37 +8,9 @@ import pytest
 from app.services.device.capability_payloads import CapabilityPayloadResolver
 from app.services.execution.request_builder import TaskRequestBuilder
 from app.services.skill_resolution import build_skill_ref_meta
-from app.services.skill_runtime import validate_skill_shells
+from shared.models.execution import ExecutionRequest
 
 pytestmark = pytest.mark.unit
-
-
-@pytest.mark.parametrize("shell", ["ClaudeCode", "Codex"])
-def test_sandbox_only_document_cannot_be_distributed_to_native_shell(shell):
-    with pytest.raises(ValueError, match="document.*not compatible"):
-        validate_skill_shells(
-            [{"shell_type": shell, "skills": ["document"]}],
-            {"document": {"bind_shells": ["Chat"]}},
-        )
-
-
-@pytest.mark.parametrize("shell", ["Chat", "ClaudeCode", "Codex"])
-def test_updated_document_supports_chat_and_native_shells(shell):
-    validate_skill_shells(
-        [{"shell_type": shell, "skills": ["document"]}],
-        {"document": {"bind_shells": ["Chat", "ClaudeCode", "Codex"]}},
-    )
-
-
-def test_unselected_skill_binding_does_not_reject_execution():
-    validate_skill_shells(
-        [{"shell_type": "ClaudeCode", "skills": ["browser"]}],
-        {"document": {"bind_shells": ["Chat"]}},
-    )
-
-
-def test_undeclared_shell_binding_remains_unrestricted():
-    validate_skill_shells([{"shell_type": "ClaudeCode", "skills": ["browser"]}])
 
 
 def test_package_shell_binding_survives_task_and_device_distribution():
@@ -63,51 +35,61 @@ def test_package_shell_binding_survives_task_and_device_distribution():
     assert payload["installed_skill_id"] == 9
 
 
-def test_multi_bot_references_keep_their_own_shell_bindings():
-    validate_skill_shells(
-        [
+@pytest.mark.parametrize(
+    ("schema_version", "team_id", "compile_on_device"),
+    [(3, 42, False), (2, None, True)],
+    ids=["team", "device-intent"],
+)
+def test_runtime_payload_preserves_selected_sandbox(
+    mocker, schema_version, team_id, compile_on_device
+):
+    from app.schemas.runtime_work import RuntimeTaskCreateRequest
+    from app.services import runtime_work_service
+
+    reference = {"skill_id": 1286, "bind_shells": ["Chat"]}
+    execution_request = ExecutionRequest(
+        team_id=team_id or 0,
+        bot=[
             {
                 "shell_type": "ClaudeCode",
-                "skills": ["shared"],
-                "skill_refs": {"shared": {"bind_shells": ["ClaudeCode"]}},
-            },
-            {
-                "shell_type": "Chat",
-                "skills": ["shared"],
-                "skill_refs": {"shared": {"bind_shells": ["Chat"]}},
-            },
+                "skills": ["sandbox"],
+                "preload_skills": ["sandbox"],
+                "skill_refs": {"sandbox": reference},
+            }
         ],
-        {"shared": {"bind_shells": ["ClaudeCode"]}},
+        skill_names=["sandbox"],
+        preload_skills=["sandbox"],
+        skill_refs={"sandbox": reference},
+        preload_skill_refs={"sandbox": reference},
+    )
+    mocker.patch.object(
+        runtime_work_service,
+        "_build_runtime_execution_request",
+        return_value=execution_request,
     )
 
+    compiled = runtime_work_service._compile_runtime_task_create(
+        db=None,
+        user_id=2,
+        request=RuntimeTaskCreateRequest(
+            schemaVersion=schema_version,
+            wegentTeamId=team_id,
+            deviceId="fixture-device",
+            runtime="claude_code",
+            compileOnDevice=compile_on_device,
+            message="Use the selected sandbox",
+        ),
+        target=runtime_work_service.RuntimeTaskTarget(
+            device_id="fixture-device", workspace_path="/workspace"
+        ),
+    )
 
-@pytest.mark.parametrize("compile_on_device", [False, True])
-def test_incompatible_team_skill_returns_validation_error_before_dispatch(
-    compile_on_device,
-):
-    from unittest.mock import patch
-
-    from fastapi import HTTPException
-
-    from app.schemas.runtime_work import RuntimeTaskCreateRequest
-    from app.services.runtime_work_service import _compile_runtime_task_create
-    from app.services.skill_runtime import SkillShellMismatchError
-
-    with patch(
-        "app.services.runtime_work_service._build_runtime_execution_request",
-        side_effect=SkillShellMismatchError("document is sandbox-only"),
-    ):
-        with pytest.raises(HTTPException) as error:
-            _compile_runtime_task_create(
-                db=None,
-                user_id=2,
-                request=RuntimeTaskCreateRequest(
-                    schemaVersion=2,
-                    runtime="codex",
-                    message="Reject incompatible skill before dispatch",
-                    compileOnDevice=compile_on_device,
-                ),
-                target=SimpleNamespace(),
-            )
-    assert error.value.status_code == 422
-    assert "sandbox-only" in error.value.detail
+    assert compiled.team_id == team_id
+    assert compiled.payload["runtime"] == "claude_code"
+    payload = compiled.payload["executionRequest"]
+    assert payload["skill_names"] == ["sandbox"]
+    assert payload["preload_skills"] == ["sandbox"]
+    assert payload["skill_refs"]["sandbox"] == reference
+    assert payload["preload_skill_refs"]["sandbox"] == reference
+    assert payload["bot"][0]["skills"] == ["sandbox"]
+    assert payload["bot"][0]["skill_refs"]["sandbox"] == reference

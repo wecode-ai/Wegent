@@ -175,7 +175,11 @@
     "loading_diff_message": "Loading diff...",
     "no_changes_between_branches": "No changes found between branches",
     "execution_timeline": "Execution Timeline",
-    "no_repository": "This task is not associated with a code repository"
+    "no_repository": "This task is not associated with a code repository",
+    "task_file_changes": "Cumulative task file changes",
+    "file_changes_unavailable": "This task has no saved file change data.",
+    "snapshot_failed": "Task file changes could not be captured.",
+    "diff_truncated": "Cumulative task file changes. The diff is large, so only part of it is shown."
   },
   "thinking": {
     "execution_completed": "Execution Completed",
