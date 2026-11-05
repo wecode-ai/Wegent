@@ -49,6 +49,29 @@ describe('Issue field save queue', () => {
     expect(result.current.pending).toBe(false)
   })
 
+  it('reports a failed save to the current host callback only', async () => {
+    const original = vi.fn()
+    const latest = vi.fn()
+    const pending = Promise.withResolvers<typeof initial>()
+    const { result, rerender } = renderHook(
+      ({ report }) => useIssueFieldSaves(initial, vi.fn(), report),
+      { initialProps: { report: original } }
+    )
+    let save!: Promise<unknown>
+    act(() => {
+      save = result.current.save('title', () => pending.promise)
+    })
+    rerender({ report: latest })
+    const error = new Error('Save failed')
+    await act(async () => {
+      pending.reject(error)
+      await save
+    })
+    expect(original).not.toHaveBeenCalled()
+    expect(latest).toHaveBeenCalledExactlyOnceWith(error)
+    expect(result.current.error).toBe(error)
+  })
+
   it('retains failed operations for explicit retry without blocking unrelated fields', async () => {
     const accept = vi.fn()
     const failed = vi

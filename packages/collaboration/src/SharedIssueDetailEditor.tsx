@@ -165,6 +165,7 @@ export interface SharedIssueDetailExtensionContext {
 }
 
 export interface SharedIssueDetailExtensions {
+  onSaveError?(error: unknown): void;
   normalizeDescription?(value: string): string;
   dueDateInputType?: "date" | "datetime-local";
   startDateFromSource?(value: string | null): string;
@@ -951,10 +952,14 @@ export function TodoEditor(props: TodoEditorProps) {
   const [saving, setSaving] = useState(false);
   const persistedIssueRef = useRef<CloudLoopItem | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const fieldSaves = useIssueFieldSaves(item, (updated) => {
-    persistedIssueRef.current = updated;
-    if (props.mode === "edit") props.onUpdated(updated);
-  });
+  const fieldSaves = useIssueFieldSaves(
+    item,
+    (updated) => {
+      persistedIssueRef.current = updated;
+      if (props.mode === "edit") props.onUpdated(updated);
+    },
+    extensions?.onSaveError,
+  );
   const descriptionDirty = Boolean(
     item &&
     description !==

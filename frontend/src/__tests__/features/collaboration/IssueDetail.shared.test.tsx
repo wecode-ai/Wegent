@@ -365,6 +365,9 @@ describe('shared IssueDetail', () => {
   ])('uses the latest callbacks after a $name', async ({ error, conflict }) => {
     const api = createApi()
     jest.mocked(api.issues.update).mockRejectedValue(error)
+    jest
+      .mocked(api.issues.get)
+      .mockResolvedValue({ ...issue, title: 'Concurrent title', version: 2 })
     const original = { onError: jest.fn(), onConflict: jest.fn() }
     const latest = { onError: jest.fn(), onConflict: jest.fn() }
     const view = renderDetail(api, original)
@@ -382,6 +385,42 @@ describe('shared IssueDetail', () => {
     expect(original.onError).not.toHaveBeenCalled()
     expect(original.onConflict).not.toHaveBeenCalled()
     expect(api.attachments.list).toHaveBeenCalledTimes(1)
+  })
+
+  it('rebases an unrelated version change before reporting a conflict to the host', async () => {
+    const api = createApi()
+    const conflict = Object.assign(new Error('Save failed'), {
+      status: 409,
+      detail: { code: 'version_conflict' },
+    })
+    jest
+      .mocked(api.issues.update)
+      .mockRejectedValueOnce(conflict)
+      .mockResolvedValue({ ...issue, title: 'New title', version: 3 })
+    jest.mocked(api.issues.get).mockResolvedValue({ ...issue, version: 2, is_unread: false })
+    const onError = jest.fn()
+    const onConflict = jest.fn()
+    const onChange = jest.fn()
+    renderDetail(api, { onError, onConflict, onChange })
+    fireEvent.change(screen.getByTestId('cloud-todo-detail-title'), {
+      target: { value: 'New title' },
+    })
+    fireEvent.blur(screen.getByTestId('cloud-todo-detail-title'))
+    await waitFor(() =>
+      expect(onChange).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'New title', version: 3 })
+      )
+    )
+    expect(api.issues.update).toHaveBeenNthCalledWith(1, issue.id, {
+      version: 1,
+      title: 'New title',
+    })
+    expect(api.issues.update).toHaveBeenNthCalledWith(2, issue.id, {
+      version: 2,
+      title: 'New title',
+    })
+    expect(onConflict).not.toHaveBeenCalled()
+    expect(onError).not.toHaveBeenCalled()
   })
 
   it('wires the PC approval toolbar through the complete Web Issue host', async () => {
