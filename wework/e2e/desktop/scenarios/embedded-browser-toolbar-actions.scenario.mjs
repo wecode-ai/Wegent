@@ -233,11 +233,19 @@ async function listLinuxProcesses(commandName) {
     .filter(line => line.includes(commandName))
 }
 
-async function waitForLinuxProcess(commandName, pathFragment, timeoutMs, message) {
+async function captureLinuxProcesses(commandName) {
+  return process.platform === 'linux' ? listLinuxProcesses(commandName) : []
+}
+
+async function waitForLinuxProcess(
+  commandName,
+  pathFragment,
+  timeoutMs,
+  message,
+  beforeLines = []
+) {
   if (process.platform !== 'linux') return null
-  const beforePids = new Set(
-    (await listLinuxProcesses(commandName)).map(line => line.match(/^\d+/)?.[0]).filter(Boolean)
-  )
+  const beforePids = new Set(beforeLines.map(line => line.match(/^\d+/)?.[0]).filter(Boolean))
   const startedAt = Date.now()
   let lastMatches = []
   while (Date.now() - startedAt < timeoutMs) {
@@ -666,6 +674,7 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
       try {
         const directoryUrl = pathToFileURL(localDirectory).href
         await loadLocalUrl(directoryUrl)
+        const directoryProcessesBefore = await captureLinuxProcesses('pcmanfm')
         await control.command('click', BROWSER_OPEN_EXTERNAL_BUTTON_SELECTOR)
         await waitForNoBrowserError(
           control,
@@ -676,12 +685,14 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
           'pcmanfm',
           localDirectory,
           uiTimeoutMs,
-          'The local directory was not opened by the Linux file manager'
+          'The local directory was not opened by the Linux file manager',
+          directoryProcessesBefore
         )
         await stopLinuxProcess(externalProcess)
 
         const textFileUrl = pathToFileURL(localTextFile).href
         await loadLocalUrl(textFileUrl)
+        const fileProcessesBefore = await captureLinuxProcesses('mousepad')
         await control.command('click', BROWSER_OPEN_EXTERNAL_BUTTON_SELECTOR)
         await waitForNoBrowserError(
           control,
@@ -692,7 +703,8 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
           'mousepad',
           localTextFile,
           uiTimeoutMs,
-          'The local file was not opened by the Linux text editor'
+          'The local file was not opened by the Linux text editor',
+          fileProcessesBefore
         )
         await stopLinuxProcess(externalProcess)
 
@@ -707,6 +719,7 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
         )
 
         await loadLocalUrl(directoryUrl)
+        const recoveryProcessesBefore = await captureLinuxProcesses('pcmanfm')
         await control.command('click', BROWSER_OPEN_EXTERNAL_BUTTON_SELECTOR)
         await waitForNoBrowserError(
           control,
@@ -717,7 +730,8 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
           'pcmanfm',
           localDirectory,
           uiTimeoutMs,
-          'The recovered external-open action did not launch the Linux file manager'
+          'The recovered external-open action did not launch the Linux file manager',
+          recoveryProcessesBefore
         )
         await stopLinuxProcess(externalProcess)
       } finally {
