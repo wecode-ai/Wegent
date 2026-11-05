@@ -1,4 +1,5 @@
 import { FileReferenceIcon } from '../composer/FileReferenceIcon'
+import { isStandInActivityMessage } from './standInActivity'
 import { MessageHoverActions } from './MessageHoverActions'
 import { useMemo, useState } from 'react'
 import {
@@ -168,17 +169,7 @@ export function UserMessage({
   const showGoalRequestBadge = message.runtimeGoalRequest === true
   const codeCommentCount = message.codeComments?.length ?? 0
 
-  if (message.role === 'user' && message.source?.source === 'stand_in_activity')
-    return (
-      <div
-        role="note"
-        data-testid="stand-in-activity-message"
-        className="flex w-full items-center justify-center gap-2 py-2 text-xs text-text-muted"
-      >
-        <MessageCircle aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
-        <span>{t('workbench.stand_in_activity')}</span>
-      </div>
-    )
+  if (isStandInActivityMessage(message)) return null
 
   return (
     <div
@@ -400,7 +391,10 @@ export function getUserMessageTextProjection(content: string) {
   const request = projectRuntimeUserText(content)
   const mentions = parseCodexLocalFileMentions(content)
   if (mentions && !mentions.requestText) return { content: '', sourceStart: 0, sourceEnd: 0 }
-  return { ...request, content: normalizeCodexUserMessageContent(request.content) }
+  return {
+    ...request,
+    content: normalizeCodexUserMessageContent(request.content),
+  }
 }
 
 function normalizeCodexUserMessageContent(content: string): string {

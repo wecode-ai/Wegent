@@ -52,35 +52,32 @@ function render(children: ReactNode, language = 'zh-CN') {
   )
 }
 
-it.each([
-  ['zh-CN', '分身主动更新'],
-  ['en', 'Stand-in update'],
-])(
-  'presents explicit host activity as a neutral label in %s without user actions',
-  (locale, label) => {
-    const onStartEdit = vi.fn()
-    render(
-      <UserMessage
-        message={message({ source: 'stand_in_activity', taskId: 'internal-task-42' })}
-        services={{ images }}
-        editable
-        editing
-        forceExpanded
-        onStartEdit={onStartEdit}
-      />,
-      locale
-    )
-    const note = container.querySelector('[data-testid="stand-in-activity-message"]')
-    expect(note?.getAttribute('role')).toBe('note')
-    expect(note?.textContent).toBe(label)
-    expect(container.textContent).not.toContain('internal-task-42')
-    expect(container.textContent).not.toContain('done')
-    expect(container.textContent).not.toContain('Read the task')
-    expect(container.querySelector('[data-testid="message-hover-region"]')).toBeNull()
-    expect(container.querySelector('button, textarea, input')).toBeNull()
-    expect(onStartEdit).not.toHaveBeenCalled()
-  }
-)
+it.each([['zh-CN'], ['en']])('hides explicit host activity in %s without user actions', locale => {
+  const onStartEdit = vi.fn()
+  render(
+    <UserMessage
+      message={message({
+        source: 'stand_in_activity',
+        taskId: 'internal-task-42',
+      })}
+      services={{ images }}
+      editable
+      editing
+      forceExpanded
+      onStartEdit={onStartEdit}
+    />,
+    locale
+  )
+  const note = container.querySelector('[data-testid="stand-in-activity-message"]')
+  expect(note).toBeNull()
+  expect(container.innerHTML).toBe('')
+  expect(container.textContent).not.toContain('internal-task-42')
+  expect(container.textContent).not.toContain('done')
+  expect(container.textContent).not.toContain('Read the task')
+  expect(container.querySelector('[data-testid="message-hover-region"]')).toBeNull()
+  expect(container.querySelector('button, textarea, input')).toBeNull()
+  expect(onStartEdit).not.toHaveBeenCalled()
+})
 
 it.each([undefined, { source: 'manual' }, { source: 'stand_in_activity_extra' }])(
   'keeps identical text as a real user bubble without an exact host source marker: %j',
@@ -95,7 +92,11 @@ it.each([undefined, { source: 'manual' }, { source: 'stand_in_activity_extra' }]
 it('preserves IM source badges and the original IM message body', () => {
   render(
     <UserMessage
-      message={message({ source: 'im', channel_type: 'dingtalk', channel_label: '钉钉' })}
+      message={message({
+        source: 'im',
+        channel_type: 'dingtalk',
+        channel_label: '钉钉',
+      })}
       services={{ images }}
     />
   )
@@ -122,14 +123,14 @@ it('retains the assistant business result after the host activity marker', () =>
       />
     </>
   )
-  expect(container.textContent).toContain('分身主动更新')
+  expect(container.textContent).not.toContain('分身主动更新')
   expect(container.textContent).toContain(
     '会议简报已完成：明天十点讨论发布计划，需确认回滚负责人。'
   )
   expect(container.textContent).not.toContain(content)
 })
 
-it('preserves the native history origin through transcript projection before rendering the activity note', () => {
+it('preserves the native history origin through transcript projection while hiding the internal trigger', () => {
   const nativeSnapshot: NormalizedRuntimeMessage = {
     id: 'native-activity-message',
     role: 'user',
@@ -146,7 +147,11 @@ it('preserves the native history origin through transcript projection before ren
         id: 'native-history-turn',
         status: 'done',
         items: [
-          { id: 'activity-item', type: 'user_message', message: nativeSnapshot },
+          {
+            id: 'activity-item',
+            type: 'user_message',
+            message: nativeSnapshot,
+          },
           {
             id: 'result-item',
             type: 'assistant_text',
@@ -164,16 +169,11 @@ it('preserves the native history origin through transcript projection before ren
       <AssistantMessage message={historyResult} devices={[]} imageServices={images} />
     </>
   )
-  expect(container.querySelector('[data-testid="stand-in-activity-message"]')?.textContent).toBe(
-    '分身主动更新'
-  )
+  expect(container.querySelector('[data-testid="stand-in-activity-message"]')).toBeNull()
   expect(container.textContent).not.toContain('internal-task-42')
   expect(container.textContent).not.toContain('done')
   expect(container.textContent).toContain('会前简报已整理，并附上相关资料。')
-  expect(
-    container
-      .querySelector('[data-testid="stand-in-activity-message"]')
-      ?.closest('[data-testid="message-hover-region"]')
-  ).toBeNull()
+  expect(container.querySelectorAll('[data-testid="message-hover-region"]')).toHaveLength(1)
+  expect(container.querySelector('[data-testid="user-message-content"]')).toBeNull()
   expect(projected.content).toBe(nativeSnapshot.content)
 })
