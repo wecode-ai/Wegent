@@ -404,7 +404,16 @@ impl RuntimeWorkRpcHandler {
         }))
     }
 
-    pub(super) async fn create_task(&self, mut payload: Value) -> Result<Value, AppIpcError> {
+    pub(super) async fn create_task(&self, payload: Value) -> Result<Value, AppIpcError> {
+        self.create_task_with_activity(payload, false).await
+    }
+
+    pub(super) async fn create_task_with_activity(
+        &self,
+        mut payload: Value,
+        activity: bool,
+    ) -> Result<Value, AppIpcError> {
+        self.bind_stand_in_owner_command(&mut payload, activity);
         normalize_user_message_presentation(&mut payload)?;
         let command_gate = payload
             .get("commandId")
@@ -474,6 +483,7 @@ impl RuntimeWorkRpcHandler {
             ensure_claude_execution_identity(&local_task_id, &mut request);
         }
         set_runtime_task_title(&mut request, &title);
+        self.stamp_stand_in_owner_request(&local_task_id, &mut request, activity)?;
         self.resolve_local_model_reference(&mut request, &local_task_id)?;
         self.retain_runtime_model_config(&local_task_id, &request.model_config);
         log_executor_event(
@@ -1057,10 +1067,27 @@ impl RuntimeWorkRpcHandler {
             .map(Some)
     }
 
-    async fn send_message_after_local_checks(
+    async fn send_message_after_local_checks(&self, payload: Value) -> Result<Value, AppIpcError> {
+        self.send_message_with_activity_checks(payload, false).await
+    }
+
+    pub(super) async fn send_identity_activity(
+        &self,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        let task = runtime_task_id(&payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let gate = self.task_send_gate(&task);
+        let _guard = gate.lock().await;
+        self.send_message_with_activity_checks(payload, true).await
+    }
+
+    async fn send_message_with_activity_checks(
         &self,
         mut payload: Value,
+        activity: bool,
     ) -> Result<Value, AppIpcError> {
+        self.bind_stand_in_owner_command(&mut payload, activity);
         normalize_user_message_presentation(&mut payload)?;
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
@@ -1328,6 +1355,7 @@ impl RuntimeWorkRpcHandler {
         let resume_thread_id = thread_id.filter(|_| !ephemeral);
         let initial_thread_goal = initial_thread_goal_from_payload(&payload);
 
+        self.stamp_stand_in_owner_request(&local_task_id, &mut request, activity)?;
         let turn = SpawnTurnRequest {
             task_kind: None,
             local_task_id: local_task_id.clone(),
@@ -2005,6 +2033,7 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<Value, AppIpcError> {
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        self.invalidate_stand_in_owner_request(&local_task_id);
         let link = self.local_task_link(&local_task_id);
         let thread_id = link.as_ref().and_then(runtime_session_id_from_link);
         let is_codex = link

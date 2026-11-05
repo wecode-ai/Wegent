@@ -177,6 +177,7 @@ mod stand_in_history;
 mod stand_in_ingress;
 mod stand_in_memory;
 mod stand_in_processing;
+mod stand_in_proposal_continuations;
 mod stand_in_read_sources;
 mod stand_in_review;
 mod stand_in_schedules;

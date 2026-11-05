@@ -401,6 +401,15 @@ impl RuntimeWorkRpcHandler {
             loop {
                 interval.tick().await;
                 receipt_handler.flush_stand_in_task_results().await;
+                if let Err(error) = receipt_handler
+                    .flush_stand_in_proposal_continuations()
+                    .await
+                {
+                    log_executor_event(
+                        "stand-in proposal continuation failed",
+                        &[("code", error.code)],
+                    );
+                }
                 if let Err(error) = receipt_handler.flush_assignment_receipts().await {
                     log_executor_event(
                         "Assignment receipt synchronization failed",

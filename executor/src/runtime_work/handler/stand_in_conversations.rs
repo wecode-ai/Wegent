@@ -2,7 +2,7 @@
 use super::stand_in::settings_error;
 use super::*;
 
-const CONNECTION_INSTRUCTIONS: &str = "Before acting on mail, calendars or project updates, inspect available sources with get_profile and list_connection_providers (list_projects for projects). Attempt missing data-source connections with connect_source. A provider being ready or a subscription existing does not prove you have read its contents. When login is required, request native Wework authorization using only the exact pluginKey and connectorSlug returned by the provider; resume discovery after authorization. For account setup, guide the user to the secure native Connections form; never request passwords or tokens in chat. Clarify the required resource scope, propose subscriptions with propose_profile, and wait for explicit native confirmation before proceeding. If a source cannot be read, explain what is missing and wait; do not invent content or create an aggregation task that cannot access its inputs. Keep the user's business request intact rather than asking them to write these setup instructions.";
+const CONNECTION_INSTRUCTIONS: &str = "Before acting on mail, calendars or project updates, inspect available sources with get_profile and list_connection_providers (list_projects for projects). Attempt missing data-source connections with connect_source. A provider being ready or a subscription existing does not prove you have read its contents. When login is required, request native Wework authorization using only the exact pluginKey and connectorSlug returned by the provider; resume discovery after authorization. For account setup, guide the user to the secure native Connections form; never request passwords or tokens in chat. Clarify the required resource scope, propose subscriptions with propose_profile, and wait for explicit native confirmation before proceeding. When that configuration blocks the current explicit business request, set continueCurrentRequest=true and check willContinueCurrentRequest in the tool result so the host can resume this same owner request after acceptance. Omit it for ordinary configuration edits. Existing worker grants never expand; select exact current sources for any new execution. If a source cannot be read, explain what is missing and wait; do not invent content or create an aggregation task that cannot access its inputs. Keep the user's business request intact rather than asking them to write these setup instructions.";
 
 fn append_connection_instructions(system: &mut String) {
     if !system.contains(CONNECTION_INSTRUCTIONS) {
@@ -125,9 +125,17 @@ impl RuntimeWorkRpcHandler {
             } else {
                 None
             };
-            store
+            let saved = store
                 .resolve_stand_in_proposal(user, &self.device_id, id, accept, prepared)
-                .map_err(settings_error)
+                .map_err(settings_error)?;
+            drop(_guard);
+            if let Err(error) = self.flush_stand_in_proposal_continuations().await {
+                log_executor_event(
+                    "stand-in proposal continuation deferred",
+                    &[("code", error.code)],
+                );
+            }
+            Ok(saved)
         } else {
             store
                 .stand_in_proposal(user, payload["roleId"].as_str())
@@ -135,6 +143,15 @@ impl RuntimeWorkRpcHandler {
         }
     }
     pub(super) async fn stand_in_conversation(&self, payload: Value) -> Result<Value, AppIpcError> {
+        self.stand_in_conversation_with_activity(payload, false)
+            .await
+    }
+
+    pub(super) async fn stand_in_conversation_with_activity(
+        &self,
+        payload: Value,
+        activity: bool,
+    ) -> Result<Value, AppIpcError> {
         let user = payload["userId"]
             .as_i64()
             .filter(|id| *id >= 0)
@@ -185,6 +202,11 @@ impl RuntimeWorkRpcHandler {
             }
         }
         apply_runtime_model_selection(&mut prepared, &payload["options"]);
+        if activity {
+            if let Some(expected) = payload.get("expectedOwnerRequest") {
+                prepared["executionRequest"]["standInExpectedOwnerRequest"] = expected.clone();
+            }
+        }
         let system = prepared["executionRequest"]["system_prompt"]
             .as_str()
             .unwrap_or_default();
@@ -193,9 +215,13 @@ impl RuntimeWorkRpcHandler {
         prepared["executionRequest"]["system_prompt"] = json!(system);
         let result = if self.local_task_link(&task_id).is_some() {
             prepared["queueIfBusy"] = json!(true);
-            self.send_message(prepared).await?
+            if activity {
+                self.send_identity_activity(prepared).await?
+            } else {
+                self.send_message(prepared).await?
+            }
         } else {
-            self.create_task(prepared).await?
+            self.create_task_with_activity(prepared, activity).await?
         };
         if result["success"] == false {
             return Err(AppIpcError::new(

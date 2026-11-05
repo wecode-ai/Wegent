@@ -36,6 +36,9 @@ impl RuntimeWorkRpcHandler {
         name: &str,
         args: Value,
     ) -> Result<Value, AppIpcError> {
+        if name == "propose_profile" {
+            return self.propose_stand_in_profile(&identity, &args);
+        }
         if name == "authorize_source_read" {
             return self.authorize_work_source_read(&identity, &args);
         }

@@ -34,8 +34,35 @@ impl LocalTaskStore {
         device: &str,
         role: Option<&str>,
         summary: &str,
-        mut settings: Value,
+        settings: Value,
     ) -> Result<Value, TaskRuntimeError> {
+        self.propose_stand_in_settings_with_continuation(
+            user, device, role, summary, settings, None,
+        )
+    }
+
+    pub fn propose_stand_in_settings_with_continuation(
+        &self,
+        user: i64,
+        device: &str,
+        role: Option<&str>,
+        summary: &str,
+        mut settings: Value,
+        continuation: Option<Value>,
+    ) -> Result<Value, TaskRuntimeError> {
+        if continuation.as_ref().is_some_and(|owner| {
+            owner["userId"] != user
+                || owner["deviceId"] != device
+                || owner["roleId"].as_str() != role
+                || owner["cancelled"] == true
+                || !owner["id"].is_string()
+                || !owner["revision"].is_u64()
+                || !owner["taskId"].is_string()
+        }) {
+            return Err(TaskRuntimeError::Invalid(
+                "Invalid proposal owner request".into(),
+            ));
+        }
         super::personal_stand_in::migrate_connections(&mut settings)?;
         if summary.trim().is_empty() || summary.len() > 4000 {
             return Err(TaskRuntimeError::Invalid(
@@ -69,7 +96,7 @@ impl LocalTaskStore {
         connection.execute_batch(
             "ROLLBACK TO validate_stand_in_proposal; RELEASE validate_stand_in_proposal",
         )?;
-        let proposal = json!({"id":Uuid::new_v4().to_string(),"userId":user,"roleId":role,"summary":summary,"settings":settings,"status":"pending"});
+        let proposal = json!({"id":Uuid::new_v4().to_string(),"userId":user,"roleId":role,"summary":summary,"settings":settings,"status":"pending","continuation":continuation});
         connection.execute("INSERT INTO loop_items (id,resource_type,metadata,created_at,updated_at) VALUES (?1,'stand_in_proposal',?2,?3,?3) ON CONFLICT(id) DO UPDATE SET metadata=excluded.metadata,updated_at=excluded.updated_at", params![proposal_key(user,role),proposal.to_string(),now()])?;
         connection.commit()?;
         Ok(proposal)
@@ -96,6 +123,11 @@ impl LocalTaskStore {
                 "Proposal is no longer pending".into(),
             ));
         }
+        if proposal["continuation"].is_object() && proposal["continuation"]["deviceId"] != device {
+            return Err(TaskRuntimeError::Invalid(
+                "Proposal belongs to another device".into(),
+            ));
+        }
         let saved = if accept {
             self.save_personal_stand_in_on(
                 &connection,
@@ -107,12 +139,47 @@ impl LocalTaskStore {
             read_personal(&connection, user, device)?
         };
         proposal["status"] = json!(if accept { "accepted" } else { "rejected" });
+        if accept && proposal["continuation"].is_object() {
+            let outbox = json!({"proposalId":id,"deviceId":device,"ownerRequest":proposal["continuation"],"status":"pending"});
+            connection.execute("INSERT INTO loop_items(id,resource_type,metadata,created_at,updated_at) VALUES (?1,'stand_in_proposal_continuation',?2,?3,?3)",params![format!("stand-in-proposal-continuation:{id}"),outbox.to_string(),now()])?;
+        }
         connection.execute(
             "UPDATE loop_items SET metadata=?1,updated_at=?2 WHERE id=?3",
             params![proposal.to_string(), now(), key],
         )?;
         connection.commit()?;
         Ok(saved)
+    }
+
+    pub fn pending_stand_in_proposal_continuations(
+        &self,
+        device: &str,
+    ) -> Result<Vec<Value>, TaskRuntimeError> {
+        let connection = self.connection()?;
+        let mut statement=connection.prepare("SELECT metadata FROM loop_items WHERE resource_type='stand_in_proposal_continuation' AND json_extract(metadata,'$.deviceId')=?1 AND json_extract(metadata,'$.status')='pending' ORDER BY created_at,id")?;
+        let rows = statement
+            .query_map([device], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        rows.into_iter()
+            .map(|raw| {
+                serde_json::from_str(&raw)
+                    .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))
+            })
+            .collect()
+    }
+
+    pub fn settle_stand_in_proposal_continuation(
+        &self,
+        id: &str,
+        status: &str,
+    ) -> Result<(), TaskRuntimeError> {
+        if !matches!(status, "delivered" | "cancelled") {
+            return Err(TaskRuntimeError::Invalid(
+                "Invalid continuation status".into(),
+            ));
+        }
+        self.connection()?.execute("UPDATE loop_items SET metadata=json_set(metadata,'$.status',?1),updated_at=?2 WHERE resource_type='stand_in_proposal_continuation' AND id=?3 AND json_extract(metadata,'$.status')='pending'",params![status,now(),format!("stand-in-proposal-continuation:{id}")])?;
+        Ok(())
     }
 
     pub fn stand_in_proposal_settings(
@@ -134,6 +201,74 @@ impl LocalTaskStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn continuation_and_configuration_commit_atomically_and_survive_replacement_and_restart() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("tasks.sqlite");
+        let store = LocalTaskStore::open(&path).unwrap();
+        let previous = store.personal_stand_in(7, "mac").unwrap();
+        let owner = json!({"id":"owner-native","revision":1,"taskId":"stand-in-chat-7-primary","userId":7,"deviceId":"mac","roleId":null,"cancelled":false});
+        let proposal = store
+            .propose_stand_in_settings_with_continuation(
+                7,
+                "mac",
+                None,
+                "Resume current work",
+                previous.clone(),
+                Some(owner.clone()),
+            )
+            .unwrap();
+        let id = proposal["id"].as_str().unwrap();
+        rusqlite::Connection::open(&path).unwrap().execute_batch("CREATE TRIGGER reject_continuation BEFORE INSERT ON loop_items WHEN NEW.resource_type='stand_in_proposal_continuation' BEGIN SELECT RAISE(ABORT,'injected outbox failure'); END;").unwrap();
+        assert!(store
+            .resolve_stand_in_proposal(7, "mac", id, true, None)
+            .is_err());
+        assert_eq!(store.personal_stand_in(7, "mac").unwrap(), previous);
+        assert_eq!(
+            store.stand_in_proposal(7, None).unwrap()["status"],
+            "pending"
+        );
+        assert!(store
+            .pending_stand_in_proposal_continuations("mac")
+            .unwrap()
+            .is_empty());
+        rusqlite::Connection::open(&path)
+            .unwrap()
+            .execute_batch("DROP TRIGGER reject_continuation")
+            .unwrap();
+        assert!(store
+            .resolve_stand_in_proposal(7, "foreign-device", id, true, None)
+            .is_err());
+        let saved = store
+            .resolve_stand_in_proposal(7, "mac", id, true, None)
+            .unwrap();
+        assert_eq!(
+            store
+                .pending_stand_in_proposal_continuations("mac")
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(store
+            .pending_stand_in_proposal_continuations("foreign-device")
+            .unwrap()
+            .is_empty());
+        assert!(store
+            .resolve_stand_in_proposal(7, "mac", id, true, None)
+            .is_err());
+        store
+            .propose_stand_in_settings(7, "mac", None, "Unrelated configuration edit", saved)
+            .unwrap();
+        drop(store);
+        let restored = LocalTaskStore::open(&path).unwrap();
+        let pending = restored
+            .pending_stand_in_proposal_continuations("mac")
+            .unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0]["ownerRequest"], owner);
+        assert_eq!(pending[0]["proposalId"], id);
+    }
 
     #[test]
     fn new_role_proposal_preserves_existing_settings_until_explicit_confirmation() {

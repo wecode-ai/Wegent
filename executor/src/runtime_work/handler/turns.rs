@@ -361,6 +361,16 @@ impl RuntimeWorkRpcHandler {
             .clone();
         command_journal::project_queue(&mut commands, &turns, starting)?;
         let committed_commands = commands.clone();
+        let owner_admissions: Vec<_> = turns
+            .iter()
+            .chain(starting)
+            .filter_map(|turn| {
+                turn.request
+                    .extra
+                    .get("standInOwnerRequest")
+                    .map(|owner| (turn.local_task_id.clone(), owner.clone()))
+            })
+            .collect();
         let queue_path = Arc::clone(&self.turn_queue_path);
         let active_goal_turns = self
             .active_goal_turns
@@ -382,6 +392,9 @@ impl RuntimeWorkRpcHandler {
             .command_journal
             .lock()
             .expect("command journal lock should not be poisoned") = committed_commands;
+        for (task, owner) in &owner_admissions {
+            self.record_stand_in_owner_admission(task, owner);
+        }
         if let Some((previous, current)) = admissions {
             self.sync_native_queue_admissions(previous, current);
         }
@@ -1196,6 +1209,16 @@ impl RuntimeWorkRpcHandler {
             let handler = self.clone();
             tokio::spawn(async move {
                 handler.park_waiting_automatic_turn(turn).await;
+            });
+            return;
+        }
+        if !self.stand_in_owner_request_matches(&turn.request, &turn.local_task_id) {
+            let handler = self.clone();
+            tokio::spawn(async move {
+                handler
+                    .finish_prepared_command(&turn, command_journal::CommandState::Cancelled)
+                    .await;
+                handler.finish_scheduled_turn(&turn.local_task_id).await;
             });
             return;
         }

@@ -39,7 +39,20 @@ impl RuntimeWorkRpcHandler {
         message: &str,
         preview: &str,
     ) -> Result<Option<Value>, AppIpcError> {
-        let source = super::stand_in_conversations::conversation_task_id(user, None);
+        self.deliver_identity_activity(user, None, command, message, preview, None)
+            .await
+    }
+
+    pub(super) async fn deliver_identity_activity(
+        &self,
+        user: i64,
+        role: Option<&str>,
+        command: &str,
+        message: &str,
+        preview: &str,
+        expected: Option<&Value>,
+    ) -> Result<Option<Value>, AppIpcError> {
+        let source = super::stand_in_conversations::conversation_task_id(user, role);
         if self.local_task_link(&source).is_some_and(|parent| {
             parent.status == "archived" || parent.interaction_status.is_some()
         }) {
@@ -62,11 +75,11 @@ impl RuntimeWorkRpcHandler {
                 options["modelOptions"] = selected["options"].clone();
             }
         }
-        Box::pin(self.stand_in_conversation(json!({
-            "userId":user,"message":message,"commandId":command,
+        Box::pin(self.stand_in_conversation_with_activity(json!({
+            "userId":user,"roleId":role,"expectedOwnerRequest":expected,"message":message,"commandId":command,
             "options":options,
             "userMessagePresentation":{"content":preview,"source":{"source":"stand_in_activity"}}
-        })))
+        }), true))
         .await
         .map(Some)
     }
