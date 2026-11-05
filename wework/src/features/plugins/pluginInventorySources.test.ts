@@ -258,6 +258,28 @@ describe('source-owned local plugin inventory', () => {
     })
   })
 
+  test.each([false, true])(
+    'Codex recovery retains the confirmed personal source when its next read fails (empty=%s)',
+    empty => {
+      const personal = plugin('personal-tool', 'wework-personal')
+      const stale = plugin('stale-personal', 'wework-personal')
+      const other = plugin('native-tool')
+      const confirmed = empty ? [] : [personal]
+      const resolved = resolveLocalPluginInventory(
+        snapshot(confirmed, { personal: confirmed.map(inventoryIdentity) }),
+        {
+          items: [other, stale],
+          partial: true,
+          sourceReads: { codex: fulfilled([other, stale]), personal: rejected },
+        },
+        'device'
+      )
+      expect(resolved.items).toEqual([other, ...confirmed])
+      expect(resolved.localInstalledSources.personal).toEqual(confirmed.map(inventoryIdentity))
+      expect(resolved.localInstalledSourceStatus.personal).toBe('rejected')
+    }
+  )
+
   test('reconstructs legacy ownership from explicit native and managed routing metadata', () => {
     const native = plugin('native-tool')
     const stored = storePlugin('stored-tool')
