@@ -184,8 +184,10 @@ mod skill_config;
 pub(crate) use skill_config::reload_skill_configuration;
 
 mod local_notifications;
+mod native_activity;
 mod native_turn;
 mod notification;
+use native_activity::{CodexNativeActivity, CodexNativeRequest};
 pub(crate) use native_turn::completed_native_codex_turn;
 pub use notification::CodexNotification;
 
@@ -417,7 +419,9 @@ impl CodexAppServerClient {
 
     async fn request_once(&self, method: &str, params: Value) -> Result<Value, String> {
         let timeout_seconds = codex_rpc_timeout_seconds();
-        let (request_id, handle, response_rx) = self.prepare_request().await?;
+        let (request_id, handle, response_rx) = self
+            .prepare_request_with_process(true, None, method, &params)
+            .await?;
         Self::send_request_and_wait(
             method,
             params,
@@ -461,7 +465,7 @@ impl CodexAppServerClient {
     ) -> Result<Value, String> {
         let timeout_seconds = codex_rpc_timeout_seconds();
         let (request_id, handle, response_rx) = self
-            .prepare_request_with_process(true, Some(launch_config))
+            .prepare_request_with_process(true, Some(launch_config), method, &params)
             .await?;
         Self::send_request_and_wait(
             method,
@@ -617,13 +621,18 @@ impl CodexAppServerClient {
         if runtime_proxy_endpoint_matches(&state.runtime_proxy_env, &runtime_proxy_env) {
             return Ok(false);
         }
-        if !allow_active_turns && !state.active_threads.is_empty() {
+        let pending_request_count = match state.process.as_ref() {
+            Some(process) => process.pending.lock().await.len(),
+            None => 0,
+        };
+        let active_threads = state.active_threads_snapshot();
+        if !allow_active_turns && (!active_threads.is_empty() || pending_request_count > 0) {
             log_codex_environment_change(
                 "codex runtime proxy update deferred",
                 "runtime_proxy_update",
                 &state.runtime_proxy_env,
                 &runtime_proxy_env,
-                &state.active_threads,
+                &active_threads,
             );
             replace_proxy_environment(&mut state.runtime_proxy_env, runtime_proxy_env);
             return Ok(true);
@@ -654,7 +663,9 @@ impl CodexAppServerClient {
         method: &str,
         params: Value,
     ) -> Result<oneshot::Receiver<Result<Value, String>>, String> {
-        let (request_id, handle, response_rx) = self.prepare_existing_request().await?;
+        let (request_id, handle, response_rx) = self
+            .prepare_request_with_process(false, None, method, &params)
+            .await?;
         let message = json!({
             "method": method,
             "id": request_id,
@@ -682,11 +693,11 @@ impl CodexAppServerClient {
 
     pub async fn restart_if_idle(&self) -> Result<(), (usize, usize)> {
         let mut state = self.state.lock().await;
-        let active_turn_count = state.active_threads.values().sum::<usize>();
         let pending_request_count = match state.process.as_ref() {
             Some(process) => process.pending.lock().await.len(),
             None => 0,
         };
+        let active_turn_count = state.active_threads_snapshot().values().sum::<usize>();
         if active_turn_count > 0 || pending_request_count > 0 {
             return Err((active_turn_count, pending_request_count));
         }
@@ -712,11 +723,11 @@ impl CodexAppServerClient {
         Fut: Future<Output = Result<(T, bool), String>>,
     {
         let mut state = self.state.lock().await;
-        let active_turn_count = state.active_threads.values().sum::<usize>();
         let pending_request_count = match state.process.as_ref() {
             Some(process) => process.pending.lock().await.len(),
             None => 0,
         };
+        let active_turn_count = state.active_threads_snapshot().values().sum::<usize>();
         if active_turn_count > 0 || pending_request_count > 0 {
             return Err(CodexIdleMutationError::Busy {
                 active_turn_count,
@@ -739,17 +750,15 @@ impl CodexAppServerClient {
             Some(process) => process.pending.lock().await.len(),
             None => 0,
         };
+        let active_threads = state.active_threads_snapshot();
         log_executor_event(
             "codex shared startup recovery state",
             &[
                 ("thread_id", thread_id.to_owned()),
-                (
-                    "active_thread_count",
-                    state.active_threads.len().to_string(),
-                ),
+                ("active_thread_count", active_threads.len().to_string()),
                 (
                     "active_turn_count",
-                    state.active_threads.values().sum::<usize>().to_string(),
+                    active_threads.values().sum::<usize>().to_string(),
                 ),
                 ("pending_request_count", pending_request_count.to_string()),
                 (
@@ -759,8 +768,8 @@ impl CodexAppServerClient {
             ],
         );
         if state.preparing_turns.count() != 0
-            || state.active_threads.get(thread_id) != Some(&1)
-            || state.active_threads.values().sum::<usize>() != 1
+            || active_threads.get(thread_id) != Some(&1)
+            || active_threads.values().sum::<usize>() != 1
         {
             return false;
         }
@@ -806,36 +815,12 @@ impl CodexAppServerClient {
             .ok_or_else(|| "turn/steer response missing turnId".to_owned())
     }
 
-    async fn prepare_request(
-        &self,
-    ) -> Result<
-        (
-            u64,
-            CodexAppServerHandle,
-            oneshot::Receiver<Result<Value, String>>,
-        ),
-        String,
-    > {
-        self.prepare_request_with_process(true, None).await
-    }
-
-    async fn prepare_existing_request(
-        &self,
-    ) -> Result<
-        (
-            u64,
-            CodexAppServerHandle,
-            oneshot::Receiver<Result<Value, String>>,
-        ),
-        String,
-    > {
-        self.prepare_request_with_process(false, None).await
-    }
-
     async fn prepare_request_with_process(
         &self,
         start_if_missing: bool,
         launch_config: Option<&CodexLaunchConfig>,
+        method: &str,
+        params: &Value,
     ) -> Result<
         (
             u64,
@@ -869,6 +854,7 @@ impl CodexAppServerClient {
             pending_request_count,
         )
         .await?;
+        let active_threads = state.active_threads_snapshot();
         // Control and live-reload requests belong to the existing process.
         // Apply launch-environment changes only when a request may start a process.
         if start_if_missing
@@ -877,7 +863,7 @@ impl CodexAppServerClient {
                 "rpc_request",
                 &state.process_environment,
                 &process_environment,
-                &state.active_threads,
+                &active_threads,
                 pending_request_count,
             )
         {
@@ -895,6 +881,7 @@ impl CodexAppServerClient {
                 &process_launch_config,
                 Arc::clone(&state.runtime_notifications),
                 state.auth_mode,
+                Arc::clone(&state.thread_activity_changed),
             )
             .await?;
             state.thread_mcp_configurations.clear();
@@ -911,7 +898,18 @@ impl CodexAppServerClient {
             .expect("persistent Codex app-server should be initialized")
             .handle();
         let (tx, rx) = oneshot::channel();
-        handle.pending.lock().await.insert(request_id, tx);
+        handle.pending.lock().await.insert(
+            request_id,
+            PendingCodexResponse {
+                sender: tx,
+                native_request: handle
+                    .notifications
+                    .native_activity
+                    .lock()
+                    .expect("Codex native activity registry should not be poisoned")
+                    .request_context(request_id, method, params),
+            },
+        );
         Ok((request_id, handle, rx))
     }
 
@@ -1192,7 +1190,7 @@ impl CodexAppServerClient {
         {
             let state = self.state.lock().await;
             if state.has_mcp_app_session(thread_id)
-                || state.active_threads.contains_key(thread_id)
+                || state.active_threads_snapshot().contains_key(thread_id)
                 || state.thread_generations.get(thread_id) != Some(&generation)
             {
                 return Ok(false);
@@ -1204,7 +1202,7 @@ impl CodexAppServerClient {
             .await?;
         {
             let mut state = self.state.lock().await;
-            if !state.active_threads.contains_key(thread_id)
+            if !state.active_threads_snapshot().contains_key(thread_id)
                 && state.thread_generations.get(thread_id) == Some(&generation)
             {
                 state.thread_mcp_configurations.remove(thread_id);
@@ -1223,7 +1221,7 @@ impl CodexAppServerClient {
             Ok(_) => Ok(true),
             Err(error) => {
                 let mut state = self.state.lock().await;
-                if !state.active_threads.contains_key(thread_id)
+                if !state.active_threads_snapshot().contains_key(thread_id)
                     && !state.thread_generations.contains_key(thread_id)
                 {
                     state
@@ -1270,7 +1268,8 @@ impl CodexAppServerClient {
 
     async fn unscoped_notification_belongs_to_thread(&self, thread_id: &str) -> bool {
         let state = self.state.lock().await;
-        state.active_threads.len() == 1 && state.active_threads.contains_key(thread_id)
+        let active_threads = state.active_threads_snapshot();
+        active_threads.len() == 1 && active_threads.contains_key(thread_id)
     }
 
     async fn ensure_process(&self) -> Result<CodexAppServerHandle, String> {
@@ -1298,12 +1297,13 @@ impl CodexAppServerClient {
             Some(process) => process.pending.lock().await.len(),
             None => 0,
         };
+        let active_threads = state.active_threads_snapshot();
         if state.process.is_some()
             && codex_process_environment_requires_restart(
                 "startup",
                 &state.process_environment,
                 &process_environment,
-                &state.active_threads,
+                &active_threads,
                 pending_request_count,
             )
         {
@@ -1321,6 +1321,7 @@ impl CodexAppServerClient {
                 &launch_config,
                 Arc::clone(&state.runtime_notifications),
                 state.auth_mode,
+                Arc::clone(&state.thread_activity_changed),
             )
             .await?;
             initialize_elapsed = Some(initialize_started_at.elapsed());
@@ -1359,12 +1360,13 @@ impl CodexAppServerClient {
         };
         auth_mode::apply_auth_mode(&mut state, launch_config.auth_mode, pending_request_count)
             .await?;
+        let active_threads = state.active_threads_snapshot();
         if state.process.is_some()
             && codex_process_environment_requires_restart(
                 "turn_start",
                 &state.process_environment,
                 &process_environment,
-                &state.active_threads,
+                &active_threads,
                 pending_request_count,
             )
         {
@@ -1379,6 +1381,7 @@ impl CodexAppServerClient {
                 &process_launch_config,
                 Arc::clone(&state.runtime_notifications),
                 state.auth_mode,
+                Arc::clone(&state.thread_activity_changed),
             )
             .await?;
             state.thread_mcp_configurations.clear();
@@ -1609,7 +1612,10 @@ impl Default for CodexAppServerSharedState {
     }
 }
 
-type PendingCodexResponse = oneshot::Sender<Result<Value, String>>;
+struct PendingCodexResponse {
+    sender: oneshot::Sender<Result<Value, String>>,
+    native_request: Option<CodexNativeRequest>,
+}
 
 type RuntimeNotificationSubscribers = Arc<StdMutex<Vec<mpsc::Sender<CodexNotification>>>>;
 
@@ -1619,15 +1625,23 @@ struct CodexNotificationHub {
     all: broadcast::Sender<CodexNotification>,
     runtime: RuntimeNotificationSubscribers,
     threads: Arc<StdMutex<HashMap<String, broadcast::Sender<CodexNotification>>>>,
+    native_activity: Arc<StdMutex<CodexNativeActivity>>,
+    thread_activity_changed: Arc<tokio::sync::Notify>,
 }
 
 impl CodexNotificationHub {
     #[cfg(test)]
     fn new() -> Self {
-        Self::for_runtime(Arc::new(StdMutex::new(Vec::new())))
+        Self::for_runtime(
+            Arc::new(StdMutex::new(Vec::new())),
+            Arc::new(tokio::sync::Notify::new()),
+        )
     }
 
-    fn for_runtime(runtime: RuntimeNotificationSubscribers) -> Self {
+    fn for_runtime(
+        runtime: RuntimeNotificationSubscribers,
+        thread_activity_changed: Arc<tokio::sync::Notify>,
+    ) -> Self {
         static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         let (all, _) = broadcast::channel(CODEX_GLOBAL_NOTIFICATION_CAPACITY);
         Self {
@@ -1635,6 +1649,8 @@ impl CodexNotificationHub {
             process_generation: GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             runtime,
             threads: Arc::new(StdMutex::new(HashMap::new())),
+            native_activity: Arc::new(StdMutex::new(CodexNativeActivity::default())),
+            thread_activity_changed,
         }
     }
 
@@ -1668,6 +1684,7 @@ impl CodexNotificationHub {
     }
 
     async fn send(&self, message: Value) {
+        self.update_native_activity(|activity| activity.observe(&message));
         let message =
             CodexNotification::from(message).with_process_generation(self.process_generation);
         if matches!(
@@ -1730,6 +1747,18 @@ impl CodexNotificationHub {
         // The lifecycle owner applies backpressure instead of dropping native events.
         for subscriber in subscribers {
             let _ = subscriber.send(message.clone()).await;
+        }
+    }
+
+    fn update_native_activity(&self, update: impl FnOnce(&mut CodexNativeActivity) -> bool) {
+        let changed = update(
+            &mut self
+                .native_activity
+                .lock()
+                .expect("Codex native activity registry should not be poisoned"),
+        );
+        if changed {
+            self.thread_activity_changed.notify_waiters();
         }
     }
 }
@@ -1796,6 +1825,7 @@ async fn start_persistent_codex_app_server(
     request_launch_config: &CodexLaunchConfig,
     runtime_notifications: RuntimeNotificationSubscribers,
     auth_mode: CodexAuthMode,
+    thread_activity_changed: Arc<tokio::sync::Notify>,
 ) -> Result<(CodexAppServerProcess, u64), String> {
     let launch_config = persistent_codex_app_server_launch_config(request_launch_config);
     let mut child = spawn_codex_app_server(binary, &launch_config, Some(auth_mode))?;
@@ -1838,7 +1868,8 @@ async fn start_persistent_codex_app_server(
                 &[("process_id", process_id)],
             );
             let pending = Arc::new(Mutex::new(HashMap::new()));
-            let notifications = CodexNotificationHub::for_runtime(runtime_notifications);
+            let notifications =
+                CodexNotificationHub::for_runtime(runtime_notifications, thread_activity_changed);
             let reader_task = tokio::spawn(read_persistent_codex_app_server_stdout(
                 stdout,
                 Arc::clone(&pending),
@@ -1992,8 +2023,14 @@ async fn read_persistent_codex_app_server_stdout(
 
         if is_json_rpc_response(&message) {
             if let Some(request_id) = response_id(&message) {
-                if let Some(sender) = pending.lock().await.remove(&request_id) {
-                    let _ = sender.send(response_result(message));
+                if let Some(request) = pending.lock().await.remove(&request_id) {
+                    let result = response_result(message);
+                    if let (Some(context), Ok(response)) = (&request.native_request, &result) {
+                        notifications.update_native_activity(|activity| {
+                            activity.observe_response(context, response)
+                        });
+                    }
+                    let _ = request.sender.send(result);
                     continue;
                 }
             }
@@ -2074,7 +2111,7 @@ async fn fail_all_pending(
 ) {
     let pending = std::mem::take(&mut *pending.lock().await);
     for (_, sender) in pending {
-        let _ = sender.send(Err(message.clone()));
+        let _ = sender.sender.send(Err(message.clone()));
     }
 }
 
@@ -2235,9 +2272,12 @@ async fn run_codex_app_server_turn_on_shared_client(
         if let Some(thread_id) = options.direct_thread_id.take() {
             options.resume_thread_id = Some(thread_id);
         }
-        let runtime_notifications = CodexNotificationHub::for_runtime(Arc::clone(
-            &client.state.lock().await.runtime_notifications,
-        ));
+        let state = client.state.lock().await;
+        let runtime_notifications = CodexNotificationHub::for_runtime(
+            Arc::clone(&state.runtime_notifications),
+            Arc::clone(&state.thread_activity_changed),
+        );
+        drop(state);
         return run_codex_app_server_turn_with_runtime(
             &client.binary,
             request,
@@ -2458,7 +2498,7 @@ async fn run_codex_app_server_turn_on_shared_client(
 
         let mut turn_fields = codex_turn_fields(request, &thread_id);
         let startup_timeout_seconds = codex_turn_startup_timeout_seconds();
-        let startup_deadline = Instant::now() + Duration::from_secs(startup_timeout_seconds);
+        let mut startup_deadline = Instant::now() + Duration::from_secs(startup_timeout_seconds);
         let active_turn_id = if awaits_initial_goal_turn || resume_goal_only {
             log_executor_event("codex shared goal turn awaiting", &turn_fields);
             None
@@ -2470,7 +2510,7 @@ async fn run_codex_app_server_turn_on_shared_client(
             let turn_start_response = startup::wait_for_shared_startup(
                 client,
                 &thread_id,
-                startup_deadline,
+                &mut startup_deadline,
                 startup_timeout_seconds,
                 &mut cancellation,
                 turn_request_context.request(
@@ -3216,7 +3256,7 @@ async fn read_shared_turn_notifications(
                     let (response, restarted) = startup::wait_for_shared_startup(
                         client,
                         thread_id,
-                        startup_deadline,
+                        &mut startup_deadline,
                         startup_timeout_seconds,
                         &mut options.cancellation,
                         continuation,
@@ -7755,6 +7795,10 @@ fn extract_text(item: &Value) -> Option<String> {
 #[cfg(test)]
 #[path = "codex/tests.rs"]
 mod tests;
+
+#[cfg(all(test, unix))]
+#[path = "codex/request_process_tests.rs"]
+mod request_process_tests;
 
 #[cfg(test)]
 pub(crate) use tests::environment::LaunchEnvironment;

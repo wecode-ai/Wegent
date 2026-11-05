@@ -496,8 +496,24 @@ const localWorkspaceCatalogLog = new RuntimeDiagnosticsLog(
 )
 app.on('web-contents-created', (_event, contents) => {
   const logLoadEvent = (event: string) => () => {
-    console.info('[renderer-load]', { event, webContentsId: contents.id })
+    const address = contents.getURL()
+    const route =
+      process.env.VITE_WEWORK_E2E === 'true' && URL.canParse(address) ? new URL(address) : null
+    console.info('[renderer-load]', {
+      event,
+      webContentsId: contents.id,
+      ...(route?.pathname.startsWith('/wework/app')
+        ? {
+            pathname: route.pathname,
+            projectId: route.searchParams.get('projectId'),
+            projectStore: route.searchParams.get('projectStore'),
+            workspaceTab: route.searchParams.get('workspaceTab'),
+          }
+        : {}),
+    })
   }
+  if (process.env.VITE_WEWORK_E2E === 'true')
+    contents.on('did-navigate-in-page', logLoadEvent('did-navigate-in-page'))
   contents.on('did-start-loading', logLoadEvent('did-start-loading'))
   contents.on('dom-ready', logLoadEvent('dom-ready'))
   contents.on('did-finish-load', logLoadEvent('did-finish-load'))

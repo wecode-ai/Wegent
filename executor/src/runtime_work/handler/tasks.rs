@@ -765,7 +765,10 @@ impl RuntimeWorkRpcHandler {
         }
         if let (Some(runtime_handle), Some(origin)) = (
             link.runtime_handle.as_object_mut(),
-            payload.get("origin").filter(|value| value.is_object()),
+            request
+                .extra
+                .get("origin")
+                .filter(|value| value.is_object()),
         ) {
             runtime_handle.insert("origin".to_owned(), origin.clone());
         }
@@ -807,6 +810,7 @@ impl RuntimeWorkRpcHandler {
                 }
             }
             let turn = SpawnTurnRequest {
+                task_kind: None,
                 local_task_id: local_task_id.clone(),
                 runtime: "codex".to_owned(),
                 request,
@@ -1316,6 +1320,7 @@ impl RuntimeWorkRpcHandler {
         let initial_thread_goal = initial_thread_goal_from_payload(&payload);
 
         let turn = SpawnTurnRequest {
+            task_kind: None,
             local_task_id: local_task_id.clone(),
             runtime: "codex".to_owned(),
             request,
@@ -1570,6 +1575,7 @@ impl RuntimeWorkRpcHandler {
             self.record_superseded_runtime_transcript_turn(&local_task_id, &turn_id);
         }
         self.spawn_turn(SpawnTurnRequest {
+            task_kind: None,
             local_task_id: local_task_id.clone(),
             runtime: "codex".to_owned(),
             request,

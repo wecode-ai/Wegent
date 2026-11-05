@@ -53,7 +53,7 @@ impl CodexAppServerClient {
                     .state
                     .lock()
                     .await
-                    .active_threads
+                    .active_threads_snapshot()
                     .get(thread_id)
                     .copied()
                     .unwrap_or(0)
@@ -207,7 +207,10 @@ mod tests {
         let responses = std::mem::take(&mut *pending.lock().await);
         assert_eq!(responses.len(), 1);
         for (_, response) in responses {
-            response.send(Ok(json!({"status":"unsubscribed"}))).unwrap();
+            response
+                .sender
+                .send(Ok(json!({"status":"unsubscribed"})))
+                .unwrap();
         }
         assert!(first.as_mut().poll(&mut context).is_pending());
         notifications
@@ -233,7 +236,10 @@ mod tests {
         let responses = std::mem::take(&mut *pending.lock().await);
         assert_eq!(responses.len(), 1);
         for (_, response) in responses {
-            response.send(Ok(json!({"status":"unsubscribed"}))).unwrap();
+            response
+                .sender
+                .send(Ok(json!({"status":"unsubscribed"})))
+                .unwrap();
         }
         assert!(second.as_mut().poll(&mut context).is_pending());
         notifications
@@ -273,7 +279,10 @@ mod tests {
         let responses = std::mem::take(&mut *pending.lock().await);
         assert_eq!(responses.len(), 1);
         for (_, response) in responses {
-            response.send(Ok(json!({"status":"unsubscribed"}))).unwrap();
+            response
+                .sender
+                .send(Ok(json!({"status":"unsubscribed"})))
+                .unwrap();
         }
         assert!(
             release.as_mut().poll(&mut context).is_pending(),

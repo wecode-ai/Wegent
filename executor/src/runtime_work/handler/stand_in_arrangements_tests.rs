@@ -50,6 +50,7 @@ fn insert_receipt(handler: &RuntimeWorkRpcHandler, run: &AutomationRun, state: C
     request.extra.insert("user_id".into(), json!(7));
     apply_runtime_payload_metadata(&mut request, &payload);
     let turn = SpawnTurnRequest {
+        task_kind: None,
         local_task_id: task.clone(),
         runtime: "codex".into(),
         request,

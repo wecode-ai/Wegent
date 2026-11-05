@@ -8,7 +8,73 @@ from sqlalchemy import and_, false, or_
 from sqlalchemy.orm import Query, Session
 
 from app.models.delivery import LoopItemTaskBinding, loop_datetime_is_unset
-from app.services.device.identity import owned_device_aliases
+from app.models.loop_item_execution import LoopItemExecution
+from app.services.device.identity import (
+    owned_device_aliases,
+    resolve_owned_device_alias,
+)
+from app.services.device.runtime_route import runtime_device_route_id
+from app.services.loop_item_executions.cancellation import execution_cancellation_target
+from app.services.runtime_cancellation import RuntimeCancellationTarget
+
+
+def owned_binding_cancellation_targets(
+    db: Session, *, project_id: int, item_ids: list[str], user_id: int
+) -> list[RuntimeCancellationTarget]:
+    """Capture actor-owned active bindings through trusted persisted devices."""
+
+    bindings = (
+        db.query(LoopItemTaskBinding)
+        .filter(
+            LoopItemTaskBinding.cloud_project_id == project_id,
+            LoopItemTaskBinding.loop_item_id.in_(item_ids),
+            LoopItemTaskBinding.task_user_id == user_id,
+            loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
+            loop_datetime_is_unset(LoopItemTaskBinding.deleted_at),
+        )
+        .all()
+    )
+    targets = []
+    for binding in bindings:
+        device = resolve_owned_device_alias(
+            db, user_id=user_id, device_id=binding.device_id or ""
+        )
+        if device is None or not binding.task_id:
+            continue
+        device_id = runtime_device_route_id(device)
+        if device_id:
+            targets.append(
+                RuntimeCancellationTarget(
+                    owner_user_id=user_id,
+                    device_id=device_id,
+                    task_id=binding.task_id,
+                    runtime_device_id=binding.device_id,
+                )
+            )
+    return targets
+
+
+def uncovered_binding_cancellation_targets(
+    db: Session,
+    *,
+    targets: list[RuntimeCancellationTarget],
+    executions: list[LoopItemExecution],
+) -> list[RuntimeCancellationTarget]:
+    """Leave queue-owned Runtime addresses to their execution ACK mapping."""
+
+    covered: set[tuple[int, str, str]] = set()
+    for execution in executions:
+        target = execution_cancellation_target(execution)
+        if target is None:
+            continue
+        device = resolve_owned_device_alias(
+            db, user_id=target.owner_user_id, device_id=target.device_id
+        )
+        if device is not None:
+            covered.add(
+                (target.owner_user_id, runtime_device_route_id(device), target.task_id)
+            )
+    return [target for target in targets if target.identity not in covered]
 
 
 def active_task_binding_query(

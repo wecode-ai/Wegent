@@ -13,6 +13,7 @@ import { verifyLocalBoardUnread } from './local-board-unread.mjs'
 import { verifyMcpElicitationInFullAccess } from './mcp-elicitation-flow.mjs'
 import { MCP_URL_TIMEOUT_MS, MCP_FORM_TIMEOUT_MS } from './mcp-elicitation-evidence.mjs'
 import { verifyPendingTaskAcrossTabs } from './pending-task-tab-flow.mjs'
+import { prepareStandInOnboardingFixture } from './stand-in-onboarding-fixture.mjs'
 
 import {
   createCheckpointTaskFixture,
@@ -1712,6 +1713,14 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
 
     if (desktopScenario && DESKTOP_SCENARIO_ONLY) {
       phase = 'desktop-extension-scenario'
+      if (
+        !desktopScenario.verifiesStandInOnboarding &&
+        (DESKTOP_SEGMENT.startsWith('stand-in') ||
+          DESKTOP_SEGMENT === 'application-menu' ||
+          DESKTOP_SEGMENT.startsWith('coordination-'))
+      ) {
+        await prepareStandInOnboardingFixture(control, cloudEnvironment, WORKBENCH_READY_TIMEOUT_MS)
+      }
       await desktopScenario.verify(control)
       if (DESKTOP_SEGMENT === 'local-harness') {
         await writeLocalHarnessDiagnostics(control, resultDir)

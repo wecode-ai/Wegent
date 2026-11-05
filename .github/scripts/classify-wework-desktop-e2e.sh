@@ -1108,11 +1108,14 @@ classify_wework_path() {
       select_target "core:collaboration-remote-agent-dispatch"
       return
       ;;
-    wework/e2e/desktop/scenarios/collaboration-local-agent-dispatch.scenario.mjs|wework/e2e/desktop/modules/local-issue-assignee-recovery.mjs)
+    wework/e2e/desktop/scenarios/collaboration-local-agent-dispatch.scenario.mjs | \
+      wework/e2e/desktop/scenarios/collaboration-local-status-automation.scenario.mjs | \
+      wework/e2e/desktop/modules/local-issue-assignee-recovery.mjs)
       select_target "core:collaboration-local-agent-dispatch"
       return
       ;;
     wework/e2e/desktop/scenarios/collaboration-remote-agent-dispatch.scenario.mjs | \
+      wework/e2e/desktop/modules/unconfigured-issue-archive.mjs | \
       wework/e2e/desktop/modules/dispatch-issue-boundary.mjs)
       select_target "core:collaboration-remote-agent-dispatch"
       return

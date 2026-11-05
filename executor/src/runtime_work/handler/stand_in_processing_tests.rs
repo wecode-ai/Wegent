@@ -48,6 +48,7 @@ async fn a_waiting_assessment_retires_only_after_the_original_question_is_resolv
         state: CommandState::AwaitingUser,
         accepted_at: 1,
         turn: SpawnTurnRequest {
+            task_kind: None,
             local_task_id: task_id(7),
             runtime: "codex".into(),
             request,

@@ -117,6 +117,22 @@ def later_project_status(
     return candidate_status if candidate_index > current_index else current_status
 
 
+def automatic_project_status(
+    project: CloudProject,
+    *,
+    current_status: str,
+    candidate_status: str,
+) -> str:
+    """Keep automatic lifecycle transitions inside the project's board."""
+    if current_status == "completed":
+        return current_status
+    if candidate_status not in {
+        entry_id for entry_id, _ in project_board_statuses(project)
+    }:
+        return current_status
+    return candidate_status
+
+
 def status_name(project: CloudProject, status_id: str) -> str:
     """Display name for a status id; empty when the id is not on the board."""
     for entry_id, entry_name in project_board_statuses(project):
