@@ -36,6 +36,7 @@ jest.mock('@wegent/chat-core', () => ({
   createRuntimeConversationClient: () => mockCreateRuntimeConversationClient(),
 }))
 let mockTemplateStore: CollaborationTemplateStore | null = null
+let mockUserLoading = false
 jest.mock('@/features/resource-library/useCollaborationTemplates', () => ({
   useCollaborationTemplates: () => mockTemplateStore,
 }))
@@ -79,6 +80,7 @@ jest.mock('@/features/layout/components/UserFloatingMenu', () => ({
 
 jest.mock('@/features/common/UserContext', () => ({
   useUser: () => ({
+    isLoading: mockUserLoading,
     user: mockUser,
   }),
 }))
@@ -108,6 +110,7 @@ jest.mock('sonner', () => ({
 
 describe('CollaborationPage platform routing', () => {
   beforeEach(() => {
+    mockUserLoading = false
     mockAccountScope = 'backend:auth-generation-1'
     mockUser = { id: 7, user_name: 'current-user' }
     mockCreateProjectChatClient.mockClear()
@@ -128,6 +131,22 @@ describe('CollaborationPage platform routing', () => {
     mockListGroups.mockReset()
     mockListGroups.mockReturnValue(new Promise(() => undefined))
     localStorage.clear()
+  })
+
+  it('waits for the authenticated owner before mounting the scoped workbench', () => {
+    mockUserLoading = true
+    mockUser = null
+    const view = render(<CollaborationPage />)
+    expect(screen.queryByTestId('shared-collaboration-main')).not.toBeInTheDocument()
+    expect(capturedHost).toBeNull()
+    expect(screen.getByTestId('top-navigation')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('collaboration-back-to-workbench'))
+    expect(mockPush).toHaveBeenCalledWith('/chat')
+    mockUserLoading = false
+    mockUser = { id: 7, user_name: 'current-user' }
+    view.rerender(<CollaborationPage />)
+    expect(screen.getByTestId('shared-collaboration-main')).toBeInTheDocument()
+    expect(capturedHost?.currentUser?.id).toBe(7)
   })
 
   it('renders the platform spaces root through the thin host shell', () => {
@@ -174,12 +193,18 @@ describe('CollaborationPage platform routing', () => {
 
   it('keeps the account scope and API clients stable when the user profile arrives or refreshes', () => {
     mockUser = null
+    mockUserLoading = true
     const { rerender } = render(<CollaborationPage />)
-    const originalApi = capturedApi
     const originalActivity = mockCreateProjectChatClient.mock.results[0].value
     const originalRuntime = mockCreateRuntimeConversationClient.mock.results[0].value
+    expect(capturedHost).toBeNull()
+
+    mockUserLoading = false
+    mockUser = { id: 7, user_name: 'current-user' }
+    rerender(<CollaborationPage />)
+    const originalApi = capturedApi
     expect(capturedHost?.accountScope).toBe(mockAccountScope)
-    expect(capturedHost?.currentUser).toBeUndefined()
+    expect(capturedHost?.currentUser).toEqual({ id: 7, name: 'current-user' })
 
     for (const user_name of ['current-user', 'updated profile']) {
       mockUser = { id: 7, user_name }

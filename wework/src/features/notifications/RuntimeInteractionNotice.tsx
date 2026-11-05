@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Bot, X } from 'lucide-react'
 import { useRuntimeInteractions } from './RuntimeInteractionsContext'
@@ -16,13 +16,7 @@ function InteractionNotice() {
   const interactions = useRuntimeInteractions()!
   const { t } = useTranslation('common')
   const [expanded, setExpanded] = useState(false)
-  const [hovered, setHovered] = useState(false)
   const { notice: item, dismissNotice } = interactions
-  useEffect(() => {
-    if (expanded || hovered) return
-    const timer = window.setTimeout(dismissNotice, 8000)
-    return () => window.clearTimeout(timer)
-  }, [expanded, hovered, dismissNotice])
   if (!item) return null
   return createPortal(
     <aside
@@ -30,12 +24,6 @@ function InteractionNotice() {
       data-embedded-browser-occlusion
       aria-label={t('interactions.needs_reply')}
       className="fixed right-4 top-24 z-popover w-96 max-w-[calc(100vw-2rem)] rounded-xl border border-border bg-background p-4 text-text-primary shadow-lg"
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      onFocusCapture={() => setHovered(true)}
-      onBlurCapture={event => {
-        if (!event.currentTarget.contains(event.relatedTarget)) setHovered(false)
-      }}
     >
       <span className="sr-only" role="status">
         {item.task.task.title}: {item.question}

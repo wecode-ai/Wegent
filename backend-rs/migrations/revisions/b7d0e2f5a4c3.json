@@ -1,0 +1,176 @@
+{
+  "revision": "b7d0e2f5a4c3",
+  "parents": [
+    "a6c9d1e4f3b2"
+  ],
+  "source": "20260908_b7d0e2f5a4c3_nonnullable_notification_storage.py",
+  "upgrade": [
+    {
+      "sql": [
+        "ALTER TABLE wework_notifications ADD COLUMN is_read BOOL NOT NULL COMMENT 'Read state: 0 unread, 1 read' DEFAULT '0'"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE wework_notifications ADD COLUMN read_status_changed_at DATETIME NOT NULL COMMENT 'Read state transition time in UTC' DEFAULT CURRENT_TIMESTAMP"
+      ]
+    },
+    {
+      "sql": [
+        "UPDATE wework_notifications SET is_read = CASE WHEN read_at IS NULL THEN 0 ELSE 1 END, read_status_changed_at = COALESCE(read_at, created_at), url = COALESCE(url, '')"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE wework_notifications MODIFY id VARCHAR(36) NOT NULL COMMENT 'Notification UUID'"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE wework_notifications MODIFY user_id INTEGER NOT NULL DEFAULT '0' COMMENT 'Recipient user ID'"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE wework_notifications MODIFY actor_user_id INTEGER NOT NULL DEFAULT '0' COMMENT 'Sender user ID'"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE wework_notifications MODIFY kind VARCHAR(64) NOT NULL DEFAULT 'message' COMMENT 'Notification kind'"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE wework_notifications MODIFY title VARCHAR(256) NOT NULL DEFAULT '' COMMENT 'Notification title'"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE wework_notifications MODIFY body TEXT NOT NULL COMMENT 'Notification body'"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE wework_notifications MODIFY url VARCHAR(2048) NOT NULL DEFAULT '' COMMENT 'Click destination; empty means no navigation'"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE wework_notifications MODIFY payload JSON NOT NULL COMMENT 'Structured source context'"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE wework_notifications CHANGE created_at created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Creation time in UTC'"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE wework_notifications DROP COLUMN read_at"
+      ]
+    },
+    {
+      "sql": [
+        "DROP INDEX ix_wework_notifications_inbox ON wework_notifications"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX idx_wework_notifications_inbox ON wework_notifications (user_id, created_at, id)"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE wework_notifications COMMENT 'Persistent Wework inbox notifications'"
+      ]
+    }
+  ],
+  "downgrade": [
+    {
+      "sql": [
+        "ALTER TABLE wework_notifications ADD COLUMN read_at DATETIME"
+      ]
+    },
+    {
+      "sql": [
+        "UPDATE wework_notifications SET read_at = CASE WHEN is_read = 1 THEN read_status_changed_at ELSE NULL END"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE wework_notifications DROP COLUMN is_read"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE wework_notifications DROP COLUMN read_status_changed_at"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE wework_notifications MODIFY id VARCHAR(36) NOT NULL"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE wework_notifications MODIFY user_id INTEGER NOT NULL"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE wework_notifications MODIFY actor_user_id INTEGER NOT NULL"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE wework_notifications MODIFY kind VARCHAR(64) NOT NULL"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE wework_notifications MODIFY title VARCHAR(256) NOT NULL"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE wework_notifications MODIFY body TEXT NOT NULL"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE wework_notifications MODIFY url VARCHAR(2048) NULL"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE wework_notifications MODIFY payload JSON NOT NULL"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE wework_notifications MODIFY created_at DATETIME NOT NULL"
+      ]
+    },
+    {
+      "sql": [
+        "DROP INDEX idx_wework_notifications_inbox ON wework_notifications"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX ix_wework_notifications_inbox ON wework_notifications (user_id, created_at, id)"
+      ]
+    },
+    {
+      "sql": [
+        "UPDATE wework_notifications SET url = NULL WHERE url = ''"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE wework_notifications COMMENT ''"
+      ]
+    }
+  ]
+}

@@ -170,7 +170,7 @@ async function loseRealResponse(route: Route) {
   await route.abort('failed')
 }
 
-test('preserves a workspace draft while the signed-in profile and templates initialize', async ({
+test('creates and persists a workspace draft after delayed account initialization', async ({
   page,
 }) => {
   let release!: () => void
@@ -195,15 +195,18 @@ test('preserves a workspace draft while the signed-in profile and templates init
   try {
     await page.goto('/collaboration')
     await expect.poll(() => fetched).toBe(true)
-    await page.getByTestId('collaboration-workspace-create').click()
-    const name = `Delayed profile ${crypto.randomUUID()}`
-    const description = 'Keep this draft when the optional template store becomes available.'
-    await page.getByTestId('collaboration-workspace-name-input').fill(name)
-    await page.getByTestId('collaboration-workspace-description-input').fill(description)
-
+    await expect(page.getByTestId('collaboration-platform-root')).toHaveCount(0)
+    await expect(page.getByTestId('collaboration-workspace-create')).toHaveCount(0)
     release()
     await expect.poll(() => delivered).toBe(true)
     await expect(page.getByTestId('user-floating-menu-toggle')).toContainText(userName)
+    await expect(page.getByTestId('collaboration-platform-root')).toBeVisible()
+    await page.getByTestId('collaboration-workspace-create').click()
+    const name = `Delayed profile ${crypto.randomUUID()}`
+    const description = 'Persist this draft after the authenticated owner becomes available.'
+    await page.getByTestId('collaboration-workspace-name-input').fill(name)
+    await page.getByTestId('collaboration-workspace-description-input').fill(description)
+
     await expect(page.getByTestId('collaboration-workspace-name-input')).toHaveValue(name)
     await expect(page.getByTestId('collaboration-workspace-description-input')).toHaveValue(
       description

@@ -3,8 +3,8 @@
 
 //! Selectively mirror approved upstreams without changing the stored schema.
 
-mod metadata;
-mod package;
+pub(crate) mod metadata;
+pub(crate) mod package;
 mod publish;
 mod storage;
 use crate::{

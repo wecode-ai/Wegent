@@ -1,3 +1,4 @@
+import { clearPluginMarketplaceCache } from '@/features/plugins/pluginMarketplaceCache'
 import { beforeEach, afterEach, describe, expect, test, vi } from 'vitest'
 import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
 // Exported by the bundled runtime: codex app-server generate-json-schema --experimental.
@@ -8,6 +9,7 @@ import {
   createLocalCodexPluginApi,
   installedPluginMatchesImportedPersonalPlugin,
   peekLocalCodexPluginsReadState,
+  peekLocalInstalledPluginInventory,
   warmLocalCodexPluginsReadState,
 } from './codexPlugins'
 
@@ -24,6 +26,10 @@ const mocks = vi.hoisted(() => ({
     desktop: true,
     electron: true,
   },
+}))
+
+vi.mock('./runtimeAuthStatus', () => ({
+  getLocalCodexAuthStatus: vi.fn().mockResolvedValue({ sha256: 'account-a' }),
 }))
 
 vi.mock('@/lib/runtime-environment', () => ({
@@ -291,6 +297,7 @@ describe('local codex plugin readState cache', () => {
     )
   })
   beforeEach(() => {
+    clearPluginMarketplaceCache()
     clearLocalCodexPluginsReadStateCache()
     mocks.runtime.desktop = true
     mocks.runtime.electron = true
@@ -599,6 +606,7 @@ describe('local codex plugin readState cache', () => {
       method: 'plugin/list',
       params: {
         cwds: null,
+        marketplaceKinds: ['local'],
       },
     })
   })
@@ -1175,7 +1183,7 @@ describe('local codex plugin readState cache', () => {
           )
           expect(
             (params as { params?: { marketplaceKinds?: unknown } }).params?.marketplaceKinds
-          ).toBeUndefined()
+          ).toEqual(['local'])
           return await new Promise(resolve => {
             resolveList = resolve
           })
@@ -1250,6 +1258,9 @@ describe('local codex plugin readState cache', () => {
 
     const api = createLocalCodexPluginApi()
     const deviceARead = api.readState({ mergeAllMarketplaces: true })
+    const deviceARejected = expect(deviceARead).rejects.toMatchObject({
+      name: 'ExpiredPluginInventoryRequest',
+    })
     await vi.waitFor(() => expect(pluginListRequestCount).toBe(1))
 
     activeDevice = 'device-b'
@@ -1268,9 +1279,7 @@ describe('local codex plugin readState cache', () => {
         },
       ],
     })
-    const deviceAState = await deviceARead
-    expect(deviceAState.deviceId).toBe('device-a')
-    expect(deviceAState.marketplaceItems.map(item => item.name)).toEqual(['device-a-plugin'])
+    await deviceARejected
     expect(peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })?.deviceId).toBe(
       'device-b'
     )
@@ -1414,10 +1423,13 @@ describe('local codex plugin readState cache', () => {
       mergeAllMarketplaces: true,
       refresh: true,
     })
+    const rejected = expect(pending).rejects.toMatchObject({
+      name: 'ExpiredPluginInventoryRequest',
+    })
     await vi.waitFor(() => expect(finish).toBeDefined())
     clearLocalCodexPluginsReadStateCache()
     finish!({ marketplaces: [personalMarketplace] })
-    await pending
+    await rejected
     expect(peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })).toBeNull()
   })
 
@@ -2345,7 +2357,7 @@ describe('local codex plugin readState cache', () => {
     expect(order).toEqual(['installed-start', 'installed-end', 'list-start'])
   })
 
-  test('complete membership reads supersede an in-flight membership read', async () => {
+  test('a new plugin revision supersedes an in-flight membership read', async () => {
     const api = createLocalCodexPluginApi()
     await api.readState({ mergeAllMarketplaces: true, refresh: true })
 
@@ -2402,8 +2414,12 @@ describe('local codex plugin readState cache', () => {
     )
 
     const superseded = api.listInstalledPlugins({ refresh: true })
+    const rejected = expect(superseded).rejects.toMatchObject({
+      name: 'ExpiredPluginInventoryRequest',
+    })
     await vi.waitFor(() => expect(installedRequestCount).toBe(1))
 
+    clearLocalCodexPluginsReadStateCache()
     const current = api.listInstalledPlugins({ requireComplete: true })
     await expect(current).resolves.toEqual(
       expect.objectContaining({
@@ -2419,10 +2435,10 @@ describe('local codex plugin readState cache', () => {
 
     resolveFirstInstalled?.({ marketplaces: [personalMarketplace] })
     resolveFirstStore?.({ storePath: '/tmp/store/plugins', plugins: [] })
-    await superseded
-    expect(peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })).toEqual(
+    await rejected
+    expect(peekLocalInstalledPluginInventory()).toEqual(
       expect.objectContaining({
-        installedPlugins: [
+        items: [
           expect.objectContaining({
             metadata: expect.objectContaining({ name: 'current-plugin' }),
           }),

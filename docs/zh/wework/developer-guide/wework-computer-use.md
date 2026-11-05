@@ -21,15 +21,30 @@ Codex
   -> 打包内的 wegent-executor
   -> 带 Bearer Token 的 loopback HTTP bridge
   -> Electron ComputerUseService
+  -> Electron Node Helper 子进程（Node IPC）
   -> @trycua/cua-driver
   -> 平台辅助功能与屏幕捕获接口
 ```
 
 Electron 主进程拥有 CUA Driver 的生命周期。启用电脑操控且系统权限满足后，
-`ComputerUseService` 创建 Driver，监听随机的 `127.0.0.1` 端口，并把 PID、地址、
+`ComputerUseService` 在独立的 Electron Node Helper 子进程中创建 Driver，主进程监听
+随机的 `127.0.0.1` 端口，并把主进程 PID、地址、
 随机 token 和启动时间原子写入当前 Executor Home 的
 `runtime/computer-use-bridge.json`。关闭功能或退出应用时必须中止当前动作、关闭
 bridge、停止 Driver 并删除该文件。
+
+原生工具不得在 Electron 主进程内执行：macOS 对同进程的辅助功能调用可能直接
+进入 AppKit，而 CUA 的后台线程不能操作 AppKit 窗口。独立子进程让窗口调用跨进程
+交由宿主主线程处理，并隔离原生崩溃。子进程以 `ELECTRON_RUN_AS_NODE=1` 运行打包
+内的 Helper，沿用宿主的 TCC 责任链，权限请求仍由 Wework 主进程负责。取消信号通过
+Node IPC 传入对应的原生调用；宿主 IPC 断开时子进程立即退出。
+
+桥接使用 Node 的 `child_process.fork` 和带错误回调的 `send`。Electron 43.0.0 的
+`utilityProcess.postMessage` 在子进程退出时存在主进程原生崩溃问题，不能用它承载
+这条崩溃隔离链路，见 [Electron #53293](https://releases.electronjs.org/pr/53293)。
+
+Driver 异常退出后，主进程清理 bridge、显示错误，并保留启用偏好；状态查询不会
+自动重启 Driver 或重放结果未知的动作。用户关闭再开启电脑操控后创建新进程。
 
 Executor 启动 Codex 会话时读取这份 runtime record。文件不存在、内容无效或功能
 尚未就绪时，不注入 `wework_computer`。文件有效时，Executor 以自身的

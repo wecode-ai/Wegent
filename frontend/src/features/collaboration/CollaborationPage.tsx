@@ -47,6 +47,7 @@ import { CollaborationContextSidebar } from '@/features/collaboration/Collaborat
 import { createWebSharedWorkspaceApi } from '@/features/collaboration/shared-api'
 import { webProjectAgentConfigurationHost } from '@/features/collaboration/ProjectAgentConfigurationHost'
 import { useUser } from '@/features/common/UserContext'
+import LoadingState from '@/features/common/LoadingState'
 import { useCollaborationTemplates } from '@/features/resource-library/useCollaborationTemplates'
 import {
   templateIdentity,
@@ -129,13 +130,13 @@ function CollaborationWebShell({ main, sidebar }: { main: ReactNode; sidebar: Re
 
 export function CollaborationPage() {
   const theme = useDocumentTheme()
-  const { user } = useUser()
+  const { user, isLoading: userLoading } = useUser()
   const accountScope = String(apiClient.getCacheScope())
   const templateStore = useCollaborationTemplates()
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
-  const { getCurrentLanguage } = useTranslation()
+  const { getCurrentLanguage, t } = useTranslation('common')
   const templateLocale = getCurrentLanguage().startsWith('zh') ? 'zh-CN' : 'en'
   const requestedTemplate = searchParams.get('template')
   const [templateRequest, setTemplateRequest] = useState<{
@@ -429,6 +430,12 @@ export function CollaborationPage() {
       searchParams,
     ]
   )
+
+  if (userLoading && !user) {
+    return (
+      <CollaborationWebShell sidebar={<div />} main={<LoadingState message={t('loading')} />} />
+    )
+  }
 
   if (requestedTemplate && templateRequestError) {
     const m = templateMessages[templateLocale]

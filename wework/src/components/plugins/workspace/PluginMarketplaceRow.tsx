@@ -70,6 +70,13 @@ export const PluginMarketplaceRow = memo(function PluginMarketplaceRow({
     shouldShowInstalledMarketplaceActions(item, isLoggedIn) && !showFailedState && !showSyncingState
   const uninstallPending = isUninstalling || deviceState === 'uninstalling'
   const actionPending = isInstalling || uninstallPending || showSyncingState
+  const pendingLabel = isUninstalling
+    ? labels.uninstalling
+    : isInstalling
+      ? labels.installing
+      : uninstallPending
+        ? labels.uninstalling
+        : labels.syncing
   const actionLabel = showFailedState
     ? labels.retry
     : showSyncingState
@@ -142,22 +149,10 @@ export const PluginMarketplaceRow = memo(function PluginMarketplaceRow({
             className="plugin-market-card-install-status"
             role="status"
             data-testid={`${testIdPrefix}plugin-marketplace-install-${item.id}`}
-            aria-label={`${
-              uninstallPending
-                ? labels.uninstalling
-                : isInstalling
-                  ? labels.installing
-                  : labels.syncing
-            } ${item.displayName || item.name}`}
+            aria-label={`${pendingLabel} ${item.displayName || item.name}`}
           >
             <RefreshCw className="animate-spin" aria-hidden="true" />
-            <span>
-              {uninstallPending
-                ? labels.uninstalling
-                : isInstalling
-                  ? labels.installing
-                  : labels.syncing}
-            </span>
+            <span>{pendingLabel}</span>
           </span>
         ) : showInstalledState ? (
           <div ref={actionsRef} className="relative">
