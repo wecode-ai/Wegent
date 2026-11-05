@@ -221,7 +221,7 @@ test('late initial snapshot cannot undo an Issue assignment and refreshed board'
     const assignmentSaved = page.waitForResponse(
       response =>
         response.request().method() === 'POST' &&
-        new URL(response.url()).pathname === `/api/v1/loop-items/${issue.id}/assign`
+        new URL(response.url()).pathname.endsWith(`/loop-items/${issue.id}/assign`)
     )
     await page.getByTestId(`cloud-todo-detail-assignee-option-user:${assignee}`).click()
     expect((await assignmentSaved).ok()).toBe(true)

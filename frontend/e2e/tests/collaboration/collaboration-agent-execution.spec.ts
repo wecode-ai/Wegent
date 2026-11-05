@@ -233,7 +233,7 @@ test.describe('Collaboration agent execution', () => {
     const assignmentSaved = page.waitForResponse(
       response =>
         response.request().method() === 'POST' &&
-        new URL(response.url()).pathname === `/api/v1/loop-items/${issue.id}/assign`
+        new URL(response.url()).pathname.endsWith(`/loop-items/${issue.id}/assign`)
     )
     await page.getByTestId(`cloud-todo-detail-assignee-option-agent:${agentCase.agent.id}`).click()
     expect((await assignmentSaved).ok()).toBe(true)
