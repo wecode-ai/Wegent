@@ -1,27 +1,35 @@
 import { CuaDriver } from '@trycua/cua-driver'
 import type { DriverRequest, DriverResponse } from './computer-use-driver-protocol.js'
 
-const port = process.parentPort
-if (!port) throw new Error('Computer use driver requires a parent process')
+if (!process.send) throw new Error('Computer use driver requires a parent IPC channel')
+const send = process.send.bind(process)
 
 let driver: (ReturnType<typeof CuaDriver.create> & { uniffiDestroy?: () => void }) | null = null
 const actions = new Map<number, AbortController>()
 
-port.on('message', ({ data }: { data: DriverRequest }) => {
+process.once('disconnect', () => process.exit(0))
+process.on('message', (data: DriverRequest) => {
   if (data.method === 'abort') {
     actions.get(data.id)?.abort()
     return
   }
   void handleRequest(data).then(
-    result => port.postMessage({ id: data.id, ok: true, result } satisfies DriverResponse),
+    result => respond({ id: data.id, ok: true, result }),
     error =>
-      port.postMessage({
+      respond({
         id: data.id,
         ok: false,
         error: error instanceof Error ? error.message : String(error),
-      } satisfies DriverResponse)
+      })
   )
 })
+
+/** Stop immediately when replies can no longer reach the owning host. */
+function respond(response: DriverResponse): void {
+  send(response, error => {
+    if (error) process.exit(1)
+  })
+}
 
 /** Keep cancellation controllers in the process that owns their native calls. */
 async function handleRequest(request: Exclude<DriverRequest, { method: 'abort' }>) {

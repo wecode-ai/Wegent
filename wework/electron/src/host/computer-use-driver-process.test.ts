@@ -4,13 +4,17 @@ import { ComputerUseDriverProcess } from './computer-use-driver-process.js'
 import type { DriverRequest } from './computer-use-driver-protocol.js'
 
 const { fork } = vi.hoisted(() => ({ fork: vi.fn() }))
-vi.mock('electron', () => ({ utilityProcess: { fork } }))
+vi.mock('node:child_process', () => ({ fork }))
+
+const originalHelperPath = Object.getOwnPropertyDescriptor(process, 'helperExecPath')
 
 class DriverChild extends EventEmitter {
-  postMessage = vi.fn((message: DriverRequest) => {
+  send = vi.fn((message: DriverRequest, callback: (error: Error | null) => void) => {
     if (message.method === 'start' || message.method === 'shutdown') {
       queueMicrotask(() => this.emit('message', { id: message.id, ok: true }))
     }
+    callback(null)
+    return true
   })
   kill = vi.fn(() => this.emit('exit', 0))
 }
@@ -19,11 +23,17 @@ describe('ComputerUseDriverProcess', () => {
   let child: DriverChild
 
   beforeEach(() => {
+    Object.defineProperty(process, 'helperExecPath', {
+      configurable: true,
+      value: process.execPath,
+    })
     child = new DriverChild()
     fork.mockReturnValue(child)
   })
 
   afterEach(() => {
+    if (originalHelperPath) Object.defineProperty(process, 'helperExecPath', originalHelperPath)
+    else Reflect.deleteProperty(process, 'helperExecPath')
     vi.useRealTimers()
     vi.clearAllMocks()
   })
@@ -34,10 +44,15 @@ describe('ComputerUseDriverProcess', () => {
     expect(fork).toHaveBeenCalledWith(
       expect.stringMatching(/computer-use-driver-worker\.js$/),
       [],
-      expect.objectContaining({ disclaim: false })
+      expect.objectContaining({
+        execPath: process.execPath,
+        execArgv: [],
+        env: expect.objectContaining({ ELECTRON_RUN_AS_NODE: '1' }),
+        stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+      })
     )
     const result = driver.callTool('invoke_menu', '{"pid":123}')
-    const request = child.postMessage.mock.lastCall![0]
+    const request = child.send.mock.lastCall![0]
     expect(request).toMatchObject({
       method: 'callTool',
       name: 'invoke_menu',
@@ -55,15 +70,15 @@ describe('ComputerUseDriverProcess', () => {
     const driver = await ComputerUseDriverProcess.create(vi.fn())
     const controller = new AbortController()
     const result = driver.callTool('click', '{}', { signal: controller.signal })
-    const { id } = child.postMessage.mock.lastCall![0]
+    const { id } = child.send.mock.lastCall![0]
     controller.abort()
-    expect(child.postMessage).toHaveBeenLastCalledWith({ id, method: 'abort' })
+    expect(child.send).toHaveBeenLastCalledWith({ id, method: 'abort' }, expect.any(Function))
     child.emit('message', { id, ok: false, error: 'aborted' })
     await expect(result).rejects.toThrow('aborted')
 
-    const calls = child.postMessage.mock.calls.length
+    const calls = child.send.mock.calls.length
     await expect(driver.callTool('click', '{}', { signal: controller.signal })).rejects.toThrow()
-    expect(child.postMessage).toHaveBeenCalledTimes(calls)
+    expect(child.send).toHaveBeenCalledTimes(calls)
     await driver.shutdown()
   })
 
@@ -77,12 +92,12 @@ describe('ComputerUseDriverProcess', () => {
     await expect(catalog).rejects.toThrow('exited (5)')
     expect(onExit).toHaveBeenCalledOnce()
     await expect(driver.callTool('invoke_menu', '{}')).rejects.toThrow('exited (5)')
-    expect(child.postMessage).toHaveBeenCalledTimes(3)
+    expect(child.send).toHaveBeenCalledTimes(3)
     await driver.shutdown()
   })
 
   test('rejects startup when the native module crashes before readiness', async () => {
-    child.postMessage.mockImplementation(() => {})
+    child.send.mockImplementation(() => true)
     const startup = ComputerUseDriverProcess.create(vi.fn())
     child.emit('exit', 5)
     await expect(startup).rejects.toThrow('exited (5)')
@@ -93,8 +108,8 @@ describe('ComputerUseDriverProcess', () => {
     const onExit = vi.fn()
     const driver = await ComputerUseDriverProcess.create(onExit)
     const result = driver.callTool('invoke_menu', '{}')
-    child.emit('error', 'FatalError', 'native runtime', 'diagnostic report')
-    await expect(result).rejects.toThrow('FatalError at native runtime')
+    child.emit('error', new Error('Native worker failed'))
+    await expect(result).rejects.toThrow('Native worker failed')
     child.emit('exit', 1)
     expect(onExit).toHaveBeenCalledOnce()
     await driver.shutdown()
@@ -104,7 +119,7 @@ describe('ComputerUseDriverProcess', () => {
     const driver = await ComputerUseDriverProcess.create(vi.fn())
     const controller = new AbortController()
     const result = driver.callTool('click', '{}', { signal: controller.signal })
-    child.postMessage.mockImplementation(() => {
+    child.send.mockImplementation(() => {
       throw new Error('IPC closed')
     })
     controller.abort()
@@ -116,10 +131,37 @@ describe('ComputerUseDriverProcess', () => {
   test('kills an unresponsive worker after the shutdown budget', async () => {
     vi.useFakeTimers()
     const driver = await ComputerUseDriverProcess.create(vi.fn())
-    child.postMessage.mockImplementation(() => {})
+    child.send.mockImplementation(() => true)
     const stopped = expect(driver.shutdown()).rejects.toThrow('shutdown timed out')
     await vi.advanceTimersByTimeAsync(10_000)
     await stopped
     expect(child.kill).toHaveBeenCalledOnce()
+  })
+
+  test('rejects closed-channel sends before an exit notification arrives', async () => {
+    const onExit = vi.fn()
+    const driver = await ComputerUseDriverProcess.create(onExit)
+    child.send.mockImplementation((_message, callback) => {
+      queueMicrotask(() => callback(new Error('IPC channel is already closed')))
+      return false
+    })
+    await expect(driver.listToolsJson()).rejects.toThrow('IPC channel is already closed')
+    expect(onExit).toHaveBeenCalledOnce()
+    expect(child.kill).toHaveBeenCalledOnce()
+    const calls = child.send.mock.calls.length
+    await expect(driver.callTool('invoke_menu', '{}')).rejects.toThrow('action outcome is unknown')
+    await driver.shutdown()
+    expect(child.send).toHaveBeenCalledTimes(calls)
+  })
+
+  test('rejects pending work when IPC disconnects before process exit', async () => {
+    const onExit = vi.fn()
+    const driver = await ComputerUseDriverProcess.create(onExit)
+    const pending = driver.callTool('invoke_menu', '{}')
+    child.emit('disconnect')
+    await expect(pending).rejects.toThrow('IPC disconnected')
+    child.emit('exit', 1)
+    expect(onExit).toHaveBeenCalledOnce()
+    await driver.shutdown()
   })
 })

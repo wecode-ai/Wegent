@@ -23,14 +23,14 @@ Codex
   -> packaged wegent-executor
   -> Bearer-authenticated loopback HTTP bridge
   -> Electron ComputerUseService
-  -> Electron utility process (private IPC)
+  -> Electron Node Helper child process (Node IPC)
   -> @trycua/cua-driver
   -> platform accessibility and screen-capture APIs
 ```
 
 The Electron main process owns the CUA Driver lifecycle. Once computer use is
 enabled and system permissions are ready, `ComputerUseService` creates the
-Driver in a separate Electron utility process. The main process listens on a
+Driver in a separate Electron Node Helper process. The main process listens on a
 random `127.0.0.1` port and atomically writes its own PID,
 address, random token, and start time to
 `runtime/computer-use-bridge.json` under the active Executor Home. Disabling
@@ -40,9 +40,16 @@ the bridge, stop the Driver, and remove this file.
 Native tools must execute outside the Electron main process. On macOS,
 same-process accessibility calls can enter AppKit directly, but CUA's background
 threads cannot manipulate AppKit windows. A child process routes window calls
-through the host's main thread and isolates native crashes. It does not disclaim
-TCC responsibility; Wework still owns permission requests. Private IPC forwards
-cancellation to the corresponding native call.
+through the host's main thread and isolates native crashes. The child runs the
+bundled Helper with `ELECTRON_RUN_AS_NODE=1`, preserving the host's TCC
+responsibility chain. Wework still owns permission requests. Node IPC forwards
+cancellation to the corresponding native call; losing the host IPC channel
+terminates the child immediately.
+
+The bridge uses Node's `child_process.fork` and `send` with error callbacks.
+Electron 43.0.0 has a native main-process crash in `utilityProcess.postMessage`
+after child termination, so that API cannot carry this crash-isolation boundary.
+See [Electron #53293](https://releases.electronjs.org/pr/53293).
 
 An unexpected Driver exit removes the bridge and reports an error while retaining
 the enabled preference. Status checks neither restart the Driver nor replay an
