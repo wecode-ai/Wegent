@@ -1105,7 +1105,7 @@ function OwnedWorkbenchProvider({
     cloudWorkStatus,
     getRuntimeWorkSnapshot,
     updateRuntimeProject,
-    markRuntimeTasksArchived,
+    markRuntimeTasksArchived: markRuntimeTasksArchivedInView,
     markRuntimeProjectRemoved,
     refreshWorkLists,
     refreshRuntimeTask,
@@ -1124,6 +1124,15 @@ function OwnedWorkbenchProvider({
     executorClient,
     services: resolvedServices,
   })
+
+  const markRuntimeTasksArchived = useCallback(
+    (addresses: RuntimeTaskAddress[]) => {
+      // Successful explicit archival is authoritative even when another pane owns snapshot writes.
+      addresses.forEach(address => sharedLifecycleStore.remove(address))
+      markRuntimeTasksArchivedInView(addresses)
+    },
+    [markRuntimeTasksArchivedInView, sharedLifecycleStore]
+  )
 
   const sidebarDevicesRef = useRef(state.devices)
   useLayoutEffect(() => {

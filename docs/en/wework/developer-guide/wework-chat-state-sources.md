@@ -20,6 +20,11 @@ accepted user reply in the view layer.
 
 ## Pending Interaction Membership and Error Cleanup
 
+After successful archival, remove the task through the shared lifecycle Store before updating
+the initiating view's task list. This confirmed user action is independent of background snapshot
+ownership. Removing through a non-owner's read-only view leaves embedded inbox conversations
+able to restore the old question from shared lifecycle state. Background write guards remain intact.
+
 Pending scans use current task sources and device pending inventories. Cached questions must
 not reintroduce archived or removed tasks. After a successful inventory read, remove questions,
 successful-read markers, and related errors for tasks outside the candidate set. Failed or
