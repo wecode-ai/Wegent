@@ -465,6 +465,7 @@ fn store_runtime_execution_request(runtime_handle: &mut Value, request: &Executi
                 | "skill_names"
                 | "standaloneChatWorkspace"
                 | "standInDelegation"
+                | "standInOwnerRequest"
                 | "standInReportTo"
                 | "standInSchedule"
                 | "standInSourceBindings"

@@ -65,7 +65,7 @@ async fn owner_input(
         .request
         .clone();
     handler.store.update_task(&identity.task_id, |link| {
-        link.runtime_handle["executionRequest"] = json!(accepted)
+        store_runtime_execution_request(&mut link.runtime_handle, &accepted)
     });
     owner
 }
