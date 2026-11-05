@@ -241,7 +241,7 @@ async function clickBridgeNavigation(identity, selector, expectedUrl, timeoutMs,
   let clickResult = null
   let clickError = null
   try {
-    clickResult = await callBridge({
+    clickResult = await callBridge(identity, {
       action: 'click',
       selector,
       timeoutMs: 8_000,

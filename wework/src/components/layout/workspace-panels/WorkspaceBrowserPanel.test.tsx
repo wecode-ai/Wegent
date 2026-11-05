@@ -339,6 +339,59 @@ describe('WorkspaceBrowserPanel', () => {
     expect(externalLinksMocks.openExternalUrl).not.toHaveBeenCalled()
   })
 
+  test('reports and clears a failed local file external open', async () => {
+    embeddedBrowserMocks.openEmbeddedBrowser.mockResolvedValue({
+      nativeLabel: 'workspace-browser-native-1',
+      title: 'Index of /Users/mowei',
+      url: 'file:///Users/mowei/',
+      isLoading: false,
+    })
+    embeddedBrowserMocks.readEmbeddedBrowserPageState.mockResolvedValue({
+      nativeLabel: 'workspace-browser-native-1',
+      title: 'Index of /Users/mowei',
+      url: 'file:///Users/mowei/',
+      isLoading: false,
+    })
+    let handlePageStateChange!: (pageState: {
+      label: string
+      nativeLabel: string
+      title: string | null
+      url: string | null
+      isLoading: boolean
+    }) => void
+    embeddedBrowserMocks.listenEmbeddedBrowserPageStateChanges.mockImplementation(handler => {
+      handlePageStateChange = handler
+      return Promise.resolve(() => undefined)
+    })
+    localTerminalMocks.openLocalFileUrl.mockRejectedValueOnce(new Error('open failed'))
+    render(<WorkspaceBrowserPanel active />)
+
+    act(() => {
+      handlePageStateChange({
+        label: 'workspace-browser',
+        nativeLabel: 'workspace-browser-native-1',
+        title: 'Index of /Users/mowei',
+        url: 'file:///Users/mowei/',
+        isLoading: false,
+      })
+    })
+
+    const openExternal = screen.getByTestId('workspace-browser-open-external-button')
+    await waitFor(() => expect(openExternal).toBeEnabled())
+    fireEvent.click(openExternal)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('workspace-browser-error')).toHaveTextContent(
+        '无法在系统应用中打开'
+      )
+    )
+
+    fireEvent.click(openExternal)
+    await waitFor(() =>
+      expect(screen.queryByTestId('workspace-browser-error')).not.toBeInTheDocument()
+    )
+  })
+
   test('reports a failed browser data clear', async () => {
     embeddedBrowserMocks.clearEmbeddedBrowserData.mockRejectedValueOnce(new Error('failed'))
     render(<WorkspaceBrowserPanel active />)
