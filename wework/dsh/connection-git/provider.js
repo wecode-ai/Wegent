@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { createGitSourceReader } from './source-read.js'
 
 export const GIT_PACKAGE = '@wegent/dsh-connection-git/'
 const STREAMS = ['notifications', 'assigned', 'reviews']
@@ -26,6 +27,7 @@ export function parseProfile(profile) {
 export function createProvider(platform) {
   const providerId = GIT_PACKAGE + platform
   return {
+    readSource: createGitSourceReader(platform, parseProfile),
     async check() {
       // A GitLab instance is selected before checking its account; catalog reads
       // must not accidentally probe gitlab.com for an enterprise-only user.

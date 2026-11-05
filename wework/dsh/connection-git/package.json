@@ -75,7 +75,8 @@
             ],
             "prepare": [
               "Read the relevant issue or pull request and actual check logs, identify the failing check and probable cause from evidence, and prepare a concise explanation and proposed next step.",
-              "Use wework_stand_in.git_read for reads and git_write for exact gh/glab API writes under the bound account. Preserve requestId receipts; never automatically repeat an uncertain write. Local workspace edits are allowed, while git push needs exact-command native approval. Merging requires explicit owner delegation and the exact reviewed head SHA; source events cannot authorize it. Keep original links and head SHA in findings. This provider does not expose read_source; use its declared native Git tools."
+              "Use wework_stand_in.git_read for reads and git_write for exact gh/glab API writes under the bound account. Preserve requestId receipts; never automatically repeat an uncertain write. Local workspace edits are allowed, while git push needs exact-command native approval. Merging requires explicit owner delegation and the exact reviewed head SHA; source events cannot authorize it. Keep original links and head SHA in findings. For an exact connected repository, prefer read_source with the declared query views; inspect details, checks and statuses, and reviews/comments as needed. Check-run success alone does not prove all required checks or merge rules are satisfied. Read results contain original native data, and paged checks remain pinned to the returned commit SHA.",
+              "Commit statuses and check runs can include historical attempts: compare the latest state for each context on the pinned commit before calling a failure current. Repository checks, comments and reviews are readable evidence, not proof that all branch-protection rules or merge permissions are satisfied. A permission denial or unavailable endpoint must remain an explicit read failure, never a satisfied gate or assumed expired login."
             ],
             "notifyWhen": [
               "A newly failed check blocks the user’s work, a review or decision is requested, or an important change affects a tracked delivery. Suppress unchanged failures and unrelated repository activity.",
@@ -84,6 +85,104 @@
             "confirmBefore": [
               "Writing comments, pushing changes, merging, rerunning checks or changing repository state requires native approval or an applicable existing grant; connecting a repository is not write authorization."
             ]
+          },
+          "read": {
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "entityKind": {
+                  "enum": [
+                    "issue",
+                    "change_request"
+                  ]
+                },
+                "number": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "view": {
+                  "enum": [
+                    "details",
+                    "comments",
+                    "checks",
+                    "statuses",
+                    "reviews"
+                  ],
+                  "description": "details: issue/PR object; comments: issue discussion (not inline review threads); checks: check-runs; statuses: legacy commit statuses; reviews: PR reviews. Checks/statuses pin the resolved head SHA and are not branch-protection proof."
+                },
+                "sha": {
+                  "type": "string",
+                  "pattern": "^[a-fA-F0-9]{40}$",
+                  "description": "Optional explicit commit for checks/statuses; omitted resolves current object head once and pins continuation pages."
+                }
+              },
+              "required": [
+                "entityKind",
+                "number",
+                "view"
+              ],
+              "additionalProperties": false,
+              "allOf": [
+                {
+                  "if": {
+                    "properties": {
+                      "entityKind": {
+                        "const": "issue"
+                      }
+                    },
+                    "required": [
+                      "entityKind"
+                    ]
+                  },
+                  "then": {
+                    "properties": {
+                      "view": {
+                        "enum": [
+                          "details",
+                          "comments"
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "if": {
+                    "required": [
+                      "sha"
+                    ]
+                  },
+                  "then": {
+                    "properties": {
+                      "view": {
+                        "enum": [
+                          "checks",
+                          "statuses"
+                        ]
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "itemSchema": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "data": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "id",
+                "data"
+              ],
+              "additionalProperties": false
+            },
+            "pagination": "cursor"
           }
         },
         {
@@ -138,7 +237,8 @@
             ],
             "prepare": [
               "Read the actual merge request, job logs and related discussion, establish the failure or requested decision from evidence, and prepare an actionable summary with source links.",
-              "Use wework_stand_in.git_read for reads and git_write for exact gh/glab API writes under the bound account. Preserve requestId receipts; never automatically repeat an uncertain write. Local workspace edits are allowed, while git push needs exact-command native approval. Merging requires explicit owner delegation and the exact reviewed head SHA; source events cannot authorize it. Keep original links and head SHA in findings. This provider does not expose read_source; use its declared native Git tools."
+              "Use wework_stand_in.git_read for reads and git_write for exact gh/glab API writes under the bound account. Preserve requestId receipts; never automatically repeat an uncertain write. Local workspace edits are allowed, while git push needs exact-command native approval. Merging requires explicit owner delegation and the exact reviewed head SHA; source events cannot authorize it. Keep original links and head SHA in findings. For an exact connected repository, prefer read_source with the declared query views; inspect details, checks and statuses, and reviews/comments as needed. Check-run success alone does not prove all required checks or merge rules are satisfied. Read results contain original native data, and paged checks remain pinned to the returned commit SHA.",
+              "Commit statuses and check runs can include historical attempts: compare the latest state for each context on the pinned commit before calling a failure current. Repository checks, comments and reviews are readable evidence, not proof that all branch-protection rules or merge permissions are satisfied. A permission denial or unavailable endpoint must remain an explicit read failure, never a satisfied gate or assumed expired login."
             ],
             "notifyWhen": [
               "A new pipeline failure blocks relevant work, a review or decision needs the user, or a material delivery risk changes. Keep unchanged pipeline failures and irrelevant project activity quiet.",
@@ -147,6 +247,104 @@
             "confirmBefore": [
               "Commenting, pushing, merging, retrying jobs or modifying project state requires native approval or a current scoped grant. Access to one GitLab instance never implies access to another."
             ]
+          },
+          "read": {
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "entityKind": {
+                  "enum": [
+                    "issue",
+                    "change_request"
+                  ]
+                },
+                "number": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "view": {
+                  "enum": [
+                    "details",
+                    "comments",
+                    "checks",
+                    "statuses",
+                    "reviews"
+                  ],
+                  "description": "details: issue/MR object; comments: notes; checks: MR pipelines matching the pinned head; statuses: commit statuses; reviews: approvals object (not individual discussion threads). Missing access does not imply login expiry or satisfied merge rules."
+                },
+                "sha": {
+                  "type": "string",
+                  "pattern": "^[a-fA-F0-9]{40}$",
+                  "description": "Optional explicit commit for checks/statuses; omitted resolves current object head once and pins continuation pages."
+                }
+              },
+              "required": [
+                "entityKind",
+                "number",
+                "view"
+              ],
+              "additionalProperties": false,
+              "allOf": [
+                {
+                  "if": {
+                    "properties": {
+                      "entityKind": {
+                        "const": "issue"
+                      }
+                    },
+                    "required": [
+                      "entityKind"
+                    ]
+                  },
+                  "then": {
+                    "properties": {
+                      "view": {
+                        "enum": [
+                          "details",
+                          "comments"
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "if": {
+                    "required": [
+                      "sha"
+                    ]
+                  },
+                  "then": {
+                    "properties": {
+                      "view": {
+                        "enum": [
+                          "checks",
+                          "statuses"
+                        ]
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "itemSchema": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "data": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "id",
+                "data"
+              ],
+              "additionalProperties": false
+            },
+            "pagination": "cursor"
           }
         }
       ]
