@@ -24,6 +24,7 @@ pub(crate) struct StandInMcpIdentity {
     pub coordinator_batch: Option<String>,
     pub project: Option<Value>,
     pub review: bool,
+    pub readonly_worker: bool,
 }
 
 pub(crate) fn stand_in_identity(request: &ExecutionRequest) -> Option<StandInMcpIdentity> {
@@ -40,6 +41,7 @@ pub(crate) fn stand_in_identity(request: &ExecutionRequest) -> Option<StandInMcp
                 | "stand_in_coordinator"
                 | "project_coordinator"
                 | "stand_in_schedule"
+                | "stand_in_task"
         )
     ) {
         return None;
@@ -51,6 +53,7 @@ pub(crate) fn stand_in_identity(request: &ExecutionRequest) -> Option<StandInMcp
         .to_owned();
     Some(StandInMcpIdentity {
         review: origin["type"] == "stand_in_schedule",
+        readonly_worker: origin["type"] == "stand_in_task",
         task_id: origin["runtimeTaskId"]
             .as_str()
             .unwrap_or(&request.task_id)
@@ -164,6 +167,13 @@ pub(super) fn tools(context: &SpaceMcpRequestContext) -> Vec<Value> {
     if context
         .stand_in
         .as_ref()
+        .is_some_and(|identity| identity.readonly_worker)
+    {
+        return super::stand_in_tasks::read_tools();
+    }
+    if context
+        .stand_in
+        .as_ref()
         .is_some_and(|identity| identity.review)
     {
         return super::stand_in_tasks::review_tools();
@@ -234,6 +244,11 @@ pub(super) fn tools(context: &SpaceMcpRequestContext) -> Vec<Value> {
         tools.extend(super::stand_in_tasks::tools());
         tools.extend(super::stand_in_tasks::schedule_tools());
         tools.extend(super::stand_in_tasks::review_tools());
+    }
+    for read in super::stand_in_tasks::read_tools() {
+        if !tools.iter().any(|tool| tool["name"] == read["name"]) {
+            tools.push(read);
+        }
     }
     tools
 }
@@ -592,6 +607,7 @@ mod memory_tests {
             coordinator_batch: None,
             project: None,
             review: false,
+            readonly_worker: false,
         };
         let arguments = json!({"workId":work["id"]});
         let summary = read_connected_work(&runtime, &identity, &arguments).unwrap();
@@ -641,6 +657,57 @@ mod memory_tests {
         assert!(read_connected_work(&runtime, &identity, &arguments).is_err());
     }
 
+    #[tokio::test]
+    async fn delegated_worker_raw_catalog_is_readonly_and_roles_have_history_tools() {
+        let directory = tempfile::tempdir().unwrap();
+        let runtime =
+            TaskRuntime::new(LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap())
+                .unwrap();
+        let mut request:ExecutionRequest=serde_json::from_value(json!({"task_id":"worker","origin":{"type":"stand_in_task","userId":7,"deviceId":"mac","standInId":"@primary","sourceTaskId":"primary"}})).unwrap();
+        let mut context = SpaceMcpRequestContext::new(None, None, None);
+        context.surface = WeworkMcpSurface::StandIn;
+        context.stand_in = stand_in_identity(&request);
+        let result = handle_request_with_context(
+            &runtime,
+            &json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}),
+            &context,
+        )
+        .await
+        .unwrap();
+        let names: Vec<_> = result["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, vec!["list_tasks", "read_task"]);
+        for name in [
+            "create_task",
+            "continue_task",
+            "propose_profile",
+            "schedule_task",
+            "remember",
+            "forget_memory",
+            "reply",
+            "send_email",
+        ] {
+            assert_eq!(
+                call(&runtime, name, json!({}), &context).await["isError"],
+                true,
+                "{name}"
+            );
+        }
+        request.extra.get_mut("origin").unwrap()["type"] = json!("stand_in_identity");
+        request.extra.get_mut("origin").unwrap()["standInId"] = json!("default");
+        context.stand_in = stand_in_identity(&request);
+        let names: Vec<_> = tools(&context)
+            .into_iter()
+            .map(|tool| tool["name"].as_str().unwrap().to_owned())
+            .collect();
+        assert!(names.contains(&"list_tasks".into()) && names.contains(&"read_task".into()));
+        assert!(!names.contains(&"create_task".into()));
+    }
+
     #[test]
     fn stand_in_review_has_only_read_history_and_other_schedules_have_no_identity() {
         let mut request: ExecutionRequest = serde_json::from_value(json!({"task_id":"review","origin":{"type":"stand_in_schedule","userId":7,"deviceId":"mac","standInId":"@primary"}})).unwrap();
@@ -670,6 +737,7 @@ mod memory_tests {
             work: None,
             project: None,
             review: false,
+            readonly_worker: false,
             ask_before_act: true,
             coordinator_batch: None,
         };

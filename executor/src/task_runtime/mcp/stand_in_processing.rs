@@ -173,6 +173,7 @@ mod tests {
             work: None,
             project: None,
             review: false,
+            readonly_worker: false,
             ask_before_act: false,
             coordinator_batch: Some("batch".into()),
         };
@@ -214,6 +215,7 @@ mod tests {
             work: None,
             project: None,
             review: false,
+            readonly_worker: false,
             ask_before_act: false,
             coordinator_batch: Some("batch".into()),
         };

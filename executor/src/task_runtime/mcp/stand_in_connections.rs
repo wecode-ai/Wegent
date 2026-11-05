@@ -342,6 +342,7 @@ mod tests {
             coordinator_batch: None,
             project: None,
             review: false,
+            readonly_worker: false,
         }
     }
 

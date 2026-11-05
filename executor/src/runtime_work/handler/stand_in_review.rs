@@ -3,46 +3,6 @@ use super::*;
 use crate::runtime_work::automations::weekly_review;
 use crate::task_runtime::mcp::StandInMcpIdentity;
 
-fn review_owned(link: &RuntimeTaskLink, user: i64) -> bool {
-    link.runtime_handle["executionRequest"]["user_id"] == user
-        && !link.ephemeral
-        && !matches!(
-            link.runtime_handle["origin"]["type"].as_str(),
-            Some("stand_in_coordinator" | "stand_in_processing")
-        )
-}
-
-fn filter_review_page(page: &mut Value, start: i64, end: i64, previous: bool) {
-    let mut unknown = false;
-    if let Some(messages) = page["messages"].as_array_mut() {
-        messages.retain(|message| {
-            let at = timestamp_ms_field(message, "createdAt");
-            unknown |= at.is_none();
-            at.map_or(true, |at| (previous || at >= start) && at < end)
-        });
-    }
-    // Native navigation and canonical turns can contain unfiltered text.
-    if let Some(object) = page.as_object_mut() {
-        object.retain(|key, _| {
-            matches!(
-                key.as_str(),
-                "success"
-                    | "code"
-                    | "error"
-                    | "taskId"
-                    | "messages"
-                    | "fullContent"
-                    | "beforeCursor"
-                    | "afterCursor"
-                    | "hasMoreBefore"
-                    | "hasMoreAfter"
-            )
-        });
-    }
-    page["unknownTimestamps"] = json!(unknown);
-    page["contentMayBeTruncated"] = json!(page["fullContent"] != true);
-}
-
 impl RuntimeWorkRpcHandler {
     pub(super) async fn read_stand_in_review_history(
         &self,
@@ -64,7 +24,7 @@ impl RuntimeWorkRpcHandler {
             return Err(denied());
         }
         let actor = self.local_task_link(&identity.task_id).ok_or_else(denied)?;
-        if !review_owned(&actor, identity.user)
+        if !super::stand_in_history::history_owned(&actor, identity.user)
             || actor.runtime_handle["origin"]["userId"] != identity.user
         {
             return Err(denied());
@@ -87,7 +47,7 @@ impl RuntimeWorkRpcHandler {
         if let Some(id) = args["taskId"].as_str() {
             let link = self
                 .local_task_link(id)
-                .filter(|link| review_owned(link, identity.user))
+                .filter(|link| super::stand_in_history::history_owned(link, identity.user))
                 .ok_or_else(denied)?;
             if previous && link.runtime_handle["origin"]["weeklyReview"] != true {
                 return Err(AppIpcError::new(
@@ -99,11 +59,10 @@ impl RuntimeWorkRpcHandler {
                 return Err(denied());
             }
             let mut page = self.transcript(json!({"taskId":id,"limit":50,"includeFullContent":false,"beforeCursor":args["beforeCursor"]})).await?;
-            filter_review_page(
+            super::stand_in_history::filter_history_page(
                 &mut page,
-                start.timestamp_millis(),
-                end.timestamp_millis(),
-                previous,
+                (!previous).then_some(start.timestamp_millis()),
+                Some(end.timestamp_millis()),
             );
             page["windowStart"] = json!(start);
             page["windowEnd"] = json!(end);
@@ -113,7 +72,7 @@ impl RuntimeWorkRpcHandler {
             .local_task_links(true)
             .into_iter()
             .filter(|link| {
-                review_owned(link, identity.user)
+                super::stand_in_history::history_owned(link, identity.user)
                     && link.local_task_id != identity.task_id
                     && !self.archived_link_is_deleted(link)
                     && if previous {
@@ -283,7 +242,7 @@ mod tests {
             {"id":"inside","createdAt":end-1}, {"id":"end","createdAt":end},
             {"id":"unknown"}], "turns":[{"private":"unfiltered"}],
             "beforeCursor":"older", "hasMoreBefore":true, "fullContent":false});
-        filter_review_page(&mut page, start, end, false);
+        super::super::stand_in_history::filter_history_page(&mut page, Some(start), Some(end));
         assert_eq!(
             page["messages"]
                 .as_array()
@@ -299,7 +258,7 @@ mod tests {
         assert_eq!(page["beforeCursor"], "older");
         assert_eq!(page["hasMoreBefore"], true);
         let mut previous = json!({"messages":[{"createdAt":start-1},{"createdAt":end}]});
-        filter_review_page(&mut previous, start, end, true);
+        super::super::stand_in_history::filter_history_page(&mut previous, None, Some(end));
         assert_eq!(previous["messages"].as_array().unwrap().len(), 1);
     }
 
@@ -373,6 +332,7 @@ mod tests {
                 coordinator_batch: None,
                 project: None,
                 review: false,
+                readonly_worker: false,
             },
         )
     }
@@ -447,6 +407,7 @@ mod tests {
             },
             StandInMcpIdentity {
                 review: true,
+                readonly_worker: false,
                 ..identity.clone()
             },
         ] {

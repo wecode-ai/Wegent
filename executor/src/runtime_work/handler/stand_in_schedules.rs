@@ -339,6 +339,7 @@ mod tests {
             coordinator_batch: None,
             project: None,
             review: false,
+            readonly_worker: false,
         };
         let args = json!({"requestId":"event","title":"Review","message":"Review outstanding items","at":"2099-01-01T00:00:00Z","timezone":"UTC"});
         let saved = handler

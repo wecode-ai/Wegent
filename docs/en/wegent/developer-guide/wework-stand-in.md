@@ -249,6 +249,20 @@ remain in force, and history conveys no authority. Reports disclose missing
 timestamps, failed reads and truncation without automatically changing memories,
 settings or sending externally.
 
+Personal stand-ins and scenario roles use the general `list_tasks` and `read_task`
+tools to read permitted conversations belonging to the current account, including
+identity conversations and ordinary tasks. Lists and native transcripts support
+pagination and optional time bounds. List entries distinguish `kind` and
+`canContinue`: reading identity evidence does not authorize dispatching work to it.
+Direct primary-delegated workers inherit only these two read-only tools, without
+configuration, orchestration, scheduling or memory writes. Every read revalidates
+the persisted owner, device, existing role and delegation source. Pausing new-work
+intake does not revoke reads of existing conversations. Source tasks can read only
+associated conversations in the same role and exact currently connected scope;
+removing the connection denies subsequent reads. Other accounts, unknown owners,
+deleted or ephemeral tasks and private coordinators are excluded. Project
+coordinators receive no personal history. History never grants execution authority.
+
 ### User stories and acceptance coverage
 
 | User story                            | Acceptance behavior                                                                                                                 | Automated coverage                                                                                             |

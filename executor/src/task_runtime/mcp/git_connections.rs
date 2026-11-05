@@ -232,6 +232,7 @@ mod tests {
             project: None,
             ask_before_act: true,
             review: false,
+            readonly_worker: false,
             coordinator_batch: None,
         };
         let bound = bind(&store, &identity, json!({"operation":"repository"})).unwrap();

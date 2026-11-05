@@ -167,6 +167,7 @@ mod stand_in_conversations;
 mod stand_in_diagnostics;
 mod stand_in_events;
 mod stand_in_execution;
+mod stand_in_history;
 mod stand_in_ingress;
 mod stand_in_memory;
 mod stand_in_processing;

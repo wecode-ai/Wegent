@@ -50,6 +50,11 @@ impl RuntimeWorkRpcHandler {
         if name == "read_review_history" {
             return self.read_stand_in_review_history(&identity, &args).await;
         }
+        if matches!(name, "list_tasks" | "read_task") {
+            return self
+                .read_stand_in_conversations(&identity, name, &args)
+                .await;
+        }
         if identity.device != self.device_id
             || identity.work.is_some()
             || !matches!(identity.role.as_deref(), None | Some("@primary"))
@@ -109,11 +114,6 @@ impl RuntimeWorkRpcHandler {
                 .stand_in_schedule_operation(&identity, name, &args)
                 .await;
         }
-        if name == "list_tasks" {
-            return Ok(json!({"items": self.local_task_links(false).into_iter()
-                .filter(|link| owns_task(link, identity.user)).take(100)
-                .map(|link| json!({"taskId":link.local_task_id,"title":link.title,"status":link.status,"interactionStatus":link.interaction_status})).collect::<Vec<_>>()}));
-        }
         if name == "create_task" {
             return self.create_primary_task(&identity, &args).await;
         }
@@ -129,11 +129,6 @@ impl RuntimeWorkRpcHandler {
                     "Task does not belong to the current user",
                 )
             })?;
-        if name == "read_task" {
-            return self
-                .transcript(json!({"taskId":id,"limit":50,"includeFullContent":false}))
-                .await;
-        }
         if name != "continue_task" || link.status == "archived" || link.interaction_status.is_some()
         {
             return Err(AppIpcError::new(
@@ -272,6 +267,7 @@ mod operation_tests {
             work: None,
             project: None,
             review: false,
+            readonly_worker: false,
             ask_before_act: true,
             coordinator_batch: Some("batch".into()),
         };
@@ -306,7 +302,7 @@ mod operation_tests {
         let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
         handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
         handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
-        handler.upsert_local_task(RuntimeTaskLink { local_task_id: "primary".into(), runtime_handle: json!({"origin":{"type":"stand_in_identity","userId":7},"executionRequest":{"user_id":7}}), ..Default::default() });
+        handler.upsert_local_task(RuntimeTaskLink { local_task_id: "primary".into(), runtime_handle: json!({"origin":{"type":"stand_in_identity","userId":7,"deviceId":"mac"},"executionRequest":{"user_id":7}}), ..Default::default() });
         for (id, user, interaction) in [
             ("own", 7, None),
             ("foreign", 8, None),
@@ -328,6 +324,7 @@ mod operation_tests {
             work: None,
             project: None,
             review: false,
+            readonly_worker: false,
             ask_before_act: true,
             coordinator_batch: None,
         };
@@ -335,7 +332,15 @@ mod operation_tests {
             .stand_in_task_operation(identity.clone(), "list_tasks", json!({}))
             .await
             .unwrap();
-        assert_eq!(listed["items"].as_array().unwrap().len(), 3);
+        assert_eq!(listed["items"].as_array().unwrap().len(), 4);
+        let primary = listed["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["taskId"] == "primary")
+            .unwrap();
+        assert_eq!(primary["kind"], "identity");
+        assert_eq!(primary["canContinue"], false);
         assert!(!listed.to_string().contains("foreign"));
         for id in ["foreign", "waiting", "approval", "missing"] {
             let error = handler

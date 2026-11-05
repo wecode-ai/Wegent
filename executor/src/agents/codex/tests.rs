@@ -6501,3 +6501,83 @@ async fn expired_native_approval_emits_expiry_without_waiting_for_an_answer() {
     );
     client.restart().await;
 }
+
+#[tokio::test]
+async fn stand_in_worker_cold_and_loaded_resume_register_only_general_read_tools() {
+    let _environment = environment::LaunchEnvironment::new();
+    ensure_codex_mcp_endpoints().await.unwrap();
+    let request:ExecutionRequest=serde_json::from_value(json!({"task_id":"worker","origin":{"type":"stand_in_task","userId":7,"deviceId":"mac","standInId":"@primary","sourceTaskId":"primary"}})).unwrap();
+    let mut previous = None;
+    for _ in 0..2 {
+        let mut launch = CodexLaunchConfig::default();
+        mcp_config::configure_task_mcp(&request, &mut launch).unwrap();
+        let mut params = Map::from_iter([("threadId".into(), json!("worker-thread"))]);
+        append_thread_launch_params(&mut params, &launch);
+        let configuration = mcp_reload::mcp_thread_configuration(&Value::Object(params.clone()));
+        let plan = CodexThreadPlan {
+            start: CodexThreadStart::Request {
+                operation: "thread/resume",
+                params: Value::Object(params),
+            },
+            resume_requested: true,
+            fork_requested: false,
+        };
+        assert_eq!(
+            config_reload_resume_thread_id(&plan, &request, previous.as_ref()),
+            Some("worker-thread")
+        );
+        let field = |suffix: &str| {
+            configuration
+                .iter()
+                .find(|(key, _)| key.contains("wework_stand_in") && key.ends_with(suffix))
+                .unwrap()
+                .1
+                .as_str()
+                .unwrap()
+                .to_owned()
+        };
+        let url = field(".url");
+        let context = configuration
+            .iter()
+            .find(|(key, _)| {
+                key.contains("wework_stand_in") && key.contains("X-Wework-Mcp-Context")
+            })
+            .unwrap()
+            .1
+            .as_str()
+            .unwrap();
+        let client = reqwest::Client::new();
+        let initialized=client.post(&url).header("Authorization",&launch.env["WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION"]).header("X-Wework-Mcp-Context",context)
+            .json(&json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}})).send().await.unwrap();
+        assert!(initialized.status().is_success());
+        let session = initialized.headers()["Mcp-Session-Id"]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let catalog = client
+            .post(&url)
+            .header(
+                "Authorization",
+                &launch.env["WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION"],
+            )
+            .header("Mcp-Session-Id", &session)
+            .json(&json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}))
+            .send()
+            .await
+            .unwrap()
+            .json::<Value>()
+            .await
+            .unwrap();
+        let names: Vec<_> = catalog["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, vec!["list_tasks", "read_task"]);
+        let denied=client.post(&url).header("Authorization",&launch.env["WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION"]).header("Mcp-Session-Id",&session)
+            .json(&json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"create_task","arguments":{}}})).send().await.unwrap().json::<Value>().await.unwrap();
+        assert_eq!(denied["result"]["isError"], true);
+        previous = Some(configuration);
+    }
+}
