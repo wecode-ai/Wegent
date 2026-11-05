@@ -331,16 +331,32 @@ describe('DesktopRuntime lifecycle generation', () => {
     expect(runtime.state().ready).toBe(true)
   })
 
-  test('passes the stable desktop device identity to Core DSH', async () => {
-    const runtime = createRuntime({
-      ...EXTERNAL_DSH,
-      WEGENT_APP_IPC_DEVICE_ID: 'stable-desktop-device',
-    })
+  test('passes the explicit verification identity to Core DSH and its managed executor', async () => {
+    const createExecutor = vi.fn(() => new FakeExecutor())
+    const runtime = createRuntime(
+      {
+        ...EXTERNAL_DSH,
+        DEVICE_ID: 'stable-desktop-device',
+        WEGENT_APP_IPC_DEVICE_ID: 'stable-desktop-device',
+        WEGENT_EXECUTOR_HOME: '/tmp/explicit-verification-home',
+        WEWORK_EXECUTOR_PATH: '/executor',
+      },
+      { createExecutor }
+    )
 
     await runtime.start()
 
     expect(createdOptions).toHaveLength(1)
     expect(createdOptions[0].env?.WEGENT_APP_IPC_DEVICE_ID).toBe('stable-desktop-device')
+    expect(createExecutor).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        deviceId: 'stable-desktop-device',
+        environment: expect.objectContaining({
+          WEGENT_EXECUTOR_HOME: '/tmp/explicit-verification-home',
+          WEGENT_APP_IPC_DEVICE_ID: 'stable-desktop-device',
+        }),
+      })
+    )
   })
 
   test('an old-generation start cannot clear a new-generation start', async () => {
