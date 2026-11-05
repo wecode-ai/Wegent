@@ -12,7 +12,6 @@ import {
   waitForCollaborationIssueDrawer,
   webApi,
 } from '../../utils/collaboration-test-support'
-import { createApiClient } from '../../utils/api-client'
 
 async function dragIssueToLane(page: Page, issueId: string, source: string, target: string) {
   return dragCollaborationIssueToColumn(page, issueId, target, source)

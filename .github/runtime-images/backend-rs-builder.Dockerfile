@@ -22,6 +22,7 @@ FROM ${DEPS_IMAGE} AS build
 COPY backend-rs/src ./src
 COPY backend-rs/examples ./examples
 COPY backend-rs/migrations ./migrations
+COPY shared/issue_follow_events.rs /workspace/shared/issue_follow_events.rs
 RUN find src examples -type f -exec touch {} + \
     && cargo build --release --locked --bin wegent-backend-rs \
       --example attachment_s3_e2e --example attachment_hosting_e2e
