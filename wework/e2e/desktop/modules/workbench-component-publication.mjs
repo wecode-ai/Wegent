@@ -49,6 +49,7 @@ const input = JSON.parse(process.argv[2])
 const { waitForNativeFileHolder } = await import(pathToFileURL(input.holderHelper).href)
 const occupiedPublicationEntry = ${occupiedPublicationEntry.toString()}
 app.setPath('userData', join(input.root, 'electron'))
+const runtimeRoot = join(input.root, 'runtimes')
 const originalSymlink = fs.symlink
 let child
 let closed
@@ -66,6 +67,7 @@ async function holdFile(file, releaseAfterMs = 0) {
 fs.symlink = async (source, target, type) => {
   const file = occupiedPublicationEntry(input.root, source, target)
   if (file) {
+    assert.equal((await fs.stat(join(source, file))).isFile(), true)
     await holdFile(join(source, file))
     await assert.rejects(fs.rename(source, source + '.blocked'), error =>
       ['EPERM', 'EACCES', 'EBUSY'].includes(error.code))
@@ -96,7 +98,6 @@ try {
   assert.deepEqual(await fs.readdir(join(input.root, 'data', 'managed-components', 'composed', 'wework-core-plugins')), entries)
   const { materializeBundledRuntimes } = await import(pathToFileURL(join(input.resources,
     'app.asar/dist/runtime/bundled-runtime-materializer.js')).href)
-  const runtimeRoot = join(input.root, 'runtimes')
   await materializeBundledRuntimes(join(input.resources, 'harness-runtime'), runtimeRoot, ['core'])
   assert.equal(occupiedPublications, 2)
   await materializeBundledRuntimes(join(input.resources, 'harness-runtime'), runtimeRoot, ['core'])

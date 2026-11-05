@@ -449,6 +449,8 @@ export function CollaborationApp({
           value={currentMilestoneFilter}
           onChange={milestoneFilter.select}
           label={milestoneLabels.title}
+          searchLabel={milestoneLabels.search}
+          emptyLabel={milestoneLabels.noMatches}
           noneLabel={milestoneLabels.none}
           allLabel={milestoneLabels.all}
           errorLabel={milestoneLabels.error}

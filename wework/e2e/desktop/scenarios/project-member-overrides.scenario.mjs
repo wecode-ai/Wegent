@@ -445,6 +445,16 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           visible: false,
         })
         await control.command('waitFor', collaborationProjectViewSelector(CONTENT, 'board', true))
+        assert.equal(
+          Number(
+            await control.command(
+              'getElementCount',
+              scoped('[data-testid="collaboration-project-view-select"] option[value="manage"]')
+            )
+          ),
+          0,
+          'Self-demotion must remove management from compact navigation too'
+        )
         await assertViewerDenials()
         await captureScreenshot(control, 'project-member-overrides-self-demoted.png', CONTENT)
         verifiedCases.push('self-demotion-immediately-exits-management-and-revokes-write-access')

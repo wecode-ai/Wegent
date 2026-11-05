@@ -105,6 +105,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         }
       )
       await control.command('waitFor', board('[data-testid="cloud-todo-detail"]'), {
+        text: ISSUE_NAME,
         visible: true,
         timeoutMs: uiTimeoutMs,
       })

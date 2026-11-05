@@ -285,8 +285,13 @@ test('late initial snapshot cannot undo an Issue assignment and refreshed board'
       `${path}/issues/${issue.id}?view=manage`
     )
     await page.getByTestId('cloud-todo-detail-assignee').click()
+    const assignmentSaved = page.waitForResponse(
+      response =>
+        response.request().method() === 'POST' &&
+        new URL(response.url()).pathname.endsWith(`/loop-items/${issue.id}/assign`)
+    )
     await page.getByTestId(`cloud-todo-detail-assignee-option-user:${assignee}`).click()
-    await page.getByTestId('cloud-todo-save').click()
+    expect((await assignmentSaved).ok()).toBe(true)
     await expect(page.getByTestId('cloud-todo-save')).toHaveCount(0)
     await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute(
       'data-value',

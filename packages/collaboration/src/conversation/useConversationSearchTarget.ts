@@ -313,18 +313,21 @@ export function useConversationSearchTarget({
         recordPhase(3, behavior === 'smooth')
         navigationScrolling = true
         scroller.addEventListener('scrollend', finishNavigation)
+        const previousTop = scroller.scrollTop
         scrollToContentPosition(scroller, top, behavior)
         recordLayout(startedAt)
-        const destination = Math.min(
-          top,
-          Math.max(0, scroller.scrollHeight - scroller.clientHeight)
-        )
-        navigationFrame = requestAnimationFrame(() => {
-          navigationFrame = 0
-          // Let native scroll observers read the new offset before releasing ownership.
-          // A no-op or clamped scroll does not dispatch scrollend.
-          if (Math.abs(scroller.scrollTop - destination) < 1) finishNavigation()
-        })
+        // Instant writes also need native read-back before resize anchoring resumes.
+        if (behavior === 'smooth' || scroller.scrollTop === previousTop) {
+          const destination = Math.min(
+            top,
+            Math.max(0, scroller.scrollHeight - scroller.clientHeight)
+          )
+          navigationFrame = requestAnimationFrame(() => {
+            navigationFrame = 0
+            // A no-op or clamped scroll does not dispatch scrollend.
+            if (Math.abs(scroller.scrollTop - destination) < 1) finishNavigation()
+          })
+        }
         return
       }
       scheduleNavigation()

@@ -204,9 +204,6 @@ export async function createAndAssignCloudIssue(
   )
   if (!assignDuringCreate) {
     await selectAssignee()
-    await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
-      timeoutMs,
-    })
   }
   return issue
 }

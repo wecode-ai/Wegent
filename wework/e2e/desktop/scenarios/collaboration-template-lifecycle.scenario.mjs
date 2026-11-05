@@ -15,8 +15,8 @@ import {
   configureFirstProjectExecutionEnvironment,
   openProjectAgentCreator,
   selectProjectRunnerModel,
-  waitForTestIdByText,
   selectCollaborationProjectView,
+  waitForTestIdByText,
 } from '../modules/workspace-flows.mjs'
 import {
   assistantMessage,

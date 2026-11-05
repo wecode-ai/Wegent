@@ -7,7 +7,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from openai import APIConnectionError
 
 from app.services.execution.dispatcher import ExecutionDispatcher
 from app.services.execution.emitters import status_updating
@@ -66,26 +65,20 @@ class _BlockingStream:
             raise
 
 
-def _build_fake_openai_module(
+def _build_fake_chat_shell_client(
     stream: _BlockingStream,
     create_blocker: _BlockingCreate | None = None,
-):
+) -> SimpleNamespace:
     class _FakeResponses:
         async def create(self, **kwargs):
             if create_blocker:
                 await create_blocker.wait()
             return stream
 
-    class _FakeAsyncOpenAI:
-        def __init__(self, **kwargs):
-            self.responses = _FakeResponses()
-            self.base_url = kwargs["base_url"].rstrip("/") + "/"
-
-        async def close(self):
-            pass
-
     return SimpleNamespace(
-        AsyncOpenAI=_FakeAsyncOpenAI, APIConnectionError=APIConnectionError
+        responses=_FakeResponses(),
+        base_url="http://chat-shell/v1/",
+        close=AsyncMock(),
     )
 
 
@@ -183,14 +176,9 @@ async def test_dispatch_sse_cancels_while_opening_stream() -> None:
     session_manager.is_cancelled.return_value = False
 
     with (
-        patch.dict(
-            "sys.modules",
-            {
-                "openai": _build_fake_openai_module(
-                    stream,
-                    create_blocker=create_blocker,
-                )
-            },
+        patch(
+            "app.services.execution.chat_shell_client._build_client",
+            return_value=_build_fake_chat_shell_client(stream, create_blocker),
         ),
         patch(
             "app.services.execution.chat_shell_sse.OpenAIRequestConverter.from_execution_request",
@@ -249,9 +237,9 @@ async def test_cancelled_sse_owner_persists_terminal_state(
         dispatcher.router, "route", MagicMock(return_value=_sse_target())
     )
     with (
-        patch.dict(
-            "sys.modules",
-            {"openai": _build_fake_openai_module(stream, create_blocker)},
+        patch(
+            "app.services.execution.chat_shell_client._build_client",
+            return_value=_build_fake_chat_shell_client(stream, create_blocker),
         ),
         patch(
             "app.services.execution.chat_shell_sse.OpenAIRequestConverter.from_execution_request",
@@ -299,14 +287,9 @@ async def test_dispatch_sse_closes_stream_opened_during_cancellation() -> None:
     session_manager.is_cancelled.return_value = False
 
     with (
-        patch.dict(
-            "sys.modules",
-            {
-                "openai": _build_fake_openai_module(
-                    stream,
-                    create_blocker=create_blocker,
-                )
-            },
+        patch(
+            "app.services.execution.chat_shell_client._build_client",
+            return_value=_build_fake_chat_shell_client(stream, create_blocker),
         ),
         patch(
             "app.services.execution.chat_shell_sse.OpenAIRequestConverter.from_execution_request",
@@ -347,7 +330,10 @@ async def test_dispatch_sse_cancels_while_waiting_for_event() -> None:
     )
 
     with (
-        patch.dict("sys.modules", {"openai": _build_fake_openai_module(stream)}),
+        patch(
+            "app.services.execution.chat_shell_client._build_client",
+            return_value=_build_fake_chat_shell_client(stream),
+        ),
         patch(
             "app.services.execution.chat_shell_sse.OpenAIRequestConverter.from_execution_request",
             return_value={

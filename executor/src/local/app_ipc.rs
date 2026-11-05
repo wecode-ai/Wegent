@@ -3087,35 +3087,6 @@ async fn handle_builtin_device_command(
                 None,
             ))
         }
-        "ls_dirs" => {
-            let path = string_field(params, "path").or_else(|| string_field(params, "cwd"))?;
-            Some((
-                match std::fs::read_dir(&path) {
-                    Ok(entries) => {
-                        let mut output = String::new();
-                        for entry in entries.flatten() {
-                            if let Ok(metadata) = entry.metadata() {
-                                let name = entry.file_name().to_string_lossy().to_string();
-                                if metadata.is_dir() {
-                                    output.push_str(&name);
-                                    output.push('/');
-                                } else {
-                                    output.push_str(&name);
-                                }
-                                output.push('\n');
-                            }
-                        }
-                        CommandResult::ok(output)
-                    }
-                    Err(error) => CommandResult::error(
-                        format!("Failed to list directory {path}: {error}"),
-                        0.0,
-                        false,
-                    ),
-                },
-                Some(PostProcessor::DirectoryList),
-            ))
-        }
         "runtime_auth_status" => {
             let codex_home = crate::agents::wework_codex_home();
             let target = codex_home.join("auth.json");
