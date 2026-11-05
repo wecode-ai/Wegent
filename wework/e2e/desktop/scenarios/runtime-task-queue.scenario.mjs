@@ -144,7 +144,10 @@ async function waitForSnapshot(control, predicate, message, timeoutMs) {
 
 async function assertQueuePosition(control, selector, expected, visible, message) {
   // Queue admission can render before positional metadata reaches the sidebar.
-  await control.command('waitFor', selector, visible ? { visible: true } : {})
+  await control.command('waitFor', selector, {
+    text: expected,
+    ...(visible ? { visible: true } : {}),
+  })
   const text = await control.command('getText', selector, { visible })
   const positions = text.split('\n').filter(Boolean)
   assert.ok(positions.length > 0, message ?? `No queue position found for ${selector}`)

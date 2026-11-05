@@ -126,9 +126,9 @@ export async function verifyPluginScopeBoundaries({
     })
     await control.command('click', testId('plugins-button'), { visible: true })
     for (const id of ['plugin-management-back-button', 'plugin-detail-back-button']) {
-      if (Number(await control.command('getElementCount', testId(id))) > 0) {
-        await control.command('click', testId(id))
-      }
+      // An off-screen window may retain a duplicate control. Click only the
+      // enabled/visible route action instead of the first DOM match.
+      await control.command('clickIfPresent', testId(id))
     }
     await control.command('waitFor', testId('plugins-search-input'))
     await control.command('fill', testId('plugins-search-input'), { value: '' })
@@ -136,6 +136,10 @@ export async function verifyPluginScopeBoundaries({
 
   async function refreshCatalog() {
     await backToCatalog()
+    await control.command('waitFor', testId('plugins-refresh-button'), {
+      visible: true,
+      enabled: true,
+    })
     await control.command('clickWhenEnabled', testId('plugins-refresh-button'))
   }
 

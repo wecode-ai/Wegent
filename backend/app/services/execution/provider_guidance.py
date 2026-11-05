@@ -52,17 +52,18 @@ Response template:
 """.strip()
 
 
-def apply_provider_configuration_guidance(request: ExecutionRequest) -> None:
-    """Refresh one authoritative guide after initial or late Skill resolution.
+def collect_provider_guides(request: ExecutionRequest) -> list[str]:
+    """Return the guides of active Skills whose configuration is missing.
 
     Chat keeps on-demand Skill loading, but does not duplicate preloaded guidance.
-    Bot prompts also carry the guide for adapters that read per-Bot instructions.
     Chat, ClaudeCode, and Codex consume these Skills. Dify runs an external
     application's tools and configuration, and Agno is no longer a supported
     platform runtime, so both are excluded.
     """
     primary_bot = request.bot[0] if request.bot else {}
     shell_type = primary_bot.get("shell_type", "Chat")
+    if shell_type in {"Dify", "Agno"}:
+        return []
     active_skills = set(request.preload_skills or []) | set(
         request.user_selected_skills or []
     )
@@ -70,8 +71,7 @@ def apply_provider_configuration_guidance(request: ExecutionRequest) -> None:
     for skill in request.skill_configs or []:
         skill.pop("prompt_in_system_prompt", None)
         if (
-            shell_type not in {"Dify", "Agno"}
-            and skill.get("configuration_required") is True
+            skill.get("configuration_required") is True
             and skill.get("name") in active_skills
             and not skill.get("mcpServers")
             and skill.get("prompt")
@@ -79,14 +79,6 @@ def apply_provider_configuration_guidance(request: ExecutionRequest) -> None:
             guides[skill["name"]] = skill["prompt"]
             skill["prompt_in_system_prompt"] = True
 
-    guidance = "\n\n".join(guides.values())
-    request.system_prompt = _replace_guidance(request.system_prompt, guidance)
-    for bot in request.bot:
-        bot_guidance = guidance if bot.get("shell_type") not in {"Dify", "Agno"} else ""
-        if bot_guidance or GUIDANCE_START in (bot.get("system_prompt") or ""):
-            bot["system_prompt"] = _replace_guidance(
-                bot.get("system_prompt") or "", bot_guidance
-            )
     if guides:
         logger.info(
             "[MCP-GUIDANCE] task_id=%s shell_type=%s skills=%s",
@@ -94,6 +86,28 @@ def apply_provider_configuration_guidance(request: ExecutionRequest) -> None:
             shell_type,
             sorted(guides),
         )
+    return list(guides.values())
+
+
+def apply_execution_guidance(request: ExecutionRequest, sections: list[str]) -> None:
+    """Write one authoritative guidance block onto the request and its bots.
+
+    Every guidance source contributes a section; composing them here keeps a
+    single block so one source cannot overwrite another.
+    """
+    guidance = "\n\n".join(section.strip() for section in sections if section.strip())
+    request.system_prompt = _replace_guidance(request.system_prompt, guidance)
+    for bot in request.bot:
+        bot_guidance = guidance if bot.get("shell_type") not in {"Dify", "Agno"} else ""
+        if bot_guidance or GUIDANCE_START in (bot.get("system_prompt") or ""):
+            bot["system_prompt"] = _replace_guidance(
+                bot.get("system_prompt") or "", bot_guidance
+            )
+
+
+def apply_provider_configuration_guidance(request: ExecutionRequest) -> None:
+    """Apply provider configuration guidance only (no other sources)."""
+    apply_execution_guidance(request, collect_provider_guides(request))
 
 
 def _replace_guidance(prompt: str, guidance: str) -> str:

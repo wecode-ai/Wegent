@@ -11,15 +11,18 @@ This module contains methods for creating, updating, deleting, and canceling tas
 import asyncio
 import json as json_lib
 import logging
+import time
 from datetime import datetime
 from typing import Any, Callable, Dict, Optional
 
 import httpx
 from fastapi import HTTPException
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 import app.stores.tasks as task_stores
 from app.core.config import settings
+from app.core.db_errors import is_mysql_deadlock
 from app.models.kind import Kind
 from app.models.project import Project
 from app.models.subtask import SubtaskStatus
@@ -47,6 +50,8 @@ from .helpers import create_subtasks
 
 logger = logging.getLogger(__name__)
 
+TASK_CREATE_DEADLOCK_ATTEMPTS = 3
+
 
 class TaskOperationsMixin:
     """Mixin class providing task CRUD operations."""
@@ -72,10 +77,71 @@ class TaskOperationsMixin:
         logger.info(
             f"create_task_or_append called with task_id={task_id}, user_id={user.id}"
         )
-        task = None
-        team = None
-        requested_task_id = task_id
+        task, _ = self._create_task_rows_with_deadlock_retry(
+            db, obj_in=obj_in, user=user, task_id=task_id, namespace=namespace
+        )
+        db.refresh(task)
 
+        # Push mode: dispatch task to executor_manager immediately after commit
+        # Skip dispatch for device tasks - they are routed via WebSocket to local devices
+        if obj_in.task_type != "task":
+            from app.services.execution import schedule_dispatch
+
+            schedule_dispatch(task.id)
+
+        return convert_to_task_dict(task, db, user.id)
+
+    def _create_task_rows_with_deadlock_retry(
+        self,
+        db: Session,
+        *,
+        obj_in: TaskCreate,
+        user: User,
+        task_id: Optional[int],
+        namespace: str,
+    ) -> tuple:
+        """Persist a task, retrying the whole transaction on MySQL deadlock.
+
+        Parallel requests (a reserved task id being finalized while another
+        task or project is deleted) can deadlock on the ``tasks`` row. MySQL
+        rolls the transaction back and asks the client to retry, so a fresh
+        attempt is the correct outcome instead of surfacing a 500.
+        """
+        attempt = 0
+        while True:
+            attempt += 1
+            try:
+                task, team = self._create_task_rows(
+                    db, obj_in=obj_in, user=user, task_id=task_id, namespace=namespace
+                )
+                db.commit()
+                return task, team
+            except OperationalError as exc:
+                db.rollback()
+                if (
+                    not is_mysql_deadlock(exc)
+                    or attempt == TASK_CREATE_DEADLOCK_ATTEMPTS
+                ):
+                    raise
+                logger.warning(
+                    "Retrying task creation after MySQL deadlock: "
+                    "task_id=%s user_id=%s attempt=%s",
+                    task_id,
+                    user.id,
+                    attempt,
+                )
+                time.sleep(0.05 * attempt)
+
+    def _create_task_rows(
+        self,
+        db: Session,
+        *,
+        obj_in: TaskCreate,
+        user: User,
+        task_id: Optional[int],
+        namespace: str,
+    ) -> tuple:
+        """Create or append the task rows without committing."""
         if task_id is None:
             task, team = self._create_new_task(
                 db, obj_in, user, task_id=None, namespace=namespace
@@ -108,7 +174,7 @@ class TaskOperationsMixin:
                     task_id=task_id,
                     owner_user_id=user.id,
                 )
-                if requested_task_id is not None and (
+                if (
                     existing_record is not None
                     and existing_record.kind != "Placeholder"
                 ):
@@ -117,20 +183,8 @@ class TaskOperationsMixin:
                     db, obj_in, user, task_id, namespace=namespace
                 )
 
-        # Create subtasks for the task
         create_subtasks(db, task, team, user.id, obj_in.prompt)
-
-        db.commit()
-        db.refresh(task)
-
-        # Push mode: dispatch task to executor_manager immediately after commit
-        # Skip dispatch for device tasks - they are routed via WebSocket to local devices
-        if obj_in.task_type != "task":
-            from app.services.execution import schedule_dispatch
-
-            schedule_dispatch(task.id)
-
-        return convert_to_task_dict(task, db, user.id)
+        return task, team
 
     def _handle_existing_task(
         self,

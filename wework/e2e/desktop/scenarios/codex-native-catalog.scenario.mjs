@@ -13,9 +13,13 @@ import {
 } from './codex-catalog-context.mjs'
 
 const MODEL_ID = 'gpt-5.5'
+// Catalog screens load through the executor RPC, which can exceed the 5s
+// harness default when four checkpoints share the machine.
+const UI_TIMEOUT_MS = 15_000
 const EDIT = `[data-testid="codex-catalog-edit-openai-${MODEL_ID}"]`
 const ROW = `[data-testid="codex-official-model-row-openai-${MODEL_ID}"]`
 const RESTORE = `[data-testid="codex-catalog-restore-openai-${MODEL_ID}"]`
+const DIALOG = '[data-testid="codex-catalog-editor-dialog"]'
 
 export function createDesktopScenario(options) {
   const context = createCatalogContextVerification({ ...options, modelId: MODEL_ID })
@@ -79,15 +83,20 @@ export function createDesktopScenario(options) {
         'clickWhenEnabled',
         '[data-testid="codex-model-provider-toggle-openai"]'
       )
-      await control.command('waitFor', `${EDIT}:not(:disabled)`)
+      await control.command('waitFor', `${EDIT}:not(:disabled)`, { timeoutMs: UI_TIMEOUT_MS })
       for (const { slug } of bundledModels) {
         const selector = `[data-testid="codex-catalog-edit-openai-${slug}"]`
         if (Number(await control.command('getElementCount', selector)) > 0) {
           assert.equal(Number(await control.command('getElementCount', `${selector}:disabled`)), 0)
         }
       }
-      await control.command('clickWhenEnabled', EDIT)
-      await control.command('waitFor', '[data-testid="codex-catalog-editor-dialog"]')
+      await control.command('waitFor', `${EDIT}:not(:disabled)`, {
+        timeoutMs: UI_TIMEOUT_MS,
+      })
+      await control.command('clickWhenEnabled', EDIT, { timeoutMs: UI_TIMEOUT_MS })
+      // Waiting on the dialog instead of retrying keeps a real regression
+      // visible; the evidence directory holds app.log for renderer failures.
+      await control.command('waitFor', DIALOG, { timeoutMs: UI_TIMEOUT_MS })
       await control.command('fill', '[data-testid="local-model-context-window-input"]', {
         value: '300001',
       })
@@ -95,10 +104,8 @@ export function createDesktopScenario(options) {
       const saveLogOffset = (await readFile(executorLogPath, 'utf8')).length
       await control.command('clickWhenEnabled', '[data-testid="codex-catalog-editor-save"]')
       await waitForCatalogRestart(control, executorLogPath, saveLogOffset)
-      await control.command('waitFor', '[data-testid="codex-catalog-editor-dialog"]', {
-        visible: false,
-      })
-      await control.command('waitFor', ROW, { text: '已自定义' })
+      await control.command('waitFor', DIALOG, { visible: false, timeoutMs: UI_TIMEOUT_MS })
+      await control.command('waitFor', ROW, { text: '已自定义', timeoutMs: UI_TIMEOUT_MS })
       const persisted = JSON.parse(await readFile(overridePath, 'utf8'))
       assert.deepEqual(persisted, [
         {
@@ -150,7 +157,7 @@ export function createDesktopScenario(options) {
         'clickWhenEnabled',
         '[data-testid="codex-model-provider-toggle-openai"]'
       )
-      await control.command('waitFor', ROW, { text: '已自定义' })
+      await control.command('waitFor', ROW, { text: '已自定义', timeoutMs: UI_TIMEOUT_MS })
       const restoreLogOffset = (await readFile(executorLogPath, 'utf8')).length
       await control.command('clickWhenEnabled', RESTORE)
       await waitForCatalogRestart(control, executorLogPath, restoreLogOffset)

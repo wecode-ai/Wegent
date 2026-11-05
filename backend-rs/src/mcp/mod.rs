@@ -11,6 +11,7 @@
 //! explicit session termination (not used in stateless mode). This module owns
 //! the shared transport framing and the per-server JSON-RPC behavior.
 
+pub mod connectors;
 pub mod interactive_form_question;
 mod knowledge;
 pub mod knowledge_external;

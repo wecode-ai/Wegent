@@ -515,4 +515,3 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
     "$notification_path"
 done
-

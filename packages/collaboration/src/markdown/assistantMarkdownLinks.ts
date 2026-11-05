@@ -23,6 +23,10 @@ export interface ExtractedMarkdownLink {
 
 const HTML_FILE_PATTERN = /\.(?:html?|xhtml)$/i;
 const MARKDOWN_ESCAPED_PUNCTUATION_PATTERN = /\\([!-/:-@[-`{-~])/g;
+// DingTalk mini-app pages are served from this host but only render inside the
+// DingTalk client, where the client injects its JSAPI bridge.
+const DINGTALK_MINI_APP_URL_PATTERN =
+  /^https:\/\/n\.dingtalk\.com\/dingding\//i;
 // Protected Markdown links may be encoded again by intermediate URL normalizers.
 const MAX_MARKDOWN_FILE_PATH_DECODE_PASSES = 16;
 
@@ -133,6 +137,17 @@ export function classifyMarkdownLink(href?: string): MarkdownLinkTarget {
     kind: "file",
     ...splitMarkdownFileLineSuffix(decodeMarkdownFilePath(value)),
   };
+}
+
+/**
+ * Turns a DingTalk mini-app URL into a deep link that opens it in the DingTalk
+ * client. Mini-app pages render blank in a regular browser because they need
+ * the client's JSAPI bridge.
+ */
+export function toDingTalkClientUrl(href: string): string | null {
+  const trimmed = href.trim();
+  if (!DINGTALK_MINI_APP_URL_PATTERN.test(trimmed)) return null;
+  return `dingtalk://dingtalkclient/page/link?url=${encodeURIComponent(trimmed)}&pc_slide=true`;
 }
 
 export function isHtmlFilePath(path: string): boolean {

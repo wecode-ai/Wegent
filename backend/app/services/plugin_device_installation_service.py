@@ -13,6 +13,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.core.constants import PLUGIN_AUTO_UPDATE_FAILURE_LIMIT
+from app.core.db_errors import is_mysql_deadlock
 from app.models.kind import Kind
 from app.models.plugin_marketplace import PluginDeviceInstallation
 from app.schemas.device import (
@@ -32,7 +33,6 @@ from app.services.plugin_write_operations import run_plugin_operation
 
 logger = logging.getLogger(__name__)
 
-MYSQL_DEADLOCK_ERROR = 1213
 DEVICE_SYNC_WRITE_ATTEMPTS = 3
 
 
@@ -212,7 +212,7 @@ class PluginDeviceInstallationService:
                 return
             except OperationalError as exc:
                 db.rollback()
-                if not _is_mysql_deadlock(exc) or attempt == DEVICE_SYNC_WRITE_ATTEMPTS:
+                if not is_mysql_deadlock(exc) or attempt == DEVICE_SYNC_WRITE_ATTEMPTS:
                     raise
                 logger.warning(
                     "Retrying plugin device sync persistence after MySQL deadlock: "
@@ -672,8 +672,3 @@ class PluginDeviceInstallationService:
 
 
 plugin_device_installation_service = PluginDeviceInstallationService()
-
-
-def _is_mysql_deadlock(error: OperationalError) -> bool:
-    original = error.orig
-    return bool(original.args and original.args[0] == MYSQL_DEADLOCK_ERROR)

@@ -20,6 +20,13 @@ pub struct ConnectionResponse {
     pub granted_scopes: Vec<String>,
     /// Pydantic serializes the stored naive datetime without a timezone.
     pub expires_at: Option<String>,
+    /// Last tool-discovery failure of a still-authorized app, so the desktop
+    /// can explain "authorized but the upstream is unavailable".
+    pub last_error: Option<String>,
+    /// `toolsDiscoveredAt` of the last successful discovery.
+    pub last_discovered_at: Option<String>,
+    /// `len(spec["toolSummaries"])` of the cached discovery result.
+    pub tool_count: usize,
 }
 
 /// `ConnectorToolSummary`.
@@ -29,6 +36,10 @@ pub struct ToolSummary {
     pub title: Option<String>,
     pub description: String,
     pub raw_tool_name: Option<String>,
+    /// `summary["inputSchema"]`: the cache keeps it so a cached surface can
+    /// still drive a tool call, but `ConnectorToolSummary` does not expose it.
+    #[serde(skip)]
+    pub input_schema: Option<brz_json::OpaqueJson>,
 }
 
 /// `ConnectorInstalledApp`.
@@ -42,6 +53,7 @@ pub struct InstalledApp {
     pub runtime_name: Option<String>,
     pub enabled: bool,
     pub callable: bool,
+    pub tool_loading_mode: String,
     pub connection: ConnectionResponse,
     pub tool_summaries: Vec<ToolSummary>,
 }
@@ -60,5 +72,8 @@ pub fn connected_no_auth() -> ConnectionResponse {
         external_account_name: None,
         granted_scopes: Vec::new(),
         expires_at: None,
+        last_error: None,
+        last_discovered_at: None,
+        tool_count: 0,
     }
 }

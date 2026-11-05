@@ -3,6 +3,7 @@ import { fireEvent, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
   installExternalLinkHandler,
+  isDingTalkUrl,
   isHttpUrl,
   isLocalHttpUrl,
   openExternalUrl,
@@ -47,6 +48,12 @@ describe('external link helpers', () => {
     expect(isHttpUrl('javascript:alert(1)')).toBe(false)
   })
 
+  test('recognizes DingTalk client deep links', () => {
+    expect(isDingTalkUrl('dingtalk://dingtalkclient/page/link?url=x')).toBe(true)
+    expect(isDingTalkUrl('https://n.dingtalk.com/dingding/dd-todo')).toBe(false)
+    expect(isDingTalkUrl('javascript:alert(1)')).toBe(false)
+  })
+
   test('detects localhost URLs without treating private remote hosts as local', () => {
     expect(isLocalHttpUrl('http://localhost:3000')).toBe(true)
     expect(isLocalHttpUrl('https://app.localhost/path')).toBe(true)
@@ -68,6 +75,17 @@ describe('external link helpers', () => {
     } finally {
       window.removeEventListener(WEWORK_OPEN_SCHEME_EVENT, opened)
     }
+  })
+
+  test('opens DingTalk deep links through the Electron host', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    const url = 'dingtalk://dingtalkclient/page/link?url=https%3A%2F%2Fn.dingtalk.com&pc_slide=true'
+
+    await expect(openExternalUrl(url)).resolves.toBe(true)
+
+    expect(desktopHostMock).toHaveBeenCalledWith('shell.openExternal', { url })
+    expect(requestEmbeddedBrowserOpenMock).not.toHaveBeenCalled()
+    expect(getAppPreferencesMock).not.toHaveBeenCalled()
   })
 
   test.each([

@@ -55,7 +55,6 @@ import {
   splitProcessingBlocks,
   shouldShowAssistantThinkingIndicator,
 } from "./assistantMessagePresentation";
-
 export function AssistantMessage({
   imageServices,
   renderVisualization,

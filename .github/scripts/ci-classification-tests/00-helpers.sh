@@ -218,4 +218,3 @@ assert_desktop_comparison_preserves_coverage() {
 }
 
 assert_desktop_comparison_preserves_coverage
-

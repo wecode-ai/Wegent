@@ -13,9 +13,73 @@ from app.services import mcp_provider_registry
 from app.services.execution.request_builder import TaskRequestBuilder
 from app.services.user_mcp_service import user_mcp_service
 
+USER_PROVIDER_ID = "demo-user"
+USER_SERVICE_ID = "svc"
+USER_SKILL_NAME = "demo-user-svc"
+USER_SERVER_NAME = "demo_user_svc"
+USER_MCP_URL_PLACEHOLDER = (
+    "${{task_data.user_mcps.demo-user.services.svc.credentials.url}}"
+)
+
+
+def install_user_managed_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Register a user-managed provider that is not connector-managed.
+
+    The DingTalk services moved to connector apps, so the personal-URL and
+    OAuth-header machinery needs a provider that still uses that model.
+    """
+    monkeypatch.setitem(
+        mcp_provider_registry.MCP_PROVIDER_REGISTRY,
+        USER_PROVIDER_ID,
+        {
+            "provider_id": USER_PROVIDER_ID,
+            "display_name": "示例用户服务",
+            "configuration_mode": "user",
+            "message_keywords": ("示例用户服务",),
+            "services": {
+                USER_SERVICE_ID: {
+                    "service_id": USER_SERVICE_ID,
+                    "server_name": USER_SERVER_NAME,
+                    "connector_slug": None,
+                    "detail_url": "https://example.com/svc",
+                    "skill_name": USER_SKILL_NAME,
+                    "display_name": "示例用户服务",
+                    "message_keywords": ("示例",),
+                    "oauth_supported": True,
+                }
+            },
+        },
+    )
+
+
+def user_managed_skill(
+    server_name: str = USER_SERVER_NAME, *, prompt: str = ""
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=101,
+        user_id=0,
+        json={
+            "kind": "Skill",
+            "metadata": {"name": USER_SKILL_NAME, "namespace": "default"},
+            "spec": {
+                "description": "User-managed provider skill",
+                "prompt": prompt,
+                "bindShells": ["Chat"],
+                "mcpServers": {
+                    server_name: {
+                        "type": "streamable-http",
+                        "url": USER_MCP_URL_PLACEHOLDER,
+                    }
+                },
+            },
+        },
+    )
+
 
 class TestUserScopedMcpInjection:
     """Tests for DingTalk Docs MCP injection."""
+
+    PERSONAL_URL = "https://mcp-gw.dingtalk.com/server/abc?key=secret"
 
     def test_tool_output_guard_defaults_to_enabled(self):
         user = SimpleNamespace(preferences="{}")
@@ -323,50 +387,52 @@ class TestUserScopedMcpInjection:
         ]
 
     def test_build_skill_data_preserves_mcp_server_placeholders_when_service_ready(
-        self, test_db
+        self, test_db, monkeypatch
     ):
+        install_user_managed_provider(monkeypatch)
         builder = TaskRequestBuilder(test_db)
         preferences = user_mcp_service.dump_preferences(
             user_mcp_service.set_provider_service_config(
                 None,
-                provider_id="dingtalk",
-                service_id="docs",
+                provider_id=USER_PROVIDER_ID,
+                service_id=USER_SERVICE_ID,
                 enabled=True,
                 url="https://example.com/docs?token=secret",
             )
         )
         user = SimpleNamespace(preferences=preferences)
-        skill = SimpleNamespace(
-            id=101,
-            user_id=0,
-            json={
-                "kind": "Skill",
-                "metadata": {"name": "dingtalk-docs", "namespace": "default"},
-                "spec": {
-                    "description": "DingTalk docs runtime skill",
-                    "bindShells": ["Chat"],
-                    "mcpServers": {
-                        "docs": {
-                            "type": "streamable-http",
-                            "url": "${{task_data.user_mcps.dingtalk.services.docs.credentials.url}}",
-                        }
-                    },
-                },
-            },
-        )
-
-        skill_data = builder._build_skill_data(skill, user=user)
+        skill_data = builder._build_skill_data(user_managed_skill(), user=user)
 
         assert skill_data["mcpServers"] == {
-            "docs": {
+            USER_SERVER_NAME: {
                 "type": "streamable-http",
-                "url": "${{task_data.user_mcps.dingtalk.services.docs.credentials.url}}",
+                "url": USER_MCP_URL_PLACEHOLDER,
             }
         }
 
     def test_build_skill_data_turns_runtime_skill_into_embedded_guide_when_service_missing(
+        self, test_db, monkeypatch
+    ):
+        install_user_managed_provider(monkeypatch)
+        builder = TaskRequestBuilder(test_db)
+        skill_data = builder._build_skill_data(
+            user_managed_skill(prompt="Use the demo MCP."),
+            user=SimpleNamespace(preferences="{}"),
+        )
+
+        assert "mcpServers" not in skill_data
+        assert skill_data["configuration_required"] is True
+        assert "Use the demo MCP." not in skill_data["prompt"]
+        assert "Configuration Required" in skill_data["prompt"]
+        assert (
+            f"wegent://modal/mcp-provider-config?provider={USER_PROVIDER_ID}"
+            f"&service={USER_SERVICE_ID}"
+        ) in skill_data["prompt"]
+
+    def test_connector_managed_skill_has_no_personal_mcp_or_provider_guide(
         self, test_db
     ):
+        """DingTalk services moved to connector apps and are authorized per user."""
         builder = TaskRequestBuilder(test_db)
         skill = SimpleNamespace(
             id=101,
@@ -376,14 +442,9 @@ class TestUserScopedMcpInjection:
                 "metadata": {"name": "dingtalk-docs", "namespace": "default"},
                 "spec": {
                     "description": "DingTalk docs runtime skill",
-                    "prompt": "Use DingTalk docs MCP.",
+                    "prompt": "DingTalk documents use the connector bridge.",
                     "bindShells": ["Chat"],
-                    "mcpServers": {
-                        "docs": {
-                            "type": "streamable-http",
-                            "url": "${{task_data.user_mcps.dingtalk.services.docs.credentials.url}}",
-                        }
-                    },
+                    "mcpServers": {"dingtalk_docs": {"type": "streamable-http"}},
                 },
             },
         )
@@ -393,12 +454,107 @@ class TestUserScopedMcpInjection:
         )
 
         assert "mcpServers" not in skill_data
-        assert skill_data["configuration_required"] is True
-        assert "Use DingTalk docs MCP." not in skill_data["prompt"]
-        assert "Configuration Required" in skill_data["prompt"]
-        assert "wegent://modal/mcp-provider-config?provider=dingtalk&service=docs" in (
-            skill_data["prompt"]
+        assert "configuration_required" not in skill_data
+        assert skill_data["prompt"] == "DingTalk documents use the connector bridge."
+
+    def test_historical_personal_url_keeps_working_for_connector_managed_skill(
+        self, test_db
+    ):
+        """API-key users must keep their personal Streamable HTTP URL."""
+        preferences = user_mcp_service.dump_preferences(
+            user_mcp_service.set_provider_service_config(
+                None,
+                provider_id="dingtalk",
+                service_id="docs",
+                enabled=True,
+                url=self.PERSONAL_URL,
+            )
         )
+        skill = SimpleNamespace(
+            id=101,
+            user_id=0,
+            json={
+                "kind": "Skill",
+                "metadata": {"name": "dingtalk-docs", "namespace": "default"},
+                "spec": {
+                    "description": "DingTalk docs runtime skill",
+                    "prompt": "Use DingTalk documents.",
+                    "bindShells": ["Chat"],
+                    "mcpServers": {
+                        "dingtalk_docs": {
+                            "type": "streamable-http",
+                            "url": (
+                                "${{task_data.user_mcps.dingtalk.services.docs"
+                                ".credentials.url}}"
+                            ),
+                        }
+                    },
+                },
+            },
+        )
+
+        skill_data = TaskRequestBuilder(test_db)._build_skill_data(
+            skill, user=SimpleNamespace(preferences=preferences)
+        )
+
+        assert "dingtalk_docs" in skill_data["mcpServers"]
+        assert "configuration_required" not in skill_data
+
+    def test_authorized_connector_takes_over_from_the_personal_url(
+        self, test_db, test_user
+    ):
+        """Once OAuth is granted the connector surface wins, avoiding duplicates."""
+        from app.services.connector_connections import connector_connection_service
+
+        connector_connection_service.save_oauth_connection(
+            test_db,
+            slug="dingtalk_docs",
+            user_id=test_user.id,
+            access_token="token",
+            refresh_token=None,
+            token_type="bearer",
+            granted_scopes=[],
+            external_account_name=None,
+            expires_at=None,
+        )
+        preferences = user_mcp_service.dump_preferences(
+            user_mcp_service.set_provider_service_config(
+                None,
+                provider_id="dingtalk",
+                service_id="docs",
+                enabled=True,
+                url=self.PERSONAL_URL,
+            )
+        )
+        test_user.preferences = preferences
+        skill = SimpleNamespace(
+            id=101,
+            user_id=0,
+            json={
+                "kind": "Skill",
+                "metadata": {"name": "dingtalk-docs", "namespace": "default"},
+                "spec": {
+                    "description": "DingTalk docs runtime skill",
+                    "prompt": "Use DingTalk documents.",
+                    "bindShells": ["Chat"],
+                    "mcpServers": {
+                        "dingtalk_docs": {
+                            "type": "streamable-http",
+                            "url": (
+                                "${{task_data.user_mcps.dingtalk.services.docs"
+                                ".credentials.url}}"
+                            ),
+                        }
+                    },
+                },
+            },
+        )
+
+        skill_data = TaskRequestBuilder(test_db)._build_skill_data(
+            skill, user=test_user
+        )
+
+        assert "mcpServers" not in skill_data
 
     def test_build_skill_data_keeps_system_managed_mcp_without_user_config(
         self, test_db, monkeypatch

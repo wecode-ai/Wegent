@@ -140,6 +140,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 
 # Keep full-selection expectations independent of the classifier implementation.
 full_desktop_expected="$(node "$script_dir/ci-classification-tests/expected-desktop-matrix.mjs" "$repo_root")"
+full_cloud_expected="$(printf '%s\n' "$full_desktop_expected" | sed -n '/^wework_desktop_cloud_e2e=/p;/^wework_desktop_cloud_e2e_matrix=/p')"
 
 for path in \
   executor/src/agents/codex.rs \
@@ -406,12 +407,11 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/features/todo/ProjectAutomationRulesSection.tsx"
 
 assert_desktop_case "project automation E2E changes select core and cloud coverage" \
-  'wework_desktop_e2e=true
+  "wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"project-automation"},{"id":"core-3","name":"Core / shard 3","segments":"automation-lifecycle"}]}
-wework_desktop_cloud_e2e=true
-wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"plugin-uninstall-restart-recovery,plugin-runtime-path-recovery,plugin-legacy-upgrade,plugin-uninstall-lost-response,embedded-browser,cloud-project-creation,automation-lifecycle,browser-multi-tabs"},{"id":"cloud-2","name":"Cloud / shard 2","segments":"core-task-flow,goal-lifecycle,supervisor-lifecycle,priority-filter,cloud-worktree-create,plugin-toggle-persistence,cloud-worktree-tools,cloud-model-presets"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"plugin-auto-update,resilience,workspace-tabs,plugin-workspace-publication,plugin-write-coordination,workspace-attachments,cloud-device-lifecycle,plugin-account-auth-coordination"},{"id":"cloud-4","name":"Cloud / shard 4","segments":"model-routing,conversation-state,plugin-uninstall-unknown-result,cloud-model-recovery,rendering-extensions,telemetry-consent,plugin-registration-coordination"},{"id":"cloud-5","name":"Cloud / shard 5","segments":"window-lifecycle,plugin-uninstall-reinstall-race,project-automation,cloud-worktree-archive-restore,cloud-worktree-capability,cloud-worktree-queued-cancel,task-model-deletion"},{"id":"cloud-6","name":"Cloud / shard 6","segments":"plugin-account-auth-password,plugin-account-auth-transfer,plugin-account-auth-oauth"},{"id":"cloud-7","name":"Cloud / shard 7","segments":"plugin-composer-long-list,plugin-collaboration-composer-isolation,plugin-runtime-route-refresh,plugin-background-sync-isolation,plugin-periodic-reconcile"},{"id":"cloud-8","name":"Cloud / shard 8","segments":"plugin-account-auth-dws,plugin-account-auth-conversation,plugin-account-auth-github"}]}
+wework_desktop_core_e2e_matrix={\"include\":[{\"id\":\"core-2\",\"name\":\"Core / shard 2\",\"segments\":\"project-automation\"},{\"id\":\"core-3\",\"name\":\"Core / shard 3\",\"segments\":\"automation-lifecycle\"}]}
+${full_cloud_expected}
 wework_desktop_other_e2e=false
-wework_desktop_other_e2e_matrix={"include":[]}' \
+wework_desktop_other_e2e_matrix={\"include\":[]}
+wework_desktop_macos_inspector_e2e=false" \
   "wework/e2e/desktop/scenarios/project-automation.scenario.mjs"
-

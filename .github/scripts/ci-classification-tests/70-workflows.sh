@@ -620,4 +620,3 @@ if [[ "$wework_memory_job" != *"pnpm-store-v2-"* ]] ||
   printf 'Wework memory E2E must allow dependency downloads when the macOS pnpm cache is incomplete\n' >&2
   exit 1
 fi
-

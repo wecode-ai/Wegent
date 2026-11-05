@@ -2019,6 +2019,16 @@ fn emit_request_user_input_block(
             .entry("interactionScope".to_owned())
             .or_insert_with(|| json!(request.subtask_id));
     }
+    // An async question is answered by the next user message, not by the
+    // tool's accepted acknowledgement. Until then it is still pending.
+    if let Some(payload) = render_payload
+        .as_object_mut()
+        .filter(|payload| payload.get("delivery").and_then(Value::as_str) == Some("async"))
+    {
+        payload
+            .entry("interactionStatus".to_owned())
+            .or_insert_with(|| json!("pending"));
+    }
     emit_response_event(
         event_tx,
         device_id,
@@ -5345,6 +5355,7 @@ mod tests {
         assert_eq!(block["render_payload"]["kind"], "request_user_input");
         assert_eq!(block["render_payload"]["delivery"], "async");
         assert_eq!(block["render_payload"]["itemId"], "call-question");
+        assert_eq!(block["render_payload"]["interactionStatus"], "pending");
         assert!(
             block["render_payload"].get("interactionScope").is_none(),
             "Async call identity must match the unscoped transcript payload"

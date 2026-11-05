@@ -520,4 +520,3 @@ classify_path() {
       ;;
   esac
 }
-

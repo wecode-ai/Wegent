@@ -100,13 +100,13 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/tests/workbench.spec.ts"
 
 assert_desktop_case "cloud files select only the cloud suite" \
-  'wework_desktop_e2e=true
+  "wework_desktop_e2e=true
 wework_desktop_core_e2e=false
-wework_desktop_core_e2e_matrix={"include":[]}
-wework_desktop_cloud_e2e=true
-wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"plugin-uninstall-restart-recovery,plugin-runtime-path-recovery,plugin-legacy-upgrade,plugin-uninstall-lost-response,embedded-browser,cloud-project-creation,automation-lifecycle,browser-multi-tabs"},{"id":"cloud-2","name":"Cloud / shard 2","segments":"core-task-flow,goal-lifecycle,supervisor-lifecycle,priority-filter,cloud-worktree-create,plugin-toggle-persistence,cloud-worktree-tools,cloud-model-presets"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"plugin-auto-update,resilience,workspace-tabs,plugin-workspace-publication,plugin-write-coordination,workspace-attachments,cloud-device-lifecycle,plugin-account-auth-coordination"},{"id":"cloud-4","name":"Cloud / shard 4","segments":"model-routing,conversation-state,plugin-uninstall-unknown-result,cloud-model-recovery,rendering-extensions,telemetry-consent,plugin-registration-coordination"},{"id":"cloud-5","name":"Cloud / shard 5","segments":"window-lifecycle,plugin-uninstall-reinstall-race,project-automation,cloud-worktree-archive-restore,cloud-worktree-capability,cloud-worktree-queued-cancel,task-model-deletion"},{"id":"cloud-6","name":"Cloud / shard 6","segments":"plugin-account-auth-password,plugin-account-auth-transfer,plugin-account-auth-oauth"},{"id":"cloud-7","name":"Cloud / shard 7","segments":"plugin-composer-long-list,plugin-collaboration-composer-isolation,plugin-runtime-route-refresh,plugin-background-sync-isolation,plugin-periodic-reconcile"},{"id":"cloud-8","name":"Cloud / shard 8","segments":"plugin-account-auth-dws,plugin-account-auth-conversation,plugin-account-auth-github"}]}
+wework_desktop_core_e2e_matrix={\"include\":[]}
+${full_cloud_expected}
 wework_desktop_other_e2e=false
-wework_desktop_other_e2e_matrix={"include":[]}' \
+wework_desktop_other_e2e_matrix={\"include\":[]}
+wework_desktop_macos_inspector_e2e=false" \
   "wework/src/features/cloud-connection/CloudConnectionProvider.tsx"
 
 assert_desktop_case "cloud device lifecycle files select managed restart coverage" \
@@ -523,4 +523,3 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "shared desktop infrastructure remains full coverage" \
   "$full_desktop_expected" \
   "wework/src/App.tsx"
-

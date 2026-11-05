@@ -188,4 +188,3 @@ assert_case "Wework transport retains E2E coverage" "$wework_e2e_expected" \
 
 assert_case "Wework E2E image changes run Wework E2E" "$wework_e2e_expected" \
   "docker/wework-e2e/desktop.Dockerfile"
-

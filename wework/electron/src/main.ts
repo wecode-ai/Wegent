@@ -104,6 +104,7 @@ import {
 import { handlePopoutWindowInput } from './host/popout-window-shortcuts.js'
 import { createWeworkProcessExplorerService } from './host/process-explorer-service.js'
 import { DesktopRuntime } from './runtime/desktop-runtime.js'
+import { isolateInheritedDesktopEnvironment } from './runtime/desktop-environment-isolation.js'
 import { isolateDevelopmentEnvironment } from './runtime/development-isolation.js'
 import { prepareDevelopmentHistory } from './runtime/development-history-migration.js'
 import { FeedbackBundleManager } from './host/feedback-bundle-manager.js'
@@ -221,6 +222,12 @@ isolateDevelopmentEnvironment(process.env, {
   appData: app.getPath('appData'),
   homeDirectory: process.env.HOME?.trim() || app.getPath('home'),
 })
+if (packagedApplication) {
+  isolateInheritedDesktopEnvironment(process.env, {
+    homeDirectory: process.env.HOME?.trim() || app.getPath('home'),
+    namespace: packageMetadata.weworkExecutorNamespace?.trim() || 'default',
+  })
+}
 const dshPreloadPath = resolve(packageRoot, 'dist/dsh-preload.cjs')
 const startupSplashPreloadPath = resolve(packageRoot, 'dist/startup-splash-preload.cjs')
 const browserAnnotationPreloadPath = resolve(packageRoot, 'dist/browser-annotation-preload.cjs')
@@ -2860,7 +2867,13 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
       console.warn(`Wework CLI install path is not managed by Wework: ${userCliPath}`)
     }
   }
-  nodeRuntime.environment.PATH = [cliBin, nodeRuntime.environment.PATH?.trim()]
+  // Expose bundled sidecars such as `dws` to agent shells. Without this entry
+  // skills fall back to scanning the home directory, which triggers macOS
+  // privacy prompts (for example, Photos).
+  const componentBin = components?.dws
+    ? dirname(components.dws)
+    : join(componentResourcesRoot, 'bin')
+  nodeRuntime.environment.PATH = [cliBin, componentBin, nodeRuntime.environment.PATH?.trim()]
     .filter(Boolean)
     .join(delimiter)
   logStartupStep('wework-cli-install', 'completed')

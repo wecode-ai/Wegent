@@ -23,6 +23,24 @@ MODAL_LINK = "wegent://modal/mcp-provider-config?provider=dingtalk&service=docs"
 PLATFORM_SHELLS = ["Chat", "ClaudeCode", "Codex"]
 
 
+@pytest.fixture(autouse=True)
+def legacy_user_managed_dingtalk(monkeypatch):
+    """Cover the personal-URL provider flow that DingTalk services moved away from.
+
+    Production DingTalk services are connector-managed (per-user OAuth), so
+    these guidance tests pin them back to the user-managed model that other
+    deployment-specific providers still use.
+    """
+    provider = MCP_PROVIDER_REGISTRY["dingtalk"]
+    services = {
+        service_id: {**service, "connector_slug": None}
+        for service_id, service in provider["services"].items()
+    }
+    monkeypatch.setitem(
+        MCP_PROVIDER_REGISTRY, "dingtalk", {**provider, "services": services}
+    )
+
+
 def public_skill(service_id: str = "docs") -> SimpleNamespace:
     service = MCP_PROVIDER_REGISTRY["dingtalk"]["services"][service_id]
     name = service["skill_name"]

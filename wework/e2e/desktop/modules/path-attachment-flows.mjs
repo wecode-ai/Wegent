@@ -560,7 +560,11 @@ async function verifyDroppedWorkspacePaths({ composerSelector, control }) {
   await writeFile(join(workspacePath, SELECTED_TEXT_FILE_NAME), SELECTED_TEXT_FILE_CONTENT)
 
   await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
-  await control.command('click', '[data-testid="right-workspace-file-option"]')
+  // The panel mounts its tab options after the toggle re-renders the layout,
+  // so wait for the option instead of clicking a single DOM snapshot.
+  await control.command('clickWhenEnabled', '[data-testid="right-workspace-file-option"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('waitFor', '[data-testid="workspace-file-path"]', {
     text: workspacePath.replaceAll('\\', '/'),
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,

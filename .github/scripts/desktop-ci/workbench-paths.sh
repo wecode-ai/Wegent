@@ -575,4 +575,3 @@ classify_workbench_path() {
       ;;
   esac
 }
-

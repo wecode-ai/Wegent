@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   runtimeTokenPost: vi.fn(),
   issueToken: vi.fn(),
   listApps: vi.fn(),
+  listCatalog: vi.fn(),
   request: vi.fn().mockResolvedValue({}),
   notifySkillsChanged: vi.fn(),
   backendConnected: true,
@@ -25,6 +26,7 @@ vi.mock('./cloudConnectionAvailability', () => ({
 vi.mock('@/api/cloud/connectorApps', () => ({
   issueWegentConnectorToken: mocks.issueToken,
   listWegentInstalledConnectorApps: mocks.listApps,
+  listWegentConnectorApps: mocks.listCatalog,
 }))
 
 vi.mock('@/api/http', () => ({
@@ -88,6 +90,17 @@ describe('LocalExecutorCloudBridge', () => {
         },
       ],
     })
+    mocks.listCatalog.mockResolvedValue([
+      {
+        id: 1,
+        slug: 'tickets',
+        name: 'Tickets',
+        description: '',
+        icon_url: null,
+        auth_type: 'oauth2',
+        connection: { status: 'connected' },
+      },
+    ])
   })
 
   async function flushAsyncEffects() {
@@ -530,6 +543,7 @@ describe('LocalExecutorCloudBridge', () => {
           name: 'Tickets',
           description: '',
           tools: [{ name: 'tickets__search', raw_tool_name: 'search' }],
+          authorizationRequired: false,
         },
       ],
     })
@@ -537,6 +551,55 @@ describe('LocalExecutorCloudBridge', () => {
     expect(
       mocks.request.mock.calls.find(call => call[0] === 'runtime.connectors.configure')?.[1]
     ).not.toHaveProperty('authToken')
+  })
+
+  test('syncs an unauthorized app as guidance-only so the agent can offer authorization', async () => {
+    mocks.listCatalog.mockResolvedValue([
+      {
+        id: 1,
+        slug: 'tickets',
+        name: 'Tickets',
+        description: '',
+        icon_url: null,
+        auth_type: 'oauth2',
+        connection: { status: 'connected' },
+      },
+      {
+        id: 2,
+        slug: 'dingtalk_log',
+        name: '钉钉日志',
+        description: '工作日志',
+        icon_url: null,
+        auth_type: 'oauth2',
+        connection: { status: 'disconnected' },
+      },
+    ])
+
+    render(
+      <LocalExecutorCloudBridge
+        preferencesLoaded
+        apiBaseUrl="https://cloud.example.test/api"
+        backendUrl="https://cloud.example.test"
+        socketBaseUrl="wss://socket.example.test"
+        isConnected
+        token="cloud-token"
+      />
+    )
+
+    await waitFor(() => {
+      expect(mocks.request).toHaveBeenCalledWith(
+        'runtime.connectors.apps.sync',
+        expect.objectContaining({
+          apps: expect.arrayContaining([
+            expect.objectContaining({
+              slug: 'dingtalk_log',
+              tools: [],
+              authorizationRequired: true,
+            }),
+          ]),
+        })
+      )
+    })
   })
 
   test('disconnects the executor and clears connector state when cloud is unavailable', async () => {
@@ -676,7 +739,7 @@ describe('LocalExecutorCloudBridge', () => {
     }
   })
 
-  test('notifies an applied change when renewal supersedes a pending synchronization', async () => {
+  test('a superseded synchronization does not publish its catalog', async () => {
     vi.useFakeTimers()
     const firstSynchronization = deferred<{ changed: boolean }>()
     let synchronizationCount = 0
@@ -713,7 +776,10 @@ describe('LocalExecutorCloudBridge', () => {
         firstSynchronization.resolve({ changed: true })
         await firstSynchronization.promise
       })
-      expect(mocks.notifySkillsChanged).toHaveBeenCalledTimes(1)
+      // The renewal already owns the surface: a late result from the attempt
+      // it replaced must not publish a catalog for an older attempt, and the
+      // same rule is what keeps a signed-out account from being republished.
+      expect(mocks.notifySkillsChanged).not.toHaveBeenCalled()
     } finally {
       view.unmount()
       vi.useRealTimers()
@@ -865,5 +931,41 @@ describe('LocalExecutorCloudBridge', () => {
     })
 
     expect(mocks.notifySkillsChanged).not.toHaveBeenCalled()
+  })
+
+  test('never reconfigures a signed-out account with a late token', async () => {
+    const token = deferred<{ access_token: string; token_type: string; expires_in: number }>()
+    mocks.issueToken.mockReturnValueOnce(token.promise)
+    const view = render(
+      <LocalExecutorCloudBridge
+        preferencesLoaded
+        apiBaseUrl="https://cloud.example.test/api"
+        isConnected
+        token="account-a-token"
+      />
+    )
+
+    await waitFor(() => expect(mocks.issueToken).toHaveBeenCalledTimes(1))
+
+    // Signing out clears the executor before the old token request returns.
+    view.rerender(<LocalExecutorCloudBridge preferencesLoaded isConnected={false} token={null} />)
+    await waitFor(() =>
+      expect(mocks.request).toHaveBeenCalledWith('runtime.connectors.clear', {
+        syncRevision: expect.any(Number),
+      })
+    )
+
+    await act(async () => {
+      token.resolve({ access_token: 'stale-account-token', token_type: 'bearer', expires_in: 900 })
+      await token.promise
+    })
+    await flushAsyncEffects()
+
+    expect(
+      mocks.request.mock.calls.filter(([method]) => method === 'runtime.connectors.configure')
+    ).toHaveLength(0)
+    expect(
+      mocks.request.mock.calls.filter(([method]) => method === 'runtime.connectors.apps.sync')
+    ).toHaveLength(0)
   })
 })

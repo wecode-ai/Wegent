@@ -1630,7 +1630,12 @@
       "provider_headers": "Provider headers",
       "clear_provider_headers": "Clear saved provider headers",
       "tool_allowlist": "Tool allowlist",
-      "enabled": "Make this app available to users"
+      "enabled": "Make this app available to users",
+      "keywords": "Match keywords",
+      "tool_loading_mode": "Tool loading",
+      "oauth_scope": "OAuth scopes",
+      "authorize_app": "OAuth Authorization",
+      "delete_app": "Delete App"
     },
     "hints": {
       "lines": "Enter one value per line.",
@@ -1638,26 +1643,58 @@
       "http_tools": "JSON array of tools. Each tool defines name, description, method, relative path, input_schema, optional argument_locations, and timeout_seconds.",
       "http_tools_example": "[{\"name\":\"get_ticket\",\"description\":\"Get a ticket\",\"method\":\"GET\",\"path\":\"/tickets/{id}\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"}},\"required\":[\"id\"]},\"argument_locations\":{\"id\":\"path\"},\"timeout_seconds\":30}]",
       "headers_json": "Optional JSON object. Values are stored encrypted.",
-      "headers_configured": "Configured headers: {{names}}. Leave empty to retain them, enter a JSON object to replace them, or {} to clear them."
+      "headers_configured": "Configured headers: {{names}}. Leave empty to retain them, enter a JSON object to replace them, or {} to clear them.",
+      "keywords": "Used by Lazy loading only. Enter one keyword per line. When the user message matches any keyword, the app's scoped MCP is added to mcp_servers and the connector Skill prompt is preloaded. A phrase with spaces requires every word to be present, for example “DingTalk table”.",
+      "tool_loading_mode": "Static loading exposes every authorized tool to every task, which suits a few frequently used apps. Lazy loading connects tools only when the Skill is selected, a keyword matches, or load_skill runs, which suits many or tool-heavy apps.",
+      "slug": "Use lowercase letters, numbers, underscores, and hyphens. The value is lowercased when saving.",
+      "keywords_placeholder": "DingTalk table\nspreadsheet\nworksheet",
+      "oauth_scope": "Optional. Leave empty to use all scopes declared by the authorization server; separate multiple scopes with spaces."
     },
     "success": {
       "saved": "App saved",
       "disabled": "App disabled",
       "discovered": "Discovered {{count}} tools",
-      "tested": "Tool test completed"
+      "tested": "Tool test completed",
+      "enabled": "App enabled",
+      "authorized": "App authorized",
+      "app_deleted": "App deleted"
     },
     "errors": {
       "load_failed": "Failed to load apps",
       "save_failed": "Failed to save app",
       "disable_failed": "Failed to disable app",
       "discover_failed": "Failed to discover tools",
-      "test_failed": "Failed to test tool",
-      "test_returned_error": "Tool test returned an error",
+      "test_failed": "Failed to test tool {{name}}",
+      "test_returned_error": "Tool {{name}} returned an error",
       "no_test_tool": "Configure or allow at least one tool before testing",
       "required": "Name, slug, endpoint URL, and required transport configuration are required",
       "provider_headers_invalid": "Provider headers must be a JSON object with string values",
-      "http_tools_invalid": "HTTP tool definitions must be a JSON array"
-    }
+      "http_tools_invalid": "HTTP tool definitions must be a JSON array",
+      "enable_failed": "Failed to enable app",
+      "delete_failed": "Failed to delete app",
+      "authorization_failed": "Failed to authorize app",
+      "authorization_required": "Authorize the app first",
+      "authorization_declined": "App authorization was canceled",
+      "authorization_timeout": "App authorization timed out",
+      "authorization_popup_blocked": "The browser blocked the authorization window. Allow popups and try again.",
+      "slug_invalid": "The slug can only contain lowercase letters, numbers, underscores, and hyphens"
+    },
+    "tool_loading": {
+      "static": "Static loading",
+      "lazy": "Lazy loading"
+    },
+    "static_loading_confirm": "Use static loading anyway",
+    "static_loading_warning_title": "Static loading exposes every tool at once",
+    "static_loading_warning_body": "Static loading injects every tool of this app into every task, which significantly increases token usage and first-token latency when the app has many tools. Lazy loading is recommended. Switch to static loading anyway?",
+    "delete_impact_title": "Deleting affects every user",
+    "delete_impact_body": "“{{name}}” is a shared MCP app with {{count}} user connections. Deleting it immediately removes the app and every user's authorization, breaks running tasks that use it, and cannot be undone.",
+    "delete_impact_continue": "I understand, continue",
+    "delete_forever": "Delete permanently",
+    "search_placeholder": "Search by name, ID, description, or keyword",
+    "search_empty": "No matching apps",
+    "enable": "Enable app",
+    "confirm_delete_app_title": "Confirm deletion again",
+    "confirm_delete_app": "This permanently deletes the app “{{name}}” and cannot be undone. Continue?"
   },
   "templates": {
     "title": "Template Management",

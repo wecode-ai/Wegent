@@ -5,6 +5,7 @@
 """Authenticated project TODO and delivery endpoints."""
 
 import logging
+from typing import Any
 
 from fastapi import (
     APIRouter,
@@ -19,11 +20,13 @@ from fastapi import (
 )
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.api.endpoints.adapter.attachments import _build_content_disposition
 from app.core.config import settings
+from app.core.db_errors import is_mysql_deadlock
 from app.core.security import (
     get_current_user,
     get_current_user_jwt_apikey_tasktoken,
@@ -107,6 +110,37 @@ from app.services.project_incoming_hooks import project_incoming_hook_service
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+LOOP_ITEM_CREATE_ATTEMPTS = 3
+
+
+async def _create_loop_item(
+    db: Session,
+    project: Any,
+    current_user: User,
+    values: LoopItemCreate,
+) -> Any:
+    """Create an Issue, restarting the transaction on a MySQL deadlock.
+
+    Concurrent Issue creation in one project can deadlock while assigning the
+    creator; MySQL asks the client to restart the transaction in that case, and
+    the whole unit of work only writes database rows, so a restart is safe.
+    """
+    for attempt in range(LOOP_ITEM_CREATE_ATTEMPTS):
+        try:
+            return await run_in_threadpool(
+                loop_item_provider_router.create, db, project, current_user, values
+            )
+        except OperationalError as error:
+            if not is_mysql_deadlock(error) or attempt == LOOP_ITEM_CREATE_ATTEMPTS - 1:
+                raise
+            db.rollback()
+            logger.warning(
+                "Restarting Issue creation after MySQL deadlock: project=%s attempt=%s",
+                project.id,
+                attempt + 1,
+            )
+    raise AssertionError("Issue creation retry loop exited without a result")
 
 
 def _loop_item_response(
@@ -411,9 +445,7 @@ async def create_loop_item(
         )
 
     # Lock waits must leave the event loop free to finish other transactions.
-    created = await run_in_threadpool(
-        loop_item_provider_router.create, db, project, current_user, values
-    )
+    created = await _create_loop_item(db, project, current_user, values)
     response = LoopItemResponse.model_validate(created.values)
 
     try:

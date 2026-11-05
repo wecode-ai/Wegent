@@ -341,4 +341,3 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
     "$terminal_path"
 done
-
