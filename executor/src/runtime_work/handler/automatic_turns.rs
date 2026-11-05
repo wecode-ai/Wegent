@@ -16,7 +16,9 @@ impl RuntimeWorkRpcHandler {
                 .await;
             return;
         }
-        if let Err(error) = self.refresh_stand_in_confirmation(&mut turn.request) {
+        if let Err(error) =
+            self.refresh_stand_in_confirmation(&turn.local_task_id, &mut turn.request)
+        {
             self.retain_failed_runtime_task(&turn.local_task_id, &error);
             self.finish_prepared_command(&turn, super::command_journal::CommandState::Failed)
                 .await;

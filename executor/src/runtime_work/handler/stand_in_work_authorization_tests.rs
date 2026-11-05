@@ -7,12 +7,16 @@ fn personal_delegation_is_not_rebound_to_an_unrelated_project_confirmation_polic
     let mut request:ExecutionRequest=serde_json::from_value(json!({
         "origin":{"type":"stand_in_task","initiatedBy":"stand_in","userId":7,"standInId":"@primary","askBeforeAct":false}
     })).unwrap();
-    handler.refresh_stand_in_confirmation(&mut request).unwrap();
+    handler
+        .refresh_stand_in_confirmation(&request.task_id.clone(), &mut request)
+        .unwrap();
     assert!(!crate::runtime_work::stand_in_requires_confirmation(
         &request
     ));
     request.extra.get_mut("origin").unwrap()["askBeforeAct"] = json!(true);
-    handler.refresh_stand_in_confirmation(&mut request).unwrap();
+    handler
+        .refresh_stand_in_confirmation(&request.task_id.clone(), &mut request)
+        .unwrap();
     assert!(crate::runtime_work::stand_in_requires_confirmation(
         &request
     ));
@@ -86,7 +90,7 @@ fn one_time_confirmation_keeps_the_original_task_and_does_not_replay_sent_messag
         .extra
         .insert("standInAutomatic".into(), json!(true));
     handler
-        .refresh_stand_in_confirmation(&mut prepared)
+        .refresh_stand_in_confirmation(&prepared.task_id.clone(), &mut prepared)
         .unwrap();
     assert_eq!(prepared.extra["origin"]["manual"], false);
     assert_eq!(prepared.extra["origin"]["askBeforeAct"], false);
@@ -175,9 +179,41 @@ fn source_confirmation_fixture() -> (
 }
 
 #[test]
+fn source_confirmation_uses_the_host_task_address_for_local_execution() {
+    let (_root, handler, _store, _settings, mut request) = source_confirmation_fixture();
+    let local_task_id = request.task_id.clone();
+    request.task_id.clear();
+    request.subtask_id.clear();
+    handler
+        .refresh_stand_in_confirmation(&local_task_id, &mut request)
+        .unwrap();
+    assert_eq!(request.extra["origin"]["askBeforeAct"], false);
+    assert_eq!(request.extra["standInDelegation"]["askBeforeAct"], false);
+}
+
+#[test]
+fn source_confirmation_rejects_a_different_host_task_address() {
+    let (_root, handler, _store, _settings, mut request) = source_confirmation_fixture();
+    let claimed_task_id = request.task_id.clone();
+    request
+        .extra
+        .insert("runtimeLocalTaskId".into(), json!(claimed_task_id));
+    assert_eq!(
+        handler
+            .refresh_stand_in_confirmation("different-host-task", &mut request)
+            .unwrap_err()
+            .code,
+        "source_removed"
+    );
+    assert_eq!(request.extra["origin"]["askBeforeAct"], true);
+}
+
+#[test]
 fn source_confirmation_uses_only_the_current_work_and_live_authorization() {
     let (_root, handler, store, mut settings, mut request) = source_confirmation_fixture();
-    handler.refresh_stand_in_confirmation(&mut request).unwrap();
+    handler
+        .refresh_stand_in_confirmation(&request.task_id.clone(), &mut request)
+        .unwrap();
     assert_eq!(request.extra["origin"]["askBeforeAct"], false);
     assert_eq!(request.extra["standInDelegation"]["askBeforeAct"], false);
     let source_b = settings["roles"][0]["connections"][1].clone();
@@ -201,17 +237,21 @@ fn source_confirmation_uses_only_the_current_work_and_live_authorization() {
         json!([{"recordId":messages_b[0]["recordId"],"source":messages_b[0]["source"]}]),
     );
     handler
-        .refresh_stand_in_confirmation(&mut request_b)
+        .refresh_stand_in_confirmation(&request_b.task_id.clone(), &mut request_b)
         .unwrap();
     assert_eq!(request_b.extra["origin"]["askBeforeAct"], true);
     settings["roles"][0]["connections"][0]["policy"]["askBeforeAct"] = json!(true);
     settings = store.save_personal_stand_in(7, "mac", settings).unwrap();
-    handler.refresh_stand_in_confirmation(&mut request).unwrap();
+    handler
+        .refresh_stand_in_confirmation(&request.task_id.clone(), &mut request)
+        .unwrap();
     assert_eq!(request.extra["origin"]["askBeforeAct"], true);
     assert_eq!(request.extra["standInDelegation"]["askBeforeAct"], true);
     settings["roles"][0]["connections"][0]["policy"]["askBeforeAct"] = json!(false);
     store.save_personal_stand_in(7, "mac", settings).unwrap();
-    handler.refresh_stand_in_confirmation(&mut request).unwrap();
+    handler
+        .refresh_stand_in_confirmation(&request.task_id.clone(), &mut request)
+        .unwrap();
     assert_eq!(request.extra["origin"]["askBeforeAct"], false);
     assert_eq!(request.extra["standInDelegation"]["askBeforeAct"], false);
 }
@@ -223,7 +263,7 @@ fn source_confirmation_rejects_removed_or_paused_sources_before_resuming() {
     settings = store.save_personal_stand_in(7, "mac", settings).unwrap();
     assert_eq!(
         handler
-            .refresh_stand_in_confirmation(&mut request)
+            .refresh_stand_in_confirmation(&request.task_id.clone(), &mut request)
             .unwrap_err()
             .code,
         "source_removed"
@@ -235,7 +275,7 @@ fn source_confirmation_rejects_removed_or_paused_sources_before_resuming() {
     store.save_personal_stand_in(7, "mac", settings).unwrap();
     assert_eq!(
         handler
-            .refresh_stand_in_confirmation(&mut request)
+            .refresh_stand_in_confirmation(&request.task_id.clone(), &mut request)
             .unwrap_err()
             .code,
         "source_removed"
@@ -250,7 +290,7 @@ fn source_confirmation_cannot_be_downgraded_using_forged_or_missing_binding_fiel
         settings["roles"][0]["connections"][1].clone();
     assert_eq!(
         handler
-            .refresh_stand_in_confirmation(&mut request)
+            .refresh_stand_in_confirmation(&request.task_id.clone(), &mut request)
             .unwrap_err()
             .code,
         "source_removed"
@@ -262,7 +302,7 @@ fn source_confirmation_cannot_be_downgraded_using_forged_or_missing_binding_fiel
         json!("invented-message");
     assert_eq!(
         handler
-            .refresh_stand_in_confirmation(&mut request)
+            .refresh_stand_in_confirmation(&request.task_id.clone(), &mut request)
             .unwrap_err()
             .code,
         "source_removed"
@@ -270,7 +310,7 @@ fn source_confirmation_cannot_be_downgraded_using_forged_or_missing_binding_fiel
     request.extra.remove("standInSourceBindings");
     assert_eq!(
         handler
-            .refresh_stand_in_confirmation(&mut request)
+            .refresh_stand_in_confirmation(&request.task_id.clone(), &mut request)
             .unwrap_err()
             .code,
         "source_removed"

@@ -100,6 +100,7 @@ impl RuntimeWorkRpcHandler {
     }
     pub(super) fn refresh_stand_in_confirmation(
         &self,
+        local_task_id: &str,
         request: &mut ExecutionRequest,
     ) -> Result<(), AppIpcError> {
         let Some(origin) = request.extra.get("origin") else {
@@ -131,7 +132,8 @@ impl RuntimeWorkRpcHandler {
             origin["type"].as_str(),
             Some("dingtalk_work" | "connection_work")
         ) {
-            let confirm = self.connection_work_confirmation(&store, user, role, request)?;
+            let confirm =
+                self.connection_work_confirmation(&store, user, role, local_task_id, request)?;
             let manual = request.extra.get("standInManualConfirmation") == Some(&Value::Bool(true));
             request.extra.get_mut("origin").unwrap()["askBeforeAct"] = json!(confirm);
             request.extra.get_mut("origin").unwrap()["manual"] = json!(manual);
@@ -164,6 +166,7 @@ impl RuntimeWorkRpcHandler {
         store: &LocalTaskStore,
         user: i64,
         role: Option<&Value>,
+        local_task_id: &str,
         request: &ExecutionRequest,
     ) -> Result<bool, AppIpcError> {
         let unavailable = || {
@@ -179,8 +182,9 @@ impl RuntimeWorkRpcHandler {
             .and_then(Value::as_array)
             .filter(|rows| !rows.is_empty())
             .ok_or_else(unavailable)?;
+        // Work entries bind to the host's local task, not a backend execution ID.
         if origin["deviceId"] != self.device_id
-            || work["taskId"] != request.task_id
+            || work["taskId"] != local_task_id
             || work["roleId"] != role["id"]
             || role["id"] != origin["standInId"]
         {
@@ -354,7 +358,7 @@ impl RuntimeWorkRpcHandler {
                 .map(|message| json!({"recordId":message["recordId"],"source":message["source"]}))
                 .collect::<Vec<_>>()),
         );
-        self.refresh_stand_in_confirmation(&mut request)?;
+        self.refresh_stand_in_confirmation(&task.local_task_id, &mut request)?;
         Ok(request)
     }
 
