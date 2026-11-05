@@ -39,7 +39,7 @@ function fixture(compact, options = {}) {
     if (action === 'select') {
       assert.equal(compact, true, 'Wide layouts must use their visible tabs')
       assert.ok(
-        (options.views ?? ['board', 'table', 'manage']).includes(input.value),
+        (options.views ?? ['board', 'table', 'manage', 'gantt']).includes(input.value),
         'View is unavailable'
       )
       view = input.value
@@ -51,7 +51,15 @@ function fixture(compact, options = {}) {
       assert.equal(options.navigationEnabled ?? true, true, 'Navigation is disabled')
       assert.equal(input.visible, true)
       assert.equal(input.timeoutMs, DEFAULT_STEP_TIMEOUT_MS)
-      view = /collaboration-tab-(\w+)/.exec(selector)[1]
+      const tabs = {
+        'collaboration-tab-board': 'board',
+        'collaboration-tab-table': 'table',
+        'collaboration-tab-manage': 'manage',
+        'collaboration-gantt-tab': 'gantt',
+      }
+      const id = /data-testid="([^"]+)"/.exec(selector)[1]
+      assert.ok(tabs[id], `Wide layout does not render ${id}`)
+      view = tabs[id]
       return view
     }
     assert.fail(`Unexpected action: ${action}`)
@@ -81,7 +89,7 @@ test.each([false, true])(
   }
 )
 
-for (const view of ['board', 'manage', 'table']) {
+for (const view of ['board', 'manage', 'table', 'gantt']) {
   test.each([false, true])(
     `selects ${view} through the actual layout, compact=%s`,
     async compact => {

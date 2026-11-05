@@ -11,11 +11,11 @@ export async function selectCollaborationProjectView(
     await control.command('waitFor', compact, { visible: true, enabled: true, timeoutMs })
     await control.command('select', compact, { value: view })
   } else {
-    await control.command(
-      'clickWhenEnabled',
-      `${contentSelector} [data-testid="collaboration-tab-${view}"]`,
-      { visible: true, timeoutMs }
-    )
+    const tabId = view === 'gantt' ? 'collaboration-gantt-tab' : `collaboration-tab-${view}`
+    await control.command('clickWhenEnabled', `${contentSelector} [data-testid="${tabId}"]`, {
+      visible: true,
+      timeoutMs,
+    })
   }
 }
 
