@@ -9,7 +9,9 @@ export const activityMessages: Record<
     "activity.device_access_unavailable": "当前账号无法访问此任务所属的设备。",
     "workbench.task_activity_approve": "批准执行",
     "workbench.task_activity_reject": "拒绝",
-    "workbench.task_activity_accept": "验收并完成",
+    "workbench.task_activity_accept": "完成此事项",
+    "workbench.task_activity_accept_hint":
+      "确认此事项已交付，将状态标记为已完成。",
     "workbench.task_activity_rerun": "重新执行",
     "workbench.task_activity_run_now": "立即执行",
     "workbench.task_activity_awaiting_approval": "等待机器人创建者批准",
@@ -125,7 +127,9 @@ export const activityMessages: Record<
       "This account cannot access the device that owns this task.",
     "workbench.task_activity_approve": "Approve run",
     "workbench.task_activity_reject": "Reject",
-    "workbench.task_activity_accept": "Accept and complete",
+    "workbench.task_activity_accept": "Complete Issue",
+    "workbench.task_activity_accept_hint":
+      "Confirm delivery and mark this Issue as completed.",
     "workbench.task_activity_rerun": "Rerun",
     "workbench.task_activity_run_now": "Run now",
     "workbench.task_activity_awaiting_approval":

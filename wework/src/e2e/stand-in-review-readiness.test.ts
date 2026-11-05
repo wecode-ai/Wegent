@@ -56,5 +56,6 @@ test.each(['ready', 'loading'])('waits for reopened review time input: %s', asyn
   expect(command.mock.calls.filter(([action]) => action === 'waitFor').at(-1)).toEqual([
     'waitFor',
     '[data-testid="stand-in-onboarding-time"]:enabled',
+    { timeoutMs: 1000 },
   ])
 })

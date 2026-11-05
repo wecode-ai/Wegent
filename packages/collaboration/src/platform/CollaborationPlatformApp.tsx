@@ -2573,6 +2573,7 @@ function CollaborationPlatformAppContent({
         renderProject({ project: selectedProject, workspace: workspaceContext })
       ) : (
         <CollaborationApp
+          parentGroupingEnabled
           api={scopedApi}
           initialProject={selectedProject ?? undefined}
           issueArchiveEnabled
