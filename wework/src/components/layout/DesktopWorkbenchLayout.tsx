@@ -1445,7 +1445,7 @@ export function DesktopWorkbenchLayout({
                     }
                     if (!project) {
                       workspaceTabs.updateActiveTab({
-                        title: t('workbench.workspace_tab_board', '协作 (Beta)'),
+                        title: t('workbench.workspace_tab_board', '协作'),
                         contentRoute: '/todo',
                       })
                       return
