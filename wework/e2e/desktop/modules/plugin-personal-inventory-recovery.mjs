@@ -188,6 +188,11 @@ export async function verifyPersonalInventoryRecovery({
         await control.command('deleteLocalPluginPackage', 'body', {
           value: JSON.stringify({ pluginId: `${NAME}@wework-personal`, pluginName: NAME }),
         })
+        // Once the source is gone, drain the shared cache lock and remove any
+        // cache committed by an import that outlived its original receipt.
+        await control.command('uninstallInstalledPlugin', 'body', {
+          value: `${NAME}@wework-personal`,
+        })
         await control.command('click', testId('plugins-button'))
         await refreshPluginInventory(control)
         await assertInventory(control, NAME, false)

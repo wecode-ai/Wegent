@@ -103,6 +103,31 @@ test.each([
   assert.equal(f.deletions().length, 0)
 })
 
+test('removes cache written by a delayed install between uninstall and source deletion', async () => {
+  const f = await fixture()
+  const failure = new Error('local_plugin_commit_timeout: still committing')
+  let cacheExists = false
+  const cleanup = []
+  const original = f.control.command.getMockImplementation()
+  f.control.command.mockImplementation((action, ...args) => {
+    if (action === 'importPluginPackage') throw failure
+    if (action === 'deleteLocalPluginPackage') {
+      // Local uninstall releases its cache lock before personal source deletion.
+      cacheExists = true
+      cleanup.push('source-deleted-after-late-cache-write')
+    }
+    if (action === 'uninstallInstalledPlugin') {
+      assert.equal(args[1].value, `${name}@wework-personal`)
+      cacheExists = false
+      cleanup.push('cache-removed-after-source')
+    }
+    return original(action, ...args)
+  })
+  await assert.rejects(f.verify(), error => error === failure)
+  assert.equal(cacheExists, false)
+  assert.deepEqual(cleanup, ['source-deleted-after-late-cache-write', 'cache-removed-after-source'])
+})
+
 test.each([false, true])(
   'retains the post-import RPC failure when cleanup fails=%s',
   async cleanupFails => {
