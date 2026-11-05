@@ -15,6 +15,7 @@ import {
   configureFirstProjectExecutionEnvironment,
   createLocalCollaborationProject,
   waitForTestIdByText,
+  selectCollaborationProjectView,
 } from '../modules/workspace-flows.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -137,7 +138,7 @@ export function createDesktopScenario({
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await createLocalCollaborationProject(control, CONTENT, name)
       await configureFirstProjectExecutionEnvironment(control, CONTENT, uiTimeoutMs)
-      await control.command('click', selector('collaboration-tab-manage'))
+      await selectCollaborationProjectView(control, CONTENT, 'manage', uiTimeoutMs)
       await control.command('click', selector('collaboration-project-settings-sharing'))
       await control.command('clickWhenEnabled', selector('project-template-import'))
       await control.command('click', selector('template-tab-available'))

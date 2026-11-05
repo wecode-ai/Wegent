@@ -7,6 +7,10 @@ import {
 } from './issue-composer-layout.mjs'
 import { verifyWorkspaceTabReturn } from './workspace-tab-return.mjs'
 import { verifyNewTaskBoardAssociation } from './new-task-board-association.mjs'
+import {
+  selectCollaborationProjectView,
+  waitForLocalProjectNavigation,
+} from './collaboration-project-navigation.mjs'
 
 import {
   ensureExperimentalFeaturesDisabled,
@@ -230,19 +234,6 @@ export async function selectAgentEnvironment(
   await control.command('waitFor', `${trigger}[data-value=${JSON.stringify(value)}]`, { timeoutMs })
 }
 
-export async function selectCollaborationProjectView(control, contentSelector, view) {
-  const compact = `${contentSelector} [data-testid="collaboration-project-view-select"]`
-  if (Number(await control.command('getElementCount', compact)) > 0) {
-    await control.command('select', compact, { value: view })
-  } else {
-    await control.command(
-      'clickWhenEnabled',
-      `${contentSelector} [data-testid="collaboration-tab-${view}"]`,
-      { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
-    )
-  }
-}
-
 /** Native fixtures require an explicit environment; automatic routing is cloud-only. */
 export async function selectProjectRunnerModel(control, timeoutMs) {
   const prefix = 'cloud-project-chat-agent'
@@ -381,11 +372,7 @@ export async function configureFirstProjectExecutionEnvironment(
   timeoutMs,
   deviceId = null
 ) {
-  await control.command('waitFor', `${contentSelector} [data-testid="collaboration-tab-manage"]`, {
-    visible: true,
-    timeoutMs,
-  })
-  await control.command('click', `${contentSelector} [data-testid="collaboration-tab-manage"]`)
+  await selectCollaborationProjectView(control, contentSelector, 'manage', timeoutMs)
   await control.command(
     'click',
     `${contentSelector} [data-testid="collaboration-project-settings-environments"]`
@@ -551,15 +538,7 @@ export async function createLocalCollaborationProject(control, contentSelector, 
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
-  await control.command(
-    'waitFor',
-    `${contentSelector} [data-testid="cloud-project-header-title"]`,
-    { text: projectName, visible: true, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
-  )
-  await control.command('waitFor', `${contentSelector} [data-testid="collaboration-tab-board"]`, {
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
+  await waitForLocalProjectNavigation(control, contentSelector, projectName)
 }
 
 export async function completeLocalCollaborationFolderImport(control, projectName) {
@@ -2640,6 +2619,7 @@ async function verifyWorkspaceTabIsolation(control, restartDesktopApp) {
 }
 
 export {
+  selectCollaborationProjectView,
   waitForFolderPathReady,
   waitForFolderPickerInitialized,
   waitForControlValue,

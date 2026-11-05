@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { expect, test, vi } from 'vitest'
 import { openProjectBoard } from '../e2e/desktop/modules/collaboration-board-personal-view.mjs'
+import { DEFAULT_STEP_TIMEOUT_MS } from '../e2e/desktop/modules/shared.mjs'
 
 const content = '[data-workspace-tab-content][aria-hidden="false"]'
 const scoped = selector => `${content} ${selector}`
@@ -26,7 +27,7 @@ test.each([true, false])(
       compact
         ? scoped('[data-testid="collaboration-project-view-select"]')
         : scoped('[data-testid="collaboration-tab-board"]'),
-      compact ? { value: 'board' } : { timeoutMs: expect.any(Number) }
+      compact ? { value: 'board' } : { visible: true, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
     )
     expect(command).toHaveBeenLastCalledWith(
       'waitFor',
