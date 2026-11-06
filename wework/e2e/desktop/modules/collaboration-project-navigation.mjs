@@ -28,7 +28,7 @@ export async function selectCollaborationProjectView(
   const tabId = projectViewTabId(view)
   // ResizeObserver can replace the navigation between controller round trips.
   await control.command(
-    'selectOrClick',
+    'chooseWhenEnabled',
     `${compact}, ${contentSelector} [data-testid="${tabId}"]`,
     {
       value: view,

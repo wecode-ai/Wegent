@@ -25,7 +25,7 @@ function fixture({ cardReady, title = ISSUE_NAME }) {
   const captures = []
   const control = {
     async command(action, selector, options = {}) {
-      if (action === 'selectOrClick') return
+      if (action === 'chooseWhenEnabled') return
       if (action === 'fill') {
         if (options.value === ISSUE_NAME) return
         assert.ok(titleVerified, 'The real Issue identity must be checked before mentioning')

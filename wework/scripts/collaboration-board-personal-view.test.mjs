@@ -14,7 +14,7 @@ test.each([true, false])(
       if (action === 'getElementCount') return compact ? '1' : '0'
       if (
         compact &&
-        action !== 'selectOrClick' &&
+        action !== 'chooseWhenEnabled' &&
         selector.endsWith('[data-testid="collaboration-tab-board"]')
       ) {
         throw new Error('Expanded tabs are not mounted in compact layout')
@@ -27,7 +27,7 @@ test.each([true, false])(
       workspace_id: 'workspace',
     })
     expect(command).toHaveBeenCalledWith(
-      'selectOrClick',
+      'chooseWhenEnabled',
       `${scoped('[data-testid="collaboration-project-view-select"]')}, ${scoped('[data-testid="collaboration-tab-board"]')}`,
       { value: 'board', visible: true, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
     )

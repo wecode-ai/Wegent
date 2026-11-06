@@ -47,7 +47,7 @@ function fixture(compact, options = {}) {
       } else assert.fail(`Unexpected wait: ${selector}`)
       return ''
     }
-    if (action === 'selectOrClick') {
+    if (action === 'chooseWhenEnabled') {
       assert.equal(options.navigationVisible ?? true, true, 'Navigation is hidden')
       assert.equal(options.navigationEnabled ?? true, true, 'Navigation is disabled')
       assert.equal(input.visible, true)

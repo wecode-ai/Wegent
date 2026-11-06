@@ -23,7 +23,7 @@ test.each([
   const control = {
     async command(action, selector, options) {
       commands += 1
-      assert.equal(action, 'selectOrClick')
+      assert.equal(action, 'chooseWhenEnabled')
       assert.equal(
         selector,
         `main [data-testid="collaboration-project-view-select"], main [data-testid="${tabId}"]`

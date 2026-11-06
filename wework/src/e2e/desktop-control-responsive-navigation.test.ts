@@ -36,7 +36,7 @@ test.each([
       if (before !== after) mount(after)
       return Response.json({
         id: 'responsive-navigation',
-        action: 'selectOrClick',
+        action: 'chooseWhenEnabled',
         selector:
           '[data-testid="responsive-project"] [data-testid="view-select"], [data-testid="responsive-project"] [data-testid="view-manage"]',
         value: 'manage',
@@ -58,6 +58,9 @@ test('does not accept a non-interactive replacement or an unavailable option', a
   surface.innerHTML =
     '<div data-testid="not-control">Manage</div><select data-testid="missing-option"><option value="board">Board</option></select>'
   document.body.append(surface)
+  for (const control of surface.children) {
+    vi.spyOn(control, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 100, 30))
+  }
   const results: Array<{ ok: boolean; error?: string }> = []
   let polls = 0
   vi.stubGlobal('fetch', async (url: string, options?: RequestInit) => {
@@ -65,7 +68,7 @@ test('does not accept a non-interactive replacement or an unavailable option', a
       if (++polls > 2) return new Response(null, { status: 410 })
       return Response.json({
         id: String(polls),
-        action: 'selectOrClick',
+        action: 'chooseWhenEnabled',
         selector: `[data-testid="${polls === 1 ? 'not-control' : 'missing-option'}"]`,
         value: 'manage',
       })
@@ -75,6 +78,6 @@ test('does not accept a non-interactive replacement or an unavailable option', a
   })
   await runDesktopControlClient('http://127.0.0.1:43111', 'main')
   expect(results.map(result => result.ok)).toEqual([false, false])
-  expect(results[0].error).toContain('not a select or button')
+  expect(results[0].error).toContain('Choice target must be a select or button element')
   expect(results[1].error).toContain('Unable to find select option')
 })

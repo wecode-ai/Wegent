@@ -92,7 +92,7 @@ import {
 } from '@/desktop/localExecutor'
 import { executeVerificationControlCommand } from './verification-control'
 import { captureEmbeddedBrowserSnapshot, evalEmbeddedBrowserJson } from '@/lib/embedded-browser'
-import { selectDesktopControlOption } from './desktop-control-select'
+import { chooseDesktopControlOption, selectDesktopControlOption } from './desktop-control-select'
 import { cloudIdentityFailure } from './cloud-identity-diagnostics'
 import { dispatchDesktopControlWheel } from './desktop-control-wheel'
 import {
@@ -3281,6 +3281,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         return element.textContent?.trim() ?? ''
       })
     }
+    case 'chooseWhenEnabled': {
+      return waitForDesktopControlElement({ ...command, enabled: true, visible: true }, element =>
+        chooseDesktopControlOption(element, command.value ?? '')
+      )
+    }
     case 'setExpanded': {
       const expected = command.value
       if (expected !== 'true' && expected !== 'false') {
@@ -3764,16 +3769,6 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         throw new Error(`Selector "${command.selector}" is not a select element`)
       }
       return selectDesktopControlOption(element, command.value ?? '', command.by)
-    }
-    case 'selectOrClick': {
-      return waitForDesktopControlElement({ ...command, enabled: true }, element => {
-        if (element instanceof HTMLSelectElement)
-          return selectDesktopControlOption(element, command.value ?? '', command.by)
-        if (!(element instanceof HTMLButtonElement))
-          throw new Error(`Selector "${command.selector}" is not a select or button`)
-        element.click()
-        return element.textContent?.trim() ?? ''
-      })
     }
     case 'submit': {
       const element = findDesktopControlElements(command.selector)[0]

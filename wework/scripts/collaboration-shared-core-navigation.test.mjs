@@ -34,12 +34,12 @@ function controlFixture(compact, memberSettings = false) {
       return memberSettings && selector.includes('[role="cell"]') ? '4' : '0'
     }
     if (action === 'getAttribute') return 'true'
-    if (selector.includes('collaboration-tab-') && action !== 'selectOrClick') {
+    if (selector.includes('collaboration-tab-') && action !== 'chooseWhenEnabled') {
       assert.equal(compact, false, 'Compact layout does not mount wide tabs')
       assert.equal(action, 'clickWhenEnabled')
       assert.deepEqual(input, { visible: true, timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
     }
-    if (action === 'selectOrClick') {
+    if (action === 'chooseWhenEnabled') {
       assert.equal(
         selector,
         `${scoped('[data-testid="collaboration-project-view-select"]')}, ${scoped(`[data-testid="collaboration-tab-${input.value}"]`)}`
@@ -115,7 +115,7 @@ test.each([false, true])(
     await regression.prepare({ backendUrl: 'https://backend.invalid', authToken: 'reader' }, owner)
     const control = controlFixture(compact)
     await regression.verify(control, scoped)
-    const switches = control.command.mock.calls.filter(([action]) => action === 'selectOrClick')
+    const switches = control.command.mock.calls.filter(([action]) => action === 'chooseWhenEnabled')
     // Both project-only entries and both later grouping checks must navigate.
     expect(switches).toHaveLength(4)
     expect(control.command).toHaveBeenCalledWith(
@@ -139,7 +139,7 @@ test.each([false, true])(
       project: { id: 'project' },
       request: async () => [{ user_id: owner.id, inherited_role: 'Maintainer' }],
     })
-    const switches = control.command.mock.calls.filter(([action]) => action === 'selectOrClick')
+    const switches = control.command.mock.calls.filter(([action]) => action === 'chooseWhenEnabled')
     expect(switches).toHaveLength(2)
     expect(switches.map(([, , input]) => input.value)).toEqual(['manage', 'board'])
     expect(control.command).toHaveBeenCalledWith(

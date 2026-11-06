@@ -74,7 +74,7 @@ test.each(['2026-10-26T12:00:00', '2026-11-30T12:00:00'])(
     const control = {
       async command(action, selector, options = {}) {
         calls.push({ action, selector, options })
-        if (action === 'selectOrClick') {
+        if (action === 'chooseWhenEnabled') {
           const tabs = {
             calendar: 'collaboration-calendar-tab',
             gantt: 'collaboration-gantt-tab',
@@ -90,7 +90,6 @@ test.each(['2026-10-26T12:00:00', '2026-11-30T12:00:00'])(
           return
         }
         if (action === 'getElementCount') {
-          if (selector.endsWith('[data-testid="collaboration-project-view-select"]')) return '0'
           const day = selector.match(/collaboration-calendar-day-(\d{4}-\d{2}-\d{2})/)?.[1]
           assert.ok(day, `Unexpected calendar day selector: ${selector}`)
           return visibleDates.has(day) ? '1' : '0'
@@ -153,7 +152,7 @@ test.each(['2026-10-26T12:00:00', '2026-11-30T12:00:00'])(
     assert.equal(calls.filter(call => call.action === 'dragBy').length, 1)
     assert.equal(captures.length, 3)
     assert.deepEqual(
-      calls.filter(call => call.action === 'selectOrClick').map(call => call.options.value),
+      calls.filter(call => call.action === 'chooseWhenEnabled').map(call => call.options.value),
       ['calendar', 'gantt', 'table']
     )
     const dayWaits = calls.filter(
