@@ -55,6 +55,11 @@ TEMPLATE_VARIABLES = {
 }
 
 
+def preview_belongs_to_user(preview_data: Dict[str, Any], user_id: int) -> bool:
+    """Require the stored preview owner to match the authenticated user."""
+    return preview_data.get("user_id") == user_id
+
+
 def resolve_prompt_template(
     template: str,
     subscription_name: str,
