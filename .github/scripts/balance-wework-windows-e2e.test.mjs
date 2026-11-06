@@ -73,11 +73,23 @@ test('previously frozen Windows shards can use their successful checkpoint measu
     balanced.include.find(shard => shard.id === 'core-3'),
     original.include.find(shard => shard.id === 'core-3')
   )
-  assert.notDeepEqual(
-    balanceWindowsMatrix(completeMatrix).include.find(shard => shard.id === 'core-3'),
-    completeMatrix.include.find(shard => shard.id === 'core-3'),
-    'The complete production shard must no longer be frozen by stand-in-git'
+  const productionShard = completeMatrix.include.find(shard => shard.id === 'core-3')
+  const balancedProductionShard = balanceWindowsMatrix(completeMatrix).include.find(
+    shard => shard.id === 'core-3'
   )
+  if (productionShard.segments.split(',').some(segment => checkpointSeconds(segment) === null)) {
+    assert.deepEqual(
+      balancedProductionShard,
+      productionShard,
+      'Other unmeasured checkpoints must still freeze the production shard'
+    )
+  } else {
+    assert.notDeepEqual(
+      balancedProductionShard,
+      productionShard,
+      'The measured production shard must no longer be frozen by stand-in-git'
+    )
+  }
 })
 
 test('measured Windows scheduling preserves every segment and expanded checkpoint exactly once', () => {
