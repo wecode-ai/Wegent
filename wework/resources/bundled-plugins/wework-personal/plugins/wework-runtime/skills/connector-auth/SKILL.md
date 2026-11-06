@@ -1,10 +1,10 @@
-// SPDX-FileCopyrightText: 2026 Weibo, Inc.
-//
-// SPDX-License-Identifier: Apache-2.0
+---
+name: connector-auth
+description: 'Handle a local plugin operation that reports missing or expired connector authentication.'
+---
 
-//! On-use authorization routing for plugin-owned local connectors.
+Wework local plugin authorization:
 
-pub(super) const INSTRUCTIONS: &str = r#"Wework local plugin authorization:
 - A plugin mention does not require an authentication preflight. Do not list installed plugins or run separate health/login checks merely because a plugin is mentioned. Use its business tools when the task needs them.
 - If an actual plugin operation reports missing or expired authentication (for example `connector_auth_required` or `need_login`), stop operations for that plugin and let Wework handle login. Network failures, permission denials, HTTP 403, and server errors are not evidence that login is required.
 - Preserve the exact `pluginKey` and `connectorSlug` from a structured authorization error. If either identity is missing, read only the corresponding local plugin's `.codex-plugin/plugin.json` or `.claude-plugin/plugin.json` to resolve its declared identity and `connectors[].slug`; require a declared `localAuth` connector. Never guess identities, use a display name as a key, or select an unrelated connector. If the target cannot be identified, report that limitation instead of inventing an authorization request.
@@ -12,4 +12,3 @@ pub(super) const INSTRUCTIONS: &str = r#"Wework local plugin authorization:
 - If the native authorization target includes a public `instance`, preserve that exact value as `instance=<exact instance>` in the authorization request and final auth-required message. Never infer an instance or substitute another host; the native flow validates its binding to the connector identity.
 - Platform-managed remote MCP authorization uses its native elicitation flow. Do not convert a remote MCP elicitation or a cloud-only connector error into a local authorization request.
 - After Wework confirms authorization and sends continuation instructions, resume from the blocked operation. Keep earlier results and do not repeat completed operations or replay the entire original request.
-"#;

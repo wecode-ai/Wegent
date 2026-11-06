@@ -322,20 +322,15 @@ mod tests {
             entry["runtimePolicy"], true,
             "Oversized host policy must use the common lossless policy transport"
         );
-        let wire = crate::agents::turn_context_for_test(&request);
+        let transport = crate::agents::turn_context_for_test(&request);
+        let wire = &transport["additionalContext"];
         assert!(wire.get("wework.stand-in").is_none());
         assert!(wire.get("wework.execution-policy").is_none());
-        let mut full = String::new();
-        for (key, entry) in wire.as_object().unwrap() {
-            if key.starts_with("wework.host-policy.part-") {
-                let value = entry["value"].as_str().unwrap();
-                assert!(value.len() <= 4000);
-                full.push_str(value.split_once("\n\n").unwrap().1);
-            }
-        }
+        assert_eq!(wire.as_object().unwrap().len(), 1);
+        let full = transport["developerInstructions"].as_str().unwrap();
         assert!(
             full.contains(text),
-            "The actual complete primary context must reach native developer policy without loss"
+            "The full role must reach native policy without loss"
         );
         assert!(full.contains(EXECUTION_POLICY));
     }

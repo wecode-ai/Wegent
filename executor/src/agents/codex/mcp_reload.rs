@@ -56,7 +56,7 @@ impl CodexAppServerClient {
             let gate = self.thread_lifecycle_gate(thread_id).await;
             let _guard = gate.lock().await;
             let desired = thread_context_configuration(&json!({"developerInstructions":
-                effective_instructions::text(request, launch_config)}));
+                effective_instructions::native_instructions(request, launch_config)}));
             let state = self.state.lock().await;
             if state
                 .thread_context_configurations
@@ -391,7 +391,7 @@ mod policy_tests {
             .unwrap()
             .is_none());
         let saved = thread_context_configuration(
-            &json!({"developerInstructions":effective_instructions::text(&request,&launch)}),
+            &json!({"developerInstructions":effective_instructions::native_instructions(&request,&launch)}),
         );
         client
             .state
