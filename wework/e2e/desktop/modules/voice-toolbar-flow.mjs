@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fetchLocalRuntime } from './runtime-request.mjs'
-import { withTimeout } from './shared.mjs'
+import { WORKBENCH_READY_TIMEOUT_MS, withTimeout } from './shared.mjs'
 
 const PACKAGE = '@wework-e2e/speech-model'
 const PROVIDER = 'voice-toolbar-model'
@@ -78,6 +78,8 @@ export function apply(ctx) {
   )
   const origin = await control.command('getLocationOrigin', 'body')
   const response = await fetchLocalRuntime(control, `${origin}/wework/electron-host/v1/invoke`, {
+    // Package installation and profile validation exceed an ordinary UI step.
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
