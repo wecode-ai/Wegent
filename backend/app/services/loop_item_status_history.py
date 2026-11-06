@@ -17,6 +17,7 @@ from typing import Any
 
 from app.models.delivery import CloudProject
 from app.schemas.cloud_project import CloudProjectBoardConfig, default_board_statuses
+from app.services.loop_item_history_actor import automation_history_actor
 
 STATUS_HISTORY_KEY = "status_history"
 
@@ -149,6 +150,7 @@ def write_status_change(
     to_status: str,
     trigger: str,
     by_user_id: int | None,
+    automation_context: dict[str, Any] | None = None,
 ) -> None:
     """Append one transition to ``metadata["status_history"]`` in place."""
     current = metadata.get(STATUS_HISTORY_KEY)
@@ -167,6 +169,7 @@ def write_status_change(
             "to_status_name": status_name(project, to_status) if to_status else "",
             "trigger": trigger,
             "by_user_id": by_user_id,
+            **automation_history_actor(automation_context),
             "at": now.isoformat(),
         }
     )

@@ -4,12 +4,12 @@
 
 """Subscription MCP tools for managing scheduled tasks.
 
-This module provides MCP tools for subscription management:
+This module provides subscription write-side MCP tools:
 - preview_subscription: Preview subscription configuration before creating
 - create_subscription: Create a subscription task after preview
 
-These tools are registered with the subscription MCP server and allow
-AI agents to create scheduled/periodic tasks via MCP protocol.
+The read-side tools live in ``subscription_read``. Together they are registered
+with the subscription MCP server and allow AI agents to manage scheduled tasks.
 """
 
 import json
@@ -21,6 +21,9 @@ from typing import Any, Literal, Optional
 from app.db.session import SessionLocal
 from app.mcp_server.auth import TaskTokenInfo
 from app.mcp_server.tools.decorator import mcp_tool
+from app.mcp_server.tools.subscription_common import (
+    format_trigger_description as _format_trigger_description,
+)
 from app.schemas.subscription import (
     SubscriptionCreate,
     SubscriptionTaskType,
@@ -287,26 +290,6 @@ def _build_trigger_config(
             "timezone": timezone,
         }
     return {}
-
-
-def _format_trigger_description(
-    trigger_type: str, trigger_config: dict[str, Any]
-) -> str:
-    """Format a human-readable trigger description."""
-    if trigger_type == "cron":
-        expr = trigger_config.get("expression", "")
-        tz = trigger_config.get("timezone", "UTC")
-        return f"Cron表达式: `{expr}` (时区: {tz})"
-    elif trigger_type == "interval":
-        value = trigger_config.get("value", 0)
-        unit = trigger_config.get("unit", "")
-        unit_zh = {"minutes": "分钟", "hours": "小时", "days": "天"}.get(unit, unit)
-        return f"每 {value} {unit_zh}执行"
-    elif trigger_type == "one_time":
-        execute_at = trigger_config.get("execute_at", "")
-        tz = trigger_config.get("timezone", "UTC")
-        return f"一次性执行于 {execute_at} (时区: {tz})"
-    return ""
 
 
 def _generate_unique_name(display_name: str) -> str:
@@ -673,7 +656,8 @@ async def preview_subscription(
         "4. User confirmation (either one):\n"
         "   - Clicks 'Confirm' button in UI: Frontend creates automatically, AI does NOTHING\n"
         "   - Sends '确认' message: AI must call create_subscription to create the subscription\n\n"
-        "CRITICAL: NEVER auto-call create_subscription after preview. Wait for explicit user confirmation message."
+        "CRITICAL: NEVER auto-call create_subscription after preview. Wait for explicit user confirmation message. "
+        "The create result is a point-in-time record; use get_subscription to verify current state before reporting it."
     ),
     server="subscription",
     exclude_params=["token_info"],
