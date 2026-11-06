@@ -273,6 +273,41 @@ if ! grep -qE '(^| )pytest tests/' "$CALL_LOG"; then
     exit 1
 fi
 
+for worker_count in 0 1; do
+    : > "$CALL_LOG"
+    if ! AI_VERIFIED=1 AI_PUSH_FULL_TESTS=1 \
+        BACKEND_PRE_PUSH_TEST_WORKERS="$worker_count" PATH="$TMP_DIR/bin:$PATH" \
+        bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$FULL_TEST_OUT" 2>&1
+refs/heads/topic $LOCAL_SHA refs/heads/topic $REMOTE_SHA
+EOF
+    then
+        cat "$FULL_TEST_OUT"
+        exit 1
+    fi
+    if ! grep -qE "pytest tests/ --tb=short -q -n $worker_count$" "$CALL_LOG"; then
+        echo "Backend worker limit did not reach pytest: $worker_count"
+        cat "$CALL_LOG"
+        exit 1
+    fi
+done
+
+: > "$CALL_LOG"
+if AI_VERIFIED=1 AI_PUSH_FULL_TESTS=1 BACKEND_PRE_PUSH_TEST_WORKERS=invalid \
+    PATH="$TMP_DIR/bin:$PATH" \
+    bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$FULL_TEST_OUT" 2>&1
+refs/heads/topic $LOCAL_SHA refs/heads/topic $REMOTE_SHA
+EOF
+then
+    echo 'Expected an invalid Backend worker limit to reject the push.'
+    exit 1
+fi
+if grep -qE '(^| )pytest tests/' "$CALL_LOG" || \
+    ! grep -q 'Invalid BACKEND_PRE_PUSH_TEST_WORKERS' "$FULL_TEST_OUT"; then
+    echo 'Invalid Backend worker limits must fail before pytest starts.'
+    cat "$FULL_TEST_OUT"
+    exit 1
+fi
+
 : > "$CALL_LOG"
 
 # This historical range changes only Wework files. It verifies the pre-push

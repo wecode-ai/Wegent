@@ -754,7 +754,11 @@ describe('unified human response', () => {
     })
     view(interactionQuestion, interactionTask, false, undefined, false)
     await waitFor(() => expect(context!.pending).toHaveLength(1))
-    expect(harness.list).toHaveBeenCalledWith({ pendingOnly: true, deviceId: undefined })
+    expect(harness.list).toHaveBeenCalledWith({
+      pendingOnly: true,
+      preferCached: true,
+      deviceId: undefined,
+    })
     expect(context!.pending[0].task.address).toMatchObject({
       deviceId: interactionTask.address.deviceId,
       taskId: interactionTask.address.taskId,
@@ -901,6 +905,41 @@ describe('unified human response', () => {
     if (desktop) expect(screen.queryByTestId('runtime-interaction-notice')).not.toBeInTheDocument()
     else await screen.findByTestId('runtime-interaction-notice')
   })
+
+  it.each([true, false])(
+    'uses the independent personal stand-in decision alert preference (%s)',
+    async enabled => {
+      harness.desktop = true
+      harness.focused = false
+      cacheNotificationPreferences('test:1', {
+        ...defaultNotificationPreferences,
+        stand_in: { in_app: true, system: enabled, im: null },
+      })
+      view(interactionQuestion, {
+        ...interactionTask,
+        task: {
+          ...interactionTask.task,
+          runtimeHandle: {
+            ...interactionTask.task.runtimeHandle,
+            origin: { type: 'stand_in_task' },
+          },
+        },
+      })
+      await waitFor(() => expect(context!.pending).toHaveLength(1))
+      if (enabled) {
+        await waitFor(() =>
+          expect(harness.host).toHaveBeenCalledWith(
+            'notification.show',
+            expect.objectContaining({ body: 'Keep existing customer behavior?' })
+          )
+        )
+      } else {
+        expect(harness.host).not.toHaveBeenCalledWith('notification.show', expect.anything())
+      }
+      expect(harness.send).not.toHaveBeenCalled()
+      expect(harness.guide).not.toHaveBeenCalled()
+    }
+  )
 
   it('keeps pending work when a reminder is dismissed or opened, independently of unread', async () => {
     view()

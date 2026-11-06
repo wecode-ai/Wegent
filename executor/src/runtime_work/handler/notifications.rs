@@ -302,6 +302,7 @@ impl RuntimeWorkRpcHandler {
                             }
                         }
                     }
+                    self.bind_native_mcp_approval(&local_task_id, &mut message);
                     if let Some(turn_id) = codex_notification_turn_id(&message) {
                         self.record_active_codex_transcript_item(
                             &local_task_id,

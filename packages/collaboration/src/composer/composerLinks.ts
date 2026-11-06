@@ -1,5 +1,6 @@
 import {
   getRecognizedLink,
+  matchHttpUrls,
   type RecognizedLink,
 } from "../markdown/link-preview";
 
@@ -17,7 +18,6 @@ export interface ParsedComposerLink extends ComposerLinkPayload {
 
 const MARKDOWN_LINK_REGEX =
   /\[((?:\\.|[^\]\\])*)\]\(([a-z][a-z0-9+.-]*:\/\/[^\s)\]]+)\)/gi;
-const BARE_URL_REGEX = new RegExp("https?:\\/\\/[^\\s)\\]}]+", "gi");
 
 export function serializeComposerLink({
   url,
@@ -60,7 +60,7 @@ export function parseComposerLinks(value: string): ParsedComposerLink[] {
       ),
     );
   }
-  for (const match of value.matchAll(BARE_URL_REGEX)) {
+  for (const match of matchHttpUrls(value)) {
     const raw = match[0];
     const recognized = getRecognizedLink(raw);
     if (!recognized) continue;
