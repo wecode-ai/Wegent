@@ -19,6 +19,9 @@ async function loadPersistence() {
 
 describe('desktop localStorage persistence', () => {
   beforeEach(async () => {
+    const prototype = Object.getPrototypeOf(localStorage)
+    const methods = prototype[Symbol.for('wework.desktop.localStoragePersistence.methods')]
+    if (methods) Object.assign(prototype, methods)
     localStorage.clear()
     sessionStorage.clear()
     await new Promise(resolve => setTimeout(resolve, 0))
