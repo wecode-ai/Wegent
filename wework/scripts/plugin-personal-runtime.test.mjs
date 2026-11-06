@@ -219,12 +219,7 @@ test('detects author source damage during recipient fixture cleanup', async () =
 
 test('same-account recovery waits for both real connection surfaces without reloading', async () => {
   vi.useFakeTimers()
-  let status = {
-    backend: { configured: true, connected: false },
-    rendererConnected: false,
-    pluginRouteRegistered: false,
-    inFlight: false,
-  }
+  let status = { backend: { configured: true, connected: false }, rendererConnected: false }
   const command = vi.fn(async action => {
     if (action === 'reconnectLocalExecutorCloud') return ''
     assert.equal(action, 'getPluginSyncDiagnostics')
@@ -239,22 +234,10 @@ test('same-account recovery waits for both real connection surfaces without relo
   status.backend.connected = true
   await vi.advanceTimersByTimeAsync(100)
   assert.equal(finished, false, 'Native connection alone must not imply renderer recovery')
-  status = {
-    backend: { configured: false, connected: true },
-    rendererConnected: true,
-    pluginRouteRegistered: false,
-    inFlight: false,
-  }
+  status = { backend: { configured: false, connected: true }, rendererConnected: true }
   await vi.advanceTimersByTimeAsync(100)
   assert.equal(finished, false, 'A missing Native profile must not count as recovery')
   status.backend.configured = true
-  await vi.advanceTimersByTimeAsync(100)
-  assert.equal(finished, false, 'A missing plugin route must not count as recovery')
-  status.pluginRouteRegistered = true
-  status.inFlight = true
-  await vi.advanceTimersByTimeAsync(100)
-  assert.equal(finished, false, 'Plugin synchronization must finish before recovery')
-  status.inFlight = false
   await vi.advanceTimersByTimeAsync(100)
   await restoring
   assert.equal(finished, true)
@@ -290,8 +273,6 @@ test('account switching verifies the mounted identity and keeps the device witho
         return JSON.stringify({
           backend: { configured: true, connected: true },
           rendererConnected: true,
-          pluginRouteRegistered: true,
-          inFlight: false,
         })
       if (action === 'getLocalStorageItem') return JSON.stringify({ user: { id: 42 } })
       assert.ok(['setCloudSessionToken', 'waitFor'].includes(action))

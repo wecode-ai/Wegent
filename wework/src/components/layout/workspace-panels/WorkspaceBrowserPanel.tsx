@@ -76,7 +76,7 @@ import {
 } from '@/lib/embedded-browser-download-store'
 import { openExternalUrl } from '@/lib/external-links'
 import { fileManagerRevealLabel } from '@/lib/file-manager'
-import { openLocalFile, openLocalFileUrl, revealLocalFile } from '@/lib/local-terminal'
+import { openLocalFile, revealLocalFile } from '@/lib/local-terminal'
 import { browserDiagnosticOrigin, normalizeBrowserUrl } from '@/lib/browser-url'
 import { navigateTo } from '@/lib/navigation'
 import { BROWSER_ZOOM_DEFAULT_PERCENT, zoomPercentToScaleFactor } from '@/lib/browser-zoom'
@@ -2016,11 +2016,7 @@ export function WorkspaceBrowserTabPanel({
 
   const handleOpenExternal = () => {
     if (!activePageUrl || internalExtensionPage) return
-    setError(null)
-    const open = activePageUrl.startsWith('file:')
-      ? openLocalFileUrl(activePageUrl)
-      : openExternalUrl(activePageUrl, { target: 'system' })
-    void open.catch(() => setError(t('workbench.browser_open_external_failed')))
+    void openExternalUrl(activePageUrl, { target: 'system' })
   }
 
   const clearBrowserData = useCallback(

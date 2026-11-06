@@ -1,9 +1,6 @@
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { clipboard, type WebContents } from 'electron'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { resolve } from 'node:path'
 import { EventEmitter } from 'node:events'
 import { acquireDebuggerSession } from './debugger-session.js'
 import type { EmbeddedBrowserManager } from './embedded-browser-manager.js'
@@ -489,101 +486,6 @@ function createIsolatedClipboardRouter(
 describe('Process explorer capabilities', () => {
   test('stays read-only', () => {
     expect(HOST_CAPABILITIES).not.toContain('diagnostics.endProcess')
-  })
-})
-
-describe('Local file URL capabilities', () => {
-  const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!
-  let directory: string
-  let filePath: string
-
-  beforeEach(async () => {
-    directory = await mkdtemp(join(tmpdir(), 'wework-local-file-url-'))
-    filePath = join(directory, 'readme with space.md')
-    await writeFile(filePath, 'Local file fixture')
-  })
-
-  afterEach(async () => {
-    Object.defineProperty(process, 'platform', originalPlatform)
-    await rm(directory, { recursive: true, force: true })
-  })
-
-  test('opens a file URL through the system file handler', async () => {
-    Object.defineProperty(process, 'platform', { value: 'darwin' })
-    electronMocks.shellOpenPath.mockClear()
-    electronMocks.shellOpenExternal.mockClear()
-    const { router } = createIsolatedClipboardRouter()
-    const url = pathToFileURL(filePath).href
-
-    await expect(
-      router.invoke(WEWORK_APP_PRINCIPAL, 'shell.openLocalFileUrl', { url })
-    ).resolves.toBeUndefined()
-
-    expect(electronMocks.shellOpenPath).toHaveBeenCalledWith(filePath)
-    expect(electronMocks.shellOpenExternal).not.toHaveBeenCalled()
-  })
-
-  test('uses the Linux URL opener because openPath never settles', async () => {
-    Object.defineProperty(process, 'platform', { value: 'linux' })
-    electronMocks.shellOpenPath.mockClear()
-    electronMocks.shellOpenExternal.mockClear()
-    const { router } = createIsolatedClipboardRouter()
-    const url = pathToFileURL(filePath).href
-
-    await expect(
-      router.invoke(WEWORK_APP_PRINCIPAL, 'shell.openLocalFileUrl', { url })
-    ).resolves.toBeUndefined()
-
-    expect(electronMocks.shellOpenExternal).toHaveBeenCalledWith(url)
-    expect(electronMocks.shellOpenPath).not.toHaveBeenCalled()
-  })
-
-  test('propagates a Linux URL opener failure', async () => {
-    Object.defineProperty(process, 'platform', { value: 'linux' })
-    electronMocks.shellOpenPath.mockClear()
-    electronMocks.shellOpenExternal.mockRejectedValueOnce(new Error('no handler'))
-    const { router } = createIsolatedClipboardRouter()
-
-    await expect(
-      router.invoke(WEWORK_APP_PRINCIPAL, 'shell.openLocalFileUrl', {
-        url: pathToFileURL(filePath).href,
-      })
-    ).rejects.toThrow('no handler')
-    expect(electronMocks.shellOpenPath).not.toHaveBeenCalled()
-  })
-
-  test('rejects a deleted Linux target and opens it after recreation', async () => {
-    Object.defineProperty(process, 'platform', { value: 'linux' })
-    electronMocks.shellOpenExternal.mockClear()
-    electronMocks.shellOpenPath.mockClear()
-    const { router } = createIsolatedClipboardRouter()
-    const url = pathToFileURL(filePath).href
-    await rm(filePath)
-
-    await expect(
-      router.invoke(WEWORK_APP_PRINCIPAL, 'shell.openLocalFileUrl', { url })
-    ).rejects.toThrow('ENOENT')
-    expect(electronMocks.shellOpenExternal).not.toHaveBeenCalled()
-
-    await writeFile(filePath, 'Restored local file fixture')
-    await expect(
-      router.invoke(WEWORK_APP_PRINCIPAL, 'shell.openLocalFileUrl', { url })
-    ).resolves.toBeUndefined()
-    expect(electronMocks.shellOpenExternal).toHaveBeenCalledExactlyOnceWith(url)
-    expect(electronMocks.shellOpenPath).not.toHaveBeenCalled()
-  })
-
-  test('rejects non-file URLs', async () => {
-    electronMocks.shellOpenPath.mockClear()
-    electronMocks.shellOpenExternal.mockClear()
-    const { router } = createIsolatedClipboardRouter()
-
-    await expect(
-      router.invoke(WEWORK_APP_PRINCIPAL, 'shell.openLocalFileUrl', {
-        url: 'https://example.com/readme.md',
-      })
-    ).rejects.toThrow('Local file URL protocol is not allowed: https:')
-    expect(electronMocks.shellOpenPath).not.toHaveBeenCalled()
   })
 })
 

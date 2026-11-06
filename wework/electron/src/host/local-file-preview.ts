@@ -33,11 +33,6 @@ export type LocalFileNavigation =
   | { kind: 'preview'; displayUrl: string; sourceUrl: string }
   | { kind: 'blocked'; sourceUrl: string }
 
-function directoryFileUrl(path: string): string {
-  const url = pathToFileURL(path).href
-  return url.endsWith('/') ? url : `${url}/`
-}
-
 export async function prepareLocalFileNavigation(url: string): Promise<LocalFileNavigation> {
   const parsed = new URL(url)
   if (parsed.protocol !== 'file:') {
@@ -82,13 +77,13 @@ async function writeDirectoryPreview(directory: string): Promise<string> {
       const path = join(directory, child.name)
       const childMetadata = await stat(path)
       const name = child.isDirectory() ? `${child.name}/` : child.name
-      const url = child.isDirectory() ? directoryFileUrl(path) : pathToFileURL(path).href
+      const url = pathToFileURL(path).href + (child.isDirectory() ? '/' : '')
       const size = child.isDirectory() ? '' : formatFileSize(childMetadata.size)
       const modified = childMetadata.mtime.toLocaleString()
       return `<tr><td><a data-testid="embedded-browser-directory-entry" href="${escapeHtml(url)}">${escapeHtml(name)}</a></td><td>${escapeHtml(size)}</td><td>${escapeHtml(modified)}</td></tr>`
     })
   )
-  const parent = directoryFileUrl(join(directory, '..'))
+  const parent = pathToFileURL(join(directory, '..')).href
   const title = `Index of ${directory}`
   const truncated =
     children.length > DIRECTORY_ENTRY_LIMIT

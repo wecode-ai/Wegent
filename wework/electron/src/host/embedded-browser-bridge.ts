@@ -322,7 +322,13 @@ export class EmbeddedBrowserBridge {
           expressionScript(requiredString(request.expression, 'expression'))
         )
       case 'inspect':
-        return this.inspect(label, request)
+        return this.evaluate(
+          label,
+          (await this.loadScript('embedded_browser_inspect.js')).replace(
+            '__WEWORK_INSPECT_OPTIONS__',
+            JSON.stringify(request.options ?? {})
+          )
+        )
       case 'click':
         return this.runClickAction(label, request)
       case 'typeText':
@@ -414,31 +420,6 @@ export class EmbeddedBrowserBridge {
     )
   }
 
-  private async inspect(label: string, request: BrowserBridgeRequest): Promise<unknown> {
-    return this.evaluateReadOnly(
-      label,
-      (await this.loadScript('embedded_browser_inspect.js')).replace(
-        '__WEWORK_INSPECT_OPTIONS__',
-        JSON.stringify(request.options ?? {})
-      )
-    )
-  }
-
-  // A read-only read can be interrupted when the page starts a navigation and
-  // Chromium tears down the execution context underneath it. Retry against the
-  // new document instead of reporting the navigation as an inspection failure.
-  private async evaluateReadOnly(label: string, expression: string): Promise<unknown> {
-    const deadline = Date.now() + DEFAULT_EVAL_TIMEOUT_MS
-    for (;;) {
-      try {
-        return await this.evaluate(label, expression)
-      } catch (error) {
-        if (!isNavigationInterruptedError(error) || Date.now() >= deadline) throw error
-        await new Promise(resolve => setTimeout(resolve, 50))
-      }
-    }
-  }
-
   private async runClickAction(label: string, request: BrowserBridgeRequest): Promise<unknown> {
     const preview = await this.runAction(label, request, true)
     const point = actionCursorPoint(request, preview)
@@ -516,8 +497,7 @@ export class EmbeddedBrowserBridge {
           )
         )
       } catch (error) {
-        if (!isUnavailableBrowserError(error, label) && !isNavigationInterruptedError(error))
-          throw error
+        if (!isUnavailableBrowserError(error, label)) throw error
         await new Promise(resolve => setTimeout(resolve, pollMs))
         continue
       }
@@ -645,10 +625,6 @@ export class EmbeddedBrowserBridge {
 
 function isUnavailableBrowserError(error: unknown, label: string): boolean {
   return errorMessage(error) === `Embedded browser is unavailable: ${label}`
-}
-
-function isNavigationInterruptedError(error: unknown): boolean {
-  return errorMessage(error).includes('Inspected target navigated or closed')
 }
 
 async function writeRuntimeRecord(path: string, record: RuntimeRecord): Promise<void> {

@@ -629,7 +629,7 @@ export function createDesktopScenario({ captureScreenshot, executorHome, resultD
       )
       const popupTabText = await waitForBridgeText(
         bridgeIdentity,
-        firstBrowserLabel,
+        BROWSER_LABEL,
         FIXTURE_B_TEXT,
         uiTimeoutMs,
         'The popup browser tab did not finish loading the linked page'

@@ -1637,7 +1637,6 @@
     "browser_forward": "Forward",
     "browser_reload": "Reload",
     "browser_open_external": "Open in external browser",
-    "browser_open_external_failed": "Unable to open with the system app",
     "browser_more_actions": "More actions",
     "browser_find_in_page": "Find in page",
     "browser_find_placeholder": "Find in page",

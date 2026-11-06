@@ -28,7 +28,6 @@ import {
   type SaveDialogOptions,
 } from 'electron'
 import { stat, writeFile } from 'node:fs/promises'
-import { fileURLToPath } from 'node:url'
 import { cpuLoadRatioBetween, cpuTimeSample } from './system-cpu.js'
 import { availableMemoryRatio } from './maintenance-memory.js'
 import { basename, join, resolve } from 'node:path'
@@ -1185,30 +1184,6 @@ export function createElectronCapabilityRouter(
       )
     }
     await shell.openExternal(url.toString())
-  })
-  router.register('shell.openLocalFileUrl', async params => {
-    const url = new URL(stringParam(params, 'url'))
-    if (url.protocol !== 'file:') {
-      throw new HostCapabilityError(
-        'invalid_external_url',
-        `Local file URL protocol is not allowed: ${url.protocol}`
-      )
-    }
-    let path: string
-    try {
-      path = fileURLToPath(url)
-    } catch {
-      throw new HostCapabilityError('invalid_external_url', 'Local file URL is invalid')
-    }
-    if (process.platform === 'linux') {
-      // Electron 43's Linux openPath never settles (electron/electron#53738).
-      // openExternal only reports launcher startup, so reject missing targets first.
-      await stat(path)
-      await shell.openExternal(url.toString())
-      return
-    }
-    const error = await shell.openPath(path)
-    if (error) throw new HostCapabilityError('open_path_failed', error)
   })
   router.register('shell.openPath', async params => {
     const error = await shell.openPath(stringParam(params, 'path'))

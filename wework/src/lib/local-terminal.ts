@@ -559,19 +559,6 @@ export async function openLocalFile(path?: string): Promise<void> {
   await invokeDesktopHost<void>('shell.openPath', { path: trimmedPath })
 }
 
-export async function openLocalFileUrl(url?: string): Promise<void> {
-  if (!isLocalTerminalAvailable()) {
-    throw new Error(i18n.t('localRuntime:local_file_opening_unavailable'))
-  }
-
-  const trimmedUrl = url?.trim()
-  if (!trimmedUrl || !trimmedUrl.startsWith('file:')) {
-    throw new Error('Local file URL is empty or invalid')
-  }
-
-  await invokeDesktopHost<void>('shell.openLocalFileUrl', { url: trimmedUrl })
-}
-
 export async function openLocalFileInWorkspaceApp(
   path: string,
   workspacePath?: string

@@ -1,9 +1,6 @@
 import assert from 'node:assert/strict'
-import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { pathToFileURL } from 'node:url'
-import { promisify } from 'node:util'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
@@ -24,10 +21,6 @@ const BROWSER_RELOAD_BUTTON_SELECTOR =
   ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-reload-button"]'
 const BROWSER_MORE_BUTTON_SELECTOR =
   ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-more-button"]'
-const BROWSER_OPEN_EXTERNAL_BUTTON_SELECTOR =
-  ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-open-external-button"]'
-const BROWSER_ERROR_SELECTOR =
-  ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-error"]'
 const FIND_ITEM_SELECTOR = '[data-testid="workspace-browser-find-item"]'
 const FIND_BAR_SELECTOR = '[data-testid="workspace-browser-find-bar"]'
 const FIND_INPUT_SELECTOR = '[data-testid="workspace-browser-find-input"]'
@@ -63,7 +56,6 @@ const HANGING_FIXTURE_RELEASE_PATH = '/embedded-browser-toolbar-actions-fixture-
 const BRIDGE_RUNTIME_FILE = 'embedded-browser-bridge.json'
 const BROWSER_LABEL = 'workspace-browser'
 const FIXTURE_WORD = 'Fixture'
-const executeFile = promisify(execFile)
 
 function fixtureHtml(title, heading) {
   return [
@@ -195,79 +187,6 @@ async function waitForButtonDisabled(control, selector, disabled, timeoutMs, mes
     timeoutMs,
     message
   )
-}
-
-async function waitForNoBrowserError(control, stableMs, message) {
-  const startedAt = Date.now()
-  while (Date.now() - startedAt < stableMs) {
-    const count = await control.command('getElementCount', BROWSER_ERROR_SELECTOR)
-    if (count !== '0') {
-      const text = await control.command('getText', BROWSER_ERROR_SELECTOR)
-      assert.fail(`${message}; error=${text}`)
-    }
-    await new Promise(resolve => setTimeout(resolve, 100))
-  }
-}
-
-async function waitForBrowserError(control, timeoutMs, message) {
-  const startedAt = Date.now()
-  let lastText = ''
-  while (Date.now() - startedAt < timeoutMs) {
-    const count = await control.command('getElementCount', BROWSER_ERROR_SELECTOR)
-    if (count !== '0') {
-      lastText = await control.command('getText', BROWSER_ERROR_SELECTOR)
-      if (/无法在系统应用中打开|Unable to open with the system app/.test(lastText)) return
-    }
-    await new Promise(resolve => setTimeout(resolve, 100))
-  }
-  assert.fail(`${message}; last error=${lastText}`)
-}
-
-async function listLinuxProcesses(commandName) {
-  const { stdout } = await executeFile('ps', ['-eo', 'pid=,args='], {
-    maxBuffer: 1024 * 1024,
-  })
-  return stdout
-    .split('\n')
-    .map(line => line.trim())
-    .filter(line => line.includes(commandName))
-}
-
-async function captureLinuxProcesses(commandName) {
-  return process.platform === 'linux' ? listLinuxProcesses(commandName) : []
-}
-
-async function waitForLinuxProcess(
-  commandName,
-  pathFragment,
-  timeoutMs,
-  message,
-  beforeLines = []
-) {
-  if (process.platform !== 'linux') return null
-  const beforePids = new Set(beforeLines.map(line => line.match(/^\d+/)?.[0]).filter(Boolean))
-  const startedAt = Date.now()
-  let lastMatches = []
-  while (Date.now() - startedAt < timeoutMs) {
-    lastMatches = await listLinuxProcesses(commandName)
-    const matched =
-      lastMatches.find(line => line.includes(pathFragment)) ??
-      lastMatches.find(line => !beforePids.has(line.match(/^\d+/)?.[0]))
-    if (matched) return matched
-    await new Promise(resolve => setTimeout(resolve, 100))
-  }
-  assert.fail(`${message}; matching processes=${JSON.stringify(lastMatches)}`)
-}
-
-async function stopLinuxProcess(line) {
-  if (!line || process.platform !== 'linux') return
-  const pid = Number(line.match(/^\d+/)?.[0])
-  if (!Number.isInteger(pid) || pid <= 0) return
-  try {
-    process.kill(pid, 'SIGTERM')
-  } catch {
-    // The external app may already have exited after opening the fixture.
-  }
 }
 
 function assertFramesEqual(before, after) {
@@ -642,90 +561,6 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
         uiTimeoutMs,
         'The device toolbar did not close'
       )
-
-      // --- Local file and directory external open ---
-      const localRoot = await mkdtemp(join(executorHome, 'browser-toolbar-local-'))
-      const localDirectory = join(localRoot, 'directory')
-      const localTextFile = join(localRoot, 'readme.txt')
-      await mkdir(localDirectory, { recursive: true })
-      await writeFile(localTextFile, 'local file fixture', 'utf8')
-
-      const loadLocalUrl = async value => {
-        await control.command('submit', BROWSER_INPUT_SELECTOR, { value })
-        await waitForValue(
-          control,
-          BROWSER_INPUT_SELECTOR,
-          value,
-          uiTimeoutMs,
-          `The browser did not load local URL ${value}`
-        )
-        await waitForButtonDisabled(
-          control,
-          BROWSER_OPEN_EXTERNAL_BUTTON_SELECTOR,
-          false,
-          uiTimeoutMs,
-          `The external-open button stayed disabled for ${value}`
-        )
-      }
-
-      let externalProcess = null
-      try {
-        const directoryUrl = pathToFileURL(localDirectory).href
-        await loadLocalUrl(directoryUrl)
-        const directoryProcessesBefore = await captureLinuxProcesses('pcmanfm')
-        await control.command('click', BROWSER_OPEN_EXTERNAL_BUTTON_SELECTOR)
-        await waitForNoBrowserError(
-          control,
-          1_000,
-          'Opening a local directory externally surfaced an error'
-        )
-        externalProcess = await waitForLinuxProcess(
-          'pcmanfm',
-          localDirectory,
-          uiTimeoutMs,
-          'The local directory was not opened by the Linux file manager',
-          directoryProcessesBefore
-        )
-        await stopLinuxProcess(externalProcess)
-
-        const textFileUrl = pathToFileURL(localTextFile).href
-        await loadLocalUrl(textFileUrl)
-        await waitForPageNumber(
-          bridgeIdentity,
-          `location.href === ${JSON.stringify(textFileUrl)} && document.body?.textContent.includes('local file fixture') ? 1 : 0`,
-          1,
-          0,
-          uiTimeoutMs,
-          'The real local file page did not render before removing its backing file'
-        )
-        // Remove a loaded file so the real host/OS open fails without invalid navigation.
-        await rm(localTextFile)
-        await control.command('click', BROWSER_OPEN_EXTERNAL_BUTTON_SELECTOR)
-        await waitForBrowserError(
-          control,
-          uiTimeoutMs,
-          'A failed system app open did not surface the external-open error'
-        )
-
-        await loadLocalUrl(directoryUrl)
-        const recoveryProcessesBefore = await captureLinuxProcesses('pcmanfm')
-        await control.command('click', BROWSER_OPEN_EXTERNAL_BUTTON_SELECTOR)
-        await waitForNoBrowserError(
-          control,
-          1_000,
-          'The external-open error did not clear after a successful retry'
-        )
-        externalProcess = await waitForLinuxProcess(
-          'pcmanfm',
-          localDirectory,
-          uiTimeoutMs,
-          'The recovered external-open action did not launch the Linux file manager',
-          recoveryProcessesBefore
-        )
-        await stopLinuxProcess(externalProcess)
-      } finally {
-        await rm(localRoot, { recursive: true, force: true })
-      }
 
       // --- Browser settings navigation ---
       await control.command('click', BROWSER_MORE_BUTTON_SELECTOR)

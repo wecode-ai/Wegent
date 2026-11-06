@@ -76,12 +76,13 @@ describe('PerformanceRecorder', () => {
 
   async function waitForSamples(count: number) {
     for (let attempt = 0; attempt < 2000; attempt += 1) {
-      // The next sample timer is registered only after the current append completes.
-      // Reading earlier can observe a partial JSON line from a large sample.
-      if (vi.getTimerCount() === 1) {
-        const values = await records()
-        if (values.filter(value => value.type === 'performance-sample').length >= count) return
-      }
+      const values = await records()
+      // File visibility can precede append completion and the next sample timer.
+      if (
+        values.filter(value => value.type === 'performance-sample').length >= count &&
+        vi.getTimerCount() === 1
+      )
+        return
       await new Promise<void>(resolve => setImmediate(resolve))
     }
     throw new Error(`Expected ${count} recorded performance samples`)

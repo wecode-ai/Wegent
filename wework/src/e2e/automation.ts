@@ -3547,30 +3547,15 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       if (!deviceId) throw new Error('getPluginSyncDiagnostics requires a device id')
       const { hasInFlightPluginDeviceSync } =
         await import('@/features/plugins/pluginDeviceAutoSync')
-      const { resolveLocalPluginDeviceRouteId } = await import('@/features/plugins/pluginDeviceApi')
       const { getLocalExecutorCloudConnectionStatus } =
         await import('@/features/cloud-connection/localExecutorCloudConnectionStatus')
-      const runtimeConfig = getDesktopE2ERuntimeConfig()
       const backend = await requestLocalExecutor<{ configured: boolean; connected: boolean }>(
         'executor.backend.status'
       )
-      let pluginRouteRegistered = false
-      if (runtimeConfig.cloudBackendUrl && runtimeConfig.cloudToken) {
-        try {
-          await resolveLocalPluginDeviceRouteId(deviceId, {
-            apiBaseUrl: runtimeConfig.cloudBackendUrl,
-            token: runtimeConfig.cloudToken,
-          })
-          pluginRouteRegistered = true
-        } catch {
-          // Route registration can lag the generic Runtime connection status.
-        }
-      }
       return JSON.stringify({
         deviceId,
         backend: { configured: backend.configured, connected: backend.connected },
         rendererConnected: getLocalExecutorCloudConnectionStatus().connected,
-        pluginRouteRegistered,
         inFlight: hasInFlightPluginDeviceSync(deviceId),
         localCatalogReads: ['started', 'completed', 'failed']
           .flatMap(phase =>
