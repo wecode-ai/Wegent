@@ -246,13 +246,41 @@ export function createDesktopScenario(options) {
         providerId: PROVIDER,
         aliases: ['source'],
       })
+      let storyFailure
       try {
         await story.verify(control, (method, params) => rpc(control, method, params), records)
+      } catch (error) {
+        storyFailure = error
+        throw error
       } finally {
-        await host(control, 'runtime.setCoreDshPluginEnabled', { name: PACKAGE, enabled: false })
-        await codex(control, 'plugin/uninstall', { pluginId: PLUGIN })
-        await codex(control, 'marketplace/remove', { marketplaceName: MARKET })
-        await host(control, 'runtime.uninstallCoreDshPlugin', { name: PACKAGE })
+        try {
+          await host(control, 'runtime.setCoreDshPluginEnabled', { name: PACKAGE, enabled: false })
+          const cleanupReadyCount = control.readyCount
+          await host(control, 'runtime.restartCoreDsh', {})
+          await withTimeout(
+            control.awaitReadyAfter(cleanupReadyCount),
+            workbenchReadyTimeoutMs,
+            'Project story cleanup did not reconnect the workbench'
+          )
+          await control.command('waitFor', '[data-testid="plugins-button"]', {
+            timeoutMs: workbenchReadyTimeoutMs,
+          })
+          const stopped = await rpc(control, 'runtime.connections.catalog', {})
+          assert.equal(
+            stopped.items.find(item => item.id === PROVIDER)?.availability.status,
+            'plugin_disabled'
+          )
+          await codex(control, 'plugin/uninstall', { pluginId: PLUGIN })
+          await codex(control, 'marketplace/remove', { marketplaceName: MARKET })
+          await host(control, 'runtime.uninstallCoreDshPlugin', { name: PACKAGE })
+        } catch (cleanupError) {
+          if (storyFailure)
+            throw new AggregateError(
+              [storyFailure, cleanupError],
+              'Project source verification and cleanup failed'
+            )
+          throw cleanupError
+        }
       }
     },
   }
