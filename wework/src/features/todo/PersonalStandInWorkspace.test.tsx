@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import { useImperativeHandle, type Ref } from 'react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -118,7 +118,7 @@ it('keeps signed-out local profiles reachable after connecting and separates clo
     onOpenTask: vi.fn(),
   }
   const view = render(<PersonalStandInWorkspace {...props} />)
-  const picker = await screen.findByTestId('stand-in-workspace-location')
+  await screen.findByTestId('stand-in-workspace-location')
   expect(screen.getByTestId('retained-role-draft')).toHaveAttribute('data-owner', '0')
   view.rerender(
     <PersonalStandInWorkspace
@@ -134,6 +134,7 @@ it('keeps signed-out local profiles reachable after connecting and separates clo
       ]}
     />
   )
+  const picker = await screen.findByTestId('stand-in-workspace-location')
   await userEvent.selectOptions(picker, '@local')
   expect(screen.getByTestId('retained-role-draft')).toHaveAttribute('data-owner', '0')
   expect(screen.getByTestId('retained-role-draft')).toHaveAttribute('data-device', 'mac')
@@ -297,4 +298,56 @@ it('keeps a failed local profile discovery visible after project loading and ret
   expect(await screen.findByTestId('retained-role-draft')).toHaveAttribute('data-device', 'mac')
   expect(localReads).toBe(2)
   expect(screen.queryByRole('alert')).toBeNull()
+})
+
+it('reloads scoped preferences when the enterprise user or Backend resolves without remounting', async () => {
+  const { CloudConnectionContext } =
+    await import('@/features/cloud-connection/CloudConnectionContext')
+  const key = (backend: string, account: number) =>
+    `wework.stand-in.cloud-device:${JSON.stringify([backend, account])}`
+  localStorage.setItem(key('https://enterprise-a', 7), 'cloud-one')
+  localStorage.setItem(key('https://enterprise-b', 7), 'cloud-two')
+  const services = {
+    getLocalRuntimeSidebarIdentity: async () => ({ deviceId: 'mac' }),
+    standInApi: {
+      personalGet: async (userId: number) => ({ userId, version: userId === 0 ? 1 : 0, roles: [] }),
+    },
+  } as unknown as WorkbenchServices
+  const workspace = (user: User, backend: string) => (
+    <CloudConnectionContext.Provider
+      value={
+        {
+          isConnected: true,
+          apiBaseUrl: backend,
+        } as import('@/features/cloud-connection/CloudConnectionContext').CloudConnectionContextValue
+      }
+    >
+      <PersonalStandInWorkspace
+        services={services}
+        user={user}
+        devices={[]}
+        active
+        contentRoute="/stand-in"
+        onClose={vi.fn()}
+        onOpenTask={vi.fn()}
+      />
+    </CloudConnectionContext.Provider>
+  )
+  const view = render(workspace(LOCAL_USER as User, 'https://enterprise-a'))
+  expect(await screen.findByTestId('retained-role-draft')).toHaveAttribute('data-device', 'mac')
+  view.rerender(workspace({ id: 7 } as User, 'https://enterprise-a'))
+  await waitFor(() =>
+    expect(screen.getByTestId('retained-role-draft')).toHaveAttribute('data-device', 'cloud-one')
+  )
+  expect(screen.getByTestId('retained-role-draft')).toHaveAttribute('data-owner', '7')
+  view.rerender(workspace({ id: 8 } as User, 'https://enterprise-a'))
+  await waitFor(() =>
+    expect(screen.getByTestId('retained-role-draft')).toHaveAttribute('data-device', 'mac')
+  )
+  expect(screen.getByTestId('retained-role-draft')).toHaveAttribute('data-owner', '0')
+  view.rerender(workspace({ id: 7 } as User, 'https://enterprise-b'))
+  await waitFor(() =>
+    expect(screen.getByTestId('retained-role-draft')).toHaveAttribute('data-device', 'cloud-two')
+  )
+  expect(screen.getByTestId('retained-role-draft')).toHaveAttribute('data-owner', '7')
 })

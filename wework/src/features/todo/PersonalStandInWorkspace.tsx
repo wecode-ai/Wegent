@@ -29,15 +29,7 @@ function configuredProfile(profile: PersonalStandInSettings | undefined) {
   )
 }
 
-export function PersonalStandInWorkspace({
-  services,
-  user,
-  devices,
-  active,
-  contentRoute,
-  onClose,
-  onOpenTask,
-}: {
+type PersonalStandInWorkspaceProps = {
   services: WorkbenchServices
   user: User
   devices: DeviceInfo[]
@@ -45,7 +37,23 @@ export function PersonalStandInWorkspace({
   contentRoute: string
   onClose(): void
   onOpenTask(address: RuntimeTaskAddress): Promise<void> | void
-}) {
+}
+
+export function PersonalStandInWorkspace(props: PersonalStandInWorkspaceProps) {
+  const cloud = useContext(CloudConnectionContext)
+  const accountKey = JSON.stringify([cloud?.apiBaseUrl ?? '', props.user.id])
+  return <AccountStandInWorkspace key={accountKey} {...props} />
+}
+
+function AccountStandInWorkspace({
+  services,
+  user,
+  devices,
+  active,
+  contentRoute,
+  onClose,
+  onOpenTask,
+}: PersonalStandInWorkspaceProps) {
   const { t, i18n } = useTranslation('common')
   const cloud = useContext(CloudConnectionContext)
   const query = new URLSearchParams(contentRoute.split('?')[1] ?? '')
