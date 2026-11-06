@@ -139,7 +139,7 @@ class TemplateChatCardAdapter:
     async def _save_quote_addresses(self, response: dict) -> None:
         from app.services.channels.dingtalk.card_quotes import save_quote_address
 
-        if not self.config.follow_up_enabled or self._message.conversation_type != "2":
+        if not self.config.follow_up_enabled:
             return
         results = response.get("result")
         if not isinstance(results, list):
@@ -148,19 +148,21 @@ class TemplateChatCardAdapter:
             if not isinstance(row, dict):
                 continue
             carrier_id = row.get("carrierId")
-            if (
-                row.get("success") is True
-                and row.get("spaceType") == "IM_GROUP"
-                and row.get("spaceId") == self._message.conversation_id
-                and isinstance(carrier_id, str)
-                and carrier_id
+            if row.get("success") is not True or not isinstance(carrier_id, str):
+                continue
+            if not carrier_id:
+                continue
+            if self._message.conversation_type == "2" and (
+                row.get("spaceType") != "IM_GROUP"
+                or row.get("spaceId") != self._message.conversation_id
             ):
-                await save_quote_address(
-                    self.channel_id,
-                    self._message.conversation_id,
-                    carrier_id,
-                    self._out_track_id,
-                )
+                continue
+            await save_quote_address(
+                self.channel_id,
+                self._message.conversation_id,
+                carrier_id,
+                self._out_track_id,
+            )
 
     def _log_delivery(self, response: dict) -> None:
         """Capture only addressing fields to correlate future quoted replies."""

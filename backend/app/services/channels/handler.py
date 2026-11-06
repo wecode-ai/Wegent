@@ -1208,11 +1208,19 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             address.device_id,
             address.local_task_id,
         )
+        if await self._reject_concurrent_runtime_quote(callback_key, message_context):
+            return False
+        callback_service = self.get_callback_service()
+        previous_callback_info = (
+            await callback_service.get_callback_info(callback_key)
+            if callback_service
+            else None
+        )
         streaming_emitter = await self._create_private_im_runtime_streaming_emitter(
             callback_key=callback_key,
             message_context=message_context,
         )
-        await self._register_private_im_runtime_callback(
+        await self._save_private_im_runtime_callback_info(
             callback_key=callback_key,
             message_context=message_context,
             streaming_emitter=streaming_emitter,
@@ -1255,7 +1263,6 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 ),
             )
         except (HTTPException, ValidationError):
-            await self._delete_private_im_runtime_callback(callback_key)
             self.logger.exception(
                 "[%sHandler] Active private IM runtime task is unavailable: "
                 "user_id=%s local_task_id=%s",
@@ -1265,20 +1272,26 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             )
             if not message_context.extra_data.get("card_follow_up"):
                 await im_session_service.clear_active_task(db, session=im_session)
-            await self._emit_private_im_runtime_stream_error(
+            await self._fail_private_im_runtime_continuation(
+                callback_key=callback_key,
+                previous_callback_info=previous_callback_info,
                 streaming_emitter=streaming_emitter,
-                task_id=callback_key,
                 message_context=message_context,
                 error="当前本地任务不可用,请回到 Wework 重新选择。",
             )
             return False
 
         if response.accepted:
+            await self._register_private_im_runtime_callback(
+                callback_key=callback_key,
+                message_context=message_context,
+                streaming_emitter=streaming_emitter,
+            )
             return True
-        await self._delete_private_im_runtime_callback(callback_key)
-        await self._emit_private_im_runtime_stream_error(
+        await self._fail_private_im_runtime_continuation(
+            callback_key=callback_key,
+            previous_callback_info=previous_callback_info,
             streaming_emitter=streaming_emitter,
-            task_id=callback_key,
             message_context=message_context,
             error=response.error or "本地任务暂时无法接收消息，请稍后重试。",
         )
@@ -1307,6 +1320,75 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             message_context=message_context,
             persist_without_emitter=True,
         )
+
+    async def _reject_concurrent_runtime_quote(
+        self, callback_key: str, message_context: MessageContext
+    ) -> bool:
+        """Return True when a provider-specific quoted-card follow-up must wait."""
+        return False
+
+    async def _save_private_im_runtime_callback_info(
+        self,
+        *,
+        callback_key: str,
+        message_context: MessageContext,
+        streaming_emitter: Any = None,
+    ) -> None:
+        """Persist provisional callback state without registering the emitter."""
+        callback_service = self.get_callback_service()
+        if not callback_service:
+            return
+        callback_info = self.create_callback_info(message_context)
+        card_id = (
+            getattr(streaming_emitter, "card_instance_id", None)
+            if streaming_emitter
+            else None
+        )
+        if card_id:
+            callback_info.card_instance_id = card_id
+        await callback_service.save_callback_info(
+            task_id=callback_key, callback_info=callback_info
+        )
+
+    async def _restore_private_im_runtime_callback(
+        self, callback_key: str, previous_callback_info: Any
+    ) -> None:
+        """Restore the callback owned by an already-running runtime turn."""
+        callback_service = self.get_callback_service()
+        if not callback_service:
+            return
+        if previous_callback_info is None:
+            await callback_service.delete_callback_info(callback_key)
+            return
+        await callback_service.save_callback_info(
+            task_id=callback_key, callback_info=previous_callback_info
+        )
+
+    async def _fail_private_im_runtime_continuation(
+        self,
+        *,
+        callback_key: str,
+        previous_callback_info: Any,
+        streaming_emitter: Any,
+        message_context: MessageContext,
+        error: str,
+    ) -> None:
+        """Report a rejected turn without disturbing the callback in progress."""
+        try:
+            await self._emit_private_im_runtime_stream_error(
+                streaming_emitter=streaming_emitter,
+                task_id=callback_key,
+                message_context=message_context,
+                error=error,
+            )
+        finally:
+            try:
+                if streaming_emitter and hasattr(streaming_emitter, "close"):
+                    await streaming_emitter.close()
+            finally:
+                await self._restore_private_im_runtime_callback(
+                    callback_key, previous_callback_info
+                )
 
     async def _create_private_im_runtime_streaming_emitter(
         self,
@@ -1341,12 +1423,6 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             )
             return
         await self.send_text_reply(message_context, error)
-
-    async def _delete_private_im_runtime_callback(self, callback_key: str) -> None:
-        callback_service = self.get_callback_service()
-        if not callback_service:
-            return
-        await callback_service.delete_callback_info(callback_key)
 
     async def execute_private_im_create_task(
         self,

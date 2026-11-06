@@ -371,6 +371,38 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
         raw = self._get_chat_card_config() if self._get_chat_card_config else None
         return DingTalkChatCardConfig.model_validate(raw) if raw is not None else None
 
+    async def _reject_concurrent_runtime_quote(
+        self, callback_key: str, message_context: MessageContext
+    ) -> bool:
+        callback_data = message_context.extra_data.get("callback_data")
+        if not isinstance(callback_data, dict):
+            return False
+        text = callback_data.get("text")
+        if not isinstance(text, dict) or not text.get("isReplyMsg"):
+            return False
+        replied = text.get("repliedMsg")
+        if not isinstance(replied, dict) or replied.get("msgType") != "interactiveCard":
+            return False
+        callback_service = self.get_callback_service()
+        if not callback_service or not await callback_service.has_callback_info(
+            callback_key
+        ):
+            return False
+        log_dingtalk_message(
+            self.logger,
+            "card_quote_busy",
+            {
+                "channel_id": self._channel_id,
+                "conversation_id": message_context.conversation_id,
+                "message_id": message_context.extra_data.get("message_id"),
+            },
+        )
+        await self.send_text_reply(
+            message_context,
+            "上一条消息仍在执行，请等当前回答完成后再发送。",
+        )
+        return True
+
     async def _register_streaming_emitter(
         self,
         task_id: int | str,

@@ -41,7 +41,7 @@ async def save_quote_address(
 async def route_quoted_card(
     receiver: "DingTalkCardCallbackHandler", data: dict[str, Any]
 ) -> bool:
-    """Only a verified, mapped group card quote can enter the follow-up inbox."""
+    """Route a verified, mapped card quote from a group or private chat."""
     text = data.get("text")
     if not isinstance(text, dict) or not text.get("isReplyMsg"):
         return False
@@ -53,9 +53,10 @@ async def route_quoted_card(
         return False
     carrier_id = data.get("originalProcessQueryKey")
     conversation_id = data.get("conversationId")
+    conversation_type = data.get("conversationType")
     if (
-        data.get("conversationType") != "2"
-        or not data.get("isInAtList")
+        conversation_type not in {"1", "2"}
+        or (conversation_type == "2" and not data.get("isInAtList"))
         or not isinstance(carrier_id, str)
         or not carrier_id
         or not isinstance(conversation_id, str)
