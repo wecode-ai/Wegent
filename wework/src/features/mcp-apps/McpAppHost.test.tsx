@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import type { ToolBlock } from '@wegent/chat-core/runtime-conversation'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { McpAppHost } from './McpAppHost'
 
 const translate = vi.hoisted(() => (key: string) => key)
@@ -8,12 +8,19 @@ const native = vi.hoisted(() => ({ invoke: vi.fn() }))
 const connection = vi.hoisted(() => ({ start: vi.fn() }))
 const bridges = vi.hoisted(() => [] as Array<Record<string, unknown>>)
 const toolResults = vi.hoisted(() => vi.fn())
+const hostContexts = vi.hoisted(() => vi.fn())
 vi.mock('@/hooks/useTranslation', () => ({ useTranslation: () => ({ t: translate }) }))
 vi.mock('@/api/dsh/desktopHost', () => ({ invokeDesktopHost: native.invoke }))
 vi.mock('@modelcontextprotocol/ext-apps/app-bridge', () => ({
   AppBridge: class {
-    constructor() {
+    constructor(
+      _client: unknown,
+      _info: unknown,
+      _capabilities: unknown,
+      options: { hostContext: unknown }
+    ) {
       bridges.push(this as unknown as Record<string, unknown>)
+      hostContexts(options.hostContext)
     }
     oninitialized?: () => void
     async connect() {
@@ -24,7 +31,9 @@ vi.mock('@modelcontextprotocol/ext-apps/app-bridge', () => ({
     async sendToolResult(result: unknown) {
       toolResults(result)
     }
-    async setHostContext() {}
+    async setHostContext(context: unknown) {
+      hostContexts(context)
+    }
     async teardownResource() {}
     async close() {}
   },
@@ -53,6 +62,17 @@ beforeEach(() => {
   connection.start.mockReset().mockResolvedValue(undefined)
   bridges.length = 0
   toolResults.mockClear()
+  hostContexts.mockClear()
+})
+
+afterEach(() => {
+  const root = document.documentElement
+  root.classList.remove('dark')
+  root.removeAttribute('data-theme')
+  root.removeAttribute('data-appearance-theme')
+  for (const name of ['--color-bg-base', '--color-text-primary', '--color-focus']) {
+    root.style.removeProperty(name)
+  }
 })
 
 describe('MCP App discovery', () => {
@@ -200,6 +220,87 @@ describe('MCP App close completion', () => {
     result: { content: [] },
     arguments: {},
   }
+
+  it('updates named theme and accent variables without replacing the iframe or its bridge', async () => {
+    const root = document.documentElement
+    root.classList.add('dark')
+    root.dataset.theme = 'dark'
+    root.dataset.appearanceTheme = 'tokyo-night'
+    root.style.setProperty('--color-bg-base', '26 27 38')
+    root.style.setProperty('--color-text-primary', '169 177 214')
+    native.invoke.mockImplementation((method: string) => {
+      if (method === 'mcpApps.createDocument')
+        return Promise.resolve({ id: 'document', url: 'http://127.0.0.1:9000/document' })
+      if (
+        method === 'mcpApps.releaseDocument' ||
+        method === 'mcpApps.retainSession' ||
+        method === 'mcpApps.releaseSession'
+      )
+        return Promise.resolve()
+      throw new Error('Unexpected host method: ' + method)
+    })
+    await act(async () =>
+      render(
+        <McpAppHost
+          block={running}
+          address={address}
+          api={{ requestMcpApp: vi.fn().mockResolvedValue(descriptor) }}
+        />
+      )
+    )
+    const frame = screen.getByTestId('mcp-app-frame') as HTMLIFrameElement
+    const frameWindow = frame.contentWindow!
+    const source = frame.src
+    frameWindow.name = 'preserved app draft'
+    expect(hostContexts).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        theme: 'dark',
+        styles: {
+          variables: expect.objectContaining({
+            '--color-background-primary': 'rgb(26 27 38)',
+          }),
+        },
+      })
+    )
+
+    await act(async () => {
+      root.dataset.appearanceTheme = 'matrix'
+      root.style.setProperty('--color-bg-base', '4 8 5')
+      root.style.setProperty('--color-text-primary', '184 255 202')
+    })
+    expect(hostContexts).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        theme: 'dark',
+        styles: {
+          variables: expect.objectContaining({
+            '--color-background-primary': 'rgb(4 8 5)',
+            '--color-text-primary': 'rgb(184 255 202)',
+          }),
+        },
+      })
+    )
+
+    await act(async () => {
+      root.style.setProperty('--color-focus', '18 52 86')
+    })
+    expect(hostContexts).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        styles: { variables: expect.objectContaining({ '--color-text-info': 'rgb(18 52 86)' }) },
+      })
+    )
+    expect(screen.getByTestId('mcp-app-frame')).toBe(frame)
+    expect(frame.src).toBe(source)
+    expect(frame.contentWindow).toBe(frameWindow)
+    expect(frameWindow.name).toBe('preserved app draft')
+    expect(bridges).toHaveLength(1)
+    expect(connection.start).toHaveBeenCalledTimes(1)
+    expect(
+      native.invoke.mock.calls.filter(([method]) => method === 'mcpApps.createDocument')
+    ).toHaveLength(1)
+    expect(
+      native.invoke.mock.calls.filter(([method]) => method === 'mcpApps.releaseDocument')
+    ).toHaveLength(0)
+  })
 
   it('downloads remaining resources when a resource filename contains malformed percent encoding', async () => {
     native.invoke.mockImplementation((method: string) => {

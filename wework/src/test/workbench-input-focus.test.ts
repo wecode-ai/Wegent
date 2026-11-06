@@ -179,14 +179,14 @@ test.each([
   {
     name: 'project space search',
     source: sources.projectSpace,
-    expression: /className="([^"]*focus-within:ring-blue-500\/70[^"]*)"/,
+    expression: /className="([^"]*focus-within:ring-focus\/70[^"]*)"/,
     tag: 'input',
     nested: true,
   },
   {
     name: 'project space sorting',
     source: sources.projectSpace,
-    expression: /className="([^"]*focus-visible:ring-blue-500\/70[^"]*)"/,
+    expression: /className="([^"]*focus-visible:ring-focus\/70[^"]*)"/,
     tag: 'select',
     nested: false,
   },

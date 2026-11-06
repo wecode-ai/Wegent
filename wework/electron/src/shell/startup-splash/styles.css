@@ -1,30 +1,22 @@
+@import '../theme-tokens.css';
+
 :root {
-  color-scheme: dark;
-  --text-code-sm: 11px;
-  --text-xs: 12px;
-  --text-base: 14px;
-  --text-lg: 16px;
-  --startup-brand-background: #05070d;
+  --startup-brand-background: rgb(var(--color-bg-base));
   --startup-status-background: var(--startup-brand-background);
-  --startup-text: #e5e7ed;
-  --startup-muted: #b3b9c6;
-  --startup-activity: #8e96a6;
-  --startup-border: rgb(255 255 255 / 14%);
-  --startup-track: rgb(132 177 224 / 18%);
-  --startup-button-background: #212121;
-  --startup-primary-text: #181818;
-  --startup-primary-background: #ececec;
-  --startup-note-background: rgb(255 255 255 / 4%);
-  --startup-error: #fca5a5;
-  --startup-error-background: #25191c;
-  --startup-error-border: #633137;
-  --startup-link: #83baff;
-  font-family:
-    ui-sans-serif,
-    -apple-system,
-    BlinkMacSystemFont,
-    'Segoe UI',
-    sans-serif;
+  --startup-text: rgb(var(--color-text-primary));
+  --startup-muted: rgb(var(--color-text-secondary));
+  --startup-activity: rgb(var(--color-text-muted));
+  --startup-border: rgb(var(--color-border));
+  --startup-track: rgb(var(--color-primary) / 18%);
+  --startup-button-background: rgb(var(--color-bg-surface));
+  --startup-primary-text: rgb(var(--color-bg-base));
+  --startup-primary-background: rgb(var(--color-text-primary));
+  --startup-note-background: rgb(var(--color-text-primary) / 4%);
+  --startup-error: rgb(var(--color-destructive));
+  --startup-error-background: rgb(var(--color-destructive) / 8%);
+  --startup-error-border: rgb(var(--color-destructive) / 35%);
+  --startup-link: rgb(var(--color-link));
+  font-family: var(--font-ui, ui-sans-serif, system-ui, sans-serif);
   background: var(--startup-brand-background);
 }
 
@@ -190,7 +182,7 @@ body {
 
 .startup-progress-fill {
   stroke: url('#startup-progress-gradient');
-  filter: drop-shadow(0 0 3px rgb(94 186 255 / 65%));
+  filter: drop-shadow(0 0 3px rgb(var(--color-primary) / 65%));
 }
 
 .is-failed .startup-progress-fill {
@@ -304,9 +296,9 @@ body {
 }
 
 .startup-button-danger {
-  color: #fff;
-  border-color: #b91c1c;
-  background: #b91c1c;
+  color: rgb(var(--color-destructive-contrast));
+  border-color: var(--startup-error);
+  background: var(--startup-error);
 }
 
 .startup-link-button {
@@ -318,7 +310,7 @@ body {
 
 .startup-button:focus-visible,
 .startup-link-button:focus-visible {
-  outline: 2px solid #339cff;
+  outline: 2px solid rgb(var(--color-focus));
   outline-offset: 2px;
 }
 

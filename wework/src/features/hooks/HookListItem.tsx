@@ -101,7 +101,7 @@ export function HookListItem({
           )}
           {plugin.policy.canDelete && (
             <button
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-red-500 hover:bg-red-500/10"
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-destructive hover:bg-destructive/10"
               onClick={() => void onDelete()}
               aria-label={t('delete')}
             >

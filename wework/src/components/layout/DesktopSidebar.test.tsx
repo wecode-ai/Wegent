@@ -326,21 +326,29 @@ describe('DesktopSidebar', () => {
         'style',
         'data-theme',
         'data-appearance-mode',
+        'data-appearance-theme',
+        'data-ui-theme-id',
         'data-sidebar-translucent',
         'class',
       ].map(name => [name, root.getAttribute(name)] as const)
       try {
         for (const [accentColor, expectedAccent] of [
-          [defaultAppearance.accentColor, '37 99 235'],
+          [defaultAppearance.accentColor, '1 105 204'],
           ['#123456', '18 52 86'],
           ['#facc15', '250 204 21'],
           ['#808080', '128 128 128'],
           ['#000000', '0 0 0'],
           ['#ffffff', '255 255 255'],
           ['#fff', '255 255 255'],
-          [defaultAppearance.accentColor, '37 99 235'],
+          [defaultAppearance.accentColor, '1 105 204'],
         ]) {
-          applyAppearance({ ...defaultAppearance, accentColor }, theme)
+          applyAppearance(
+            {
+              ...defaultAppearance,
+              themeOverrides: { ...defaultAppearance.themeOverrides, [theme]: { accentColor } },
+            },
+            theme
+          )
           expect(root.style.getPropertyValue('--color-primary')).toBe(expectedAccent)
           if (theme === 'light' && accentColor === defaultAppearance.accentColor) {
             expect(root.style.getPropertyValue('--color-sidebar-attention')).toBe(expectedAccent)

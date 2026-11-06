@@ -6,7 +6,8 @@ import { json } from '@codemirror/lang-json'
 import { markdown } from '@codemirror/lang-markdown'
 import { python } from '@codemirror/lang-python'
 import { rust } from '@codemirror/lang-rust'
-import { bracketMatching, defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language'
+import { bracketMatching, HighlightStyle, syntaxHighlighting } from '@codemirror/language'
+import { tags } from '@lezer/highlight'
 import { Compartment, EditorState } from '@codemirror/state'
 import { highlightSelectionMatches, searchKeymap } from '@codemirror/search'
 import {
@@ -29,6 +30,20 @@ interface WorkspaceTextFileEditorProps {
   onChange: (value: string) => void
   onSave: () => void
 }
+
+const syntaxTheme = HighlightStyle.define([
+  { tag: tags.keyword, color: 'rgb(var(--color-syntax-keyword))' },
+  { tag: [tags.string, tags.regexp], color: 'rgb(var(--color-syntax-string))' },
+  { tag: [tags.number, tags.bool, tags.null], color: 'rgb(var(--color-syntax-number))' },
+  { tag: tags.variableName, color: 'rgb(var(--color-syntax-variable))' },
+  { tag: tags.function(tags.variableName), color: 'rgb(var(--color-syntax-function))' },
+  { tag: [tags.typeName, tags.className], color: 'rgb(var(--color-syntax-type))' },
+  { tag: tags.comment, color: 'rgb(var(--color-syntax-comment))' },
+  { tag: tags.operator, color: 'rgb(var(--color-syntax-operator))' },
+  { tag: tags.punctuation, color: 'rgb(var(--color-syntax-punctuation))' },
+  { tag: tags.tagName, color: 'rgb(var(--color-syntax-keyword))' },
+  { tag: tags.attributeName, color: 'rgb(var(--color-syntax-variable))' },
+])
 
 function languageForPath(path: string) {
   const extension = path.split('.').pop()?.toLowerCase()
@@ -70,6 +85,32 @@ function editorTheme(themeType: 'light' | 'dark') {
       },
       '.cm-selectionBackground, &.cm-focused .cm-selectionBackground': {
         backgroundColor: 'rgb(var(--color-primary) / 0.24) !important',
+      },
+      '.cm-searchMatch, .cm-selectionMatch': {
+        backgroundColor: 'rgb(var(--color-warning) / 0.2)',
+        outline: '1px solid rgb(var(--color-warning) / 0.4)',
+      },
+      '.cm-searchMatch-selected': {
+        backgroundColor: 'rgb(var(--color-primary) / 0.25)',
+        outline: '1px solid rgb(var(--color-primary))',
+      },
+      '.cm-matchingBracket': {
+        backgroundColor: 'rgb(var(--color-primary) / 0.2)',
+        outline: '1px solid rgb(var(--color-primary) / 0.4)',
+      },
+      '.cm-panels, .cm-tooltip': {
+        backgroundColor: 'rgb(var(--color-popover))',
+        color: 'rgb(var(--color-text-primary))',
+        border: '1px solid rgb(var(--color-border))',
+      },
+      '.cm-textfield, .cm-button': {
+        background: 'rgb(var(--color-bg-surface))',
+        color: 'rgb(var(--color-text-primary))',
+        border: '1px solid rgb(var(--color-border))',
+      },
+      '.cm-tooltip-autocomplete > ul > li[aria-selected]': {
+        backgroundColor: 'rgb(var(--color-primary))',
+        color: 'rgb(var(--color-primary-contrast))',
       },
       '&.cm-focused': { outline: 'none' },
     },
@@ -139,7 +180,7 @@ export function WorkspaceTextFileEditor({
           highlightActiveLine(),
           highlightSelectionMatches(),
           bracketMatching(),
-          syntaxHighlighting(defaultHighlightStyle),
+          syntaxHighlighting(syntaxTheme),
           languageForPath(path),
           keymap.of([
             saveKeymap,

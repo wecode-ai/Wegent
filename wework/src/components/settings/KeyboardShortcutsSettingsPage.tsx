@@ -267,7 +267,7 @@ export function KeyboardShortcutsSettingsPage() {
           </div>
         ) : null}
         {error ? (
-          <div data-testid="keyboard-shortcuts-error" className="mb-4 text-sm text-red-500">
+          <div data-testid="keyboard-shortcuts-error" className="mb-4 text-sm text-destructive">
             {error}
           </div>
         ) : null}

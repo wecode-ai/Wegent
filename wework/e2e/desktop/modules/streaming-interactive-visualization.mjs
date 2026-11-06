@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fetchLocalRuntimeJson } from './runtime-request.mjs'
 import { createVisualizationFixtureWriteCommand } from './visualization-fixture-command.mjs'
+import { selectWorkbenchTheme } from './appearance-theme.mjs'
 import {
   ACTIVE_WORKBENCH_SELECTOR,
   COMPOSER_SELECTOR,
@@ -51,7 +52,11 @@ const HTML = `<section>
   calculate()
 </script>`
 
-export function createInteractiveVisualizationChecks({ workspacePath, uiTimeoutMs }) {
+export function createInteractiveVisualizationChecks({
+  workspacePath,
+  uiTimeoutMs,
+  captureScreenshot,
+}) {
   const directory = join(workspacePath, 'outputs', 'visualizations', 'interactive-e2e')
   const file = join(directory, 'interest-calculator.html')
   let stage = 'initial'
@@ -172,6 +177,36 @@ export function createInteractiveVisualizationChecks({ workspacePath, uiTimeoutM
       await waitForInterest(control, '210.96')
       await frameAction(control, 'fill', '#rate', '6.5')
       await waitForInterest(control, '249.32')
+
+      const originalSource = await control.command('getAttribute', FRAME, { value: 'src' })
+      for (const themeId of ['tokyo-night', 'matrix']) {
+        await selectWorkbenchTheme(control, { themeId, timeoutMs: uiTimeoutMs })
+        await control.command('waitFor', FRAME, { timeoutMs: uiTimeoutMs })
+        assert.equal(
+          await control.command('getAttribute', FRAME, { value: 'src' }),
+          originalSource,
+          'A named theme change reloaded the interactive visualization'
+        )
+        await waitForInterest(control, '249.32')
+        assert.equal(await frameAction(control, 'value', '#principal'), '200000')
+        assert.equal(await frameAction(control, 'value', '#rate'), '6.5')
+        const expected = themeId === 'tokyo-night' ? 'rgb(26 27 38)' : 'rgb(4 8 5)'
+        const deadline = Date.now() + uiTimeoutMs
+        let background
+        do {
+          const style = await frameAction(control, 'attribute', 'html', 'style')
+          background = style?.match(/--background:\s*([^;]+)/)?.[1]?.trim()
+          if (background === expected) break
+          await new Promise(resolve => setTimeout(resolve, 50))
+        } while (Date.now() < deadline)
+        assert.equal(background, expected, 'The live iframe did not receive the selected palette')
+        await captureScreenshot(
+          control,
+          `appearance-${themeId}-interactive-visualization.png`,
+          'body'
+        )
+      }
+      await selectWorkbenchTheme(control, { timeoutMs: uiTimeoutMs })
 
       const readyCount = control.readyCount
       await control.command('reloadMainWindow', 'body')

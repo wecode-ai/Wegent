@@ -435,7 +435,7 @@ export function ProviderEditor({
                   <p
                     role="alert"
                     data-testid="provider-discovery-error"
-                    className="text-sm text-red-500"
+                    className="text-sm text-destructive"
                   >
                     {discoveryError}
                   </p>
@@ -576,7 +576,7 @@ export function ProviderEditor({
                 <p
                   role="alert"
                   data-testid="provider-editor-error"
-                  className="text-sm text-red-500"
+                  className="text-sm text-destructive"
                 >
                   {error}
                 </p>

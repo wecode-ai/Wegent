@@ -137,7 +137,7 @@ export function ExistingLocalProjectImportDialog({
           </div>
         )}
 
-        {error ? <p className="mt-3 text-sm text-red-500">{error}</p> : null}
+        {error ? <p className="mt-3 text-sm text-destructive">{error}</p> : null}
 
         <div className="mt-5 flex justify-end gap-3">
           <button

@@ -61,24 +61,24 @@ function captureFixture(mode, options = {}) {
         if (params.value === 'color-scheme') return mode
         if (params.value === '--color-bg-base') {
           assert.equal(selector, 'html')
-          return options.backgroundToken ?? (mode === 'dark' ? '24 24 24' : '255 255 255')
+          return options.backgroundToken ?? (mode === 'dark' ? '17 17 17' : '255 255 255')
         }
         if (params.value === '--color-text-primary') {
           assert.equal(selector, 'html')
-          return options.textToken ?? (mode === 'dark' ? '255 255 255' : '26 26 26')
+          return options.textToken ?? (mode === 'dark' ? '252 252 252' : '13 13 13')
         }
         if (params.value === 'background-color') {
           assert.equal(
             selector,
             '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"] main'
           )
-          return options.background ?? (mode === 'dark' ? 'rgb(24, 24, 24)' : 'rgb(255, 255, 255)')
+          return options.background ?? (mode === 'dark' ? 'rgb(17, 17, 17)' : 'rgb(255, 255, 255)')
         }
         assert.equal(
           selector,
           '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"] [data-testid="chat-message-input"][contenteditable="true"]'
         )
-        return options.text ?? (mode === 'dark' ? 'rgb(255, 255, 255)' : 'rgb(26, 26, 26)')
+        return options.text ?? (mode === 'dark' ? 'rgb(252, 252, 252)' : 'rgb(13, 13, 13)')
       }
       if (action === 'getNativeWindowState')
         return JSON.stringify({ visible: true, minimized: false })
@@ -110,17 +110,17 @@ for (const mode of ['light', 'dark']) {
     })
   })
 
-  test(`records the actual ${mode} main renderer and completed fixed-dark splash separately`, async t => {
+  test(`records the actual ${mode} main renderer and completed themed splash separately`, async t => {
     const { resultDir } = await directory(t)
     const fixture = captureFixture(mode)
     const evidence = await captureStartupThemeEvidence({ ...fixture, resultDir })
     assert.equal(evidence.targetTheme, mode)
-    assert.equal(evidence.stageAppearance, 'fixed-dark')
+    assert.equal(evidence.stageAppearance, 'persisted-theme')
     assert.equal(evidence.source, 'native-electron-capturePage')
     assert.equal(evidence.rendered.owner, 'wework')
     assert.deepEqual(evidence.rendered.palette, {
-      background: mode === 'dark' ? '24 24 24' : '255 255 255',
-      text: mode === 'dark' ? '255 255 255' : '26 26 26',
+      background: mode === 'dark' ? '17 17 17' : '255 255 255',
+      text: mode === 'dark' ? '252 252 252' : '13 13 13',
     })
     assert.deepEqual(evidence.rendered.hostDocument, {
       owner: 'core-dsh',

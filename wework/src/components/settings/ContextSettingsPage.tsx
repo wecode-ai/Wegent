@@ -317,7 +317,7 @@ export function ContextSettingsPage() {
           {instructionsError ? (
             <p
               data-testid="context-wework-instructions-error"
-              className="mt-3 text-xs text-red-500"
+              className="mt-3 text-xs text-destructive"
             >
               {instructionsError}
             </p>

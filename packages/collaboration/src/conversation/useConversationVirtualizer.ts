@@ -1,5 +1,6 @@
 import {
   elementScroll,
+  observeElementRect,
   observeElementOffset,
   useVirtualizer,
   type Virtualizer,
@@ -54,6 +55,12 @@ export function useConversationVirtualizer({
     scrollMargin: prefix,
     paddingEnd: (options.paddingEnd ?? 0) + scrollTailHeight,
     getScrollElement: () => scrollElementRef?.current ?? null,
+    observeElementRect: (instance, callback) =>
+      observeElementRect(instance, rect => {
+        // A retained workspace can be hidden while settings is open. A zero
+        // viewport must not discard its mounted interactive content.
+        if (rect.width > 0 && rect.height > 0) callback(rect)
+      }),
     observeElementOffset: (instance, callback) => {
       readOffsetRef.current = callback
       const dispose = observeElementOffset(instance, callback)

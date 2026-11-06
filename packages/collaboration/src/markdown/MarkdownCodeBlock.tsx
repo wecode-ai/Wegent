@@ -5,6 +5,7 @@ import { ArrowRightToLine, Copy, CopyCheck, TextWrap } from "lucide-react";
 import * as ScrollAreaPrimitive from "@radix-ui/react-scroll-area";
 import type { HighlightedCode } from "./highlightCode";
 import "highlight.js/styles/atom-one-dark.css";
+import "./code-theme.css";
 
 const LANGUAGE_ALIASES: Record<string, string> = {
   cjs: "javascript",
@@ -29,7 +30,7 @@ const DISPLAY_LANGUAGE_ALIASES: Record<string, string> = {
 };
 
 const CODE_ACTION_BUTTON_CLASS =
-  "flex h-7 w-7 select-none items-center justify-center rounded-md text-[#b8c0cc] transition-colors hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/25";
+  "markdown-code-action flex h-7 w-7 select-none items-center justify-center rounded-md transition-colors focus-visible:outline-none";
 
 const CODE_FONT_FAMILY =
   'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace';
@@ -42,7 +43,7 @@ const codeCustomStyle: CSSProperties = {
   margin: 0,
   padding: "0.75rem 1rem",
   background: "transparent",
-  color: "#abb2bf",
+  color: "rgb(var(--markdown-code-foreground, 171 178 191))",
   fontSize: "var(--text-code)",
   lineHeight: "1.8",
 };
@@ -113,14 +114,14 @@ export function MarkdownCodeBlock({
       data-testid="markdown-code-block"
       data-scroll-anchor
       className={[
-        "markdown-code-block max-w-full select-none overflow-hidden rounded-lg border border-[#3c424a] bg-[#2f2f2f] text-left shadow-sm",
+        "markdown-code-block max-w-full select-none overflow-hidden rounded-lg border text-left shadow-sm",
         compact ? "mb-1.5" : "mb-3 mt-2",
       ].join(" ")}
     >
-      <div className="flex h-10 select-none items-center justify-between border-b border-[#3c424a] px-3">
+      <div className="markdown-code-header flex h-10 select-none items-center justify-between border-b px-3">
         <span
           data-testid="markdown-code-block-language"
-          className="select-none text-xs font-medium text-[#b8c0cc]"
+          className="markdown-code-language select-none text-xs font-medium"
         >
           {displayLanguage}
         </span>
@@ -224,7 +225,7 @@ function MarkdownCodeScrollArea({
       >
         <ScrollAreaPrimitive.Thumb
           data-testid="markdown-code-horizontal-scrollbar-thumb"
-          className="relative self-stretch rounded-full bg-[#aaaaaa] hover:bg-[#8c8c8c]"
+          className="markdown-code-scrollbar-thumb relative self-stretch rounded-full"
         />
       </ScrollAreaPrimitive.Scrollbar>
     </ScrollAreaPrimitive.Root>

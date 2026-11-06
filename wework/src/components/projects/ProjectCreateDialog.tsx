@@ -418,7 +418,7 @@ function ProjectCreateDialogContent({
               data-testid="project-device-unlink-button"
               disabled={submitting}
               onClick={unlinkActiveDevice}
-              className="h-8 shrink-0 rounded-md border border-red-500/25 px-2 text-xs font-medium text-red-500 hover:bg-red-500/10 disabled:opacity-50"
+              className="h-8 shrink-0 rounded-md border border-destructive/25 px-2 text-xs font-medium text-destructive hover:bg-destructive/10 disabled:opacity-50"
             >
               {t('workbench.project_unlink_device_folder', '解除关联')}
             </button>
@@ -428,7 +428,7 @@ function ProjectCreateDialogContent({
         {!canUseDevice && (
           <div
             data-testid={`project-device-unavailable-${activeDevice.device_id}`}
-            className="mt-3 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-sm leading-5 text-amber-700 dark:text-amber-300"
+            className="mt-3 rounded-lg border border-warning/25 bg-warning/10 px-3 py-2 text-sm leading-5 text-warning"
           >
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -443,7 +443,7 @@ function ProjectCreateDialogContent({
                         '设备恢复在线后可选择目录'
                       )}
                 </p>
-                <p className="mt-0.5 text-xs text-amber-700/80 dark:text-amber-300/80">
+                <p className="mt-0.5 text-xs text-warning/80">
                   {belowVersion
                     ? t('workbench.project_device_upgrade_detail', {
                         defaultValue: '当前 {{current}}，需要 {{required}} 或以上',
@@ -461,7 +461,7 @@ function ProjectCreateDialogContent({
                   data-testid={`upgrade-project-device-${activeDevice.device_id}`}
                   disabled={submitting || upgrading}
                   onClick={() => void onUpgradeDevice?.(activeDevice.device_id)}
-                  className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-amber-500/30 bg-background px-2 text-xs font-medium text-amber-700 hover:bg-amber-500/10 disabled:opacity-50 dark:text-amber-300"
+                  className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-warning/30 bg-background px-2 text-xs font-medium text-warning hover:bg-warning/10 disabled:opacity-50"
                 >
                   {upgrading ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -715,7 +715,7 @@ function ProjectCreateDialogContent({
         )}
 
         {projectCreateError && (
-          <p className="mt-4 rounded-md bg-red-500/10 px-3 py-2 text-sm text-red-500">
+          <p className="mt-4 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
             {projectCreateError}
           </p>
         )}

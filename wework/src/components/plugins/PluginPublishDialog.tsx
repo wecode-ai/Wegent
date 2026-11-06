@@ -183,7 +183,7 @@ function PluginPublicationRiskStep({
             type="checkbox"
             checked={riskDeclaration.externalNetworkAccess}
             data-testid="plugin-publication-risk-network"
-            className="mt-1 h-4 w-4 accent-neutral-900"
+            className="mt-1 h-4 w-4 accent-[rgb(var(--color-text-primary))]"
             onChange={event =>
               setRiskDeclaration(current => ({
                 ...current,
@@ -228,7 +228,7 @@ function PluginPublicationRiskStep({
                   type="checkbox"
                   checked={riskDeclaration[row.key]}
                   data-testid={testId}
-                  className="mt-1 h-4 w-4 accent-neutral-900"
+                  className="mt-1 h-4 w-4 accent-[rgb(var(--color-text-primary))]"
                   onChange={event =>
                     setRiskDeclaration(current => ({
                       ...current,
@@ -272,7 +272,7 @@ function PluginPublicationRiskStep({
               type="checkbox"
               checked={applicationAuthorization}
               data-testid="plugin-publication-risk-application"
-              className="mt-1 h-4 w-4 accent-neutral-900"
+              className="mt-1 h-4 w-4 accent-[rgb(var(--color-text-primary))]"
               onChange={event => setApplicationAuthorization(event.target.checked)}
             />
           </label>
@@ -308,7 +308,7 @@ function PluginPublicationRiskStep({
           className={cn(
             'w-full resize-none rounded-xl border bg-background px-3 py-2 text-sm outline-none',
             testNotesAreBlank
-              ? 'border-red-500/50 focus:border-red-500/70 focus:ring-2 focus:ring-red-500/15'
+              ? 'border-destructive/50 focus:border-destructive/70 focus:ring-2 focus:ring-destructive/15'
               : 'border-border keyboard:focus:border-focus/70 keyboard:focus:ring-2 keyboard:focus:ring-focus/15'
           )}
           placeholder={t(
@@ -320,7 +320,10 @@ function PluginPublicationRiskStep({
         <span
           id="plugin-publication-test-notes-help"
           data-testid="plugin-publication-test-notes-help"
-          className={cn('block text-xs', testNotesAreBlank ? 'text-red-600' : 'text-text-muted')}
+          className={cn(
+            'block text-xs',
+            testNotesAreBlank ? 'text-destructive' : 'text-text-muted'
+          )}
         >
           {testNotesAreBlank
             ? t('workbench.plugins_publication_test_notes_required', '测试说明不能为空')
@@ -474,7 +477,10 @@ export function PluginPublishDialog({
     : ''
 
   const errorContent = error ? (
-    <div role="alert" className="space-y-2 rounded-xl bg-red-500/5 px-3 py-2 text-sm text-red-600">
+    <div
+      role="alert"
+      className="space-y-2 rounded-xl bg-destructive/5 px-3 py-2 text-sm text-destructive"
+    >
       <p>{error}</p>
       {shareRecoveryLabel && onShareRecovery ? (
         <Button
@@ -546,7 +552,7 @@ export function PluginPublishDialog({
                     <div
                       className={cn(
                         'h-1 rounded-full',
-                        current || completed ? 'bg-blue-500' : 'bg-border/60'
+                        current || completed ? 'bg-focus' : 'bg-border/60'
                       )}
                     />
                     <p
@@ -598,8 +604,8 @@ export function PluginPublishDialog({
                     onChange={event => setReleaseNotes(event.target.value)}
                   />
                 </label>
-                <div className="flex gap-3 rounded-xl bg-blue-500/5 px-3 py-3 text-sm text-text-secondary">
-                  <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-blue-600" />
+                <div className="flex gap-3 rounded-xl bg-focus/5 px-3 py-3 text-sm text-text-secondary">
+                  <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-focus" />
                   <p>
                     {t(
                       'workbench.plugins_publication_snapshot_hint',
@@ -710,7 +716,7 @@ export function PluginPublishDialog({
                     type="checkbox"
                     checked={declarationAccepted}
                     data-testid="plugin-publication-declaration"
-                    className="mt-1 h-4 w-4 accent-neutral-900"
+                    className="mt-1 h-4 w-4 accent-[rgb(var(--color-text-primary))]"
                     onChange={event => setDeclarationAccepted(event.target.checked)}
                   />
                   <span className="text-sm leading-5 text-text-secondary">
@@ -852,7 +858,7 @@ export function PluginPublishDialog({
               className={cn(
                 'flex w-full items-start gap-3 rounded-xl border px-4 py-4 text-left transition-colors',
                 intent === 'restricted'
-                  ? 'border-blue-500/50 bg-blue-500/5'
+                  ? 'border-focus/50 bg-focus/5'
                   : 'border-border/30 hover:bg-surface'
               )}
               onClick={() => setIntent('restricted')}
@@ -882,7 +888,7 @@ export function PluginPublishDialog({
                 className={cn(
                   'mt-1 flex h-4 w-4 items-center justify-center rounded-full border',
                   intent === 'restricted'
-                    ? 'border-blue-500 bg-blue-500 text-white'
+                    ? 'border-text-primary bg-text-primary text-background'
                     : 'border-border'
                 )}
               >
@@ -900,7 +906,7 @@ export function PluginPublishDialog({
               className={cn(
                 'flex w-full items-start gap-3 rounded-xl border px-4 py-4 text-left transition-colors',
                 intent === 'enterprise'
-                  ? 'border-blue-500/50 bg-blue-500/5'
+                  ? 'border-focus/50 bg-focus/5'
                   : 'border-border/30 hover:bg-surface'
               )}
               onClick={() => setIntent('enterprise')}
@@ -939,7 +945,7 @@ export function PluginPublishDialog({
                 className={cn(
                   'mt-1 flex h-4 w-4 items-center justify-center rounded-full border',
                   intent === 'enterprise'
-                    ? 'border-blue-500 bg-blue-500 text-white'
+                    ? 'border-text-primary bg-text-primary text-background'
                     : 'border-border'
                 )}
               >
@@ -1036,7 +1042,7 @@ export function PluginPublishDialog({
                 type="checkbox"
                 checked={allowCopy}
                 data-testid="plugin-share-allow-copy"
-                className="h-4 w-4 accent-neutral-900"
+                className="h-4 w-4 accent-[rgb(var(--color-text-primary))]"
                 onChange={event => setAllowCopy(event.target.checked)}
               />
             </label>

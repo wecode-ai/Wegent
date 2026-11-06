@@ -80,7 +80,7 @@ export function ConfirmDialog({
             onClick={onConfirm}
             className={
               destructive
-                ? 'min-h-11 rounded-lg bg-red-600 px-3 text-sm text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-45 md:min-h-8'
+                ? 'min-h-11 rounded-lg bg-destructive px-3 text-sm text-destructive-contrast hover:bg-destructive/90 disabled:cursor-not-allowed disabled:opacity-45 md:min-h-8'
                 : 'min-h-11 rounded-lg bg-text-primary px-3 text-sm text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-45 md:min-h-8'
             }
           >
