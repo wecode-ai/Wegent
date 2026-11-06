@@ -5,6 +5,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { stopProcessGroup } from '../process-lifecycle.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { findRuntimeWorkTask } from '../modules/runtime-task-evidence.mjs'
 import { CLOUD_DEVICE_ID, REMOTE_DOCKER_DEVICE_ID, selectE2EModel } from '../modules/shared.mjs'
 import {
   assistantMessage,
@@ -38,7 +39,6 @@ function readRoles(home) {
 // remaining device, and recover through Cloud work when all devices are offline.
 export function createDesktopScenario({
   resultDir,
-  executorHome,
   uiTimeoutMs,
   workbenchReadyTimeoutMs,
   modelResponseTimeoutMs,
@@ -115,11 +115,10 @@ export function createDesktopScenario({
         remoteIndex.tasks[taskId]?.thread_id,
         'The real remote Executor must own the Codex conversation'
       )
-      const localIndex = JSON.parse(
-        await readFile(join(executorHome, 'runtime-work/index.json'), 'utf8')
-      )
+      const localTasks = await requestExecutor(control, 'runtime.tasks.list', {}, uiTimeoutMs)
+      assert.equal(localTasks.coverage.authorized_index_complete, true)
       assert.equal(
-        localIndex.tasks[taskId],
+        findRuntimeWorkTask(localTasks.workspaces, taskId),
         undefined,
         'The local Executor must not own this conversation'
       )
