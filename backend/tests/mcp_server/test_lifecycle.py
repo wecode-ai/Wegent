@@ -38,6 +38,7 @@ def _rpc(
     params: dict[str, object],
     token: str | None = None,
 ) -> dict[str, object]:
+    """Send one MCP JSON-RPC request and require a successful HTTP response."""
     headers = dict(MCP_HEADERS)
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -79,6 +80,7 @@ def test_mounted_wework_space_streamable_http_uses_parent_asgi_lifespan(
     test_task_token: str,
     monkeypatch,
 ) -> None:
+    """Mount MCP apps with their shared ASGI lifecycle and exercise transports."""
     project = _create_project(test_db, test_user)
     tool_session_factory = sessionmaker(bind=test_db.get_bind())
     monkeypatch.setattr(wework_space, "SessionLocal", tool_session_factory)
