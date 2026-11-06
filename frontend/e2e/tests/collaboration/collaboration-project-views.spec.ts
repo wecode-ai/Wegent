@@ -600,7 +600,13 @@ for (const groupBy of ['priority', 'assignee', 'tag'] as const) {
       await pendingSort.click()
       await page.getByTestId('cloud-board-sort-by-pending-manual').click()
       await pendingSort.click()
+      const beforeReorder = page.waitForResponse(
+        response =>
+          response.request().method() === 'PATCH' &&
+          response.url().endsWith(`/loop-items/${first.id}`)
+      )
       await dragBefore(page, 'pending', first.id, 'pending', outside.id)
+      expect((await beforeReorder).ok()).toBe(true)
       await assertSavedMove('pending', first.id)
       await expect
         .poll(async () => {
@@ -611,7 +617,13 @@ for (const groupBy of ['priority', 'assignee', 'tag'] as const) {
           )
         })
         .toBe(true)
+      const tailReorder = page.waitForResponse(
+        response =>
+          response.request().method() === 'PATCH' &&
+          response.url().endsWith(`/loop-items/${first.id}`)
+      )
       await dragBefore(page, 'pending', first.id, 'pending', null)
+      expect((await tailReorder).ok()).toBe(true)
       await assertSavedMove('pending', first.id)
       await expect
         .poll(async () => {

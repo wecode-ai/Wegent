@@ -6,6 +6,27 @@ import {
 } from "./managerActivity";
 
 describe("managerActivityPresentation", () => {
+  it.each([
+    ["zh-CN", "将「采集运行证据」分配给诊断智能体；将「独立复核结论」分配给我"],
+    [
+      "en",
+      "assigned “采集运行证据” to 诊断智能体; assigned “独立复核结论” to 我",
+    ],
+  ] as const)("describes assignments as sentences in %s", (locale, label) => {
+    expect(
+      managerActivityPresentation(
+        createCollaborationTranslator(locale),
+        {
+          dispatch_assignments: [
+            { task_title: "采集运行证据", agent_name: "诊断智能体" },
+            { task_title: "独立复核结论", human_user_name: "我" },
+          ],
+        },
+        "completed",
+      ),
+    ).toEqual({ label, planning: false });
+  });
+
   it("labels a completed manager decision as a review instead of task planning", () => {
     expect(
       managerActivityPresentation(
@@ -62,8 +83,20 @@ describe("managerActivityPresentation", () => {
   });
 });
 
-it('keeps internal stage identifiers out of the user-facing dispatch summary', () => {
-  const summary = managerActivityPresentation(createCollaborationTranslator('zh-CN'), { dispatch_assignments: [{ task_title: '完成体验设计', agent_name: '设计智能体', workflow_stage_id: 'stage-1' }] }, 'completed')
-  expect(summary.label).toContain('完成体验设计 → 设计智能体')
-  expect(summary.label).not.toContain('stage-1')
-})
+it("keeps internal stage identifiers out of the user-facing dispatch summary", () => {
+  const summary = managerActivityPresentation(
+    createCollaborationTranslator("zh-CN"),
+    {
+      dispatch_assignments: [
+        {
+          task_title: "完成体验设计",
+          agent_name: "设计智能体",
+          workflow_stage_id: "stage-1",
+        },
+      ],
+    },
+    "completed",
+  );
+  expect(summary.label).toContain("将「完成体验设计」分配给设计智能体");
+  expect(summary.label).not.toContain("stage-1");
+});

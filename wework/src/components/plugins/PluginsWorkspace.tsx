@@ -1,3 +1,4 @@
+import { ExpiredPluginInventoryRequest } from '@/api/local/codexInstalledCatalog'
 import { LOCAL_CONNECTOR_AUTH_CHANGED_EVENT } from '@/api/local/localConnectorAuthEvents'
 import {
   recordPluginInstallationAccepted,
@@ -4671,15 +4672,14 @@ export function PluginsWorkspace({
         trace('applying')
         applyLiveCodexCatalog(localState)
       })
-      .catch(() => {
-        if (isCurrent()) {
-          setPluginMarketplaceState(previous => ({ ...previous, isLoading: false }))
-          setPluginOperationNotice({
-            id: 'plugin-catalog-load',
-            kind: 'error',
-            message: t('workbench.plugins_load_failed', '加载插件失败'),
-          })
-        }
+      .catch(error => {
+        if (!isCurrent() || error instanceof ExpiredPluginInventoryRequest) return
+        setPluginMarketplaceState(previous => ({ ...previous, isLoading: false }))
+        setPluginOperationNotice({
+          id: 'plugin-catalog-load',
+          kind: 'error',
+          message: t('workbench.plugins_load_failed', '加载插件失败'),
+        })
       })
       .finally(() => {
         if (isActiveRequest()) setIsMarketplaceRefreshing(false)
