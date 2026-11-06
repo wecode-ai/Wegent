@@ -90,14 +90,20 @@ describe('ModelEditDialog model spec modes', () => {
     jest.restoreAllMocks()
   })
 
-  it('allows scrolling model options while keeping the surrounding dialog locked', async () => {
+  it('supports keyboard focus and scrolling model options while keeping the dialog locked', async () => {
     const user = userEvent.setup()
     const onClose = jest.fn()
     render(<ModelEditDialog open onClose={onClose} toast={jest.fn()} />)
     const dialog = screen.getByRole('dialog', { name: 'common:models.create_title' })
     const modelIdSelect = within(dialog).getByTestId('model-id-select')
-    await user.click(modelIdSelect)
+    for (let step = 0; step < 20 && document.activeElement !== modelIdSelect; step += 1) {
+      await user.tab()
+    }
+    expect(modelIdSelect).toHaveFocus()
+    await user.keyboard('{Enter}')
     const modelOption = await screen.findByText('gpt-4o (Recommended)', { exact: true })
+    const search = screen.getByPlaceholderText('common:models.search_model_id')
+    expect(search).toHaveFocus()
     const viewport = modelOption.parentElement!
 
     // JSDOM has no layout; supply only the viewport bounds read by real RemoveScroll.
@@ -129,9 +135,15 @@ describe('ModelEditDialog model spec modes', () => {
     fireEvent(dialog, outsideWheel)
     expect(outsideWheel.defaultPrevented).toBe(true)
 
-    const search = screen.getByPlaceholderText('common:models.search_model_id')
-    await user.type(search, 'gpt')
+    await user.keyboard('gpt')
+    expect(search).toHaveValue('gpt')
     expect(search).toHaveFocus()
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(modelIdSelect).toHaveFocus())
+    expect(modelIdSelect).toHaveAttribute('aria-expanded', 'false')
+
+    await user.keyboard(' ')
+    expect(await screen.findByPlaceholderText('common:models.search_model_id')).toHaveFocus()
     await user.keyboard('{Escape}')
     await waitFor(() => expect(modelIdSelect).toHaveFocus())
     expect(modelIdSelect).toHaveAttribute('aria-expanded', 'false')
