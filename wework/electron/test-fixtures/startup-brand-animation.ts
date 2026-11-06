@@ -181,14 +181,7 @@ export async function createAnimationFixture(
     }),
     addEventListener: vi.fn(),
     removeEventListener: vi.fn(),
-  } as {
-    createStartupBrandAnimation: (target: typeof canvas, status: typeof footer) => BrandAnimation
-    WEWORK_STARTUP_BRAND_CONTOURS: Array<{
-      name: string
-      hole: boolean
-      curves: Array<Array<[number, number]>>
-    }>
-  } & Record<string, unknown>
+  }
   const paths: FakePath2D[] = []
   const environment = {
     window,
@@ -213,7 +206,15 @@ export async function createAnimationFixture(
     },
   }
   runInNewContext(`${markScript}\n${animationScript}`, environment)
-  const animation = window.createStartupBrandAnimation(canvas, footer)
+  const runtime = window as typeof window & {
+    createStartupBrandAnimation: (target: typeof canvas, status: typeof footer) => BrandAnimation
+    WEWORK_STARTUP_BRAND_CONTOURS: Array<{
+      name: string
+      hole: boolean
+      curves: Array<Array<[number, number]>>
+    }>
+  }
+  const animation = runtime.createStartupBrandAnimation(canvas, footer)
   const step = (timestamp: number) => {
     now = timestamp
     const pending = [...frames.values()]
@@ -234,7 +235,7 @@ export async function createAnimationFixture(
     brand,
     canvas,
     footer,
-    contours: window.WEWORK_STARTUP_BRAND_CONTOURS,
+    contours: runtime.WEWORK_STARTUP_BRAND_CONTOURS,
     markScript,
     contexts,
     frames,

@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { basename, join } from 'node:path'
 import { describe, expect, test, vi } from 'vitest'
-import { createAnimationFixture } from './startup-brand-animation.fixture'
+import { createAnimationFixture } from '../../test-fixtures/startup-brand-animation'
 
 describe('startup brand animation lifecycle', () => {
   test.each([

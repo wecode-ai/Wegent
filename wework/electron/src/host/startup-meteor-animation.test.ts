@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { createAnimationFixture } from './startup-brand-animation.fixture'
+import { createAnimationFixture } from '../../test-fixtures/startup-brand-animation'
 
 describe('startup meteor formation', () => {
   test.each(['light', 'dark'] as const)(
