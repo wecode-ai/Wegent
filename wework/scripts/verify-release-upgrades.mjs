@@ -29,6 +29,7 @@ import {
   upgradeVerificationCheckpoint,
   upgradeIncludesFaultRecovery,
   UPGRADE_DIAGNOSTIC_CHECKPOINTS,
+  UPGRADE_SOURCE_DIAGNOSTICS,
   UPGRADE_SUITE_VERSION,
   rejectFailedReleaseCheckpoint,
 } from '../e2e/desktop/upgrade-suite.mjs'
@@ -61,10 +62,10 @@ const sourceAssets = process.env.WEWORK_UPGRADE_SOURCE_ASSETS || ''
 const sourceVersion = process.env.WEWORK_UPGRADE_SOURCE_VERSION || ''
 if (
   Boolean(sourceAssets) !== Boolean(sourceVersion) ||
-  (sourceAssets && diagnosticCheckpoint !== 'app-update-refresh') ||
-  (diagnosticCheckpoint === 'app-update-refresh' && !sourceAssets)
+  (sourceAssets && !UPGRADE_SOURCE_DIAGNOSTICS.includes(diagnosticCheckpoint)) ||
+  (UPGRADE_SOURCE_DIAGNOSTICS.includes(diagnosticCheckpoint) && !sourceAssets)
 )
-  throw new Error('The refresh diagnostic requires immutable source artifacts and their version')
+  throw new Error('The update diagnostic requires immutable source artifacts and their version')
 const releaseChannels = releaseVerificationChannels(
   channel,
   process.env.WEWORK_UPGRADE_VERIFY_CHANNEL || '',

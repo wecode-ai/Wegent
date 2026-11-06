@@ -1,0 +1,10 @@
+{
+  "order": 160001,
+  "scenario": "./scenarios/app-upgrade.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "release": {
+      "order": 1001
+    }
+  }
+}

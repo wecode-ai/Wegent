@@ -1,15 +1,5 @@
 import { execFile } from 'node:child_process'
-import {
-  copyFile,
-  cp,
-  mkdir,
-  mkdtemp,
-  readFile,
-  realpath,
-  rm,
-  stat,
-  writeFile,
-} from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { promisify } from 'node:util'
@@ -17,6 +7,7 @@ import { afterEach, expect, test } from 'vitest'
 import { prepareMacosReleaseInstallation } from './macos-release-installation.js'
 import { macosApplication, macosInstallationStage } from './macos-installation-paths.js'
 import { atomicReleaseWrite, ReleaseStore, type DesktopRelease } from './release-store.js'
+import { copyPhysicalRelease } from './physical-release-files.js'
 
 const execute = promisify(execFile)
 
@@ -63,7 +54,7 @@ if (process.platform === 'darwin') {
     const targetBundle = join(store.slot('target'), 'host/WeWork.app')
     await bundle(installed, '1.0.0')
     if (versioned) {
-      if (binding === 'bridge') await cp(installed, sourceBundle, { recursive: true })
+      if (binding === 'bridge') await copyPhysicalRelease(installed, sourceBundle)
       else await bundle(sourceBundle, '2.0.0')
     }
     await bundle(targetBundle, '3.0.0')

@@ -60,7 +60,7 @@ async function fixture(version = '0.6.3') {
 test.each(['0.6.3', '0.5.13-beta.8'])(
   'target preparation repairs the %s unstarted activation without restoring data',
   async version => {
-    const { desktop, store, source, target, environment } = await fixture(version)
+    const { desktop, store, source, environment } = await fixture(version)
     const activation = (await store.activation())!
     await recoverReleaseLayout(store, source.profileRoot, source.dataSchema, environment)
     expect(await releaseBridgeUserData(store, source.executable, join(desktop, 'user-data'))).toBe(
@@ -76,9 +76,7 @@ test.each(['0.6.3', '0.5.13-beta.8'])(
     expect(
       JSON.parse(await readFile(join(store.root, 'recovery', `${activation.token}.json`), 'utf8'))
     ).toEqual(activation)
-    expect(
-      JSON.parse(await readFile(join(store.root, 'rolled-back-versions.json'), 'utf8'))
-    ).toEqual([target.version])
+    expect(await store.rollbackHistory()).toEqual([])
     expect(await readFile(join(source.profileRoot, 'live-data'), 'utf8')).toBe('latest source data')
     // Repeating preparation reuses the same bridge and does not change source data.
     await recoverReleaseLayout(store, source.profileRoot, source.dataSchema, environment)

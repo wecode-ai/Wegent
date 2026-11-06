@@ -109,6 +109,24 @@ independently built regression packages.
 Compatible manual rollback switches directly to the retained release. Incompatible
 rollback still requires confirmation before restoring the pre-update snapshot.
 
+Startup-failure rollback records identify the actual activation attempt and target
+package hash. Update checks still return a verified path, with a retry question in
+the existing update dialog. Cancelling neither downloads nor clears the record;
+confirmation authorizes only the displayed target and failure record. Manual
+rollback has distinct copy, and legacy version-only records do not imply a startup
+failure. Cancelling an unstarted activation does not quarantine the target. A
+healthy startup clears that version's failure record. Confirmation never overrides
+server revocation or a missing verified upgrade edge.
+
+Cleanup resolves the complete live resource graph before deleting anything,
+including cross-slot profiles, component directory roots, symlinks, and Windows
+junctions. An unresolved live reference skips all deletion for that collection.
+Verified archives live in a separate cache, so plugin configuration changes only
+repeat preparation; reuse still checks size and SHA-256. Download, extraction,
+verification, preparation, and installation failures retain their structured
+stage in the UI. Legacy macOS installation discovery excludes applications on
+read-only volumes while retaining valid installations on writable external volumes.
+
 Historical signed updaters may copy the host and prepare a separate rollback
 profile first. Their verification still exercises real upgrades, rollbacks,
 and persisted data, and checks executable and `app.asar` hashes, physical slot

@@ -40,10 +40,12 @@ test('Windows certifies the core round trip while macOS retains complete recover
   for (const checkpoint of UPGRADE_CHECKPOINTS) assert.ok(DESKTOP_CHECKPOINTS.includes(checkpoint))
 })
 
-test('the refresh diagnostic uses the shared package runner without certifying an upgrade edge', () => {
-  assert.ok(DESKTOP_CHECKPOINTS.includes('app-update-refresh'))
-  assert.ok(UPGRADE_DIAGNOSTIC_CHECKPOINTS.includes('app-update-refresh'))
-  assert.equal(UPGRADE_PACKAGE_CHECKPOINTS.includes('app-update-refresh'), false)
+test('source diagnostics use the shared package runner without certifying upgrade edges', () => {
+  for (const checkpoint of ['app-update-refresh', 'app-update-retry']) {
+    assert.ok(DESKTOP_CHECKPOINTS.includes(checkpoint))
+    assert.ok(UPGRADE_DIAGNOSTIC_CHECKPOINTS.includes(checkpoint))
+    assert.equal(UPGRADE_PACKAGE_CHECKPOINTS.includes(checkpoint), false)
+  }
 })
 
 test('the existing CI profile checkpoint includes the original and model catalog regressions', () => {

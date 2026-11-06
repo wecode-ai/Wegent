@@ -2,6 +2,10 @@ import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { isElectronRuntime } from './runtime-environment'
 import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
 import { getPlatform } from './platform'
+import {
+  createWeworkUpdateFailureError,
+  WeworkUpdateRetryConfirmationError,
+} from './app-updater-errors'
 
 import type {
   WeworkUpdateChannel,
@@ -52,19 +56,27 @@ export async function checkForWeworkUpdate(
 }
 
 export async function downloadPendingWeworkUpdate(
-  onProgress?: (progress: WeworkUpdateDownloadProgress) => void
+  onProgress?: (progress: WeworkUpdateDownloadProgress) => void,
+  retryToken?: string
 ): Promise<WeworkUpdateInfo | null> {
   if (!pendingUpdate) {
     throw new Error('No pending Wework update is available.')
   }
 
+  const channel = pendingUpdate.channel
   try {
-    const channel = pendingUpdate.channel
-    await invokeDesktopHost<void>('appUpdate.download', { channel })
+    await invokeDesktopHost<void>('appUpdate.download', {
+      channel,
+      ...(retryToken ? { retryToken } : {}),
+    })
     const update = await waitForDownloadCompletion(onProgress)
     pendingUpdate = update ? { ...update, channel } : null
     return update
   } catch (error) {
+    if (error instanceof WeworkUpdateRetryConfirmationError) {
+      pendingUpdate = { ...error.update, channel }
+      throw error
+    }
     throw new Error(errorMessage(error), { cause: error })
   }
 }
@@ -97,7 +109,12 @@ async function waitForDownloadCompletion(
     const progress = await invokeDesktopHost<WeworkUpdateDownloadProgress>(
       'appUpdate.downloadProgress'
     )
-    if (progress.phase === 'failed') throw downloadFailureError(progress.failure)
+    if (progress.phase === 'failed') {
+      if (progress.failure?.code === 'UPDATE_RETRY_CONFIRMATION_REQUIRED' && progress.update) {
+        throw new WeworkUpdateRetryConfirmationError(progress.update)
+      }
+      throw createWeworkUpdateFailureError(progress.failure)
+    }
     onProgress?.(progress)
     if (progress.phase === 'upToDate') return null
     if (progress.phase === 'ready') {
@@ -106,12 +123,6 @@ async function waitForDownloadCompletion(
     }
     await delay(DOWNLOAD_PROGRESS_POLL_MS)
   }
-}
-
-function downloadFailureError(failure: WeworkUpdateDownloadProgress['failure']): Error {
-  const error = new Error(failure?.message || 'Wework update download failed')
-  if (failure?.code) Object.assign(error, { code: failure.code })
-  return error
 }
 
 function delay(ms: number): Promise<void> {

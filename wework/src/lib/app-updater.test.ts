@@ -4,6 +4,8 @@ import {
   downloadPendingWeworkUpdate,
   installDownloadedWeworkUpdate,
 } from './app-updater'
+import { WeworkUpdateRetryConfirmationError } from './app-updater-errors'
+import { createAppUpdateError } from '@/features/app-update/app-update-error'
 
 const desktopHostMocks = vi.hoisted(() => ({
   invoke: vi.fn(),
@@ -67,6 +69,104 @@ describe('Wework app updater', () => {
     await expect(downloadPendingWeworkUpdate()).rejects.toThrow(
       'Cannot download "https://example.com/private" status 404'
     )
+  })
+
+  test('retains a refreshed retry offer and sends authorization only for the confirmed attempt', async () => {
+    const checked = { currentVersion: '1.0.0', version: '1.1.0', readyToInstall: false }
+    const refreshed = {
+      ...checked,
+      version: '1.2.0',
+      retryConfirmation: { token: 'attempt-2', version: '1.2.0', reason: 'startup-failed' },
+    }
+    desktopHostMocks.invoke.mockImplementation(async capability => {
+      if (capability === 'appUpdate.check') return checked
+      if (capability === 'appUpdate.downloadProgress')
+        return {
+          phase: 'failed',
+          failure: {
+            message: 'Confirmation required',
+            code: 'UPDATE_RETRY_CONFIRMATION_REQUIRED',
+            stage: 'check',
+          },
+          update: refreshed,
+        }
+    })
+    await checkForWeworkUpdate('beta')
+    await expect(downloadPendingWeworkUpdate()).rejects.toMatchObject({
+      name: 'WeworkUpdateRetryConfirmationError',
+      update: refreshed,
+    })
+    expect(desktopHostMocks.invoke).toHaveBeenCalledWith('appUpdate.download', { channel: 'beta' })
+    desktopHostMocks.invoke.mockImplementation(async capability => {
+      if (capability === 'appUpdate.downloadProgress')
+        return {
+          phase: 'ready',
+          update: { ...refreshed, readyToInstall: true, retryConfirmation: undefined },
+        }
+    })
+
+    await downloadPendingWeworkUpdate(undefined, 'attempt-2')
+    await installDownloadedWeworkUpdate()
+    expect(desktopHostMocks.invoke).toHaveBeenCalledWith('appUpdate.download', {
+      channel: 'beta',
+      retryToken: 'attempt-2',
+    })
+    expect(desktopHostMocks.invoke).toHaveBeenCalledWith('appUpdate.install', { version: '1.2.0' })
+  })
+
+  test.each(['extract', 'verify', 'prepare'] as const)(
+    'preserves the host %s failure stage through polling and error wrapping',
+    async stage => {
+      desktopHostMocks.invoke.mockImplementation(async capability => {
+        if (capability === 'appUpdate.check')
+          return { currentVersion: '1.0.0', version: '1.1.0', readyToInstall: false }
+        if (capability === 'appUpdate.downloadProgress')
+          return {
+            phase: 'failed',
+            failure: {
+              message: 'Update could not finish',
+              stage,
+              code: 'UPDATE_PREPARATION_FAILED',
+              retryable: false,
+            },
+          }
+      })
+      await checkForWeworkUpdate('stable')
+      const error = await downloadPendingWeworkUpdate().catch(error => error)
+      expect(error).toBeInstanceOf(Error)
+      expect(error).not.toBeInstanceOf(WeworkUpdateRetryConfirmationError)
+      expect(createAppUpdateError(error, 'download')).toMatchObject({
+        stage,
+        code: 'UPDATE_PREPARATION_FAILED',
+        retryable: false,
+      })
+    }
+  )
+
+  test('returns the current ordinary offer when an earlier retry token is stale', async () => {
+    const replacement = { currentVersion: '1.0.0', version: '1.2.0', readyToInstall: false }
+    desktopHostMocks.invoke.mockImplementation(async capability => {
+      if (capability === 'appUpdate.check') return { ...replacement, version: '1.1.0' }
+      if (capability === 'appUpdate.downloadProgress')
+        return {
+          phase: 'failed',
+          update: replacement,
+          failure: {
+            message: 'Confirmation changed',
+            code: 'UPDATE_RETRY_CONFIRMATION_REQUIRED',
+            stage: 'check',
+          },
+        }
+    })
+    await checkForWeworkUpdate('stable')
+
+    await expect(downloadPendingWeworkUpdate(undefined, 'stale-attempt')).rejects.toMatchObject({
+      name: 'WeworkUpdateRetryConfirmationError',
+      update: replacement,
+    })
+    expect(
+      desktopHostMocks.invoke.mock.calls.filter(([name]) => name === 'appUpdate.download')
+    ).toHaveLength(1)
   })
 
   test('a failed same-channel recheck preserves the offer for a freshly resolved download', async () => {

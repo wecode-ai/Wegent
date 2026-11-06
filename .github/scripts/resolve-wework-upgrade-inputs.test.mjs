@@ -234,6 +234,42 @@ test("a refresh diagnostic resolves a separate immutable source without publishi
   );
 });
 
+test("retry diagnostics require an independent source and run on macOS and Windows", () => {
+  const value = fixture();
+  Object.assign(value.environment, {
+    VERIFICATION_CHECKPOINT: "app-update-retry",
+    VERIFICATION_SOURCE_RUN_ID: "124",
+  });
+  const execute = (command, args) => {
+    const result = value.execute(command, args);
+    return args.at(-1).includes("/runs/124/")
+      ? result.replaceAll("0.6.4-beta.4", "0.6.4-beta.3")
+      : result;
+  };
+  const resolved = resolveUpgradeInputs(value.environment, execute);
+  assert.equal(resolved.diagnostic_checkpoint, "app-update-retry");
+  assert.equal(resolved.source_run_id, "124");
+  assert.deepEqual(
+    JSON.parse(resolved.verification_matrix).include.map(
+      (item) => item.platform,
+    ),
+    ["macos", "windows"],
+  );
+  for (const change of [
+    { VERIFICATION_SOURCE_RUN_ID: "" },
+    { PUBLISH_RELEASE: "true" },
+    { VERIFICATION_CHECKPOINT: "all" },
+  ]) {
+    assert.throws(() =>
+      resolveUpgradeInputs({ ...value.environment, ...change }, execute),
+    );
+  }
+  assert.throws(
+    () => resolveUpgradeInputs(value.environment, value.execute),
+    /must be newer/,
+  );
+});
+
 test("rejects publication, invalid provenance, failed producers, and incomplete artifacts", () => {
   const cases = [
     (value) => {
