@@ -17,6 +17,7 @@ mod history;
 mod image_budget;
 mod long_context;
 mod passthrough_stream;
+mod progressive_tools;
 mod request_policy;
 pub mod retry_notifications;
 mod vision;
@@ -521,6 +522,14 @@ fn text_only_request(body: &[u8]) -> Result<Vec<u8>, HttpError> {
         object.insert("tools".to_owned(), json!([]));
         object.insert("tool_choice".to_owned(), json!("none"));
         object.remove("parallel_tool_calls");
+        if let Some(input) = object.get_mut("input").and_then(Value::as_array_mut) {
+            input.retain(|item| item["type"] != "additional_tools");
+            for item in input {
+                if item["type"] == "tool_search_output" {
+                    item["tools"] = json!([]);
+                }
+            }
+        }
     }
     Ok(serde_json::to_vec(&value).expect("JSON request serializes"))
 }
@@ -528,6 +537,21 @@ fn text_only_request(body: &[u8]) -> Result<Vec<u8>, HttpError> {
 #[cfg(test)]
 mod text_only_tests {
     use super::*;
+
+    #[test]
+    fn text_only_request_does_not_expose_lite_or_discovered_definitions() {
+        let body = json!({"input":[{"type":"additional_tools","tools":[{"type":"custom","name":"exec"}]},{"type":"tool_search_output","call_id":"search","tools":[{"type":"function","name":"private_tool"}]},{"type":"message","role":"user","content":"Predict text only"}]});
+        let sanitized: Value = serde_json::from_slice(
+            &text_only_request(&serde_json::to_vec(&body).unwrap()).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(sanitized["tools"], json!([]));
+        assert_eq!(sanitized["tool_choice"], "none");
+        assert_eq!(sanitized["input"][0]["tools"], json!([]));
+        assert_eq!(sanitized["input"][1]["content"], "Predict text only");
+        assert!(!sanitized.to_string().contains("private_tool"));
+        assert!(!sanitized.to_string().contains("additional_tools"));
+    }
 
     #[test]
     fn text_only_request_preserves_prompt_schema_and_model_without_tools() {

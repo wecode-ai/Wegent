@@ -168,6 +168,17 @@ pub(crate) fn responses_to_responses(
     let bridge_tool_search = !native_tool_search;
     let bridge_namespace_tools = !native_namespace_tools;
 
+    let materialize_lite = result.get("tools").is_none()
+        && (convert_custom_tools || bridge_tool_search || bridge_namespace_tools);
+    if materialize_lite {
+        result["tools"] = Value::Array(effective_tools.clone());
+        if let Some(input) = result.get_mut("input").and_then(Value::as_array_mut) {
+            input.retain(|item| {
+                item.get("type").and_then(Value::as_str) != Some("additional_tools")
+            });
+        }
+    }
+
     if let Some(tools) = result.get("tools").and_then(Value::as_array) {
         if !tools.is_empty() {
             let tools = if bridge_namespace_tools {

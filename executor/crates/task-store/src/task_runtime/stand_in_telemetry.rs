@@ -283,6 +283,7 @@ impl LocalTaskStore {
     }
 }
 
+/// Record consent-aware configuration changes without treating versions as user edits.
 pub(super) fn configuration_changes(
     connection: &Connection,
     user: i64,
@@ -351,8 +352,6 @@ pub(super) fn configuration_changes(
                 "workspace",
                 "collaboration",
                 "connections",
-                "agentId",
-                "agentProject",
             ]
             .iter()
             .any(|key| previous[*key] != role[*key])

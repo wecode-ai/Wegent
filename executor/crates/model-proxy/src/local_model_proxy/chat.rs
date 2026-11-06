@@ -19,6 +19,10 @@ use serde_json::{json, Map, Value};
 
 use crate::logging::log_executor_event;
 
+#[path = "tool_catalog.rs"]
+mod tool_catalog;
+use tool_catalog::effective_tools;
+
 const CUSTOM_TOOL_INPUT_FIELD: &str = "input";
 const TOOL_SEARCH_NAME: &str = "tool_search";
 pub(super) const BRIDGED_TOOL_SEARCH_NAME: &str = "search_deferred_tools";
@@ -771,7 +775,6 @@ use input_translation::json_string;
 use input_translation::split_tool_output;
 use input_translation::text_value;
 use input_translation::tool_image_output_notice;
-use request_translation::effective_tools;
 pub(super) use request_translation::responses_to_chat_for_anthropic;
 pub(super) use request_translation::responses_to_chat_with_model_hint;
 pub(super) use responses_events::chat_sse_to_responses;

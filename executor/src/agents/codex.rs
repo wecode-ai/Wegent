@@ -25,7 +25,7 @@ use tokio::{
 use crate::{
     agents::{
         runtime_capabilities,
-        task_identity::{task_identity_env, TASK_SCOPED_ENV_KEYS},
+        task_identity::{is_backend_task, task_identity_env, TASK_SCOPED_ENV_KEYS},
     },
     attachments::{process_prompt, AttachmentPromptProcessor, AttachmentRecord},
     image_preprocessor::prepare_image_bytes_for_model_with_short_edge_limit,
@@ -101,28 +101,6 @@ External tools may be available according to this thread's current permissions. 
 Sub-agents are off-limits in this side conversation. Do not interact with any existing or new sub-agents, even if sub-agents were used before this boundary.
 
 Do not modify files, source, git state, permissions, configuration, or workspace state unless the user explicitly asks for that mutation after this boundary. Do not request escalated permissions or broader sandbox access unless the user explicitly asks for a mutation that requires it. If the user explicitly requests a mutation, keep it minimal, local to the request, and avoid disrupting the main thread."#;
-pub(crate) const WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS: &str = r#"Wework 内置浏览器 routing:
-- "Wework" refers to Wegent's desktop workbench. Describe its browser as the Wework built-in browser.
-- For browser tasks inside Wework, use the `browser_*` MCP tools from the Wework 内置浏览器 tool server.
-- Build the workflow from the user's requested outcome. Run browser tools sequentially, complete every requested action, and never claim an action succeeded unless its matching tool succeeded.
-- Use `browser_open` for navigation and `browser_inspect` for structured page state. Inspect when targets or page understanding are needed, prefer numbered `index` targets, and reuse all known targets across adjacent actions. Inspect again only after an intentional page change, an unknown/stale target, or when the task needs a final-page summary.
-- An explicit click request requires `browser_click` or `browser_click_coordinates`; filling, pressing Enter, page auto-update, JavaScript submission, or a screenshot does not count as a click.
-- Use `browser_take_screenshot` only when the user explicitly requests a screenshot. Use `browser_evaluate` only for read-only diagnostics, never as a substitute for open/fill/click/press actions.
-- On a transient action error, inspect the existing page and retry that action once with a fresh target. Do not reopen a page that is still available.
-- Report progress in one short line when each requested subtask starts and finishes (for example "第 2/4 项完成：搜索结果已获取，开始第 3 项"), so the user can follow along and intervene in time. Keep progress lines brief. After all requested actions and any needed final inspect, give one concise result based on the final page.
-- If a page redirects to a login or sign-in page (the URL or page content shows authentication is required), stop all further browser actions immediately. Tell the user the page requires login, ask them to log in inside the Wework built-in browser panel, and wait for their confirmation. Do not continue executing later steps while logged out. After the user confirms they have logged in, resume from the step that failed: reopen the target page, retry that step, and then continue the remaining steps.
-- To upload a local file into a page upload control, use `browser_upload_file` with the absolute local file path; target the file input with a CSS selector, or omit the selector to use the first file input on the page. To clear browser data, use `browser_clear_data` with `kinds` chosen from cookies, cache, storage, and history; omitting `kinds` clears cookies, cache, and storage. Clearing cookies signs the user out of websites, so only clear what the user asked for.
-- Do not use the bundled Browser or Chrome plugin runtimes for Wework browser tasks, including `agent.browsers.get("iab")`, `agent.browsers.get("extension")`, `browser:control-in-app-browser`, or `chrome:control-chrome`.
-- Do not fall back to an external Chrome window unless the user explicitly asks for Chrome."#;
-pub(crate) const WEWORK_COMPUTER_USE_DEVELOPER_INSTRUCTIONS: &str = r#"Wework 电脑操控 routing:
-- Use the `wework_computer` MCP tools only when the user asks to control a desktop application outside the Wework built-in browser.
-- The `wework_computer` tools exist only in conversations started after computer use was enabled in Wework settings and its system permissions were granted.
-- If the user asks to control the desktop but `wework_computer` tools are unavailable, do NOT search for npm packages, run bash tricks, or improvise another mechanism. Tell the user to open Wework 设置 → 集成 → 电脑操控, enable computer use, and finish the macOS permission prompts (in development builds the requesting app may appear as "Electron"), then start a new conversation and retry.
-- Inspect the desktop or target application state before acting. Reuse observed coordinates or accessibility targets only while that state remains unchanged.
-- Treat clicks, typing, key presses, scrolling, dragging, clipboard writes, menu invocation, and window movement as mutating actions.
-- Stop immediately when the user takes control, cancels, or the observed application no longer matches the requested target.
-- Never enter passwords, authentication codes, payment details, or other secrets unless the user explicitly authorizes that exact action in the current conversation.
-- Do not use computer use for Wework built-in browser tasks; use the `browser_*` tools instead."#;
 pub(crate) const WEWORK_SPACE_DEVELOPER_INSTRUCTIONS: &str = r#"Wework 项目空间 routing:
 - Use `wework_space` MCP tools for Wework project spaces and Issues; discover deferred tools before reporting them unavailable.
 - For the current Issue, start with `get_current_context`; without a binding, use `list_spaces` and explicit target IDs. Follow the discovered tool instructions.
@@ -186,9 +164,8 @@ pub(crate) use effective_instructions::turn_context_for_test;
 #[path = "codex/effective_instructions_tests.rs"]
 mod effective_instructions_tests;
 mod github_cli;
-mod inline_visualization;
+mod host_skills;
 
-mod local_connector_auth;
 mod skill_config;
 pub(crate) use skill_config::reload_skill_configuration;
 
@@ -1942,6 +1919,8 @@ fn persistent_codex_app_server_launch_config(
     launch_config.config_overrides.extend([
         "features.goals=true".to_owned(),
         "features.code_mode_host=true".to_owned(),
+        "features.code_mode_only=true".to_owned(),
+        "features.code_mode_only_strict_3p_tools=true".to_owned(),
     ]);
     launch_config
         .config_overrides
@@ -4170,15 +4149,9 @@ fn codex_thread_developer_instructions(user_instructions: &str, task_instruction
         user_instructions.trim(),
         task_instructions.trim(),
         WEWORK_HUMAN_INPUT_INSTRUCTIONS,
-        WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS,
-        WEWORK_COMPUTER_USE_DEVELOPER_INSTRUCTIONS,
         WEWORK_SPACE_DEVELOPER_INSTRUCTIONS,
-        crate::workbench_control::INSTRUCTIONS,
-        local_connector_auth::INSTRUCTIONS,
-        github_cli::INSTRUCTIONS,
-        inline_visualization::INSTRUCTIONS,
+        host_skills::INSTRUCTIONS,
         external_work::SOURCE_CONTENT_INSTRUCTIONS,
-        crate::artifact_cli::AGENT_INSTRUCTIONS,
     ]
     .into_iter()
     .filter(|instructions| !instructions.is_empty())
@@ -4361,6 +4334,7 @@ struct CodexLaunchConfig {
     auth_mode: Option<CodexAuthMode>,
     env: BTreeMap<String, String>,
     user_developer_instructions: String,
+    runtime_policy_root: Option<PathBuf>,
     effort: Option<String>,
     summary: Option<String>,
     local_proxy_registration: Option<Arc<LocalProxyRegistration>>,
@@ -4509,6 +4483,7 @@ fn build_codex_launch_config_with_route_scope(
         .then_some(CodexAuthMode::LocalSubscription),
         thread_config,
         user_developer_instructions: read_wework_codex_user_instructions(&codex_home)?,
+        runtime_policy_root: Some(codex_home.join("runtime-policies")),
         effort: reasoning.effort.clone(),
         summary: reasoning.summary.clone(),
         env: runtime_proxy_env(&request.model_config),
@@ -4686,6 +4661,7 @@ fn build_codex_launch_config_with_route_scope(
         external_work::configure(request, &mut launch_config, &codex_home)?;
     }
 
+    effective_instructions::publish(request, &launch_config)?;
     Ok(launch_config)
 }
 
@@ -6928,7 +6904,10 @@ fn insert_codex_developer_instructions(
 ) {
     params.insert(
         "developerInstructions".to_owned(),
-        Value::String(effective_instructions::text(request, launch_config)),
+        Value::String(effective_instructions::native_instructions(
+            request,
+            launch_config,
+        )),
     );
 }
 

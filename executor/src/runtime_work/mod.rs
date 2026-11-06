@@ -44,7 +44,7 @@ mod transcript_search_annotations;
 mod transcript_search_projection;
 mod transcript_search_text;
 mod transcript_transport;
-mod transcript_work;
+pub(crate) mod transcript_work;
 mod util;
 pub(crate) use util::external_work_kind;
 pub(crate) use util::stand_in_requires_confirmation;

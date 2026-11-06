@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, statSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 
 // Cargo owns the dependency graph, including workspace members and external path crates.
@@ -30,6 +30,14 @@ export function rustSourceInputs(manifestPath) {
       if (existsSync(source)) directories.add(source)
       const buildScript = join(dirname(packageManifest), 'build.rs')
       if (existsSync(buildScript)) files.add(buildScript)
+      for (const input of pkg.metadata?.wegent?.['source-inputs'] ?? []) {
+        const path = resolve(dirname(packageManifest), input)
+        if (!existsSync(path)) {
+          throw new Error(`Missing Rust source input ${path} declared by ${packageManifest}`)
+        }
+        if (statSync(path).isDirectory()) directories.add(path)
+        else files.add(path)
+      }
       for (const dependency of pkg.dependencies) {
         if (dependency.path) queue.push(join(dependency.path, 'Cargo.toml'))
       }

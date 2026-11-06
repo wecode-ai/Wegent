@@ -79,6 +79,9 @@ async function run(withSharedLibraries = false) {
     await writeFile(join(executorDirectory, 'Cargo.lock'), '')
     await writeFile(sourcePath, 'fn main() {}\n')
     if (withSharedLibraries) {
+      await mkdir(join(directory, 'shared', 'assets'), { recursive: true })
+      await writeFile(join(directory, 'shared', 'assets', 'instructions.md'), 'Original guidance\n')
+      await writeFile(join(directory, 'shared', 'schema.json'), '{"version": 1}\n')
       for (const name of ['protocol', 'crypto']) {
         const library = join(directory, 'shared', 'rust', name)
         await mkdir(join(library, 'src'), { recursive: true })
@@ -110,7 +113,10 @@ if (process.argv[2] === 'metadata') {
   const dependencies = root === process.env.WEGENT_EXECUTOR_SOURCE_DIR
     ? ['protocol', 'crypto'].map(name => ({path: join(root, '..', 'shared', 'rust', name)})).filter(dep => existsSync(join(dep.path, 'Cargo.toml')))
     : []
-  console.log(JSON.stringify({workspace_root: root, packages: [{manifest_path: manifest, dependencies}]}))
+  const metadata = existsSync(join(root, '..', 'shared', 'assets'))
+    ? {wegent: {'source-inputs': ['../shared/assets', '../shared/schema.json']}}
+    : {}
+  console.log(JSON.stringify({workspace_root: root, packages: [{manifest_path: manifest, dependencies, metadata}]}))
   process.exit(0)
 }
 appendFileSync(process.env.TEST_BUILD_LOG, 'build\\n')
@@ -162,6 +168,17 @@ chmodSync(output, 0o755)
         expectedBuilds += 1
         assert.equal((await readFile(buildLog, 'utf8')).trim().split('\n').length, expectedBuilds)
       }
+      const assetReady = waitForOutput(watcher.stdout, /ready (\d+)\n/)
+      await writeFile(join(directory, 'shared', 'assets', 'instructions.md'), 'Updated guidance\n')
+      await assetReady
+      expectedBuilds += 1
+      assert.equal((await readFile(buildLog, 'utf8')).trim().split('\n').length, expectedBuilds)
+      const schemaReady = waitForOutput(watcher.stdout, /ready (\d+)\n/)
+      await writeFile(join(directory, 'shared', 'schema.json'), '{"version": 2}\n')
+      await schemaReady
+      expectedBuilds += 1
+      assert.equal((await readFile(buildLog, 'utf8')).trim().split('\n').length, expectedBuilds)
+      await writeFile(join(directory, 'shared', 'unrelated.md'), 'Not a build input\n')
       // Cargo output under the shared workspace must not create a rebuild loop.
       await mkdir(join(directory, 'shared', 'rust', 'target'), { recursive: true })
       await writeFile(join(directory, 'shared', 'rust', 'target', 'output'), 'build output')

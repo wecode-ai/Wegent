@@ -55,7 +55,7 @@ fn compatibility_catalogs_keep_tools_and_configured_windows_without_official_aut
         "wework-gpt-6-astra",
     ] {
         let model = models.iter().find(|model| model["slug"] == slug).unwrap();
-        assert_eq!(model["tool_mode"], Value::Null, "{slug}");
+        assert_eq!(model["tool_mode"], "code_mode_only", "{slug}");
         assert_eq!(model["use_responses_lite"], false, "{slug}");
         assert_eq!(model["max_context_window"], Value::Null, "{slug}");
         assert_eq!(model["shell_type"], "shell_command", "{slug}");
@@ -194,9 +194,9 @@ fn catalog_includes_verified_builtin_kimi_profiles() {
         .expect("Kimi K3 entry");
     assert!(k3["base_instructions"]
         .as_str()
-        .is_some_and(
-            |instructions| instructions.len() > 10_000 && !instructions.contains("based on GPT-5")
-        ));
+        .is_some_and(|instructions| instructions.len() < 4_000
+            && instructions.contains("ALL_TOOLS")
+            && instructions.contains("wework-runtime:coding")));
     assert_eq!(k3["context_window"], 1_048_576);
     assert_eq!(k3["auto_compact_token_limit"], Value::Null);
     assert_eq!(k3["default_reasoning_level"], "low");
@@ -609,4 +609,66 @@ fn invalidates_models_cache_and_accepts_missing_cache() {
     invalidate_models_cache_at(&path).expect("cache should be removed");
     assert!(!path.exists());
     invalidate_models_cache_at(&path).expect("missing cache should be accepted");
+}
+
+#[test]
+fn progressive_defaults_update_the_native_canonical_template_and_preserve_permissions() {
+    let permissions = json!({"danger_full_access":"native permission guidance"});
+    let mut catalog = json!({"models":[{"slug":"native-template-fixture", "base_instructions":"legacy provider prompt", "model_messages":{"instructions_template":"canonical provider prompt", "permissions":permissions.clone()}, "context_window":500000}]});
+    apply_progressive_base_instructions(&mut catalog);
+    let model = &catalog["models"][0];
+    assert_eq!(model["base_instructions"], default_base_instructions());
+    assert_eq!(
+        model["model_messages"]["instructions_template"],
+        model["base_instructions"]
+    );
+    assert_eq!(model["model_messages"]["permissions"], permissions);
+    assert_eq!(model["context_window"], 500000);
+}
+
+#[test]
+fn legacy_default_identity_preserves_user_edits() {
+    let workflow = include_str!("../../../../wework/resources/bundled-plugins/wework-personal/plugins/wework-runtime/skills/coding/workflow.md");
+    let legacy = workflow.replacen(
+        "You are Codex, a coding agent.",
+        "You are Codex, an agent based on GPT-5.",
+        1,
+    );
+    assert!(is_legacy_base_instructions(&legacy));
+    assert!(!is_legacy_base_instructions(&format!(
+        "{legacy}\nUser edit"
+    )));
+    assert!(!is_legacy_base_instructions(workflow));
+    assert!(!is_legacy_base_instructions(&default_base_instructions()));
+}
+
+#[test]
+fn legacy_instruction_edits_update_native_templates_without_dropping_other_messages() {
+    let mut model = json!({"base_instructions":"default", "model_messages":{"instructions_template":"default", "permissions":{"read_only":"native permission text"}}});
+    apply_override_fields(
+        &mut model,
+        &BTreeMap::from([("base_instructions".into(), json!("User instructions"))]),
+    );
+    assert_eq!(
+        model["model_messages"]["instructions_template"],
+        "User instructions"
+    );
+    assert_eq!(
+        model["model_messages"]["permissions"]["read_only"],
+        "native permission text"
+    );
+    apply_override_fields(
+        &mut model,
+        &BTreeMap::from([
+            ("base_instructions".into(), json!("legacy")),
+            (
+                "model_messages".into(),
+                json!({"instructions_template":"Explicit canonical instructions"}),
+            ),
+        ]),
+    );
+    assert_eq!(
+        model["model_messages"]["instructions_template"],
+        "Explicit canonical instructions"
+    );
 }

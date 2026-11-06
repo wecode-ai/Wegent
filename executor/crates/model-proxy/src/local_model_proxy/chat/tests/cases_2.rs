@@ -803,3 +803,45 @@ async fn responses_sse_to_responses_leaves_regular_function_calls_unchanged() {
     );
     assert!(!output.contains("custom_tool_call"), "output: {output}");
 }
+
+#[test]
+fn lite_namespaced_custom_exec_preserves_raw_input_in_all_adapters() {
+    let script = "text('中文');\ntext(42)";
+    let declaration = json!({"type":"namespace","name":"functions","tools":[{"type":"custom","name":"exec","description":"Native code execution"}]});
+    let body = json!({"input":[
+        {"type":"additional_tools","tools":[declaration]},
+        {"type":"custom_tool_call","namespace":"functions","name":"exec","call_id":"cell-1","input":script},
+        {"type":"custom_tool_call_output","call_id":"cell-1","output":"42"}
+    ]});
+    let (chat, context) = responses_to_chat(&body).unwrap();
+    assert!(context.is_custom("functions__exec"));
+    assert_eq!(
+        chat["tools"][0]["function"]["parameters"]["required"],
+        json!(["input"])
+    );
+    let arguments: Value = serde_json::from_str(
+        chat["messages"][0]["tool_calls"][0]["function"]["arguments"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(arguments["input"], script);
+    let (standard, context) = responses_to_responses(&body, true, false, false).unwrap();
+    assert!(context.is_custom("functions__exec"));
+    assert_eq!(standard["tools"][0]["name"], "functions__exec");
+    assert!(!standard["input"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| item["type"] == "additional_tools"));
+    let (native, _) = responses_to_responses(&body, false, true, true).unwrap();
+    assert_eq!(native["input"], body["input"]);
+    assert!(native.get("tools").is_none());
+    let (anthropic, _) =
+        crate::local_model_proxy::anthropic::responses_to_anthropic(&body).unwrap();
+    assert_eq!(
+        anthropic["tools"][0]["input_schema"]["required"],
+        json!(["input"])
+    );
+    assert!(anthropic["messages"].to_string().contains("中文"));
+}

@@ -462,7 +462,7 @@ classify_path() {
         select_target "core:collaboration-delivery-editing"
       fi
       ;;
-    executor/src/server/codex_model_catalog*.rs)
+    executor/crates/model-proxy/src/codex_model_catalog*.rs)
       select_target "core:codex-native-catalog"
       ;;
     executor/* | packages/chat-core/* | package.json | pnpm-lock.yaml | pnpm-workspace.yaml)

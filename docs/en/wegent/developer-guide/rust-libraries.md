@@ -86,6 +86,8 @@ Each Backend and Executor workspace includes its application and private librari
 
 Shared-source changes must select Backend, Executor, and their existing integration checks. Docker dependency and application stages both need shared sources. Dependency-image, runtime-image, and macOS/Windows build fingerprints include shared and application-private libraries. Update these inputs when adding local crates so cached binaries cannot omit source changes.
 
+Development reload follows local dependencies through Cargo metadata. Each owning package declares embedded non-Rust resources as relative paths in `package.metadata.wegent.source-inputs`. Directories and individual files participate in fingerprints and watching; missing declared paths are errors. Model proxy declares shared instructions and model assets, plugin packages declare the Creator/Auth SDKs, and the application declares the runtime task protocol schema. Test-only resources are not development binary inputs.
+
 ## Criteria for further extraction
 
 A library owns a complete state, transaction, or protocol lifetime rather than merely relocating files. It must not depend on application entrypoints, the complete AppState, or reverse calls into higher layers. Expose interfaces only for real cross-boundary consumers. Keep task, coordination, and queue updates on the same transactional connection in one library. Similar names do not justify merging protocols with different role rules, defaults, or error policies.

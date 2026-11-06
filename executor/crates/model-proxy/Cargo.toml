@@ -6,6 +6,9 @@ rust-version.workspace = true
 license = "Apache-2.0"
 description = "Local model routing, protocol translation, and model contexts"
 
+[package.metadata.wegent]
+source-inputs = ["../../../shared/assets"]
+
 [features]
 test-support = []
 

@@ -277,6 +277,10 @@ pub(super) async fn handle_for_token(
     } else {
         body.to_vec()
     };
+    let request_body = progressive_tools::prepare(&request_body).map_err(|error| HttpError {
+        status: StatusCode::BAD_REQUEST,
+        detail: format!("Invalid native Code Mode request: {error}"),
+    })?;
     let request_policy::PreparedRequest {
         body: request_body,
         conversion,

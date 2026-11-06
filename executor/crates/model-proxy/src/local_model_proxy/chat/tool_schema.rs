@@ -43,7 +43,11 @@ pub(super) fn build_tool_context(tools: &[Value], preserve_namespace: bool) -> T
                     ToolIdentity {
                         name: name.to_owned(),
                         namespace: Some(namespace.to_owned()),
-                        kind: ToolKind::Function,
+                        kind: if inner_tool.get("type").and_then(Value::as_str) == Some("custom") {
+                            ToolKind::Custom
+                        } else {
+                            ToolKind::Function
+                        },
                     },
                 );
             }

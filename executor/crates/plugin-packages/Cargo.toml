@@ -6,6 +6,9 @@ rust-version.workspace = true
 license = "Apache-2.0"
 description = "Capability package publication, discovery, configuration, and activation"
 
+[package.metadata.wegent]
+source-inputs = ["../../../sdk/plugin-creator", "../../../sdk/plugin-auth"]
+
 [dependencies]
 futures-util = "0.3"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }

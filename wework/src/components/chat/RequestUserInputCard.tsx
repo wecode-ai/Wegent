@@ -1,14 +1,30 @@
-import type { ComponentProps } from 'react'
+import { useContext, type ComponentProps } from 'react'
+import { MessageCircle } from 'lucide-react'
+import type { RuntimeTaskAddress } from '@/types/api'
+import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
+import {
+  canDiscussQuestion,
+  questionDiscussionKey,
+  questionDiscussionDrafts,
+  QuestionDiscussionStoreContext,
+  useQuestionDiscussion,
+} from '@/features/notifications/questionDiscussion'
+import { requestUserInputQuestionTarget } from '@/components/layout/requestUserInputOverlay'
 import type { RequestUserInputPayload } from '@wegent/chat-core/runtime'
 import {
   RequestUserInputCard as SharedRequestUserInputCard,
   RequestUserInputSummary as SharedRequestUserInputSummary,
+  useToolInteractionServices,
 } from '@wegent/collaboration/conversation'
 import { DesktopConversationTranslation } from './DesktopConversationTranslation'
 import { openExternalUrl } from '@/lib/external-links'
 import type { WorkbenchMessage } from '@/types/workbench'
 import { useTranslation } from '@/hooks/useTranslation'
-import { isRequestUserInputBlock, requestUserInputPayloadKey } from './requestUserInputMessages'
+import {
+  isRequestUserInputBlock,
+  requestUserInputPayloadKey,
+  isImplementationPlanRequestUserInput,
+} from './requestUserInputMessages'
 export type { RequestUserInputPayload } from '@wegent/chat-core/runtime'
 
 function nativeApprovalArguments(payload: RequestUserInputPayload, title: string) {
@@ -70,9 +86,32 @@ function nativeGitApproval(payload: RequestUserInputPayload) {
 
 export function RequestUserInputCard({
   messages,
+  source,
   ...props
-}: ComponentProps<typeof SharedRequestUserInputCard> & { messages?: WorkbenchMessage[] }) {
+}: ComponentProps<typeof SharedRequestUserInputCard> & {
+  messages?: WorkbenchMessage[]
+  source?: RuntimeTaskAddress | null
+}) {
   const { t } = useTranslation('common')
+  const pane = useContext(WorkbenchContext)
+  const discussion = useQuestionDiscussion()
+  const store = useContext(QuestionDiscussionStoreContext)
+  const toolServices = useToolInteractionServices()
+  const address =
+    source === undefined
+      ? (toolServices.requestUserInputSource ?? pane?.state.currentRuntimeTask)
+      : source
+  const discussionKey = address ? questionDiscussionKey(address, props.payload) : null
+  const draftAnswers =
+    store && address
+      ? {
+          ...props.draftAnswers,
+          ...questionDiscussionDrafts(store.sessions, address, props.payload),
+        }
+      : props.draftAnswers
+  const canDiscuss = Boolean(
+    discussion && address && props.onSubmit && canDiscussQuestion(props.payload)
+  )
   const question = props.payload.questions?.[0]
   const questionId = question?.id
   const callId = questionId?.startsWith('mcp_tool_call_approval_')
@@ -180,7 +219,50 @@ export function RequestUserInputCard({
     <DesktopConversationTranslation>
       <SharedRequestUserInputCard
         {...props}
-        payload={payload}
+        payload={
+          canDiscuss && !isImplementationPlanRequestUserInput(payload)
+            ? {
+                ...payload,
+                questions: payload.questions?.map(question => ({
+                  ...question,
+                  isOther: true,
+                  is_other: true,
+                })),
+              }
+            : payload
+        }
+        draftAnswers={draftAnswers}
+        onDraftAnswersChange={answers => {
+          props.onDraftAnswersChange?.(answers)
+          if (store && address && discussionKey && canDiscuss) {
+            for (const [questionId, answer] of Object.entries(answers)) {
+              const target = requestUserInputQuestionTarget(props.payload, questionId)
+              store.update(questionDiscussionKey(address, target.payload), current => ({
+                ...current,
+                source: address,
+                payload: current?.payload ?? target.payload,
+                address: current?.address ?? null,
+                answers: { ...current?.answers, [target.questionId]: answer },
+              }))
+            }
+          }
+        }}
+        additionalActions={
+          canDiscuss ? (
+            <button
+              type="button"
+              data-testid="request-user-input-discuss"
+              disabled={props.disabled}
+              onClick={() => discussion!.open(address!, props.payload)}
+              className="mr-auto inline-flex min-h-11 items-center gap-1.5 rounded-lg px-2 text-sm text-text-secondary hover:bg-muted keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus disabled:opacity-50 md:min-h-8"
+            >
+              <MessageCircle className="h-4 w-4" aria-hidden="true" />
+              {t('question_discussion.open')}
+            </button>
+          ) : (
+            props.additionalActions
+          )
+        }
         onOpenAuthorizationUrl={url => openExternalUrl(url, { target: 'system' })}
       />
     </DesktopConversationTranslation>
