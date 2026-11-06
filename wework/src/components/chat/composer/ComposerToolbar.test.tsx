@@ -69,6 +69,37 @@ describe('ComposerToolbar', () => {
     vi.unstubAllGlobals()
   })
 
+  it('places voice between the model and compact send action with regular text', () => {
+    render(
+      <ComposerToolbar
+        canSend={false}
+        models={[]}
+        selectedModel={null}
+        selectedModelOptions={{}}
+        isModelSelectionReady
+        onSelectModel={vi.fn()}
+        onSelectModelOption={vi.fn()}
+        onFileSelect={vi.fn()}
+        onQuickPhraseSelect={vi.fn()}
+        onInsertPluginReference={vi.fn()}
+        onSubmit={vi.fn()}
+      />
+    )
+
+    const toolbar = screen.getByTestId('composer-toolbar')
+    const actions = toolbar.querySelector('[data-composer-toolbar-group="actions"]')!
+    const voice = screen.getByTestId('test-voice-input')
+    expect(toolbar).toHaveClass('font-normal', 'min-h-7')
+    expect(actions).toContainElement(voice)
+    expect(screen.getByTestId('model-selector-button').compareDocumentPosition(voice)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
+    expect(voice.compareDocumentPosition(screen.getByTestId('send-message-button'))).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
+    expect(screen.getByTestId('send-message-button')).toHaveClass('h-7', 'w-7')
+  })
+
   it('renders the unavailable model selector after the catalog has returned models', () => {
     const unavailableModel = {
       name: 'codex-official-unavailable',

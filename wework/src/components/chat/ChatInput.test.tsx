@@ -205,6 +205,47 @@ describe('ChatInput', () => {
     delete window.__WEWORK_RUNTIME_CONFIG__
   })
 
+  test('integrates work-item context and goal into the composer without a separate card', () => {
+    const goal: RuntimeGoal = {
+      threadId: 'thread-1',
+      objective: '完成工作项验收',
+      status: 'active',
+      tokenBudget: null,
+      tokensUsed: 0,
+      timeUsedSeconds: 12,
+      createdAt: 1780000000000,
+      updatedAt: 1780000000000,
+    }
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        contextHeader={<div data-testid="work-item-context-summary">WORK-1 · 下一步：验收</div>}
+        goal={goal}
+      />
+    )
+
+    const rail = screen.getByTestId('composer-context-rail')
+    const composer = screen.getByTestId('project-chat-composer-form')
+    expect(rail).toContainElement(screen.getByTestId('work-item-context-summary'))
+    expect(rail).toContainElement(screen.getByTestId('goal-status-bar'))
+    expect(
+      screen
+        .getByTestId('goal-status-bar')
+        .compareDocumentPosition(screen.getByTestId('work-item-context-summary'))
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(composer).toContainElement(rail)
+    expect(rail).not.toHaveClass('border', 'bg-muted/45', 'divide-x')
+    expect(composer).not.toHaveAttribute('data-short-collapse', 'true')
+    expect(rail.compareDocumentPosition(screen.getByTestId('chat-message-input'))).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
+  })
+
   test('shows pending supervision as task context above the editor', () => {
     const onConfigureSupervisor = vi.fn()
     render(
