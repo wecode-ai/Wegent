@@ -29,6 +29,7 @@ jobs:
     outputs:
       platform_e2e: ${{ steps.classify.outputs.platform_e2e }}
       wework_desktop_e2e: ${{ steps.classify.outputs.wework_desktop_e2e }}
+      backend_delivery_image: ${{ steps.delivery.outputs.required }}
 
     steps:
       - name: Checkout code
@@ -54,6 +55,20 @@ jobs:
             .github/scripts/classify-ci-changes.sh < "$changed_files"
             .github/scripts/classify-wework-desktop-e2e.sh < "$changed_files"
           fi
+
+      - name: Classify Backend delivery image inputs
+        id: delivery
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          FORCE_ALL: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:all')) }}
+        run: |
+          if [[ "$FORCE_ALL" == "true" ]]; then
+            required="$(node .github/scripts/verify-backend-delivery-image.mjs --classify --force)"
+          else
+            required="$(git diff --name-only --no-renames "$BASE_SHA...$HEAD_SHA" | node .github/scripts/verify-backend-delivery-image.mjs --classify)"
+          fi
+          echo "required=$required" >> "$GITHUB_OUTPUT"
 
   build-frontend-e2e:
     name: Build Frontend E2E Artifact
@@ -157,10 +172,10 @@ jobs:
   build-backend-rs-e2e-runtime:
     name: Build Backend Rust E2E Runtime
     needs: changes
-    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (needs.changes.outputs.platform_e2e == 'true' || needs.changes.outputs.wework_desktop_e2e == 'true'))
+    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (needs.changes.outputs.platform_e2e == 'true' || needs.changes.outputs.wework_desktop_e2e == 'true' || needs.changes.outputs.backend_delivery_image == 'true'))
     # Match the Noble containers consuming these dynamically linked binaries.
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 60
     permissions:
       contents: read
       packages: write
@@ -290,6 +305,44 @@ jobs:
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
+
+      # Build the delivery Dockerfile once, not once per browser shard. Its
+      # CentOS layers cannot be replaced with the Noble E2E runtime above.
+      - name: Set up Backend delivery Buildx
+        if: needs.changes.outputs.backend_delivery_image == 'true'
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+
+      - name: Build Backend delivery image
+        if: needs.changes.outputs.backend_delivery_image == 'true'
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25
+        with:
+          context: .
+          file: docker/backend/Dockerfile
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: wegent-backend-delivery:${{ github.event.pull_request.head.sha || github.sha }}
+          labels: org.opencontainers.image.revision=${{ github.event.pull_request.head.sha || github.sha }}
+          cache-from: type=gha,scope=backend-delivery-amd64
+          cache-to: type=gha,scope=backend-delivery-amd64,mode=max
+
+      - name: Verify Backend delivery image
+        if: needs.changes.outputs.backend_delivery_image == 'true'
+        env:
+          REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          node .github/scripts/verify-backend-delivery-image.mjs \
+            --image "wegent-backend-delivery:$REVISION" --revision "$REVISION" \
+            --evidence .ci-artifacts/backend-delivery
+
+      - name: Upload Backend delivery evidence
+        if: always() && needs.changes.outputs.backend_delivery_image == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: backend-delivery-evidence
+          path: .ci-artifacts/backend-delivery/
+          if-no-files-found: warn
+          retention-days: 7
 
   build-executor-e2e-runtime:
     name: Prepare Executor E2E Runtime
@@ -2051,6 +2104,7 @@ jobs:
       - changes
       - build-frontend-e2e
       - build-executor-e2e-runtime
+      - build-backend-rs-e2e-runtime
       - e2e-tests
       - executor-e2e-tests
     if: always() && !cancelled() && (github.event_name != 'pull_request' || github.event.action != 'labeled' || github.event.label.name == 'ci:all')
@@ -2063,17 +2117,14 @@ jobs:
           CHANGES_RESULT: ${{ needs.changes.result }}
           FRONTEND_BUILD_RESULT: ${{ needs.build-frontend-e2e.result }}
           EXECUTOR_BUILD_RESULT: ${{ needs.build-executor-e2e-runtime.result }}
+          RUN_DELIVERY: ${{ needs.changes.outputs.backend_delivery_image == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
+          BACKEND_BUILD_RESULT: ${{ needs.build-backend-rs-e2e-runtime.result }}
           PLATFORM_E2E_RESULT: ${{ needs.e2e-tests.result }}
           EXECUTOR_E2E_RESULT: ${{ needs.executor-e2e-tests.result }}
         run: |
           if [[ "$CHANGES_RESULT" != "success" ]]; then
             echo "Platform E2E change detection completed with: $CHANGES_RESULT"
             exit 1
-          fi
-
-          if [[ "$RUN_E2E" != "true" ]]; then
-            echo "Platform E2E is not required for this pull request"
-            exit 0
           fi
 
           assert_success() {
@@ -2084,6 +2135,15 @@ jobs:
               exit 1
             fi
           }
+
+          if [[ "$RUN_DELIVERY" == "true" ]]; then
+            assert_success "$BACKEND_BUILD_RESULT" "Backend delivery image build and verification"
+          fi
+
+          if [[ "$RUN_E2E" != "true" ]]; then
+            echo "Platform E2E is not required for this pull request"
+            exit 0
+          fi
 
           assert_success "$FRONTEND_BUILD_RESULT" "Frontend E2E build"
           assert_success "$EXECUTOR_BUILD_RESULT" "Executor E2E build"
