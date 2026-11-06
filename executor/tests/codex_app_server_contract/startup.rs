@@ -169,7 +169,11 @@ fn shared_startup_timeout_retries_recovery_after_other_turn_finishes() {
                     running_client.run_turn_with_cancel(request, CodexAppServerTurnOptions::default())
                 )
             });
-            wait_for_fixture_events(&root.path().join("codex"), "ready", 2).await;
+            let fixture_binary = root.path().join("codex");
+            tokio::select! {
+                _ = wait_for_fixture_events(&fixture_binary, "ready", 2) => {}
+                settled = turns.join_next() => panic!("startup turns ended before fixture readiness: {settled:?}"),
+            }
             assert!(tokio::time::timeout(Duration::from_millis(1500), turns.join_next()).await.is_err());
             client.request("test/finish-first", json!({})).await.unwrap();
             let (first, stalled) = tokio::time::timeout(Duration::from_secs(5), turns.join_next()).await.unwrap().unwrap().unwrap();
@@ -180,6 +184,7 @@ fn shared_startup_timeout_retries_recovery_after_other_turn_finishes() {
 }
 
 const SERVER: &str = r#"#!/bin/sh
+printf '%s\n' boot >> "$0.events"
 thread_count=0
 turn_count=0
 delayed_id=
@@ -194,6 +199,7 @@ while IFS= read -r line; do
   request_id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
   case "$line" in
     *'"method":"initialize"'*)
+      printf '%s\n' initialized >> "$0.events"
       printf '{"id":%s,"result":{}}\n' "$request_id"
       ;;
     *'"method":"thread/start"'*)
