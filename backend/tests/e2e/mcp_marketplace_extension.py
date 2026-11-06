@@ -27,6 +27,7 @@ MCPProviderRegistry.register(
             base_url="http://127.0.0.1:9999",
             list_path="/e2e/mcp-marketplace/servers",
             method="GET",
+            auth_template="",
             timeout=10.0,
         ),
         mapping=ResponseMappingConfig(
