@@ -58,6 +58,7 @@ export interface ProjectComposerBodyProps {
   supervisorPending?: boolean
   onConfigureSupervisor?(): void
   inputLeadingContext?: ReactNode
+  contextHeader?: ReactNode
   onDismissInputLeadingContext?(): void
   hasToolbarLeadingContext?: boolean
   planModeActive?: boolean
@@ -109,6 +110,7 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
       supervisorPending,
       onConfigureSupervisor,
       inputLeadingContext,
+      contextHeader,
       onDismissInputLeadingContext,
       hasToolbarLeadingContext,
       planModeActive,
@@ -143,7 +145,7 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
       focus: () => editorRef.current?.focus(),
       getValue: getLiveValue,
       captureInsertion: () => editorRef.current?.captureInsertion?.() ?? null,
-      insertReference: (reference) => editorRef.current?.insertReference(reference),
+      insertReference: reference => editorRef.current?.insertReference(reference),
       setValue: (nextValue, cursor) => editorRef.current?.setValue(nextValue, cursor),
     }))
     useEffect(() => {
@@ -171,6 +173,7 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
       !disabledReason &&
       !supervisorPending &&
       !inputLeadingContext &&
+      !contextHeader &&
       !hasToolbarLeadingContext &&
       !planModeActive &&
       !goalDraftActive
@@ -223,17 +226,18 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
           presentation={presentation}
           embeddedInForm={embeddedInForm}
           workBar={workBar}
+          contextHeader={contextHeader}
           canCollapseInShortPane={canCollapse && !alwaysShowComposerToolbar}
           collapseWhenIdle={collapseWhenIdle && !alwaysShowComposerToolbar}
           isDraggingFiles={isDraggingFiles}
           formProps={{
             onDragEnter: handleDragOver,
             onDragOver: handleDragOver,
-            onDragLeave: (event) => {
+            onDragLeave: event => {
               if (!event.currentTarget.contains(event.relatedTarget as Node | null))
                 setDraggingFiles(false)
             },
-            onDrop: (event) => {
+            onDrop: event => {
               if (!acceptsDrop(event.dataTransfer)) return
               event.preventDefault()
               setDraggingFiles(false)
@@ -251,11 +255,11 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
                   if (references) appendText(references)
                   if (attachmentFiles.length) await onFileSelect(attachmentFiles)
                 })
-                .catch((cause) =>
+                .catch(cause =>
                   setTransferError(cause instanceof Error ? cause.message : String(cause))
                 )
             },
-            onSubmit: (event) => {
+            onSubmit: event => {
               event.preventDefault()
               submit(primaryComposerSubmitOptions(isStreaming, followUpBehavior))
             },

@@ -5351,7 +5351,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   <ScrollableMessageArea
                     mcpApp={mcpAppConversationServices}
                     searchActive={paneActive && paneVisible && workbenchVisible}
-                    workspacePath={composerWorkspaceTarget?.path}
                     imageTarget={remoteImageTarget}
                     messages={paneMessages}
                     turns={paneSession.turns}
