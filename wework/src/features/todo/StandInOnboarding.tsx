@@ -21,6 +21,7 @@ const examples = [
   { id: 'weekly_review', icon: History },
 ] as const
 
+/** Loads account-scoped setup and keeps optional usage examples separate from activation. */
 export function StandInOnboarding({
   api,
   userId,

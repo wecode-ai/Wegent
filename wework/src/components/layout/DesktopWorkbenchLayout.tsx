@@ -172,6 +172,7 @@ function routePathname(route: string): string {
   return searchIndex >= 0 ? route.slice(0, searchIndex) : route
 }
 
+/** Hosts task, board and personal stand-in surfaces using the active workspace route. */
 export function DesktopWorkbenchLayout({
   routeActive = true,
   surfaceKind,

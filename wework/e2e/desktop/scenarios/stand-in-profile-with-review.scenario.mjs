@@ -21,6 +21,7 @@ import {
 const USER = 9001
 const GUIDE = '[data-testid="stand-in-onboarding"]'
 
+/** Checks first-use connection setup separately from the existing help examples. */
 async function verifyGuideExamples(control, completed = false) {
   if (!completed) {
     await control.command('waitFor', '[data-testid="stand-in-connection-type-picker"]')

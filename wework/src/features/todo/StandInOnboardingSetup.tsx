@@ -29,6 +29,7 @@ export interface StandInOnboardingConfiguration {
   onReload(): void
 }
 
+/** Edits existing connections as drafts and enables the primary identity only on confirmation. */
 export function StandInOnboardingSetup({
   configuration,
   api,
@@ -78,6 +79,7 @@ export function StandInOnboardingSetup({
       else leave()
     },
   }))
+  /** Persist settings before completion, retaining the saved version for completion-only retries. */
   const finish = async () => {
     if (!baseline || !role || busy) return
     setBusy(true)

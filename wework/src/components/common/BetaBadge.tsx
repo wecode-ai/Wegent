@@ -1,5 +1,6 @@
 import { useTranslation } from '@/hooks/useTranslation'
 
+/** Shared feature-stage label for entry points available outside experimental settings. */
 export function BetaBadge({ testId }: { testId: string }) {
   const { t } = useTranslation('common')
   return (

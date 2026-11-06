@@ -356,6 +356,7 @@ function projectWorkspaceRoots(project: CollaborationProject): string[] {
     : []
 }
 
+/** Adapts a project to desktop services, separating public stand-in and experimental coordinator actions. */
 export function WeworkSharedProject({
   api,
   projectCatalogApi,
@@ -1352,6 +1353,7 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
   )
 }
 
+/** Binds project navigation and stand-in indicators to the current account and project catalog. */
 function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformProps) {
   const { i18n, t } = useTranslation('common')
   const standInProjects = useStandInProjects(props.services, props.devices, Number(props.user.id))

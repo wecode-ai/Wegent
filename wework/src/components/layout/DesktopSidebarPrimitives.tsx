@@ -39,6 +39,7 @@ interface DesktopSidebarNavItemProps {
   onPointerEnter?: () => void
 }
 
+/** Renders a sidebar destination with an optional non-interactive status badge. */
 export function DesktopSidebarNavItem({
   icon: Icon,
   iconElement,

@@ -6,6 +6,7 @@ import type { StandInExecutorApi } from '@/api/standIn'
 import type { PersonalStandInSettings } from '@/api/personalStandIn'
 import { StandInOnboarding } from './StandInOnboarding'
 
+/** Builds account-scoped setup fixtures while retaining the real connection editor. */
 function setup(completed = false, guideOpen = false, primary?: PersonalStandInSettings['primary']) {
   const settings: PersonalStandInSettings = {
     userId: 7,
