@@ -11,6 +11,11 @@
   --startup-activity: #8e96a6;
   --startup-border: rgb(255 255 255 / 14%);
   --startup-track: rgb(132 177 224 / 18%);
+  --startup-progress-start: #4a91ff;
+  --startup-progress-middle: #8ed6ff;
+  --startup-progress-end: #e2f6ff;
+  --startup-progress-shadow: drop-shadow(0 0 3px rgb(94 186 255 / 65%));
+  --startup-breathing-brightness: 1.14;
   --startup-button-background: #212121;
   --startup-primary-text: #181818;
   --startup-primary-background: #ececec;
@@ -26,6 +31,29 @@
     'Segoe UI',
     sans-serif;
   background: var(--startup-brand-background);
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --startup-brand-background: #fafafa;
+  --startup-text: #23272f;
+  --startup-muted: #586174;
+  --startup-activity: #657082;
+  --startup-border: rgb(35 39 47 / 14%);
+  --startup-track: rgb(39 88 150 / 18%);
+  --startup-progress-start: #5a9be8;
+  --startup-progress-middle: #2879d5;
+  --startup-progress-end: #1759b0;
+  --startup-progress-shadow: drop-shadow(0 1px 2px rgb(35 105 190 / 12%));
+  --startup-breathing-brightness: 1.035;
+  --startup-button-background: #fff;
+  --startup-primary-text: #fff;
+  --startup-primary-background: #25272b;
+  --startup-note-background: rgb(35 39 47 / 3%);
+  --startup-error: #b4232b;
+  --startup-error-background: #fff0f0;
+  --startup-error-border: #efb9be;
+  --startup-link: #1c64bb;
 }
 
 * {
@@ -190,7 +218,7 @@ body {
 
 .startup-progress-fill {
   stroke: url('#startup-progress-gradient');
-  filter: drop-shadow(0 0 3px rgb(94 186 255 / 65%));
+  filter: var(--startup-progress-shadow);
 }
 
 .is-failed .startup-progress-fill {
@@ -386,7 +414,7 @@ body {
 
   50% {
     transform: scale(1.018);
-    filter: brightness(1.14);
+    filter: brightness(var(--startup-breathing-brightness));
   }
 }
 

@@ -128,8 +128,8 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
     await waitFor(() =>
       expect(retrieverApis.getUnifiedRetrievers).toHaveBeenCalledWith('personal', undefined)
     )
-    fireEvent.keyDown(screen.getByTestId('group-selector'), { key: 'ArrowDown' })
-    fireEvent.click(await screen.findByRole('option', { name: 'Team' }))
+    fireEvent.click(screen.getByTestId('group-selector'))
+    fireEvent.click(await screen.findByTestId('create-space-option-team'))
 
     await waitFor(() =>
       expect(retrieverApis.getUnifiedRetrievers).toHaveBeenLastCalledWith('group', 'team-space')
@@ -144,8 +144,8 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
       )
     )
 
-    fireEvent.keyDown(screen.getByTestId('group-selector'), { key: 'ArrowDown' })
-    fireEvent.click(await screen.findByRole('option', { name: 'Personal' }))
+    fireEvent.click(screen.getByTestId('group-selector'))
+    fireEvent.click(await screen.findByTestId('create-space-option-personal'))
     await waitFor(() =>
       expect(retrieverApis.getUnifiedRetrievers).toHaveBeenLastCalledWith('personal', undefined)
     )

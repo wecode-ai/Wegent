@@ -157,3 +157,40 @@ describe('createCodeWiki', () => {
     expect(codeWikiApi.create).toHaveBeenCalledTimes(1)
   })
 })
+
+it('does not schedule an old creation in a new backend or login session', async () => {
+  const client = (await import('@/apis/client')).default
+  const scope = jest.spyOn(client, 'getCacheScope').mockReturnValue('backend-one:session-one')
+  let finish!: (value: never) => void
+  jest.mocked(codeWikiApi.create).mockImplementationOnce(
+    () =>
+      new Promise(resolve => {
+        finish = resolve
+      })
+  )
+  jest.mocked(codeWikiApi.configureScheduledUpdate).mockClear()
+  const pending = createCodeWiki({
+    namespace: 'default',
+    data: {
+      name: 'Old wiki',
+      kb_type: 'code_wiki',
+      source_type: 'github',
+      source_url: 'https://github.com/wecode-ai/Wegent.git',
+      execution_model_ref: { name: 'model', namespace: 'default', type: 'public' },
+      scheduled_update: {
+        enabled: true,
+        cadence: 'daily',
+        interval_days: 1,
+        weekday: 0,
+        hour: 9,
+        minute: 0,
+        timezone: 'Asia/Shanghai',
+      },
+    },
+  })
+  scope.mockReturnValue('backend-two:session-two')
+  finish({ id: 17, name: 'Old wiki' } as never)
+  await pending
+  expect(codeWikiApi.configureScheduledUpdate).not.toHaveBeenCalled()
+  scope.mockRestore()
+})

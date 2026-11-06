@@ -6,6 +6,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, OnceLock,
 };
+use std::time::Duration;
 
 use tokio::sync::Semaphore;
 
@@ -13,6 +14,13 @@ use crate::local::app_ipc::AppIpcError;
 
 pub(crate) const MAX_CONCURRENT_HISTORY_READS: usize = 2;
 pub(crate) const MAX_PENDING_HISTORY_READS: usize = MAX_CONCURRENT_HISTORY_READS + 8;
+
+fn busy_error() -> AppIpcError {
+    AppIpcError::new(
+        "runtime_read_busy",
+        "Transcript processing is busy; try again when the current read finishes",
+    )
+}
 
 #[derive(Clone)]
 pub(super) struct Cancellation(Arc<AtomicBool>);
@@ -86,9 +94,7 @@ where
     T: Send + 'static,
     F: FnOnce(&Cancellation) -> Result<T, AppIpcError> + Send + 'static,
 {
-    let permit = pending.try_acquire_owned().map_err(|_| {
-        AppIpcError::new("runtime_read_busy", "Transcript processing queue is full")
-    })?;
+    let permit = pending.try_acquire_owned().map_err(|_| busy_error())?;
     // Admission follows the worker after caller cancellation, just like its CPU slot.
     run_with_workers(workers, move |cancellation| {
         let _permit = permit;
@@ -102,12 +108,11 @@ where
     T: Send + 'static,
     F: FnOnce(&Cancellation) -> Result<T, AppIpcError> + Send + 'static,
 {
-    let permit = workers.acquire_owned().await.map_err(|_| {
-        AppIpcError::new(
-            "runtime_read_busy",
-            "Transcript processing admission is closed",
-        )
-    })?;
+    // Brief contention waits asynchronously; CPU concurrency and request deadlines stay bounded.
+    let permit = match tokio::time::timeout(Duration::from_secs(1), workers.acquire_owned()).await {
+        Ok(Ok(permit)) => permit,
+        _ => return Err(busy_error()),
+    };
     let cancellation = Cancellation::new();
     let _cancel = CancelOnDrop(cancellation.clone());
     tokio::task::spawn_blocking(move || {
@@ -123,6 +128,54 @@ where
 mod tests {
     use super::*;
     use std::sync::mpsc;
+
+    #[tokio::test(start_paused = true)]
+    async fn brief_contention_waits_for_capacity_without_blocking_control_requests() {
+        let workers = Arc::new(Semaphore::new(1));
+        let held = workers.clone().acquire_owned().await.unwrap();
+        let (entered, entered_rx) = tokio::sync::oneshot::channel();
+        let read = tokio::spawn(async move {
+            entered.send(()).unwrap();
+            run_with_workers(workers, |_| Ok("read once")).await
+        });
+        entered_rx.await.unwrap();
+        assert!(!read.is_finished());
+        assert_eq!(tokio::spawn(async { "ready" }).await.unwrap(), "ready");
+        drop(held);
+        assert_eq!(read.await.unwrap().unwrap(), "read once");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn cancellation_while_waiting_does_not_consume_worker_capacity() {
+        let workers = Arc::new(Semaphore::new(1));
+        let held = workers.clone().acquire_owned().await.unwrap();
+        let (entered, entered_rx) = tokio::sync::oneshot::channel();
+        let queued_workers = workers.clone();
+        let read = tokio::spawn(async move {
+            entered.send(()).unwrap();
+            run_with_workers(queued_workers, |_| Ok(())).await
+        });
+        entered_rx.await.unwrap();
+        assert!(!read.is_finished());
+        read.abort();
+        assert!(read.await.unwrap_err().is_cancelled());
+        drop(held);
+        assert_eq!(workers.available_permits(), 1);
+        assert!(run_with_workers(workers, |_| Ok(())).await.is_ok());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn prolonged_contention_still_returns_busy_without_admitting_more_work() {
+        let workers = Arc::new(Semaphore::new(1));
+        let _held = workers.clone().acquire_owned().await.unwrap();
+        let started = tokio::time::Instant::now();
+        let error = run_with_workers(workers.clone(), |_| Ok(()))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "runtime_read_busy");
+        assert_eq!(started.elapsed(), Duration::from_secs(1));
+        assert_eq!(workers.available_permits(), 0);
+    }
 
     #[tokio::test(flavor = "current_thread")]
     async fn worker_keeps_control_requests_responsive_and_cancels_without_releasing_admission() {
@@ -154,6 +207,26 @@ mod tests {
         );
         assert!(queued.await.is_ok());
         assert!(run_with_workers(workers, |_| Ok(())).await.is_ok());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn queued_deadline_releases_admission_without_starting_work() {
+        let workers = Arc::new(Semaphore::new(1));
+        let _held = workers.clone().acquire_owned().await.unwrap();
+        let pending = Arc::new(Semaphore::new(1));
+        let started = Arc::new(AtomicBool::new(false));
+        let worker_started = started.clone();
+        let error = run_with_admission(workers.clone(), pending.clone(), move |_| {
+            worker_started.store(true, Ordering::Release);
+            Ok(())
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(error.code, "runtime_read_busy");
+        assert_eq!(error.message, busy_error().message);
+        assert_eq!(pending.available_permits(), 1);
+        assert_eq!(workers.available_permits(), 0);
+        assert!(!started.load(Ordering::Acquire));
     }
 
     #[tokio::test(flavor = "current_thread")]
