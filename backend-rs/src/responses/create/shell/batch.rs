@@ -10,7 +10,7 @@ use brz_mysql::{FromMysqlRow, MysqlResult, MysqlRow, MysqlService};
 use brz_redis::Redis;
 
 use super::shell_named_public_statement;
-use crate::permissions::{EntityResolvers, user_groups};
+use crate::permissions::{EntityResolvers, active_namespace_names, user_groups_for_names};
 use crate::responses::create::resolution::{
     KIND_COLUMNS, KindRow, named_kind_rows, referenced_listing, referenced_listing_statement,
 };
@@ -116,9 +116,9 @@ async fn scoped_shells(
             row.get_at::<String>(1)?,
             row.get_at::<String>(2)?,
         );
-        resolved
-            .entry(key)
-            .or_insert(Arc::new(KindRow::from_mysql_row(row)?));
+        if let std::collections::hash_map::Entry::Vacant(entry) = resolved.entry(key) {
+            entry.insert(Arc::new(KindRow::from_mysql_row(row)?));
+        }
     }
     Ok(resolved)
 }
@@ -225,14 +225,19 @@ async fn resolve_groups<R: Redis>(
     refs: &[ShellKey],
     resolved: &mut ResolvedShells,
 ) -> MysqlResult<()> {
-    let mut groups_by_owner = HashMap::new();
-    let mut authorized = Vec::new();
-    for key in missing_keys(resolved, refs)
+    let missing: Vec<_> = missing_keys(resolved, refs)
         .into_iter()
         .filter(|key| key.2 != "default")
-    {
+        .collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    let names = active_namespace_names(mysql).await?;
+    let mut groups_by_owner = HashMap::new();
+    let mut authorized = Vec::new();
+    for key in missing {
         if let std::collections::hash_map::Entry::Vacant(entry) = groups_by_owner.entry(key.0) {
-            entry.insert(user_groups(mysql, resolvers, redis, key.0).await?);
+            entry.insert(user_groups_for_names(mysql, resolvers, redis, key.0, &names).await?);
         }
         if groups_by_owner[&key.0].contains(&key.2) {
             authorized.push(key);

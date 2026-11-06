@@ -281,7 +281,14 @@ async fn group_rows_are_shared_only_after_each_owners_authorization() {
                     if owner_only {
                         vec![]
                     } else {
-                        vec![scoped(0, "CODE-GO", "target", shell(3, 99, "target"))]
+                        let first = scoped(0, "CODE-GO", "target", shell(3, 99, "target"));
+                        let mut discarded = first.clone();
+                        discarded
+                            .iter_mut()
+                            .find(|(name, _)| *name == "kinds_json")
+                            .unwrap()
+                            .1 = text("invalid JSON must not be decoded for a discarded row");
+                        vec![first, discarded]
                     },
                 );
             }
@@ -337,6 +344,14 @@ async fn group_rows_are_shared_only_after_each_owners_authorization() {
         assert_eq!(resolved[&refs[0]].id, if authorized { 3 } else { 90 });
         assert!(Arc::ptr_eq(&resolved[&refs[0]], &resolved[&refs[1]]));
         let queries = fixture.queries();
+        assert_eq!(
+            queries
+                .iter()
+                .filter(|sql| sql.starts_with("SELECT namespace.name AS namespace_name"))
+                .count(),
+            1,
+            "active namespaces must be shared across owners"
+        );
         assert_eq!(
             queries.iter().filter(|sql| is_scoped(sql)).count(),
             if authorized { 2 } else { 1 }

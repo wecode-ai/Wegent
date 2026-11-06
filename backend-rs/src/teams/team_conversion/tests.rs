@@ -257,10 +257,10 @@ fn bot_summary_uses_public_model_fallback() {
 #[test]
 fn team_shell_lookup_preserves_context_identity_and_reference_namespace() {
     let timestamp = chrono::DateTime::from_timestamp(0, 0).unwrap().naive_utc();
-    for (team_namespace, lookup_owner) in [("default", 0), ("source-group", 74)] {
+    for (team_namespace, team_owner, bot_owner) in [("default", 0, 0), ("source-group", 75, 74)] {
         let bot = KindRow {
             kinds_id: 2,
-            kinds_user_id: lookup_owner,
+            kinds_user_id: bot_owner,
             kinds_name: "bot".to_owned(),
             kinds_namespace: "source-group".to_owned(),
             kinds_json: stored_json(json!({"spec": {
@@ -269,7 +269,7 @@ fn team_shell_lookup_preserves_context_identity_and_reference_namespace() {
         };
         let team = TeamRow {
             team_id: 1,
-            team_user_id: lookup_owner,
+            team_user_id: team_owner,
             team_name: "agent".to_owned(),
             team_namespace: team_namespace.to_owned(),
             team_json: stored_json(json!({"spec": {"members": [{
@@ -278,18 +278,18 @@ fn team_shell_lookup_preserves_context_identity_and_reference_namespace() {
             team_created_at: timestamp,
             team_updated_at: timestamp,
             share_status: 0,
-            context_user_id: lookup_owner,
+            context_user_id: team_owner,
             restricted_guest_access: 0,
             access_source: "native".to_owned(),
         };
         let key = (
-            lookup_owner,
+            bot_owner,
             "code-go".to_owned(),
             "reference-group".to_owned(),
         );
         let preloaded = Preloaded {
             bots: HashMap::from([(
-                (lookup_owner, "bot".to_owned(), "source-group".to_owned()),
+                (bot_owner, "bot".to_owned(), "source-group".to_owned()),
                 bot.clone(),
             )]),
             group_bots: HashMap::from([(

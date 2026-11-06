@@ -22,7 +22,7 @@ use super::models::{
 };
 use super::repository::{ContextRow, SubtaskRow};
 use crate::remote_workspace_tree::kinds::KindStore;
-use crate::responses::create::shell::resolve_shell;
+use crate::responses::create::shell::resolve_shells;
 use crate::state::AppState;
 
 /// The public user projection (`model_to_dict(User)` with datetimes rendered
@@ -365,7 +365,7 @@ pub(crate) async fn build_team_response(
         .unwrap_or_default();
     let is_group_resource = !team.namespace.is_empty() && team.namespace != "default";
 
-    let mut bots = Vec::new();
+    let mut members_with_bots = Vec::new();
     if let Some(members) = spec.members.as_ref() {
         for member in members.iter().filter_map(|member| member.as_ref()) {
             let Some(bot_ref) = member.bot_ref.as_ref() else {
@@ -389,17 +389,41 @@ pub(crate) async fn build_team_response(
             } else {
                 user_id
             };
-            let bot_summary = build_bot_summary(state, kinds, &bot, summary_user_id).await?;
-            bots.push(TeamBotResponse {
-                bot_id: bot.id,
-                bot_prompt: member.prompt.clone().unwrap_or_default(),
-                role: member.role.clone().unwrap_or_default(),
-                require_confirmation: member.require_confirmation.unwrap_or(false),
-                context_passing: normalize_context_passing(member.context_passing.as_deref())
-                    .to_owned(),
-                bot: bot_summary,
-            });
+            members_with_bots.push((member, bot, summary_user_id));
         }
+    }
+    let shell_refs: Vec<_> = members_with_bots
+        .iter()
+        .filter_map(|(_, bot, owner)| bot_shell_key(bot, *owner))
+        .collect();
+    let shells = resolve_shells(
+        &state.mysql,
+        &state.entity_resolvers,
+        state.redis.as_ref(),
+        &shell_refs,
+    )
+    .await
+    .map_err(|error| {
+        tracing::warn!(%error, "[task_detail] shell query failed");
+        crate::remote_workspace_tree::error::ApiError::internal("kind query failed")
+    })?;
+    let mut bots = Vec::new();
+    for (member, bot, owner) in members_with_bots {
+        let shell_type = bot_shell_key(&bot, owner)
+            .and_then(|key| shells.get(&key))
+            .and_then(|shell| shell_type_of(&shell.json.0))
+            .unwrap_or_default()
+            .to_owned();
+        let bot_summary = build_bot_summary(kinds, &bot, owner, shell_type).await?;
+        bots.push(TeamBotResponse {
+            bot_id: bot.id,
+            bot_prompt: member.prompt.clone().unwrap_or_default(),
+            role: member.role.clone().unwrap_or_default(),
+            require_confirmation: member.require_confirmation.unwrap_or(false),
+            context_passing: normalize_context_passing(member.context_passing.as_deref())
+                .to_owned(),
+            bot: bot_summary,
+        });
     }
     let agent_type = bots
         .first()
@@ -524,40 +548,25 @@ fn public_model_admitted(model_json: &Value, user_name: Option<&str>) -> bool {
     )
 }
 
-/// `_get_bot_summary`.
-pub(crate) async fn build_bot_summary(
-    state: &AppState,
+/// Preserve the caller's lookup identity and the Bot's reference namespace.
+fn bot_shell_key(
+    bot: &crate::remote_workspace_tree::kinds::KindRecord,
+    owner: i64,
+) -> Option<(i64, String, String)> {
+    let crd = crate::crd::CrdDocument::project(&bot.json.0);
+    let (name, namespace) = crd.spec.as_ref()?.shell_ref.as_ref()?.nonempty_parts()?;
+    Some((owner, name, namespace))
+}
+
+/// `_get_bot_summary`, consuming the team's already-resolved Shell type.
+async fn build_bot_summary(
     kinds: &KindStore<'_, brz_mysql::MysqlService, impl brz_redis::Redis>,
     bot: &crate::remote_workspace_tree::kinds::KindRecord,
     user_id: i64,
+    shell_type: String,
 ) -> Result<BotSummaryResponse, crate::remote_workspace_tree::error::ApiError> {
     let bot_crd = crate::crd::CrdDocument::project(&bot.json.0);
     let bot_spec = bot_crd.spec.as_ref();
-
-    let shell_type = match bot_spec
-        .and_then(|spec| spec.shell_ref.as_ref())
-        .and_then(|reference| reference.nonempty_parts())
-    {
-        Some((name, namespace)) => {
-            let shell = resolve_shell(
-                &state.mysql,
-                &state.entity_resolvers,
-                state.redis.as_ref(),
-                user_id,
-                &name,
-                &namespace,
-            )
-            .await
-            .map_err(|error| {
-                tracing::warn!(%error, "[task_detail] shell query failed");
-                crate::remote_workspace_tree::error::ApiError::internal("kind query failed")
-            })?;
-            shell
-                .and_then(|shell| shell_type_of(&shell.json.0).map(str::to_owned))
-                .unwrap_or_default()
-        }
-        None => String::new(),
-    };
 
     let mut agent_config = serde_json::Map::new();
     if let Some((name, namespace)) = bot_spec

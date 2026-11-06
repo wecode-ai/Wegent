@@ -7,6 +7,81 @@
 
 use super::*;
 
+/// Repeated members consume one Shell lookup under the group Bot's owner.
+#[tokio::test]
+async fn team_response_shares_shell_lookups_across_members() {
+    use crate::remote_workspace_tree::kinds::KindRecord;
+    use crate::sql_test_support::mysql_rows::{MysqlRows, Row, Value as SqlValue};
+
+    let fixture = MysqlRows::start_results(|sql| {
+        let shell = sql.starts_with("SELECT anon_1.owner_id");
+        assert!(shell || sql.contains("FROM kinds"), "{sql}");
+        let mut row: Row = vec![
+            ("kinds_id", SqlValue::I64(if shell { 3 } else { 2 })),
+            ("kinds_user_id", SqlValue::I64(74)),
+            ("kinds_kind", SqlValue::Text(if shell { "Shell" } else { "Bot" }.into())),
+            ("kinds_name", SqlValue::Text(if shell { "custom-shell" } else { "bot" }.into())),
+            ("kinds_namespace", SqlValue::Text("source-group".into())),
+            ("kinds_json", SqlValue::Text(if shell {
+                json!({"spec": {"shellType": "ClaudeCode"}}).to_string()
+            } else {
+                json!({"spec": {"shellRef": {"name": "custom-shell", "namespace": "source-group"}}}).to_string()
+            })),
+            ("kinds_is_active", SqlValue::I8(1)),
+            ("kinds_created_at", SqlValue::DateTime),
+            ("kinds_updated_at", SqlValue::DateTime),
+        ];
+        if shell {
+            let mut requested = vec![
+                ("requested_owner_id", SqlValue::I64(74)),
+                ("requested_name", SqlValue::Text("custom-shell".into())),
+                ("requested_namespace", SqlValue::Text("source-group".into())),
+            ];
+            requested.append(&mut row);
+            row = requested;
+        }
+        (row.clone(), vec![row])
+    }).await;
+    let app = crate::app_test_support::app(fixture.mysql.clone());
+    let timestamp = chrono::DateTime::from_timestamp(0, 0).unwrap().naive_utc();
+    let team = KindRecord {
+        id: 1,
+        user_id: 75,
+        kind: "Team".into(),
+        name: "agent".into(),
+        namespace: "source-group".into(),
+        json: brz_mysql::Json(json!({"spec": {"members": [
+            {"botRef": {"name": "bot", "namespace": "source-group"}, "prompt": "first"},
+            {"botRef": {"name": "bot", "namespace": "source-group"}, "prompt": "second"}
+        ]}})),
+        is_active: 1,
+        created_at: timestamp,
+        updated_at: timestamp,
+    };
+    let kinds = KindStore {
+        mysql: &fixture.mysql,
+        redis: app.redis.as_ref(),
+    };
+
+    let response = build_team_response(&app, &kinds, &team, 76).await.unwrap();
+    let rendered = serde_json::to_value(response).unwrap();
+
+    assert_eq!(rendered["agent_type"], "claude");
+    assert_eq!(rendered["bots"].as_array().unwrap().len(), 2);
+    for (index, prompt) in ["first", "second"].iter().enumerate() {
+        assert_eq!(rendered["bots"][index]["bot_prompt"], *prompt);
+        assert_eq!(rendered["bots"][index]["bot"]["shell_type"], "ClaudeCode");
+    }
+    assert_eq!(
+        fixture
+            .queries()
+            .iter()
+            .filter(|sql| sql.starts_with("SELECT anon_1.owner_id"))
+            .count(),
+        1
+    );
+}
+
 /// The stored team placeholder (`model_dump(exclude_none=True)`) has no
 /// entry for an unset locale; the response model re-serializes every
 /// locale and device override, so they become explicit nulls.

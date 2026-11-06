@@ -16,6 +16,7 @@ pub use group_roles::{
     GroupRoleEntry, accessible_namespace_ids, effective_roles_in_groups,
     iter_user_groups_with_roles, list_resources_by_entity_match, organization_names, user_groups,
 };
+pub(crate) use group_roles::{active_namespace_names, user_groups_for_names};
 pub use query::EntityQuery;
 
 /// The operation requesting an entity match. Providers may refresh identities
