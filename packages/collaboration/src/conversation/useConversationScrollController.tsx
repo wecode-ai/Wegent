@@ -184,7 +184,7 @@ export function useConversationScrollController({
     commandRef.current = false
     lastScrollPositionRef.current = viewport.scrollTop
   }, [])
-  const save = useCallback(() => {
+  const save = useCallback((measuredDistanceFromBottomPx?: number) => {
     const viewport = activeScrollRefRef.current.current
     if (!viewport || messages.length === 0 || latestRef.current.autoScrollSuspended) return
     const snapshot: ConversationScrollSnapshot =
@@ -204,7 +204,10 @@ export function useConversationScrollController({
     }
     lastSnapshotRef.current = { key: currentScrollKey, snapshot }
     if (currentScrollKey) setConversationScrollSnapshot(currentScrollKey, snapshot)
-    setShowScrollButton(snapshot.distanceFromBottomPx > BOTTOM_THRESHOLD)
+    // Follow steps already measured the range and read back their applied offset.
+    setShowScrollButton(
+      (measuredDistanceFromBottomPx ?? getDistanceFromBottom(viewport)) > BOTTOM_THRESHOLD
+    )
   }, [currentScrollKey, messages.length])
   const follow = useCallback(
     (smooth = false) => {
@@ -217,17 +220,20 @@ export function useConversationScrollController({
         return
       const viewport = activeScrollRefRef.current.current
       if (!viewport) return
-      if (motionRef.current.position === null && getDistanceFromBottom(viewport) < 1) {
+      const distanceFromBottom =
+        motionRef.current.position === null ? getDistanceFromBottom(viewport) : null
+      if (distanceFromBottom !== null && distanceFromBottom < 1) {
         cancelMotion()
-        save()
+        save(distanceFromBottom)
         return
       }
       const animate =
         smooth || followBehaviorRef.current === 'smooth' || motionRef.current.frame !== null
       if (!animate || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
         cancelMotion()
-        writeOffset(Math.max(0, viewport.scrollHeight - viewport.clientHeight))
-        save()
+        const end = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
+        writeOffset(end)
+        save(Math.max(0, end - (lastScrollPositionRef.current ?? viewport.scrollTop)))
         return
       }
       if (motionRef.current.frame !== null) return
@@ -263,7 +269,7 @@ export function useConversationScrollController({
         if (lag <= STREAM_FOLLOW_SETTLE_PX) {
           writeOffset(end)
           cancelMotion()
-          save()
+          save(Math.max(0, end - (lastScrollPositionRef.current ?? viewport.scrollTop)))
           return
         }
         const step = computeStreamingScrollStep(

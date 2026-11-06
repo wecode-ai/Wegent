@@ -8,7 +8,7 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-test('saves pinned follow intent without forcing another viewport layout', () => {
+test('saves actual follow position without remeasuring geometry after a scroll write', () => {
   const viewport = document.createElement('div')
   document.body.append(viewport)
   Object.defineProperties(viewport, {
@@ -34,12 +34,24 @@ test('saves pinned follow intent without forcing another viewport layout', () =>
       ],
     })
   )
-  const readHeight = vi.fn(() => 1400)
-  Object.defineProperty(viewport, 'scrollHeight', { get: readHeight, configurable: true })
+  let wroteOffset = false
+  const measureAfterWrite = vi.fn()
+  Object.defineProperty(viewport, 'scrollHeight', {
+    get: () => {
+      if (wroteOffset) measureAfterWrite()
+      return 1400
+    },
+    configurable: true,
+  })
+  viewport.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+    viewport.scrollTop = Number(top)
+    wroteOffset = true
+  })
 
-  fireEvent(viewport, new Event('scrollend'))
+  act(() => current.result.current.handleContentLayoutChange())
 
-  expect(readHeight).not.toHaveBeenCalled()
+  expect(wroteOffset).toBe(true)
+  expect(measureAfterWrite).not.toHaveBeenCalled()
   expect(getConversationScrollSnapshot(conversationKey)).toEqual({
     pinnedToBottom: true,
     distanceFromBottomPx: 0,
