@@ -118,6 +118,15 @@ class InvalidToolMessageSequenceError(ValueError):
     """
 
 
+def _recursion_limit_for(max_iterations: int) -> int:
+    """LangGraph super-steps for max_iterations model rounds.
+
+    Every round is agent -> tools plus the pre_model_hook node that
+    ``_build_agent`` always installs, so a round costs 3 steps, not 2.
+    """
+    return max_iterations * 3 + 1
+
+
 def _log_tool_error_event(tool_name: str, run_id: str, event_data: Any) -> None:
     """Log a tool execution failure surfaced by LangGraph's ``on_tool_error``.
 
@@ -859,7 +868,7 @@ class LangGraphAgentBuilder:
                 {"messages": lc_messages},
                 config={
                     **exec_config,
-                    "recursion_limit": self.max_iterations * 2 + 1,
+                    "recursion_limit": _recursion_limit_for(self.max_iterations),
                 },
                 version="v2",
                 durability="exit",
@@ -1527,7 +1536,7 @@ class LangGraphAgentBuilder:
             if on_tool_event
             else None
         )
-        recursion_limit = self.max_iterations * 2 + 1
+        recursion_limit = _recursion_limit_for(self.max_iterations)
         agent_iteration = 0
         last_model_end_tool_calls = 0
 
