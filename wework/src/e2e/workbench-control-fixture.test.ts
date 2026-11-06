@@ -261,15 +261,41 @@ test('control workflow uses the runner model-response budget instead of the UI-a
   }
 })
 
-test.each(['ready', 'preparing', 'failed'])(
-  'cloud conversation continuation waits for real runtime readiness: %s',
+test.each(['ready', 'preparing', 'failed', 'cancelled', 'wrong-workspace', 'owner-unavailable'])(
+  'local APP conversation continuation waits for its owning Executor: %s',
   async state => {
     const { scenario, waitForRuntimeTask } = await prepareFixture({})
     const reachedWorkflow = new Error('Reached workflow wait')
+    let settled = state !== 'preparing'
+    const localRead = vi.fn(async () => {
+      if (state === 'owner-unavailable') throw new Error('Owning Executor is unavailable')
+      return JSON.stringify({
+        workspaces: [
+          {
+            workspacePath: '/cloud-workspace',
+            tasks: [
+              {
+                taskId: 'cloud-task',
+                workspacePath:
+                  state === 'wrong-workspace' ? '/another-workspace' : '/cloud-workspace',
+                threadId: 'local-native-thread',
+                running: !settled,
+                status: ['failed', 'cancelled'].includes(state)
+                  ? state
+                  : settled
+                    ? 'done'
+                    : 'running',
+              },
+            ],
+          },
+        ],
+      })
+    })
     await expect(
       scenario.verify({
         command: vi.fn(async (action: string, _selector: string, options?: { text?: string }) => {
           if (action === 'getWorkbenchDebugSnapshot') return SOURCE_SNAPSHOT
+          if (action === 'getLocalRuntimeWork') return localRead()
           if (options?.text === 'WEWORK_CONTROL_COMPLETE') throw reachedWorkflow
         }),
       })
@@ -325,20 +351,8 @@ test.each(['ready', 'preparing', 'failed'])(
         await call.done
         expect(call.response.writeHead).toHaveBeenCalledWith(200, expect.any(Object))
       }
-      let release!: () => void
-      const readiness = new Promise<void>(resolve => {
-        release = resolve
-      })
       waitForRuntimeTask.mockImplementationOnce(async () => {
-        if (state === 'failed') throw new Error('runtime preparation failed')
-        if (state === 'preparing') await readiness
-        return {
-          taskId: 'cloud-task',
-          workspacePath: '/cloud-workspace',
-          title: 'Cloud conversation',
-          runtime: 'codex',
-          status: 'completed',
-        }
+        throw new Error('Cloud runtime lists do not contain local APP tasks')
       })
       const call = respond(14, {
         accepted: true,
@@ -347,19 +361,14 @@ test.each(['ready', 'preparing', 'failed'])(
         taskId: 'cloud-task',
         workspacePath: '/cloud-workspace',
       })
-      await vi.waitFor(() =>
-        expect(waitForRuntimeTask).toHaveBeenLastCalledWith({
-          deviceId: SOURCE_DEVICE.device_id,
-          taskId: 'cloud-task',
-          workspacePath: '/cloud-workspace',
-        })
-      )
+      await vi.waitFor(() => expect(localRead).toHaveBeenCalled())
       if (state === 'preparing') {
         expect(call.response.end).not.toHaveBeenCalled()
-        release()
+        settled = true
       }
       await call.done
-      if (state === 'failed') {
+      expect(waitForRuntimeTask).toHaveBeenCalledTimes(1)
+      if (['failed', 'cancelled', 'wrong-workspace', 'owner-unavailable'].includes(state)) {
         expect(call.response.writeHead).toHaveBeenCalledWith(500)
         expect(call.response.end.mock.calls[0][0]).not.toContain('continue_conversation')
       } else {

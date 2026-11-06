@@ -6,6 +6,10 @@ import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
 import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
 import { waitForScenarioProgress } from '../modules/scenario-progress.mjs'
 import {
+  findRuntimeWorkTask,
+  waitForCompletedRuntimeTaskThread,
+} from '../modules/runtime-task-evidence.mjs'
+import {
   assistantMessage,
   createSse,
   handleEmptyReplyPrediction,
@@ -70,6 +74,7 @@ function callResult(body, callId) {
 
 export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
   let active = false
+  let localControl
   let sourceId
   let sourceTaskId
   let sourceDeviceId
@@ -245,11 +250,14 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
         const created = findValue(value, item => item.accepted === true && item.conversation_id)
         assert.ok(created)
         assert.equal(created.deviceId, sourceDeviceId)
-        await cloudEnvironment.waitForRuntimeTask({
-          deviceId: created.deviceId,
-          taskId: created.taskId,
-          workspacePath: created.workspacePath,
-        })
+        await waitForCompletedRuntimeTaskThread(localControl, created.taskId, uiTimeoutMs)
+        const task = findRuntimeWorkTask(
+          JSON.parse(await localControl.command('getLocalRuntimeWork', 'body')),
+          created.taskId
+        )
+        assert.ok(task, 'The owning Executor must retain the created APP task')
+        assert.equal(task.workspacePath, created.workspacePath)
+        assert.ok(!['failed', 'cancelled'].includes(task.status))
         cloudCreatedId = created.conversation_id
         cloudCreatedTaskId = created.taskId
       },
@@ -597,6 +605,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
     },
 
     async verify(control) {
+      localControl = control
       await verifyLocalExecutorUsesCloudSocketUrl(control, cloudEnvironment)
       const { workspacePath } = cloudEnvironment
       assert.ok(typeof workspacePath === 'string' && workspacePath.length > 0)
