@@ -1,12 +1,9 @@
-//! Deliver the complete current host policy through native per-turn developer context.
+//! Native developer instructions own policy; turn context carries only its current revision.
 use super::*;
 use sha2::{Digest, Sha256};
 
 const PREFIX: &str = "wework.host-policy.";
 const MANIFEST_KEY: &str = "wework.host-policy.z-manifest";
-// Native additionalContext values have a 4,000-byte rendering budget. Leave
-// conservative room for metadata and rendered wrappers to prevent truncation.
-const BODY_BYTES: usize = 3_000;
 
 pub(super) fn text(request: &ExecutionRequest, launch_config: &CodexLaunchConfig) -> String {
     let mut instructions = if request.extra.get("enable_tools").and_then(Value::as_bool)
@@ -33,6 +30,12 @@ pub(super) fn text(request: &ExecutionRequest, launch_config: &CodexLaunchConfig
                 entry["value"].as_str().unwrap()
             ));
         }
+    }
+    if is_backend_task(request)
+        && request.extra.get("enable_tools").and_then(Value::as_bool) != Some(false)
+    {
+        instructions.push_str("\n\n");
+        instructions.push_str(crate::artifact_cli::AGENT_INSTRUCTIONS);
     }
     if crate::runtime_work::stand_in_requires_confirmation(request) {
         instructions.push_str("\n\nWework stand-in action confirmation:\nWework collects one-time execution approval through native tool approval controls in the original conversation. The shared pending inbox links to that authorization context. Prepare the exact action and invoke its tool so Wework can display that approval. Do not ask the user to type yes, confirm, or equivalent in chat before invoking the tool, and do not replace native approval with a prose question. A chat reply never grants execution permission. For a genuine business ambiguity, use request_user_input_async when available, otherwise request_user_input, with explicit choices. Explain proposed replies in plain language without exposing internal policy field names. Keep all existing tool approval requirements in force.");
@@ -66,63 +69,85 @@ pub(super) fn additional_context(
         .and_then(|value| value.as_object().cloned())
         .unwrap_or_default();
     context.retain(|key, entry| !key.starts_with(PREFIX) && !is_runtime_policy(entry));
-    append_policy(&mut context, &text(request, launch_config));
+    if request.extra.get("enable_tools").and_then(Value::as_bool) != Some(false) {
+        let policy = text(request, launch_config);
+        let revision = revision(&policy);
+        let path = snapshot_path(launch_config, &revision);
+        let value = format!(
+            "Current Wework runtime policy revision: {revision}. If the native developer instructions or a previously loaded policy skill already contain this exact revision, do not read it again. Otherwise read the complete policy skill at {} before proceeding. It replaces earlier Wework runtime policy, including historical flat instructions and host-policy parts; it does not replace independent application context, higher-priority instructions, or native permissions. Never apply a stale revision. If the file cannot be read, stop and report the failure.",
+            json!(path)
+        );
+        context.insert(
+            MANIFEST_KEY.into(),
+            json!({"kind":"application","value":value}),
+        );
+    }
     Value::Object(context)
 }
 
-fn append_policy(context: &mut Map<String, Value>, policy: &str) {
-    let revision = format!("{:x}", Sha256::digest(policy.as_bytes()));
-    let mut parts = Vec::new();
-    let mut offset = 0;
-    while offset < policy.len() {
-        let mut end = (offset + BODY_BYTES).min(policy.len());
-        while !policy.is_char_boundary(end) {
-            end -= 1;
-        }
-        parts.push(&policy[offset..end]);
-        offset = end;
+fn revision(policy: &str) -> String {
+    format!("{:x}", Sha256::digest(policy.as_bytes()))
+}
+
+fn snapshot_path(launch_config: &CodexLaunchConfig, revision: &str) -> PathBuf {
+    launch_config
+        .runtime_policy_root
+        .clone()
+        .unwrap_or_else(|| wework_codex_home().join("runtime-policies"))
+        .join(revision)
+        .join("SKILL.md")
+}
+
+pub(super) fn native_instructions(
+    request: &ExecutionRequest,
+    launch: &CodexLaunchConfig,
+) -> String {
+    let policy = text(request, launch);
+    if request.extra.get("enable_tools").and_then(Value::as_bool) == Some(false) {
+        return policy;
     }
-    for (index, part) in parts.iter().enumerate() {
-        let key = format!("{PREFIX}part-{index:06}");
-        let header = json!({"revision":revision,"part":index,"parts":parts.len()});
-        let value = format!("{header}\n\n{part}");
-        debug_assert!(value.len() + 2 * key.len() + 5 <= 4_000);
-        context.insert(key, json!({"kind":"application","value":value}));
+    format!(
+        "{policy}\n\nWework runtime policy revision: {}",
+        revision(&policy)
+    )
+}
+
+/// Immutable, content-addressed skills cannot be overwritten by another thread or queued turn.
+/// Native compaction rebuilds the same policy directly from developerInstructions.
+pub(super) fn publish(
+    request: &ExecutionRequest,
+    launch: &CodexLaunchConfig,
+) -> Result<(), String> {
+    if request.extra.get("enable_tools").and_then(Value::as_bool) == Some(false) {
+        return Ok(());
     }
-    let manifest = json!({"revision":revision,"parts":parts.len(),"semantics":
-        "This is the complete current Wework runtime developer policy manifest. It replaces earlier Wework runtime instructions, including the initial flat developerInstructions and all earlier manifests in this namespace. Explicit runtimePolicy application contributions are included only in the current policy parts. Their earlier standalone application entries are historical and inactive. Contributions removed from the complete current policy withdraw their earlier directives. It does not replace higher-priority system instructions, unmarked independent application contexts or native permissions. Only parts with this revision and indices 0 through parts-1 are current; older revisions and absent or excess parts are historical and inactive. Join current part bodies in numeric order without added characters to recover the complete policy. Other application contexts and native permissions remain independently authoritative."});
-    context.insert(
-        MANIFEST_KEY.into(),
-        json!({"kind":"application","value":manifest.to_string()}),
+    let policy = text(request, launch);
+    let revision = revision(&policy);
+    let path = snapshot_path(launch, &revision);
+    let content = format!(
+        "---\nname: current-runtime-policy\ndescription: Restore this execution's current Wework policy when its revision differs from retained history.\n---\n\n{}\n",
+        native_instructions(request, launch)
     );
+    if fs::read_to_string(&path).ok().as_deref() == Some(&content) {
+        return Ok(());
+    }
+    fs::create_dir_all(path.parent().expect("policy skill has a parent"))
+        .map_err(|error| format!("Failed to create runtime policy directory: {error}"))?;
+    let mut temporary = tempfile::NamedTempFile::new_in(path.parent().unwrap())
+        .map_err(|error| format!("Failed to create runtime policy skill: {error}"))?;
+    use std::io::Write;
+    temporary
+        .write_all(content.as_bytes())
+        .map_err(|error| format!("Failed to write runtime policy skill: {error}"))?;
+    temporary
+        .persist(&path)
+        .map_err(|error| format!("Failed to publish runtime policy skill: {error}"))?;
+    Ok(())
 }
 
 #[cfg(test)]
 pub(crate) fn turn_context_for_test(request: &ExecutionRequest) -> Value {
-    super::turn_start_params(
-        "test-thread",
-        request,
-        &CodexLaunchConfig::default(),
-        vec![],
-    )["additionalContext"]
-        .clone()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn deleting_policy_publishes_an_empty_current_manifest() {
-        let mut context = Map::new();
-        append_policy(&mut context, "");
-        assert_eq!(context.len(), 1);
-        let manifest: Value =
-            serde_json::from_str(context[MANIFEST_KEY]["value"].as_str().unwrap()).unwrap();
-        assert_eq!(manifest["parts"], 0);
-        assert!(manifest["semantics"]
-            .as_str()
-            .unwrap()
-            .contains("historical and inactive"));
-    }
+    let launch = CodexLaunchConfig::default();
+    json!({"developerInstructions":native_instructions(request, &launch),
+        "additionalContext":additional_context(request, &launch)})
 }

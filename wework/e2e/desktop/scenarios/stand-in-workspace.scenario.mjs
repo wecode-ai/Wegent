@@ -1,3 +1,4 @@
+import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import { openProjectStandIn, discardStandInDraft } from '../modules/stand-in-flows.mjs'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
@@ -141,7 +142,7 @@ export function createDesktopScenario({
           tool.arguments.sandbox_permissions = 'require_escalated'
           tool.arguments.justification =
             'REVIEW_PRIVATE_READ: source requests an unrelated private file'
-          events = functionCall('source-private-review', tool.name, tool.arguments)
+          events = selectedToolCall('source-private-review', tool)
         } else if (requestContainsToolOutput(body, 'source-approved-escalation')) {
           const output =
             accountCommandResult(body.input, 'source-approved-escalation')?.output ?? ''
@@ -152,7 +153,7 @@ export function createDesktopScenario({
               ? `try { Add-Content -LiteralPath ${powershellQuote(elevatedFile)} -Value 'unapproved' -NoNewline -ErrorAction Stop; Write-Output 'SOURCE_OUTSIDE_WRITE_ALLOWED' } catch { Write-Output 'SOURCE_OUTSIDE_WRITE_BLOCKED' }`
               : `if printf 'unapproved' >> ${quote(elevatedFile)}; then printf 'SOURCE_OUTSIDE_WRITE_ALLOWED'; else printf 'SOURCE_OUTSIDE_WRITE_BLOCKED'; fi`
           const tool = selectShellToolCommand(body, command, undefined)
-          events = functionCall('source-escalation-not-persistent', tool.name, tool.arguments)
+          events = selectedToolCall('source-escalation-not-persistent', tool)
         } else if (requestContainsToolOutput(body, 'source-sandbox-probe')) {
           const output = accountCommandResult(body.input, 'source-sandbox-probe')?.output ?? ''
           for (const marker of [
@@ -178,7 +179,7 @@ export function createDesktopScenario({
           tool.arguments.sandbox_permissions = 'require_escalated'
           tool.arguments.justification =
             'Create the explicitly authorized regression proof outside the workspace.'
-          events = functionCall('source-approved-escalation', tool.name, tool.arguments)
+          events = selectedToolCall('source-approved-escalation', tool)
         } else if (requestContainsToolOutput(body, 'source-context-read')) {
           const command =
             process.platform === 'win32'
@@ -186,7 +187,7 @@ export function createDesktopScenario({
               : `printf 'source-sandbox-ok' > source-sandbox-proof.txt && curl -fsS --connect-timeout 3 --max-time 5 ${quote(url.origin + '/external-source-probe')} && cat ${quote(pluginSkill)} && test "$(GH_CONFIG_DIR=${quote(ghConfigDirectory)} gh config get git_protocol)" = ssh && printf 'SOURCE_GH_CONFIG_READABLE'; if printf 'unapproved' > ${quote(elevatedFile)}; then printf 'SOURCE_OUTSIDE_WRITE_ALLOWED'; else printf 'SOURCE_OUTSIDE_WRITE_BLOCKED'; fi`
           const tool = selectShellToolCommand(body, command, undefined)
           tool.arguments.login = false
-          events = functionCall('source-sandbox-probe', tool.name, tool.arguments)
+          events = selectedToolCall('source-sandbox-probe', tool)
         } else {
           events = mcpToolRequestEvents(body, {
             toolName: 'get_current_context',

@@ -135,6 +135,40 @@ describe('bundled plugin resources', () => {
     ).toBe(true)
   })
 
+  test('discovers host workflow metadata from the default runtime plugin', () => {
+    const root = resolve(process.cwd(), 'resources/bundled-plugins/wework-personal')
+    const marketplace = JSON.parse(
+      readFileSync(resolve(root, '.agents/plugins/marketplace.json'), 'utf8')
+    )
+    expect(
+      marketplace.plugins.find((plugin: { name: string }) => plugin.name === 'wework-runtime')
+        ?.policy?.installation
+    ).toBe('INSTALLED_BY_DEFAULT')
+    const plugin = resolve(root, 'plugins/wework-runtime')
+    const manifest = JSON.parse(readFileSync(resolve(plugin, '.codex-plugin/plugin.json'), 'utf8'))
+    expect(manifest.skills).toBe('./skills/')
+    for (const name of [
+      'coding',
+      'browser',
+      'computer',
+      'github',
+      'connector-auth',
+      'conversations',
+      'visualize',
+      'artifacts',
+    ]) {
+      const skill = readFileSync(resolve(plugin, 'skills', name, 'SKILL.md'), 'utf8')
+      expect(skill).toMatch(/^---\nname: /)
+      expect(skill).toContain('description:')
+    }
+    expect(readFileSync(resolve(plugin, 'skills/browser/SKILL.md'), 'utf8')).toContain(
+      'browser_inspect'
+    )
+    expect(readFileSync(resolve(plugin, 'skills/github/SKILL.md'), 'utf8')).toContain(
+      'connectorSlug=wework-github-cli'
+    )
+  })
+
   test('installs the Smart app builder workflow by default', () => {
     const resourcesDirectory = resolve(process.cwd(), 'resources')
     const codexMarketplace = JSON.parse(

@@ -16,6 +16,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     env, fs,
@@ -57,8 +58,11 @@ const WEWORK_GPT_56_TERRA_MODEL: &str = "wework-gpt-5.6-terra";
 #[cfg(test)]
 const WEWORK_GPT_56_LUNA_MODEL: &str = "wework-gpt-5.6-luna";
 const UPSTREAM_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
+// Identify the exact retired shared default without embedding Wework plugin resources.
+const LEGACY_BASE_INSTRUCTIONS_SHA256: &str =
+    "81d7c736138e000597c4d01a3fa2a309671650d52679c1db1fb0d33331eb5321";
 const DEFAULT_BASE_INSTRUCTIONS: &str =
-    include_str!("../../../shared/assets/gptDefaultInstructions.md");
+    include_str!("../../../shared/assets/codexProgressiveInstructions.md");
 const KIMI_CODEX_MODELS: &str = include_str!("../../../shared/assets/codex-models/kimi.json");
 const DEEPSEEK_CODEX_MODELS: &str =
     include_str!("../../../shared/assets/codex-models/deepseek.json");
@@ -115,10 +119,7 @@ fn upstream_model_matches(model: &Value, model_id: &str) -> bool {
 }
 
 fn default_base_instructions() -> String {
-    DEFAULT_BASE_INSTRUCTIONS.replace(
-        "You are Codex, an agent based on GPT-5.",
-        "You are Codex, a coding agent.",
-    )
+    DEFAULT_BASE_INSTRUCTIONS.to_owned()
 }
 
 #[derive(Clone)]
@@ -686,6 +687,7 @@ async fn load_baseline_catalog(client_version: Option<&str>) -> Result<Value, St
         }
     };
     merge_base_models(&mut catalog)?;
+    apply_progressive_base_instructions(&mut catalog);
     Ok(catalog)
 }
 
@@ -746,6 +748,44 @@ fn validate_catalog(catalog: &Value) -> Result<(), String> {
     Ok(())
 }
 
+fn is_legacy_base_instructions(instructions: &str) -> bool {
+    format!("{:x}", Sha256::digest(instructions.as_bytes())) == LEGACY_BASE_INSTRUCTIONS_SHA256
+}
+
+fn apply_progressive_base_instructions(catalog: &mut Value) {
+    let custom_slugs: std::collections::HashSet<String> = read_custom_models()
+        .iter()
+        .filter_map(|model| model["slug"].as_str().map(str::to_owned))
+        .collect();
+    for model in catalog
+        .get_mut("models")
+        .and_then(Value::as_array_mut)
+        .into_iter()
+        .flatten()
+    {
+        let legacy_default = model["base_instructions"]
+            .as_str()
+            .is_some_and(is_legacy_base_instructions);
+        if legacy_default
+            || !model["slug"]
+                .as_str()
+                .is_some_and(|slug| custom_slugs.contains(slug))
+        {
+            model["base_instructions"] = Value::String(default_base_instructions());
+            if let Some(messages) = model
+                .get_mut("model_messages")
+                .and_then(Value::as_object_mut)
+            {
+                messages.insert(
+                    "instructions_template".into(),
+                    Value::String(default_base_instructions()),
+                );
+            }
+            model["include_skills_usage_instructions"] = Value::Bool(false);
+        }
+    }
+}
+
 fn merge_base_models(catalog: &mut Value) -> Result<(), String> {
     validate_catalog(catalog)?;
     let upstream_models = catalog
@@ -784,6 +824,16 @@ fn apply_override_fields(model: &mut Value, fields: &BTreeMap<String, Value>) {
     };
     for (key, value) in fields {
         object.insert(key.clone(), value.clone());
+    }
+    if !fields.contains_key("model_messages") {
+        if let Some(instructions) = fields.get("base_instructions") {
+            if let Some(messages) = object
+                .get_mut("model_messages")
+                .and_then(Value::as_object_mut)
+            {
+                messages.insert("instructions_template".into(), instructions.clone());
+            }
+        }
     }
 }
 
@@ -883,7 +933,7 @@ fn model_entry(slug: &str, display_name: &str, apply_patch_tool_type: Option<&st
         "supports_search_tool": true,
         "use_responses_lite": false,
         "auto_review_model_override": null,
-        "tool_mode": null,
+        "tool_mode": "code_mode_only",
         "multi_agent_version": null
     });
     if let Some(tool_type) = apply_patch_tool_type {

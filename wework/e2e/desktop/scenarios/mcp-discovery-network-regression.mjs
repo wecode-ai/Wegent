@@ -1,3 +1,4 @@
+import { readNativeMcpCallId } from '../modules/native-tool-call-id.mjs'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -7,6 +8,7 @@ import { requestExecutor } from '../modules/executor-rpc.mjs'
 export async function verifyMcpDiscoveryNetworkFailure(control, userDataDirectory, timeoutMs) {
   const address = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).workbench
     .currentRuntimeTask
+  const callId = await readNativeMcpCallId(control, address, 'counter', 'model_only', timeoutMs)
   const origin = await control.command('getLocationOrigin', 'body')
   const configureFault = async enabled => {
     const result = await fetchLocalRuntimeJson(
@@ -69,7 +71,7 @@ export async function verifyMcpDiscoveryNetworkFailure(control, userDataDirector
       'runtime.mcp_apps.request',
       {
         address,
-        callId: 'ordinary-mcp-read',
+        callId,
         method: 'discover',
       },
       timeoutMs

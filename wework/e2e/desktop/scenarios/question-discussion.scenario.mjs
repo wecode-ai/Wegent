@@ -11,7 +11,7 @@ import {
 import {
   assistantMessage,
   createSse,
-  functionCall,
+  selectedToolCall,
   handleEmptyReplyPrediction,
   readRequestBody,
   requestContainsToolOutput,
@@ -84,7 +84,7 @@ export function createDesktopScenario({
           ],
         })
         firstToolName = tool.name
-        events = functionCall(callId, tool.name, tool.arguments)
+        events = selectedToolCall(callId, tool)
       } else if (text.includes(CONCLUSION)) {
         finalAnswers += 1
         events = [assistantMessage(COMPLETE)]
