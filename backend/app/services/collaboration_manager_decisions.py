@@ -60,6 +60,10 @@ def _require_manager_dispatch(
             LoopItemExecution.loop_item_id == item.id,
             LoopItemExecution.cloud_project_id == str(project_id),
         )
+        # Use the current version and retain the lock through the status decision;
+        # device reconciliation may have advanced an earlier snapshot.
+        .populate_existing()
+        .with_for_update()
         .all()
     )
     dispatch = next(

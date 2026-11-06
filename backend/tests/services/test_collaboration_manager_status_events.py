@@ -106,8 +106,14 @@ def _complete_group_conversation(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("origin", "other_rule"),
-    [("automation", False), ("automation", True), ("manager", False), ("human", False)],
+    ("origin", "other_rule", "stale_dispatch"),
+    [
+        ("automation", False, False),
+        ("automation", True, False),
+        ("manager", False, False),
+        ("manager", False, True),
+        ("human", False, False),
+    ],
 )
 async def test_manager_status_event_preserves_only_its_actual_dispatch_cause(
     test_db: Session,
@@ -115,6 +121,7 @@ async def test_manager_status_event_preserves_only_its_actual_dispatch_cause(
     monkeypatch: pytest.MonkeyPatch,
     origin: str,
     other_rule: bool,
+    stale_dispatch: bool,
 ) -> None:
     monkeypatch.setattr("app.core.async_utils.schedule_async_task", lambda *args: None)
     monkeypatch.setattr(
@@ -218,6 +225,15 @@ async def test_manager_status_event_preserves_only_its_actual_dispatch_cause(
             LoopItemUpdate(version=issue.version, status="in_review"),
         )
     else:
+        if stale_dispatch:
+            # A device reconciliation can advance the version after this
+            # Session has already loaded the dispatch into its identity map.
+            version = group_dispatch.version
+            test_db.query(LoopItemExecution).filter_by(id=group_dispatch.id).update(
+                {LoopItemExecution.version: LoopItemExecution.version + 1},
+                synchronize_session=False,
+            )
+            assert group_dispatch.version == version
         apply_collaboration_manager_decision(
             test_db,
             project_id=project.id,
@@ -229,6 +245,9 @@ async def test_manager_status_event_preserves_only_its_actual_dispatch_cause(
             target_status="in_review",
             reason="Work is ready for review",
         )
+        test_db.refresh(group_dispatch)
+        assert group_dispatch.status == "completed"
+        assert group_dispatch.termination_reason == "manager_status_decision"
         if cause is not None:
             test_db.refresh(cause)
             assert cause.status == "succeeded"
