@@ -45,7 +45,15 @@ async function waitForExecution(control, issueId, timeoutMs, roleIds = ['default
         { taskId: binding.task_id },
         10000
       )
-      assert.notEqual(task?.status, 'failed', JSON.stringify(task))
+      if (task?.status === 'failed') {
+        const transcript = await requestExecutor(
+          control,
+          'runtime.tasks.transcript',
+          { taskId: binding.task_id, limit: 10 },
+          10000
+        )
+        assert.fail(JSON.stringify({ task, transcript }))
+      }
       latest.push(task)
     }
     if (latest.length === roleIds.length && latest.every(task => task?.status === 'done')) {
@@ -396,9 +404,15 @@ export async function createDesktopScenario({
       legacy.roles[0].agentId = agent.id
       legacy.roles[0].agentProject = { id: project.id, store: 'local' }
       legacy.roles[0].collaboration.allProjects = true
+      // Keep automatic execution enabled while migrating a primary with no project intake.
+      legacy.primary = {
+        enabled: true,
+        prompt: 'Legacy primary instructions',
+        preferences: 'Legacy primary preferences',
+        agentId: agent.id,
+        agentProject: { id: project.id, store: 'local' },
+      }
       assert.equal(Object.hasOwn(legacy.primary, 'collaboration'), false)
-      legacy.primary.agentId = agent.id
-      legacy.primary.agentProject = { id: project.id, store: 'local' }
       const expected = structuredClone(legacy)
       delete expected.roles[0].agentId
       delete expected.roles[0].agentProject
