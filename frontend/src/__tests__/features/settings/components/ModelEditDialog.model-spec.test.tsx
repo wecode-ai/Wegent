@@ -3,10 +3,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import React from 'react'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import ModelEditDialog from '@/features/settings/components/ModelEditDialog'
-import { modelApis, type ModelCRD } from '@/apis/models'
+import { modelApis, type ModelCRD, type UnifiedModel } from '@/apis/models'
 
 jest.setTimeout(30000)
 
@@ -88,6 +88,153 @@ const existingModel: ModelCRD = {
 describe('ModelEditDialog model spec modes', () => {
   beforeEach(() => {
     jest.restoreAllMocks()
+  })
+
+  it('supports keyboard focus and scrolling model options while keeping the dialog locked', async () => {
+    const user = userEvent.setup()
+    const onClose = jest.fn()
+    const onSave = jest.fn().mockResolvedValue(true)
+    render(<ModelEditDialog open onClose={onClose} toast={jest.fn()} onSave={onSave} />)
+    const dialog = screen.getByRole('dialog', { name: 'common:models.create_title' })
+    const modelIdSelect = within(dialog).getByTestId('model-id-select')
+    for (let step = 0; step < 20 && document.activeElement !== modelIdSelect; step += 1) {
+      await user.tab()
+    }
+    expect(modelIdSelect).toHaveFocus()
+    await user.keyboard('{Enter}')
+    const picker = await screen.findByRole('dialog', { name: 'common:models.model_id' })
+    const modelOption = within(picker).getByRole('button', { name: 'gpt-4o (Recommended)' })
+    const search = within(picker).getByPlaceholderText('common:models.search_model_id')
+    expect(search).toHaveFocus()
+    const viewport = modelOption.parentElement!
+
+    // JSDOM has no layout; supply only the viewport bounds read by real RemoveScroll.
+    Object.defineProperties(viewport, {
+      clientHeight: { value: 200 },
+      scrollHeight: { value: 600 },
+    })
+    viewport.scrollTop = 100
+
+    const wheel = createEvent.wheel(modelOption, { deltaY: 40, cancelable: true })
+    fireEvent(modelOption, wheel)
+
+    fireEvent.touchStart(viewport, {
+      touches: [{ clientX: 0, clientY: 100 }],
+      changedTouches: [{ clientX: 0, clientY: 100 }],
+    })
+    const touchMove = createEvent.touchMove(viewport, {
+      touches: [{ clientX: 0, clientY: 60 }],
+      changedTouches: [{ clientX: 0, clientY: 60 }],
+      cancelable: true,
+    })
+    fireEvent(viewport, touchMove)
+    expect({ wheel: wheel.defaultPrevented, touchMove: touchMove.defaultPrevented }).toEqual({
+      wheel: false,
+      touchMove: false,
+    })
+
+    const outsideWheel = createEvent.wheel(dialog, { deltaY: 40, cancelable: true })
+    fireEvent(dialog, outsideWheel)
+    expect(outsideWheel.defaultPrevented).toBe(true)
+
+    await user.keyboard('gpt-4o')
+    expect(search).toHaveValue('gpt-4o')
+    expect(search).toHaveFocus()
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(modelIdSelect).toHaveFocus())
+    expect(modelIdSelect).toHaveAttribute('aria-expanded', 'false')
+
+    await user.keyboard(' ')
+    expect(await screen.findByPlaceholderText('common:models.search_model_id')).toHaveFocus()
+    const presetOption = screen.getByRole('button', { name: 'gpt-4o (Recommended)' })
+    await user.tab()
+    expect(presetOption).toHaveFocus()
+    await user.keyboard('{Enter}')
+    await waitFor(() => expect(modelIdSelect).toHaveFocus())
+    expect(modelIdSelect).toHaveTextContent('gpt-4o (Recommended)')
+    expect(modelIdSelect).toHaveAttribute('aria-expanded', 'false')
+
+    await user.keyboard(' ')
+    const customSearch = await screen.findByPlaceholderText('common:models.search_model_id')
+    expect(customSearch).toHaveFocus()
+    expect(customSearch).toHaveValue('')
+    await user.keyboard('Custom')
+    const customOption = screen.getByRole('button', { name: 'Custom...' })
+    await user.tab()
+    expect(customOption).toHaveFocus()
+    await user.keyboard(' ')
+    await waitFor(() => expect(modelIdSelect).toHaveFocus())
+    expect(modelIdSelect).toHaveTextContent('Custom...')
+    expect(modelIdSelect).toHaveAttribute('aria-expanded', 'false')
+    const customModelId = within(dialog).getByPlaceholderText(
+      'common:models.custom_model_id_placeholder'
+    )
+    await user.tab()
+    expect(customModelId).toHaveFocus()
+    await user.keyboard('keyboard-custom-model')
+    expect(customModelId).toHaveValue('keyboard-custom-model')
+    expect(onClose).not.toHaveBeenCalled()
+
+    await user.type(within(dialog).getByTestId('model-id-name-input'), 'keyboard-model')
+    await user.type(within(dialog).getByLabelText(/common:models.api_key/), 'test-api-key')
+    await user.click(within(dialog).getByRole('button', { name: 'common:actions.save' }))
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1))
+    expect(onSave.mock.calls[0][1]).toMatchObject({
+      metadata: { name: 'keyboard-model' },
+      spec: { modelConfig: { env: { model_id: 'keyboard-custom-model' } } },
+    })
+  })
+
+  it('creates a model with a vision sidecar using options outside the scrolling dialog', async () => {
+    const user = userEvent.setup()
+    const onSave = jest.fn().mockResolvedValue(true)
+    const sidecar: UnifiedModel = {
+      name: 'vision-model',
+      displayName: 'Vision Sidecar',
+      type: 'user',
+      namespace: 'default',
+      resourceUserId: 42,
+      runtime: { family: 'claude' },
+      modelCapabilities: { supportsImage: true },
+    }
+    jest.spyOn(modelApis, 'getUnifiedModels').mockResolvedValue({ data: [sidecar] })
+    render(<ModelEditDialog open onClose={jest.fn()} toast={jest.fn()} onSave={onSave} />)
+    const dialog = screen.getByRole('dialog', { name: 'common:models.create_title' })
+
+    await user.click(within(dialog).getByTestId('model-wework-available-switch'))
+    const sidecarSelect = within(dialog).getByTestId('vision-sidecar-model-select')
+    await waitFor(() => expect(sidecarSelect).toBeEnabled())
+    await user.click(sidecarSelect)
+    await user.click(await screen.findByRole('option', { name: 'Vision Sidecar' }))
+    await user.type(within(dialog).getByTestId('model-id-name-input'), 'primary-model')
+    const modelIdSelect = within(dialog).getByTestId('model-id-select')
+    await user.click(modelIdSelect)
+    const modelOption = await screen.findByText('gpt-4o (Recommended)', { exact: true })
+
+    expect(dialog).not.toContainElement(modelOption)
+    await user.click(modelOption)
+    expect(modelIdSelect).toHaveTextContent('gpt-4o (Recommended)')
+    expect(modelIdSelect).toHaveAttribute('aria-expanded', 'false')
+    await user.type(within(dialog).getByLabelText(/common:models.api_key/), 'test-api-key')
+    await user.click(within(dialog).getByRole('button', { name: 'common:actions.save' }))
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1))
+    expect(onSave.mock.calls[0][1]).toMatchObject({
+      metadata: { name: 'primary-model' },
+      spec: {
+        isWeworkAvailable: true,
+        modelConfig: {
+          env: { model_id: 'gpt-4o', api_key: 'test-api-key' },
+          visionSidecarModel: {
+            modelName: 'vision-model',
+            modelType: 'user',
+            namespace: 'default',
+            resourceUserId: 42,
+            apiFormat: 'anthropic-messages',
+          },
+        },
+      },
+    })
   })
 
   it.each(['systemone', 'openai'])(

@@ -206,7 +206,7 @@ export function createDesktopScenario({
         }),
       })
       await ensureExperimentalFeaturesEnabled(control)
-      await reloadMainWindow(control, 'The worktree-policy renderer did not reconnect')
+      await reloadMainWindow(control, 'The worktree policy renderer did not reconnect')
       await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]')
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       const toggle = inCollaborationSidebar(
