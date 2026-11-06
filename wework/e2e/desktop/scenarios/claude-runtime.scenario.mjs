@@ -1,11 +1,15 @@
 import { readRequestBody as readJson } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
 import { constants } from 'node:fs'
-import { access, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { access, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { localHarnessCliPath, localHarnessCliVersion } from '../modules/local-harness-cli.mjs'
+import {
+  createLocalHarnessCliAlias,
+  localHarnessCliPath,
+  localHarnessCliVersion,
+} from '../modules/local-harness-cli.mjs'
 import { createSharedSkillRuntime } from '../modules/shared-skill-runtime.mjs'
 import { createConcurrentClaudeHomes } from '../modules/concurrent-claude-homes.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -349,11 +353,7 @@ export async function createDesktopScenario({
   )
   const remoteWorkspacePath = join(resultDir, 'claude-remote-workspace')
   await rm(localClaudeAlias, { force: true })
-  if (process.platform === 'win32') {
-    await writeFile(localClaudeAlias, `@echo off\r\ncall "${CLAUDE_BINARY}" %*\r\n`, 'utf8')
-  } else {
-    await symlink(CLAUDE_BINARY, localClaudeAlias)
-  }
+  await createLocalHarnessCliAlias(CLAUDE_BINARY, localClaudeAlias)
   await mkdir(remoteWorkspacePath, { recursive: true })
   await writeFile(join(remoteWorkspacePath, 'README.md'), '# Claude remote E2E\n', 'utf8')
 
