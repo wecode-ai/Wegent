@@ -119,7 +119,7 @@ fn changed_removed_and_compacted_policies_share_the_current_native_baseline() {
                 reference["value"]
                     .as_str()
                     .unwrap()
-                    .contains(path.to_str().unwrap())
+                    .contains(&json!(path).to_string())
             })
             .unwrap();
         let contents = std::fs::read_to_string(&snapshot).unwrap();
