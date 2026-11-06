@@ -29,6 +29,7 @@ export async function verifyPluginDetailCacheRace({
   item,
   openDetail,
   backToList,
+  refreshCatalog,
   entry,
 }) {
   const gates = runtimeTransportGates(control)
@@ -39,6 +40,7 @@ export async function verifyPluginDetailCacheRace({
   const sharedMember = state => member(state.sharedInventory)
   const read = () => inventory(control)
   try {
+    await refreshCatalog()
     await gates.arm({
       id: detailGate,
       kind: 'response',

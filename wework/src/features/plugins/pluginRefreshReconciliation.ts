@@ -5,6 +5,8 @@ import {
 } from '@/components/plugins/installedPluginMerge'
 import { logPluginRefreshPhase } from './pluginRefreshDiagnostics'
 
+export type PluginReconciliationStage = 'waiting' | 'reading' | 'syncing' | 'verifying'
+
 export function verifyReconciledPluginInventory(
   cloud: InstalledPlugin[],
   store: InstalledPlugin[]
@@ -37,6 +39,7 @@ export async function reconcilePluginRefresh(options: {
   sync: () => Promise<PluginDeviceSyncResponse>
   readCloud: () => Promise<InstalledPlugin[]>
   invalidate: () => void
+  onProgress?: (stage: PluginReconciliationStage) => void
 }): Promise<void> {
   const measure = async <T>(phase: string, run: () => Promise<T>): Promise<T> => {
     const start = Date.now()
@@ -55,8 +58,11 @@ export async function reconcilePluginRefresh(options: {
     }
   }
   // This also checks runtime support before sending a mutating request.
+  if (!options.isCurrent()) return
+  options.onProgress?.('reading')
   await measure('reconcile-inventory', options.readStore)
   if (!options.isCurrent()) return
+  options.onProgress?.('syncing')
   const response = await measure('reconcile-sync', options.sync)
   if (!options.isCurrent()) return
   if (
@@ -68,6 +74,7 @@ export async function reconcilePluginRefresh(options: {
   ) {
     throw new Error('Plugin reconciliation did not complete; update the app or retry refresh')
   }
+  options.onProgress?.('verifying')
   options.invalidate()
   const [cloud, store] = await measure('reconcile-readback', () =>
     Promise.all([options.readCloud(), options.readStore()])
