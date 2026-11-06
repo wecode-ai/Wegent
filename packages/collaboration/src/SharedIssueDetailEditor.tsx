@@ -90,6 +90,7 @@ import type {
   CollaborationStatus,
 } from "./types";
 import { markdownAttachmentRows } from "./issue-detail/attachmentMarkdown";
+import { stripLocalFileUrlsFromClipboardText } from "./issue-detail/clipboardText";
 import { TagEditor, type TagEditorHandle } from "./issue-detail/TagEditor";
 import { IssuePropertiesPopover } from "./issue-detail/IssuePropertiesPopover";
 import { IssuePropertyRow as RailProp } from "./issue-detail/IssuePropertyRow";
@@ -3278,8 +3279,21 @@ export function TodoEditor(props: TodoEditorProps) {
                           if (!editable) return;
                           const files = Array.from(event.clipboardData.files);
                           if (files.length === 0) return;
-                          // macOS file pastes also carry a text/plain file URL.
+                          const pastedText =
+                            stripLocalFileUrlsFromClipboardText(
+                              event.clipboardData.getData("text/plain"),
+                            );
                           event.preventDefault();
+                          if (pastedText) {
+                            const target = event.currentTarget;
+                            target.setRangeText(
+                              pastedText,
+                              target.selectionStart,
+                              target.selectionEnd,
+                              "end",
+                            );
+                            setDescription(target.value);
+                          }
                           void pasteAttachments(files);
                         }}
                         className={cn(
