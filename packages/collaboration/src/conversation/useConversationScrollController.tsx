@@ -204,7 +204,7 @@ export function useConversationScrollController({
     }
     lastSnapshotRef.current = { key: currentScrollKey, snapshot }
     if (currentScrollKey) setConversationScrollSnapshot(currentScrollKey, snapshot)
-    setShowScrollButton(getDistanceFromBottom(viewport) > BOTTOM_THRESHOLD)
+    setShowScrollButton(snapshot.distanceFromBottomPx > BOTTOM_THRESHOLD)
   }, [currentScrollKey, messages.length])
   const follow = useCallback(
     (smooth = false) => {

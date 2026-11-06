@@ -8,6 +8,46 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+test('saves pinned follow intent without forcing another viewport layout', () => {
+  const viewport = document.createElement('div')
+  document.body.append(viewport)
+  Object.defineProperties(viewport, {
+    clientHeight: { value: 200 },
+    scrollHeight: { value: 1200, configurable: true },
+  })
+  viewport.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+    viewport.scrollTop = Number(top)
+  })
+  const conversationKey = 'follow-save-without-layout'
+  const current = renderHook(() =>
+    useConversationScrollController({
+      conversationKey,
+      externalScrollRef: { current: viewport },
+      messages: [
+        {
+          id: 'latest',
+          role: 'assistant',
+          content: 'Latest answer',
+          status: 'done',
+          createdAt: '2026-10-28T00:00:00.000Z',
+        },
+      ],
+    })
+  )
+  const readHeight = vi.fn(() => 1400)
+  Object.defineProperty(viewport, 'scrollHeight', { get: readHeight, configurable: true })
+
+  fireEvent(viewport, new Event('scrollend'))
+
+  expect(readHeight).not.toHaveBeenCalled()
+  expect(getConversationScrollSnapshot(conversationKey)).toEqual({
+    pinnedToBottom: true,
+    distanceFromBottomPx: 0,
+  })
+  expect(current.result.current.showScrollButton).toBe(false)
+  current.unmount()
+})
+
 test.each(['follow', 'read'] as const)(
   'keeps the original %s snapshot while suspended search navigation uses the viewport',
   mode => {
