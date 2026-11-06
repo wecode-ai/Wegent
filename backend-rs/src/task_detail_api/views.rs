@@ -22,6 +22,7 @@ use super::models::{
 };
 use super::repository::{ContextRow, SubtaskRow};
 use crate::remote_workspace_tree::kinds::KindStore;
+use crate::responses::create::shell::resolve_shell;
 use crate::state::AppState;
 
 /// The public user projection (`model_to_dict(User)` with datetimes rendered
@@ -355,7 +356,6 @@ pub(crate) async fn build_team_response(
     team: &crate::remote_workspace_tree::kinds::KindRecord,
     user_id: i64,
 ) -> Result<TeamResponse, crate::remote_workspace_tree::error::ApiError> {
-    let _ = state;
     let team_crd = crate::crd::CrdDocument::project(&team.json.0);
     let spec = team_crd
         .spec
@@ -366,8 +366,6 @@ pub(crate) async fn build_team_response(
     let is_group_resource = !team.namespace.is_empty() && team.namespace != "default";
 
     let mut bots = Vec::new();
-    let mut shell_types: Vec<String> = Vec::new();
-    let mut first_bot_id: Option<i64> = None;
     if let Some(members) = spec.members.as_ref() {
         for member in members.iter().filter_map(|member| member.as_ref()) {
             let Some(bot_ref) = member.bot_ref.as_ref() else {
@@ -391,14 +389,7 @@ pub(crate) async fn build_team_response(
             } else {
                 user_id
             };
-            let bot_summary = build_bot_summary(kinds, &bot, summary_user_id).await?;
-            if first_bot_id.is_none() {
-                first_bot_id = Some(bot.id);
-            }
-            if !bot_summary.shell_type.is_empty() && !shell_types.contains(&bot_summary.shell_type)
-            {
-                shell_types.push(bot_summary.shell_type.clone());
-            }
+            let bot_summary = build_bot_summary(state, kinds, &bot, summary_user_id).await?;
             bots.push(TeamBotResponse {
                 bot_id: bot.id,
                 bot_prompt: member.prompt.clone().unwrap_or_default(),
@@ -410,43 +401,20 @@ pub(crate) async fn build_team_response(
             });
         }
     }
-    let _ = shell_types;
-
-    // Agent type from the first bot's shell.
-    let mut agent_type = raw_null();
-    if let Some(first_bot_id) = first_bot_id
-        && let Some(first_bot) = kinds.get_by_id("Bot", first_bot_id).await?
-    {
-        let bot_crd = crate::crd::CrdDocument::project(&first_bot.json.0);
-        if let Some(shell_ref) = bot_crd
-            .spec
-            .as_ref()
-            .and_then(|spec| spec.shell_ref.as_ref())
-        {
-            let shell_user_id = if is_group_resource {
-                first_bot.user_id
-            } else {
-                user_id
-            };
-            let shell = kinds
-                .get_by_name_and_namespace(
-                    shell_user_id,
-                    "Shell",
-                    shell_ref.namespace(),
-                    shell_ref.name(),
-                )
-                .await?;
-            if let Some(shell_type) = shell.as_ref().and_then(shell_type_of) {
-                agent_type = brz_json::to_raw_value(&match shell_type {
-                    "Agno" => "agno".to_owned(),
-                    "ClaudeCode" => "claude".to_owned(),
-                    "Dify" => "dify".to_owned(),
-                    other => other.to_lowercase(),
-                })
-                .unwrap();
-            }
-        }
-    }
+    let agent_type = bots
+        .first()
+        .map(|first| first.bot.shell_type.as_str())
+        .filter(|shell_type| !shell_type.is_empty())
+        .map(|shell_type| {
+            brz_json::to_raw_value(&match shell_type {
+                "Agno" => "agno".to_owned(),
+                "ClaudeCode" => "claude".to_owned(),
+                "Dify" => "dify".to_owned(),
+                other => other.to_lowercase(),
+            })
+            .expect("agent type serializes")
+        })
+        .unwrap_or_else(raw_null);
 
     Ok(team_response(team, &team_crd, &spec, bots, agent_type))
 }
@@ -558,6 +526,7 @@ fn public_model_admitted(model_json: &Value, user_name: Option<&str>) -> bool {
 
 /// `_get_bot_summary`.
 pub(crate) async fn build_bot_summary(
+    state: &AppState,
     kinds: &KindStore<'_, brz_mysql::MysqlService, impl brz_redis::Redis>,
     bot: &crate::remote_workspace_tree::kinds::KindRecord,
     user_id: i64,
@@ -570,11 +539,21 @@ pub(crate) async fn build_bot_summary(
         .and_then(|reference| reference.nonempty_parts())
     {
         Some((name, namespace)) => {
-            let shell = kinds
-                .get_by_name_and_namespace(user_id, "Shell", &namespace, &name)
-                .await?;
+            let shell = resolve_shell(
+                &state.mysql,
+                &state.entity_resolvers,
+                state.redis.as_ref(),
+                user_id,
+                &name,
+                &namespace,
+            )
+            .await
+            .map_err(|error| {
+                tracing::warn!(%error, "[task_detail] shell query failed");
+                crate::remote_workspace_tree::error::ApiError::internal("kind query failed")
+            })?;
             shell
-                .and_then(|shell| shell_type_of(&shell).map(str::to_owned))
+                .and_then(|shell| shell_type_of(&shell.json.0).map(str::to_owned))
                 .unwrap_or_default()
         }
         None => String::new(),
