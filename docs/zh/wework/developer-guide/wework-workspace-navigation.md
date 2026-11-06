@@ -17,6 +17,13 @@ sidebar_position: 41
 设置页临时覆盖当前界面并保存返回位置；带 `workspaceTab` 的路由明确指定目标，
 不再派发导航事件。登录等不属于工作区的路由保持页面导航。
 
+## 恢复固定标签标题
+
+默认协作标签统一显示“协作”，不显示 Beta 后缀。普通会话标签和固定标签偏好设置
+都复用 `normalizePersistedTab` 更新旧标题，包括首次加载和偏好设置异步加载后的同步。
+仅更新指向协作首页的内置旧标题；具体项目标签的自定义标题保持不变。
+`WorkspaceTabsContext.test.tsx` 覆盖中英文旧标题、启动恢复和异步固定标签加载。
+
 ## 回归验证
 
 `notification-tab-navigation` 已接入桌面 checkpoint 和 GitHub Core 分片。
