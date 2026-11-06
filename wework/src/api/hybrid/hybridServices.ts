@@ -1731,6 +1731,17 @@ export function createHybridWorkbenchServices(
     deviceApi: hybridDeviceApi,
     runtimeWorkApi: hybridRuntimeWorkApi,
     standInApi: {
+      taskCommands: {
+        async get(deviceId, target) {
+          return (await standInApiForDevice(deviceId)).taskCommands.get(deviceId, target)
+        },
+        async resolve(deviceId, resolution) {
+          return (await standInApiForDevice(deviceId)).taskCommands.resolve(deviceId, resolution)
+        },
+      },
+      async gitConnection(deviceId, input) {
+        return (await standInApiForDevice(deviceId)).gitConnection(deviceId, input)
+      },
       async onboarding(userId, deviceId, language) {
         return (await standInApiForDevice(deviceId)).onboarding(userId, deviceId, language)
       },
@@ -1997,7 +2008,11 @@ function filterRuntimeChatStreamHandlers(
     onBlockUpdated: route(handlers.onBlockUpdated),
     onSubagentActivity: route(handlers.onSubagentActivity),
     onRuntimeTaskTitleUpdated: route(handlers.onRuntimeTaskTitleUpdated),
-    onRuntimeWorkChanged: route(handlers.onRuntimeWorkChanged),
+    // The local executor can create work on a remote device through MCP.
+    // Catalog invalidation carries that target address but no conversation data.
+    onRuntimeWorkChanged: localRuntime
+      ? handlers.onRuntimeWorkChanged
+      : route(handlers.onRuntimeWorkChanged),
     onRuntimeGoalUpdated: route(handlers.onRuntimeGoalUpdated),
     onRuntimeGoalCleared: route(handlers.onRuntimeGoalCleared),
     onRuntimeSupervisorUpdated: route(handlers.onRuntimeSupervisorUpdated),

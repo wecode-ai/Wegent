@@ -7712,6 +7712,10 @@ mod tests {
             .as_deref()
             .expect("manager execution must have a Runtime task id")
             .to_owned();
+        assert!(store
+            .assignment_receipts(&project.id, &issue.id)
+            .unwrap()
+            .is_empty());
         let round = store
             .submit_collaboration_round(
                 &runtime_task_id,
@@ -7745,6 +7749,41 @@ mod tests {
             json!("admin")
         );
         assert!(issue_after_dispatch.metadata["collaboration_group"].is_null());
+        let receipts = store.assignment_receipts(&project.id, &issue.id).unwrap();
+        assert_eq!(receipts.len(), 1);
+        let assignment_id = format!(
+            "{}-{}",
+            issue.id,
+            issue_after_dispatch.metadata["assignment_history"]
+                .as_array()
+                .unwrap()
+                .len()
+        );
+        assert_eq!(receipts[0]["id"], assignment_id);
+        assert_eq!(receipts[0]["target_id"], "42");
+        assert_eq!(receipts[0]["receipt_tracking"], true);
+        store
+            .acknowledge_assignment(&project.id, &issue.id, &assignment_id, 42, true)
+            .unwrap();
+        let received = store.assignment_receipts(&project.id, &issue.id).unwrap();
+        assert!(received[0]["stand_in_received_at"].is_string());
+        assert!(received[0]["human_read_at"].is_null());
+        store
+            .acknowledge_assignment(&project.id, &issue.id, &assignment_id, 42, false)
+            .unwrap();
+        let read = store.assignment_receipts(&project.id, &issue.id).unwrap();
+        assert_eq!(
+            read[0]["stand_in_received_at"],
+            received[0]["stand_in_received_at"]
+        );
+        assert!(read[0]["human_read_at"].is_string());
+        assert_eq!(
+            LocalTaskStore::open(directory.path().join("tasks.sqlite"))
+                .unwrap()
+                .assignment_receipts(&project.id, &issue.id)
+                .unwrap(),
+            read
+        );
         let human_task = store.get_task(&project.id, &human_task_id).unwrap();
         assert_eq!(
             human_task.metadata["collaboration_assignment"]["dispatch_id"],
@@ -7826,6 +7865,68 @@ mod tests {
                 .as_str()
                 .unwrap()
                 .contains("CPU load confirmed at 42%.")
+        );
+        accept_and_start(&store, &resumed_manager);
+        let second_plan = json!({
+            "round_id": "cpu-review-round-2",
+            "items": [{
+                "assignment_id": "cpu-review-admin-again",
+                "title": "Confirm the CPU load again",
+                "instructions": "Check the load after the fix.",
+                "assignee_type": "human",
+                "assignee_id": "42",
+            }],
+        });
+        let resumed_runtime_id = resumed_manager.runtime_task_id.as_deref().unwrap();
+        assert_eq!(
+            store
+                .submit_collaboration_round(
+                    resumed_runtime_id,
+                    &json!({
+                        "round_id": "cpu-review-round-1",
+                        "items": second_plan["items"],
+                    }),
+                )
+                .unwrap()["state"],
+            "already_dispatched"
+        );
+        assert_eq!(
+            store.assignment_receipts(&project.id, &issue.id).unwrap(),
+            read
+        );
+        let second_round = store
+            .submit_collaboration_round(resumed_runtime_id, &second_plan)
+            .unwrap();
+        assert_eq!(second_round["state"], "dispatched");
+        let issue_after_second_round = store.get_task(&project.id, &issue.id).unwrap();
+        assert_eq!(issue_after_second_round.assignee_user_id, Some(42));
+        let second_assignment_id = format!(
+            "{}-{}",
+            issue.id,
+            issue_after_second_round.metadata["assignment_history"]
+                .as_array()
+                .unwrap()
+                .len()
+        );
+        assert_ne!(second_assignment_id, assignment_id);
+        let second_receipts = store.assignment_receipts(&project.id, &issue.id).unwrap();
+        assert_eq!(second_receipts.len(), 1);
+        let fresh = second_receipts
+            .iter()
+            .find(|receipt| receipt["id"] == second_assignment_id)
+            .unwrap();
+        assert_eq!(fresh["target_id"], "42");
+        assert!(fresh["stand_in_received_at"].is_null());
+        assert!(fresh["human_read_at"].is_null());
+        assert!(store
+            .acknowledge_assignment(&project.id, &issue.id, &assignment_id, 42, true)
+            .is_err());
+        assert_eq!(
+            LocalTaskStore::open(directory.path().join("tasks.sqlite"))
+                .unwrap()
+                .assignment_receipts(&project.id, &issue.id)
+                .unwrap(),
+            second_receipts
         );
     }
 

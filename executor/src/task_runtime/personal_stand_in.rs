@@ -108,7 +108,21 @@ pub fn source_namespace(source: &Value) -> Value {
     if source_provider(source) == DINGTALK_PROVIDER {
         source["profile"].clone()
     } else {
-        json!({"providerId":source_provider(source),"profile":source["profile"]})
+        let mut namespace =
+            json!({"providerId":source_provider(source),"profile":source["profile"]});
+        if let Some(transport) = source.get("transport") {
+            namespace["transport"] = transport.clone();
+        }
+        namespace
+    }
+}
+
+/// Collection partitions are provider-owned cursors, never resource permissions.
+pub fn source_collection_namespace(source: &Value) -> Value {
+    let namespace = source_namespace(source);
+    match source.get("collectionKey") {
+        Some(key) => json!({"source":namespace,"collectionKey":key}),
+        None => namespace,
     }
 }
 
@@ -347,6 +361,16 @@ fn validate_connections(role: &Value) -> Result<(), TaskRuntimeError> {
                             && row["kind"]
                                 .as_str()
                                 .is_some_and(|kind| !kind.is_empty() && kind.len() <= 128)
+                            && row.get("collectionKey").map_or(true, |key| {
+                                key.as_str().is_some_and(|key| {
+                                    !key.is_empty() && key.trim() == key && key.len() <= 256
+                                })
+                            })
+                            && row.get("configurationSummary").map_or(true, |summary| {
+                                summary.as_str().is_some_and(|text| {
+                                    !text.trim().is_empty() && text.len() <= 4096
+                                })
+                            })
                             && (all || row.get("scope").is_none())
                             && (all == (row["id"] == "*"))
                             && !rows.iter().any(|other| {
@@ -357,7 +381,7 @@ fn validate_connections(role: &Value) -> Result<(), TaskRuntimeError> {
                                     && (all || other["scope"] == "all")
                             })
                             && validate_policy(&row["policy"])
-                            && (source_provider(row) != EMAIL_PROVIDER
+                            && (!source_provider(row).starts_with("@wegent/dsh-connection-git/")
                                 || row["policy"]["askBeforeAct"] == true)
                             && ids.insert((
                                 row["providerId"].to_string(),
@@ -404,7 +428,17 @@ pub fn stand_in_connection<'a>(identity: &'a Value, source: &Value) -> Option<&'
             && source_provider(row) == source_provider(source)
             && row["profile"] == source["profile"]
             && row["kind"] == source["kind"]
+            && row["transport"] == source["transport"]
     })
+}
+
+/// Intake must still belong to the currently configured collection partition.
+pub fn stand_in_collection_connection<'a>(
+    identity: &'a Value,
+    source: &Value,
+) -> Option<&'a Value> {
+    stand_in_connection(identity, source)
+        .filter(|connection| connection.get("collectionKey") == source.get("collectionKey"))
 }
 
 pub fn project_policy(role: &Value, project: &str, store: &str) -> Value {
@@ -500,6 +534,21 @@ impl LocalTaskStore {
         Ok(saved)
     }
 
+    pub(crate) fn validate_personal_stand_in_settings(
+        &self,
+        user: i64,
+        device: &str,
+        value: Value,
+    ) -> Result<(), TaskRuntimeError> {
+        let mut guard = self.connection()?;
+        let transaction = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let result = self
+            .save_personal_stand_in_on(&transaction, user, device, value)
+            .map(|_| ());
+        transaction.rollback()?;
+        result
+    }
+
     pub(super) fn save_personal_stand_in_on(
         &self,
         connection: &Connection,
@@ -532,7 +581,7 @@ impl LocalTaskStore {
             })?;
         if value["executionDeviceId"] != device {
             return Err(TaskRuntimeError::Invalid(
-                "invalid personal stand-in settings".into(),
+                "settings.executionDeviceId must match the current profile device".into(),
             ));
         }
         if let Some(primary) = value.get("primary") {
@@ -575,6 +624,7 @@ impl LocalTaskStore {
         value["userId"] = json!(user);
         value["version"] = json!(previous["version"].as_i64().unwrap_or(0) + 1);
         write_personal(connection, &value)?;
+        super::stand_in_inbox::queue_removed_git_connections(connection, user, &previous, &value)?;
         super::stand_in_processing::update_processing_configuration(
             connection, user, &previous, &value,
         )?;
@@ -612,6 +662,10 @@ pub(super) fn stamp_stand_in_connections(identity: &mut Value, previous: &Value)
                     && source_provider(row) == source_provider(source)
                     && row["kind"] == source["kind"]
                     && row["profile"] == source["profile"]
+                    && row["generation"] == source["generation"]
+                    && row["subscriptionId"] == source["subscriptionId"]
+                    && row["transport"] == source["transport"]
+                    && row.get("collectionKey") == source.get("collectionKey")
             })
         });
         source["enabledAfter"] = before
@@ -640,10 +694,163 @@ mod email_policy_tests {
     use super::*;
 
     #[test]
-    fn email_connections_always_require_native_confirmation() {
+    fn git_cli_and_webhook_sources_keep_separate_checkpoints_and_bindings() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        let webhook = json!({"providerId":"@wegent/dsh-connection-git/github","kind":"repository","id":"42","profile":"account"});
+        let mut cli = webhook.clone();
+        cli["transport"] = json!("cli");
+        store
+            .save_stand_in_source(7, &webhook, &json!({"checkpoint":{"sequence":5}}))
+            .unwrap();
+        store
+            .save_stand_in_source(7, &cli, &json!({"checkpoint":{"activityPage":2}}))
+            .unwrap();
+        assert_eq!(
+            store.stand_in_source(7, &webhook).unwrap()["checkpoint"]["sequence"],
+            5
+        );
+        assert_eq!(
+            store.stand_in_source(7, &cli).unwrap()["checkpoint"]["activityPage"],
+            2
+        );
+        let role = json!({"connections":[cli.clone()]});
+        assert!(stand_in_connection(&role, &cli).is_some());
+        assert!(stand_in_connection(&role, &webhook).is_none());
+    }
+
+    #[test]
+    fn collection_partition_changes_start_a_new_receiving_boundary() {
+        let source = json!({"providerId":"example/events","profile":"account","kind":"resource","id":"shared","enabledAfter":"2020-01-01T00:00:00Z","collectionKey":"first"});
+        let previous = json!({"enabled":true,"connections":[source]});
+        let mut unchanged = previous.clone();
+        stamp_stand_in_connections(&mut unchanged, &previous);
+        assert_eq!(
+            unchanged["connections"][0]["enabledAfter"],
+            source["enabledAfter"]
+        );
+        let mut changed = previous.clone();
+        changed["connections"][0]["collectionKey"] = json!("second");
+        stamp_stand_in_connections(&mut changed, &previous);
+        assert_ne!(
+            changed["connections"][0]["enabledAfter"],
+            source["enabledAfter"]
+        );
+        changed["connections"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("collectionKey");
+        stamp_stand_in_connections(&mut changed, &previous);
+        assert_ne!(
+            changed["connections"][0]["enabledAfter"],
+            source["enabledAfter"]
+        );
+    }
+
+    #[test]
+    fn connection_collection_metadata_is_bounded_and_persisted_without_interpreting_provider_config(
+    ) {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        settings["roles"][0]["connections"] = json!([{
+            "providerId":"example/events","profile":"account","kind":"resource",
+            "id":"shared","name":"Shared","collectionKey":"selected:v1",
+            "configurationSummary":"Selected object 42", "providerOwned":{"objects":[42]},
+            "policy":{"automatic":true,"askBeforeAct":true}
+        }]);
+        let saved = store.save_personal_stand_in(7, "mac", settings).unwrap();
+        assert_eq!(
+            saved["roles"][0]["connections"][0]["providerOwned"],
+            json!({"objects":[42]})
+        );
+        assert_eq!(
+            saved["roles"][0]["connections"][0]["collectionKey"],
+            "selected:v1"
+        );
+        for invalid in [
+            Value::Null,
+            json!(7),
+            json!(""),
+            json!(" "),
+            json!(" padded "),
+            json!("x".repeat(257)),
+        ] {
+            let mut changed = saved.clone();
+            changed["roles"][0]["connections"][0]["collectionKey"] = invalid;
+            assert!(store.save_personal_stand_in(7, "mac", changed).is_err());
+        }
+        for invalid in [Value::Null, json!(7), json!(" "), json!("x".repeat(4097))] {
+            let mut changed = saved.clone();
+            changed["roles"][0]["connections"][0]["configurationSummary"] = invalid;
+            assert!(store.save_personal_stand_in(7, "mac", changed).is_err());
+        }
+        assert_eq!(store.personal_stand_in(7, "mac").unwrap(), saved);
+    }
+
+    #[test]
+    fn git_connection_save_preflight_never_commits_the_draft() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        let original = store.personal_stand_in(7, "mac").unwrap();
+        let mut draft = original.clone();
+        draft["primary"] =
+            json!({"enabled":false,"prompt":"","preferences":"Draft only","connections":[]});
+        store
+            .validate_personal_stand_in_settings(7, "mac", draft.clone())
+            .unwrap();
+        assert_eq!(store.personal_stand_in(7, "mac").unwrap(), original);
+        let saved = store
+            .save_personal_stand_in(7, "mac", draft.clone())
+            .unwrap();
+        assert!(matches!(
+            store.validate_personal_stand_in_settings(7, "mac", draft),
+            Err(TaskRuntimeError::VersionConflict)
+        ));
+        assert_eq!(store.personal_stand_in(7, "mac").unwrap(), saved);
+    }
+    #[test]
+    fn git_takeover_resets_collection_stamp_but_ordinary_saves_preserve_it() {
+        let previous = json!({"enabled":true,"connections":[{"providerId":"@wegent/dsh-connection-git/github","profile":"account","id":"repo","kind":"repository","subscriptionId":"receiver","generation":"old","enabledAfter":"2026-01-01T00:00:00Z"}]});
+        let mut unchanged = previous.clone();
+        stamp_stand_in_connections(&mut unchanged, &previous);
+        assert_eq!(
+            unchanged["connections"][0]["enabledAfter"],
+            previous["connections"][0]["enabledAfter"]
+        );
+        let mut takeover = previous.clone();
+        takeover["connections"][0]["generation"] = json!("new");
+        stamp_stand_in_connections(&mut takeover, &previous);
+        assert_ne!(
+            takeover["connections"][0]["enabledAfter"],
+            previous["connections"][0]["enabledAfter"]
+        );
+    }
+    #[test]
+    fn email_connections_accept_explicit_confirmation_or_continuous_authorization() {
         let mut role = json!({"connections":[{"providerId":EMAIL_PROVIDER,"profile":"account","kind":"inbox","id":"INBOX","name":"Mailbox","policy":{"automatic":true,"askBeforeAct":true}}]});
         assert!(validate_connections(&role).is_ok());
         role["connections"][0]["policy"]["askBeforeAct"] = json!(false);
+        assert!(validate_connections(&role).is_ok());
+        for invalid in [Value::Null, json!("false"), json!(0)] {
+            role["connections"][0]["policy"]["askBeforeAct"] = invalid;
+            assert!(validate_connections(&role).is_err());
+        }
+        role["connections"][0]["policy"] = json!({"automatic":true});
         assert!(validate_connections(&role).is_err());
+        role["connections"][0]["policy"] = json!({"automatic":"true","askBeforeAct":false});
+        assert!(validate_connections(&role).is_err());
+    }
+    #[test]
+    fn git_sources_cannot_disable_native_external_write_confirmation() {
+        for provider in [
+            "@wegent/dsh-connection-git/github",
+            "@wegent/dsh-connection-git/gitlab",
+        ] {
+            let mut role = json!({"connections":[{"providerId":provider,"profile":"account","kind":"personal","id":"personal","name":"Personal events","policy":{"automatic":true,"askBeforeAct":true}}]});
+            assert!(validate_connections(&role).is_ok());
+            role["connections"][0]["policy"]["askBeforeAct"] = json!(false);
+            assert!(validate_connections(&role).is_err());
+        }
     }
 }

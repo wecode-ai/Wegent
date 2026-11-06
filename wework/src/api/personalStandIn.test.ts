@@ -1,7 +1,12 @@
 // @vitest-environment node
 
 import { describe, expect, it } from 'vitest'
-import { disconnectStandInProject, newStandInRole, roleIncludesProject } from './personalStandIn'
+import {
+  disconnectStandInProject,
+  newStandInRole,
+  roleIncludesProject,
+  roleSelectsProject,
+} from './personalStandIn'
 
 const project = { id: 'one', store: 'local' as const }
 const other = { id: 'two', store: 'local' as const }
@@ -48,3 +53,24 @@ describe('project-only stand-in disabling', () => {
     expect(roleIncludesProject(role, project)).toBe(true)
   })
 })
+
+it.each([true, false])(
+  'retains selected scope without activating a paused source (allProjects=%s)',
+  allProjects => {
+    const role = newStandInRole('mac')
+    role.collaboration = {
+      ...role.collaboration,
+      allProjects,
+      projects: [project],
+      excludedProjects: [other],
+    }
+    expect(roleSelectsProject(role, project)).toBe(true)
+    expect(roleSelectsProject(role, other)).toBe(false)
+    expect(roleIncludesProject(role, project)).toBe(false)
+    role.collaboration.enabled = true
+    expect(roleIncludesProject(role, project)).toBe(true)
+    expect(roleSelectsProject(role, sameIdInCloud)).toBe(allProjects)
+    role.agentProject = project
+    expect(roleSelectsProject(role, sameIdInCloud)).toBe(false)
+  }
+)

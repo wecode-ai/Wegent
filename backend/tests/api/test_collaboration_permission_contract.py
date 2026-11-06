@@ -11,6 +11,7 @@ from app.models.cloud_project import CloudProject
 from app.models.resource_member import ResourceMember
 from app.models.user import User
 from app.schemas.base_role import BaseRole
+from app.schemas.cloud_project import CloudProjectMemberResponse
 from app.services.cloud_project_visibility import (
     project_membership_rows,
     project_participant_ids,
@@ -21,6 +22,8 @@ from app.services.cloud_projects.responses import (
 )
 from app.services.cloud_projects.service import cloud_project_service
 from app.services.collaboration_permissions import collaboration_permission_service
+from app.services.workspaces.responses import list_workspace_responses
+from tests.service_results import service_result
 
 
 def read_project(test_db, project_id, user):
@@ -175,8 +178,12 @@ def test_cp02_cp03_cp05_role_precedence_and_restricted_projects(
     assert (pid in projects) == (expected is not None)
     if expected:
         assert projects[pid].access_role.value == expected
-    roster = test_client.get(
-        f"/api/v1/cloud-projects/{pid}/members", headers=scope["owner"]
+    roster = service_result(
+        cloud_project_service.list_members,
+        test_db,
+        int(pid),
+        scope["space"]["owner_user_id"],
+        response_model=list[CloudProjectMemberResponse],
     )
     assert roster.status_code == 200, roster.text
     rows = [row for row in roster.json() if row["user_id"] == scope["user"].id]
@@ -211,8 +218,8 @@ def test_cp04_project_guest_does_not_inherit_upward(test_client, test_db, scope,
     assert detail["workspace_context"]["id"] == wid
     workspace_ids = {
         row["id"]
-        for row in test_client.get(
-            "/api/v1/workspaces", headers=scope["member"]
+        for row in service_result(
+            lambda: {"items": list_workspace_responses(test_db, scope["user"].id)}
         ).json()["items"]
     }
     assert wid not in workspace_ids
@@ -237,7 +244,7 @@ def test_cp04_project_guest_does_not_inherit_upward(test_client, test_db, scope,
     assert sibling["id"] not in {row["id"] for row in listed_projects}
 
 
-def test_cp07_cp08_cp20_viewer_and_membership_provenance(test_client, scope):
+def test_cp07_cp08_cp20_viewer_and_membership_provenance(test_db, test_client, scope):
     invite(test_client, scope, "Viewer")
     pid, wid = scope["project"]["id"], scope["space"]["id"]
     assert (
@@ -248,12 +255,16 @@ def test_cp07_cp08_cp20_viewer_and_membership_provenance(test_client, scope):
     )
     assert wid in {
         row["id"]
-        for row in test_client.get(
-            "/api/v1/workspaces", headers=scope["member"]
+        for row in service_result(
+            lambda: {"items": list_workspace_responses(test_db, scope["user"].id)}
         ).json()["items"]
     }
-    roster = test_client.get(
-        f"/api/v1/cloud-projects/{pid}/members", headers=scope["member"]
+    roster = service_result(
+        cloud_project_service.list_members,
+        test_db,
+        int(pid),
+        scope["user"].id,
+        response_model=list[CloudProjectMemberResponse],
     ).json()
     row = next(row for row in roster if row["user_id"] == scope["user"].id)
     assert row["role"] == "Viewer"
@@ -359,8 +370,12 @@ def test_cp08_lower_direct_role_never_masks_space_administration(
     invite(test_client, scope, "Maintainer")
     invite(test_client, scope, "Viewer", project=True)
     pid = scope["project"]["id"]
-    rows = test_client.get(
-        f"/api/v1/cloud-projects/{pid}/members", headers=scope["member"]
+    rows = service_result(
+        cloud_project_service.list_members,
+        test_db,
+        int(pid),
+        scope["user"].id,
+        response_model=list[CloudProjectMemberResponse],
     ).json()
     row = next(row for row in rows if row["user_id"] == scope["user"].id)
     assert (row["role"], row["direct_role"], row["inherited_role"]) == (
@@ -492,12 +507,3 @@ def test_cp09_cp13_enabled_agents_and_assignment_entry_points(test_client, scope
             test_client.post(path, headers=scope["member"], json=body).status_code
             == 403
         )
-
-
-@pytest.fixture
-def test_client(test_client):
-    """Exercise retained Python HTTP components in an isolated application."""
-    from tests.retained_python_handlers import component_client
-
-    with component_client(test_client, ("project_members", "workspaces")) as client:
-        yield client

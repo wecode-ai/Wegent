@@ -1,3 +1,4 @@
+import type { CollaborationProject } from '@wegent/collaboration'
 import { createRef } from 'react'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -41,8 +42,6 @@ it('discovers independent connection plugins and routes resource searches to the
   } as unknown as StandInExecutorApi
   const user = userEvent.setup()
   render(<StandInConnectionSettings {...props} api={api} />)
-  if (screen.queryByTestId('stand-in-add-connection'))
-    await user.click(screen.getByTestId('stand-in-add-connection'))
   await user.click(await screen.findByTestId('stand-in-add-@test/mail/inbox-connection'))
   await user.type(screen.getByTestId('stand-in-connection-@test/mail/inbox-query'), 'Inbox')
   await user.click(screen.getByTestId('stand-in-connection-@test/mail/inbox-search'))
@@ -68,8 +67,6 @@ it('installs dependencies only after the user clicks the installation action', a
   } as unknown as StandInExecutorApi
   const user = userEvent.setup()
   render(<StandInConnectionSettings {...props} api={api} />)
-  if (screen.queryByTestId('stand-in-add-connection'))
-    await user.click(screen.getByTestId('stand-in-add-connection'))
   await user.click(await screen.findByTestId('stand-in-add-@test/mail/inbox-connection'))
   const install = await screen.findByTestId('stand-in-install-dependencies-@test/mail/inbox')
   expect(installConnectionDependencies).not.toHaveBeenCalled()
@@ -89,17 +86,14 @@ it('does not apply a previous device catalog after changing the selected device'
       )
       .mockResolvedValue({ items: [provider('@test/new/inbox', '新设备邮箱')] }),
   } as unknown as StandInExecutorApi
-  const user = userEvent.setup()
   const view = render(<StandInConnectionSettings {...props} api={api} />)
   view.rerender(<StandInConnectionSettings {...props} api={api} deviceId="other" />)
-  if (screen.queryByTestId('stand-in-add-connection'))
-    await user.click(screen.getByTestId('stand-in-add-connection'))
   await screen.findByText('新设备邮箱')
   await act(async () => finish({ items: [provider('@test/old/inbox', '旧设备邮箱')] }))
   expect(screen.queryByText('旧设备邮箱')).not.toBeInTheDocument()
 })
 
-it('offers the built-in calendar only inside the add connection picker', async () => {
+it('offers the built-in calendar independently of configured sources', async () => {
   const user = userEvent.setup()
   const ref = createRef<StandInConnectionNavigationHandle>()
   render(
@@ -112,8 +106,6 @@ it('offers the built-in calendar only inside the add connection picker', async (
   expect(screen.getByTestId('stand-in-time-connections')).toBeVisible()
   expect(screen.queryByTestId('stand-in-add-connection')).not.toBeInTheDocument()
   expect(screen.queryByTestId('stand-in-connections-empty')).not.toBeInTheDocument()
-  if (screen.queryByTestId('stand-in-add-connection'))
-    await user.click(screen.getByTestId('stand-in-add-connection'))
   expect(screen.getAllByText('日历')).toHaveLength(1)
   expect(screen.queryByTestId('stand-in-add-time-connection')).not.toBeInTheDocument()
   expect(screen.getByTestId('stand-in-connection-type-picker')).toContainElement(
@@ -190,5 +182,91 @@ it.each(['@primary', 'reviewer'])(
         },
       })
     )
+  }
+)
+
+it('shows pending connection changes until the saved configuration catches up', () => {
+  const savedConfiguration = newStandInRole('mac')
+  const role = {
+    ...savedConfiguration,
+    calendar: { policy: { automatic: true, askBeforeAct: true, immediate: true } },
+  }
+  const view = render(
+    <StandInConnectionSettings {...props} role={role} savedConfiguration={savedConfiguration} />
+  )
+  expect(screen.getByTestId('stand-in-connections-pending')).toHaveTextContent('保存分身设置后生效')
+  view.rerender(<StandInConnectionSettings {...props} role={role} savedConfiguration={role} />)
+  expect(screen.queryByTestId('stand-in-connections-pending')).not.toBeInTheDocument()
+})
+
+it.each(['dependency_missing', 'plugin_disabled', 'dependency_incompatible', 'auth_required'])(
+  'allows removing saved scope while the provider is %s',
+  async status => {
+    const item = { ...provider('chat', '消息'), availability: { status } }
+    const api = {
+      connectionProviders: vi.fn(async () => ({ items: [item] })),
+    } as unknown as StandInExecutorApi
+    const role = {
+      ...props.role,
+      connections: [
+        {
+          providerId: 'chat',
+          profile: 'account',
+          kind: 'folder',
+          id: 'saved',
+          name: '保留的范围',
+          policy: { automatic: true, askBeforeAct: true },
+        },
+      ],
+    }
+    const onChange = vi.fn()
+    const user = userEvent.setup()
+    render(<StandInConnectionSettings {...props} role={role} api={api} onChange={onChange} />)
+    await user.click(await screen.findByTestId('stand-in-add-chat-connection'))
+    await user.click(
+      await screen.findByTestId(
+        status === 'auth_required'
+          ? 'stand-in-connection-chat-remove-saved'
+          : 'stand-in-disconnect-chat-saved'
+      )
+    )
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ connections: [] }))
+  }
+)
+
+it('allows preparing the all-project scope before joining a project without a misleading prerequisite', async () => {
+  const role = { ...props.role, collaboration: { ...props.role.collaboration, enabled: true } }
+  const user = userEvent.setup()
+  render(<StandInConnectionSettings {...props} role={role} />)
+  await user.click(screen.getByTestId('stand-in-add-projects-connection'))
+  expect(screen.getByText('目前没有可选项目，之后加入的项目会自动纳入此范围。')).toBeVisible()
+  expect(screen.queryByText('先创建或加入一个项目，再配置分身。')).not.toBeInTheDocument()
+})
+
+it.each([true, false])(
+  'keeps paused project selections checked and disabled (allProjects=%s)',
+  async allProjects => {
+    const role = {
+      ...props.role,
+      collaboration: {
+        ...props.role.collaboration,
+        allProjects,
+        projects: [{ id: 'one', store: 'local' as const }],
+      },
+    }
+    const user = userEvent.setup()
+    render(
+      <StandInConnectionSettings
+        {...props}
+        role={role}
+        projects={[
+          { id: 'one', name: 'Selected project', project_store: 'local' } as CollaborationProject,
+        ]}
+      />
+    )
+    await user.click(screen.getByTestId('stand-in-add-projects-connection'))
+    const checkbox = screen.getByRole('checkbox', { name: 'Selected project' })
+    expect(checkbox).toBeChecked()
+    expect(checkbox).toBeDisabled()
   }
 )

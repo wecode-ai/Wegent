@@ -939,13 +939,6 @@ function AppShell() {
   const { user, isLoading } = useAuth()
   const cloudConnection = useCloudConnection()
   const { key: ownershipKey } = resolveWorkbenchOwnership(cloudConnection, user)
-  const initialCloudConnection = {
-    apiBaseUrl: cloudConnection.apiBaseUrl,
-    backendUrl: cloudConnection.backendUrl,
-    socketBaseUrl: cloudConnection.socketBaseUrl,
-    isConnected: cloudConnection.isConnected,
-    token: cloudConnection.token,
-  }
   const { activeAppKey, navigateToApp } = useChromeTabs(path)
   const isElectron = isElectronRuntime()
   const isDesktop = isDesktopRuntime()
@@ -953,6 +946,17 @@ function AppShell() {
   const currentWindowLabel = isElectron ? getDesktopWindowLabel() : null
   const isMainWindow = currentWindowLabel === 'main'
   const isWorkspaceWindow = currentWindowLabel?.startsWith('workspace-') === true
+  const localExecutorCloudBridge =
+    !isPopoutWindow && !isWorkspaceWindow ? (
+      <LocalExecutorCloudBridge
+        apiBaseUrl={cloudConnection.apiBaseUrl}
+        backendUrl={cloudConnection.backendUrl}
+        socketBaseUrl={cloudConnection.socketBaseUrl}
+        isConnected={cloudConnection.isConnected}
+        token={cloudConnection.token}
+        preferencesLoaded={appPreferences?.loaded ?? false}
+      />
+    ) : null
   const cloudApiBaseUrl = cloudConnection.apiBaseUrl
   const cloudToken = cloudConnection.token
   const titlebarOverlaysContent = false
@@ -1278,10 +1282,8 @@ function AppShell() {
     )
     return (
       <CodexHomeInitializer>
-        <LocalRuntimeInitializer
-          initialCloudConnection={initialCloudConnection}
-          startupReady={workbenchStartupReady}
-        >
+        <LocalRuntimeInitializer startupReady={workbenchStartupReady}>
+          {localExecutorCloudBridge}
           {isolatedShell}
         </LocalRuntimeInitializer>
       </CodexHomeInitializer>
@@ -1326,16 +1328,6 @@ function AppShell() {
               />
             )}
             {isDesktop && !isPopoutWindow && !isWorkspaceWindow ? <RuntimeTaskCloseGuard /> : null}
-            {!isPopoutWindow && !isWorkspaceWindow ? (
-              <LocalExecutorCloudBridge
-                apiBaseUrl={cloudConnection.apiBaseUrl}
-                backendUrl={cloudConnection.backendUrl}
-                socketBaseUrl={cloudConnection.socketBaseUrl}
-                isConnected={cloudConnection.isConnected}
-                token={cloudConnection.token}
-                preferencesLoaded={appPreferences?.loaded ?? false}
-              />
-            ) : null}
             {isMainWindow && isElectron ? (
               <>
                 <IdleTaskCoordinator active={workbenchStartupReady} />
@@ -1371,10 +1363,8 @@ function AppShell() {
 
   return (
     <CodexHomeInitializer>
-      <LocalRuntimeInitializer
-        initialCloudConnection={initialCloudConnection}
-        startupReady={workbenchStartupReady}
-      >
+      <LocalRuntimeInitializer startupReady={workbenchStartupReady}>
+        {localExecutorCloudBridge}
         {shell}
       </LocalRuntimeInitializer>
     </CodexHomeInitializer>

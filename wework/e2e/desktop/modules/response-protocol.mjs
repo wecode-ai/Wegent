@@ -1,4 +1,6 @@
 import { gunzipSync, zstdDecompressSync } from 'node:zlib'
+import { createHash } from 'node:crypto'
+import { readMcpToolOutput } from './mcp-tool-results.mjs'
 
 import {
   ARTIFACT_CONTENT,
@@ -53,6 +55,39 @@ function createSse(events) {
       return `event: ${normalizedEvent.type}\ndata: ${JSON.stringify(normalizedEvent)}\n\n`
     })
     .join('')
+}
+
+// Script only the model: task-result delivery and its history read stay native.
+function delegatedTaskResultEvents(body) {
+  const latestUser = (Array.isArray(body.input) ? body.input : [])
+    .filter(item => item.role === 'user')
+    .at(-1)
+  const message = modelMessageText(latestUser)
+  const match = message.match(
+    /^Wework delegated task result: resultId=([^,\s]+), taskId=([^,\s]+), status=([^,\s]+),/
+  )
+  if (!match) return null
+  const [, resultId, taskId, status] = match
+  const callId = `delegated-result-${createHash('sha256').update(resultId).digest('hex').slice(0, 16)}`
+  if (!requestContainsToolOutput(body, callId)) {
+    return mcpToolRequestEvents(body, {
+      toolName: 'read_task',
+      directToolName: 'mcp__wework_stand_in__read_task',
+      argumentsValue: { taskId },
+      searchCallId: `${callId}-search`,
+      toolCallId: callId,
+    }).events
+  }
+  const history = JSON.parse(readMcpToolOutput(body, callId))
+  assert.equal(history.taskId, taskId, 'Completion reporting must read the exact child task')
+  assert.ok(Array.isArray(history.messages), 'Completion reporting requires a real transcript')
+  const answer = history.messages
+    .filter(item => item.role === 'assistant')
+    .map(item => (typeof item.content === 'string' ? item.content : JSON.stringify(item.content)))
+    .filter(Boolean)
+    .at(-1)
+  if (status === 'done') assert.ok(answer, 'A completed task must provide its actual result')
+  return [assistantMessage(`任务 ${taskId}（${status}）：${answer ?? '本次执行未产出回答。'}`)]
 }
 
 function codexRequestMetadata(body) {
@@ -115,6 +150,23 @@ function handleEmptyReplyPrediction(body, response) {
     createSse([
       responseCreated(id),
       assistantMessage(JSON.stringify({ suggestion: null })),
+      responseCompleted(id),
+    ])
+  )
+  return true
+}
+
+function handleModelMaintenanceRequest(body, response) {
+  const kind = codexRequestKind(body)
+  if (!['compaction', 'prewarm'].includes(kind)) return false
+  const id = `desktop-e2e-${kind}`
+  response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+  response.end(
+    createSse([
+      responseCreated(id),
+      ...(kind === 'compaction'
+        ? [assistantMessage('Desktop E2E context compaction completed.')]
+        : []),
       responseCompleted(id),
     ])
   )
@@ -671,13 +723,31 @@ function selectConvertedTool(request, toolName, argumentsValue) {
   return { name, arguments: argumentsValue }
 }
 
+function findMcpToolNamespace(tools, toolName, namespaceName) {
+  const matches = tools.filter(
+    tool =>
+      tool?.type === 'namespace' &&
+      (!namespaceName || [namespaceName, `mcp__${namespaceName}`].includes(tool.name)) &&
+      tool.tools?.some(candidate => candidate?.type === 'function' && candidate.name === toolName)
+  )
+  assert.ok(
+    new Set(matches.map(tool => tool.name)).size <= 1,
+    `Ambiguous MCP tool ${toolName}; specify its qualified name`
+  )
+  return matches[0]
+}
+
 function selectMcpToolRequest(request, toolName, argumentsValue, directToolName) {
   const tools = Array.isArray(request.tools) ? request.tools : []
   const names = tools.map(tool => tool?.name ?? tool?.function?.name).filter(Boolean)
-  const searchedNamespace = requestToolSearchResults(request).find(
-    tool =>
-      tool?.type === 'namespace' &&
-      tool.tools?.some(candidate => candidate?.type === 'function' && candidate.name === toolName)
+  const namespaceName = directToolName?.startsWith('mcp__')
+    ? directToolName.slice(5, -(toolName.length + 2))
+    : undefined
+  if (namespaceName) assert.ok(directToolName.endsWith(`__${toolName}`))
+  const searchedNamespace = findMcpToolNamespace(
+    requestToolSearchResults(request),
+    toolName,
+    namespaceName
   )
   if (searchedNamespace) {
     return {
@@ -691,11 +761,7 @@ function selectMcpToolRequest(request, toolName, argumentsValue, directToolName)
       (tool?.type === 'function' &&
         ['tool_search', 'search_deferred_tools'].includes(tool?.name ?? tool?.function?.name))
   )
-  const namespace = tools.find(
-    tool =>
-      tool?.type === 'namespace' &&
-      tool.tools?.some(candidate => candidate?.type === 'function' && candidate.name === toolName)
-  )
+  const namespace = findMcpToolNamespace(tools, toolName, namespaceName)
   if (!advertisesToolSearch && namespace) {
     return {
       mode: 'direct',
@@ -710,7 +776,7 @@ function selectMcpToolRequest(request, toolName, argumentsValue, directToolName)
   }
   return {
     mode: 'search',
-    ...selectToolSearch(request, toolName),
+    ...selectToolSearch(request, namespaceName ? `${namespaceName} ${toolName}` : toolName),
   }
 }
 
@@ -871,8 +937,10 @@ function snapshotHasAssistantActivity(snapshot) {
 
 export {
   createSse,
+  delegatedTaskResultEvents,
   codexRequestMetadata,
   codexRequestKind,
+  handleModelMaintenanceRequest,
   latestModelInputText,
   isReplyPredictionRequest,
   isReplyPredictionVisionRequest,

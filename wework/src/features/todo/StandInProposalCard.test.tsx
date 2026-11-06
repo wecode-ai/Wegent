@@ -73,3 +73,40 @@ it('blocks a stale proposal while keeping the reject action available', async ()
   await userEvent.click(screen.getByTestId('stand-in-proposal-reject'))
   expect(props.onResolve).toHaveBeenCalledWith(false)
 })
+
+it('shows the complete collection configuration change without exposing opaque keys', () => {
+  const props = fixture()
+  const source = props.current.primary!.connections![0]!
+  Object.assign(source, { collectionKey: 'opaque-before', configurationSummary: 'Items #1, #2' })
+  props.proposal.settings = {
+    ...props.current,
+    primary: {
+      ...props.current.primary!,
+      connections: [
+        { ...source, collectionKey: 'opaque-after', configurationSummary: 'Items #3, #4' },
+      ],
+    },
+  }
+  render(<StandInProposalCard {...props} />)
+  const change = screen.getByTestId('stand-in-proposal-connection-configuration')
+  expect(change).toHaveTextContent('修改前：Items #1, #2 → 修改后：Items #3, #4')
+  expect(screen.queryByText(/opaque-before|opaque-after/)).not.toBeInTheDocument()
+})
+
+it('describes a legacy connection with the generic default scope', () => {
+  const props = fixture()
+  const source = props.current.primary!.connections![0]!
+  props.proposal.settings = {
+    ...props.current,
+    primary: {
+      ...props.current.primary!,
+      connections: [
+        { ...source, configurationSummary: 'Selected item #3', collectionKey: 'opaque-selection' },
+      ],
+    },
+  }
+  render(<StandInProposalCard {...props} />)
+  expect(screen.getByTestId('stand-in-proposal-connection-configuration')).toHaveTextContent(
+    '修改前：默认范围 → 修改后：Selected item #3'
+  )
+})

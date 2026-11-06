@@ -405,6 +405,16 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn create_task(&self, payload: Value) -> Result<Value, AppIpcError> {
+        self.create_task_with_activity(payload, false).await
+    }
+
+    pub(super) async fn create_task_with_activity(
+        &self,
+        mut payload: Value,
+        activity: bool,
+    ) -> Result<Value, AppIpcError> {
+        self.bind_stand_in_owner_command(&mut payload, activity);
+        normalize_user_message_presentation(&mut payload)?;
         let command_gate = payload
             .get("commandId")
             .and_then(|_| runtime_task_id(&payload))
@@ -473,6 +483,8 @@ impl RuntimeWorkRpcHandler {
             ensure_claude_execution_identity(&local_task_id, &mut request);
         }
         set_runtime_task_title(&mut request, &title);
+        self.stamp_stand_in_owner_request(&local_task_id, &mut request, activity)?;
+        self.resolve_local_model_reference(&mut request, &local_task_id)?;
         self.retain_runtime_model_config(&local_task_id, &request.model_config);
         log_executor_event(
             "runtime task create identity",
@@ -917,6 +929,7 @@ impl RuntimeWorkRpcHandler {
         self.store.update_task(local_task_id, |link| {
             apply_runtime_task_start_failure(link, error);
         });
+        self.record_stand_in_completion_outbox(local_task_id, "failed");
     }
 
     pub(super) fn record_runtime_turn_id(
@@ -1028,7 +1041,7 @@ impl RuntimeWorkRpcHandler {
             return Ok(None);
         }
         let origin = &payload["executionRequest"]["origin"];
-        let user = super::stand_in_work::stand_in_user(origin)?;
+        let user = super::runtime_owner::runtime_user(origin)?;
         let store = LocalTaskStore::open(self.task_store_path.as_ref())
             .map_err(super::stand_in::settings_error)?;
         let state = store
@@ -1055,6 +1068,27 @@ impl RuntimeWorkRpcHandler {
     }
 
     async fn send_message_after_local_checks(&self, payload: Value) -> Result<Value, AppIpcError> {
+        self.send_message_with_activity_checks(payload, false).await
+    }
+
+    pub(super) async fn send_identity_activity(
+        &self,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        let task = runtime_task_id(&payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let gate = self.task_send_gate(&task);
+        let _guard = gate.lock().await;
+        self.send_message_with_activity_checks(payload, true).await
+    }
+
+    async fn send_message_with_activity_checks(
+        &self,
+        mut payload: Value,
+        activity: bool,
+    ) -> Result<Value, AppIpcError> {
+        self.bind_stand_in_owner_command(&mut payload, activity);
+        normalize_user_message_presentation(&mut payload)?;
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let existing_link = self.local_task_link(&local_task_id);
@@ -1134,6 +1168,7 @@ impl RuntimeWorkRpcHandler {
         let mut request = payload_execution_request
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
+        self.resolve_local_model_reference(&mut request, &local_task_id)?;
         if let Some(link) = existing_link.as_ref() {
             super::mcp_apps::append_model_context(&mut request, link);
             // A failed preparation has no session yet. Retry its saved snapshot;
@@ -1162,7 +1197,8 @@ impl RuntimeWorkRpcHandler {
         if let Some(link) = existing_link.as_ref() {
             restore_cloud_project_id(&mut request, &link.runtime_handle);
             restore_origin(&mut request, &link.runtime_handle);
-            self.refresh_stand_in_confirmation(&mut request)?;
+            self.refresh_identity_conversation_origin(&mut request, link)?;
+            self.refresh_stand_in_confirmation(&local_task_id, &mut request)?;
         }
         request.new_session = false;
         if request.runtime_project_key.is_none() {
@@ -1319,6 +1355,7 @@ impl RuntimeWorkRpcHandler {
         let resume_thread_id = thread_id.filter(|_| !ephemeral);
         let initial_thread_goal = initial_thread_goal_from_payload(&payload);
 
+        self.stamp_stand_in_owner_request(&local_task_id, &mut request, activity)?;
         let turn = SpawnTurnRequest {
             task_kind: None,
             local_task_id: local_task_id.clone(),
@@ -1550,7 +1587,8 @@ impl RuntimeWorkRpcHandler {
         mark_runtime_model_switch(&mut request, &existing_link, &payload);
         restore_cloud_project_id(&mut request, &existing_link.runtime_handle);
         restore_origin(&mut request, &existing_link.runtime_handle);
-        self.refresh_stand_in_confirmation(&mut request)?;
+        self.refresh_identity_conversation_origin(&mut request, &existing_link)?;
+        self.refresh_stand_in_confirmation(&local_task_id, &mut request)?;
         request.new_session = false;
         if !workspace_path.is_empty() {
             request.project_workspace_path = Some(workspace_path.clone());
@@ -1995,6 +2033,7 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<Value, AppIpcError> {
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        self.invalidate_stand_in_owner_request(&local_task_id);
         let link = self.local_task_link(&local_task_id);
         let thread_id = link.as_ref().and_then(runtime_session_id_from_link);
         let is_codex = link

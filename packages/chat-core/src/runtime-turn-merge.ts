@@ -37,7 +37,7 @@ export function mergeRuntimeConversationTurn(
   const preserveLocalTerminal =
     isTerminalTurnStatus(local.status) &&
     isUnsettledTurnStatus(snapshot.status);
-  const items =
+  let items =
     snapshot.itemMerge === "prepend"
       ? prependRuntimeConversationItems(
           local.items,
@@ -49,6 +49,12 @@ export function mergeRuntimeConversationTurn(
           snapshot.items,
           preserveLocalTerminal,
         );
+  if (local.id !== null && local.id === snapshot.id) {
+    const previousById = new Map(local.items.map((item) => [item.id, item]));
+    items = items.map((item) =>
+      preserveCompletedImageArtifact(previousById.get(item.id), item),
+    );
+  }
   const preserveLocalFailure =
     local.status === "failed" && Boolean(local.error) && !snapshot.error;
   const preserveStreamingThinking =
@@ -113,6 +119,67 @@ export function mergeRuntimeConversationTurn(
         ? getLatestThinkingContent(processingBlocks(items))
         : snapshot.streamingThinkingContent,
   };
+}
+
+/** Optional artifact references omitted by a snapshot cannot retract a completed image. */
+function preserveCompletedImageArtifact(
+  previous: RuntimeConversationItem | undefined,
+  incoming: RuntimeConversationItem,
+): RuntimeConversationItem {
+  if (previous?.type !== "block" || incoming.type !== "block") return incoming;
+  const local = previous.block;
+  const snapshot = incoming.block;
+  if (
+    local.type !== "tool" ||
+    snapshot.type !== "tool" ||
+    local.toolName !== "image_generation" ||
+    snapshot.toolName !== local.toolName ||
+    local.status !== "done" ||
+    snapshot.status !== "done"
+  )
+    return incoming;
+  const artifact = local.renderPayload;
+  const payload = snapshot.renderPayload;
+  if (
+    !artifact ||
+    typeof artifact !== "object" ||
+    Array.isArray(artifact) ||
+    Reflect.get(artifact, "kind") !== "image_generation"
+  )
+    return incoming;
+  if (
+    payload !== undefined &&
+    (!payload ||
+      typeof payload !== "object" ||
+      Array.isArray(payload) ||
+      Reflect.get(payload, "kind") !== "image_generation" ||
+      Object.hasOwn(payload, "source") ||
+      Object.hasOwn(payload, "imageBase64"))
+  )
+    return incoming;
+  if (!hasGeneratedImageArtifact(artifact)) return incoming;
+  return {
+    ...incoming,
+    block: { ...snapshot, renderPayload: { ...artifact, ...payload } },
+  };
+}
+
+function hasGeneratedImageArtifact(payload: object): boolean {
+  const source = Reflect.get(payload, "source");
+  const inline = Reflect.get(payload, "imageBase64");
+  return (
+    (typeof inline === "string" && inline.trim().length > 0) ||
+    Boolean(
+      source &&
+      typeof source === "object" &&
+      !Array.isArray(source) &&
+      Reflect.get(source, "type") === "workspace_file" &&
+      ["deviceId", "workspacePath", "path"].every((key) => {
+        const value = Reflect.get(source, key);
+        return typeof value === "string" && value.trim().length > 0;
+      }),
+    )
+  );
 }
 
 export function prependRuntimeConversationItems(
