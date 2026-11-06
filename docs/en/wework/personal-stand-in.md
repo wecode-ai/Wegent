@@ -4,6 +4,8 @@ sidebar_position: 12
 
 # Personal stand-in and scenario roles
 
+When opening your stand-in, the page checks onboarding status and shows an inline loading message. Initial setup opens automatically only after the check confirms it is incomplete. Completed setup opens the stand-in directly. If the check fails, use the retry action in the error prompt.
+
 Open **My stand-in**, marked **Beta**, in the Tasks sidebar to delegate work, ask follow-up questions, or draft a scenario role with AI. The header displays the primary identity and existing roles for switching. The primary identity conversation and individual work executions are stored separately. Returning from a role restores the primary conversation.
 
 A **scenario role** continuously handles a particular information flow. Its default page is a work list. Select work for a preview, open the shared **Needs your input** tab for human decisions, or open the full conversation for context. Each role also has its own persistent identity conversation.

@@ -59,7 +59,10 @@ export function StandInOnboarding({
     setPreviousActive(active)
     if (!active) setDismissed(false)
   }
-  const open = active && (guideOpen || (!bypass && !dismissed && !result?.state.completed))
+  const checking = active && !bypass && !dismissed && !result && !error
+  const open =
+    active &&
+    (guideOpen || (!bypass && !dismissed && !!(result || error) && !result?.state.completed))
   const setupRef = useRef<Pick<StandInSettingsHandle, 'requestLeave'>>(null)
   const [setupBusy, setSetupBusy] = useState(false)
   const dismiss = () => {
@@ -125,6 +128,11 @@ export function StandInOnboarding({
         data-testid="stand-in-onboarding-content"
       >
         {result || dismissed || bypass || !active ? children : null}
+        {checking && !guideOpen ? (
+          <p role="status" className="p-5 text-sm text-text-secondary">
+            {t('standIn.onboarding.loading')}
+          </p>
+        ) : null}
       </div>
       {open &&
         createPortal(
