@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { DatabaseSync } from 'node:sqlite'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -139,13 +139,14 @@ export function createDingTalkReplyStory(options) {
         })
       )
       const preparedBinary = process.env.WEWORK_E2E_DWS_STORY_FIXTURE_BIN
-      const binary =
-        preparedBinary ??
-        join(
-          options.resultDir,
-          process.platform === 'win32' ? 'source-story-dws.exe' : 'source-story-dws'
-        )
-      if (!preparedBinary) {
+      const binary = join(
+        options.resultDir,
+        process.platform === 'win32' ? 'source-story-dws.exe' : 'source-story-dws'
+      )
+      if (preparedBinary) {
+        // The fixture locates its isolated protocol data beside its executable.
+        await copyFile(preparedBinary, binary)
+      } else {
         await promisify(execFile)('rustc', [
           fileURLToPath(new URL('../fixtures/source-story-dingtalk-cli.rs', import.meta.url)),
           '--edition',

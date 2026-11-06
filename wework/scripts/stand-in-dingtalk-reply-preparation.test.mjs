@@ -21,7 +21,12 @@ test('reply story reuses the prepared binary without a compiler in the standard 
     }
     await createDingTalkReplyStory({ resultDir }).prepareApp(context, baseline)
     expect(baseline.prepareApp).toHaveBeenCalledExactlyOnceWith(context)
-    expect(context.appEnvironment.DWS_BINARY_PATH).toBe(prepared)
+    expect(context.appEnvironment.DWS_BINARY_PATH).toBe(
+      join(resultDir, process.platform === 'win32' ? 'source-story-dws.exe' : 'source-story-dws')
+    )
+    expect(await readFile(context.appEnvironment.DWS_BINARY_PATH, 'utf8')).toBe(
+      'precompiled protocol fixture'
+    )
     expect(await readFile(join(resultDir, 'dingtalk-story/baseline-path.txt'), 'utf8')).toBe(
       '/prepared/baseline'
     )
