@@ -11,6 +11,7 @@ import { knowledgePermissionApi } from '@/apis/knowledge-permission'
 import { codeWikiApi } from '@/apis/code-wiki'
 import type {
   AllGroupedKnowledgeResponse,
+  BatchPermissionAddResponse,
   KnowledgeBase,
   KnowledgeBaseWithGroupInfo,
   PermissionResponse,
@@ -199,6 +200,18 @@ function row(kb = baseKb, level = 'personal'): KnowledgeBaseWithGroupInfo {
   }
 }
 let data: AllGroupedKnowledgeResponse
+let pendingGrantCleanup: (() => Promise<void>) | undefined
+
+afterEach(async () => {
+  const cleanup = pendingGrantCleanup
+  pendingGrantCleanup = undefined
+  try {
+    await cleanup?.()
+  } finally {
+    jest.restoreAllMocks()
+  }
+})
+
 beforeEach(() => {
   localStorage.clear()
   jest.clearAllMocks()
@@ -219,10 +232,24 @@ beforeEach(() => {
   }
   jest
     .mocked(knowledgeBaseApi.getAllGrouped)
+    .mockReset()
     .mockImplementation(async () => JSON.parse(JSON.stringify(data)))
-  jest.mocked(getKnowledgeBase).mockResolvedValue(baseKb)
-  jest.mocked(createKnowledgeBase).mockResolvedValue(baseKb)
-  jest.mocked(codeWikiApi.create).mockResolvedValue({ id: 9, name: 'Repository' } as never)
+  jest.mocked(getKnowledgeBase).mockReset().mockResolvedValue(baseKb)
+  jest.mocked(createKnowledgeBase).mockReset().mockResolvedValue(baseKb)
+  jest
+    .mocked(codeWikiApi.create)
+    .mockReset()
+    .mockResolvedValue({ id: 9, name: 'Repository' } as never)
+  jest.mocked(knowledgePermissionApi.batchAddPermission).mockReset()
+  jest.mocked(knowledgePermissionApi.deletePermission).mockReset()
+  jest.mocked(knowledgePermissionApi.updatePermission).mockReset()
+  jest
+    .mocked(knowledgePermissionApi.listPermissions)
+    .mockReset()
+    .mockResolvedValue({
+      pending: [],
+      approved: { Owner: [], Maintainer: [], Developer: [], Reporter: [], RestrictedAnalyst: [] },
+    })
 })
 
 it('renders the shared relationship list as readable mobile rows and keeps migration', async () => {
@@ -770,55 +797,124 @@ it.each(
     const next = { ...baseKb, id: 88, name: 'Next library' }
     data.personal.created_by_me.push(row(next))
     jest.mocked(getKnowledgeBase).mockImplementation(async id => (id === 88 ? next : baseKb))
-    let finish!: (value: never) => void
-    jest.mocked(knowledgePermissionApi.batchAddPermission).mockImplementationOnce(
-      () =>
-        new Promise(resolve => {
-          finish = resolve
-        })
-    )
+    const grantResult: BatchPermissionAddResponse = {
+      succeeded: [
+        {
+          id: 91,
+          knowledge_base_id: 7,
+          user_id: 0,
+          entity_type: 'late-target',
+          entity_id: '7',
+          role: 'Reporter',
+          status: 'approved',
+          requested_at: baseKb.created_at,
+          created_at: baseKb.created_at,
+          updated_at: baseKb.updated_at,
+        },
+      ],
+      failed: [],
+    }
+    let finish!: (value: BatchPermissionAddResponse) => void
+    const pendingGrant = new Promise<BatchPermissionAddResponse>(resolve => {
+      finish = resolve
+    })
+    jest.mocked(knowledgePermissionApi.batchAddPermission).mockReturnValueOnce(pendingGrant)
     const { rerender, unmount } = render(<KnowledgeDocumentPageMobile />)
     const user = userEvent.setup()
-    if (entry === 'created') {
-      await user.click(await screen.findByTestId('create-kb-button'))
-      await user.click(screen.getByTestId('submit-normal-kb'))
-    } else {
-      await user.click(await screen.findByTestId('more-kb-7'))
-      await user.click(screen.getByTestId('permission-kb-7'))
+    let phase = 'open permission session'
+    let disposed = false
+    const cleanup = async () => {
+      if (disposed) return
+      disposed = true
+      if (phase !== 'complete')
+        console.error('Late grant test did not complete', { entry, mode, phase })
+      unmount()
+      await act(async () => {
+        finish(grantResult)
+        await pendingGrant
+      })
     }
-    await user.click(await screen.findByTestId('permission-add-collaborator'))
-    await user.click(screen.getByRole('button', { name: 'Select late target' }))
-    await user.click(screen.getByTestId('submit-created-permissions'))
-    await user.click(screen.getByTestId('close-add-collaborator'))
-    if (mode !== 'child') await user.click(screen.getByTestId('close-knowledge-access'))
-    if (mode === 'library' || mode === 'return') {
-      await user.click(screen.getByTestId('open-kb-88'))
-      await screen.findByText('Next library')
-      if (mode === 'return') {
-        await user.click(screen.getByTestId('knowledge-detail-back-button'))
-        await user.click(screen.getByTestId('more-kb-7'))
-        await user.click(screen.getByTestId('permission-kb-7'))
-        await screen.findByTestId('perm-tab-user')
+    // Jest timeouts can bypass the test body's finally until a pending action settles.
+    pendingGrantCleanup = cleanup
+    const step = async <T,>(label: string, action: () => Promise<T>): Promise<T> => {
+      if (disposed) throw new Error('Late grant test session has been disposed')
+      phase = label
+      const result = await action()
+      if (disposed) throw new Error('Late grant test session has been disposed')
+      return result
+    }
+    const click = async (testId: string) => {
+      const target = await step('find ' + testId, () => screen.findByTestId(testId))
+      await step('click ' + testId, () => user.click(target))
+    }
+    try {
+      if (entry === 'created') {
+        await click('create-kb-button')
+        await click('submit-normal-kb')
+      } else {
+        await click('more-kb-7')
+        await click('permission-kb-7')
       }
+      await click('permission-add-collaborator')
+      await step('select late target', () =>
+        user.click(screen.getByRole('button', { name: 'Select late target' }))
+      )
+      await click('submit-created-permissions')
+      await step('confirm grant request', () =>
+        waitFor(() => {
+          expect(knowledgePermissionApi.batchAddPermission).toHaveBeenCalledTimes(1)
+          expect(knowledgePermissionApi.batchAddPermission).toHaveBeenCalledWith(7, {
+            members: [
+              {
+                user_id: 0,
+                role: 'Reporter',
+                entity_type: 'late-target',
+                entity_id: '7',
+                entity_display_name: 'Late target',
+              },
+            ],
+          })
+        })
+      )
+      await click('close-add-collaborator')
+      if (mode !== 'child') await click('close-knowledge-access')
+      if (mode === 'library' || mode === 'return') {
+        await click('open-kb-88')
+        await step('wait for next library', () => screen.findByText('Next library'))
+        if (mode === 'return') {
+          await click('knowledge-detail-back-button')
+          await click('more-kb-7')
+          await click('permission-kb-7')
+          await step('wait for original permissions', () => screen.findByTestId('perm-tab-user'))
+        }
+      }
+      phase = 'switch session: ' + mode
+      if (mode === 'account') {
+        mockUser = { id: 2 }
+        rerender(<KnowledgeDocumentPageMobile />)
+      }
+      if (mode === 'backend') {
+        mockScope = 'backend:session-2'
+        rerender(<KnowledgeDocumentPageMobile />)
+      }
+      if (mode === 'unmount') unmount()
+      const reads = jest.mocked(knowledgeBaseApi.getAllGrouped).mock.calls.length
+      await step('deliver late grant', () =>
+        act(async () => {
+          finish(grantResult)
+          await pendingGrant
+        })
+      )
+      phase = 'verify refresh isolation'
+      if (mode === 'child' || mode === 'manager')
+        await step('wait for surviving page refresh', () =>
+          waitFor(() => expect(knowledgeBaseApi.getAllGrouped).toHaveBeenCalledTimes(reads + 1))
+        )
+      else expect(knowledgeBaseApi.getAllGrouped).toHaveBeenCalledTimes(reads)
+      phase = 'complete'
+    } finally {
+      if (pendingGrantCleanup === cleanup) pendingGrantCleanup = undefined
+      await cleanup()
     }
-    if (mode === 'account') {
-      mockUser = { id: 2 }
-      rerender(<KnowledgeDocumentPageMobile />)
-    }
-    if (mode === 'backend') {
-      mockScope = 'backend:session-2'
-      rerender(<KnowledgeDocumentPageMobile />)
-    }
-    if (mode === 'unmount') unmount()
-    const reads = jest.mocked(knowledgeBaseApi.getAllGrouped).mock.calls.length
-    await act(async () =>
-      finish({
-        succeeded: [{ entity_type: 'late-target', entity_id: '7', role: 'Reporter' }],
-        failed: [],
-      } as never)
-    )
-    if (mode === 'child' || mode === 'manager')
-      await waitFor(() => expect(knowledgeBaseApi.getAllGrouped).toHaveBeenCalledTimes(reads + 1))
-    else expect(knowledgeBaseApi.getAllGrouped).toHaveBeenCalledTimes(reads)
   }
 )
