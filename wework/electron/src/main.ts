@@ -2677,7 +2677,7 @@ function scheduleComputerUseStartup(): void {
     void restoreComputerUseAfterStartup({
       isShuttingDown: () => quitting || computerUse !== service,
       readPreferences: () => store.read(),
-      setEnabled: enabled => service.setEnabled(enabled),
+      setEnabled: enabled => service.restoreEnabled(enabled),
     }).catch(error => {
       console.error('[computer-use] lazy startup failed', error)
     })
