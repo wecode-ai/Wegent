@@ -36,6 +36,7 @@ pub(super) async fn request(
     let slug = target["connectorSlug"].as_str().ok_or_else(denied)?;
     super::local_connector_auth::run_connection_tool(&root, key, slug, &args)
         .await
+        .map_err(collection_read_error)
         .inspect_err(|error| {
             if error.code == "connection_cli_response_invalid" {
                 crate::logging::log_executor_event(
@@ -56,6 +57,16 @@ pub(super) async fn request(
                 );
             }
         })
+}
+
+pub(super) fn collection_read_error(error: AppIpcError) -> AppIpcError {
+    // This module only invokes host-declared reads. An absent process outcome is
+    // retryable during collection, never a permission or protocol decision.
+    if error.code == "connection_cli_failed" {
+        error.with_retry_after_ms(30_000)
+    } else {
+        error
+    }
 }
 
 fn denied() -> AppIpcError {

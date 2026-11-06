@@ -1,5 +1,85 @@
 use super::*;
 
+#[test]
+fn declared_cli_read_process_failure_retries_from_the_original_cursor_then_clears_error() {
+    let root = tempfile::tempdir().unwrap();
+    let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+    let source =
+        json!({"providerId":"example.source","profile":"account","kind":"inbox","id":"inbox"});
+    let version = json!(48);
+    let state = json!({"checkpoint":{"partition":"generation-1","cursor":"page-two"}});
+    let error = crate::runtime_work::connection_cli::collection_read_error(AppIpcError::new(
+        "connection_cli_failed",
+        "Plugin tool exited without a structured outcome",
+    ));
+    save_collection_result(&store, 7, &source, &version, &state, Err(error)).unwrap();
+    let mut failed = store.stand_in_source(7, &source).unwrap();
+    assert_eq!(failed["checkpoint"], state["checkpoint"]);
+    assert_eq!(failed["version"], version);
+    assert_eq!(failed["error"]["retryable"], true);
+    assert!(collection_error_latched(&failed, &version));
+    failed["retryAt"] = json!(chrono::Utc::now().timestamp_millis() - 1);
+    assert!(!collection_error_latched(&failed, &version));
+    save_collection_result(
+        &store,
+        7,
+        &source,
+        &version,
+        &failed,
+        Ok(json!({"checkpoint":{"partition":"generation-1","cursor":"page-three"}})),
+    )
+    .unwrap();
+    let resumed = store.stand_in_source(7, &source).unwrap();
+    assert!(resumed["error"].is_null());
+    assert!(resumed["retryAt"].is_null());
+    assert_eq!(resumed["version"], version);
+    assert_eq!(
+        resumed["checkpoint"],
+        json!({"partition":"generation-1","cursor":"page-three"})
+    );
+}
+
+#[test]
+fn explicit_source_retry_clears_the_latch_without_resetting_collection_progress() {
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    settings["roles"][0]["connections"] = json!([{"providerId":"example.source","profile":"account","kind":"inbox","id":"inbox","name":"Source","policy":{"automatic":false,"askBeforeAct":true}}]);
+    settings["roles"][0]["enabled"] = json!(true);
+    let settings = store.save_personal_stand_in(7, "mac", settings).unwrap();
+    let role = stand_in_identities(&settings).remove(0);
+    let source = &role["connections"][0];
+    let state = json!({"version":settings["version"],"checkpoint":{"partition":"generation-1","cursor":"page-two"},"error":{"code":"connection_cli_response_invalid","message":"Old failed process"}});
+    store.save_stand_in_source(7, source, &state).unwrap();
+    assert!(collection_error_latched(&state, &settings["version"]));
+    assert_eq!(
+        handler
+            .retry_connection_source(json!({"userId":7,"source":source}))
+            .unwrap()["success"],
+        true
+    );
+    let restored = store.stand_in_source(7, source).unwrap();
+    assert!(restored["error"].is_null());
+    assert!(!collection_error_latched(&restored, &settings["version"]));
+    assert_eq!(restored["checkpoint"], state["checkpoint"]);
+    assert_eq!(restored["version"], settings["version"]);
+    assert_eq!(
+        store.personal_stand_in(7, "mac").unwrap()["version"],
+        settings["version"]
+    );
+    let mut removed = source.clone();
+    removed["id"] = json!("different-inbox");
+    assert_eq!(
+        handler
+            .retry_connection_source(json!({"userId":7,"source":removed}))
+            .unwrap_err()
+            .code,
+        "source_removed"
+    );
+}
+
 #[tokio::test]
 async fn connection_all_scope_persists_distinct_conversations_and_rejects_missing_identity() {
     for kind in ["group", "direct"] {

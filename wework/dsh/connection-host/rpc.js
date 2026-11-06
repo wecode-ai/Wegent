@@ -5,6 +5,8 @@ const PERMANENT_ERRORS = new Set([
   'invalid_connection',
   'forbidden',
   'connection_tool_denied',
+  'connection_cli_request_failed',
+  'connection_cli_response_invalid',
 ])
 export async function handleConnectionRpc(req, res, token, request) {
   const authorization = req.headers.authorization

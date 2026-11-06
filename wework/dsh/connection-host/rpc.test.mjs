@@ -73,6 +73,8 @@ test('only collection errors expose a bounded retry delay without adding retries
     'invalid_connection',
     'forbidden',
     'connection_tool_denied',
+    'connection_cli_request_failed',
+    'connection_cli_response_invalid',
   ]) {
     const result = await invoke({
       body: { method: 'collect' },

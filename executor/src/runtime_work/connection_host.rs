@@ -166,6 +166,8 @@ fn response_error(method: &str, error: &Value) -> AppIpcError {
                 | "invalid_connection"
                 | "forbidden"
                 | "connection_tool_denied"
+                | "connection_cli_request_failed"
+                | "connection_cli_response_invalid"
         )
     {
         if let Some(delay) = error["retryAfterMs"]
@@ -207,6 +209,8 @@ mod tests {
             "invalid_connection",
             "forbidden",
             "connection_tool_denied",
+            "connection_cli_request_failed",
+            "connection_cli_response_invalid",
         ] {
             let mut permanent = error.clone();
             permanent["code"] = json!(code);
