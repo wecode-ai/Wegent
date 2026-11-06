@@ -341,6 +341,7 @@ def test_github_oauth_api_flow_connects_polls_and_disconnects(
         tool_allowlist=[],
     )
     sessions: dict[str, dict] = {}
+    callback_locks: set[str] = set()
 
     async def cache_set(key: str, value: dict, expire: int) -> bool:
         sessions[key] = dict(value)
@@ -350,11 +351,18 @@ def test_github_oauth_api_flow_connects_polls_and_disconnects(
         value = sessions.get(key)
         return dict(value) if value else None
 
+    async def cache_setnx(key: str, value: object, expire: int) -> bool:
+        if key in callback_locks:
+            return False
+        callback_locks.add(key)
+        return True
+
     monkeypatch.setattr(settings, "GITHUB_OAUTH_CLIENT_ID", "github-client")
     monkeypatch.setattr(settings, "GITHUB_OAUTH_CLIENT_SECRET", "github-secret")
     monkeypatch.setattr(settings, "CONNECTOR_OAUTH_STATE_SECRET", "state-secret")
     monkeypatch.setattr(cache_manager, "set", cache_set)
     monkeypatch.setattr(cache_manager, "get", cache_get)
+    monkeypatch.setattr(cache_manager, "setnx", cache_setnx)
     monkeypatch.setattr(
         ConnectorOAuthService,
         "_exchange_code",
@@ -739,8 +747,13 @@ def test_expired_oauth_connector_remains_visible_but_not_callable(
             return Response()
 
     monkeypatch.setattr(
-        "app.services.connector_oauth.httpx.AsyncClient",
+        "app.services.connector_oauth.create_connector_http_client",
         lambda **_kwargs: Client(),
+    )
+    monkeypatch.setattr(
+        ConnectorRuntimeService,
+        "probe_app",
+        AsyncMock(return_value=None),
     )
     from tests.retained_python_handlers import component_client
 
