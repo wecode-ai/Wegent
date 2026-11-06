@@ -56,11 +56,7 @@ fn compatibility_catalogs_keep_tools_and_configured_windows_without_official_aut
     ] {
         let model = models.iter().find(|model| model["slug"] == slug).unwrap();
         assert_eq!(model["tool_mode"], "code_mode_only", "{slug}");
-        assert_eq!(
-            model["use_responses_lite"],
-            slug == "wework-gpt-6-astra",
-            "{slug}"
-        );
+        assert_eq!(model["use_responses_lite"], false, "{slug}");
         assert_eq!(model["max_context_window"], Value::Null, "{slug}");
         assert_eq!(model["shell_type"], "shell_command", "{slug}");
         assert_eq!(model["apply_patch_tool_type"], "freeform", "{slug}");

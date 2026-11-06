@@ -165,6 +165,7 @@
     "prettier": "^3.8.4",
     "tailwindcss": "^3.4.19",
     "tar": "^7.5.20",
+    "tiktoken": "1.0.22",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.59.2",
     "vite": "^8.0.12",

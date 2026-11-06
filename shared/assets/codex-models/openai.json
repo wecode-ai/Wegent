@@ -102,7 +102,6 @@
     },
     {
       "slug": "wework-gpt-6-astra",
-      "use_responses_lite": true,
       "upstream_model_ids": ["gpt-6-astra"],
       "display_name": "GPT-6-Astra",
       "description": "Wework GPT 6 Astra compatibility profile",

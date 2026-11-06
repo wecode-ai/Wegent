@@ -1,8 +1,7 @@
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
+import { get_encoding } from 'tiktoken'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import {
   assertCodeModeOutput,
   assertCodeModeRequest,
@@ -33,18 +32,16 @@ export const matrixDeferredCompletion = model => `${matrixDeferredPrompt(model)}
 export const matrixSkillPath = workspace =>
   join(workspace, '.agents', 'skills', 'model-matrix', 'SKILL.md')
 
+let requestEncoding
+
 export function countModelRequest(body) {
   const serialized = JSON.stringify(body)
-  const output = execFileSync(
-    'uv',
-    [
-      'run',
-      '--script',
-      fileURLToPath(new URL('../support/count-model-tokens.py', import.meta.url)),
-    ],
-    { input: serialized, encoding: 'utf8', timeout: 30_000, maxBuffer: 1024 * 1024 }
-  )
-  return { ...JSON.parse(output), bytes: Buffer.byteLength(serialized) }
+  requestEncoding ??= get_encoding('o200k_base')
+  return {
+    encoding: 'o200k_base',
+    tokens: requestEncoding.encode(serialized, [], []).length,
+    bytes: Buffer.byteLength(serialized),
+  }
 }
 
 function strings(value) {
@@ -339,9 +336,7 @@ export function assertCodeModeMatrixPatch(body, model) {
 }
 
 export function assertCodeModeMatrixRequest(body, model) {
-  const lite =
-    model.protocol === 'responses' &&
-    (model.requestMode === 'passthrough' || model.source === 'codex')
+  const lite = model.protocol === 'responses' && model.source === 'codex'
   assertCodeModeRequest(body, { protocol: model.protocol, lite })
 }
 
