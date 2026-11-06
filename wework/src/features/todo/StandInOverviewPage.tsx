@@ -1,7 +1,17 @@
 import { WORKSPACE_NAVIGATION_EVENT, type WorkspaceNavigationDetail } from '@/lib/navigation'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useStandInOpened } from '@/telemetry/useStandInOpened'
-import { useContext, useEffect, useRef, useState, type ComponentProps } from 'react'
+import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
+import { StandInMigration } from './StandInMigration'
+import {
+  useContext,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type ComponentProps,
+  type Ref,
+} from 'react'
 import {
   Brain,
   Check,
@@ -52,16 +62,21 @@ export function StandInOverviewPage({
   initialWorkView = 'work',
   settingsRequestKey,
   active = true,
+  ref,
+  onSelectLocation,
   ...props
-}: SettingsProps & {
+}: Omit<SettingsProps, 'ref'> & {
   onOpenTask?(address: RuntimeTaskAddress): Promise<void> | void
   initialPrimaryProfile?: boolean
   initialWorkView?: 'work' | 'scheduled'
   settingsRequestKey?: string
   active?: boolean
+  ref?: Ref<Pick<StandInSettingsHandle, 'requestLeave'>>
+  onSelectLocation?(deviceId: string, roleId?: string): void
 }) {
   const { t } = useTranslation('common')
   const workbench = useContext(WorkbenchContext)
+  const cloud = useContext(CloudConnectionContext)
   const state = usePersonalStandIn(props.services, props.userId, props.initialDeviceId, false)
   const { saved, setDraft, reload } = state
   const [roleId, setRoleId] = useState<string | undefined>(
@@ -88,6 +103,9 @@ export function StandInOverviewPage({
   const [proposalError, setProposalError] = useState<string | null>(null)
   const [resolving, setResolving] = useState(false)
   const panelRef = useRef<StandInSettingsHandle>(null)
+  useImperativeHandle(ref, () => ({
+    requestLeave: action => (panelRef.current ? panelRef.current.requestLeave(action) : action()),
+  }))
   const previousSettingsRequest = useRef(settingsRequestKey)
   useEffect(() => {
     if (previousSettingsRequest.current === settingsRequestKey) return
@@ -395,6 +413,34 @@ export function StandInOverviewPage({
             <HelpCircle aria-hidden="true" className="h-4 w-4" />
           </button>
         </header>
+        {api &&
+          deviceId === state.currentDeviceId &&
+          !state.loading &&
+          cloud?.isConnected &&
+          cloud.user &&
+          saved &&
+          (roleId ||
+            saved.primary?.enabled ||
+            saved.primary?.prompt ||
+            saved.primary?.preferences) && (
+            <StandInMigration
+              key={`${props.userId}:${deviceId}:${roleId ?? '@primary'}`}
+              api={api}
+              devices={props.devices}
+              sourceUser={props.userId}
+              sourceDevice={deviceId!}
+              roleId={roleId}
+              targetUser={Number(cloud.user.id)}
+              requestLeave={leavePanel}
+              onMigrated={(device, role) => {
+                if (onSelectLocation) onSelectLocation(device, role)
+                else {
+                  reload()
+                  state.setDeviceId(device)
+                }
+              }}
+            />
+          )}
         {state.loading && !state.saved ? (
           <p role="status" className="p-5 text-text-muted">
             {t('standIn.loading')}
@@ -661,9 +707,10 @@ export function StandInOverviewPage({
                     }}
                     onCancel={() => setProfile(null)}
                     onSaved={value => {
-                      if (value.executionDeviceId && value.executionDeviceId !== deviceId)
-                        state.setDeviceId(value.executionDeviceId)
-                      else reload()
+                      if (value.executionDeviceId && value.executionDeviceId !== deviceId) {
+                        if (onSelectLocation) onSelectLocation(value.executionDeviceId)
+                        else state.setDeviceId(value.executionDeviceId)
+                      } else reload()
                       setProfile(null)
                     }}
                   />

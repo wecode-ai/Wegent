@@ -1,73 +1,82 @@
-import { useState, type ReactNode } from 'react'
-import { isCloudDevice, isRemoteDevice, isUsableDevice } from '@/lib/device-capabilities'
-import { navigateTo } from '@/lib/navigation'
-import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
+import { useEffect, useState, type ReactNode } from 'react'
+import { isCloudDevice, isRemoteDevice } from '@/lib/device-capabilities'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { DeviceInfo } from '@/types/api'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { StandInDeviceSelect } from './StandInDeviceSelect'
-import { StandInSettingsHeader } from './StandInSettingsLayout'
+import { availableStandInDevices } from './standInDevices'
 
 export function StandInCreationDevice({
   devices,
-  onCancel,
+  services,
+  requestLeave,
   children,
 }: {
   devices: DeviceInfo[]
-  onCancel?(): void
-  children(deviceId: string): ReactNode
+  services: WorkbenchServices
+  requestLeave(action: () => void): void
+  children(deviceId: string, local: boolean): ReactNode
 }) {
   const { t } = useTranslation('common')
-  const available = devices.filter(
-    device => (isCloudDevice(device) || isRemoteDevice(device)) && isUsableDevice(device)
-  )
-  const initial = available.length === 1 ? available[0].device_id : ''
-  const [selected, setSelected] = useState(initial)
-  // Keep the chosen device stable if its status changes while the user edits a draft.
-  if (!selected && initial) setSelected(initial)
-  const dialog = useDialogKeyboard<HTMLElement>(() => onCancel?.(), !selected)
-  if (selected) return children(selected)
+  const [target, setTarget] = useState<{ local: string; selected: string }>()
+  const [error, setError] = useState<string | null>(null)
+  const [attempt, setAttempt] = useState(0)
+  useEffect(() => {
+    let active = true
+    void (async () => {
+      const identity = await services.getLocalRuntimeSidebarIdentity?.()
+      if (!identity) throw new Error('Executor identity is unavailable')
+      if (active) {
+        const available = availableStandInDevices(devices)
+        const preferred = available.find(device => device.is_default) ?? available[0]
+        setTarget(
+          previous =>
+            previous ?? {
+              local: identity.deviceId,
+              selected: preferred?.device_id ?? identity.deviceId,
+            }
+        )
+        setError(null)
+      }
+    })().catch(cause => {
+      if (active) setError(getStandInErrorMessage(cause, 'load_settings_failed'))
+    })
+    return () => {
+      active = false
+    }
+  }, [services, devices, attempt])
+  if (!target)
+    return error ? (
+      <div role="alert" className="p-5 text-sm text-error">
+        {error}
+        <button
+          type="button"
+          data-testid="stand-in-device-retry"
+          className="ml-2 min-h-11 underline"
+          onClick={() => setAttempt(value => value + 1)}
+        >
+          {t('standIn.reload')}
+        </button>
+      </div>
+    ) : (
+      <p role="status" className="p-5 text-sm">
+        {t('standIn.loading')}
+      </p>
+    )
   return (
-    <section
-      ref={dialog}
-      className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5"
-      data-testid="stand-in-settings"
-    >
-      <StandInSettingsHeader
-        title={t('standIn.personal.create_title')}
-        description={t('standIn.cloud_device_description')}
-        disabled={false}
-        close={onCancel ? { testId: 'stand-in-close', onClick: onCancel } : undefined}
-      />
-      {available.length ? (
-        <label className="space-y-2 text-sm">
-          <span>{t('standIn.device')}</span>
-          <StandInDeviceSelect
-            value=""
-            currentDeviceId=""
-            devices={available}
-            disabled={false}
-            includeCurrent={false}
-            onChange={setSelected}
-          />
-        </label>
-      ) : (
-        <>
-          <p role="status" className="text-sm text-text-muted">
-            {t('standIn.no_cloud_device')}
-          </p>
-          <button
-            type="button"
-            data-testid="stand-in-open-cloud-work"
-            className="mt-3 min-h-11 self-start rounded-lg border border-border px-3 text-sm md:min-h-9"
-            onClick={() => {
-              onCancel?.()
-              navigateTo('/cloud-work')
-            }}
-          >
-            {t('workbench.cloud_work_entry')}
-          </button>
-        </>
-      )}
-    </section>
+    <div className="flex min-h-0 flex-1 flex-col">
+      <label className="flex items-center gap-2 border-b border-border px-5 py-2 text-sm">
+        <span>{t('standIn.device')}</span>
+        <StandInDeviceSelect
+          value={target.selected}
+          currentDeviceId={target.local}
+          devices={devices.filter(device => isCloudDevice(device) || isRemoteDevice(device))}
+          disabled={false}
+          onChange={selected => requestLeave(() => setTarget({ ...target, selected }))}
+        />
+      </label>
+      {children(target.selected, target.selected === target.local)}
+    </div>
   )
 }

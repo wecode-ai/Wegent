@@ -87,23 +87,39 @@ export function StandInSettingsPage({ ref, ...props }: StandInSettingsPageProps)
   const [creation, setCreation] = useState(() => ({
     active: props.initialCreate ?? false,
     cloud: cloudCreation,
+    userId: Number(cloud?.user?.id ?? props.userId),
   }))
   const editor = useRef<StandInSettingsHandle>(null)
   useImperativeHandle(ref, () => ({
     requestClose: () => (editor.current ? editor.current.requestClose() : props.onCancel?.()),
     requestLeave: action => (editor.current ? editor.current.requestLeave(action) : action()),
   }))
-  const renderEditor = (deviceId = props.initialDeviceId) => (
+  const renderEditor = (deviceId = props.initialDeviceId, local = false) => (
     <StandInSettingsEditor
+      key={`${deviceId ?? 'default'}:${creation.active ? 'create' : 'edit'}`}
       {...props}
       ref={editor}
       initialDeviceId={deviceId}
+      userId={creation.active && creation.cloud && !local ? creation.userId : props.userId}
       initialCreate={creation.active}
-      onRequestCreate={cloudCreation ? () => setCreation({ active: true, cloud: true }) : undefined}
+      onRequestCreate={
+        cloudCreation
+          ? () =>
+              setCreation({
+                active: true,
+                cloud: true,
+                userId: Number(cloud?.user?.id ?? props.userId),
+              })
+          : undefined
+      }
     />
   )
   return creation.active && creation.cloud ? (
-    <StandInCreationDevice devices={props.devices} onCancel={props.onCancel}>
+    <StandInCreationDevice
+      devices={props.devices}
+      services={props.services}
+      requestLeave={action => (editor.current ? editor.current.requestLeave(action) : action())}
+    >
       {renderEditor}
     </StandInCreationDevice>
   ) : (
@@ -134,7 +150,7 @@ function StandInSettingsEditor({
   useStandInOpened('settings', initialProfileId === '@primary' ? 'primary' : 'role')
   const { t } = useTranslation('common')
   const cloudConnection = useContext(CloudConnectionContext)
-  const canLoadPersonalAgents = cloudConnection?.isConnected ?? true
+  const canLoadPersonalAgents = (cloudConnection?.isConnected ?? true) && userId !== 0
   const state = usePersonalStandIn(services, userId, initialDeviceId, canLoadPersonalAgents)
   const { draft, saved, setDraft, updateRole, loading, saving, setError } = state
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -786,18 +802,20 @@ function StandInSettingsEditor({
                   devices={devices}
                   services={services}
                   deviceControl={
-                    <StandInDeviceSelect
-                      value={draft.executionDeviceId}
-                      currentDeviceId={state.currentDeviceId}
-                      devices={devices}
-                      disabled={saving || dirty}
-                      onChange={value => {
-                        setHistory(current => current.map(entry => ({ ...entry, draft: null })))
-                        setSelectedId('')
-                        setNotice(false)
-                        state.setDeviceId(value)
-                      }}
-                    />
+                    initialCreate ? null : (
+                      <StandInDeviceSelect
+                        value={draft.executionDeviceId}
+                        currentDeviceId={state.currentDeviceId}
+                        devices={devices}
+                        disabled={saving || dirty}
+                        onChange={value => {
+                          setHistory(current => current.map(entry => ({ ...entry, draft: null })))
+                          setSelectedId('')
+                          setNotice(false)
+                          state.setDeviceId(value)
+                        }}
+                      />
+                    )
                   }
                 />
               )}

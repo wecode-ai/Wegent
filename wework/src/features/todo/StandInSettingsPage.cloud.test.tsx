@@ -9,10 +9,52 @@ import {
   type CloudConnectionContextValue,
 } from '@/features/cloud-connection/CloudConnectionContext'
 import { StandInSettingsPage } from './StandInSettingsPage'
+import { newStandInRole } from '@/api/personalStandIn'
 
 vi.mock('./StandInComposer', () => ({ StandInComposer: () => null }))
 vi.mock('./StandInRequirements', () => ({ StandInRequirements: () => null }))
 afterEach(cleanup)
+
+test('edits a signed-out local role after cloud connection without querying cloud agents for user zero', async () => {
+  const role = { ...newStandInRole('mac', 'local-role'), name: 'Local role' }
+  const personalGet = vi.fn(async () => ({
+    userId: 0,
+    executionDeviceId: 'mac',
+    version: 1,
+    roles: [role],
+  }))
+  const personalSave = vi.fn(async (_user, settings) => settings)
+  const personalAgents = vi.fn()
+  const services = {
+    getLocalRuntimeSidebarIdentity: async () => ({ deviceId: 'mac' }),
+    standInApi: { personalGet, personalSave, personalAgents },
+  } as unknown as WorkbenchServices
+  render(
+    <CloudConnectionContext.Provider
+      value={{ isConnected: true, user: { id: 7 } } as CloudConnectionContextValue}
+    >
+      <StandInSettingsPage
+        api={{} as SharedWorkspaceApi}
+        services={services}
+        userId={0}
+        projects={[]}
+        devices={[]}
+        initialDeviceId="mac"
+        initialProfileId="local-role"
+      />
+    </CloudConnectionContext.Provider>
+  )
+  expect(await screen.findByTestId('stand-in-role-name')).toHaveValue('Local role')
+  fireEvent.change(screen.getByTestId('stand-in-role-name'), {
+    target: { value: 'Updated local role' },
+  })
+  fireEvent.click(screen.getByTestId('stand-in-save'))
+  await waitFor(() => expect(personalSave).toHaveBeenCalled())
+  expect(personalSave.mock.calls[0][0]).toBe(0)
+  expect(personalSave.mock.calls[0][2]).toBe('mac')
+  expect(personalAgents).not.toHaveBeenCalled()
+  expect(personalGet).toHaveBeenCalledWith(0, 'mac')
+})
 
 test('retries a failed cloud profile load on the same device without a local fallback', async () => {
   const personalGet = vi
@@ -65,13 +107,13 @@ test('loads and saves a new role on the sole cloud Executor without touching the
     getLocalRuntimeSidebarIdentity: async () => ({ deviceId: 'mac' }),
     standInApi: { personalGet, personalSave, personalAgents: vi.fn(async () => []) },
   } as unknown as WorkbenchServices
-  const cloud = { isConnected: true } as CloudConnectionContextValue
+  const cloud = { isConnected: true, user: { id: 7 } } as CloudConnectionContextValue
   render(
     <CloudConnectionContext.Provider value={cloud}>
       <StandInSettingsPage
         api={{} as SharedWorkspaceApi}
         services={services}
-        userId={7}
+        userId={0}
         projects={[]}
         initialCreate
         initialDeviceId="mac"
