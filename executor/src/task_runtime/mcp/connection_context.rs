@@ -29,7 +29,7 @@ pub(super) fn work_messages(messages: &[Value], args: &Value) -> Result<Value, S
     )
 }
 
-fn exact_message<'a>(messages: &'a [Value], id: &str) -> Result<&'a Value, String> {
+pub(super) fn exact_message<'a>(messages: &'a [Value], id: &str) -> Result<&'a Value, String> {
     if let Some(message) = messages.iter().find(|message| message["recordId"] == id) {
         return Ok(message);
     }

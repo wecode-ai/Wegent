@@ -186,7 +186,7 @@ export function createSourceStoryModel({ marker, roleId, providerId, mode, expec
         messageId: message.id,
       })
     if (mode === 'project') return [assistantMessage(value.fact)]
-    return call(body, reply, 'reply', { messageId: message.id, text: value.reply })
+    return call(body, reply, 'reply', { messageId: message.recordId, text: value.reply })
   }
 
   function proposal(body) {

@@ -1099,6 +1099,10 @@ fn redact_secrets(value: &str) -> String {
 }
 
 #[cfg(test)]
+#[path = "local_connector_auth/declared_connector_tests.rs"]
+mod declared_connector_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
