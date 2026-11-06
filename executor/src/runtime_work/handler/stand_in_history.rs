@@ -79,7 +79,7 @@ fn source_scope(source: &Value) -> Value {
 struct ReadScope {
     source: Option<Value>,
     role: Value,
-    coordinator: bool,
+    coordinator_tasks: Option<HashSet<String>>,
     can_orchestrate: bool,
     window: Option<(i64, i64)>,
 }
@@ -133,7 +133,7 @@ impl RuntimeWorkRpcHandler {
             return Ok(ReadScope {
                 source: None,
                 role: role.clone(),
-                coordinator: false,
+                coordinator_tasks: None,
                 can_orchestrate: false,
                 window: Some((
                     (end - chrono::Duration::days(7)).timestamp_millis(),
@@ -141,6 +141,7 @@ impl RuntimeWorkRpcHandler {
                 )),
             });
         }
+        let mut coordinator_tasks = None;
         if coordinator {
             let state = store
                 .stand_in_processing_state(identity.user)
@@ -151,6 +152,14 @@ impl RuntimeWorkRpcHandler {
             {
                 return Err(denied());
             }
+            coordinator_tasks = Some(
+                state["snapshot"]["works"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|work| work["taskId"].as_str().map(str::to_owned))
+                    .collect(),
+            );
         } else if identity.readonly_worker {
             let delegation = &actor.runtime_handle["executionRequest"]["standInDelegation"];
             if !delegation.is_null()
@@ -206,7 +215,7 @@ impl RuntimeWorkRpcHandler {
         Ok(ReadScope {
             source,
             role: role.clone(),
-            coordinator,
+            coordinator_tasks,
             window: None,
             can_orchestrate: !identity.readonly_worker
                 && identity.work.is_none()
@@ -300,7 +309,10 @@ impl RuntimeWorkRpcHandler {
         {
             return false;
         }
-        if scope.coordinator && link.runtime_handle["origin"]["type"] == "stand_in_identity" {
+        if scope.coordinator_tasks.as_ref().is_some_and(|tasks| {
+            link.runtime_handle["origin"]["type"] == "stand_in_identity"
+                || !tasks.contains(&link.local_task_id)
+        }) {
             return false;
         }
         let Some(source) = &scope.source else {
