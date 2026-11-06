@@ -134,6 +134,12 @@ def test_mounted_wework_space_streamable_http_uses_parent_asgi_lifespan(
             if name == "subscription":
                 assert api_response.status_code == 200
                 assert api_response.json()["result"]["tools"] == tools
+                assert {tool["name"] for tool in tools} == {
+                    "preview_subscription",
+                    "create_subscription",
+                    "list_subscriptions",
+                    "get_subscription",
+                }
                 for tool in tools:
                     arguments = {
                         "display_name": "Authentication regression",
@@ -142,6 +148,10 @@ def test_mounted_wework_space_streamable_http_uses_parent_asgi_lifespan(
                     }
                     if tool["name"] == "create_subscription":
                         arguments["preview_id"] = "unused-unauthenticated-preview"
+                    elif tool["name"] == "list_subscriptions":
+                        arguments = {}
+                    elif tool["name"] == "get_subscription":
+                        arguments = {"subscription_id": 1}
                     result = _rpc(
                         client,
                         request_id=32,
