@@ -214,6 +214,15 @@ jobs:
           echo 'cargo test --locked' > ../.ci-artifacts/backend-rs-tests/command.txt
           cargo test --locked 2>&1 | tee ../.ci-artifacts/backend-rs-tests/cargo-test.log
 
+      - name: Test Git connection inbox against real Redis
+        working-directory: backend-rs
+        env:
+          GIT_INBOX_TEST_REDIS_ENDPOINT: 127.0.0.1:6379
+        run: |
+          set -o pipefail
+          cargo test --locked --lib git_connection_inbox::store::redis_tests -- --ignored --test-threads=1 \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/git-inbox-redis.log
+
       - name: Verify native MySQL schema lifecycle and initialization
         working-directory: backend-rs
         run: |
@@ -666,7 +675,14 @@ jobs:
         uses: ./.github/actions/setup-node-workspace
 
       - name: Prepare Wework Electron dependencies
+        if: matrix.shard == 1
         run: pnpm --filter wework prepare:electron
+
+      - name: Install Wework host modules for renderer fixtures
+        if: matrix.shard != 1
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+        run: pnpm --dir wework/electron install --frozen-lockfile
 
       - name: Run process explorer package tests
         if: matrix.shard == 1

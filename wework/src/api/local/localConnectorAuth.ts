@@ -52,10 +52,21 @@ export class LocalConnectorAuthLogoutError extends Error {
 }
 
 export interface LocalConnectorAuthTarget {
+  /** Instance binding for host-owned GitLab CLI device authorization. */
+  instance?: string
   pluginKey: string
   connectorSlug: string
   localAuth?: PluginLocalAuthDefinition | null
   pluginRoot?: string | null
+}
+
+export interface LocalConnectorAuthTransport {
+  start(target: LocalConnectorAuthTarget): Promise<LocalConnectorAuthResult>
+  poll(
+    target: LocalConnectorAuthTarget,
+    sessionId?: string | null
+  ): Promise<LocalConnectorAuthResult>
+  cancel(target: LocalConnectorAuthTarget, sessionId: string): Promise<unknown>
 }
 
 /** Resolve host-owned authentication without changing the cached plugin manifest. */
@@ -115,6 +126,7 @@ async function callLocalConnectorAuth(
       pluginRoot: target.pluginRoot ?? undefined,
       sessionId: sessionId ?? undefined,
       ...(prepareRuntime ? { prepareRuntime: true } : {}),
+      ...(target.instance ? { instance: target.instance } : {}),
     }
   )
   if (result?.status === 'ok' && ['start', 'poll', 'logout'].includes(method)) {

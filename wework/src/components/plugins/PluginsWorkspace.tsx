@@ -152,6 +152,7 @@ import {
   withAcknowledgedMarketplaceDeviceState,
   withOptimisticDevicePending,
 } from '@/features/plugins/pluginDeviceAutoSync'
+import { logPluginRefreshPhase } from '@/features/plugins/pluginRefreshDiagnostics'
 import {
   marketplaceItemCanRetryPluginUpdate,
   marketplaceItemHasPausedPluginAutoUpdate,
@@ -1741,7 +1742,7 @@ export function PluginsWorkspace({
 
     let finishDeviceSync: (() => void) | undefined
     const deviceLease = currentDeviceId
-      ? acquirePluginDeviceSync(currentDeviceId)
+      ? acquirePluginDeviceSync(currentDeviceId, undefined, 'policy')
       : Promise.resolve(() => {})
     void deviceLease
       .then(finish => {
@@ -3395,6 +3396,18 @@ export function PluginsWorkspace({
     }
     const hasCachedCatalog = Boolean(cached?.marketplaceItems.length)
     const isExplicitRefresh = marketplaceRefreshTick > lastMarketplaceRefreshTickRef.current
+    const catalogStartedAt = Date.now()
+    if (isExplicitRefresh)
+      logPluginRefreshPhase('catalog-start', { request: marketplaceRefreshTick })
+    const trackCatalogRead = <T,>(phase: string, read: Promise<T>): Promise<T> =>
+      read.finally(() => {
+        if (isExplicitRefresh)
+          logPluginRefreshPhase(phase, {
+            request: marketplaceRefreshTick,
+            elapsedMs: Date.now() - catalogStartedAt,
+            current: isCurrent,
+          })
+      })
     if (isExplicitRefresh) {
       lastMarketplaceRefreshTickRef.current = marketplaceRefreshTick
     }
@@ -4099,13 +4112,69 @@ export function PluginsWorkspace({
       })
       .catch(reportReadFailure)
 
+    // Only live installed inventories and device identity gate reconciliation.
+    // Marketplace presentation reads cannot authorize or change this operation.
+    void Promise.allSettled([installedPromise, membershipPromise]).then(
+      ([installedResult, membershipResult]) => {
+        if (!isCurrent) return
+        const resolvedDeviceId =
+          (membershipResult.status === 'fulfilled' && membershipResult.value.deviceId) ||
+          currentDeviceIdRef.current ||
+          deviceIdHint ||
+          ''
+        const manualRequest = manualReconciliationTickRef.current
+        if (manualRequest && manualRequest.tick <= marketplaceRefreshTick) {
+          manualReconciliationTickRef.current = null
+        }
+        // Manual reconciliation reads current inventory itself. A newer cache
+        // publication invalidates this snapshot, not the user's scoped request.
+        if (
+          manualRequest &&
+          manualRequest.tick <= marketplaceRefreshTick &&
+          manualRequest.accountKey === marketplaceCacheKeyValue &&
+          manualRequest.isCurrent() &&
+          (!manualRequest.deviceId ||
+            (manualRequest.deviceId === currentDeviceIdRef.current &&
+              manualRequest.deviceId === resolvedDeviceId))
+        ) {
+          if (
+            !installedReadFailed &&
+            installedResult.status === 'fulfilled' &&
+            membershipResult.status === 'fulfilled' &&
+            !membershipResult.value.partial
+          ) {
+            setReconciliationScope({
+              accountKey: manualRequest.accountKey,
+              deviceId: resolvedDeviceId,
+            })
+            setReconciliationRequest(previous => previous + 1)
+          } else {
+            setPluginOperationNotice({
+              id: 'plugin-reconciliation-incomplete',
+              kind: 'error',
+              message: t(
+                'workbench.plugins_reconciliation_incomplete',
+                '插件数据未完整加载，本次未执行状态修复，请重试刷新'
+              ),
+            })
+          }
+        }
+      }
+    )
+
     const settledCatalog = Promise.allSettled([
-      localPromise,
-      cloudPromise,
-      installedPromise,
-      personalDiskPromise,
-      membershipPromise,
+      trackCatalogRead('catalog-local-settled', localPromise),
+      trackCatalogRead('catalog-cloud-settled', cloudPromise),
+      trackCatalogRead('catalog-installed-settled', installedPromise),
+      trackCatalogRead('catalog-personal-settled', personalDiskPromise),
+      trackCatalogRead('catalog-membership-settled', membershipPromise),
     ]).then(([localResult, cloudResult, installedResult, diskResult, membershipResult]) => {
+      if (isExplicitRefresh)
+        logPluginRefreshPhase('catalog-settled', {
+          request: marketplaceRefreshTick,
+          elapsedMs: Date.now() - catalogStartedAt,
+          current: isCurrent,
+        })
       if (!isCurrent) return
       catalogSettled = true
       // Prefer a background-refreshed local snapshot over the settle promise value.
@@ -4115,53 +4184,14 @@ export function PluginsWorkspace({
         localStateForMerge ?? (localResult.status === 'fulfilled' ? localResult.value : null)
       const membershipDeviceId =
         membershipResult.status === 'fulfilled' ? membershipResult.value.deviceId || '' : ''
-      // Use the settled device identity before React publishes the membership update.
       const resolvedDeviceId =
         localState?.deviceId ||
         membershipDeviceId ||
         currentDeviceIdRef.current ||
         deviceIdHint ||
         ''
-      const manualRequest = manualReconciliationTickRef.current
-      if (manualRequest && manualRequest.tick <= marketplaceRefreshTick) {
-        manualReconciliationTickRef.current = null
-      }
       setMarketplaceLoadingMessage('')
       setIsMarketplaceRefreshing(false)
-      // Manual reconciliation reads current inventory itself. A newer cache
-      // publication invalidates this snapshot, not the user's scoped request.
-      if (
-        manualRequest &&
-        manualRequest.tick <= marketplaceRefreshTick &&
-        manualRequest.accountKey === marketplaceCacheKeyValue &&
-        manualRequest.isCurrent() &&
-        (!manualRequest.deviceId ||
-          (manualRequest.deviceId === currentDeviceIdRef.current &&
-            manualRequest.deviceId === resolvedDeviceId))
-      ) {
-        if (
-          cloudResult.status === 'fulfilled' &&
-          !installedReadFailed &&
-          installedResult.status === 'fulfilled' &&
-          membershipResult.status === 'fulfilled' &&
-          !membershipResult.value.partial
-        ) {
-          setReconciliationScope({
-            accountKey: manualRequest.accountKey,
-            deviceId: resolvedDeviceId,
-          })
-          setReconciliationRequest(previous => previous + 1)
-        } else {
-          setPluginOperationNotice({
-            id: 'plugin-reconciliation-incomplete',
-            kind: 'error',
-            message: t(
-              'workbench.plugins_reconciliation_incomplete',
-              '插件数据未完整加载，本次未执行状态修复，请重试刷新'
-            ),
-          })
-        }
-      }
       if (!inventoryReadIsCurrent()) return
       if (diskResult.status === 'fulfilled' && diskResult.value !== null) {
         diskPersonalItemsForMerge = diskResult.value
@@ -4282,7 +4312,7 @@ export function PluginsWorkspace({
     const attemptKey = `${marketplaceCacheKeyValue}:${currentDeviceId}:${releaseKey}`
     if (autoUpdateAttemptKeysRef.current.has(attemptKey)) return
 
-    const finishDeviceSync = beginPluginDeviceSync(currentDeviceId)
+    const finishDeviceSync = beginPluginDeviceSync(currentDeviceId, 'auto-update')
     if (!finishDeviceSync) return
     setDeviceAutoSyncSettled(false)
     autoUpdateAttemptKeysRef.current.add(attemptKey)
@@ -4479,7 +4509,7 @@ export function PluginsWorkspace({
     }
 
     if (reports.length > 0 && !hasAttemptedPluginDeviceStatusReport(deviceId, reports)) {
-      const finishDeviceSync = beginPluginDeviceSync(deviceId)
+      const finishDeviceSync = beginPluginDeviceSync(deviceId, 'status-report')
       if (!finishDeviceSync) return
       void pluginApi
         .reportInstalledPluginsOnDevice(deviceId, reports)
@@ -4538,7 +4568,7 @@ export function PluginsWorkspace({
     }
     if (hasAttemptedPluginDeviceAutoSync(currentDeviceId)) return
 
-    const finishDeviceSync = beginPluginDeviceSync(currentDeviceId)
+    const finishDeviceSync = beginPluginDeviceSync(currentDeviceId, 'auto-sync')
     if (!finishDeviceSync) return
 
     setDeviceAutoSyncSettled(false)

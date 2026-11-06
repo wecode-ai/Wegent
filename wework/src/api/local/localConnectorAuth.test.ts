@@ -101,6 +101,29 @@ describe('localConnectorAuthHealth cache', () => {
     expect(mocks.requestLocalExecutor.mock.calls[1][1]).toMatchObject({ prepareRuntime: true })
   })
 
+  test.each([false, true])(
+    'preserves the instance binding with runtime preparation=%s',
+    async prepareRuntime => {
+      const target = {
+        pluginKey: 'gitlab',
+        connectorSlug: `wework-gitlab-cli-${'a'.repeat(64)}`,
+        instance: 'https://gitlab.example.test',
+      }
+      await localConnectorAuthHealth(target, { bypassCache: true, prepareRuntime })
+      expect(mocks.requestLocalExecutor).toHaveBeenCalledWith(
+        'runtime.local_connector_auth.health',
+        {
+          pluginKey: target.pluginKey,
+          connectorSlug: target.connectorSlug,
+          instance: target.instance,
+          pluginRoot: undefined,
+          sessionId: undefined,
+          ...(prepareRuntime ? { prepareRuntime: true } : {}),
+        }
+      )
+    }
+  )
+
   test.each([
     ['Python', ['scripts/auth.py', 'login']],
     ['shell', ['scripts/local-auth.sh', 'login']],

@@ -46,6 +46,10 @@
       "types": "./src/markdown/safeAnimationFrame.ts",
       "import": "./src/markdown/safeAnimationFrame.ts"
     },
+    "./markdown/preprocessCjkEmphasis": {
+      "types": "./src/markdown/preprocessCjkEmphasis.ts",
+      "import": "./src/markdown/preprocessCjkEmphasis.ts"
+    },
     "./markdown/MarkdownDiagramPreview": {
       "types": "./src/markdown/MarkdownDiagramPreview.tsx",
       "import": "./src/markdown/MarkdownDiagramPreview.tsx"

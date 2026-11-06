@@ -20,11 +20,12 @@ impl RuntimeWorkHandler for RuntimeWorkRpcHandler {
         Box::pin(async move {
             let method = string_field(&data, "method")
                 .ok_or_else(|| AppIpcError::new("bad_request", "method is required"))?;
-            let payload = data
+            let mut payload = data
                 .get("payload")
                 .cloned()
                 .filter(Value::is_object)
                 .unwrap_or_else(|| json!({}));
+            self.bind_submitted_interface(&method, &mut payload, data.get("modelBinding"))?;
             self.dispatch(&method, payload).await
         })
     }
@@ -42,6 +43,16 @@ impl RuntimeWorkHandler for RuntimeWorkRpcHandler {
                     format!("Unsupported Codex app-server method: {method}"),
                 ));
             }
+            // Bundled reconciliation rewrites the same complete configuration that
+            // marketplace RPCs update. Keep an accepted native edit out of that window.
+            let _marketplace_mutation = if matches!(
+                method.as_str(),
+                "marketplace/add" | "marketplace/remove" | "marketplace/upgrade"
+            ) {
+                Some(self.bundled_plugin_marketplace_reconciliation.lock().await)
+            } else {
+                None
+            };
             let _restart_guard = codex_app_server_restart_gate().lock().await;
             let params = data
                 .get("params")

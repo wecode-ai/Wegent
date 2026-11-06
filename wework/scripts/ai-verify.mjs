@@ -96,6 +96,7 @@ export const AI_VERIFY_ACTIONS = Object.freeze({
   'verify-browser-inspector': 'verifyEmbeddedBrowserDetachedInspector',
   'wait-for': 'waitFor',
   'window-focus-snapshot': 'getWindowFocusSnapshot',
+  'window-size': 'setMainWindowSize',
   text: 'getText',
   value: 'getValue',
 })
@@ -152,10 +153,12 @@ Options:
   --codex-home-initialization true
                             Seed and verify isolated first-run Codex migration
   --executor-home PATH      Use an explicitly selected existing executor home
+  --device-id ID            Preserve that existing home's device identity
   --packaged true           Launch the packaged app instead of Electron source mode
   --rollout PATH            Copy a real JSONL history into the isolated Rollout replay project
   --selector CSS_SELECTOR   Target selector (required by click, fill, press and wait-for)
   --window LABEL            Target window label (defaults to main)
+                            window-size uses --selector body --value '{"width":1280,"height":900}'
   --value TEXT_OR_JSON      Replacement value for fill or paste-text; JSON for
                             click-at, seed-local-project, archive-local-project,
                             paste-paths, or drop-paths
@@ -214,6 +217,7 @@ export function validateStartOptions(options) {
   const allowedOptions = new Set([
     'codex-home-initialization',
     'executor-home',
+    'device-id',
     'packaged',
     'timeout',
     'rollout',
@@ -223,6 +227,14 @@ export function validateStartOptions(options) {
     throw new Error(`Unexpected option for start: --${unexpectedOption}`)
   }
   resolveOptionalBoolean(options.packaged, 'packaged')
+  if (options['device-id'] !== undefined) {
+    if (!options['executor-home']) {
+      throw new Error('--device-id requires --executor-home')
+    }
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(options['device-id'])) {
+      throw new Error('--device-id must be a valid nonempty device identifier')
+    }
+  }
   if (options['executor-home'] !== undefined) {
     const executorHome = options['executor-home'].trim()
     if (!executorHome || !isAbsolute(executorHome)) {
@@ -730,7 +742,7 @@ async function main() {
       `${JSON.stringify(
         {
           version: 1,
-          deviceId: `ai-verify-${randomUUID()}`,
+          deviceId: options['device-id'] ?? `ai-verify-${randomUUID()}`,
           directory,
           token,
           status: 'starting',

@@ -190,6 +190,8 @@ pub use mcp::interactive_form_question::{
 pub use mcp::knowledge_external::auth::{
     ExternalKnowledgeAuth, ExternalKnowledgeUser, PersonalApiKeyAuth,
 };
+#[cfg(test)]
+mod app_test_support;
 mod mcp_identity;
 pub(crate) mod mcp_oauth_credentials;
 pub mod mcp_provider_registry;
@@ -308,6 +310,7 @@ mod tasks_search;
 pub use tasks_search::statements as tasks_search_statements;
 mod admin_marketplace_resources;
 mod admin_templates;
+mod git_connection_inbox;
 mod teams;
 pub mod token_issuers;
 mod tokens_probe;

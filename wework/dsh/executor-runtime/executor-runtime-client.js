@@ -4,12 +4,14 @@ import { isCancellableRuntimeRead } from './read-cancellation.js'
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 120_000
 export class ExecutorRuntimeError extends Error {
-  constructor(code, message, retryable = false, details = {}) {
+  constructor(code, message, retryable = false, details = {}, retryAfterMs) {
     super(message)
     this.name = 'ExecutorRuntimeError'
     this.code = code
     this.retryable = retryable
     this.details = details
+    if (Number.isSafeInteger(retryAfterMs) && retryAfterMs >= 1 && retryAfterMs <= 3600000)
+      this.retryAfterMs = retryAfterMs
   }
 }
 
@@ -205,7 +207,8 @@ export class ExecutorRuntimeClient {
             message.error?.code ?? 'executor_request_failed',
             message.error?.message ?? 'Executor request failed',
             message.error?.retryable ?? false,
-            message.error?.details ?? {}
+            message.error?.details ?? {},
+            message.error?.retryAfterMs
           )
         )
       }

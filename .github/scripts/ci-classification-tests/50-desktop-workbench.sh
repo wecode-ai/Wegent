@@ -196,7 +196,24 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "executor/src/server/codex_model_catalog.rs" \
   "executor/src/server/codex_model_catalog_tests.rs" \
-  "wework/e2e/desktop/scenarios/codex-native-catalog.scenario.mjs"
+  "wework/e2e/desktop/scenarios/codex-native-catalog.scenario.mjs" \
+  "wework/e2e/desktop/scenarios/codex-catalog-context.mjs" \
+  "wework/e2e/desktop/scenarios/codex-catalog-reasoning.mjs"
+
+for reasoning_control_path in \
+  packages/collaboration/src/controls/ModelSelector.tsx \
+  packages/collaboration/src/controls/ModelPowerSlider.tsx \
+  packages/collaboration/src/controls/model-ui.ts \
+  packages/collaboration/src/controls/model-reasoning.ts \
+  packages/collaboration/src/controls/model-selector-utils.ts; do
+  reasoning_targets="$(GITHUB_OUTPUT=/dev/stdout "$desktop_classifier" "$reasoning_control_path")"
+  if [[ "$reasoning_targets" != *"codex-native-catalog"* || \
+    "$reasoning_targets" != *"cloud-model-presets"* ]]; then
+    printf 'Reasoning control must select native Catalog and cloud preset regressions: %s\n' \
+      "$reasoning_control_path" >&2
+    exit 1
+  fi
+done
 
 assert_desktop_case "collaboration executor runtime changes retain full coverage including Issue Dispatch" \
   "$full_desktop_expected" \

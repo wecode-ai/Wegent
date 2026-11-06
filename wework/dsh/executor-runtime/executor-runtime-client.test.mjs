@@ -55,6 +55,35 @@ test('request applies the Python budget while preserving explicit and ordinary b
   }
 })
 
+test('preserves only bounded collection retry metadata from native responses', () => {
+  const client = new ExecutorRuntimeClient({ transport: { on() {} } })
+  for (const retryAfterMs of [30000, 3600000, 0, -1, 3600001, '30000']) {
+    let observed
+    let cleanupCount = 0
+    client.pending.set('retry', {
+      cleanup() {
+        cleanupCount++
+      },
+      reject: error => {
+        observed = error
+      },
+    })
+    client.handleMessage({
+      type: 'response',
+      id: 'retry',
+      ok: false,
+      error: { code: 'native_failure', message: 'Failed', retryAfterMs },
+    })
+    assert.equal(cleanupCount, 1)
+    assert.equal(client.pending.has('retry'), false)
+    assert.equal(
+      observed.retryAfterMs,
+      [30000, 3600000].includes(retryAfterMs) ? retryAfterMs : undefined
+    )
+    assert.equal(observed.retryable, false, 'Metadata does not authorize an operation retry')
+  }
+})
+
 test('negotiates local endpoint RPC without owning event history', async () => {
   const fixture = await executorFixture()
   const client = new ExecutorRuntimeClient({
