@@ -151,7 +151,7 @@ fn decrypt_model_api_key(raw: &str) -> Result<String, FastApiError> {
     if resolved.contains("${") {
         return Ok(resolved);
     }
-    crate::git_repositories::crypto::decrypt_git_token(&resolved)
+    wegent_identity::repository_credentials::decrypt_git_token(&resolved)
         .map_err(|_| credentials_unavailable())
 }
 

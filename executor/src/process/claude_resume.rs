@@ -50,7 +50,7 @@ fn is_missing_selected_session(spec: &CommandSpec, outcome: &CommandOutcome) -> 
         return false;
     };
     let Some(id) = spec
-        .args
+        .args()
         .windows(2)
         .find(|args| args[0] == "--resume")
         .map(|args| args[1].as_str())
@@ -101,15 +101,15 @@ fn file_resume_spec(
     mut spec: CommandSpec,
 ) -> Result<CommandSpec, String> {
     let index = spec
-        .args
+        .args()
         .windows(2)
         .position(|args| args[0] == "--resume")
         .ok_or("Claude resume argument is missing")?;
-    let id = &spec.args[index + 1];
+    let id = &spec.args()[index + 1];
     let home = spec
-        .env
+        .envs()
         .get("WEGENT_AGENT_HOME")
-        .or_else(|| spec.env.get("CLAUDE_CONFIG_DIR"))
+        .or_else(|| spec.envs().get("CLAUDE_CONFIG_DIR"))
         .ok_or("Claude config directory is missing for session restore")?;
     let transcript = claude_session_transcript(Path::new(home), id)?;
     let mut fields = task_fields(&request.task_id, &request.subtask_id);
@@ -118,10 +118,13 @@ fn file_resume_spec(
     log_executor_event("claude session file resume started", &fields);
     // Older Claude versions resolve UUIDs only inside the current project.
     // A transcript path preserves the session's original storage after a move.
-    spec.args[index + 1] = transcript
-        .to_str()
-        .ok_or("Claude session path is not valid UTF-8")?
-        .to_owned();
+    spec.replace_arg(
+        index + 1,
+        transcript
+            .to_str()
+            .ok_or("Claude session path is not valid UTF-8")?
+            .to_owned(),
+    );
     Ok(spec)
 }
 
@@ -130,11 +133,9 @@ pub(super) fn follow_up_spec(
     session_id: &str,
     query: ClaudeFollowUpQuery,
 ) -> CommandSpec {
-    let mut spec = CommandSpec::new(base_spec.program.clone());
-    spec.env = base_spec.env.clone();
-    spec.cwd = base_spec.cwd.clone();
+    let mut spec = base_spec.clone().with_args(Vec::new()).without_stdin();
     let mut skip_next = false;
-    for arg in &base_spec.args {
+    for arg in base_spec.args() {
         if skip_next {
             skip_next = false;
             continue;
@@ -146,20 +147,19 @@ pub(super) fn follow_up_spec(
             skip_next = true;
             continue;
         }
-        spec.args.push(arg.clone());
+        spec = spec.arg(arg.clone());
     }
-    spec.args.push("--resume".to_owned());
-    spec.args
-        .push(resume_argument(base_spec, session_id).to_owned());
+    spec = spec.arg("--resume".to_owned());
+    spec = spec.arg(resume_argument(base_spec, session_id).to_owned());
     match query {
         ClaudeFollowUpQuery::Prompt(prompt) => {
-            spec.args.push("-p".to_owned());
-            spec.args.push(prompt);
+            spec = spec.arg("-p".to_owned());
+            spec = spec.arg(prompt);
         }
         ClaudeFollowUpQuery::ToolResult(value) => {
-            spec.args.push("--input-format".to_owned());
-            spec.args.push("stream-json".to_owned());
-            spec.stdin = Some(format!("{value}\n"));
+            spec = spec.arg("--input-format".to_owned());
+            spec = spec.arg("stream-json".to_owned());
+            spec = spec.stdin(format!("{value}\n"));
         }
     }
     spec
@@ -167,7 +167,7 @@ pub(super) fn follow_up_spec(
 
 fn resume_argument<'a>(base_spec: &'a CommandSpec, session_id: &'a str) -> &'a str {
     base_spec
-        .args
+        .args()
         .windows(2)
         .find(|args| args[0] == "--resume")
         .map(|args| args[1].as_str())

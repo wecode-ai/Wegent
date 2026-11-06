@@ -297,7 +297,7 @@ async fn router_retains_decisions_and_recovers_actual_queue_receipts_without_dup
             .unwrap(),
         receipt
     );
-    let connection = store.connection().unwrap();
+    let connection = rusqlite::Connection::open(store.path()).unwrap();
     let count: i64 = connection
         .query_row("SELECT COUNT(*) FROM loop_item_executions", [], |row| {
             row.get(0)
@@ -349,8 +349,7 @@ async fn router_does_not_admit_stale_issue_and_refreshes_retained_inputs() {
         .unwrap()
         .iter()
         .all(|event| event["issue"]["title"] == "Changed before admission"));
-    let count: i64 = store
-        .connection()
+    let count: i64 = rusqlite::Connection::open(store.path())
         .unwrap()
         .query_row("SELECT COUNT(*) FROM loop_item_executions", [], |row| {
             row.get(0)

@@ -102,8 +102,17 @@ setInterval(() => {}, 1_000)
     await writeFile(
       cargo,
       `#!/usr/bin/env node
-import { appendFileSync, chmodSync, copyFileSync, mkdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { appendFileSync, chmodSync, copyFileSync, mkdirSync, existsSync } from 'node:fs'
+import { join, dirname } from 'node:path'
+if (process.argv[2] === 'metadata') {
+  const manifest = process.argv[process.argv.indexOf('--manifest-path') + 1]
+  const root = dirname(manifest)
+  const dependencies = root === process.env.WEGENT_EXECUTOR_SOURCE_DIR
+    ? ['protocol', 'crypto'].map(name => ({path: join(root, '..', 'shared', 'rust', name)})).filter(dep => existsSync(join(dep.path, 'Cargo.toml')))
+    : []
+  console.log(JSON.stringify({workspace_root: root, packages: [{manifest_path: manifest, dependencies}]}))
+  process.exit(0)
+}
 appendFileSync(process.env.TEST_BUILD_LOG, 'build\\n')
 const output = join(process.env.CARGO_TARGET_DIR, 'debug', 'wegent-executor')
 mkdirSync(join(process.env.CARGO_TARGET_DIR, 'debug'), { recursive: true })

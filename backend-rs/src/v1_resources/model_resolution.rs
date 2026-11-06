@@ -78,7 +78,7 @@ where
         // `db.query(User).filter(User.id == user_id).first()`: the source
         // re-reads the whitelisted user rather than reusing the caller row.
         let user_name = load_user_name(mysql, user_id).await;
-        let whitelist_ok = crate::teams::public_model_access::allowed_for_user_name(
+        let whitelist_ok = wegent_access::public_models::allowed_for_user_name(
             &OpaqueJson::from(model.json.0.clone()),
             user_name.as_deref(),
         );

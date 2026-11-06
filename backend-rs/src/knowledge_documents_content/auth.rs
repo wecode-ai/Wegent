@@ -36,8 +36,8 @@ use super::ApiFailure;
 use crate::auth::{SessionClaims, UserRow};
 use crate::config::AuthConfig;
 use crate::headers::Headers as _;
-use crate::state::AppState;
 use crate::user_reader::{USER_BY_ID_QUERY, USER_BY_NAME_QUERY, UserRecord};
+use wegent_identity::AuthServices;
 
 /// API key prefix (`app.core.auth_utils.API_KEY_PREFIX`).
 const API_KEY_PREFIX: &str = "wg-";
@@ -426,7 +426,7 @@ async fn verify_task_token_user(
 /// Authenticate one request and return the user
 /// (`get_auth_context` with the source priority order).
 pub async fn get_auth_context(
-    state: &AppState,
+    state: &AuthServices,
     headers: &impl crate::headers::Headers,
 ) -> Result<CurrentUser, ApiFailure> {
     let mysql = &state.mysql;

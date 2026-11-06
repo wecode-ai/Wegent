@@ -35,9 +35,7 @@ for (const component of Object.keys(incompleteDigests)) {
         "src/a.rs": "mod a;\n",
         "src/a/inner.rs": "pub fn nested() {}\n",
         "src/.hidden.rs": "pub fn hidden() {}\n",
-        ...(component === "backend-rs"
-          ? { "crates/library/src/lib.rs": "pub fn library() {}\n" }
-          : {}),
+        "crates/library/src/lib.rs": "pub fn library() {}\n",
         "src/schema.json": '{"type":"object"}\n',
         ...(component === "executor"
           ? {

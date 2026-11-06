@@ -15,8 +15,10 @@
 use brz_http::Client;
 use serde_json::{Map, Value};
 
-use crate::git_repositories::crypto::{decrypt_git_token, encrypt_git_token, is_token_encrypted};
 use crate::wework_auth_tokens::uuid4_hex;
+use wegent_identity::repository_credentials::{
+    decrypt_git_token, encrypt_git_token, is_token_encrypted,
+};
 
 /// `GitInfo` field names in declaration order (`model_dump()` order).
 const GIT_INFO_FIELDS: [&str; 9] = [

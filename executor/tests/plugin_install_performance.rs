@@ -132,6 +132,7 @@ async fn installing_three_plugins_only_materializes_the_three_changes() {
             archives,
             metrics: metrics.clone(),
         },
+        std::sync::Arc::new(wegent_executor::agents::CodexSkillConfigurationReloader),
     );
     let warmed = handler
         .apply_sync(json!({"scope": "plugins", "plugins": &plugins[..13]}))

@@ -50,25 +50,39 @@ pub async fn build(app: Arc<AppState>) -> Result<brz_http_server::Router<AppAuth
     let llm_responses_proxy = crate::llm_proxy::LlmResponsesProxyRoute::new(Arc::clone(&app))
         .context("failed to initialize the LLM proxy transport")?;
 
+    let sites = Arc::clone(&app.sites);
+    let git = Arc::new(wegent_git_repositories::GitState {
+        git_repositories: Arc::clone(&app.git_repositories),
+        repository_tokens: Arc::clone(&app.repository_tokens),
+    });
+    let capabilities = Arc::new(wegent_capabilities::state::AppState {
+        mysql: app.mysql.clone(),
+        redis: app.redis.clone(),
+        task_store: Arc::clone(&app.task_store),
+        erp: Arc::clone(&app.erp),
+        entity_resolvers: app.entity_resolvers.clone(),
+    });
     let handler = brz_http_server::handlers!(state = app)
         .map_err(|error| anyhow::anyhow!("API route registration failed: {error}"))?
         .merge(
-            brz_http_server::handlers!(rws = status_state; group = remote_workspace_status)
+            wegent_remote_workspace::routes(status_state, tree_state)
+                .context("failed to register workspace routes")?,
+        )
+        .merge(
+            wegent_runtime_check::routes(runtime_check_state)
                 .map_err(|error| anyhow::anyhow!("API route registration failed: {error}"))?,
         )
         .merge(
-            brz_http_server::handlers!(rwt = tree_state; group = remote_workspace_tree)
+            wegent_models::routes(models_unified_state)
                 .map_err(|error| anyhow::anyhow!("API route registration failed: {error}"))?,
         )
         .merge(
-            brz_http_server::handlers!(rc = runtime_check_state; group = runtime_check)
-                .map_err(|error| anyhow::anyhow!("API route registration failed: {error}"))?,
+            wegent_capabilities::routes(capabilities)
+                .context("failed to register capability routes")?,
         )
-        .merge(
-            brz_http_server::handlers!(mu = models_unified_state; group = models_unified)
-                .map_err(|error| anyhow::anyhow!("API route registration failed: {error}"))?,
-        )
-        .merge(llm_responses_proxy);
+        .merge(llm_responses_proxy)
+        .merge(wegent_git_repositories::routes(git).context("failed to register Git routes")?)
+        .merge(wegent_sites::routes(sites).context("failed to register Sites routes")?);
 
     Ok(handler)
 }

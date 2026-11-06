@@ -470,7 +470,7 @@ pub(crate) mod security {
         fn preserves_the_provider_length_only_padding_contract() {
             let key = b"12345678901234567890123456789012";
             let mut iv = *b"1234567890123456";
-            let ciphertext = STANDARD.decode("caUaFV2wgkYz1SIreqn7PQ==").unwrap();
+            let ciphertext = STANDARD.decode("caUaFV2wgkYz1SIrepv7PQ==").unwrap();
             // The six-byte plaintext stays intact, but its first padding byte changes.
             iv[6] ^= 1;
             assert_eq!(decrypt_cbc(key, &iv, &ciphertext).unwrap(), b"wegent");

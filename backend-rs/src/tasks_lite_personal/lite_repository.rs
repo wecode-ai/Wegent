@@ -14,7 +14,7 @@ use chrono::NaiveDateTime;
 use serde_json::Value as Json;
 
 use crate::crd::{CrdDocument, NumericId};
-use crate::task_store::quote_sql_literal;
+use wegent_backend_persistence::sql_support::quote_sql_literal;
 
 /// One `tasks`/`tasks_{:04}` row projection used by the personal list flow.
 ///

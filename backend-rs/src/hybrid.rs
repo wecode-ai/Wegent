@@ -230,7 +230,7 @@ where
     } = application;
     let job_client = state.background_jobs.clone();
     let job_grace = job_client.configuration().shutdown_grace;
-    let authenticator = crate::auth::AppAuthenticator::new(Arc::clone(&state));
+    let authenticator = crate::auth::AppAuthenticator::new(state.authentication_services());
     let socketio = crate::socketio::handlers::build(Arc::clone(&state)).await?;
     let http = brz_http_server::hyper::HandlerService::with_authenticator(
         crate::http_fallback::FastApiFallback::new(routes),

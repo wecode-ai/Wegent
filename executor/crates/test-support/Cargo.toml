@@ -1,0 +1,8 @@
+[package]
+name = "wegent-executor-test-support"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Test process environment isolation for Executor libraries"
+
+[dependencies]

@@ -71,11 +71,15 @@ pub(crate) fn app(mysql: brz_mysql::MysqlService) -> Arc<AppState> {
             .unwrap(),
         executor_manager: crate::executor_manager::ExecutorManager::new("http://127.0.0.1:1")
             .unwrap(),
-        sites: crate::sites::SitesClient::with_settings("", "", std::time::Duration::from_secs(1))
-            .unwrap(),
+        sites: Arc::new(
+            crate::sites::SitesClient::with_settings("", "", std::time::Duration::from_secs(1))
+                .unwrap(),
+        ),
         llm_proxy_credentials: Arc::new(crate::llm_proxy::StoredLlmProxyCredentials),
         repository_tokens: Arc::new(crate::repository_tokens::StoredRepositoryTokens),
-        git_repositories: crate::git_repositories::GitRepositoriesService::new(None).unwrap(),
+        git_repositories: Arc::new(
+            crate::git_repositories::GitRepositoriesService::new(None).unwrap(),
+        ),
         token_issuer_extra_claims: Arc::new(crate::token_issuers::NoExtraClaims),
         external_knowledge_auth: Arc::new(crate::mcp::knowledge_external::auth::PersonalApiKeyAuth),
         responses_dispatch: Arc::new(crate::responses::dispatch::ResponsesDispatch::spawn()),

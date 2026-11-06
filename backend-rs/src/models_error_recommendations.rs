@@ -244,7 +244,7 @@ where
 fn is_visible_and_allowed(row: &PublicModelRow, user_name: Option<&str>) -> bool {
     let value = row.json.0.to_value();
     is_public_model_visible(&value)
-        && crate::teams::public_model_access::allowed_for_user_name(&row.json.0, user_name)
+        && wegent_access::public_models::allowed_for_user_name(&row.json.0, user_name)
 }
 
 #[cfg(test)]

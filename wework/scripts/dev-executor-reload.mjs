@@ -15,6 +15,8 @@ import {
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { rustSourceInputs } from './rust-source-inputs.mjs'
+
 const DEBOUNCE_DELAY_MS = 350
 const EXIT_RESTART_DELAY_MS = 1000
 const EXIT_RESTART_MAX_DELAY_MS = 10_000
@@ -26,17 +28,8 @@ const executorDir = resolve(
   process.env.WEGENT_EXECUTOR_SOURCE_DIR || join(scriptDir, '..', '..', 'executor')
 )
 const manifestPath = join(executorDir, 'Cargo.toml')
-const sharedRustDir = resolve(executorDir, '..', 'shared', 'rust')
-const sourceDirectories = [
-  join(executorDir, 'src'),
-  ...['protocol', 'crypto'].map(name => join(sharedRustDir, name, 'src')),
-].filter(existsSync)
-const sourceManifests = [
-  manifestPath,
-  join(executorDir, 'Cargo.lock'),
-  join(sharedRustDir, 'Cargo.toml'),
-  ...['protocol', 'crypto'].map(name => join(sharedRustDir, name, 'Cargo.toml')),
-].filter(existsSync)
+let sourceDirectories = []
+let sourceManifests = []
 const targetDir = resolve(
   process.cwd(),
   process.env.WEGENT_EXECUTOR_TARGET_DIR ||
@@ -299,8 +292,8 @@ function registerWatcher(watcher) {
 }
 
 function startWatching() {
-  for (const path of sourceDirectories) {
-    registerWatcher(watch(path, { recursive: true }, scheduleSourceRestart))
+  for (const sourceDir of sourceDirectories) {
+    registerWatcher(watch(sourceDir, { recursive: true }, scheduleSourceRestart))
   }
   const manifestDirectories = [...new Set(sourceManifests.map(path => dirname(path)))]
   for (const path of manifestDirectories) {
@@ -339,6 +332,9 @@ setInterval(() => {
 }, PARENT_CHECK_INTERVAL_MS)
 
 try {
+  const sources = rustSourceInputs(manifestPath)
+  sourceDirectories = sources.directories
+  sourceManifests = sources.files
   startWatching()
   if (existsSync(executorBinary)) {
     lastAttemptedSourceFingerprint = sourceFingerprint()

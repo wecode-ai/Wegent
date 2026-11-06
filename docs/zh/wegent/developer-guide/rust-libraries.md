@@ -15,8 +15,41 @@ Backend 和 Executor 分别编译、测试和发布，保留各自的 Cargo 锁�
 | `backend-rs/crates/python-compat` | `wegent-python-compat` | Python JSON 序列化、值转换与整数集合顺序兼容 |
 | `backend-rs/crates/http-compat` | `wegent-http-compat` | Breeze HTTP 服务的 FastAPI 错误响应兼容 |
 | `backend-rs/crates/storage` | `wegent-storage` | S3 header/query 签名与对象路径编码 |
+| `shared/rust/filesystem` | `wegent-filesystem` | 文件租约、目录链接、平台路径和带权限保留的原子写入 |
+| `backend-rs/crates/config` | `wegent-backend-config` | Backend 环境与连接配置 |
+| `backend-rs/crates/persistence` | `wegent-backend-persistence` | 请求事务、SQL 值、路由键与连接池策略 |
+| `backend-rs/crates/identity` | `wegent-identity` | 会话认证、JWT、用户读取和仓库凭据编码 |
+| `backend-rs/crates/access` | `wegent-access` | 实体与组成员查询、角色继承和公共模型白名单 |
+| `backend-rs/crates/directory` | `wegent-directory` | 员工目录提供者接口与数据类型 |
+| `backend-rs/crates/celery` | `wegent-celery` | Celery 协议与队列交互 |
+| `backend-rs/crates/job-runtime` | `wegent-job-runtime` | 后台任务注册、调度、租约和取消 |
+| `backend-rs/crates/socket-events` | `wegent-socket-events` | Socket.IO 事件封装与 RPC 等待者生命周期 |
+| `backend-rs/crates/network-policy` | `wegent-network-policy` | 出站信任与目标地址策略 |
+| `backend-rs/crates/resource-store` | `wegent-resource-store` | CRD 投影、资源引用、Kind 查询和决策模型 schema |
+| `backend-rs/crates/task-store` | `wegent-task-store` | 任务/子任务持久化、原子 pipeline 推进及任务文档 |
+| `backend-rs/crates/capabilities` | `wegent-capabilities` | 统一技能目录、任务技能解析、Kind 缓存及授权 |
+| `backend-rs/crates/models` | `wegent-models` | 模型目录聚合、授权与响应投影 |
+| `backend-rs/crates/runtime-check` | `wegent-runtime-check` | 已授权任务的运行检查点与流状态 |
+| `backend-rs/crates/git-repositories` | `wegent-git-repositories` | 仓库目录、分支查询、缓存和凭据提供者 |
+| `backend-rs/crates/sites` | `wegent-sites` | Sites 目录路由与上游集成 |
+| `backend-rs/crates/test-support` | `wegent-backend-test-support` | SQL 协议夹具与 JSON 基线断言，仅用于测试 |
+| `executor/crates/config` | `wegent-runtime-config` | 设备、Home、工作区及原生命令路径配置 |
+| `executor/crates/logging` | `wegent-runtime-logging` | Executor 结构化事件与滚动日志 |
+| `executor/crates/execution-contracts` | `wegent-execution-contracts` | 执行、命令、IPC 和事件通知契约 |
+| `executor/crates/subprocess` | `wegent-subprocess` | 进程启动、输出收集与平台进程树生命周期 |
+| `executor/crates/hooks` | `wegent-hooks` | Hook 发现、受限命令执行和 rollout 观察 |
+| `executor/crates/workspace` | `wegent-workspace` | 工作区文件、原生 Git、仓库身份与变更跟踪 |
+| `executor/crates/automation` | `wegent-automation` | 自动化定义、运行记录和重复调度策略 |
+| `executor/crates/task-store` | `wegent-local-task-store` | 本地任务、项目和执行队列的事务持久化 |
+| `executor/crates/model-proxy` | `wegent-model-proxy` | 本地模型路由、协议转换、模型目录和能力上下文 |
+| `executor/crates/test-support` | `wegent-executor-test-support` | 测试环境隔离与共享环境锁 |
+| `backend-rs/crates/executor-manager` | `wegent-executor-manager` | Executor Manager 客户端、超时策略与响应投影 |
+| `backend-rs/crates/media` | `wegent-media` | 媒体策略与视频结果 URL 刷新扩展契约 |
+| `backend-rs/crates/remote-workspace` | `wegent-remote-workspace` | 远程工作区授权、状态、文件传输与任务投影 |
+| `executor/crates/plugin-packages` | `wegent-plugin-packages` | 插件包发布、能力配置、恢复与激活 |
+| `executor/crates/execution-stream` | `wegent-execution-stream` | 有序事件投递、增量合并、错误传播与 flush |
 
-共享库不读取应用环境变量，不访问数据库，不决定权限。应用负责解析配置、选择密钥、发送请求，以及将算法错误映射为原有业务响应。S3 库的当前时间辅助函数只读取时钟。
+`shared/rust` 库不读取应用环境变量，不访问数据库，不决定权限；应用专属领域库可依赖其明确声明的配置、持久化和授权接口。应用负责解析配置、选择密钥、发送请求，以及将算法错误映射为原有业务响应。S3 库的当前时间辅助函数只读取时钟。
 
 `dispatch::ExecutionRequest` 是 Backend 解析资源后的生产端投影；根模块的 `ExecutionRequest` 是 Executor 的容错消费端投影。它们的字段和默认值不同，不能机械合并。协议契约测试验证生产端组装的 JSON 能被消费端解码。消费端的 `agent_home_runtime_task_id` 是受信任的本地元数据，不从请求反序列化。
 
@@ -39,6 +72,12 @@ cargo test --manifest-path executor/Cargo.toml --locked --all-features
 cargo test --manifest-path shared/rust/Cargo.toml --locked
 ```
 
-Backend workspace 默认成员包含应用和专属库。共享 workspace 独立维护用于库测试的锁文件；依赖它的应用仍按各自锁文件解析依赖。应用的 `cargo test` 不会自动执行外部依赖的单测，因此现有 Backend CI 测试任务另外运行共享库的格式、测试和 Clippy 检查。
+Backend 与 Executor 各自 workspace 的默认成员包含应用和专属库。共享 workspace 独立维护用于库测试的锁文件；依赖它的应用仍按各自锁文件解析依赖。应用的 `cargo test` 不会自动执行外部依赖的单测，因此现有 Backend CI 测试任务另外运行共享库的格式、测试和 Clippy 检查。
 
 共享源码变化必须触发 Backend、Executor 及其既有集成验证。Docker 构建的依赖层和应用层都需要共享源码；依赖镜像指纹、运行时镜像指纹以及 macOS/Windows 构建指纹均包含共享库和应用专属库。新增本地 crate 时同步维护这些输入，避免复用旧二进制。
+
+## 继续拆分的判断标准
+
+一个库应拥有完整的状态、事务或协议生命周期，而不是只把文件搬出应用。库不能依赖应用入口、全量 AppState 或反向调用上层模块。只有跨边界消费者需要的接口才公开。持有同一事务连接的任务、协调和队列更新应保留在同一库中；角色规则、默认值或错误策略不同的协议不能因名称相似而合并。
+
+HTTP 领域库注册自身路由，由应用合并。`registered_routes()` 从实际 registry 推导路径和方法，供有效路由表契约检查使用，不维护第二份手写 API 清单。客户端、缓存、通知去重和后台 worker 继续共享原来的进程级实例。

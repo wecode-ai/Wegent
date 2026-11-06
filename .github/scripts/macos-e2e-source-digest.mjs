@@ -16,7 +16,7 @@ const groups = [
   `${component}/Cargo.lock`,
   `${component}/src`,
   "shared/rust",
-  ...(component === "backend-rs" ? ["backend-rs/crates"] : []),
+  `${component}/crates`,
   ...(component === "executor"
     ? [
         "executor/vendor",

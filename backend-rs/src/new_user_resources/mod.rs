@@ -204,10 +204,10 @@ fn extract(kind: &str, resource: &mut Value) -> Result<()> {
         && let Some(text) = key.as_str()
         && !text.is_empty()
         && text != "***"
-        && !crate::git_repositories::crypto::is_token_encrypted(text)
+        && !wegent_identity::repository_credentials::is_token_encrypted(text)
     {
         *key = Value::String(
-            crate::git_repositories::crypto::encrypt_git_token(text)
+            wegent_identity::repository_credentials::encrypt_git_token(text)
                 .map_err(|_| anyhow::anyhow!("model key encryption failed"))?,
         );
     }

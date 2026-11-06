@@ -112,8 +112,10 @@ pub async fn build_with_clients(
     // `GET /api/git/repositories`: the retained provider HTTP client and the
     // process-owned background full-fetch worker are built here so the worker
     // is initialization-owned.
-    let git_repositories = crate::git_repositories::GitRepositoriesService::new(redis.clone())
-        .context("failed to build the repository-service client")?;
+    let git_repositories = Arc::new(
+        crate::git_repositories::GitRepositoriesService::new(redis.clone())
+            .context("failed to build the repository-service client")?,
+    );
 
     Ok(AppState {
         completion_app: std::sync::OnceLock::new(),
@@ -161,8 +163,10 @@ pub async fn build_with_clients(
         executor_version,
         executor_manager: crate::executor_manager::ExecutorManager::from_env()
             .context("failed to build the executor-manager client")?,
-        sites: crate::sites::SitesClient::from_env()
-            .context("failed to build the Sites HTTP client")?,
+        sites: Arc::new(
+            crate::sites::SitesClient::from_env()
+                .context("failed to build the Sites HTTP client")?,
+        ),
         llm_proxy_credentials: Arc::new(crate::llm_proxy::StoredLlmProxyCredentials),
         repository_tokens: Arc::new(crate::repository_tokens::StoredRepositoryTokens),
         git_repositories,

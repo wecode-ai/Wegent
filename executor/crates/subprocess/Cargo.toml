@@ -1,0 +1,13 @@
+[package]
+name = "wegent-subprocess"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Platform process spawning and child lifetime primitives"
+
+[dependencies]
+tokio = { version = "1.48", features = ["io-util", "process", "rt", "sync"] }
+wegent-runtime-logging = { path = "../logging" }
+
+[dev-dependencies]
+tempfile = "3.23"

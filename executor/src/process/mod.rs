@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::HashMap,
     env, fs,
     future::Future,
     io::Write,
@@ -41,10 +41,10 @@ use crate::{
     },
 };
 
+use wegent_subprocess::{decode_output, run_prepared_command, ProcessTreeGuard};
+pub use wegent_subprocess::{hide_windows_console, spawn_program_parts};
 #[cfg(windows)]
-mod windows_batch;
-#[cfg(windows)]
-pub(crate) use windows_batch::shell_command as windows_shell_command;
+pub(crate) use wegent_subprocess::{kill_windows_process_tree, windows_shell_command};
 
 mod claude_resume;
 pub(crate) mod debug_stdout;
@@ -147,66 +147,7 @@ where
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CommandSpec {
-    program: String,
-    args: Vec<String>,
-    env: BTreeMap<String, String>,
-    cwd: Option<PathBuf>,
-    stdin: Option<String>,
-}
-
-impl CommandSpec {
-    pub fn new(program: impl Into<String>) -> Self {
-        Self {
-            program: program.into(),
-            args: Vec::new(),
-            env: BTreeMap::new(),
-            cwd: None,
-            stdin: None,
-        }
-    }
-
-    pub fn arg(mut self, arg: impl Into<String>) -> Self {
-        self.args.push(arg.into());
-        self
-    }
-
-    pub fn env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
-        self.env.insert(key.into(), value.into());
-        self
-    }
-
-    pub fn cwd(mut self, cwd: impl Into<PathBuf>) -> Self {
-        self.cwd = Some(cwd.into());
-        self
-    }
-
-    pub fn stdin(mut self, input: impl Into<String>) -> Self {
-        self.stdin = Some(input.into());
-        self
-    }
-
-    pub fn program(&self) -> &str {
-        &self.program
-    }
-
-    pub fn args(&self) -> &[String] {
-        &self.args
-    }
-
-    pub fn envs(&self) -> &BTreeMap<String, String> {
-        &self.env
-    }
-
-    pub fn current_dir(&self) -> Option<&PathBuf> {
-        self.cwd.as_ref()
-    }
-
-    pub fn stdin_input(&self) -> Option<&str> {
-        self.stdin.as_deref()
-    }
-}
+pub use wegent_subprocess::CommandSpec;
 
 #[derive(Debug, Clone)]
 pub struct ProcessEngine {
@@ -499,7 +440,7 @@ async fn handle_deferred_mcp_loop(
     // deferred HTTP proxy must use the same execution bindings, only in memory.
     if let Err(message) = crate::agents::runtime_capabilities::mcp_environment::resolve_context(
         &mut mcp_servers,
-        &base_spec.env,
+        base_spec.envs(),
     ) {
         return ExecutionOutcome::Failed { message };
     }
@@ -643,12 +584,9 @@ fn answered_interactive_form_tool_use_id(request: &ExecutionRequest) -> Option<S
 /// Used when the saved Claude session is no longer present in the sandbox and the
 /// initial `--resume` execution fails with "No conversation found with session ID".
 fn claude_spec_without_resume(base_spec: &CommandSpec) -> CommandSpec {
-    let mut spec = CommandSpec::new(base_spec.program.clone());
-    spec.env = base_spec.env.clone();
-    spec.cwd = base_spec.cwd.clone();
-    spec.stdin = base_spec.stdin.clone();
+    let mut spec = base_spec.clone().with_args(Vec::new());
     let mut skip_next = false;
-    for arg in &base_spec.args {
+    for arg in base_spec.args() {
         if skip_next {
             skip_next = false;
             continue;
@@ -657,7 +595,7 @@ fn claude_spec_without_resume(base_spec: &CommandSpec) -> CommandSpec {
             skip_next = true;
             continue;
         }
-        spec.args.push(arg.clone());
+        spec = spec.arg(arg.clone());
     }
     spec
 }
@@ -678,10 +616,10 @@ fn is_stale_claude_session_failure(stderr: &str, stdout: &str) -> bool {
 }
 
 fn mcp_servers_from_spec(spec: &CommandSpec) -> Option<Value> {
-    if let Some(path) = spec.env.get("WEGENT_MCP_CONFIG_PATH") {
+    if let Some(path) = spec.envs().get("WEGENT_MCP_CONFIG_PATH") {
         return read_json_file(path);
     }
-    spec.args
+    spec.args()
         .windows(2)
         .find_map(|window| (window[0] == "--mcp-config").then(|| read_json_file(&window[1])))
         .flatten()
@@ -702,16 +640,7 @@ async fn run_command(spec: CommandSpec, timeout_seconds: u64) -> ExecutionOutcom
     }
 }
 
-enum CommandOutcome {
-    Success {
-        stdout: String,
-    },
-    Failure {
-        stderr: String,
-        stdout: String,
-        exit_code: Option<i32>,
-    },
-}
+use wegent_subprocess::CommandOutcome;
 
 enum StreamingStdoutOutcome {
     Success(String),
@@ -725,72 +654,10 @@ enum StreamingStdoutOutcome {
     },
 }
 
-pub(crate) struct ProcessTreeGuard {
-    #[cfg(windows)]
-    pid: Option<u32>,
-}
-
-impl ProcessTreeGuard {
-    pub(crate) fn new(pid: Option<u32>) -> Self {
-        #[cfg(not(windows))]
-        let _ = pid;
-        Self {
-            #[cfg(windows)]
-            pid,
-        }
-    }
-
-    pub(crate) fn disarm(&mut self) {
-        #[cfg(windows)]
-        {
-            self.pid = None;
-        }
-    }
-
-    pub(crate) fn terminate(&mut self) {
-        #[cfg(windows)]
-        if let Some(pid) = self.pid.take() {
-            kill_windows_process_tree(pid);
-        }
-    }
-}
-
-impl Drop for ProcessTreeGuard {
-    fn drop(&mut self) {
-        self.terminate();
-    }
-}
-
-#[cfg(windows)]
-pub(crate) fn kill_windows_process_tree(pid: u32) {
-    use std::os::windows::process::CommandExt;
-
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    let pid = pid.to_string();
-    let status = std::process::Command::new("taskkill")
-        .args(["/PID", pid.as_str(), "/T", "/F"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .creation_flags(CREATE_NO_WINDOW)
-        .status();
-    match status {
-        Ok(status) if !status.success() => log_executor_event(
-            "windows process tree termination failed",
-            &[("pid", pid), ("exit_status", status.to_string())],
-        ),
-        Err(error) => log_executor_event(
-            "windows process tree termination failed",
-            &[("pid", pid), ("error", error.to_string())],
-        ),
-        Ok(_) => {}
-    }
-}
-
 async fn run_command_output(spec: CommandSpec, timeout_seconds: u64) -> CommandOutcome {
     let mut command = command_from_spec(&spec);
     hide_windows_console(&mut command);
-    if let Some(cwd) = spec.cwd.as_ref() {
+    if let Some(cwd) = spec.current_dir() {
         if let Err(error) = fs::create_dir_all(cwd) {
             return CommandOutcome::Failure {
                 stderr: format!("failed to create command cwd {}: {error}", cwd.display()),
@@ -807,7 +674,7 @@ async fn run_command_output(spec: CommandSpec, timeout_seconds: u64) -> CommandO
     let started = Instant::now();
     let outcome = match timeout(
         Duration::from_secs(timeout_seconds),
-        run_prepared_command(command, spec.stdin.clone()),
+        run_prepared_command(command, spec.stdin_input().map(str::to_owned)),
     )
     .await
     {
@@ -843,7 +710,7 @@ where
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     hide_windows_console(&mut command);
-    if let Some(cwd) = spec.cwd.as_ref() {
+    if let Some(cwd) = spec.current_dir() {
         if let Err(error) = fs::create_dir_all(cwd) {
             return CommandOutcome::Failure {
                 stderr: format!("failed to create command cwd {}: {error}", cwd.display()),
@@ -863,7 +730,7 @@ where
         ("subtask_id", subtask_id.clone()),
         (
             "include_partial_messages",
-            spec.args
+            spec.args()
                 .iter()
                 .any(|arg| arg == "--include-partial-messages")
                 .to_string(),
@@ -878,7 +745,7 @@ where
         Duration::from_secs(timeout_seconds),
         run_prepared_streaming_command(
             command,
-            spec.stdin.clone(),
+            spec.stdin_input().map(str::to_owned),
             sink,
             builder,
             (task_id.clone(), subtask_id.clone()),
@@ -907,43 +774,19 @@ where
 
 fn command_from_spec(spec: &CommandSpec) -> Command {
     let extra_env = spec
-        .env
+        .envs()
         .iter()
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect::<Vec<_>>();
-    let (program, prefix_args) = spawn_program_parts(&spec.program);
+    let (program, prefix_args) = spawn_program_parts(spec.program());
     let mut command = Command::new(program);
     command
         .args(prefix_args)
-        .args(&spec.args)
+        .args(spec.args())
         .env_clear()
         .envs(process_environment::process_env(&extra_env))
         .kill_on_drop(true);
     command
-}
-
-/// Returns the effective program and any prefix arguments for a spawn.
-///
-/// On Windows, npm/node-style batch shims are resolved to their native
-/// executable so that arguments containing newlines (common in agent prompts)
-/// can be passed through directly instead of being rejected by `cmd.exe` with
-/// `batch file arguments are invalid`. Other platforms return the program
-/// unchanged.
-pub fn spawn_program_parts(program: &str) -> (PathBuf, Vec<String>) {
-    #[cfg(windows)]
-    {
-        let search_path = env::var_os("PATH");
-        let program_path =
-            windows_batch::resolve_program_path(Path::new(program), search_path.as_deref());
-        if windows_batch::is_batch_file(&program_path) {
-            if let Some(target) = windows_batch::resolve_batch_target(&program_path) {
-                return (target.program, target.prefix_args);
-            }
-        }
-        (program_path, Vec::new())
-    }
-    #[cfg(not(windows))]
-    (PathBuf::from(program), Vec::new())
 }
 
 async fn run_prepared_streaming_command<S>(
@@ -1630,34 +1473,6 @@ async fn join_streaming_stdout(
     }
 }
 
-async fn run_prepared_command(
-    mut command: Command,
-    stdin: Option<String>,
-) -> std::io::Result<std::process::Output> {
-    hide_windows_console(&mut command);
-    let Some(input) = stdin else {
-        return command.output().await;
-    };
-
-    command
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let mut child = command.spawn()?;
-    let writer = child.stdin.take().map(|mut child_stdin| {
-        tokio::spawn(async move { child_stdin.write_all(input.as_bytes()).await })
-    });
-    let output = child.wait_with_output().await;
-    if let Some(writer) = writer {
-        if let Ok(Err(error)) = writer.await {
-            if output.as_ref().is_ok_and(|output| output.status.success()) {
-                return Err(error);
-            }
-        }
-    }
-    output
-}
-
 fn command_outcome(result: std::io::Result<std::process::Output>) -> CommandOutcome {
     match result {
         Ok(output) if output.status.success() => CommandOutcome::Success {
@@ -1678,15 +1493,15 @@ fn command_outcome(result: std::io::Result<std::process::Output>) -> CommandOutc
 
 fn command_log_fields(spec: &CommandSpec) -> Vec<(&'static str, String)> {
     let mut fields = vec![
-        ("program", spec.program.clone()),
-        ("arg_count", spec.args.len().to_string()),
+        ("program", spec.program().to_owned()),
+        ("arg_count", spec.args().len().to_string()),
     ];
-    let (resolved_program, prefix_args) = spawn_program_parts(&spec.program);
-    if resolved_program.to_string_lossy() != spec.program || !prefix_args.is_empty() {
+    let (resolved_program, prefix_args) = spawn_program_parts(spec.program());
+    if resolved_program.to_string_lossy() != spec.program() || !prefix_args.is_empty() {
         fields.push(("resolved_program", resolved_program.display().to_string()));
         fields.push(("prefix_arg_count", prefix_args.len().to_string()));
     }
-    if let Some(cwd) = spec.cwd.as_ref() {
+    if let Some(cwd) = spec.current_dir() {
         fields.push(("cwd", cwd.display().to_string()));
     }
     fields
@@ -1771,7 +1586,7 @@ fn debug_claude_stdout_path_for_spec(
     task_id: Option<&str>,
     subtask_id: Option<&str>,
 ) -> Option<PathBuf> {
-    (is_claude_program(&spec.program) && debug_stdout::enabled())
+    (is_claude_program(spec.program()) && debug_stdout::enabled())
         .then(|| debug_claude_stdout_path(task_id, subtask_id))
 }
 
@@ -1803,41 +1618,6 @@ fn failure_message(stderr: Vec<u8>, stdout: Vec<u8>) -> String {
     }
     stdout
 }
-
-fn decode_output(bytes: Vec<u8>) -> String {
-    String::from_utf8_lossy(&bytes).trim().to_owned()
-}
-
-#[cfg(windows)]
-mod windows_console {
-    use std::os::windows::process::CommandExt;
-
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-
-    pub trait HideConsole {
-        fn hide_console(&mut self);
-    }
-
-    impl HideConsole for std::process::Command {
-        fn hide_console(&mut self) {
-            self.creation_flags(CREATE_NO_WINDOW);
-        }
-    }
-
-    impl HideConsole for tokio::process::Command {
-        fn hide_console(&mut self) {
-            self.creation_flags(CREATE_NO_WINDOW);
-        }
-    }
-}
-
-#[cfg(windows)]
-pub fn hide_windows_console<C: windows_console::HideConsole>(command: &mut C) {
-    command.hide_console();
-}
-
-#[cfg(not(windows))]
-pub fn hide_windows_console<C>(_command: &mut C) {}
 
 #[cfg(test)]
 mod output_text_tests;

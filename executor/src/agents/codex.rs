@@ -195,12 +195,9 @@ pub(crate) use skill_config::reload_skill_configuration;
 mod local_notifications;
 mod native_activity;
 mod native_turn;
-mod notification;
 use native_activity::{CodexNativeActivity, CodexNativeRequest};
 pub(crate) use native_turn::completed_native_codex_turn;
-pub use notification::CodexNotification;
-
-pub type CodexNotificationSender = mpsc::UnboundedSender<CodexNotification>;
+pub use wegent_execution_contracts::notification::{CodexNotification, CodexNotificationSender};
 pub type CodexThreadStartedCallback = Box<dyn FnOnce(String) + Send + 'static>;
 pub type CodexActiveTurnCallback = Box<dyn Fn(String, String) + Send + 'static>;
 pub type CodexActiveTurnFinishedCallback = Box<dyn Fn() + Send + 'static>;

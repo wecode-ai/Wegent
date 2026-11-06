@@ -22,8 +22,6 @@ RUN mkdir -p src && printf 'pub fn placeholder() {}\n' > src/lib.rs \
 
 FROM ${DEPS_IMAGE} AS build
 COPY backend-rs/src ./src
-COPY shared/rust /workspace/shared/rust
-COPY backend-rs/crates ./crates
 COPY backend-rs/examples ./examples
 COPY backend-rs/migrations ./migrations
 RUN find src examples -type f -exec touch {} + \

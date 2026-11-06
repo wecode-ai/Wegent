@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::sync::atomic::{AtomicUsize, Ordering};
+use wegent_execution_contracts::ipc::BoxFuture;
 
 use tokio::{io::DuplexStream, sync::Notify};
 

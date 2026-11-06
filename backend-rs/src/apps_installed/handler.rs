@@ -130,7 +130,7 @@ fn unauthorized_error(
 
 /// JWT session authentication mirroring `get_current_user`.
 async fn resolve_installed_apps_user(
-    state: &AppState,
+    state: &wegent_identity::AuthServices,
     authorization: Option<&str>,
 ) -> Result<UserRow, (StatusCode, &'static str)> {
     let Some(token) = bearer_token(authorization) else {

@@ -144,7 +144,7 @@ fn matched_account<'a>(accounts: &'a Value, domain: Option<&str>) -> Option<&'a 
     })
 }
 fn encrypted_identity(token: &str) -> Result<(Value, &'static str)> {
-    use crate::git_repositories::crypto::{encrypt_git_token, is_token_encrypted};
+    use wegent_identity::repository_credentials::{encrypt_git_token, is_token_encrypted};
     if token.is_empty() {
         return Ok((Value::Null, "none"));
     }

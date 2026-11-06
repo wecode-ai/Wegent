@@ -30,8 +30,12 @@ test("dependency keys follow build inputs and survive application-only changes",
       "frontend/e2e/fixtures/claudecode-executor/Dockerfile",
       "executor/Cargo.toml",
       "executor/Cargo.lock",
+      "executor/crates",
       "executor/vendor",
       "shared/rust",
+      "shared/assets",
+      "sdk/plugin-creator",
+      "sdk/plugin-auth",
       "backend-rs/Cargo.toml",
       "backend-rs/Cargo.lock",
       "backend-rs/crates",
@@ -58,6 +62,18 @@ test("dependency keys follow build inputs and survive application-only changes",
     assert.notEqual(key(), executor);
     assert.notEqual(key("backend-rs-deps"), backend);
     writeFileSync(sharedSource, originalSource);
+    for (const input of [
+      "shared/assets/gptDefaultInstructions.md",
+      "sdk/plugin-auth/tool.py",
+      "sdk/plugin-creator/SKILL.md",
+    ]) {
+      const source = join(directory, input);
+      const original = readFileSync(source, "utf8");
+      writeFileSync(source, `${original}\nChanged embedded build input\n`);
+      assert.notEqual(key(), executor, `${input} must invalidate compiled libraries`);
+      assert.equal(key("backend-rs-deps"), backend);
+      writeFileSync(source, original);
+    }
     writeFileSync(
       join(directory, "executor/Cargo.lock"),
       "changed dependencies",

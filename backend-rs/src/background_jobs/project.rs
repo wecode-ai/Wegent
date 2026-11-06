@@ -50,7 +50,7 @@ pub(crate) mod notifications;
 #[path = "project_polling.rs"]
 mod polling;
 
-use super::registry::BackgroundJobRegistry;
+use super::BackgroundJobRegistry;
 use crate::state::AppState;
 use anyhow::Result;
 use std::sync::Arc;

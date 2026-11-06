@@ -13,7 +13,11 @@ const definitions = {
     inputs: [
       "executor/Cargo.toml",
       "executor/Cargo.lock",
+      "executor/crates",
       "shared/rust",
+      "shared/assets",
+      "sdk/plugin-creator",
+      "sdk/plugin-auth",
       "executor/vendor",
       ".github/ci/rust-toolchain",
     ],

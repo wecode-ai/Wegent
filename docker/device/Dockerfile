@@ -56,6 +56,7 @@ ENV PATH=/root/.cargo/bin:${PATH}
 
 WORKDIR /build/executor
 COPY executor/Cargo.toml executor/Cargo.lock ./
+COPY executor/crates ./crates
 COPY shared/rust /build/shared/rust
 COPY executor/vendor ./vendor
 COPY executor/src ./src

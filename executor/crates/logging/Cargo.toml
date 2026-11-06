@@ -1,0 +1,13 @@
+[package]
+name = "wegent-runtime-logging"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Executor event logging and rolling log lifecycle"
+
+[dependencies]
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+wegent-runtime-config = { path = "../config" }
+
+[dev-dependencies]
+tempfile = "3.23"

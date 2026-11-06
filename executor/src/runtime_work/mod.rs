@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 mod api_context;
-pub(crate) mod automations;
+pub(crate) use wegent_automation as automations;
 mod codex_global_state;
 mod codex_legacy_search;
 mod codex_notifications;
