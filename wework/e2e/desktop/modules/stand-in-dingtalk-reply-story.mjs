@@ -267,6 +267,13 @@ export function createDingTalkReplyStory(options) {
         await control.command('waitFor', '[data-testid="stand-in-proposal-open"]', {
           timeoutMs: options.modelResponseTimeoutMs,
         })
+        // The UI can show the proposal before the model consumes its tool result.
+        await storyUntil(
+          () => model.proposalSubmitted,
+          submitted => submitted === true,
+          options.modelResponseTimeoutMs,
+          'The model must receive the persisted proposal before reviewing its grant'
+        )
         assert.equal(model.proposalSubmitted, true)
         assert.equal(
           (await rpc('runtime.stand_in.personal.get', { userId: STORY_USER })).roles.find(

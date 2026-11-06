@@ -365,12 +365,20 @@ async function completeProgress(signal, duration) {
 function completionEvidence() {
   const canvas = document.querySelector('#startup-brand-canvas').getBoundingClientRect()
   const wordmark = document.querySelector('.startup-brand-name')
+  const rootStyle = window.getComputedStyle(document.documentElement)
   return {
     reducedMotion: motionPreference.matches,
     progressNow: Number(progressElement.getAttribute('aria-valuenow')),
     fillEnd: Number(progressFillElement.getAttribute('x2')),
     trackEnd: Number(progressTrackElement.getAttribute('x2')),
     wordmarkVisible: wordmark?.checkVisibility() ?? false,
+    appearance: {
+      theme: document.documentElement.dataset.theme,
+      colorScheme: rootStyle.colorScheme,
+      background: rootStyle.backgroundColor,
+      footerBackground: window.getComputedStyle(document.querySelector('#startup-status'))
+        .backgroundColor,
+    },
     canvas: { x: canvas.x, y: canvas.y, width: canvas.width, height: canvas.height },
     viewport: { width: window.innerWidth, height: window.innerHeight },
   }
