@@ -100,7 +100,7 @@ import { createStreamingContentChecks } from '../modules/streaming-text-content.
 import { createStreamingToolChecks } from '../modules/streaming-text-tools.mjs'
 import { createStreamingScrollChecks } from '../modules/streaming-text-scroll.mjs'
 import { createStreamingTranscriptIdentityChecks } from '../modules/streaming-transcript-identity.mjs'
-import { createStreamingGuidanceOrderChecks } from '../modules/streaming-guidance-order.mjs'
+import { createStreamingGuidanceOrderChecks } from '../modules/streaming-text-guidance-order.mjs'
 import { createInteractiveVisualizationChecks } from '../modules/streaming-interactive-visualization.mjs'
 import { createVisualizationScrollChecks } from '../modules/streaming-visualization-scroll.mjs'
 
