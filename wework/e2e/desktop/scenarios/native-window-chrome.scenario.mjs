@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { waitForClosedStartupSplash } from '../modules/native-window-state.mjs'
 
 async function readWindowState(control) {
   return JSON.parse(await control.command('getNativeWindowState', 'body'))
@@ -31,6 +32,7 @@ async function assertNaturalLanguageWindowControlText(control, testId, attribute
 export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
   return {
     async verify(control) {
+      await waitForClosedStartupSplash(control)
       const initial = await waitForWindowState(
         control,
         state => state.visible && !state.minimized,

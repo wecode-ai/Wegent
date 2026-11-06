@@ -28,12 +28,13 @@ export async function prepareStartupMainWindow(
   const bounds = splash.getBounds()
   main.setOpacity(0)
   try {
-    main.setBounds(bounds)
     if (show) {
-      if (splash.isMaximized()) main.maximize()
       main.showInactive()
-      splash.moveAbove(main.getMediaSourceId())
     }
+    // Initial native mapping may normalize hidden-window bounds, so align after showing.
+    main.setBounds(bounds)
+    if (show && splash.isMaximized()) main.maximize()
+    if (show) splash.moveAbove(main.getMediaSourceId())
     // Capturing forces a composited frame even when Windows suspends rAF in an occluded window.
     const frame = await main.webContents.capturePage()
     if (frame.isEmpty()) throw new Error('The startup destination did not produce a frame')
