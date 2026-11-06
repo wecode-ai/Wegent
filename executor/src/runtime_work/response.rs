@@ -749,7 +749,11 @@ pub(crate) fn local_task_json(mut link: RuntimeTaskLink) -> Value {
         "recencyAt".to_owned(),
         Value::Number(link.recency_at.into()),
     );
-    if let Some(completed_at) = link.completed_at {
+    // Explicitly clear completion in patch-merged clients while retaining the
+    // historical timestamp internally for ordering and stale-provider recovery.
+    if link.running {
+        task.insert("completedAt".to_owned(), Value::Null);
+    } else if let Some(completed_at) = link.completed_at {
         task.insert("completedAt".to_owned(), Value::Number(completed_at.into()));
     }
     if let Some(parent) = link.parent {

@@ -43,6 +43,16 @@ impl RuntimeWorkHandler for RuntimeWorkRpcHandler {
                     format!("Unsupported Codex app-server method: {method}"),
                 ));
             }
+            // Bundled reconciliation rewrites the same complete configuration that
+            // marketplace RPCs update. Keep an accepted native edit out of that window.
+            let _marketplace_mutation = if matches!(
+                method.as_str(),
+                "marketplace/add" | "marketplace/remove" | "marketplace/upgrade"
+            ) {
+                Some(self.bundled_plugin_marketplace_reconciliation.lock().await)
+            } else {
+                None
+            };
             let _restart_guard = codex_app_server_restart_gate().lock().await;
             let params = data
                 .get("params")

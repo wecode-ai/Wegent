@@ -5,7 +5,7 @@ import {
 } from '@/features/cloud-connection/CloudConnectionContext'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import '@/i18n'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { CollaborationProject, SharedWorkspaceApi } from '@wegent/collaboration'
 import type { ReactNode } from 'react'
@@ -178,11 +178,22 @@ describe('Personal stand-in settings', () => {
     )
   })
 
-  it('returns the created role to its parent after the first save', async () => {
-    const { props, personalSave } = fixture({ roles: [] })
+  it('waits for empty-role settings before creating and saving the first role', async () => {
+    const { props, personalGet, personalSave } = fixture({ roles: [] })
+    const settings = await personalGet()
+    let resolveSettings!: (value: PersonalStandInSettings) => void
+    personalGet.mockReturnValueOnce(
+      new Promise<PersonalStandInSettings>(resolve => {
+        resolveSettings = resolve
+      })
+    )
     const user = userSetup()
     const onSaved = vi.fn()
     render(<StandInSettingsPage {...props} initialCreate onSaved={onSaved} />)
+    await waitFor(() => expect(personalGet).toHaveBeenCalledTimes(2))
+    expect(screen.queryByTestId('stand-in-role-name')).not.toBeInTheDocument()
+    expect(personalSave).not.toHaveBeenCalled()
+    await act(async () => resolveSettings(settings))
     await user.type(await screen.findByTestId('stand-in-role-name'), 'Review role')
     await user.click(screen.getByTestId('stand-in-save'))
     await waitFor(() => expect(onSaved).toHaveBeenCalledOnce())
