@@ -332,7 +332,7 @@ jobs:
       - name: Resolve Executor E2E runtime
         id: runtime
         env:
-          SOURCE_DIGEST: ${{ hashFiles('frontend/e2e/fixtures/claudecode-executor/Dockerfile', 'executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**', 'executor/vendor/**', 'sdk/plugin-auth/**', 'sdk/plugin-creator/**', 'shared/assets/**', '.github/ci/rust-toolchain') }}
+          SOURCE_DIGEST: ${{ hashFiles('frontend/e2e/fixtures/claudecode-executor/Dockerfile', 'executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**', 'executor/vendor/**', 'sdk/plugin-auth/**', 'sdk/plugin-creator/**', 'shared/assets/**', 'shared/protocol/**', '.github/ci/rust-toolchain') }}
         run: .github/scripts/resolve-executor-e2e-runtime.sh
 
       - name: Check content-addressed Executor E2E image

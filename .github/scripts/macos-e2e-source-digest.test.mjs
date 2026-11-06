@@ -64,6 +64,8 @@ for (const component of Object.keys(incompleteDigests)) {
               "sdk/plugin-auth/auth.ts": "export const auth = true\n",
               "sdk/plugin-creator/README.md": "Embedded SDK guide\n",
               "shared/assets/instructions.md": "Embedded instructions\n",
+              "shared/protocol/runtime_task_create_request_v2.schema.json":
+                '{"type":"object"}\n',
             }
           : {}),
       };

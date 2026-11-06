@@ -370,6 +370,7 @@
         "core:supervisor-lifecycle",
         "core:task-status-sync",
         "core:transcript-sync",
+        "core:workbench-control",
         "core:workbench-mode"
       ],
       "specs": [

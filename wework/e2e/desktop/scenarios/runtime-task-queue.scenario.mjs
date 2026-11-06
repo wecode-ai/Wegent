@@ -143,7 +143,7 @@ async function waitForSnapshot(control, predicate, message, timeoutMs) {
 }
 
 export async function assertQueuePosition(control, selector, expected, visible, message) {
-  // Observe the expected text atomically; sidebar refreshes can replace the node.
+  // Observe the expected position before a later sidebar render can replace it.
   const text = await control.command('waitFor', selector, {
     ...(visible ? { visible: true } : {}),
     text: expected,

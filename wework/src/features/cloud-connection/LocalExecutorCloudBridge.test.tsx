@@ -1,5 +1,7 @@
 import { act, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
+import '@/i18n'
+import { LocalRuntimeInitializer } from '@/features/local-runtime/LocalRuntimeInitializer'
 import { LocalExecutorCloudBridge } from './LocalExecutorCloudBridge'
 import {
   resetLocalExecutorCloudConnectionStatus,
@@ -20,6 +22,10 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('./cloudConnectionAvailability', () => ({
   isCloudConnectionUiAvailable: () => true,
+}))
+
+vi.mock('@/lib/runtime-mode', () => ({
+  isLocalFirstAppRuntime: () => true,
 }))
 
 vi.mock('@/api/cloud/connectorApps', () => ({
@@ -426,6 +432,51 @@ describe('LocalExecutorCloudBridge', () => {
       view.unmount()
       vi.useRealTimers()
     }
+  })
+
+  test('startup has one connection owner and cannot restore a stale socket after metadata resolves', async () => {
+    const initialToken = deferred<{ auth_token: string; token_type: string }>()
+    const currentToken = deferred<{ auth_token: string; token_type: string }>()
+    let metadataResolved = false
+    mocks.runtimeTokenPost.mockImplementation(() =>
+      metadataResolved ? currentToken.promise : initialToken.promise
+    )
+    const connection = {
+      apiBaseUrl: 'https://backend.example.com/api',
+      backendUrl: 'https://backend.example.com',
+      socketBaseUrl: 'https://backend.example.com',
+      isConnected: true,
+      token: 'token-a',
+    }
+    const renderStartup = (socketBaseUrl: string) => (
+      <LocalRuntimeInitializer>
+        <LocalExecutorCloudBridge {...connection} socketBaseUrl={socketBaseUrl} preferencesLoaded />
+        <div data-testid="ready-workbench" />
+      </LocalRuntimeInitializer>
+    )
+    const view = render(renderStartup(connection.socketBaseUrl))
+    expect(await screen.findByTestId('ready-workbench')).toBeInTheDocument()
+    await flushAsyncEffects()
+    metadataResolved = true
+    view.rerender(renderStartup('wss://socket.example.com'))
+    await act(async () => {
+      currentToken.resolve({ auth_token: 'current-runtime-token', token_type: 'bearer' })
+    })
+    await waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(1))
+    await act(async () => {
+      initialToken.resolve({ auth_token: 'stale-runtime-token', token_type: 'bearer' })
+    })
+    await flushAsyncEffects()
+    expect(mocks.connect).toHaveBeenLastCalledWith({
+      backendUrl: connection.backendUrl,
+      socketBaseUrl: 'wss://socket.example.com',
+      authToken: connection.token,
+      runtimeAuthToken: 'current-runtime-token',
+      deviceType: 'app',
+    })
+    expect(mocks.connect).toHaveBeenCalledTimes(1)
+    expect(mocks.runtimeTokenPost).toHaveBeenCalledTimes(2)
+    expect(screen.getByTestId('ready-workbench')).toBeVisible()
   })
 
   test('ignores a stale deferred runtime token after the cloud target changes', async () => {
