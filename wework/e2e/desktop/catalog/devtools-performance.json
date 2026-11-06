@@ -1,0 +1,18 @@
+{
+  "order": 171100,
+  "scenario": "./scenarios/devtools-performance.scenario.mjs",
+  "scenarioOnly": true,
+  "paths": [
+    "wework/scripts/ai-verify-devtools*",
+    "wework/vite/verificationSourceMaps*",
+    "wework/electron/src/host/verification-devtools*",
+    "wework/e2e/desktop/fixtures/devtools-performance.js"
+  ],
+  "ci": {
+    "core": {
+      "order": 117100,
+      "shard": 5,
+      "position": 12100
+    }
+  }
+}

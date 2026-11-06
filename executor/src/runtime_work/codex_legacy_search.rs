@@ -29,7 +29,8 @@ const ITEM_RADIUS: usize = 50;
 mod context;
 
 pub(super) use context::{
-    load_legacy_context_page, load_legacy_search_match, parse_legacy_context_cursor,
+    is_legacy_page_cursor, load_legacy_context_page, load_legacy_search_match,
+    load_legacy_transcript_page, parse_legacy_context_cursor,
 };
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

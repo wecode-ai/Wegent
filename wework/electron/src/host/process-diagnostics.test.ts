@@ -97,6 +97,12 @@ describe('physical memory snapshots', () => {
         await writeFile(args[args.indexOf('--json') + 1], JSON.stringify(report))
         return { stdout: '', stderr: '' }
       }
+      if (args.includes('pid=,ppid=')) {
+        return { stdout: '10 1\n11 10\n99 1\n', stderr: '' }
+      }
+      if (args.includes('pid=,ppid=,rss=,pcpu=,command=')) {
+        expect(args).toEqual(['-p', '10,11', '-o', 'pid=,ppid=,rss=,pcpu=,command='])
+      }
       return {
         stdout: args.includes('pid=,comm=')
           ? '10 /Applications/WeWork.app/Contents/MacOS/WeWork\n11 /Applications/WeWork Helper\n'

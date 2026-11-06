@@ -21,6 +21,7 @@ const groups = [
         "sdk/plugin-auth",
         "sdk/plugin-creator",
         "shared/assets",
+        "shared/protocol",
       ]
     : []),
   ".github/ci/rust-toolchain",

@@ -239,6 +239,7 @@ function IssueCardMetadata({
 export interface CollaborationIssueCardProps extends CollaborationIssueCardContentProps {
   afterContent?: ReactNode
   summary?: ReactNode
+  metadata?: ReactNode
   articleProps?: Omit<HTMLAttributes<HTMLElement>, 'children' | 'className' | 'style'>
   articleTestId?: string
   cardClassName?: string
@@ -262,6 +263,7 @@ export interface CollaborationIssueCardProps extends CollaborationIssueCardConte
 export function CollaborationIssueCard({
   afterContent,
   summary,
+  metadata,
   articleProps,
   articleTestId,
   cardClassName,
@@ -332,6 +334,7 @@ export function CollaborationIssueCard({
       </button>
       <div className={classNames('px-3.5', detailFlushBottom ? 'pb-0' : 'pb-3.5')}>
         {summary}
+        {metadata}
         <IssueCardMetadata
           itemId={contentProps.item.id}
           model={model}

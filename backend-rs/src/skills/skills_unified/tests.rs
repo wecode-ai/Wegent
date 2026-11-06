@@ -166,6 +166,134 @@ fn availability_reflects_default_bindings() {
     );
 }
 
+#[tokio::test]
+async fn catalog_keeps_same_named_personal_and_group_skills() {
+    let personal = kind_row(11, 7, "same-name", "default", json!({"spec": {}}));
+    let group = kind_row(12, 7, "same-name", "engineering", json!({"spec": {}}));
+    let shared = HashSet::from([12]);
+    let empty = HashSet::new();
+    let items = catalog::assemble(
+        vec![personal, group],
+        catalog::CatalogSelection {
+            bound_ids: &empty,
+            shared_ids: &shared,
+            default_ids: &empty,
+            skip: 0,
+            limit: 100,
+        },
+        |sql| async move {
+            assert!(sql.contains("kinds.user_id = 0"));
+            // Public names remain shadowed, without collapsing namespaces.
+            Ok(vec![kind_row(
+                90,
+                0,
+                "same-name",
+                "default",
+                json!({"spec": {}}),
+            )])
+        },
+    )
+    .await
+    .unwrap();
+    let items = crate::json_contract_tests::serialized(items).unwrap();
+    assert_eq!(items.as_array().unwrap().len(), 2);
+    assert_eq!(items[0]["id"], json!(11));
+    assert_eq!(items[1]["id"], json!(12));
+    assert_eq!(items[0]["namespace"], json!("default"));
+    assert_eq!(items[1]["namespace"], json!("engineering"));
+    assert_eq!(items[0]["is_group_shared"], json!(false));
+    assert_eq!(items[1]["is_group_shared"], json!(true));
+}
+
+#[tokio::test]
+async fn catalog_supplements_bound_only_skills_once_and_removes_unlinked_skills() {
+    for installed in [true, false] {
+        let bound = if installed {
+            HashSet::from([11, 21])
+        } else {
+            HashSet::from([11])
+        };
+        let shared = if installed {
+            HashSet::from([21])
+        } else {
+            HashSet::new()
+        };
+        let defaults = HashSet::from([11]);
+        let mut queries = Vec::new();
+        let items = catalog::assemble(
+            vec![kind_row(11, 7, "personal", "default", json!({"spec": {}}))],
+            catalog::CatalogSelection {
+                bound_ids: &bound,
+                shared_ids: &shared,
+                default_ids: &defaults,
+                skip: 0,
+                limit: 100,
+            },
+            |sql| {
+                queries.push(sql.clone());
+                std::future::ready(Ok(if sql.contains("kinds.id IN") {
+                    assert!(installed);
+                    assert!(sql.contains("kinds.id IN (21)"));
+                    // Duplicate bindings must not duplicate the catalog entry.
+                    (0..2)
+                        .map(|_| kind_row(21, 8, "installed", "other-team", json!({"spec": {}})))
+                        .collect()
+                } else {
+                    assert!(sql.contains("kinds.user_id = 0"));
+                    vec![kind_row(91, 0, "public", "default", json!({"spec": {}}))]
+                }))
+            },
+        )
+        .await
+        .unwrap();
+        let items = crate::json_contract_tests::serialized(items).unwrap();
+        let ids: Vec<_> = items
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["id"].as_i64().unwrap())
+            .collect();
+        assert_eq!(
+            ids,
+            if installed {
+                vec![11, 21, 91]
+            } else {
+                vec![11, 91]
+            }
+        );
+        assert_eq!(queries.len(), if installed { 2 } else { 1 });
+        assert_eq!(items[0]["is_group_shared"], json!(false));
+        assert_eq!(items[0]["availability"]["in_my_default"], json!(true));
+        if installed {
+            assert_eq!(items[1]["namespace"], json!("other-team"));
+            assert_eq!(items[1]["is_group_shared"], json!(true));
+            assert_eq!(items[1]["availability"]["in_my_default"], json!(false));
+        }
+        assert_eq!(
+            items.as_array().unwrap().last().unwrap()["is_public"],
+            json!(true)
+        );
+    }
+}
+
+#[test]
+fn hidden_and_published_skill_metadata_survives_catalog_rendering() {
+    let kind = kind_row(
+        11,
+        7,
+        "published",
+        "default",
+        json!({"spec": {
+            "visible": false, "displayName": "Hidden public skill",
+            "capability": {"publishStatus": "published"}
+        }}),
+    );
+    let item = user_skill_item(&kind, true, &HashSet::new());
+    assert_eq!(item["visible"], json!(false));
+    assert_eq!(item["displayName"], json!("Hidden public skill"));
+    assert_eq!(item["publication_status"], json!("published"));
+}
+
 #[test]
 fn highest_role_prefers_most_privileged() {
     let roles = vec!["Reporter".to_string(), "Maintainer".to_string()];

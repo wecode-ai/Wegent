@@ -76,6 +76,16 @@ classify_path() {
   esac
 
   case "$path" in
+    backend/app/services/runtime_continuation.py | \
+      executor/src/runtime_work/reader* | \
+      executor/src/workbench_control/* | \
+      executor/src/runtime_work/handler/control.rs | \
+      executor/src/runtime_work/handler/control/* | \
+      executor/src/runtime_work/handler/creation.rs | \
+      executor/src/runtime_work/handler/creation/*)
+      select_target "core:workbench-control"
+      return
+      ;;
     executor/src/local/capabilities/runtime_legacy_sources* | \
       wework/e2e/desktop/scenarios/plugin-legacy-upgrade.scenario.mjs | \
       wework/e2e/desktop/modules/legacy-plugin-executor.mjs)
@@ -152,8 +162,11 @@ classify_path() {
   case "$path" in
     packages/collaboration/src/controls/ModelSelector* | \
       packages/collaboration/src/controls/ModelPowerSlider* | \
+      packages/collaboration/src/controls/model-reasoning* | \
+      packages/collaboration/src/controls/model-ui* | \
       packages/collaboration/src/controls/model-selector-utils*)
       select_target "cloud:cloud-model-presets"
+      select_target "core:codex-native-catalog"
       ;;
   esac
   case "$path" in
@@ -493,6 +506,7 @@ classify_path() {
       .github/actions/setup-minio-e2e/* | \
       .github/ci/wework-linux-checkpoint-durations.json | \
       .github/scripts/order-wework-linux-e2e.* | \
+      .github/scripts/core-runner-slots.* | \
       docker/wework-e2e/* | \
       .github/scripts/download-actions-artifact.sh | \
       .github/scripts/restore-actions-runtime.sh | \

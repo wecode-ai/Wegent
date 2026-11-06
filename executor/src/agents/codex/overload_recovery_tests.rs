@@ -733,7 +733,7 @@ async fn overload_recovery_serializes_user_mutations_between_goal_read_and_resum
             shared.process_environment =
                 client.process_environment(&shared.runtime_proxy_env, &BTreeMap::new());
             shared.process = Some(CodexAppServerProcess {
-                child,
+                child: child.into(),
                 stdin: Arc::new(Mutex::new(stdin)),
                 pending: Arc::clone(&pending),
                 notifications: CodexNotificationHub::new(),
@@ -860,7 +860,7 @@ async fn overload_recovery_drains_user_resumed_turns_before_settling_changed_goa
             shared.process_environment =
                 client.process_environment(&shared.runtime_proxy_env, &BTreeMap::new());
             shared.process = Some(CodexAppServerProcess {
-                child,
+                child: child.into(),
                 stdin: Arc::new(Mutex::new(stdin)),
                 pending: Arc::clone(&pending),
                 notifications: CodexNotificationHub::new(),

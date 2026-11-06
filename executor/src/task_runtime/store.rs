@@ -19,6 +19,7 @@ mod assignment_receipts;
 mod code_projects;
 pub(crate) mod execution_workspace;
 mod issue_badges;
+pub(crate) mod milestones;
 mod ordering;
 #[path = "project_coordination.rs"]
 mod project_coordination;
@@ -613,7 +614,11 @@ impl LocalTaskStore {
             input.status
         };
         let completed_at = (status == "completed").then(|| now.clone());
+        milestones::require_milestone(&transaction, project_id, input.milestone_id.as_deref())?;
         let mut metadata = json!({"tags": input.tags});
+        if let Some(milestone_id) = input.milestone_id {
+            metadata["milestone_id"] = json!(milestone_id);
+        }
         issue_badges::update_source(
             &mut metadata,
             "issue",
@@ -816,6 +821,14 @@ impl LocalTaskStore {
                 None
             };
         let mut metadata = current.metadata;
+        if let Some(milestone_id) = input.milestone_id {
+            milestones::require_milestone(&transaction, project_id, milestone_id.as_deref())?;
+            if let Some(milestone_id) = milestone_id {
+                metadata["milestone_id"] = json!(milestone_id);
+            } else if let Some(metadata) = metadata.as_object_mut() {
+                metadata.remove("milestone_id");
+            }
+        }
         if content_updated {
             issue_badges::update_source(
                 &mut metadata,
@@ -5887,6 +5900,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Do the thing".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -5905,6 +5919,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    milestone_id: None,
                     position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
@@ -5959,6 +5974,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Run immediately".to_owned(),
                     description: "Do not require a second assignment update.".to_owned(),
                     status: "inbox".to_owned(),
@@ -6021,6 +6037,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Coordinate manually".to_owned(),
                     description: "The human leader decides the next dispatch.".to_owned(),
                     status: "inbox".to_owned(),
@@ -6096,6 +6113,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Resolve manager".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -6212,6 +6230,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Comment run".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -6295,6 +6314,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    milestone_id: None,
                     position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
@@ -6409,6 +6429,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Coordinate work".to_owned(),
                     description: String::new(),
                     status: "in_progress".to_owned(),
@@ -6472,6 +6493,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Continue work".to_owned(),
                     description: String::new(),
                     status: "in_progress".to_owned(),
@@ -6548,6 +6570,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Assigned run".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -6566,6 +6589,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    milestone_id: None,
                     position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
@@ -6669,6 +6693,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Legacy run".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -6687,6 +6712,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    milestone_id: None,
                     position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
@@ -6756,6 +6782,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Unread activity".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -6787,6 +6814,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Review me".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -6805,6 +6833,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    milestone_id: None,
                     position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
@@ -6852,6 +6881,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Already reviewed".to_owned(),
                     description: String::new(),
                     status: "in_review".to_owned(),
@@ -6870,6 +6900,7 @@ mod tests {
                 &project.id,
                 &second.id,
                 TaskUpdate {
+                    milestone_id: None,
                     position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
@@ -7051,6 +7082,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Investigate CPU".to_owned(),
                     description: "Determine whether load is sustained.".to_owned(),
                     status: "inbox".to_owned(),
@@ -7617,6 +7649,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "看下cpu占用".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -7679,6 +7712,10 @@ mod tests {
             .as_deref()
             .expect("manager execution must have a Runtime task id")
             .to_owned();
+        assert!(store
+            .assignment_receipts(&project.id, &issue.id)
+            .unwrap()
+            .is_empty());
         let round = store
             .submit_collaboration_round(
                 &runtime_task_id,
@@ -7712,6 +7749,41 @@ mod tests {
             json!("admin")
         );
         assert!(issue_after_dispatch.metadata["collaboration_group"].is_null());
+        let receipts = store.assignment_receipts(&project.id, &issue.id).unwrap();
+        assert_eq!(receipts.len(), 1);
+        let assignment_id = format!(
+            "{}-{}",
+            issue.id,
+            issue_after_dispatch.metadata["assignment_history"]
+                .as_array()
+                .unwrap()
+                .len()
+        );
+        assert_eq!(receipts[0]["id"], assignment_id);
+        assert_eq!(receipts[0]["target_id"], "42");
+        assert_eq!(receipts[0]["receipt_tracking"], true);
+        store
+            .acknowledge_assignment(&project.id, &issue.id, &assignment_id, 42, true)
+            .unwrap();
+        let received = store.assignment_receipts(&project.id, &issue.id).unwrap();
+        assert!(received[0]["stand_in_received_at"].is_string());
+        assert!(received[0]["human_read_at"].is_null());
+        store
+            .acknowledge_assignment(&project.id, &issue.id, &assignment_id, 42, false)
+            .unwrap();
+        let read = store.assignment_receipts(&project.id, &issue.id).unwrap();
+        assert_eq!(
+            read[0]["stand_in_received_at"],
+            received[0]["stand_in_received_at"]
+        );
+        assert!(read[0]["human_read_at"].is_string());
+        assert_eq!(
+            LocalTaskStore::open(directory.path().join("tasks.sqlite"))
+                .unwrap()
+                .assignment_receipts(&project.id, &issue.id)
+                .unwrap(),
+            read
+        );
         let human_task = store.get_task(&project.id, &human_task_id).unwrap();
         assert_eq!(
             human_task.metadata["collaboration_assignment"]["dispatch_id"],
@@ -7794,6 +7866,68 @@ mod tests {
                 .unwrap()
                 .contains("CPU load confirmed at 42%.")
         );
+        accept_and_start(&store, &resumed_manager);
+        let second_plan = json!({
+            "round_id": "cpu-review-round-2",
+            "items": [{
+                "assignment_id": "cpu-review-admin-again",
+                "title": "Confirm the CPU load again",
+                "instructions": "Check the load after the fix.",
+                "assignee_type": "human",
+                "assignee_id": "42",
+            }],
+        });
+        let resumed_runtime_id = resumed_manager.runtime_task_id.as_deref().unwrap();
+        assert_eq!(
+            store
+                .submit_collaboration_round(
+                    resumed_runtime_id,
+                    &json!({
+                        "round_id": "cpu-review-round-1",
+                        "items": second_plan["items"],
+                    }),
+                )
+                .unwrap()["state"],
+            "already_dispatched"
+        );
+        assert_eq!(
+            store.assignment_receipts(&project.id, &issue.id).unwrap(),
+            read
+        );
+        let second_round = store
+            .submit_collaboration_round(resumed_runtime_id, &second_plan)
+            .unwrap();
+        assert_eq!(second_round["state"], "dispatched");
+        let issue_after_second_round = store.get_task(&project.id, &issue.id).unwrap();
+        assert_eq!(issue_after_second_round.assignee_user_id, Some(42));
+        let second_assignment_id = format!(
+            "{}-{}",
+            issue.id,
+            issue_after_second_round.metadata["assignment_history"]
+                .as_array()
+                .unwrap()
+                .len()
+        );
+        assert_ne!(second_assignment_id, assignment_id);
+        let second_receipts = store.assignment_receipts(&project.id, &issue.id).unwrap();
+        assert_eq!(second_receipts.len(), 1);
+        let fresh = second_receipts
+            .iter()
+            .find(|receipt| receipt["id"] == second_assignment_id)
+            .unwrap();
+        assert_eq!(fresh["target_id"], "42");
+        assert!(fresh["stand_in_received_at"].is_null());
+        assert!(fresh["human_read_at"].is_null());
+        assert!(store
+            .acknowledge_assignment(&project.id, &issue.id, &assignment_id, 42, true)
+            .is_err());
+        assert_eq!(
+            LocalTaskStore::open(directory.path().join("tasks.sqlite"))
+                .unwrap()
+                .assignment_receipts(&project.id, &issue.id)
+                .unwrap(),
+            second_receipts
+        );
     }
 
     #[test]
@@ -7805,6 +7939,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Approve me".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -7823,6 +7958,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    milestone_id: None,
                     position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
@@ -7877,6 +8013,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Approve me".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -7895,6 +8032,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    milestone_id: None,
                     position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
@@ -8031,6 +8169,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Implement runtime contract".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -8049,6 +8188,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    milestone_id: None,
                     position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
@@ -8285,6 +8425,7 @@ mod tests {
                 .create_task(
                     &project.id,
                     TaskCreate {
+                        milestone_id: None,
                         title: title.to_owned(),
                         description: String::new(),
                         status: "inbox".to_owned(),
@@ -8303,6 +8444,7 @@ mod tests {
                     &project.id,
                     &task.id,
                     TaskUpdate {
+                        milestone_id: None,
                         position: None,
                         assignee_group_id: None,
                         assignee_user_id: None,
@@ -8403,6 +8545,7 @@ mod tests {
                 .create_task(
                     &project.id,
                     TaskCreate {
+                        milestone_id: None,
                         title: format!("Parallel {index}"),
                         description: String::new(),
                         status: "inbox".to_owned(),
@@ -8421,6 +8564,7 @@ mod tests {
                     &project.id,
                     &task.id,
                     TaskUpdate {
+                        milestone_id: None,
                         position: None,
                         assignee_group_id: None,
                         assignee_user_id: None,
@@ -8493,6 +8637,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Run unbound".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -8511,6 +8656,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    milestone_id: None,
                     position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
@@ -8556,6 +8702,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Archived project".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -8604,6 +8751,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Fail me".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -8687,6 +8835,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Reject me".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -8763,6 +8912,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Approval task".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -8781,6 +8931,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    milestone_id: None,
                     position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
@@ -8817,6 +8968,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Recover me".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -8883,6 +9035,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Reconcile me".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -9009,6 +9162,7 @@ mod tests {
                 .create_task(
                     &project.id,
                     TaskCreate {
+                        milestone_id: None,
                         title: title.to_owned(),
                         description: String::new(),
                         status: "inbox".to_owned(),
@@ -9097,6 +9251,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Reconcile me".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -9123,6 +9278,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Run after recovery".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -9211,6 +9367,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Retry missing runtime task".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -9298,6 +9455,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Retry me".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -9521,6 +9679,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "After migration".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -9539,6 +9698,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    milestone_id: None,
                     position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
@@ -9588,6 +9748,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Track status".to_owned(),
                     description: String::new(),
                     status: "pending".to_owned(),
@@ -9657,6 +9818,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Workflow status".to_owned(),
                     description: String::new(),
                     status: "pending".to_owned(),
@@ -10172,6 +10334,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Parent".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -10193,6 +10356,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Child".to_owned(),
                     description: String::new(),
                     status: "pending".to_owned(),
@@ -10232,6 +10396,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "First".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -10249,6 +10414,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Second".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -10341,6 +10507,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Bound task".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -10423,6 +10590,7 @@ mod tests {
             .create_task(
                 DEFAULT_WORK_ITEM_PROJECT_ID,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Runtime-owned status".to_owned(),
                     description: String::new(),
                     status: "in_review".to_owned(),
@@ -10683,6 +10851,7 @@ mod tests {
             .create_task(
                 DEFAULT_WORK_ITEM_PROJECT_ID,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Temporary child context".to_owned(),
                     description: String::new(),
                     status: "completed".to_owned(),
@@ -10742,6 +10911,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "First bound task".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -10759,6 +10929,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Second bound task".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -10818,6 +10989,7 @@ mod tests {
             .create_task(
                 DEFAULT_WORK_ITEM_PROJECT_ID,
                 TaskCreate {
+                    milestone_id: None,
                     title: "System task".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -10835,6 +11007,7 @@ mod tests {
             .create_task(
                 &user_project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "User issue".to_owned(),
                     description: String::new(),
                     status: "pending".to_owned(),
@@ -10925,6 +11098,7 @@ mod tests {
             .create_task(
                 &local_project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Persisted".to_owned(),
                     description: String::new(),
                     status: "inbox".to_owned(),
@@ -11100,6 +11274,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Workflow delivery".to_owned(),
                     description: String::new(),
                     status: "pending".to_owned(),

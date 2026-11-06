@@ -26,6 +26,7 @@ function ExecutionListSection({
   toggleTestId,
   countTestId,
   actions,
+  introduction,
   translate,
   children,
 }: {
@@ -36,6 +37,7 @@ function ExecutionListSection({
   toggleTestId: string
   countTestId?: string
   actions?: ReactNode
+  introduction?: ReactNode
   translate: CollaborationTranslate
   children(expanded: boolean): ReactNode
 }) {
@@ -64,18 +66,21 @@ function ExecutionListSection({
               aria-expanded={expanded}
               onClick={() => {
                 if (listRef.current) listRef.current.scrollTop = 0
-                setExpanded(current => !current)
+                setExpanded((current) => !current)
               }}
               className="task-detail-workspace-ghost-action"
             >
               {expanded
                 ? translate('todo.collapse', '收起')
-                : translate('todo.view_all_count', '查看全部 {{count}} 个', { count })}
+                : translate('todo.view_all_count', '查看全部 {{count}} 个', {
+                    count,
+                  })}
             </button>
           ) : null}
           {actions}
         </div>
       </div>
+      {introduction}
       <div
         id={id}
         ref={listRef}
@@ -97,6 +102,7 @@ type LinkedEntry =
 
 export function IssueLinkedTasks({
   tasks,
+  creationAction,
   childItems,
   statusOptions,
   statusDotClasses,
@@ -110,10 +116,13 @@ export function IssueLinkedTasks({
   translate,
 }: {
   tasks: SharedIssueDetailTaskBinding[]
+  creationAction?: ReactNode
   childItems: CollaborationIssue[]
   statusOptions: CollaborationStatus[]
   statusDotClasses: Readonly<Record<string, string>>
-  taskExecutionStates?: Readonly<Record<string, SharedIssueDetailTaskExecutionState>>
+  taskExecutionStates?: Readonly<
+    Record<string, SharedIssueDetailTaskExecutionState>
+  >
   deviceNamesById?: Readonly<Record<string, string>>
   selectedTaskId?: string | null
   showCurrentTaskOnly?: boolean
@@ -122,17 +131,20 @@ export function IssueLinkedTasks({
   onOpenChildTask?: (child: CollaborationIssue) => void
   translate: CollaborationTranslate
 }) {
-  const activeTasks = tasks.filter(task =>
-    isExecutionActive(taskExecutionStates?.[String(task.id)]?.status)
+  const activeTasks = tasks.filter((task) =>
+    isExecutionActive(taskExecutionStates?.[String(task.id)]?.status),
   )
-  const activeIds = new Set(activeTasks.map(task => task.id))
+  const activeIds = new Set(activeTasks.map((task) => task.id))
   const recentTasks = tasks
-    .filter(task => !activeIds.has(task.id))
-    .sort((left, right) => Date.parse(right.linked_at ?? '') - Date.parse(left.linked_at ?? ''))
+    .filter((task) => !activeIds.has(task.id))
+    .sort(
+      (left, right) =>
+        Date.parse(right.linked_at ?? '') - Date.parse(left.linked_at ?? ''),
+    )
   const entries: LinkedEntry[] = [
-    ...activeTasks.map(task => ({ kind: 'task' as const, task })),
-    ...childItems.map(child => ({ kind: 'child' as const, child })),
-    ...recentTasks.map(task => ({ kind: 'task' as const, task })),
+    ...activeTasks.map((task) => ({ kind: 'task' as const, task })),
+    ...childItems.map((child) => ({ kind: 'child' as const, child })),
+    ...recentTasks.map((task) => ({ kind: 'task' as const, task })),
   ]
 
   return (
@@ -147,6 +159,7 @@ export function IssueLinkedTasks({
       listTestId="cloud-todo-task-list"
       toggleTestId="cloud-todo-toggle-tasks"
       countTestId="cloud-todo-execution-task-count"
+      introduction={creationAction}
       translate={translate}
       actions={
         onCreateTask ? (
@@ -162,15 +175,19 @@ export function IssueLinkedTasks({
         ) : null
       }
     >
-      {expanded =>
-        (expanded ? entries : entries.slice(0, PREVIEW_LIMIT)).map(entry => {
+      {(expanded) =>
+        (expanded ? entries : entries.slice(0, PREVIEW_LIMIT)).map((entry) => {
           if (entry.kind === 'child') {
             const { child } = entry
             const assignee =
-              child.assignee_agent_name ?? child.assignee_team_name ?? child.assignee_name
+              child.assignee_agent_name ??
+              child.assignee_team_name ??
+              child.assignee_name
             const status =
-              statusOptions.find(option => option.id === child.status)?.name ?? child.status
-            const canOpen = Boolean(onOpenChildTask) && child.can_view_detail !== false
+              statusOptions.find((option) => option.id === child.status)
+                ?.name ?? child.status
+            const canOpen =
+              Boolean(onOpenChildTask) && child.can_view_detail !== false
             return (
               <button
                 key={`child-${child.id}`}
@@ -192,7 +209,9 @@ export function IssueLinkedTasks({
                     {assignee ? ` · ${assignee}` : ''}
                   </span>
                 </span>
-                {canOpen ? <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" /> : null}
+                {canOpen ? (
+                  <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" />
+                ) : null}
               </button>
             )
           }
@@ -219,7 +238,10 @@ export function IssueLinkedTasks({
                 >
                   {task.task_title || task.task_id}
                 </span>
-                <span className="mt-0.5 block truncate text-xs text-text-muted" title={deviceLabel}>
+                <span
+                  className="mt-0.5 block truncate text-xs text-text-muted"
+                  title={deviceLabel}
+                >
                   {deviceLabel} ·{' '}
                   {selected
                     ? translate('todo.current_conversation', '当前会话')
@@ -232,7 +254,10 @@ export function IssueLinkedTasks({
                   data-status={state.status}
                   data-testid={`cloud-todo-task-status-${task.id}`}
                 >
-                  <span className="task-detail-flat-task-status-dot" aria-hidden="true" />
+                  <span
+                    className="task-detail-flat-task-status-dot"
+                    aria-hidden="true"
+                  />
                   {taskExecutionStatusLabel(state.status, translate)}
                 </span>
               ) : null}
@@ -267,17 +292,19 @@ export function IssueDeliveries({
       toggleTestId="todo-detail-toggle-deliveries"
       translate={translate}
     >
-      {expanded =>
-        (expanded ? deliveries : deliveries.slice(0, PREVIEW_LIMIT)).map(delivery => (
-          <IssueDeliveryRow
-            key={delivery.id}
-            delivery={delivery}
-            getDelivery={getDelivery}
-            memberName={memberName}
-            onOpen={onOpen}
-            translate={translate}
-          />
-        ))
+      {(expanded) =>
+        (expanded ? deliveries : deliveries.slice(0, PREVIEW_LIMIT)).map(
+          (delivery) => (
+            <IssueDeliveryRow
+              key={delivery.id}
+              delivery={delivery}
+              getDelivery={getDelivery}
+              memberName={memberName}
+              onOpen={onOpen}
+              translate={translate}
+            />
+          ),
+        )
       }
     </ExecutionListSection>
   )

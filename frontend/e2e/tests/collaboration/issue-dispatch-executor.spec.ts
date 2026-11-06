@@ -118,7 +118,6 @@ test.describe('Collaboration group Executor coordination', () => {
       await expect(page.getByTestId('collaboration-issue-detail')).toBeVisible()
       await page.getByTestId('cloud-todo-detail-assignee').click()
       await page.getByTestId(`cloud-todo-detail-assignee-option-agent:${agent.id}`).click()
-      await page.getByTestId('cloud-todo-save').click()
       await expect(page.getByTestId('cloud-todo-save')).toHaveCount(0)
       await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute(
         'data-value',
@@ -291,19 +290,18 @@ test.describe('Collaboration group Executor coordination', () => {
       await page.goto(`${fixture.projectPath}/issues/${encodeURIComponent(fixture.issueId)}`)
       await expect(page.getByTestId('collaboration-issue-detail')).toBeVisible()
       await page.getByTestId('cloud-todo-detail-assignee').click()
-      await page.getByTestId(`cloud-todo-detail-assignee-option-group:${groupId}`).click()
-      await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute(
-        'data-value',
-        `group:${groupId}`
-      )
-      // The manager can reassign the Issue before a subsequent read reaches the server.
       const groupAssigned = page.waitForResponse(
         response =>
           response.request().method() === 'PATCH' &&
           new URL(response.url()).pathname === `/api/v1/loop-items/${fixture.issueId}` &&
           response.request().postDataJSON()?.assignee_group_id === groupId
       )
-      await page.getByTestId('cloud-todo-save').click()
+      await page.getByTestId(`cloud-todo-detail-assignee-option-group:${groupId}`).click()
+      await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute(
+        'data-value',
+        `group:${groupId}`
+      )
+      // The manager can reassign the Issue before a subsequent read reaches the server.
       const assignmentResponse = await groupAssigned
       expect(assignmentResponse.ok()).toBe(true)
       const assigned: CollaborationIssue = await assignmentResponse.json()

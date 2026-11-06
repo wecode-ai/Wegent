@@ -28,7 +28,7 @@ import type { CloudWorkStatus } from '@/types/workbench'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { readFileSync } from 'node:fs'
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, onTestFinished, test, vi } from 'vitest'
 import { installGitUiTestContributions } from '../../../dsh/ui-git/test-support'
 import { DesktopSidebar } from './DesktopSidebar'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
@@ -205,6 +205,24 @@ async function waitForSidebarPointerSensorCleanup() {
 await preloadDefaultDshUiTestModules()
 
 describe('DesktopSidebar', () => {
+  test.each(['loading', 'error'] as const)(
+    'does not present a %s task list as empty',
+    async phase => {
+      const onRetryRuntimeWork = vi.fn().mockResolvedValue(undefined)
+      renderSidebar({
+        runtimeWork: null,
+        runtimeWorkLoad: { phase, error: phase === 'error' ? 'Request timed out' : null },
+        onRetryRuntimeWork,
+      })
+      expect(screen.getByTestId('runtime-work-load-status')).toBeInTheDocument()
+      expect(screen.queryByTestId('runtime-chat-empty')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('projects-empty-create-button')).not.toBeInTheDocument()
+      if (phase === 'error') {
+        await userEvent.click(screen.getByTestId('runtime-work-load-retry'))
+        expect(onRetryRuntimeWork).toHaveBeenCalledOnce()
+      }
+    }
+  )
   beforeEach(async () => {
     await preloadDefaultDshUiTestModules()
     await installGitUiTestContributions()
@@ -3065,5 +3083,161 @@ describe('DesktopSidebar', () => {
 
     expect(screen.getAllByTestId('project-item-button')).toHaveLength(1)
     expect(screen.getByTestId('project-item-button')).toHaveTextContent('Repo')
+  })
+  test('preserves manual task-list scrolling across runtime refreshes', async () => {
+    localStorage.setItem('wework:debug-runtime', '1')
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined)
+    onTestFinished(() => debug.mockRestore())
+    const autoScrollEntries = () =>
+      debug.mock.calls.flatMap(([prefix, entry]) =>
+        prefix === '[Wework] Runtime sidebar state' && entry?.event === 'active-task-auto-scroll'
+          ? [entry]
+          : []
+      )
+    const chatPath = '/Users/alice/.wework/workspace/chats/sidebar-scroll'
+    const runtimeWork = (status: string) => ({
+      projects: [],
+      chats: [
+        {
+          deviceId: 'local-device',
+          deviceName: 'Local Mac',
+          deviceStatus: 'online' as const,
+          available: true,
+          workspacePath: chatPath,
+          workspaceKind: 'chat' as const,
+          tasks: [
+            {
+              taskId: 'active-task',
+              workspacePath: chatPath,
+              workspaceKind: 'chat' as const,
+              title: 'Active task',
+              runtime: 'codex' as const,
+              status,
+              running: status === 'running',
+              interactionStatus:
+                status === 'waiting_for_user_input' ? ('waitingForUserInput' as const) : null,
+            },
+            {
+              taskId: 'other-task',
+              workspacePath: chatPath,
+              workspaceKind: 'chat' as const,
+              title: 'Other task',
+              runtime: 'codex' as const,
+            },
+          ],
+        },
+      ],
+      totalTasks: 2,
+    })
+    const currentRuntimeTask = {
+      deviceId: 'local-device',
+      taskId: 'active-task',
+      workspacePath: chatPath,
+    }
+    const initialProps = createSidebarProps({
+      projects: [],
+      runtimeWork: runtimeWork('running'),
+      currentRuntimeTask,
+    })
+    const lifecycleStore = new RuntimeTaskLifecycleStore('desktop-sidebar-scroll-refresh-test')
+    lifecycleStore.syncRuntimeWork(initialProps.runtimeWork)
+    const view = render(
+      <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+        <DesktopSidebar {...initialProps} />
+      </RuntimeTaskLifecycleProvider>
+    )
+    const scrollIntoView = vi.mocked(Element.prototype.scrollIntoView)
+
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalled())
+    scrollIntoView.mockClear()
+    const initialAutoScrollCount = autoScrollEntries().length
+    expect(autoScrollEntries()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ phase: 'before', willScroll: true }),
+        expect.objectContaining({ phase: 'after', willScroll: true }),
+      ])
+    )
+
+    const scrollContainer = screen.getByTestId('sidebar-worklists-scroll')
+    scrollContainer.scrollTop = 180
+    fireEvent.scroll(scrollContainer)
+
+    const refreshedProps = createSidebarProps({
+      projects: [],
+      runtimeWork: runtimeWork('waiting_for_user_input'),
+      currentRuntimeTask: { ...currentRuntimeTask },
+    })
+    act(() => lifecycleStore.syncRuntimeWork(refreshedProps.runtimeWork))
+    view.rerender(
+      <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+        <DesktopSidebar {...refreshedProps} />
+      </RuntimeTaskLifecycleProvider>
+    )
+
+    expect(scrollIntoView).not.toHaveBeenCalled()
+    expect(scrollContainer.scrollTop).toBe(180)
+    expect(autoScrollEntries()).toHaveLength(initialAutoScrollCount)
+    expect(screen.getByTestId('runtime-local-task-waiting-active-task')).toBeInTheDocument()
+    expect(screen.getByTestId('runtime-local-task-hover-actions-active-task')).toHaveClass(
+      'right-full',
+      'mr-1'
+    )
+
+    const resumedProps = createSidebarProps({
+      projects: [],
+      runtimeWork: runtimeWork('running'),
+      currentRuntimeTask,
+    })
+    act(() => lifecycleStore.syncRuntimeWork(resumedProps.runtimeWork))
+    view.rerender(
+      <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+        <DesktopSidebar {...resumedProps} />
+      </RuntimeTaskLifecycleProvider>
+    )
+    expect(screen.queryByTestId('runtime-local-task-waiting-active-task')).not.toBeInTheDocument()
+    expect(screen.getByTestId('runtime-local-task-running-active-task')).toBeInTheDocument()
+    expect(screen.getByTestId('runtime-local-task-hover-actions-active-task')).toHaveClass(
+      'right-0'
+    )
+    expect(scrollIntoView).not.toHaveBeenCalled()
+    expect(scrollContainer.scrollTop).toBe(180)
+    expect(autoScrollEntries()).toHaveLength(initialAutoScrollCount)
+
+    const switchedProps = createSidebarProps({
+      projects: [],
+      runtimeWork: resumedProps.runtimeWork,
+      currentRuntimeTask: {
+        deviceId: 'local-device',
+        taskId: 'other-task',
+        workspacePath: chatPath,
+      },
+    })
+    scrollIntoView.mockImplementationOnce(() => {
+      scrollContainer.scrollTop = 50
+    })
+    view.rerender(
+      <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+        <DesktopSidebar {...switchedProps} />
+      </RuntimeTaskLifecycleProvider>
+    )
+
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1))
+    expect(scrollIntoView.mock.contexts[0]).toBe(
+      screen.getByTestId('runtime-local-task-row-other-task')
+    )
+    expect(autoScrollEntries().slice(-2)).toEqual([
+      expect.objectContaining({
+        phase: 'before',
+        changedDependencies: ['taskId', 'taskKey'],
+        previousDependencies: expect.objectContaining({ taskId: 'active-task', rowVisible: true }),
+        dependencies: expect.objectContaining({ taskId: 'other-task', rowVisible: true }),
+        metrics: expect.objectContaining({ scrollTop: 180 }),
+      }),
+      expect.objectContaining({
+        phase: 'after',
+        changedDependencies: ['taskId', 'taskKey'],
+        metrics: expect.objectContaining({ scrollTop: 50 }),
+      }),
+    ])
   })
 })

@@ -5,6 +5,7 @@ import { CLOUD_DEVICE_ID } from '../modules/shared.mjs'
 import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
 import { verifyPluginCatalogBoundaries } from '../modules/plugin-catalog-boundaries.mjs'
 import { verifyPluginSourceContinuation } from '../modules/plugin-source-continuation.mjs'
+import { verifyPersonalInventoryRecovery } from '../modules/plugin-personal-inventory-recovery.mjs'
 import { verifyPluginInstallUpdateResilience } from '../modules/plugin-install-update-resilience.mjs'
 import { verifyPluginLateResponseResilience } from '../modules/plugin-late-response-resilience.mjs'
 import { verifyPluginDetailResilience } from '../modules/plugin-detail-resilience.mjs'
@@ -498,6 +499,7 @@ export async function createDesktopScenario({
               // The real empty-catalog checks must precede the old uninstall fixtures.
               verifyBoundaryGroups(control, [
                 ['source-continuation', verifyPluginSourceContinuation],
+                ['personal-inventory-recovery', verifyPersonalInventoryRecovery],
                 ['catalog-sources', verifyPluginCatalogBoundaries],
                 ['late-response', verifyPluginLateResponseResilience],
                 ['plugin-detail', verifyPluginDetailResilience],

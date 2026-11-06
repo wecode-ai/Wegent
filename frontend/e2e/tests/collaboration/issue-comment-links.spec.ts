@@ -105,17 +105,28 @@ commentTest(
       ] as const) {
         await expect(link).toHaveAttribute('target', '_blank')
         await expect(link).toHaveAttribute('rel', 'noopener noreferrer')
+        const navigationPromise = page
+          .context()
+          .waitForEvent(
+            'request',
+            request => request.isNavigationRequest() && request.url() === url
+          )
         const popupPromise = page.waitForEvent('popup')
         await link.click()
         const popup = await popupPromise
         try {
+          const navigation = await navigationPromise
+          expect(navigation.frame()).toBe(popup.mainFrame())
           await expect(popup).toHaveURL(url)
+          expect(await popup.evaluate(() => window.opener === null)).toBe(true)
           if (documentText) {
-            await expect(popup.locator('body')).toHaveText(documentText)
-          } else {
             await popup.waitForLoadState('load')
-            await expect(popup).toHaveTitle(/GitHub/)
+            await expect(popup).toHaveTitle('Issue comment document')
+            await expect(popup.locator('body')).toHaveText(documentText)
           }
+          // External content availability is independent of navigation: CI observed
+          // HTTP 529 with the exact GitHub URL and an empty body. The real local
+          // document above verifies page loading and content without that dependency.
           await expect(page).toHaveURL(issuePath)
           await expect(page.getByTestId('cloud-todo-detail-title')).toHaveValue(issueTitle)
           await expect(comment).toContainText(commentMarker)

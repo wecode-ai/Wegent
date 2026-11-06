@@ -62,6 +62,7 @@ export function useRuntimeConversationSearch({
   targetRef,
   searchTranscript,
   loadTranscript,
+  reloadRevision = 0,
 }: {
   target: SearchTarget | null
   targetRef: RefObject<SearchTarget | null>
@@ -70,6 +71,7 @@ export function useRuntimeConversationSearch({
     query: string
   ) => Promise<RuntimeTranscriptSearchResponse>
   loadTranscript: RuntimeTranscriptLoader
+  reloadRevision?: number
 }) {
   const [page, setPage] = useState<SearchPage | null>(null)
   const pageRef = useRef<SearchPage | null>(null)
@@ -90,12 +92,16 @@ export function useRuntimeConversationSearch({
     pendingContext.current = null
     publishPage(null)
   }, [publishPage])
-  const previousTargetKey = useRef(target?.key)
+  const previousScope = useRef({ key: target?.key, reloadRevision })
   useLayoutEffect(() => {
-    if (previousTargetKey.current === target?.key) return
-    previousTargetKey.current = target?.key
+    if (
+      previousScope.current.key === target?.key &&
+      previousScope.current.reloadRevision === reloadRevision
+    )
+      return
+    previousScope.current = { key: target?.key, reloadRevision }
     releasePage()
-  }, [target?.key, releasePage])
+  }, [target?.key, reloadRevision, releasePage])
   useLayoutEffect(
     () => () => {
       pageController.current.abort()
@@ -146,7 +152,12 @@ export function useRuntimeConversationSearch({
       signal.addEventListener('abort', abort, { once: true })
       try {
         const transcript = await queueRead(controller.signal, current =>
-          loadTranscript(current.address, { beforeCursor: match.cursor, limit: 5, isolated: true })
+          loadTranscript(current.address, {
+            beforeCursor: match.cursor,
+            limit: 5,
+            isolated: true,
+            signal: controller.signal,
+          })
         )
         const current = assertCurrent(signal)
         controller.signal.throwIfAborted()
@@ -197,6 +208,7 @@ export function useRuntimeConversationSearch({
         loadTranscript(active.address, {
           limit: 5,
           isolated: true,
+          signal: controller.signal,
           ...(direction === 'before' ? { beforeCursor: cursor } : { afterCursor: cursor }),
         })
       )

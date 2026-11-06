@@ -24,7 +24,9 @@ from tests.services.test_project_comment_execution import scenario  # noqa: F401
 SNAPSHOT_ID = "a" * 64
 
 
-def packed_transcript_chunks() -> tuple[str, list[dict]]:
+def packed_transcript_chunks(
+    accepted_client_message_ids: list[str] | None = None,
+) -> tuple[str, list[dict]]:
     """Split high-entropy tool output into multiple valid device packet fixtures."""
     output = "\n".join(
         hashlib.sha256(str(index).encode()).hexdigest() for index in range(12_000)
@@ -40,6 +42,10 @@ def packed_transcript_chunks() -> tuple[str, list[dict]]:
         "strings": [output],
         "references": [{"path": ["turns", 0, "toolOutput"], "index": 0}],
     }
+    if accepted_client_message_ids is not None:
+        packed["transcript"][
+            "acceptedClientUserMessageIds"
+        ] = accepted_client_message_ids
     compressed = gzip.compress(json.dumps(packed).encode())
     snapshot = hashlib.sha256(compressed).hexdigest()
     chunks = []
@@ -108,6 +114,75 @@ async def test_legacy_http_read_uses_device_chunks_and_preserves_json(
     assert f"total_bytes={chunks[0]['transfer']['totalBytes']}" in caplog.text
     assert "base64_bytes=" in caplog.text
     assert output[:100] not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("accepted", [None, [], ["accepted-before-tail"]])
+async def test_project_receipt_query_survives_authorized_chunk_assembly(
+    scenario, accepted
+):
+    """Retain explicit acceptance evidence without synthesizing missing receipts."""
+    _, chunks = packed_transcript_chunks(accepted)
+    scenario.rpc.side_effect = chunks
+    request = bound_request(
+        scenario,
+        reconcileClientUserMessageIds=["accepted-before-tail", "unconfirmed"],
+    )
+    request.transcript_protocol_version = None
+
+    result = await runtime_work_service.get_runtime_transcript(
+        db=scenario.db, user_id=scenario.member.id, address=request
+    )
+
+    body = result.model_dump(by_alias=True)
+    if accepted is None:
+        assert "acceptedClientUserMessageIds" not in body
+    else:
+        assert body["acceptedClientUserMessageIds"] == accepted
+    assert scenario.rpc.await_count == len(chunks)
+    for call in scenario.rpc.await_args_list:
+        assert call.kwargs["user_id"] == scenario.owner.id
+        assert call.kwargs["allow_app_device_task_reading"] is True
+        assert call.kwargs["payload"]["reconcileClientUserMessageIds"] == [
+            "accepted-before-tail",
+            "unconfirmed",
+        ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("queried", [None, [], ["accepted-before-tail"]])
+async def test_owned_remote_receipt_query_preserves_explicit_request(
+    test_db, test_user, monkeypatch, runtime_transcript_sessions, queried
+):
+    """Forward requested identities through the owned-device path and opaque v2 reply."""
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    packet = chunk_response()
+    rpc = AsyncMock(return_value=packet)
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+    request = RuntimeTranscriptRequest(
+        deviceId="remote-device",
+        taskId="task-1",
+        transcriptProtocolVersion=2,
+        **({"reconcileClientUserMessageIds": queried} if queried is not None else {}),
+    )
+
+    result = await runtime_work_service.get_runtime_transcript(
+        db=test_db, user_id=test_user.id, address=request
+    )
+
+    assert result.model_dump(by_alias=True) == packet
+    payload = rpc.await_args.kwargs["payload"]
+    if queried is None:
+        assert "reconcileClientUserMessageIds" not in payload
+    else:
+        assert payload["reconcileClientUserMessageIds"] == queried
+    assert rpc.await_args.kwargs["user_id"] == test_user.id
+    assert rpc.await_args.kwargs["device_id"] == "remote-device"
+    assert "allow_app_device_task_reading" not in rpc.await_args.kwargs
 
 
 @pytest.mark.asyncio
@@ -390,6 +465,7 @@ def test_transcript_endpoint_preserves_opaque_chunk_and_request_fields(
         "transcriptTransfer": cursor,
         "refresh": True,
         "navigationOnly": True,
+        "reconcileClientUserMessageIds": ["queued-request"],
     }
 
     response = test_client.post(

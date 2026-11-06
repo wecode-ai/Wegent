@@ -1073,6 +1073,12 @@ describe('DesktopWorkbenchLayout', () => {
       turnId: 'runtime-side-chat-turn',
     })
     subscribeRuntimeTaskStreamMock.mockReturnValue(vi.fn())
+    baseProps.projectChat.inputByScope = {}
+    baseProps.projectChat.setInputForScope.mockReset()
+    baseProps.projectChat.setInputForScope.mockImplementation((scope: string, value: string) => {
+      if (value) baseProps.projectChat.inputByScope[scope] = value
+      else delete baseProps.projectChat.inputByScope[scope]
+    })
   }, 60_000)
 
   const baseProps = {
@@ -1102,6 +1108,8 @@ describe('DesktopWorkbenchLayout', () => {
     onStartStandaloneChat: vi.fn(),
     onOpenPlugins: vi.fn(),
     projectChat: {
+      inputByScope: {} as Record<string, string>,
+      setInputForScope: vi.fn(),
       models: [],
       skills: [],
       selectedModel: null,
@@ -1963,6 +1971,7 @@ describe('DesktopWorkbenchLayout', () => {
       closeOtherTabs: vi.fn(),
       restoreClosedTab: vi.fn(),
       moveTab: vi.fn(),
+      updateTab: vi.fn(),
       updateActiveTab: vi.fn(),
     } as unknown as WorkspaceTabsContextValue
 
@@ -2052,6 +2061,7 @@ describe('DesktopWorkbenchLayout', () => {
       closeOtherTabs: vi.fn(),
       restoreClosedTab: vi.fn(),
       moveTab: vi.fn(),
+      updateTab: vi.fn(),
       updateActiveTab: vi.fn(),
     }
     const workspaceTabs = (activeTab: typeof boardTab | typeof taskTab) => ({
@@ -2159,6 +2169,7 @@ describe('DesktopWorkbenchLayout', () => {
         closeOtherTabs: vi.fn(),
         restoreClosedTab: vi.fn(),
         moveTab: vi.fn(),
+        updateTab: vi.fn(),
         updateActiveTab: vi.fn(),
       }) as unknown as WorkspaceTabsContextValue
 
@@ -6603,6 +6614,7 @@ describe('DesktopWorkbenchLayout', () => {
       closeOtherTabs: vi.fn(),
       restoreClosedTab: vi.fn(),
       moveTab: vi.fn(),
+      updateTab: vi.fn(),
       updateActiveTab: vi.fn(),
     } satisfies WorkspaceTabsContextValue
     const installed = {

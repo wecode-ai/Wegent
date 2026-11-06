@@ -1,0 +1,10 @@
+.project-board-toolbar,
+.project-board-toolbar button,
+.project-board-toolbar input,
+.project-board-toolbar select,
+.project-board-toolbar label {
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-ui, 445);
+  line-height: 1.5;
+}

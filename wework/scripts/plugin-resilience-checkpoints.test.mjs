@@ -20,6 +20,9 @@ vi.mock('../e2e/desktop/modules/shared.mjs', () => ({ CLOUD_DEVICE_ID: 'remote-d
 vi.mock('../e2e/desktop/modules/plugin-source-continuation.mjs', () => ({
   verifyPluginSourceContinuation: context => state.invoke('source-continuation', context),
 }))
+vi.mock('../e2e/desktop/modules/plugin-personal-inventory-recovery.mjs', () => ({
+  verifyPersonalInventoryRecovery: context => state.invoke('personal-inventory-recovery', context),
+}))
 vi.mock('../e2e/desktop/modules/plugin-catalog-boundaries.mjs', () => ({
   verifyPluginCatalogBoundaries: context => state.invoke('catalog-sources', context),
 }))
@@ -206,6 +209,7 @@ async function fixture(t, checkpoint) {
 
 const catalogGroups = [
   'source-continuation',
+  'personal-inventory-recovery',
   'catalog-sources',
   'late-response',
   'plugin-detail',

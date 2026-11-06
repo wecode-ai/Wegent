@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { requestExecutor } from '../modules/executor-rpc.mjs'
 
 import {
   assistantMessage,
@@ -16,6 +17,7 @@ import {
   configureFirstProjectExecutionEnvironment,
   openProjectAgentCreator,
   selectProjectRunnerModel,
+  selectCollaborationProjectView,
   waitForTestIdByText,
 } from '../modules/workspace-flows.mjs'
 
@@ -261,7 +263,7 @@ async function createCoordinateGroup(control, timeoutMs) {
 }
 
 async function createIssueAndAssignGroup(control, timeoutMs, title = ISSUE) {
-  await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+  await selectCollaborationProjectView(control, CONTENT, 'board')
   await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-issue-create"]'))
   await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), {
     value: title,
@@ -285,9 +287,6 @@ async function createIssueAndAssignGroup(control, timeoutMs, title = ISSUE) {
     timeoutMs
   )
   await control.command('click', `[data-testid="${groupOption}"]`)
-  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
-    timeoutMs,
-  })
   await control.command('waitFor', scoped('[data-testid="cloud-todo-state-assignee"]'), {
     text: GROUP,
     timeoutMs,
@@ -569,7 +568,7 @@ export async function createDesktopScenario({
       await createLocalCollaborationProject(control, CONTENT, PROJECT)
       await configureFirstProjectExecutionEnvironment(control, CONTENT, uiTimeoutMs)
 
-      await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
+      await selectCollaborationProjectView(control, CONTENT, 'manage')
 
       await control.command(
         'click',
@@ -607,7 +606,7 @@ export async function createDesktopScenario({
         control,
         scoped('[data-testid="cloud-task-activity-list"]'),
         'cloud-task-manager-event-',
-        `${LEADER} 负责人 · 分配任务：`,
+        `${LEADER} 将「${FIRST_TASK}」分配给${COLLECTOR}`,
         modelResponseTimeoutMs
       )
       const assignmentEvent = await control.command(
@@ -673,6 +672,21 @@ export async function createDesktopScenario({
       const notification = await waitForHumanNotification(control, modelResponseTimeoutMs)
       humanNotificationUrl = notification.url
       assert.match(humanNotificationUrl, /^wework:\/\/boards\/local\/[^/]+\/issues\/[^/]+$/)
+      const [, projectId, issueId] = new URL(humanNotificationUrl).pathname.match(
+        /^\/local\/([^/]+)\/issues\/([^/]+)$/
+      )
+      const receiptParams = { project_id: projectId, task_id: issueId }
+      const receipts = await requestExecutor(
+        control,
+        'todos.assignment_receipts',
+        receiptParams,
+        uiTimeoutMs
+      )
+      assert.equal(receipts.length, 1, 'Manager dispatch must persist an Issue assignment receipt')
+      assert.equal(receipts[0].target_id, humanUserId)
+      assert.equal(receipts[0].receipt_tracking, true)
+      assert.equal(receipts[0].human_read_at, null)
+      assert.equal(receipts[0].stand_in_received_at, null)
       await control.command('waitFor', scoped('[data-testid="collaboration-issue-detail"]'), {
         visible: false,
         timeoutMs: uiTimeoutMs,
@@ -685,6 +699,19 @@ export async function createDesktopScenario({
       await control.command('waitFor', scoped('[data-testid="cloud-todo-personal-task-start"]'), {
         timeoutMs: uiTimeoutMs,
       })
+      await control.command('waitFor', scoped('[data-testid="issue-assignment-receipts"]'), {
+        text: '本人已读',
+        timeoutMs: uiTimeoutMs,
+      })
+      const readReceipts = await requestExecutor(
+        control,
+        'todos.assignment_receipts',
+        receiptParams,
+        uiTimeoutMs
+      )
+      assert.equal(readReceipts[0].id, receipts[0].id)
+      assert.ok(readReceipts[0].human_read_at)
+      assert.equal(readReceipts[0].stand_in_received_at, null)
       await captureScreenshot(
         control,
         'local-coordinate-07-human-notification-opened-issue.png',

@@ -132,3 +132,13 @@ it('preserves project-scoped agent connection guidance through repeated UI resol
   expect(getStandInErrorMessage(new Error(message))).toBe(message)
   expect(getStandInErrorMessage(error.message)).toBe(message)
 })
+
+it('maps a submitted interface needing restoration to model selection guidance', async () => {
+  for (const language of ['zh-CN', 'en']) {
+    await i18n.changeLanguage(language)
+    const message = "Reselect the task's submitted model interface to restore its credentials"
+    const expected = i18n.t('common:standIn.errors.model_unavailable')
+    expect(getStandInErrorMessage({ code: 'RUNNER_MODEL_UNAVAILABLE', message })).toBe(expected)
+    expect(getStandInErrorMessage(new Error(message))).toBe(expected)
+  }
+})

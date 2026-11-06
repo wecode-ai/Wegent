@@ -10,6 +10,8 @@ from app.models.delivery import CloudProject, LoopItem, ProjectChatAgent
 from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.resource_member import ResourceMember
+from app.schemas.cloud_project import CloudProjectMemberResponse
+from app.services.cloud_projects.service import cloud_project_service
 from app.services.collaboration_permissions import collaboration_permission_service
 from app.services.collaboration_revocation import (
     execution_authorized,
@@ -19,6 +21,7 @@ from app.services.loop_item_executions.service import loop_item_execution_servic
 from tests.api.test_collaboration_permission_contract import invite
 from tests.api.test_collaboration_permission_contract import scope as scope
 from tests.api.test_workspace_shared_agents import _native_team
+from tests.service_results import service_result
 from tests.utils.collaboration import authorize_project_agent, authorize_resource
 
 
@@ -116,7 +119,7 @@ def test_cp01_cp05_archived_parent_denies_direct_and_public_access(
         )
 
 
-def test_cp05_public_read_does_not_create_participants(test_client, scope):
+def test_cp05_public_read_does_not_create_participants(test_db, test_client, scope):
     pid = scope["project"]["id"]
     result = test_client.patch(
         f"/api/v1/cloud-projects/{pid}",
@@ -128,8 +131,12 @@ def test_cp05_public_read_does_not_create_participants(test_client, scope):
     assert detail.status_code == 200
     assert detail.json()["access_role"] == "Viewer"
     assert detail.json()["permission_sources"] == [{"type": "public", "role": "Viewer"}]
-    roster = test_client.get(
-        f"/api/v1/cloud-projects/{pid}/members", headers=scope["member"]
+    roster = service_result(
+        cloud_project_service.list_members,
+        test_db,
+        int(pid),
+        scope["user"].id,
+        response_model=list[CloudProjectMemberResponse],
     ).json()
     assert scope["user"].id not in {row["user_id"] for row in roster}
     legacy_update = test_client.patch(
@@ -828,12 +835,3 @@ def test_cp11_cp12_cp15_personal_issue_task_needs_no_project_device_binding(
         json={"deviceId": "personal-executor", "taskId": "personal-task"},
     )
     assert response.status_code == expected, response.text
-
-
-@pytest.fixture
-def test_client(test_client):
-    """Exercise retained Python HTTP components in an isolated application."""
-    from tests.retained_python_handlers import component_client
-
-    with component_client(test_client, ("project_members",)) as client:
-        yield client

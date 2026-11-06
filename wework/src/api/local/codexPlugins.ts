@@ -24,6 +24,12 @@ import {
 } from '@wegent/chat-core/codex-installed-plugins'
 export { normalizeMarketplaceSource } from '@wegent/chat-core/codex-installed-plugins'
 import { catalogRecord, decodeCodexComposerSkills } from '@wegent/chat-core/codex-composer-catalog'
+import {
+  personalInstalledFromDisk,
+  withPersonalInventoryDetails,
+  type PersonalMarketplacePluginSummary,
+  type PersonalMarketplaceListResult,
+} from './codexPersonalInventory'
 import { createSharedCodexAppCatalog } from './codexAppCatalog'
 import { createSharedRemotePluginCatalog } from './codexRemoteCatalog'
 import { getLocalCodexAuthStatus } from './runtimeAuthStatus'
@@ -405,6 +411,7 @@ const installedCatalog = createVersionedInstalledCatalog<{
   marketplaces: CodexPluginMarketplaceEntry[]
 }>(installedCatalogRevision)
 const authStatusRequests = createRequestCache(() => installedReadRevision)
+const diskInventoryRequests = createRequestCache(() => installedReadRevision)
 const remoteCatalog = createSharedRemotePluginCatalog<
   PluginMarketplaceListResponse & { deviceId: string }
 >()
@@ -435,6 +442,7 @@ function invalidateReadState(deviceId: string | null = null): void {
   installedReadRevision += 1
   activeInventoryMutationVersion = getPluginInventoryMutationVersion()
   installedCatalog.invalidate()
+  diskInventoryRequests.invalidate()
   activeInstalledIdentity = undefined
   lastVerifiedInstalledScope = undefined
   cachedState = null
@@ -667,7 +675,7 @@ function toDurableReadState(state: CachedPluginsState): CachedPluginsState {
       interface: slimPluginInterfaceForDurableCache(item.interface),
       manifest: slimPluginManifestForCache(item.manifest),
     })),
-    // Installed membership belongs to the renderer inventory and live plugin/installed.
+    // Installed membership belongs to the renderer inventory and live source reads.
     // Persisting it here created a second seven-day source that survived uninstall.
     installedPlugins: [],
     sourceReads: undefined,
@@ -1259,7 +1267,7 @@ async function resolveWeworkPersonalMarketplacePath(
   if (bundled?.path && isLocalMarketplacePath(bundled.path)) {
     return normalizeMarketplaceSource(bundled.path)
   }
-  const loaded = await readState({ skipPersonalReconcile: true })
+  const loaded = await readState()
   const loadedMarketplace = loaded.marketplaces.find(
     item => item.id === WEWORK_PERSONAL_MARKETPLACE_ID
   )
@@ -1313,44 +1321,6 @@ async function ensurePluginInWeworkPersonal(options: {
   // A real migration reloads and persists a fresh snapshot in readState below.
   if (ensured.migrated) clearLocalCodexPluginsReadStateCache()
   return ensured
-}
-
-async function reconcileCodexPersonalPlugins(state: LocalCodexPluginsState): Promise<boolean> {
-  const candidates = state.installedPlugins.filter(plugin => {
-    const marketplaceId = plugin.spec.source.marketplace || plugin.spec.source.providerKey || ''
-    return marketplaceId === CODEX_PERSONAL_MARKETPLACE_ID
-  })
-  if (candidates.length === 0) return false
-
-  let changed = false
-  for (const plugin of candidates) {
-    const sourcePayload = plugin.spec.sourcePayload ?? {}
-    const pluginName =
-      (typeof sourcePayload.pluginName === 'string' && sourcePayload.pluginName.trim()) ||
-      plugin.spec.source.pluginKey
-    let sourceMarketplacePath =
-      typeof sourcePayload.marketplacePath === 'string' ? sourcePayload.marketplacePath.trim() : ''
-    if (!sourceMarketplacePath) {
-      const marketplace = state.marketplaces.find(
-        item =>
-          item.id === CODEX_PERSONAL_MARKETPLACE_ID || item.name === CODEX_PERSONAL_MARKETPLACE_ID
-      )
-      sourceMarketplacePath =
-        marketplace && isLocalMarketplacePath(marketplace.path) ? marketplace.path : ''
-    }
-    if (!pluginName.trim() || !sourceMarketplacePath) continue
-    try {
-      const ensured = await ensurePluginInWeworkPersonal({
-        sourceMarketplacePath,
-        pluginName,
-        installAfterMigrate: true,
-      })
-      if (ensured.migrated) changed = true
-    } catch (error) {
-      console.warn('[Wework] Failed to migrate Codex personal plugin', pluginName, error)
-    }
-  }
-  return changed
 }
 
 function isCodexRemoteInstallPluginName(pluginId: string, pluginName?: string): boolean {
@@ -1445,23 +1415,6 @@ function rememberSelectedMarketplaceId(id: string) {
   } else {
     window.localStorage.removeItem(SELECTED_MARKETPLACE_STORAGE_KEY)
   }
-}
-
-type PersonalMarketplacePluginSummary = {
-  name: string
-  version?: string | null
-  displayName?: string | null
-  description?: string | null
-  logo?: string | null
-  category?: string | null
-  marketplacePath?: string | null
-  pluginPath: string
-}
-
-type PersonalMarketplaceListResult = {
-  marketplaceId: string
-  marketplacePath: string
-  plugins: PersonalMarketplacePluginSummary[]
 }
 
 function toDiskPersonalMarketplaceItem(
@@ -1795,9 +1748,45 @@ export async function readLocalInstalledInventoryFromDisk(): Promise<LocalPlugin
   const deviceId = getKnownLocalExecutorDeviceId()?.trim() ?? ''
   resetInMemoryReadStateForDevice(deviceId)
   const generation = nextReadStateGeneration++
+  const { installedSources: diskSources, ...read } = await readDiskInstalledInventory(deviceId)
+  const previous = readStateMatchesDevice(cachedState, deviceId) ? cachedState : null
+  if (
+    deviceId &&
+    deviceId === getKnownLocalExecutorDeviceId() &&
+    generation >= cachedStateGeneration
+  ) {
+    const installedSources = { ...previous?.installedSources, ...diskSources }
+    cachedState = {
+      ...(previous ?? emptyState),
+      deviceId,
+      installedSources,
+      sourceReads: { ...previous?.sourceReads, ...read.sourceReads },
+      installedPartial: read.partial || previous?.installedPartial,
+      partial: read.partial || previous?.partial,
+      installedPlugins: mergeLocalInstalledWithStorePackages(
+        codexAndPersonalInstallations(installedSources),
+        installedSources.store ?? []
+      ),
+    }
+    cachedStateGeneration = generation
+  }
+  return {
+    items: read.items,
+    deviceId: read.deviceId,
+    partial: read.partial,
+    sourceReads: read.sourceReads,
+  }
+}
+
+/** Read sources without publishing intermediate cache state into a newer full read. */
+async function readDiskInstalledInventory(
+  deviceId: string,
+  options: { requireComplete?: boolean; skipCloudLinks?: boolean } = {}
+) {
+  const generation = nextReadStateGeneration++
   const [personalResult, storeResult, configResult] = await Promise.allSettled([
     readPersonalMarketplacePluginsFromDisk(),
-    listWegentStorePluginsFromDisk(),
+    listWegentStorePluginsFromDisk(options.requireComplete),
     requestLocalExecutor<LocalCodexLocalConfig>('executor.codex_home.config.read').then(config => {
       if (
         !config ||
@@ -1811,19 +1800,23 @@ export async function readLocalInstalledInventoryFromDisk(): Promise<LocalPlugin
       return config
     }),
   ])
+  if (options.requireComplete) {
+    const failed = [personalResult, storeResult, configResult].find(
+      result => result.status === 'rejected'
+    )
+    if (failed?.status === 'rejected') throw failed.reason
+  }
   const personal = personalResult.status === 'fulfilled' ? personalResult.value : null
   const config = configResult.status === 'fulfilled' ? configResult.value : null
-  const enabledKeys = config && new Set(config.enabledPluginKeys ?? [])
-  const installedKeys =
-    config && new Set([...(config.enabledPluginKeys ?? []), ...(config.disabledPluginKeys ?? [])])
-  const marketplacePath = personal?.marketplacePath || WEWORK_PERSONAL_MARKETPLACE_ID
   let linksFailed = false
-  const cloudLinks = personal?.marketplacePath
-    ? await readLocalPluginCloudLinks(personal.marketplacePath).catch(() => {
-        linksFailed = true
-        return [] as LocalPluginCloudLink[]
-      })
-    : []
+  const cloudLinks =
+    personal?.marketplacePath && !options.skipCloudLinks
+      ? await readLocalPluginCloudLinks(personal.marketplacePath).catch(error => {
+          if (options.requireComplete) throw error
+          linksFailed = true
+          return [] as LocalPluginCloudLink[]
+        })
+      : []
   // Other reads can update the catalog while these disk requests are in flight.
   const previous = readStateMatchesDevice(cachedState, deviceId) ? cachedState : null
   if (
@@ -1842,59 +1835,20 @@ export async function readLocalInstalledInventoryFromDisk(): Promise<LocalPlugin
     linksFailed ||
     [personalResult, storeResult, configResult].some(result => result.status === 'rejected')
   let personalComplete =
-    Boolean(personal && config) || personal?.plugins.length === 0 || installedKeys?.size === 0
+    Boolean(personal && config) ||
+    personal?.plugins.length === 0 ||
+    Boolean(config && !(config.enabledPluginKeys?.length || config.disabledPluginKeys?.length))
   try {
-    if (personal && config)
-      personalInstalled = personal.plugins
-        .filter(
-          plugin =>
-            installedKeys!.has(`${plugin.name}@${WEWORK_PERSONAL_MARKETPLACE_ID}`) ||
-            installedKeys!.has(`${plugin.name}@${CODEX_PERSONAL_MARKETPLACE_ID}`)
-        )
-        .map(plugin =>
-          toInstalledPlugin(
-            {
-              name: WEWORK_PERSONAL_MARKETPLACE_ID,
-              path: plugin.marketplacePath || marketplacePath,
-              interface: { displayName: WEWORK_PERSONAL_MARKETPLACE_ID },
-              plugins: [],
-            },
-            {
-              name: plugin.name,
-              id: `${plugin.name}@${WEWORK_PERSONAL_MARKETPLACE_ID}`,
-              source: { source: 'local', path: plugin.pluginPath },
-              installed: true,
-              enabled:
-                enabledKeys!.has(`${plugin.name}@${WEWORK_PERSONAL_MARKETPLACE_ID}`) ||
-                enabledKeys!.has(`${plugin.name}@${CODEX_PERSONAL_MARKETPLACE_ID}`),
-              interface: {
-                displayName: plugin.displayName ?? plugin.name,
-                shortDescription: plugin.description ?? '',
-                logo: plugin.logo ?? null,
-                category: plugin.category ?? null,
-              },
-            }
-          )
-        )
-    else
-      personalInstalled = personalInstalled.filter(
-        plugin =>
-          (!personal ||
-            personal.plugins.some(item => item.name === plugin.spec.source.pluginKey)) &&
-          (!installedKeys ||
-            installedKeys.has(
-              `${plugin.spec.source.pluginKey}@${WEWORK_PERSONAL_MARKETPLACE_ID}`
-            ) ||
-            installedKeys.has(`${plugin.spec.source.pluginKey}@${CODEX_PERSONAL_MARKETPLACE_ID}`))
-      )
+    personalInstalled = personalInstalledFromDisk(personal, config, personalInstalled)
   } catch (error) {
     partial = true
     personalComplete = false
+    if (options.requireComplete) throw error
     if (storeResult.status === 'rejected' && !previous) throw error
   }
   personalInstalled = applyPluginCloudLinks(personalInstalled, cloudLinks, {
-    authoritative: Boolean(personal?.marketplacePath),
-    retainCachedDeviceId: linksFailed ? deviceId : undefined,
+    authoritative: Boolean(personal?.marketplacePath) && !options.skipCloudLinks,
+    retainCachedDeviceId: linksFailed || options.skipCloudLinks ? deviceId : undefined,
   })
   const storePlugins =
     storeResult.status === 'fulfilled'
@@ -1904,35 +1858,19 @@ export async function readLocalInstalledInventoryFromDisk(): Promise<LocalPlugin
     personal: { status: personalComplete ? 'fulfilled' : 'rejected', items: personalInstalled },
     store: { status: storeResult.status, items: storePlugins },
   }
-  if (
-    deviceId &&
-    deviceId === getKnownLocalExecutorDeviceId() &&
-    generation >= cachedStateGeneration
-  ) {
-    const installedSources = {
-      ...previous?.installedSources,
-      personal: personalInstalled,
-      ...(storeResult.status === 'fulfilled' ? { store: storePlugins } : {}),
-    }
-    cachedState = {
-      ...(previous ?? emptyState),
-      deviceId,
-      installedSources,
-      sourceReads: { ...previous?.sourceReads, ...sourceReads },
-      installedPartial: partial || previous?.installedPartial,
-      partial: partial || previous?.partial,
-      installedPlugins: mergeLocalInstalledWithStorePackages(
-        codexAndPersonalInstallations(installedSources),
-        storePlugins
-      ),
-    }
-    cachedStateGeneration = generation
-  }
   return {
     items: mergeLocalInstalledWithStorePackages(personalInstalled, storePlugins),
     deviceId,
     partial,
     sourceReads,
+    generation,
+    installedSources: {
+      ...(previous?.installedSources?.personal !== undefined
+        ? { personal: previous.installedSources.personal }
+        : {}),
+      ...(personalComplete ? { personal: personalInstalled } : {}),
+      store: storePlugins,
+    },
   }
 }
 
@@ -2343,7 +2281,6 @@ async function readState(
     mergeAllMarketplaces?: boolean
     marketplaceKinds?: Array<'local'>
     refresh?: boolean
-    skipPersonalReconcile?: boolean
     reuseInstalledInventory?: boolean
   } = {}
 ): Promise<LocalCodexPluginsState> {
@@ -2410,7 +2347,6 @@ async function loadReadStateSnapshot(
     mergeAllMarketplaces?: boolean
     marketplaceKinds?: Array<'local'>
     refresh?: boolean
-    skipPersonalReconcile?: boolean
     reuseInstalledInventory?: boolean
   },
   paramsKey: string,
@@ -2493,8 +2429,8 @@ async function loadReadStateSnapshot(
       })
     : []
   await verifyInstalledReadCurrent(scope)
-  // plugin/installed is authoritative for membership. Fold in the device store
-  // inventory from the same live read, but never revive rows from an older cache.
+  // Codex owns native marketplace membership; owned personal and store packages
+  // come from the independent disk sources in the same live read.
   const installedSources = installedRead?.installedSources ?? previous?.installedSources
   const cloudLinkOptions = {
     authoritative: Boolean(personalMarketplace?.path),
@@ -2580,17 +2516,7 @@ async function loadReadStateSnapshot(
     rememberSelectedMarketplaceId(selectedId)
   }
   if (generation < cachedCatalogGeneration) return state
-  if (!params.skipPersonalReconcile && !state.partial) {
-    const migrated = await reconcileCodexPersonalPlugins(state)
-    if (migrated) {
-      return loadReadStateSnapshot(
-        { ...params, skipPersonalReconcile: true, refresh: true },
-        paramsKey,
-        await captureInstalledReadScope()
-      )
-    }
-    await verifyInstalledReadCurrent(scope)
-  }
+
   return state
 }
 
@@ -2825,71 +2751,93 @@ async function loadInstalledPluginsOnly(
   const scope = capturedScope ?? (await captureInstalledReadScope())
   assertInstalledReadCurrent(scope)
   const deviceId = scope.deviceId
-  const [installedResult, storeResult] = await Promise.allSettled([
-    ensureBundledPluginMarketplaceRegistered().then(async () => {
+  const ownsPersonal = isElectronRuntime()
+  const registration = ensureBundledPluginMarketplaceRegistered()
+  const readDisk = () =>
+    ownsPersonal
+      ? diskInventoryRequests.get(
+          JSON.stringify([
+            scope,
+            Boolean(options.requireComplete),
+            Boolean(options.skipCloudLinks),
+          ]),
+          () => readDiskInstalledInventory(deviceId, options),
+          0
+        )
+      : Promise.resolve(null)
+  const [installedResult, diskResult] = await Promise.allSettled([
+    registration.then(async () => {
       const response = await requestPluginInstalled(scope, options.reuseRecent)
       if (!Array.isArray(response?.marketplaces)) throw new Error('Invalid installed plugins')
       return preferWeworkPersonalInstalled(mergeInstalledPluginSummaries(response.marketplaces, []))
     }),
-    listWegentStorePluginsFromDisk(options.requireComplete),
+    registration.then(readDisk, readDisk),
   ])
-  assertInstalledReadCurrent(scope)
-  const failures = [installedResult, storeResult].filter(result => result.status === 'rejected')
+  await verifyInstalledReadCurrent(scope)
+  const failures = [installedResult, diskResult].filter(result => result.status === 'rejected')
   for (const failure of failures) {
-    if (failure.status === 'rejected' && failure.reason instanceof ExpiredPluginInventoryRequest)
+    if (
+      failure.status === 'rejected' &&
+      (options.requireComplete || failure.reason instanceof ExpiredPluginInventoryRequest)
+    )
       throw failure.reason
   }
-  if (failures.length && options.requireComplete) {
-    throw (failures[0] as PromiseRejectedResult).reason
-  }
-  const bundled = getInitializedBundledPluginMarketplace()
-  const personalPath =
-    bundled?.path && isLocalMarketplacePath(bundled.path) ? bundled.path.trim() : ''
-  let linksFailed = false
-  const cloudLinks =
-    personalPath && !options.skipCloudLinks
-      ? await readLocalPluginCloudLinks(personalPath).catch(error => {
-          if (options.requireComplete) throw error
-          linksFailed = true
-          return [] as LocalPluginCloudLink[]
-        })
-      : []
-  // A failed source must inherit any successful inventory published while it waited.
   const previous = readStateMatchesDevice(cachedState, deviceId) ? cachedState : null
-  if (failures.length === 2 && !previous?.installedSources) {
+  if (failures.length === 2 && !previous?.installedSources)
     throw (failures[0] as PromiseRejectedResult).reason
+  const disk = diskResult.status === 'fulfilled' ? diskResult.value : null
+  const diskSource = (source: 'personal' | 'store') => {
+    const newer =
+      disk && cachedStateGeneration > disk.generation ? previous?.sourceReads?.[source] : undefined
+    return newer?.status === 'fulfilled'
+      ? { ...newer, items: previous?.installedSources?.[source] ?? newer.items }
+      : disk?.sourceReads[source]
   }
+  const summaries =
+    installedResult.status === 'fulfilled'
+      ? installedResult.value
+      : (previous?.installedSources?.codex ?? [])
+  const isPersonal = (plugin: InstalledPlugin) =>
+    isPersonalMarketplaceId(installedPluginMarketplaceId(plugin) ?? '')
+  const codex = ownsPersonal ? summaries.filter(plugin => !isPersonal(plugin)) : summaries
+  const personalRead = ownsPersonal
+    ? (diskSource('personal') ?? { status: 'rejected' as const })
+    : undefined
+  const storeRead = diskSource('store') ?? {
+    status: diskResult.status,
+    items: previous?.installedSources?.store ?? [],
+  }
+  const personal =
+    personalRead?.status === 'fulfilled'
+      ? withPersonalInventoryDetails(
+          personalRead.items ?? [],
+          installedResult.status === 'fulfilled'
+            ? summaries.filter(isPersonal)
+            : (previous?.installedSources?.personal ?? [])
+        )
+      : previous?.installedSources?.personal
   const installedSources = {
-    ...previous?.installedSources,
-    ...(installedResult.status === 'fulfilled'
-      ? { codex: installedResult.value, personal: undefined }
-      : {}),
-    ...(storeResult.status === 'fulfilled' ? { store: storeResult.value } : {}),
+    codex,
+    ...(personal !== undefined ? { personal } : {}),
+    store:
+      storeRead.status === 'fulfilled'
+        ? (storeRead.items ?? [])
+        : (previous?.installedSources?.store ?? []),
   }
-  // Composer / auth gates only need membership. Never call plugin/list here — it
-  // reconciles for ~10s and stalls Codex turns on the shared app-server.
-  const codexPlugins = applyPluginCloudLinks(
-    codexAndPersonalInstallations(installedSources),
-    cloudLinks,
-    {
-      authoritative: Boolean(personalPath) && !options.skipCloudLinks,
-      retainCachedDeviceId: linksFailed || options.skipCloudLinks ? deviceId : undefined,
-    }
-  )
   const installedPlugins = mergeLocalInstalledWithStorePackages(
-    codexPlugins,
-    installedSources.store ?? []
+    codexAndPersonalInstallations(installedSources),
+    installedSources.store
   )
-  await verifyInstalledReadCurrent(scope)
   return {
     installedPlugins,
     deviceId,
     installedSources,
     sourceReads: {
-      codex: { status: installedResult.status, items: codexPlugins },
-      store: { status: storeResult.status, items: installedSources.store ?? [] },
+      codex: { status: installedResult.status, items: codex },
+      ...(personalRead ? { personal: { ...personalRead, items: personal ?? [] } } : {}),
+      store: storeRead,
     },
-    ...(failures.length || linksFailed ? { partial: true } : {}),
+    ...(failures.length || disk?.partial ? { partial: true } : {}),
   }
 }
 
@@ -2984,7 +2932,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
           plugin.spec.source.marketplace ||
           plugin.spec.source.providerKey ||
           ''
-        const state = cachedState ?? (await readState({ skipPersonalReconcile: true }))
+        const state = cachedState ?? (await readState())
         const marketplace = state.marketplaces.find(
           item => item.id === marketplaceName || item.name === marketplaceName
         )

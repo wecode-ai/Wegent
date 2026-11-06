@@ -87,4 +87,23 @@ describe('desktop device identity', () => {
     })
     await directory.remove()
   })
+
+  test('uses a verification override without rewriting the saved desktop identity', async () => {
+    const directory = await temporaryDirectory('desktop-device-id-verification-')
+    const dataDirectory = join(directory.path, 'data')
+    await mkdir(dataDirectory, { recursive: true })
+    await writeFile(join(dataDirectory, 'desktop-device-id'), 'electron-saved-device\n')
+
+    await expect(
+      resolveDesktopDeviceId({
+        dataDirectory,
+        executorHome: join(directory.path, 'explicit-home'),
+        environment: { WEGENT_APP_IPC_DEVICE_ID: 'electron-verification-device' },
+      })
+    ).resolves.toBe('electron-verification-device')
+    expect(await readFile(join(dataDirectory, 'desktop-device-id'), 'utf8')).toBe(
+      'electron-saved-device\n'
+    )
+    await directory.remove()
+  })
 })
