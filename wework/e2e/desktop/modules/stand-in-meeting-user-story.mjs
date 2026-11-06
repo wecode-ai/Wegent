@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { readMcpToolOutput } from './mcp-tool-results.mjs'
+import { readStoryTaskEvidence } from './stand-in-private-story-evidence.mjs'
 import {
   assistantMessage,
   createSse,
@@ -203,14 +204,21 @@ export function createMeetingUserStory(options) {
           assert.ok(answer.content.includes(value), `The primary outcome must contain ${value}`)
         const worker = await rpc(control, 'runtime.tasks.get', { taskId: workerTaskId })
         assert.equal(worker.task.status, 'done')
-        const completion = worker.task.runtimeHandle.standInResult
+        const evidence = await storyUntil(
+          () => readStoryTaskEvidence(options.executorHome, workerTaskId),
+          value => Boolean(value?.receipt),
+          options.modelResponseTimeoutMs,
+          'Read the actual private outbox receipt without exposing it through the public task API'
+        )
+        const completion = evidence.completion
         assert.equal(completion.status, 'done')
+        assert.equal(completion.turnId, evidence.lastTurnId)
         assert.equal(completion.turnId, worker.task.runtimeHandle.lastTurnId)
         assert.deepEqual(completion.generation.reportTo, {
           userId: STORY_USER,
           taskId: STORY_PRIMARY,
         })
-        const receipt = worker.task.runtimeHandle.standInResultReceipt
+        const receipt = evidence.receipt
         assert.ok(receipt)
         assert.deepEqual(
           [...reports],

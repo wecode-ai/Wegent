@@ -40,6 +40,7 @@ export function createDesktopScenario({
   const rpc = (control, method, params) => requestExecutor(control, method, params, uiTimeoutMs)
   const meetingStory = createMeetingUserStory({
     rpc,
+    executorHome,
     workspacePath,
     modelResponseTimeoutMs,
     captureScreenshot,
