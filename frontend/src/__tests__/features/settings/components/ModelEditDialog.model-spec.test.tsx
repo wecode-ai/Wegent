@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import React from 'react'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import ModelEditDialog from '@/features/settings/components/ModelEditDialog'
 import { modelApis, type ModelCRD, type UnifiedModel } from '@/apis/models'
@@ -88,6 +88,54 @@ const existingModel: ModelCRD = {
 describe('ModelEditDialog model spec modes', () => {
   beforeEach(() => {
     jest.restoreAllMocks()
+  })
+
+  it('allows scrolling model options while keeping the surrounding dialog locked', async () => {
+    const user = userEvent.setup()
+    const onClose = jest.fn()
+    render(<ModelEditDialog open onClose={onClose} toast={jest.fn()} />)
+    const dialog = screen.getByRole('dialog', { name: 'common:models.create_title' })
+    const modelIdSelect = within(dialog).getByTestId('model-id-select')
+    await user.click(modelIdSelect)
+    const modelOption = await screen.findByText('gpt-4o (Recommended)', { exact: true })
+    const viewport = modelOption.parentElement!
+
+    // JSDOM has no layout; supply only the viewport bounds read by real RemoveScroll.
+    Object.defineProperties(viewport, {
+      clientHeight: { value: 200 },
+      scrollHeight: { value: 600 },
+    })
+    viewport.scrollTop = 100
+
+    const wheel = createEvent.wheel(modelOption, { deltaY: 40, cancelable: true })
+    fireEvent(modelOption, wheel)
+
+    fireEvent.touchStart(viewport, {
+      touches: [{ clientX: 0, clientY: 100 }],
+      changedTouches: [{ clientX: 0, clientY: 100 }],
+    })
+    const touchMove = createEvent.touchMove(viewport, {
+      touches: [{ clientX: 0, clientY: 60 }],
+      changedTouches: [{ clientX: 0, clientY: 60 }],
+      cancelable: true,
+    })
+    fireEvent(viewport, touchMove)
+    expect({ wheel: wheel.defaultPrevented, touchMove: touchMove.defaultPrevented }).toEqual({
+      wheel: false,
+      touchMove: false,
+    })
+
+    const outsideWheel = createEvent.wheel(dialog, { deltaY: 40, cancelable: true })
+    fireEvent(dialog, outsideWheel)
+    expect(outsideWheel.defaultPrevented).toBe(true)
+
+    const search = screen.getByPlaceholderText('common:models.search_model_id')
+    await user.type(search, 'gpt')
+    expect(search).toHaveFocus()
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(modelIdSelect).toHaveFocus())
+    expect(modelIdSelect).toHaveAttribute('aria-expanded', 'false')
+    expect(onClose).not.toHaveBeenCalled()
   })
 
   it('creates a model with a vision sidecar using options outside the scrolling dialog', async () => {

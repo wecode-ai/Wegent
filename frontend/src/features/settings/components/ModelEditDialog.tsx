@@ -2079,7 +2079,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                       )}
                     </Button>
                   </div>
-                  <Popover open={modelIdPopoverOpen} onOpenChange={setModelIdPopoverOpen}>
+                  <Popover modal open={modelIdPopoverOpen} onOpenChange={setModelIdPopoverOpen}>
                     <PopoverTrigger asChild>
                       <Button
                         variant="outline"
