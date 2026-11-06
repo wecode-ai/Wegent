@@ -99,6 +99,31 @@ test.each(['csv', 'tsv'])('keeps %s attachments in the read-only table viewer', 
   expect(codeViewMocks.render).not.toHaveBeenCalled()
 })
 
+test('retries a failed text attachment read and displays the complete read-only file', async () => {
+  const content = '完整文本\n'.repeat(30000)
+  const loadFile = vi
+    .fn()
+    .mockRejectedValueOnce(new Error('Attachment is temporarily unavailable'))
+    .mockResolvedValueOnce(new Blob([content], { type: 'text/plain' }))
+  render(
+    <WorkspaceAttachmentPreview
+      source={{ filename: 'clipboard.txt', contentType: 'text/plain', loadFile }}
+    />
+  )
+  expect(await screen.findByText('Attachment is temporarily unavailable')).toBeInTheDocument()
+  fireEvent.click(screen.getByTestId('workspace-file-preview-retry-button'))
+  await waitFor(() =>
+    expect(codeViewMocks.render).toHaveBeenCalledWith(
+      expect.objectContaining({
+        items: [expect.objectContaining({ file: expect.objectContaining({ contents: content }) })],
+      })
+    )
+  )
+  expect(loadFile).toHaveBeenCalledTimes(2)
+  expect(screen.queryByTestId('workspace-file-editor')).not.toBeInTheDocument()
+  expect(screen.getByTestId('composer-attachment-preview-download')).toBeEnabled()
+})
+
 test('copies the complete file after selecting all lines with the keyboard shortcut', () => {
   const content = Array.from({ length: 200 }, (_, index) => `第 ${index + 1} 行`).join('\n')
 

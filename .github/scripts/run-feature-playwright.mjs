@@ -1,6 +1,9 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { executorProjects } from "./ci-feature-policy.mjs";
+import {
+  executorProjectGroups,
+  executorProjects,
+} from "./ci-feature-policy.mjs";
 
 export function playwrightInvocation(plan, args) {
   if (plan.errors.length)
@@ -15,15 +18,28 @@ export function playwrightInvocation(plan, args) {
     : undefined;
   let files;
   let bucket;
-  if (projects.some((project) => executorProjects.includes(project))) {
+  const executorGroup = executorProjectGroups.find((group) =>
+    projects.some((project) => group.includes(project)),
+  );
+  if (executorGroup) {
+    if (
+      projects.some(
+        (project) =>
+          executorProjects.includes(project) &&
+          !executorGroup.includes(project),
+      )
+    )
+      throw new Error(
+        "Executor phases with different Backend configuration require separate invocations",
+      );
     const specs = plan.specs.filter((spec) =>
-      executorProjects.includes(spec.project),
+      executorGroup.includes(spec.project),
     );
     files = specs.map((spec) => spec.file);
     const selectedProjects = new Set(specs.map((spec) => spec.project));
     args = [
       ...args.filter((arg) => !arg.startsWith("--project=")),
-      ...executorProjects
+      ...executorGroup
         .filter((project) => selectedProjects.has(project))
         .map((project) => `--project=${project}`),
     ];

@@ -1,7 +1,8 @@
-export const executorProjects = [
-  "executor-device-chromium",
-  "executor-chromium",
+export const executorProjectGroups = [
+  ["executor-device-chromium", "executor-chromium"],
+  ["executor-stalled-chromium"],
 ];
+export const executorProjects = executorProjectGroups.flat();
 
 // Order specific boundaries before their shared owners. Unknown code fails closed.
 export const sourceRules = [

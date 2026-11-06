@@ -383,6 +383,10 @@
           "project": "executor-device-chromium"
         },
         {
+          "file": "tasks/chat-stalled-execution.spec.ts",
+          "project": "executor-stalled-chromium"
+        },
+        {
           "file": "tasks/claude-background-lifecycle.spec.ts",
           "project": "executor-chromium"
         },

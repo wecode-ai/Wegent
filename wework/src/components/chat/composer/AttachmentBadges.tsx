@@ -6,10 +6,11 @@ import type { Attachment, AttachmentUploadProgress } from '@/types/api'
 import type { CodeCommentContext } from '@/types/workspace-files'
 import { useAttachmentImageServices } from '../useAttachmentImageServices'
 import { CodeCommentPreview } from '../CodeCommentPreview'
-import { useComposerAttachmentPreview } from './ComposerAttachmentPreview'
+import { useAttachmentPreview } from '../useAttachmentPreview'
+import { isTextAttachment } from '@/lib/attachments'
 import { openLocalFileInWorkspaceApp } from '@/lib/local-terminal'
 
-// These formats use the composer's viewer branch; ordinary local files use the host opener.
+// Text and supported rich formats use the shared attachment preview.
 const previewFileExtension = /\.(csv|docx|ipynb|pdf|pptx|tex|tsv|xlsm|xlsx|mp4|ogv|webm)$/i
 
 interface AttachmentBadgesProps {
@@ -70,13 +71,14 @@ export function AttachmentBadges({
 }: AttachmentBadgesProps) {
   const { t } = useTranslation('common')
   const imageServices = useAttachmentImageServices()
-  const openPreview = useComposerAttachmentPreview()
+  const openPreview = useAttachmentPreview()
   const [openError, setOpenError] = useState<{ filename: string; message: string } | null>(null)
   const openAttachment = async (attachment: Attachment) => {
     setOpenError(null)
     if (
       attachment.local_path &&
       !attachment.workspace_file &&
+      !isTextAttachment(attachment) &&
       !previewFileExtension.test(attachment.filename)
     ) {
       try {
@@ -90,6 +92,7 @@ export function AttachmentBadges({
       return
     }
     try {
+      if (!openPreview) throw new Error('Attachment preview panel is unavailable')
       openPreview(attachment)
     } catch (error) {
       setOpenError({

@@ -21,6 +21,7 @@ import {
 import { assertCurrentPlan, buildPlan } from "./ci-feature-plan.mjs";
 import {
   ciLabels,
+  executorProjectGroups,
   executorProjects,
   integrationChecks,
 } from "./ci-feature-policy.mjs";
@@ -559,12 +560,51 @@ test("Executor labels select the matching Playwright projects", () => {
   const runtime = playwrightInvocation(planFor([], ["ci:runtime"]).plan, args);
   assert.deepEqual(
     runtime.filter((arg) => arg.startsWith("--project=")),
-    executorProjects.map((project) => `--project=${project}`),
+    executorProjectGroups[0].map((project) => `--project=${project}`),
   );
   assert(
     runtime.some((arg) =>
       arg.endsWith("claude-background-lifecycle\\.spec\\.ts$"),
     ),
+  );
+});
+
+test("stalled execution coverage retains its isolated short-threshold Backend phase", () => {
+  const { plan, outputs } = planFor([], ["ci:runtime"]);
+  const file = "tasks/chat-stalled-execution.spec.ts";
+  assert.equal(catalog.specOwners.get(file).feature, "runtime");
+  assert.equal(outputs.executor_suite, "true");
+  const regular = playwrightInvocation(plan, ["--project=executor-chromium"]);
+  assert(!regular.includes("--project=executor-stalled-chromium"));
+  assert(
+    !regular.some((argument) => argument.includes("chat-stalled-execution")),
+  );
+  const args = [
+    "--project=executor-stalled-chromium",
+    "--output=test-results-stalled",
+  ];
+  const stalled = playwrightInvocation(plan, args);
+  assert.deepEqual(
+    stalled.filter((argument) => argument.startsWith("--project=")),
+    [args[0]],
+  );
+  assert(stalled.includes(args[1]));
+  assert(
+    stalled.some((argument) =>
+      argument.endsWith("chat-stalled-execution\\.spec\\.ts$"),
+    ),
+  );
+  assert.equal(
+    playwrightInvocation(planFor([], ["ci:workspace"]).plan, args),
+    null,
+  );
+  assert.deepEqual(
+    playwrightInvocation(planFor([], ["ci:all"]).plan, args),
+    args,
+  );
+  assert.throws(
+    () => playwrightInvocation(plan, [args[0], "--project=executor-chromium"]),
+    /separate invocations/,
   );
 });
 

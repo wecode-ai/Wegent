@@ -70,13 +70,14 @@ export function managerActivityPresentation(
   const assignments = managerAssignments(metadata);
   if (assignments.length) {
     return {
-      label: translate("activity.task_activity_manager_dispatched", undefined, {
-        assignments: assignments
-          .map(
-            ({ assigneeName, taskTitle }) => `${taskTitle} → ${assigneeName}`,
-          )
-          .join("；"),
-      }),
+      label: assignments
+        .map(({ assigneeName, taskTitle }) =>
+          translate("activity.task_activity_manager_dispatched", undefined, {
+            task: taskTitle,
+            assignee: assigneeName,
+          }),
+        )
+        .join(translate("activity.task_activity_manager_assignment_separator")),
       planning: false,
     };
   }
