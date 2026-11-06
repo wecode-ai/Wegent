@@ -33,6 +33,7 @@ function createContext() {
   const fillAlphas: number[] = []
   const context = {
     globalAlpha: 1,
+    globalCompositeOperation: 'source-over',
     fillAlphas,
     setTransform: vi.fn(),
     resetTransform: vi.fn(),
@@ -45,8 +46,8 @@ function createContext() {
     beginPath: vi.fn(),
     moveTo: vi.fn(),
     lineTo: vi.fn(),
-    arc: vi.fn(),
-    fill: vi.fn<(path: FakePath2D) => void>(),
+    arc: vi.fn<(x: number, y: number, radius: number, start: number, end: number) => void>(),
+    fill: vi.fn<(path?: FakePath2D) => void>(),
     stroke: vi.fn(),
     clip: vi.fn(),
     drawImage: vi.fn(),
@@ -55,8 +56,8 @@ function createContext() {
     createRadialGradient: vi.fn(gradient),
     getImageData: vi.fn(() => ({ data: pixels })),
   }
-  context.fill.mockImplementation(() => {
-    fillAlphas.push(context.globalAlpha)
+  context.fill.mockImplementation(path => {
+    if (path) fillAlphas.push(context.globalAlpha)
   })
   return context
 }
@@ -78,7 +79,7 @@ function createClassList() {
 async function createAnimationFixture(
   reducedMotion = false,
   dimensions = { width: 1200, height: 680 },
-  options: { footerTop?: number; pixelRatio?: number } = {}
+  options: { footerTop?: number; pixelRatio?: number; theme?: 'light' | 'dark' } = {}
 ) {
   const electronRoot =
     basename(process.cwd()) === 'electron' ? process.cwd() : join(process.cwd(), 'electron')
@@ -138,7 +139,7 @@ async function createAnimationFixture(
   const documentListeners = new Map<string, () => void>()
   const document = {
     hidden: false,
-    documentElement: { dataset: { theme: 'dark' } },
+    documentElement: { dataset: { theme: options.theme ?? 'dark' } },
     createElement: createCanvas,
     addEventListener: vi.fn((event: string, listener: () => void) => {
       documentListeners.set(event, listener)
@@ -242,6 +243,80 @@ async function createAnimationFixture(
 
 describe('startup brand animation lifecycle', () => {
   test.each([
+    { theme: 'light' as const, blend: 'source-over', highlight: '#369fdf', head: '106,200,245' },
+    { theme: 'dark' as const, blend: 'source-over', highlight: '#74d5ff', head: '230,249,255' },
+  ])('keeps strands visible on the $theme surface without changing playback', async options => {
+    const { animation, contexts, step, brand, frames } = await createAnimationFixture(
+      false,
+      { width: 1200, height: 680 },
+      options
+    )
+    step(0)
+    step(2000)
+    expect(contexts[0].globalCompositeOperation).toBe(options.blend)
+    const gradients = contexts[0].createLinearGradient.mock.results.map(result => result.value)
+    expect(
+      gradients.some(gradient =>
+        gradient.addColorStop.mock.calls.some(
+          ([offset, color]) => offset === 0 && color === options.highlight
+        )
+      )
+    ).toBe(true)
+    expect(
+      gradients.some(gradient =>
+        gradient.addColorStop.mock.calls.some(
+          ([offset, color]) => offset === 1 && String(color).includes(`rgba(${options.head},`)
+        )
+      )
+    ).toBe(true)
+    expect(brand.classList.contains('is-breathing')).toBe(false)
+    step(5600)
+    expect(brand.classList.contains('is-breathing')).toBe(true)
+    expect(frames.size).toBe(0)
+    await animation.complete(0)
+    expect(brand.classList.contains('is-breathing')).toBe(false)
+    animation.destroy()
+  })
+
+  test.each(['light', 'dark'] as const)(
+    'removes meteor heads before they enter any glyph on the %s surface',
+    async theme => {
+      const { animation, contexts, contours, step } = await createAnimationFixture(
+        false,
+        { width: 1200, height: 680 },
+        { theme }
+      )
+      const points = contours.flatMap(contour => contour.points)
+      const centerX = (Math.min(...points.map(p => p[0])) + Math.max(...points.map(p => p[0]))) / 2
+      const centerY = (Math.min(...points.map(p => p[1])) + Math.max(...points.map(p => p[1]))) / 2
+      const insideGlyph = (x: number, y: number) =>
+        contours.some(({ points: polygon }) => {
+          let inside = false
+          for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+            const [ax, ay] = polygon[i]
+            const [bx, by] = polygon[j]
+            if (ay > y !== by > y && x < ((bx - ax) * (y - ay)) / (by - ay) + ax) inside = !inside
+          }
+          return inside
+        })
+      let incomingHeads = 0
+      step(0)
+      for (let time = 100; time <= 4500; time += 100) {
+        contexts[0].arc.mockClear()
+        step(time)
+        const heads = contexts[0].arc.mock.calls.filter(([, , radius]) => radius > 1.2)
+        incomingHeads += heads.length
+        for (const [x, y] of heads) {
+          expect(insideGlyph(x / 1.12 + centerX, y / 1.12 + centerY)).toBe(false)
+        }
+      }
+      expect(incomingHeads).toBeGreaterThan(0)
+      expect(contexts[0].arc.mock.calls.every(([, , radius]) => radius <= 1.2)).toBe(true)
+      animation.destroy()
+    }
+  )
+
+  test.each([
     { width: 1440, height: 960, footerTop: 840, pixelRatio: 1 },
     { width: 1440, height: 384, footerTop: 264, pixelRatio: 1 },
     { width: 900, height: 520, footerTop: 392, pixelRatio: 2 },
@@ -257,7 +332,7 @@ describe('startup brand animation lifecycle', () => {
       const [scale, , , scaleY, offsetX, offsetY] = contexts[0].setTransform.mock.calls.at(-1)!
       expect(scale).toBeGreaterThan(0)
       expect(scaleY).toBe(scale)
-      const logo = contexts[0].fill.mock.calls.at(-1)![0]
+      const logo = contexts[0].fill.mock.calls.at(-1)![0]!
       const [x, y] = contexts[0].translate.mock.calls.at(-1)!
       const points = logo.points.map(point => ({
         x: canvas.width / 2 + ((point.x + x) * scale + offsetX - canvas.width / 2) * 1.018,
@@ -306,7 +381,7 @@ describe('startup brand animation lifecycle', () => {
     expect(contexts[0].fillAlphas.at(-1)).toBe(resumed)
     expect(canvas.width).toBe(1800)
     expect(canvas.height).toBe(1200)
-    expect(contexts).toHaveLength(3)
+    expect(contexts).toHaveLength(1)
     expect(frames.size).toBe(1)
     step(5600)
     expect(brand.classList.contains('is-breathing')).toBe(true)
@@ -398,7 +473,7 @@ describe('startup brand animation lifecycle', () => {
 
     const originX = canvas.width * 0.5
     const originY = canvas.height * 0.5
-    const logo = contexts[0].fill.mock.calls.at(-1)![0]
+    const logo = contexts[0].fill.mock.calls.at(-1)![0]!
     const [centerX, centerY] = contexts[0].translate.mock.calls.at(-1)!
     const unscaled = logo.points.map(point => ({
       x: (point.x + centerX) * scaleX + offsetX,
@@ -448,10 +523,10 @@ describe('startup brand animation lifecycle', () => {
     step(0)
     step(1_000)
     animation.setPaused(true)
-    const drawCount = contexts[0].drawImage.mock.calls.length
+    const drawCount = contexts[0].fill.mock.calls.length
 
     step(20_000)
-    expect(contexts[0].drawImage).toHaveBeenCalledTimes(drawCount)
+    expect(contexts[0].fill).toHaveBeenCalledTimes(drawCount)
     expect(brand.classList.contains('is-breathing')).toBe(false)
     expect(frames.size).toBe(0)
 
@@ -460,7 +535,7 @@ describe('startup brand animation lifecycle', () => {
     expect(frames.size).toBe(1)
     step(20_016)
     expect(brand.classList.contains('is-breathing')).toBe(false)
-    expect(contexts[0].drawImage.mock.calls.length).toBeGreaterThan(drawCount)
+    expect(contexts[0].fill.mock.calls.length).toBeGreaterThan(drawCount)
     step(24_616)
     expect(brand.classList.contains('is-breathing')).toBe(true)
     expect(frames.size).toBe(0)
@@ -470,7 +545,7 @@ describe('startup brand animation lifecycle', () => {
   test('renders a stable completed mark when reduced motion is initially enabled', async () => {
     const { animation, brand, contexts, frames } = await createAnimationFixture(true)
 
-    expect(contexts[0].drawImage).toHaveBeenCalled()
+    expect(contexts[0].fill).toHaveBeenCalled()
     expect(brand.classList.contains('is-breathing')).toBe(false)
     expect(frames.size).toBe(0)
     animation.setPaused(true)
@@ -598,14 +673,14 @@ describe('startup brand animation lifecycle', () => {
     const rejection = expect(completion).rejects.toThrow('completion was interrupted')
     step(1_050)
     const pose = canvas.style.transform
-    const drawCount = contexts[0].drawImage.mock.calls.length
+    const drawCount = contexts[0].fill.mock.calls.length
 
     animation.setPaused(true)
     await rejection
     step(20_000)
 
     expect(frames.size).toBe(0)
-    expect(contexts[0].drawImage).toHaveBeenCalledTimes(drawCount)
+    expect(contexts[0].fill).toHaveBeenCalledTimes(drawCount)
     expect(canvas.style.transform).toBe(pose)
     animation.destroy()
   })
@@ -657,12 +732,12 @@ describe('startup brand animation lifecycle', () => {
     step(0)
     const completion = animation.complete()
     animation.destroy()
-    const drawCount = contexts[0].drawImage.mock.calls.length
+    const drawCount = contexts[0].fill.mock.calls.length
 
     await expect(completion).resolves.toBeUndefined()
     await expect(animation.complete()).resolves.toBeUndefined()
     step(1_000)
-    expect(contexts[0].drawImage).toHaveBeenCalledTimes(drawCount)
+    expect(contexts[0].fill).toHaveBeenCalledTimes(drawCount)
     expect(frames.size).toBe(0)
   })
 
@@ -683,7 +758,7 @@ describe('startup brand animation lifecycle', () => {
 
     animation.destroy()
     animation.destroy()
-    const drawCount = contexts[0].drawImage.mock.calls.length
+    const drawCount = contexts[0].fill.mock.calls.length
     expect(frames.size).toBe(0)
     expect(resizeObserver.disconnect).toHaveBeenCalledOnce()
     expect(media.removeEventListener).toHaveBeenCalledWith('change', expect.any(Function))
@@ -698,6 +773,6 @@ describe('startup brand animation lifecycle', () => {
     setHidden(false)
     step(20_000)
     expect(frames.size).toBe(0)
-    expect(contexts[0].drawImage).toHaveBeenCalledTimes(drawCount)
+    expect(contexts[0].fill).toHaveBeenCalledTimes(drawCount)
   })
 })
