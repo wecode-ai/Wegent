@@ -1105,23 +1105,15 @@ async function verifyMarketplacePluginLifecycle({
     await control.command('reconcileLocalPluginCatalog', 'body')
     const reconciledAt = Date.now()
     blockingNetworkProxy.block()
-    let blockedRequestCount
-    let blockedConnectionCount
-    let importStartedAt
-    const importQueuedAt = Date.now()
+    const blockedRequestCount = blockingNetworkProxy.requests.length
+    const blockedConnectionCount = blockingNetworkProxy.connections.length
+    const importStartedAt = Date.now()
     const imported = JSON.parse(
       await control.command('importPluginPackage', 'body', {
         value: JSON.stringify({ preview, overwrite: false }),
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-        onDispatch() {
-          // Queue cooldown belongs to proxy/Codex setup, not the local mutation.
-          blockedRequestCount = blockingNetworkProxy.requests.length
-          blockedConnectionCount = blockingNetworkProxy.connections.length
-          importStartedAt = Date.now()
-        },
       })
     )
-    assert.ok(Number.isFinite(importStartedAt), 'The import dispatch boundary was not observed')
     const importElapsedMs = Date.now() - importStartedAt
     await control.awaitTelemetryEvent('plugin_zip_import_succeeded')
     assert.equal(imported.pluginName, 'direct-remote-mcp-plugin')
@@ -1180,7 +1172,6 @@ async function verifyMarketplacePluginLifecycle({
       reconciledAt,
       blockedRequestCount,
       blockedConnectionCount,
-      importQueuedAt,
       importStartedAt,
       importElapsedMs,
       deleteStartedAt,
