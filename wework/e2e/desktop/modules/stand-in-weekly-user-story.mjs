@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
 import { readMcpToolOutput } from './mcp-tool-results.mjs'
 import { until } from './plugin-regression-fixture.mjs'
+import { readStoryTaskEvidence } from './stand-in-private-story-evidence.mjs'
 import { openConnectionTypePicker } from './stand-in-flows.mjs'
 import {
   assistantMessage,
@@ -192,15 +193,18 @@ export function createWeeklyUserStory(options) {
           timeoutMs: options.modelResponseTimeoutMs,
         })
         const child = await until(
-          () => rpc('runtime.tasks.get', { taskId: run.taskId }),
-          result => Boolean(result.task?.runtimeHandle.standInResultReceipt),
+          () => readStoryTaskEvidence(options.executorHome, run.taskId),
+          result => Boolean(result?.receipt),
           'The exact scheduled completion must persist its parent delivery receipt',
           options.modelResponseTimeoutMs
         )
-        const receipt = child.task.runtimeHandle.standInResultReceipt
-        const completion = child.task.runtimeHandle.standInResult
+        const receipt = child.receipt
+        const completion = child.completion
         assert.equal(completion.status, 'done')
-        assert.equal(completion.turnId, child.task.runtimeHandle.lastTurnId)
+        const publicChild = (await rpc('runtime.tasks.get', { taskId: run.taskId })).task
+        assert.equal(publicChild.status, 'done')
+        assert.equal(publicChild.runtimeHandle.lastTurnId, completion.turnId)
+        assert.equal(completion.turnId, child.lastTurnId)
         assert.ok(completion.turnId)
         assert.deepEqual(completion.generation.reportTo, { userId: USER, taskId: PRIMARY })
         assert.equal(deliveries.get(receipt), run.taskId)

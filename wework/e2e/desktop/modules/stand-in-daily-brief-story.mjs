@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { readMcpToolOutput } from './mcp-tool-results.mjs'
+import { readStoryTaskEvidence } from './stand-in-private-story-evidence.mjs'
 import {
   STORY_USER,
   STORY_PRIMARY,
@@ -205,19 +206,19 @@ export function createDailyBriefStory(options) {
         )
         await assertStoryPrimaryOutcome(control, rpc, state.report, options.modelResponseTimeoutMs)
         const child = await storyUntil(
-          () => rpc('runtime.tasks.get', { taskId: state.taskId }),
-          result => Boolean(result.task?.runtimeHandle.standInResultReceipt),
+          () => readStoryTaskEvidence(options.executorHome, state.taskId),
+          result => Boolean(result?.receipt),
           options.modelResponseTimeoutMs,
           'The brief must persist the exact native parent-delivery receipt'
         )
-        assert.equal(child.task.runtimeHandle.standInResult.status, 'done')
-        assert.equal(
-          child.task.runtimeHandle.standInResult.generation.delegation.sourceTaskId,
-          STORY_PRIMARY
-        )
-        assert.deepEqual(child.task.runtimeHandle.executionRequest.standInDelegation.readSources, [
-          state.source,
-        ])
+        assert.equal(child.completion.status, 'done')
+        const publicChild = (await rpc('runtime.tasks.get', { taskId: state.taskId })).task
+        assert.equal(publicChild.status, 'done')
+        assert.equal(publicChild.runtimeHandle.lastTurnId, child.completion.turnId)
+        assert.equal(child.completion.turnId, child.lastTurnId)
+        assert.ok(child.completion.turnId)
+        assert.equal(child.completion.generation.delegation.sourceTaskId, STORY_PRIMARY)
+        assert.deepEqual(child.delegation.readSources, [state.source])
         assert.equal(
           (await mail.received()).length,
           smtpBefore,

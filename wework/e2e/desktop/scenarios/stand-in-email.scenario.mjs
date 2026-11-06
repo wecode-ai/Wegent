@@ -29,6 +29,7 @@ const CARD = '[data-testid="request-user-input-card"]'
 export function createDesktopScenario({
   resultDir,
   workspacePath,
+  executorHome,
   captureScreenshot,
   uiTimeoutMs,
   modelResponseTimeoutMs,
@@ -40,6 +41,7 @@ export function createDesktopScenario({
   let originalSettings
   let messageId
   const dailyStory = createDailyBriefStory({
+    executorHome,
     captureScreenshot,
     uiTimeoutMs,
     modelResponseTimeoutMs,
