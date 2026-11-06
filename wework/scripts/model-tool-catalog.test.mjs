@@ -209,7 +209,7 @@ test('uses the latest native exec definition across incremental Lite catalog upd
   expect(() => discoverySelection({ ...request, tools: [entry] }, 'get_goal')).toThrow()
 })
 
-test('keeps the actual structured MCP result and rejects native MCP errors', async () => {
+test('keeps actual structured results and native permission-denial text', async () => {
   const selection = programmaticSelection(variants[0], 'model_only', {})
   const input = inputOf(finalCall(selectedToolCall('ordinary', selection)))
   const catalog = [{ name: 'mcp__counter__model_only' }]
@@ -220,7 +220,13 @@ test('keeps the actual structured MCP result and rejects native MCP errors', asy
   expect(await run(input, catalog, { mcp__counter__model_only: async () => result })).toEqual([
     { count: 0 },
   ])
-  await expect(
-    run(input, catalog, { mcp__counter__model_only: async () => ({ isError: true, content: [] }) })
-  ).rejects.toThrow('isError')
+  const denied = 'Backend request failed (403 Forbidden): {"detail":"Insufficient permission"}'
+  expect(
+    await run(input, catalog, {
+      mcp__counter__model_only: async () => ({
+        isError: true,
+        content: [{ type: 'text', text: denied }],
+      }),
+    })
+  ).toEqual([denied])
 })

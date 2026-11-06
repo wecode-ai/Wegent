@@ -36,7 +36,7 @@ export function programmaticInput(name, args) {
           'text(result.output)',
         ]
       : [
-          'if (result?.isError) throw new Error(JSON.stringify(result)); if (result?.structuredContent !== undefined) text(result.structuredContent); else if (Array.isArray(result?.content)) { for (const part of result.content) { if (part.type === "text") text(part.text); else if (part.type === "image") image(part) } } else text(result)',
+          'if (result?.structuredContent !== undefined) text(result.structuredContent); else if (Array.isArray(result?.content)) { for (const part of result.content) { if (part.type === "text") text(part.text); else if (part.type === "image") image(part) } } else text(result)',
         ]),
   ].join('\n')
 }
