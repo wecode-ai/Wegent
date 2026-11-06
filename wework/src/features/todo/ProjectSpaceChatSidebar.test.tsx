@@ -177,6 +177,7 @@ describe('ProjectSpaceChatSidebar', () => {
         />
       )
       expect(mocks.readLocalIdentity).not.toHaveBeenCalled()
+      expect(screen.queryByTestId('project-space-chat-runtime-project')).not.toBeInTheDocument()
       await userEvent.click(screen.getByTestId('project-space-chat-new'))
       await userEvent.click(screen.getByTestId('mock-chat-send'))
       await waitFor(() => expect(mocks.createProjectRuntimeTask).toHaveBeenCalledOnce())

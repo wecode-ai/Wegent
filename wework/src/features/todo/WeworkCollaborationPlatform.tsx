@@ -6,6 +6,7 @@ import { bindProjectStandInApi } from '@/api/standIn'
 import { WorkspaceRunnerRegistrationDialog } from '@/features/collaboration/WorkspaceRunnerRegistrationDialog'
 import { ProjectCoordinatorConversation } from './ProjectCoordinatorConversation'
 import { ProjectSpaceChatSidebar } from './ProjectSpaceChatSidebar'
+import { MessageSquare } from 'lucide-react'
 import { StandInPopover } from './StandInPopover'
 import { navigateTo } from '@/lib/navigation'
 import { createLocalWorkspaceApi, LOCAL_WORKSPACE_ID } from './localWorkspaceApi'
@@ -377,6 +378,7 @@ export function WeworkSharedProject({
   onCancelRuntimeTask,
   project,
   conversationRequestKey,
+  onOpenProjectConversation,
   runtimeTaskLifecycle,
   runtimeWork,
   runtimePort,
@@ -404,6 +406,7 @@ export function WeworkSharedProject({
   sendRuntimePaneMessage?: WorkbenchContextValue['sendRuntimePaneMessage']
   project: CollaborationProject
   conversationRequestKey?: string
+  onOpenProjectConversation?(): void
   runtimeTaskLifecycle?: RuntimeTaskLifecycleStoreSnapshot
   runtimeWork?: RuntimeWorkListResponse | null
   runtimePort?: IssueRuntimeBindingPort
@@ -544,6 +547,23 @@ export function WeworkSharedProject({
   )
   const projectHost = useMemo<CollaborationHostAdapter>(
     () => ({
+      renderBoardToolbarAction: onOpenProjectConversation
+        ? () => (
+            <button
+              type="button"
+              data-testid="project-space-chat-open"
+              aria-expanded={projectChatOpen}
+              onClick={() => {
+                if (projectChatOpen) setClosedConversationRequestKey(conversationRequestKey)
+                else onOpenProjectConversation()
+              }}
+              className="inline-flex min-h-11 shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border border-border bg-background px-3 text-sm text-text-secondary hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
+            >
+              <MessageSquare className="h-4 w-4" aria-hidden="true" />
+              {t('workbench.project_space_chat.open')}
+            </button>
+          )
+        : undefined,
       renderProjectHeaderAction: currentProject => (
         <div className="flex items-center gap-2">
           {experimentalFeaturesEnabled && (
@@ -637,6 +657,10 @@ export function WeworkSharedProject({
       focusedItemId,
       devices,
       experimentalFeaturesEnabled,
+      onOpenProjectConversation,
+      projectChatOpen,
+      conversationRequestKey,
+      t,
       standInWorkspaceApi,
       scopedApi,
       onOpenRuntimeTask,
@@ -1412,6 +1436,17 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
     accountScope: string
     key: string
   }>()
+  const openProjectConversation = useCallback(
+    (project: CollaborationProject) => {
+      setConversationRequest({
+        projectId: project.id,
+        projectStore: project.project_store,
+        accountScope: templateScope,
+        key: crypto.randomUUID(),
+      })
+    },
+    [templateScope]
+  )
   const api = props.services.sharedWorkspaceApi
   const locale = useMemo(() => (i18n.language.startsWith('zh') ? 'zh-CN' : 'en'), [i18n.language])
   const collaborationUserName =
@@ -1681,14 +1716,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
           accountScope: templateScope,
           templateStore,
           templateNavigation: true,
-          openProjectConversation: project => {
-            setConversationRequest({
-              projectId: project.id,
-              projectStore: project.project_store,
-              accountScope: templateScope,
-              key: crypto.randomUUID(),
-            })
-          },
+          openProjectConversation,
           renderProjectSidebarBadge: project => {
             const enabled = standInProjects.has(
               `${project.project_store === 'local' ? 'local' : 'cloud'}:${project.id}`
@@ -2001,6 +2029,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
               onOpenRuntimeTask={props.onOpenRuntimeTask}
               sendRuntimePaneMessage={props.sendRuntimePaneMessage}
               project={project}
+              onOpenProjectConversation={() => openProjectConversation(project)}
               conversationRequestKey={
                 conversationRequest?.projectId === project.id &&
                 conversationRequest.projectStore === project.project_store &&

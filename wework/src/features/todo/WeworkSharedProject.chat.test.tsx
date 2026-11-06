@@ -12,8 +12,12 @@ vi.mock('@/features/experimental-features/useExperimentalFeaturesEnabled', () =>
 }))
 vi.mock('@wegent/collaboration', async importOriginal => ({
   ...(await importOriginal<typeof import('@wegent/collaboration')>()),
-  CollaborationApp: ({ host, initialProject }: ComponentProps<typeof CollaborationApp>) =>
-    host.renderProjectHeaderAction?.(initialProject!),
+  CollaborationApp: ({ host, initialProject }: ComponentProps<typeof CollaborationApp>) => (
+    <>
+      {host.renderProjectHeaderAction?.(initialProject!)}
+      {host.renderBoardToolbarAction?.(initialProject!)}
+    </>
+  ),
 }))
 vi.mock('./ProjectSpaceChatSidebar', () => ({
   ProjectSpaceChatSidebar: ({
@@ -34,6 +38,7 @@ it.each(['local', 'backend'] as const)(
   'opens and closes the %s project chat without experimental features or group requests',
   async projectStore => {
     const listGroups = vi.fn()
+    const onOpenProjectConversation = vi.fn()
     const project = { id: 'p1', name: 'Current board', project_store: projectStore }
     const props = {
       api: {
@@ -48,13 +53,17 @@ it.each(['local', 'backend'] as const)(
       userId: 1,
       workspace: { id: 'w1', name: 'Workspace' },
       setLocation: vi.fn(),
+      onOpenProjectConversation,
     } as unknown as ComponentProps<typeof WeworkSharedProject>
     const { rerender } = render(<WeworkSharedProject {...props} />)
     const user = userEvent.setup()
     expect(screen.queryByTestId('chat-sidebar')).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('project-space-chat-open'))
+    expect(onOpenProjectConversation).toHaveBeenCalledOnce()
     rerender(<WeworkSharedProject {...props} conversationRequestKey="request-one" />)
     expect(screen.getByTestId('chat-sidebar')).toHaveTextContent(project.name)
     expect(screen.getByTestId('chat-sidebar')).toHaveAttribute('data-local', 'true')
+    expect(screen.getByTestId('project-space-chat-open')).toHaveAttribute('aria-expanded', 'true')
     await user.click(screen.getByTestId('chat-close'))
     expect(screen.queryByTestId('chat-sidebar')).not.toBeInTheDocument()
     rerender(<WeworkSharedProject {...props} conversationRequestKey="request-two" />)

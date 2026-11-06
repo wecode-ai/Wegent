@@ -303,7 +303,11 @@ export function ProjectSpaceChatSidebar({
         </Tooltip>
 
         <div className="flex min-w-0 flex-1 items-center">
-          {showsNewConversationControls ? (
+          {showsNewConversationControls && localExecution ? (
+            <span className="truncate pl-2 text-sm font-medium text-text-primary">
+              {project.name}
+            </span>
+          ) : showsNewConversationControls ? (
             <>
               <span className="shrink-0 pl-2 text-sm font-medium text-text-primary">
                 {t('workbench.project_space_chat.new_conversation_option')}

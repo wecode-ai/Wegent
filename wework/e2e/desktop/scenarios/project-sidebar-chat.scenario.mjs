@@ -54,9 +54,18 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       const project = (await rpc('projects.list', {})).find(row => row.name === PROJECT)
       assert.ok(project)
       assert.equal(project.metadata?.collaboration_groups?.length ?? 0, 0)
-      const open = `${CONTENT} [data-testid="collaboration-project-new-conversation-${project.id}"]`
+      const open = `${CONTENT} [data-testid="project-space-chat-open"]`
       await control.command('clickWhenEnabled', open)
       await control.command('waitFor', CHAT)
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            `${CONTENT} [data-testid="project-space-chat-runtime-project"]`
+          )
+        ),
+        0
+      )
       await selectE2EModel(control, undefined, undefined, CHAT)
       await control.command('fill', `${CHAT} [data-testid="chat-message-input"]`, {
         value: REQUEST,

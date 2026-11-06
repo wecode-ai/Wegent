@@ -2958,6 +2958,29 @@ describe("CollaborationPlatformApp real component flow", () => {
     ).toBeNull();
   });
 
+  it("preserves mention candidates when reselecting the current Issue project", async () => {
+    const { api } = createApi();
+    await render(
+      <PlatformHarness
+        api={api}
+        renderIssueComposer={(props) => (
+          <button
+            data-testid="reselect-issue-project"
+            onClick={() => props.onSelectProject(props.projectId)}
+          >
+            {props.members.map((candidate) => candidate.id).join(",")}
+          </button>
+        )}
+      />,
+    );
+    const candidates = byTestId("reselect-issue-project").textContent;
+    expect(candidates).not.toBe("");
+    await click(byTestId("reselect-issue-project"));
+    expect(byTestId("reselect-issue-project").textContent).toBe(candidates);
+    await click(byTestId("reselect-issue-project"));
+    expect(byTestId("reselect-issue-project").textContent).toBe(candidates);
+  });
+
   it("uses collaboration home as a guided new Issue entry", async () => {
     const { api } = createApi();
     api.projects.listExecutionEnvironments = vi.fn(async () => []);

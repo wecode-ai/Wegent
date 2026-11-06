@@ -1449,12 +1449,7 @@ function IssueHomeLauncher({
       projects={projects}
       workspaces={workspaces}
       projectId={selectedProjectId}
-      onSelectProject={(id) => {
-        setMembers([]);
-        setAgents([]);
-        setMentionIssues([]);
-        onSelectProject(id);
-      }}
+      onSelectProject={onSelectProject}
       translate={translate}
       placeholder={messages.issueHomePlaceholder}
       projectLabel={messages.issueHomeProject}
