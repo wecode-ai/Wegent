@@ -138,7 +138,9 @@ mod command_journal;
 mod concurrency;
 mod connections;
 mod context_compaction;
+mod control;
 mod control_metadata;
+mod creation;
 mod execution_control;
 mod fork_transfer;
 mod git_connections;
@@ -549,6 +551,7 @@ pub struct RuntimeWorkRpcHandler {
     supervisor_evaluating: Arc<Mutex<HashSet<String>>>,
     supervisor_model_configs: Arc<Mutex<HashMap<String, Value>>>,
     runtime_model_configs: Arc<Mutex<HashMap<String, Value>>>,
+    creation_model_profiles: Arc<Mutex<Vec<Value>>>,
     submitted_model_bindings:
         Arc<Mutex<HashMap<String, submitted_model::SubmittedInterfaceBinding>>>,
     local_runner_models: Arc<Mutex<Vec<Value>>>,
@@ -917,6 +920,7 @@ impl RuntimeWorkRpcHandler {
             supervisor_evaluating: Arc::new(Mutex::new(HashSet::new())),
             supervisor_model_configs: Arc::new(Mutex::new(HashMap::new())),
             runtime_model_configs: Arc::new(Mutex::new(HashMap::new())),
+            creation_model_profiles: Arc::new(Mutex::new(Vec::new())),
             submitted_model_bindings: Arc::new(Mutex::new(HashMap::new())),
             local_runner_models: Arc::new(Mutex::new(Vec::new())),
             active_collaboration_rounds: Arc::new(Mutex::new(HashSet::new())),
@@ -960,6 +964,7 @@ impl RuntimeWorkRpcHandler {
         }
         handler.reconcile_command_recovery();
         handler.spawn_archived_delete_worker(archived_delete_rx);
+        crate::workbench_control::register(&handler.device_id, Arc::new(handler.clone()));
         handler
     }
 
@@ -1000,6 +1005,7 @@ impl RuntimeWorkRpcHandler {
         backend_connection: Arc<Mutex<Option<ConnectionConfig>>>,
     ) -> Self {
         self.backend_connection = backend_connection;
+        crate::workbench_control::register(&self.device_id, Arc::new(self.clone()));
         self.start_local_stand_in_scheduler();
         self.start_connection_stand_in_scheduler();
         self.register_cloud_collaboration_dispatcher();
@@ -1222,4 +1228,4 @@ use runtime_rpc::is_allowed_plugin_app_server_method;
 
 #[cfg(test)]
 #[path = "handler/tests.rs"]
-mod tests;
+pub(super) mod tests;

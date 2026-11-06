@@ -30,11 +30,12 @@ mod local_execution;
 mod mcp_elicitation;
 pub(crate) mod native_transcript;
 mod notification_mapping;
+mod reader;
 mod remote_projects;
 mod response;
 mod restored_workspaces;
 mod runtime_handle_messages;
-mod store;
+pub(crate) mod store;
 mod task_create_contract;
 mod transcript;
 pub(crate) use transcript::codex_file_change_content;
@@ -73,7 +74,8 @@ pub(crate) fn runtime_features() -> serde_json::Value {
                 "skills": true,
                 "standaloneWorkspace": true,
                 "workspaceInheritance": true,
-                "worktree": true
+                "worktree": true,
+                "intentCompilation": true
             }
         },
         "interactiveSessions": {
