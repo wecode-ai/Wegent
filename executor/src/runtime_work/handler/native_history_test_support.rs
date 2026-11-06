@@ -52,6 +52,7 @@ pub(in crate::runtime_work::handler) fn install_native_history(
     }
     for (method, response) in [
         ("initialize", json!({"userAgent":"test"})),
+        ("thread_list", json!({"data":[],"nextCursor":null})),
         (
             "thread_read",
             json!({"thread":{"id":"thread-1","cwd":"/tmp/project","historyMode":"paginated"}}),
@@ -79,6 +80,7 @@ while IFS= read -r line; do
   id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
   [ -n "$id" ] || continue
   method=$(printf '%s\n' "$line" | sed -n 's/.*"method":"\([^"]*\)".*/\1/p' | tr '/' '_')
+  case "$method:$line" in thread_list:*'"cursor":"page-2"'*) method=thread_list_page2;; esac
   if [ "$method" = "test_stop" ]; then
     printf '{{"id":%s,"result":{{}}}}\n' "$id"
     exit 0
@@ -115,6 +117,7 @@ done
     break
   }
   $method = $request.method.Replace('/', '_')
+  if ($method -eq 'thread_list' -and $request.params.cursor -eq 'page-2') { $method = 'thread_list_page2' }
   $errorFile = Join-Path $PSScriptRoot ($method + '.error-once.json')
   if (Test-Path $errorFile) {
     $failure = ConvertFrom-Json ([IO.File]::ReadAllText($errorFile))

@@ -502,6 +502,16 @@ mod tests {
     }
 
     #[test]
+    fn archived_task_listing_keeps_python_ownership_beside_rust_task_details() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml");
+        let table = load(&path).unwrap();
+        assert!(table.matches(&Method::GET, "/api/tasks/123"));
+        assert!(table.matches(&Method::GET, "/api/tasks"));
+        assert!(!table.matches(&Method::GET, "/api/tasks/archived"));
+        assert!(!table.matches(&Method::DELETE, "/api/tasks/archived"));
+    }
+
+    #[test]
     fn knowledge_routes_keep_registered_handlers_without_cutover() {
         const PREFIXES: [&str; 8] = [
             "/api/knowledge-bases",

@@ -340,7 +340,7 @@ describe('delegated task completion model routing', () => {
   const output = (callId, history) => ({
     type: 'function_call_output',
     call_id: callId,
-    output: JSON.stringify([{ type: 'input_text', text: JSON.stringify(history) }]),
+    output: [{ type: 'input_text', text: JSON.stringify(history) }],
   })
 
   test('reads the exact real child task before reporting its actual answer', () => {

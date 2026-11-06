@@ -157,11 +157,22 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: 0
       WEGENT_TEST_MYSQL_ADDRESS: 127.0.0.1:3306
       WEGENT_TEST_REDIS_ADDRESS: 127.0.0.1:6379
+      WEGENT_TEST_REDIS_REPLICA_ADDRESS: 127.0.0.1:6380
+      WEGENT_TEST_REDIS_REPLICA_PRIMARY: redis:6379
     services:
       redis:
         image: redis:7-alpine
         ports:
           - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+      redis-replica:
+        image: redis:7-alpine
+        ports:
+          - 6380:6379
         options: >-
           --health-cmd="redis-cli ping"
           --health-interval=5s
@@ -214,6 +225,15 @@ jobs:
           echo 'cargo test --locked' > ../.ci-artifacts/backend-rs-tests/command.txt
           cargo test --locked 2>&1 | tee ../.ci-artifacts/backend-rs-tests/cargo-test.log
 
+      - name: Verify streaming activity recovery with Redis
+        working-directory: backend-rs
+        env:
+          WEGENT_TEST_REDIS_ADDRESS: 127.0.0.1:6379
+        run: |
+          set -o pipefail
+          cargo test --locked --lib streaming_activity_redis_tests -- --ignored --test-threads=1 \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/streaming-activity-redis.log
+
       - name: Test Git connection inbox against real Redis
         working-directory: backend-rs
         env:
@@ -229,6 +249,13 @@ jobs:
           set -o pipefail
           cargo test --locked --lib migrations::mysql_tests -- --ignored --nocapture \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/migrations-mysql.log
+
+      - name: Verify plugin write leases with real Redis replication and MySQL
+        working-directory: backend-rs
+        run: |
+          set -o pipefail
+          cargo test --locked --lib plugins_installed::auto_update::auto_update_mysql_tests -- --ignored --nocapture --test-threads=1 \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/plugin-write-replica-mysql.log
 
       - name: Verify attachment API key authentication with MySQL
         working-directory: backend-rs

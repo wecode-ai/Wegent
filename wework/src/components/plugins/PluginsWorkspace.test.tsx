@@ -1,6 +1,7 @@
 import { authorizeWegentConnector, listWegentConnectorApps } from '@/api/cloud/connectorApps'
 import * as fileHash from '@/api/fileHash'
 import * as codexPlugins from '@/api/local/codexPlugins'
+import { ExpiredPluginInventoryRequest } from '@/api/local/codexInstalledCatalog'
 import {
   clearLocalCodexPluginsReadStateCache,
   createLocalCodexPluginApi,
@@ -9778,6 +9779,74 @@ describe('PluginsWorkspace', () => {
       } finally {
         view.unmount()
         finish()
+      }
+    }
+  )
+
+  test.each(['mutation', 'expired', 'current'] as const)(
+    'only reports a current deferred catalog failure: %s',
+    async outcome => {
+      window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+      mockSystemSkillsFetch({ marketplaceInstalled: true, marketplaceDeviceState: 'installed' })
+      mockCodexAppServerInvoke({ deviceId: 'current-device' })
+      let release!: () => void
+      const gate = new Promise<void>(resolve => {
+        release = resolve
+      })
+      const localApi = createLocalCodexPluginApi()
+      const readState = localApi.readState
+      let started = false
+      let finished = false
+      localApi.readState = async params => {
+        await readState(params)
+        started = true
+        await gate
+        finished = true
+        throw outcome === 'expired'
+          ? new ExpiredPluginInventoryRequest()
+          : new Error('Deferred catalog unavailable')
+      }
+      const factory = vi.spyOn(codexPlugins, 'createLocalCodexPluginApi').mockReturnValue(localApi)
+      const view = render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+      try {
+        await waitFor(() => expect(started).toBe(true))
+        if (outcome === 'mutation') {
+          await userEvent.click(screen.getByTestId('plugin-marketplace-actions-101'))
+          await userEvent.click(screen.getByTestId('plugin-marketplace-uninstall-101'))
+          await userEvent.click(screen.getByTestId('plugin-uninstall-confirm-button'))
+          await waitFor(() =>
+            expect(screen.getByTestId('plugin-operation-notice')).toHaveTextContent('已卸载')
+          )
+        }
+        await act(async () => {
+          release()
+          await gate
+        })
+        await waitFor(() => expect(finished).toBe(true))
+        if (outcome === 'mutation') {
+          expect(screen.getByTestId('plugin-operation-notice')).toHaveTextContent('已卸载')
+          expect(screen.getByTestId('plugin-operation-notice')).toHaveAttribute(
+            'data-notice-kind',
+            'success'
+          )
+          expect(getPluginMarketplaceCache('/api|cloud-token')?.installedPlugins).not.toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({ spec: expect.objectContaining({ pluginId: 101 }) }),
+            ])
+          )
+        } else if (outcome === 'expired') {
+          expect(screen.queryByTestId('plugin-operation-notice')).not.toBeInTheDocument()
+        } else {
+          expect(screen.getByTestId('plugin-operation-notice')).toHaveAttribute(
+            'data-notice-kind',
+            'error'
+          )
+          expect(screen.getByTestId('plugin-operation-notice')).toHaveTextContent('加载插件失败')
+        }
+      } finally {
+        release()
+        view.unmount()
+        factory.mockRestore()
       }
     }
   )

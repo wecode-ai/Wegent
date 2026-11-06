@@ -61,7 +61,7 @@ describe('stand-in execution model fixture', () => {
           {
             type: 'function_call_output',
             call_id: call.call_id,
-            output: JSON.stringify([
+            output: [
               {
                 type: 'input_text',
                 text: JSON.stringify({
@@ -69,7 +69,7 @@ describe('stand-in execution model fixture', () => {
                   messages: [{ role: 'assistant', content: `${marker}_DONE_cloud` }],
                 }),
               },
-            ]),
+            ],
           },
         ],
       },

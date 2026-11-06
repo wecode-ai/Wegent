@@ -987,6 +987,7 @@ impl RuntimeWorkRpcHandler {
         let preparation = async {
             self.prepare_project_environment(&mut turn).await?;
             self.prepare_deferred_worktree(&mut turn).await?;
+            self.prepare_creation_branch(&mut turn.request).await?;
             self.persist_prepared_project_workspace(&turn)?;
             self.store.update_task(&turn.local_task_id, |link| {
                 link.workspace_path = turn.request.cwd().unwrap_or_default().to_owned();
@@ -1257,10 +1258,6 @@ impl RuntimeWorkRpcHandler {
             "runtimeLocalTaskId".to_owned(),
             Value::String(turn.local_task_id.clone()),
         );
-        if is_claude_runtime(&turn.runtime) {
-            self.start_claude_turn(turn.local_task_id, turn.request, restore_startup);
-            return;
-        }
         self.apply_backend_connection(&mut turn.request);
         let execution_context = self
             .resolve_local_model_reference(&mut turn.request, &turn.local_task_id)
@@ -1271,6 +1268,10 @@ impl RuntimeWorkRpcHandler {
             &self.device_id,
             &turn.local_task_id,
         );
+        if is_claude_runtime(&turn.runtime) {
+            self.start_claude_turn(turn.local_task_id, turn.request, restore_startup);
+            return;
+        }
         let SpawnTurnRequest {
             task_kind: _,
             local_task_id,
