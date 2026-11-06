@@ -358,6 +358,7 @@ function projectWorkspaceRoots(project: CollaborationProject): string[] {
     : []
 }
 
+/** Adapts a project to desktop services, separating public stand-in and experimental coordinator actions. */
 export function WeworkSharedProject({
   api,
   projectCatalogApi,
@@ -552,44 +553,42 @@ export function WeworkSharedProject({
             {t('workbench.project_space_chat.open')}
           </button>
           {experimentalFeaturesEnabled && (
-            <>
-              <ProjectCoordinatorConversation
-                key={`${currentProject.project_store}:${currentProject.id}:${userId}`}
-                api={scopedApi}
-                project={currentProject}
-                services={services}
-                userId={Number(userId)}
-                devices={devices ?? []}
-                onOpenTask={onOpenRuntimeTask}
-                onOpenIssue={issueId => {
-                  setTaskComposer(null)
-                  setLocation(current => ({ ...current, projectView: 'board', issueId }))
-                  if (focusedItemId) onFocusedItemHandled?.()
-                }}
-                onOpenGroupSettings={() => {
-                  setTaskComposer(null)
-                  setLocation(current => ({
-                    ...current,
-                    projectView: 'manage',
-                    projectSettingsSection: 'groups',
-                    issueId: null,
-                  }))
-                  if (focusedItemId) onFocusedItemHandled?.()
-                }}
-              />
-              <StandInPopover
-                key={currentProject.id}
-                api={standInWorkspaceApi}
-                project={currentProject}
-                devices={devices}
-                readLocalIdentity={services.getLocalRuntimeSidebarIdentity}
-                services={services}
-                userId={Number(userId)}
-                onOpenPersonalSettings={onOpenStandInSettings}
-                initialDeviceId={standInDeviceId}
-              />
-            </>
+            <ProjectCoordinatorConversation
+              key={`${currentProject.project_store}:${currentProject.id}:${userId}`}
+              api={scopedApi}
+              project={currentProject}
+              services={services}
+              userId={Number(userId)}
+              devices={devices ?? []}
+              onOpenTask={onOpenRuntimeTask}
+              onOpenIssue={issueId => {
+                setTaskComposer(null)
+                setLocation(current => ({ ...current, projectView: 'board', issueId }))
+                if (focusedItemId) onFocusedItemHandled?.()
+              }}
+              onOpenGroupSettings={() => {
+                setTaskComposer(null)
+                setLocation(current => ({
+                  ...current,
+                  projectView: 'manage',
+                  projectSettingsSection: 'groups',
+                  issueId: null,
+                }))
+                if (focusedItemId) onFocusedItemHandled?.()
+              }}
+            />
           )}
+          <StandInPopover
+            key={currentProject.id}
+            api={standInWorkspaceApi}
+            project={currentProject}
+            devices={devices}
+            readLocalIdentity={services.getLocalRuntimeSidebarIdentity}
+            services={services}
+            userId={Number(userId)}
+            onOpenPersonalSettings={onOpenStandInSettings}
+            initialDeviceId={standInDeviceId}
+          />
         </div>
       ),
       capabilities: {
@@ -1378,9 +1377,9 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
   )
 }
 
+/** Binds project navigation and stand-in indicators to the current account and project catalog. */
 function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformProps) {
   const { i18n, t } = useTranslation('common')
-  const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const standInProjects = useStandInProjects(props.services, props.devices, Number(props.user.id))
   const cloudConnection = useOptionalCloudConnection()
   const templateOwnerId =
@@ -1684,7 +1683,6 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
           templateStore,
           templateNavigation: true,
           renderProjectSidebarBadge: project => {
-            if (!experimentalFeaturesEnabled) return null
             const enabled = standInProjects.has(
               `${project.project_store === 'local' ? 'local' : 'cloud'}:${project.id}`
             )

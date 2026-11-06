@@ -55,6 +55,26 @@ function createDetailPlugin(): InstalledPluginItem {
 }
 
 describe('PluginDetailView owner actions', () => {
+  test('keeps the header while detail content has a stable loading placeholder', () => {
+    const plugin = createDetailPlugin()
+    const props = {
+      plugin,
+      onBack: vi.fn(),
+      onToggle: vi.fn(),
+      onComponentToggle: vi.fn(),
+      onUninstall: vi.fn(),
+      onPromptSelect: vi.fn(),
+    }
+    const result = render(<PluginDetailView {...props} detailLoading />)
+    expect(screen.getByTestId('plugin-detail-loading')).toHaveAttribute('aria-busy', 'true')
+    expect(screen.getByText('Dev Tools')).toBeInTheDocument()
+    expect(screen.queryByText('Developer tools')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('plugin-detail-info')).not.toBeInTheDocument()
+    result.rerender(<PluginDetailView {...props} />)
+    expect(screen.queryByTestId('plugin-detail-loading')).not.toBeInTheDocument()
+    expect(screen.getByText('Developer tools')).toBeInTheDocument()
+    expect(screen.getByTestId('plugin-detail-info')).toBeInTheDocument()
+  })
   test('keeps a healthy installed plugin usable while reconciliation is running', () => {
     const onToggle = vi.fn()
     render(

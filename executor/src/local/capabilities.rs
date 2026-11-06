@@ -22,6 +22,7 @@ use super::personal_marketplace_lock::acquire_personal_marketplace_lock;
 
 mod activation_revision;
 mod manifest_migration;
+mod plugin_preparation;
 mod plugin_skills;
 mod plugin_sync_protocol;
 mod runtime_recovery;
@@ -148,6 +149,7 @@ struct FileSnapshot {
 struct LocalPluginStateTransaction {
     files: Vec<FileSnapshot>,
     moved_paths: Vec<(PathBuf, PathBuf)>,
+    created_paths: Vec<PathBuf>,
 }
 
 impl LocalPluginStateTransaction {
@@ -170,6 +172,7 @@ impl LocalPluginStateTransaction {
             }
             for path in moved_paths.into_iter().collect::<BTreeSet<_>>() {
                 if !path.exists() && !path.is_symlink() {
+                    transaction.created_paths.push(path);
                     continue;
                 }
                 let backup = rollback_temp_path(&path);
@@ -198,6 +201,11 @@ impl LocalPluginStateTransaction {
 
     fn rollback(&mut self) -> Result<(), CapabilitySyncError> {
         let mut errors = Vec::new();
+        for path in self.created_paths.iter().rev() {
+            if let Err(error) = remove_existing_path(path) {
+                errors.push(error.to_string());
+            }
+        }
         for (path, backup) in self.moved_paths.iter().rev() {
             if let Err(error) = remove_existing_path(path)
                 .and_then(|()| fs::rename(backup, path).map_err(CapabilitySyncError::from))
@@ -241,26 +249,6 @@ fn rollback_temp_path(path: &Path) -> PathBuf {
     let mut temporary = sibling_temp_path(path).into_os_string();
     temporary.push(".rollback");
     PathBuf::from(temporary)
-}
-
-fn rollback_plugin_package(
-    store_path: &Path,
-    backup_path: Option<&Path>,
-    error: CapabilitySyncError,
-) -> CapabilitySyncError {
-    let rollback_result = remove_existing_path(store_path).and_then(|()| {
-        if let Some(backup) = backup_path {
-            fs::rename(backup, store_path).map_err(CapabilitySyncError::from)
-        } else {
-            Ok(())
-        }
-    });
-    match rollback_result {
-        Ok(()) => error,
-        Err(rollback_error) => CapabilitySyncError::invalid_payload(format!(
-            "{error}; plugin package rollback failed: {rollback_error}"
-        )),
-    }
 }
 
 pub trait CapabilityPackageProvider {
@@ -1308,6 +1296,7 @@ where
     sync_lock: AsyncMutex<()>,
     plugin_sync_inflight: plugin_sync_protocol::InFlightRequests,
     plugin_sync_binding: plugin_sync_protocol::ConnectionBinding,
+    plugin_preparation: std::sync::Arc<plugin_preparation::PreparationCoordinator>,
 }
 
 impl CapabilitySyncHandler<NoopPackageProvider> {
@@ -1332,6 +1321,7 @@ where
         let auth_token = auth_token.into();
         let plugin_sync_binding =
             plugin_sync_protocol::ConnectionBinding::new(&store.manifest.path, &auth_token);
+        let plugin_preparation = plugin_preparation::PreparationCoordinator::for_store(&store);
         Self {
             auth_token,
             store,
@@ -1339,6 +1329,7 @@ where
             sync_lock: AsyncMutex::new(()),
             plugin_sync_inflight: Default::default(),
             plugin_sync_binding,
+            plugin_preparation,
         }
     }
 
@@ -1357,6 +1348,22 @@ where
 
     async fn apply_legacy_sync(&self, payload: Value) -> Result<Value, CapabilitySyncError> {
         let started = std::time::Instant::now();
+        // Ungenerated legacy cleanup cannot safely interleave with a prepared
+        // v2 install. Preserve its serialization contract without blocking v2 peers.
+        let _protocol = self.plugin_preparation.protocol.write().await;
+        let slot = self
+            .plugin_preparation
+            .slots
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| {
+                CapabilitySyncError::invalid_payload("Plugin preparation scheduler closed")
+            })?;
+        let preparation_lease = std::sync::Arc::new(plugin_preparation::PreparationLease {
+            _lane: None,
+            _slot: slot,
+        });
         let _sync_guard = self.sync_lock.lock().await;
         let _activation = crate::services::capability_activation::activate().await;
         let queued_ms = started.elapsed().as_millis();
@@ -1431,7 +1438,10 @@ where
         }
         let mut plugin_results = Vec::with_capacity(plugin_specs.len());
         for spec in &plugin_specs {
-            plugin_results.push(self.sync_plugin(spec, &mut manifest).await);
+            plugin_results.push(
+                self.sync_plugin(spec, &mut manifest, preparation_lease.clone())
+                    .await,
+            );
         }
         let _binding = self.plugin_sync_binding.lock_active()?;
         if !plugins_only {
@@ -1555,8 +1565,13 @@ where
         Ok(())
     }
 
-    async fn sync_plugin(&self, spec: &PluginSyncSpec, manifest: &mut Value) -> Value {
-        match self.try_sync_plugin(spec, manifest).await {
+    async fn sync_plugin(
+        &self,
+        spec: &PluginSyncSpec,
+        manifest: &mut Value,
+        lease: std::sync::Arc<plugin_preparation::PreparationLease>,
+    ) -> Value {
+        match self.try_sync_plugin(spec, manifest, lease).await {
             Ok(()) => match spec.installed_plugin_id {
                 Some(id) => json!({"id": id, "name": spec.name, "status": "synced"}),
                 None => json!({"name": spec.name, "status": "synced"}),
@@ -1587,135 +1602,16 @@ where
         &self,
         spec: &PluginSyncSpec,
         manifest: &mut Value,
+        lease: std::sync::Arc<plugin_preparation::PreparationLease>,
     ) -> Result<(), PluginSyncFailure> {
-        if self.store.shared_packages {
-            return self.try_sync_shared_plugin(spec, manifest).await;
-        }
-        let Some(store_path) = self.store.plugin_store_path(spec) else {
-            let _binding = self
-                .plugin_sync_binding
-                .lock_active()
-                .map_err(PluginSyncFailure::runtime_metadata)?;
-            ensure_object_field(manifest, "plugins").insert(
-                spec.key.clone(),
-                json!({
-                    "managed": true,
-                    "name": spec.name,
-                    "key": spec.key,
-                    "marketplace": spec.marketplace,
-                    "version": spec.version,
-                    "updated_at": now_rfc3339_like(),
-                }),
-            );
-            return Ok(());
-        };
-        let installed = read_installed_plugins(&self.store.plugins_dir).map_err(|error| {
-            PluginSyncFailure::new("local_state", "PLUGIN_STATE_READ_FAILED", false, error)
-        })?;
-        let previous_checksum = installed
-            .get("plugins")
-            .and_then(|plugins| plugins.get(&spec.key))
-            .and_then(Value::as_array)
-            .and_then(|entries| entries.first())
-            .and_then(|entry| value_string(entry.get("checksum")))
-            .or_else(|| {
-                manifest
-                    .get("plugins")
-                    .and_then(|plugins| plugins.get(&spec.key))
-                    .and_then(|plugin| value_string(plugin.get("checksum")))
-            });
-        let should_download = spec.download_path.is_some()
-            && (!has_plugin_manifest(&store_path)
-                || spec.checksum.as_ref().is_some_and(|expected| {
-                    previous_checksum
-                        .as_ref()
-                        .map(|previous| previous != expected)
-                        .unwrap_or(true)
-                }));
-
-        if should_download {
-            let download_path = spec.download_path.as_deref().unwrap_or_default();
-            let package = self
-                .package_provider
-                .download_plugin(download_path)
-                .await
-                .map_err(|error| {
-                    PluginSyncFailure::new("download", "PLUGIN_DOWNLOAD_FAILED", true, error)
-                })?;
-            let _binding = self
-                .plugin_sync_binding
-                .lock_active()
-                .map_err(PluginSyncFailure::runtime_metadata)?;
-            if let Some(expected) = &spec.checksum {
-                let actual = sha256_digest(&package);
-                if &actual != expected {
-                    return Err(PluginSyncFailure::new(
-                        "checksum",
-                        "PLUGIN_CHECKSUM_MISMATCH",
-                        false,
-                        CapabilitySyncError::ChecksumMismatch {
-                            expected: expected.clone(),
-                            actual,
-                        },
-                    ));
-                }
-            }
-            let backup_path = if store_path.exists() || store_path.is_symlink() {
-                let backup = rollback_temp_path(&store_path);
-                remove_existing_path(&backup).map_err(|error| {
-                    PluginSyncFailure::new("prepare", "PLUGIN_PACKAGE_PREPARE_FAILED", false, error)
-                })?;
-                fs::rename(&store_path, &backup).map_err(|error| {
-                    PluginSyncFailure::new(
-                        "prepare",
-                        "PLUGIN_PACKAGE_PREPARE_FAILED",
-                        false,
-                        error.into(),
-                    )
-                })?;
-                Some(backup)
-            } else {
-                None
-            };
-            let extract_result = extract_plugin_zip(&package, &store_path);
-            if let Err(error) = extract_result {
-                return Err(PluginSyncFailure::new(
-                    "extract",
-                    "PLUGIN_PACKAGE_EXTRACT_FAILED",
-                    false,
-                    rollback_plugin_package(&store_path, backup_path.as_deref(), error),
-                ));
-            }
-            if let Err(error) =
-                self.store
-                    .install_plugin_runtime_metadata(spec, &store_path, manifest)
-            {
-                let error = rollback_plugin_package(&store_path, backup_path.as_deref(), error);
-                return Err(PluginSyncFailure::runtime_metadata(error));
-            }
-            if let Some(backup) = backup_path.as_ref() {
-                let _ = remove_existing_path(backup);
-            }
-            return Ok(());
-        } else if !has_plugin_manifest(&store_path) {
-            return Err(PluginSyncFailure::new(
-                "package",
-                "PLUGIN_PACKAGE_UNAVAILABLE",
-                true,
-                CapabilitySyncError::invalid_payload(format!(
-                    "Plugin package {} is not available",
-                    spec.key
-                )),
-            ));
-        }
-
+        let mut prepared = self.prepare_plugin(spec, manifest, lease).await?;
         let _binding = self
             .plugin_sync_binding
             .lock_active()
             .map_err(PluginSyncFailure::runtime_metadata)?;
-        self.store
-            .install_plugin_runtime_metadata(spec, &store_path, manifest)
-            .map_err(PluginSyncFailure::runtime_metadata)?;
+        if !prepared.unchanged {
+            prepared.publish(&self.store, manifest)?;
+        }
         Ok(())
     }
 

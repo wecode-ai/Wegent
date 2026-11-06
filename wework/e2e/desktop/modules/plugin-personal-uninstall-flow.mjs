@@ -403,7 +403,7 @@ export async function prepareAuthorAccountInstall({
   // occupied; the guard that runs first depends on the runtime publication path.
   assert.match(
     occupied.error,
-    /Plugin (?:path is occupied by an unmanaged item|marketplace entry is occupied by an unrelated source)/
+    /Plugin (?:(?:path|runtime destination) is occupied by an unmanaged item|marketplace entry is occupied by an unrelated source)/
   )
   // The authored directory is deliberately unmanaged. Account intent must not
   // grant the cloud synchronizer ownership of that source or its local cache.

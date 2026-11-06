@@ -1,5 +1,22 @@
 # Sourced by test-classify-ci-changes.sh; all assertions share its helpers.
 
+for path in \
+  wework/e2e/desktop/catalog/component-update.json \
+  wework/e2e/desktop/scenarios/component-update.scenario.mjs; do
+  assert_desktop_case "app update retry coverage runs in Core and macOS CI: $path" \
+    'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-4","name":"Core / shard 4","segments":"component-update"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}
+wework_desktop_macos_inspector_e2e=true' \
+    "$path"
+done
+
+assert_desktop_case "app update retry helper retains full coverage including macOS CI" \
+  "$(node "$script_dir/ci-classification-tests/expected-desktop-matrix.mjs" "$repo_root")" \
+  "wework/e2e/desktop/modules/app-update-retry.mjs"
+
 assert_desktop_case "unbound project-space discovery is invoked by its core CI checkpoint" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
