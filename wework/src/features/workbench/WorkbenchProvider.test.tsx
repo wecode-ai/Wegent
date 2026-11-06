@@ -12408,7 +12408,9 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
 
     expect(screen.getByTestId('message-roles')).toHaveTextContent('user:修复 CI')
-    expect(screen.getByTestId('message-roles')).toHaveTextContent('assistant:streamed answer')
+    await waitFor(() =>
+      expect(screen.getByTestId('message-roles')).toHaveTextContent('assistant:streamed answer')
+    )
 
     await act(async () => {
       transcript.resolve({
@@ -15108,7 +15110,9 @@ describe('WorkbenchProvider runtime tasks', () => {
       })
     })
 
-    expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
+    await waitFor(() =>
+      expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
+    )
 
     await act(async () => {
       streamHandlers?.onBlockCreated?.({
