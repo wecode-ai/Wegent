@@ -9,25 +9,46 @@ const executeFile = promisify(execFile)
 
 /** Open browser content in the HTTPS handler, never the file-type handler. */
 export async function openInExternalBrowser(value: string): Promise<void> {
-  const url = new URL(value)
-  if (url.protocol === 'http:' || url.protocol === 'https:') {
-    await shell.openExternal(url.href)
-    return
-  }
-  if (url.protocol !== 'file:' || (url.hostname && url.hostname !== 'localhost')) {
-    throw new Error('Only web URLs and local file URLs can open in an external browser')
-  }
-  const metadata = await stat(fileURLToPath(url))
-  if (!metadata.isFile() && !metadata.isDirectory()) {
-    throw new Error('The browser target must be a regular file or directory')
-  }
+  let stage = 'parse-url'
+  let protocol = 'unknown'
+  try {
+    const url = new URL(value)
+    protocol = url.protocol
+    console.info('[External Browser] Open requested', { protocol })
+    if (url.protocol === 'http:' || url.protocol === 'https:') {
+      stage = 'open-web-url'
+      await shell.openExternal(url.href)
+      console.info('[External Browser] Open completed', { protocol })
+      return
+    }
+    if (url.protocol !== 'file:' || (url.hostname && url.hostname !== 'localhost')) {
+      throw new Error('Only web URLs and local file URLs can open in an external browser')
+    }
+    stage = 'validate-local-file'
+    const metadata = await stat(fileURLToPath(url))
+    if (!metadata.isFile() && !metadata.isDirectory()) {
+      throw new Error('The browser target must be a regular file or directory')
+    }
 
-  // Resolving the HTTPS handler avoids selecting Finder, an editor, or a file handler.
-  const browser = await app.getApplicationInfoForProtocol('https://example.com')
-  if (!browser.path) throw new Error('No default external browser is configured')
-  if (process.platform === 'darwin') {
-    await executeFile('/usr/bin/open', ['-a', browser.path, url.href], { timeout: 10_000 })
-  } else {
-    await launchDetached(browser.path, [url.href])
+    stage = 'resolve-default-browser'
+    // Resolving the HTTPS handler avoids selecting Finder, an editor, or a file handler.
+    const browser = await app.getApplicationInfoForProtocol('https://example.com')
+    if (!browser.path) throw new Error('No default external browser is configured')
+    stage = 'launch-external-browser'
+    if (process.platform === 'darwin') {
+      await executeFile('/usr/bin/open', ['-a', browser.path, url.href], { timeout: 10_000 })
+    } else {
+      await launchDetached(browser.path, [url.href])
+    }
+    console.info('[External Browser] Open completed', { protocol })
+  } catch (error) {
+    console.error('[External Browser] Open failed', {
+      protocol,
+      stage,
+      errorName: error instanceof Error ? error.name : typeof error,
+      errorCode:
+        typeof error === 'object' && error && 'code' in error ? String(error.code) : undefined,
+    })
+    throw error
   }
 }

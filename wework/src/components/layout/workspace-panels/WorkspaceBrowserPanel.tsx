@@ -2017,9 +2017,17 @@ export function WorkspaceBrowserTabPanel({
   const handleOpenExternal = () => {
     if (!activePageUrl || internalExtensionPage) return
     setError(null)
-    void openInExternalBrowser(activePageUrl).catch(() =>
-      setError(t('workbench.browser_open_external_failed'))
-    )
+    console.info('[Wework] External browser open requested', {
+      protocol: new URL(activePageUrl).protocol,
+    })
+    void openInExternalBrowser(activePageUrl)
+      .then(() => console.info('[Wework] External browser open completed'))
+      .catch(error => {
+        console.error('[Wework] External browser open failed', {
+          errorName: error instanceof Error ? error.name : typeof error,
+        })
+        setError(t('workbench.browser_open_external_failed'))
+      })
   }
 
   const clearBrowserData = useCallback(
