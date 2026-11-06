@@ -148,6 +148,9 @@ export function createDailyBriefStory(options) {
       const source = original.primary.connections.find(item => item.providerId === PROVIDER)
       assert.ok(source)
       const now = Date.now()
+      const pendingMailDate = new Date(now - 2 * DAY)
+      // Exercise RFC 3501's noon hour regardless of the CI runner's current time.
+      pendingMailDate.setUTCHours(12, 33, 30, 0)
       state.since = new Date(now - 3 * DAY).toISOString()
       const fixtures = [
         {
@@ -176,7 +179,7 @@ export function createDailyBriefStory(options) {
             `${MARKER} ${details.status}`,
             JSON.stringify(details),
             `<daily-${details.status}@example.com>`,
-            new Date(now - age)
+            details.status === 'pending' ? pendingMailDate : new Date(now - age)
           )
         }
         await control.command('setMainWindowSize', 'body', {
