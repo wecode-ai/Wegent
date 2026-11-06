@@ -364,7 +364,7 @@ impl JsonRpcConnection {
                 continue;
             }
             if let Some(outcome) = state.handle_message(&message) {
-                if super::should_wait_for_goal_continuation(&outcome, state, recovering_goal) {
+                if super::should_wait_for_goal_continuation(&outcome, state) {
                     waiting_for_initial_progress = true;
                     startup_deadline =
                         Instant::now() + Duration::from_secs(startup_timeout_seconds);

@@ -355,7 +355,6 @@ fn shared_options(
         request_user_input_answers: None,
         active_turn_started: None,
         active_turn_finished: None,
-        wait_for_goal_continuation: false,
         auto_approve_mcp_tool_calls: false,
         stand_in_single_approval: false,
     }

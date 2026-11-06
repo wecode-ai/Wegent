@@ -3694,7 +3694,7 @@ fn codex_run_state_uses_completed_commentary_without_item_ids_as_fallback() {
 }
 
 #[test]
-fn goal_created_during_turn_allows_the_current_run_to_settle() {
+fn goal_created_during_turn_retains_execution_until_the_goal_stops() {
     let mut state = CodexRunState::default();
 
     assert!(state
@@ -3716,8 +3716,14 @@ fn goal_created_during_turn_allows_the_current_run_to_settle() {
         }))
         .expect("turn completion should produce an outcome");
 
-    assert!(!should_wait_for_goal_continuation(&outcome, &state, false));
-    assert!(should_wait_for_goal_continuation(&outcome, &state, true));
+    assert!(should_wait_for_goal_continuation(&outcome, &state));
+    for status in ["paused", "blocked", "complete"] {
+        state.handle_message(&json!({
+            "method": "thread/goal/updated",
+            "params": {"threadId": "thread-1", "goal": {"status": status}}
+        }));
+        assert!(!should_wait_for_goal_continuation(&outcome, &state));
+    }
 }
 
 #[test]

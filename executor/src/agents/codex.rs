@@ -2522,7 +2522,6 @@ async fn run_codex_app_server_turn_on_shared_client(
                 sync_goal_status_from_response(&mut state, &goal_response);
             }
         }
-        let wait_for_goal_continuation = state.goal_is_active();
         let expected_client_user_message_id = request_client_user_message_id(request);
         let auto_approve_mcp_tool_calls = codex_auto_approve_mcp_tool_calls(request);
 
@@ -2586,7 +2585,6 @@ async fn run_codex_app_server_turn_on_shared_client(
                 active_turn_started,
                 active_turn_finished,
                 overload_turn_recovering,
-                wait_for_goal_continuation,
                 auto_approve_mcp_tool_calls,
                 stand_in_single_approval: crate::runtime_work::stand_in_requires_confirmation(request),
             },
@@ -2982,7 +2980,6 @@ struct SharedTurnNotificationOptions {
     request_user_input_answers: Option<CodexRequestUserInputReceiver>,
     active_turn_started: Option<CodexActiveTurnCallback>,
     active_turn_finished: Option<CodexActiveTurnFinishedCallback>,
-    wait_for_goal_continuation: bool,
     auto_approve_mcp_tool_calls: bool,
     stand_in_single_approval: bool,
 }
@@ -3030,7 +3027,6 @@ async fn read_shared_turn_notifications(
                         &response,
                     )
                     .await;
-                    options.wait_for_goal_continuation = false;
                     if options.active_turn_id.is_none() {
                         return Ok(last_outcome.unwrap_or(ExecutionOutcome::Cancelled {
                             message: "Goal changed during model overload recovery".to_owned(),
@@ -3327,7 +3323,6 @@ async fn read_shared_turn_notifications(
                                 != Some("active")
                         {
                             deferred_goal_snapshot = Some(response);
-                            options.wait_for_goal_continuation = true;
                         } else {
                             overload_recovery::sync_goal_snapshot(
                                 state,
@@ -3339,7 +3334,6 @@ async fn read_shared_turn_notifications(
                             .await;
                             // Activating an idle Goal starts its native continuation.
                             // Do not race it with a second turn/start request.
-                            options.wait_for_goal_continuation = state.goal_is_active();
                         }
                     } else {
                         options.active_turn_id = turn_start_response_id(&response);
@@ -3429,11 +3423,7 @@ async fn read_shared_turn_notifications(
             if cancellation_requested {
                 return Err(CODEX_APP_SERVER_TURN_CANCELLED.to_owned());
             }
-            if !should_wait_for_goal_continuation(
-                &outcome,
-                state,
-                options.wait_for_goal_continuation,
-            ) {
+            if !should_wait_for_goal_continuation(&outcome, state) {
                 if let Some(response) = deferred_goal_snapshot.take() {
                     overload_recovery::sync_goal_snapshot(
                         state,
@@ -3554,14 +3544,8 @@ fn required_mcp_startup_failure(message: &Value) -> Option<String> {
     })
 }
 
-fn should_wait_for_goal_continuation(
-    outcome: &ExecutionOutcome,
-    state: &CodexRunState,
-    goal_was_active_at_turn_start: bool,
-) -> bool {
-    goal_was_active_at_turn_start
-        && matches!(outcome, ExecutionOutcome::Completed { .. })
-        && state.goal_is_active()
+fn should_wait_for_goal_continuation(outcome: &ExecutionOutcome, state: &CodexRunState) -> bool {
+    matches!(outcome, ExecutionOutcome::Completed { .. }) && state.goal_is_active()
 }
 
 fn codex_notification_has_initial_progress(message: &Value, state: &CodexRunState) -> bool {
