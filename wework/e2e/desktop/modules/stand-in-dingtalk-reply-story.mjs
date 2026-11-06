@@ -267,6 +267,10 @@ export function createDingTalkReplyStory(options) {
         await control.command('waitFor', '[data-testid="stand-in-proposal-open"]', {
           timeoutMs: options.modelResponseTimeoutMs,
         })
+        const proposalDeadline = Date.now() + 10_000
+        while (!model.proposalSubmitted && Date.now() < proposalDeadline) {
+          await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+        }
         assert.equal(model.proposalSubmitted, true)
         assert.equal(
           (await rpc('runtime.stand_in.personal.get', { userId: STORY_USER })).roles.find(
