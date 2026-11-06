@@ -3749,11 +3749,12 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return pressNativeDesktopControlKey(command.selector, command.key ?? '', 'up')
     }
     case 'select': {
-      const element = findDesktopControlElements(command.selector)[0]
-      if (!(element instanceof HTMLSelectElement)) {
-        throw new Error(`Selector "${command.selector}" is not a select element`)
-      }
-      return selectDesktopControlOption(element, command.value ?? '', command.by)
+      return waitForDesktopControlElement({ ...command, enabled: true }, element => {
+        if (!(element instanceof HTMLSelectElement)) {
+          throw new Error(`Selector "${command.selector}" is not a select element`)
+        }
+        return selectDesktopControlOption(element, command.value ?? '', command.by)
+      })
     }
     case 'submit': {
       const element = findDesktopControlElements(command.selector)[0]

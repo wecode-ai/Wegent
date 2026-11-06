@@ -857,6 +857,55 @@ describe('Electron desktop E2E automation', () => {
     }
   })
 
+  test('waits for a disabled select to accept changes before acknowledging selection', async () => {
+    const select = document.createElement('select')
+    select.dataset.testid = 'busy-role-select'
+    select.disabled = true
+    select.innerHTML =
+      '<option value="Developer">Member</option><option value="Maintainer">Admin</option>'
+    document.body.append(select)
+    const changed = vi.fn()
+    select.addEventListener('change', changed)
+    const results: Array<{ ok: boolean; value: string }> = []
+    let polls = 0
+    vi.stubGlobal('fetch', async (url: string, options?: RequestInit) => {
+      if (url.includes('/commands?')) {
+        if (++polls > 1) return new Response(null, { status: 410 })
+        return new Response(
+          JSON.stringify({
+            id: 'busy-role-choice',
+            action: 'select',
+            selector: '[data-testid="busy-role-select"]',
+            value: 'Maintainer',
+            timeoutMs: 1000,
+          })
+        )
+      }
+      if (url.endsWith('/results')) results.push(JSON.parse(String(options?.body)))
+      return new Response('{}')
+    })
+    const client = runDesktopControlClient('http://127.0.0.1:43111', 'main')
+    try {
+      await vi.waitFor(() =>
+        expect(getDesktopControlDiagnostics()).toContainEqual(
+          expect.objectContaining({ commandId: 'busy-role-choice', phase: 'start-acknowledged' })
+        )
+      )
+      expect(select.value).toBe('Developer')
+      expect(changed).not.toHaveBeenCalled()
+      expect(results).toEqual([])
+      select.disabled = false
+      await client
+      expect(select.value).toBe('Maintainer')
+      expect(changed).toHaveBeenCalledOnce()
+      expect(results).toEqual([expect.objectContaining({ ok: true, value: 'Admin' })])
+    } finally {
+      select.disabled = false
+      await client
+      select.remove()
+    }
+  })
+
   test('delivers native shortcuts to the focused editor inside a shadow root', async () => {
     const host = document.createElement('div')
     const editor = document.createElement('textarea')
