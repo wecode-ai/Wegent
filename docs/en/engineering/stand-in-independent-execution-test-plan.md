@@ -30,6 +30,8 @@ All three checkpoints are registered in the existing core CI inventory and distr
 
 ## Execution and cleanup
 
+The shared project-view helper chooses the currently available tab or select in one renderer operation. CI milestone control history and failure snapshots showed that separate layout inspection and clicking could wait for an unmounted tab after a responsive change. The fix preserves scenario assertions and timeouts, with focused tests for control replacement and a single activation.
+
 Run `pnpm --filter wework e2e:desktop --parallel-segments stand-in,stand-in-workspace`; use the same runner with `--segment stand-in-cloud` for the remote case. Default to one checkpoint at a time and reuse the build.
 
 Use runner-owned directories, identities and processes and existing `finally` cleanup. Keep results, complete failure logs and screenshots locally under `wework/test-results/`, outside commits. Record actual results in the PR. If the remote environment is unavailable, disclose that limitation rather than treating component tests as cloud E2E evidence.

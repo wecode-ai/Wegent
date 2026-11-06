@@ -240,15 +240,7 @@ export async function selectCollaborationProjectView(
   const compact = `${contentSelector} [data-testid="collaboration-project-view-select"]`
   const tabId = view === 'milestones' ? 'collaboration-milestones-tab' : `collaboration-tab-${view}`
   const tab = `${contentSelector} [data-testid="${tabId}"]`
-  await control.command('waitFor', `${compact}, ${tab}`, {
-    visible: true,
-    timeoutMs,
-  })
-  if (Number(await control.command('getElementCount', compact)) > 0) {
-    await control.command('select', compact, { value: view })
-  } else {
-    await control.command('clickWhenEnabled', tab, { timeoutMs })
-  }
+  await control.command('chooseWhenEnabled', `${compact}, ${tab}`, { value: view, timeoutMs })
 }
 
 /** Native fixtures require an explicit environment; automatic routing is cloud-only. */

@@ -1,5 +1,15 @@
 export type DesktopControlSelectMode = 'label' | 'value'
 
+/** Activate a responsive choice using the element matched in the current renderer turn. */
+export function chooseDesktopControlOption(element: HTMLElement, value: string): string {
+  if (element instanceof HTMLSelectElement) return selectDesktopControlOption(element, value)
+  if (!(element instanceof HTMLButtonElement)) {
+    throw new Error('A responsive choice requires a select or button element')
+  }
+  element.click()
+  return element.textContent?.trim() ?? ''
+}
+
 export function selectDesktopControlOption(
   element: HTMLSelectElement,
   selection: string,

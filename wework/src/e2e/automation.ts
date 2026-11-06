@@ -92,7 +92,7 @@ import {
 } from '@/desktop/localExecutor'
 import { executeVerificationControlCommand } from './verification-control'
 import { captureEmbeddedBrowserSnapshot, evalEmbeddedBrowserJson } from '@/lib/embedded-browser'
-import { selectDesktopControlOption } from './desktop-control-select'
+import { chooseDesktopControlOption, selectDesktopControlOption } from './desktop-control-select'
 import { dispatchDesktopControlWheel } from './desktop-control-wheel'
 import {
   getAppPreferences,
@@ -3270,6 +3270,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       }
       window.setTimeout(() => element.click(), 100)
       return element.textContent?.trim() ?? ''
+    }
+    case 'chooseWhenEnabled': {
+      return waitForDesktopControlElement({ ...command, enabled: true, visible: true }, element =>
+        chooseDesktopControlOption(element, command.value ?? '')
+      )
     }
     case 'clickWhenEnabled': {
       startConversationDiagnosticCapture()
