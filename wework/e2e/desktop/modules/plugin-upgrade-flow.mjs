@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { access, cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { access, cp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fetchJson, resultDir } from './shared.mjs'
 import { captureVerificationScreenshot } from './workspace-flows.mjs'
@@ -13,7 +13,8 @@ const retiredSkill = 'retired-check'
 const addedSkill = 'added-check'
 const oldContent = 'Old release upgrade marker'
 const newContent = 'New release upgrade marker'
-const E2E_CATALOG_REFRESH_OBSERVATION_MS = 15_000
+// E2E catalog refresh runs every five seconds; include timer jitter.
+const E2E_CATALOG_REFRESH_OBSERVATION_MS = 5_500
 const PLUGIN_SYNC_TIMEOUT_MS = 30_000
 
 async function waitForManagedPlugin(manifestPath, managedKey, timeoutMs = PLUGIN_SYNC_TIMEOUT_MS) {
@@ -167,7 +168,19 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
   const repaired = await readCapabilities()
   assert.deepEqual(repaired.skills, beforeRepair.skills)
   assert.deepEqual(repaired.mcps, beforeRepair.mcps)
+  const marketplaceManifest = join(
+    codexHome,
+    'plugins/marketplaces',
+    managed.marketplace,
+    '.agents/plugins/marketplace.json'
+  )
+  const metadataBefore = await stat(marketplaceManifest)
   await refreshAndVerify()
+  assert.equal(
+    (await stat(marketplaceManifest)).mtimeMs,
+    metadataBefore.mtimeMs,
+    'An unchanged, verified plugin must not republish native marketplace metadata'
+  )
   assert.equal(
     Object.keys((await readCapabilities()).plugins).filter(key => key === managedKey).length,
     1
@@ -319,11 +332,29 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
     timeoutMs: 30000,
   })
   await control.command('click', '[data-testid="install-plugin-dialog-confirm"]')
+  // Observe the whole reinstall window: an older removal receipt must never
+  // relabel the newly accepted install as uninstalling.
+  const reinstallDeadline = Date.now() + PLUGIN_SYNC_TIMEOUT_MS
+  let reinstallReady = false
+  while (Date.now() < reinstallDeadline) {
+    const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+    assert.ok(!snapshot.text.includes('正在卸载'), 'Reinstall must not show old removal state')
+    if (snapshot.text.includes('立即对话')) {
+      reinstallReady = true
+    }
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  assert.ok(reinstallReady, 'Reinstall must converge before the receipt deadline')
   await control.command('waitFor', '[data-testid^="plugin-detail-toggle-"]', {
     text: '立即对话',
     timeoutMs: 30000,
   })
-  await capture('07-reinstalled')
+  const reinstalled = await capture('07-reinstalled')
+  assert.equal(reinstalled.item.currentDeviceInstallation?.state, 'installed')
+  assert.equal(
+    reinstalled.item.currentDeviceInstallation?.actualReleaseId,
+    reinstalled.item.currentDeviceInstallation?.desiredReleaseId
+  )
   assert.equal(JSON.parse(await readFile(currentManifestPath, 'utf8')).version, newVersion)
   assert.ok(
     (await readFile(join(newRoot, 'skills', sharedSkill, 'SKILL.md'), 'utf8')).includes(newContent)

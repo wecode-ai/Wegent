@@ -1,0 +1,6 @@
+{
+  "order": 125100,
+  "ciHost": "project-ai-settings",
+  "scenario": "./scenarios/project-sidebar-chat.scenario.mjs",
+  "scenarioOnly": true
+}

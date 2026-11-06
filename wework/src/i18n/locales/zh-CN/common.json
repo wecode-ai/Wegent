@@ -730,6 +730,7 @@
     "use_existing_folder": "使用现有文件夹",
     "new_project_chat": "问AI",
     "project_space_chat": {
+      "open": "会话",
       "resize": "调整问AI宽度",
       "conversation": "历史会话",
       "new_conversation": "新建会话",
@@ -2920,6 +2921,7 @@
     "plugins_uninstall_still_installed": "卸载未完成，插件仍显示为已安装。请刷新插件列表后重试；如果问题持续，请提交反馈。",
     "plugins_uninstall_partial": "{{name}} 已从本机卸载，但部分清理失败：{{details}}",
     "plugins_install_device_sync_retry": "{{name}} 已保存，当前设备同步失败，可稍后重试安装",
+    "plugins_install_receipt_unconfirmed": "{{name}} 已保存，暂未确认当前设备安装状态，请稍后刷新查看",
     "plugins_finish_connecting_in_browser": "请在浏览器中完成 {{name}} 连接",
     "plugins_dismiss_notice": "关闭提示",
     "plugins_view_more_installed": "查看另外 {{count}} 个已安装插件",
@@ -4172,7 +4174,11 @@
     "plugins_reconciliation_complete": "插件安装状态已核对并同步",
     "plugins_reconciliation_failed": "安装状态检查未完成：{{error}}",
     "plugins_reconciliation_incomplete": "插件数据未完整加载，本次未执行状态修复，请重试刷新",
-    "plugins_reconciliation_checking": "正在检查安装状态…",
+    "plugins_reconciliation_waiting": "等待其他插件操作完成…",
+    "plugins_reconciliation_reading": "1/3 读取本机插件…",
+    "plugins_reconciliation_syncing": "2/3 核对并修复本机插件…",
+    "plugins_reconciliation_verifying": "3/3 确认安装结果…",
+    "plugins_reconciliation_elapsed": "已用时 {{seconds}} 秒",
     "plugins_reconciliation_busy": "正在检查安装状态，请完成后再操作",
     "extensions": "扩展",
     "slash_command_group_extensions": "扩展",
@@ -5460,7 +5466,6 @@
     "prompt_placeholder": "例如：先给出处理思路，完成后说明做了什么、验证了什么；遇到不确定的地方先问我。",
     "current_device": "当前设备",
     "device": "在哪里处理",
-    "select_device": "选择设备",
     "device_unavailable": "已选设备不可用，请重新选择",
     "offline": "离线",
     "cancel": "取消",
@@ -5692,8 +5697,8 @@
       "connection_projects_empty_selected": "暂无可选项目，创建或加入项目后可在这里选择。",
       "connection_receiving_paused": "未开启接收",
       "connection_authorize_on_device": "在执行设备上授权",
-      "connection_email_help": "从邮箱接收邮件，交给分身处理。",
-      "connection_catalog_help": "选择分身接收工作的来源",
+      "connection_email_help": "帮你留意重要来信和需要处理的邮件。",
+      "connection_catalog_help": "选择希望分身关注的应用",
       "connection_search": "搜索应用或已配置的范围",
       "connection_configured_count": "已配置 {{count}}",
       "connection_show_all": "全部来源",
@@ -5704,12 +5709,12 @@
       "connection_configured": "已配置接收范围",
       "connection_not_configured": "尚未配置接收范围",
       "connection_manage": "查看配置",
-      "connection_choose_scope": "选择接收范围",
+      "connection_choose_scope": "选择关注内容",
       "connection_needs_auth": "需要登录授权",
       "connection_authorize": "登录授权",
       "connection_view_details": "查看详情",
       "connection_unknown_source": "暂不可用的来源",
-      "connection_select_help": "连接账号并选择此分身要接收的工作。",
+      "connection_select_help": "连接账号，选择希望分身关注的内容。",
       "connection_scheduled_work": "定时交办",
       "connection_manage_schedule": "管理安排",
       "connection_pending": "接收范围或处理方式有修改，保存分身设置后生效。",
@@ -6027,7 +6032,20 @@
         }
       },
       "guide": "使用示例",
-      "examples_dialog_title": "分身使用示例"
+      "examples_dialog_title": "分身使用示例",
+      "connect_title": "让分身更了解你",
+      "steps_label": "开始使用分身",
+      "connect_step": "连接常用应用",
+      "confirm_step": "开始使用",
+      "connect_help": "连接常用应用，让分身帮你留意重要消息和项目进展。也可以以后再连接。",
+      "confirm_help": "分身会帮你留意重要变化、临近的期限和需要你决定的事情。",
+      "selected_apps": "关注哪些内容",
+      "no_apps": "还没有连接应用。可以先聊天，以后再添加连接。",
+      "attention_help": "开始使用后，分身会按你在连接中选择的方式关注新动态。有重要的事再提醒你；需要执行操作时，遵循你的授权设置。没有连接时，暂时没有应用动态可供分析。",
+      "continue": "继续",
+      "back_apps": "返回连接",
+      "excluded_projects": "不包括：{{names}}",
+      "project_tags": "仅关注标签：{{names}}"
     },
     "authorization": {
       "confirm_each": "发送前逐次确认",
@@ -6037,6 +6055,20 @@
       "allow_description": "保存后，分身可在「{{name}}」已连接的范围内，按你设定的职责直接回复。邮箱仅限回复原邮件发件人，新收件人仍需确认。涉及不确定信息或承诺时先询问你。可随时打开此开关撤销持续授权。",
       "allow": "允许此范围内回复",
       "confirm_once": "本次确认后执行"
+    },
+    "local_profile": "本机 · 独立使用的分身",
+    "account_local_profile": "本机 · 当前账号的分身",
+    "migration": {
+      "offer": "云设备已可用，可将此分身的配置和记忆迁到云端。",
+      "local_available": "本机已有分身，配置和历史仍保留；你可以继续本地使用或迁移到云端。",
+      "view_local": "查看本机分身",
+      "action": "迁移到云端",
+      "keep_local": "继续本地使用",
+      "title": "迁移到「{{device}}」？",
+      "description": "迁移此分身的名称、指令、模型设置、标签及该分身和共享记忆，保留云端已有分身。本地档案、记忆和历史不删除；成功后暂停本地分身接收新工作。云端分身初始暂停，目录、项目/数据源连接、智能体和定时安排需在云端重新配置后启用。进行中的工作和会话不迁移。",
+      "changed": "本地配置已变化，尚未暂停本地分身。请核对两端配置后重试。",
+      "conflict": "云端已存在不同配置的迁移副本。请先核对或移除该副本，再重试；本地配置未被覆盖。",
+      "same_device": "请选择另一台云设备。"
     }
   },
   "workbench_error": {
@@ -6092,5 +6124,6 @@
     "title_with_count": "待你处理，{{count}} 项",
     "cached": "这是上次待处理的问题，正在同步最新状态；设备恢复连接后可以继续回应。",
     "entity_unavailable": "暂时无法显示此对象，请打开原位置查看。"
-  }
+  },
+  "beta": "Beta"
 }

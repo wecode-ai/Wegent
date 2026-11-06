@@ -14,7 +14,8 @@ import {
 } from '../modules/response-protocol.mjs'
 
 const MARKER = `STAND_IN_NOTIFICATION_${process.pid}`
-const OBSERVATION_MS = 12_000
+// Cover one complete five-second scheduler interval, including timer jitter.
+const OBSERVATION_MS = 5_500
 
 export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
   let cloud
@@ -127,7 +128,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       const notice = inbox.items.find(row => row.payload.itemId === unmatched.id)
       assert.ok(notice, 'The real assignment notification must be stored')
       await control.command('waitFor', `[data-testid="wework-notification-${notice.id}"]`)
-      // Observe more than two old five-second polling periods on an unhandled assignment.
+      // Observe beyond one old five-second polling period on an unhandled assignment.
       await new Promise(resolve => setTimeout(resolve, OBSERVATION_MS))
       assert.equal(await countAssignments(unmatched), 0, 'Unmatched work must not poll assignments')
       assert.deepEqual(await request(`/v1/loop-items/${unmatched.id}/tasks`), [])

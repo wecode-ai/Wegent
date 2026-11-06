@@ -18,7 +18,10 @@ import {
   RuntimeTaskLifecycleProvider,
   RuntimeTaskLifecycleStore,
 } from '@/features/workbench/runtimeTaskLifecycle'
-import type { RuntimeTaskReminderState } from '@/features/workbench/runtimeTaskReminders'
+import {
+  EMPTY_RUNTIME_TASK_REMINDERS,
+  type RuntimeTaskReminderState,
+} from '@/features/workbench/runtimeTaskReminders'
 import {
   resolveTemporaryChatActiveModel,
   resolveTemporaryChatModelSelection,
@@ -2523,14 +2526,23 @@ describe('DesktopWorkbenchLayout', () => {
     }
   )
 
-  test('does not open a direct stand-in route while experimental features are disabled', () => {
+  test('opens a direct stand-in route while experimental features are disabled', async () => {
     experimentalFeatures.enabled = false
+    deliveryApiMock.available = true
     const original = window.location.href
     try {
       window.history.replaceState({}, '', '/stand-in?profileId=default')
-      render(<DesktopWorkbenchLayout {...baseProps} />)
-      expect(screen.queryByTestId('personal-stand-in-workspace')).not.toBeInTheDocument()
-      expect(screen.queryByTestId('stand-in-overview')).not.toBeInTheDocument()
+      await act(async () => {
+        render(
+          <DesktopWorkbenchLayout
+            {...baseProps}
+            runtimeTaskReminders={EMPTY_RUNTIME_TASK_REMINDERS}
+          />
+        )
+      })
+      expect(screen.getByTestId('personal-stand-in-workspace')).toBeInTheDocument()
+      expect(screen.getByTestId('personal-stand-in-button')).toHaveAttribute('aria-current', 'page')
+      expect(screen.getByTestId('personal-stand-in-beta')).toHaveTextContent('Beta')
     } finally {
       window.history.replaceState({}, '', original)
     }

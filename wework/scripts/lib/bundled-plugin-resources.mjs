@@ -1,6 +1,7 @@
 import { cp, readFile, readdir, rm } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve } from 'node:path'
 
+/** Materialize bundled plugins with Wework documentation from the same source tree. */
 export async function materializeBundledPluginResources(weworkRoot, destination) {
   const source = join(weworkRoot, 'resources', 'bundled-plugins')
   await rm(destination, { recursive: true, force: true })
@@ -8,6 +9,14 @@ export async function materializeBundledPluginResources(weworkRoot, destination)
 
   const marketplaceRoot = join(destination, 'wework-personal')
   const pluginNames = await marketplacePluginNames(marketplaceRoot)
+  if (pluginNames.has('wework-docs')) {
+    const manualRoot = join(marketplaceRoot, 'plugins/wework-docs/skills/wework-docs/references')
+    for (const language of ['zh', 'en']) {
+      await cp(join(weworkRoot, '..', 'docs', language, 'wework'), join(manualRoot, language), {
+        recursive: true,
+      })
+    }
+  }
   const dshRoot = join(weworkRoot, 'dsh')
   const entries = await readdir(dshRoot, { withFileTypes: true })
   for (const entry of entries) {

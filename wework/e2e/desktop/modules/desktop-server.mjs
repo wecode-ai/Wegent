@@ -349,6 +349,7 @@ const ELECTRON_OBSERVATION_ACTIONS = new Set([
   'getPluginSyncDiagnostics',
   'getTerminalText',
   'getText',
+  'getValueWhenReady',
   'metrics',
   'snapshot',
   'text',

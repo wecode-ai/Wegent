@@ -152,7 +152,7 @@ test.describe('Pipeline native session archive and continuation', () => {
               matchText: interrupted,
               responseContent: `INTERRUPTED_${prefix}`,
               chunkDelayMs: 0,
-              doneDelayMs: 180_000,
+              holdResponse: true,
             })
           }
           const task = await postJson(

@@ -273,6 +273,8 @@ Executor 保留唯一的后台采集调度。它通过仅监听回环地址、�
 
 邮箱协议库随选定 Harness runtime 提供。Core 插件从该运行时的 `package.json` 解析依赖，避免已复制到用户配置目录的插件错误地从配置目录查找模块。新增邮箱用户故事由共享 `stand-in-email` 桌面 checkpoint 覆盖，使用独立的真实 GreenMail IMAP/SMTP 服务和临时受信证书，只模拟模型服务；该验证不代表已验证所有外部邮箱服务商的实际兼容性。
 
+邮件测试服务器固定为 GreenMail 2.1.15，本地运行需使用 Java 11 或更高版本（CI 使用 Java 21）。旧版 1.6.15 以 12 小时制解析 IMAP APPEND 日期，会将中午 `12:30` 存为凌晨 `00:30`；测试继续严格校验写入与读回的收件时间，不放宽时间断言。
+
 协议和依赖测试位于 `wework/dsh/plugin-runtime/connections.test.mjs`；钉钉采集契约测试位于 `wework/dsh/connection-dingtalk/provider.test.mjs`；回环鉴权测试位于 `wework/dsh/connection-host/rpc.test.mjs`。这些测试由现有 Wework 测试发现器执行。
 
 Executor 的 `stand_in_identity_contract` 覆盖历史配置、游标和去重迁移，以及不同 Provider 的命名空间隔离。分身确认和来源权限测试继续保留。桌面新增回归接入共享 checkpoint runner；按仓库政策，仅在明确要求时运行 E2E 和真实桌面验证。

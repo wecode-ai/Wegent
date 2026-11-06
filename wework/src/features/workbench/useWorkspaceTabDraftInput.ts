@@ -1,4 +1,4 @@
-import { useLayoutEffect } from 'react'
+import { useCallback, useLayoutEffect, useState } from 'react'
 import {
   consumeWorkspaceTabTransfer,
   publishWorkspaceTabTransferState,
@@ -9,11 +9,24 @@ import { useScopedDraftInput } from './useScopedDraftInput'
 export function useWorkspaceTabDraftInput(workspaceTabId?: string) {
   const draft = useScopedDraftInput(() => ({}))
   const { inputs, replaceInputs } = draft
+  const [goalDraftActiveByScope, setGoalDraftActiveByScope] = useState<Record<string, boolean>>({})
+  const setGoalDraftActiveForScope = useCallback((scopeKey: string, active: boolean) => {
+    setGoalDraftActiveByScope(current => {
+      if (Boolean(current[scopeKey]) === active) return current
+      const next = { ...current }
+      if (active) next[scopeKey] = true
+      else delete next[scopeKey]
+      return next
+    })
+  }, [])
   useLayoutEffect(() => {
     if (!workspaceTabId) return
     const restore = () => {
       const transfer = consumeWorkspaceTabTransfer(workspaceTabId)
-      if (transfer) replaceInputs(transfer.draftInputByScope)
+      if (transfer) {
+        replaceInputs(transfer.draftInputByScope)
+        setGoalDraftActiveByScope(transfer.goalDraftActiveByScope ?? {})
+      }
     }
     const accept = (event: Event) => {
       if ((event as CustomEvent<string>).detail === workspaceTabId) restore()
@@ -24,7 +37,10 @@ export function useWorkspaceTabDraftInput(workspaceTabId?: string) {
   }, [replaceInputs, workspaceTabId])
   useLayoutEffect(() => {
     if (!workspaceTabId) return
-    publishWorkspaceTabTransferState(workspaceTabId, { draftInputByScope: inputs })
-  }, [inputs, workspaceTabId])
-  return draft
+    publishWorkspaceTabTransferState(workspaceTabId, {
+      draftInputByScope: inputs,
+      goalDraftActiveByScope,
+    })
+  }, [goalDraftActiveByScope, inputs, workspaceTabId])
+  return { ...draft, goalDraftActiveByScope, setGoalDraftActiveForScope }
 }

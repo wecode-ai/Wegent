@@ -7,6 +7,12 @@
   },
   "plugins": [
     {
+      "name": "wework-docs",
+      "description": "Answers Wework usage, setup, settings, and troubleshooting questions from bundled documentation.",
+      "source": "./plugins/wework-docs",
+      "version": "0.1.0"
+    },
+    {
       "name": "wework-space",
       "description": "Provides project-space, Issue, attachment, and delivery tools to Wework Agent sessions.",
       "source": "./plugins/wework-space",
