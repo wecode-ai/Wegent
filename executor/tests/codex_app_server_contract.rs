@@ -27,6 +27,10 @@ use wegent_executor::{
 #[path = "codex_app_server_contract/startup.rs"]
 mod startup;
 
+#[cfg(unix)]
+#[path = "codex_app_server_contract/proxy.rs"]
+mod proxy;
+
 macro_rules! shared_runtime_tests {
     ($(async fn $name:ident() $body:block)*) => {
         $(
