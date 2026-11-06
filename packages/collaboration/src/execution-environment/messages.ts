@@ -9,6 +9,21 @@ export const executionEnvironmentMessages: Record<
   Readonly<Record<string, string>>
 > = {
   'zh-CN': {
+    'gitAccount.configure': '配置 Git 账户',
+    'gitAccount.openFailed': '无法打开配置页面，请重试。',
+    'common:workbench.git_access_credentials_required':
+      '仓库 {{domain}} 需要目标设备上的 Git 凭据。请配置对应域的 Git 账户后重新准备。',
+    'common:workbench.git_access_authentication_failed':
+      '{{domain}} 的 Git 认证被拒绝，请检查 Git 账户令牌或目标设备的 SSH 密钥后重试。',
+    'common:workbench.git_access_ssh_authentication_failed':
+      '{{domain}} 的 SSH 认证被拒绝，请配置目标设备的 SSH 密钥后重试；云端 Git 令牌不能替代 SSH 密钥。',
+    'common:workbench.git_access_repository_inaccessible':
+      '请检查仓库地址和账户的仓库访问权限；不一定是登录问题。',
+    'common:workbench.git_access_network_error':
+      '请检查目标设备网络、代理、TLS 证书和 SSH 主机信任。',
+    'common:workbench.git_access_git_unavailable':
+      '目标设备无法启动 Git，请安装或修复 Git 后重试。',
+    'common:workbench.git_access_invalid_url': '请使用不含凭据或查询参数的合法仓库地址。',
     'todo.runner_environment_not_authorized':
       '机器人没有符合配置且获项目授权的执行环境。请在项目设置中检查执行环境授权，并检查机器人的环境选择。',
     'todo.device_catalog_local_failed': '本地设备加载失败',
@@ -120,6 +135,22 @@ export const executionEnvironmentMessages: Record<
     'todo.execution_environment_permission_denied': '没有操作权限，请联系空间或项目管理员。',
   },
   en: {
+    'gitAccount.configure': 'Configure Git accounts',
+    'gitAccount.openFailed': 'Could not open Git settings. Try again.',
+    'common:workbench.git_access_credentials_required':
+      '{{domain}} requires Git credentials on the selected device. Configure the domain Git account, then prepare again.',
+    'common:workbench.git_access_authentication_failed':
+      'Git authentication for {{domain}} was rejected. Check the account token or device SSH key, then retry.',
+    'common:workbench.git_access_ssh_authentication_failed':
+      'SSH authentication for {{domain}} was rejected. Configure the target device SSH key and retry; cloud Git tokens cannot replace SSH keys.',
+    'common:workbench.git_access_repository_inaccessible':
+      'Check the repository URL and account access; this is not necessarily a login problem.',
+    'common:workbench.git_access_network_error':
+      'Check the device network, proxy, TLS certificate and SSH host trust.',
+    'common:workbench.git_access_git_unavailable':
+      'Git cannot start on the selected device. Install or repair Git and retry.',
+    'common:workbench.git_access_invalid_url':
+      'Use a valid repository URL without credentials or query parameters.',
     'todo.runner_environment_not_authorized':
       'No project-authorized execution environment matches this agent. Check execution environment authorization in Project settings and the agent’s environment selection.',
     'todo.device_catalog_local_failed': 'Failed to load local devices',

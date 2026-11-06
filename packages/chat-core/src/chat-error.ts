@@ -1,3 +1,5 @@
+import { parseGitAccessFailure, type GitAccessFailure } from "./git-access";
+
 export type ChatErrorType =
   | "context_length_exceeded"
   | "quota_exceeded"
@@ -25,6 +27,7 @@ export interface ParsedChatError {
   titleKey: string;
   descriptionKey: string;
   endpoint?: string;
+  gitFailure?: GitAccessFailure;
 }
 
 const BACKEND_TYPE_MAP: Record<string, ChatErrorType> = {
@@ -189,6 +192,15 @@ export function parseChatError(
   error: string,
   backendType?: string | null,
 ): ParsedChatError {
+  const gitFailure = parseGitAccessFailure(error);
+  if (gitFailure) {
+    return {
+      type: "generic_error",
+      titleKey: "assistant_error.git_access.title",
+      descriptionKey: `assistant_error.git_access.${gitFailure.code}`,
+      gitFailure,
+    };
+  }
   const type =
     normalizeBackendType(backendType) ??
     normalizeBackendType(extractStructuredErrorType(error)) ??

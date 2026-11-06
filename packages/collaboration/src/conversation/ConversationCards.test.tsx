@@ -11,6 +11,8 @@ import { RequestUserInputCard } from "./RequestUserInputCard";
 import { CodexReferenceList } from "./CodexTurnArtifacts";
 import { getAssistantReferences } from "./codexReferences";
 import { SelectionActionsPopover } from "./SelectionActionsPopover";
+import { AssistantErrorCard } from "./AssistantErrorCard";
+import { GitAccountConfigurationProvider } from "../controls/GitAccountConfiguration";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -63,6 +65,81 @@ const summary: TurnFileChangesSummary = {
 };
 
 describe("shared conversation cards without Electron", () => {
+  it("opens the correct Git account from the error card and preserves retry", async () => {
+    const openUrl = vi.fn();
+    const retry = vi.fn();
+    const message = {
+      id: "git-error",
+      role: "assistant",
+      content: "",
+    } as Parameters<typeof AssistantErrorCard>[0]["message"];
+    render(
+      <GitAccountConfigurationProvider
+        value={{ baseUrl: "https://cloud.example", openUrl }}
+      >
+        <AssistantErrorCard
+          error='git-access:{"code":"authentication-failed","domain":"git.example:8443","message":"Authentication rejected"}'
+          message={message}
+          onRetry={retry}
+          onSwitchModel={vi.fn()}
+        />
+      </GitAccountConfigurationProvider>,
+    );
+    await act(async () => element("assistant-error-configure-git").click());
+    expect(openUrl).toHaveBeenCalledExactlyOnceWith(
+      "https://cloud.example/settings?tab=integrations&gitDomain=git.example%3A8443#git-accounts",
+    );
+    expect(element("assistant-error-configure-git").textContent).toContain(
+      "Configure Git accounts",
+    );
+    act(() => element("assistant-error-retry").click());
+    expect(retry).toHaveBeenCalledWith(message);
+    expect(
+      container.querySelector(
+        '[data-testid="assistant-error-switch-model-retry"]',
+      ),
+    ).toBeNull();
+  });
+
+  it("shows checkout configuration guidance without raw JSON or a model-switch action", () => {
+    const retry = vi.fn();
+    const message = {
+      id: "turn-git",
+      type: "assistant",
+      content: "",
+    } as Parameters<typeof AssistantErrorCard>[0]["message"];
+    render(
+      <AssistantErrorCard
+        error={
+          'git-access:{"code":"credentials-required","domain":"git.example:8443","message":"Configure Git"}'
+        }
+        errorType="container_error"
+        message={message}
+        onRetry={retry}
+        onSwitchModel={vi.fn()}
+      />,
+    );
+    expect(element("assistant-error-title").textContent).toBe(
+      "Git repository access failed",
+    );
+    expect(element("assistant-error-description").textContent).toContain(
+      "git.example:8443",
+    );
+    expect(element("assistant-error-description").textContent).toContain(
+      "Settings → Integrations → Git accounts",
+    );
+    expect(element("assistant-error-details").textContent).not.toContain(
+      "git-access:",
+    );
+    expect(
+      document.querySelector(
+        '[data-testid="assistant-error-switch-model-retry"]',
+      ),
+    ).toBeNull();
+    act(() => element("assistant-error-retry").click());
+    expect(retry).toHaveBeenCalledExactlyOnceWith(message);
+  });
+
   it("keeps revert confirmation themed and calls the host only after confirmation", async () => {
     const revert = vi
       .fn()

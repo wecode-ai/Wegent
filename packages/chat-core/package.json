@@ -4,6 +4,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./git-access": {
+      "types": "./src/git-access.ts",
+      "import": "./src/git-access.ts"
+    },
     "./request-cache": {
       "types": "./src/request-cache.ts",
       "import": "./src/request-cache.ts"

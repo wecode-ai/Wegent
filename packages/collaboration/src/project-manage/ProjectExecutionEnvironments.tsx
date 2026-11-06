@@ -4,6 +4,7 @@
 
 import { ChevronRight } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { parseGitAccessFailure } from '@wegent/chat-core/git-access'
 
 import type { CollaborationTranslate } from '../i18n'
 import type {
@@ -26,6 +27,7 @@ import { environmentAuthorizationError } from './environmentAuthorization'
 import { useExecutionEnvironmentList } from '../execution-environment/useExecutionEnvironmentList'
 import { compareExecutionEnvironments } from '../execution-environment/compareExecutionEnvironments'
 import { ensureWorkspaceEnvironmentSharing } from '../execution-environment/ensureWorkspaceEnvironmentSharing'
+import { GitAccountConfigurationButton } from '../controls/GitAccountConfiguration'
 
 type RepositoryDraft = CollaborationExecutionEnvironmentRepository & {
   id: string
@@ -51,6 +53,14 @@ function executionEnvironmentErrorSummary(
   repositoryFree: boolean,
   translate: CollaborationTranslate
 ): string {
+  const gitFailure = parseGitAccessFailure(message)
+  if (gitFailure) {
+    return translate(
+      `common:workbench.git_access_${gitFailure.code.replaceAll('-', '_')}`,
+      gitFailure.message,
+      { domain: gitFailure.domain }
+    )
+  }
   if (repositoryFree && message.includes(LEGACY_REPOSITORY_FREE_ERROR)) {
     return translate(
       'todo.execution_environment_blank_workspace_upgrade_required',
@@ -767,18 +777,35 @@ export function ProjectExecutionEnvironments({
             onTogglePicker={() => setPickerOpen(current => !current)}
           />
           {environmentError ? (
-            <p
-              className="mt-3 text-sm text-destructive"
-              data-testid={`${testIdPrefix}-environment-error`}
-              role="alert"
-              title={environmentError}
-            >
-              {executionEnvironmentErrorSummary(
-                environmentError,
-                configuredRepositories.length === 0,
-                translate
-              )}
-            </p>
+            <div className="mt-3 space-y-2">
+              <p
+                className="break-words text-sm text-destructive"
+                data-testid={`${testIdPrefix}-environment-error`}
+                role="alert"
+                title={environmentError}
+              >
+                {executionEnvironmentErrorSummary(
+                  environmentError,
+                  configuredRepositories.length === 0,
+                  translate
+                )}
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <GitAccountConfigurationButton
+                  failure={parseGitAccessFailure(environmentError)}
+                  translate={translate}
+                  testId={`${testIdPrefix}-configure-git`}
+                  deviceId={environmentErrorDeviceKey.current}
+                  enabled={
+                    !assignedItems.some(
+                      item =>
+                        item.device_key === environmentErrorDeviceKey.current &&
+                        item.is_current_device
+                    )
+                  }
+                />
+              </div>
+            </div>
           ) : null}
           <details
             className="group mt-6 border-t border-border"

@@ -424,11 +424,24 @@ async fn clone_repo(
             failed_fields.push(("git_domain", git_domain));
         }
         log_executor_event("git clone credentials missing", &failed_fields);
-        return Err(format!(
-            "git credentials missing for protected repository: {}",
-            mask_url_credentials(git_url)
-        ));
+        return Err(crate::local::git_access::GitAccessFailure::new(
+            "credentials-required",
+            &request_git_domain(request).unwrap_or_default(),
+            "Configure Git credentials for the protected repository before retrying",
+        )
+        .wire_error());
     }
+
+    let auth_environment = crate::local::git_access::noninteractive_environment(
+        &auth_environment.into_iter().collect(),
+    );
+    crate::local::git_access::preflight(
+        git_url,
+        &auth_environment,
+        git_clone_timeout_seconds() as f64,
+    )
+    .await
+    .map_err(|failure| failure.wire_error())?;
 
     let mut command = Command::new("git");
     clear_local_git_env(command.as_std_mut());
