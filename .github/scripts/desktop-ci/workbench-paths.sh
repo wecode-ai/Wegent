@@ -521,7 +521,9 @@ classify_workbench_path() {
       return
       ;;
 
-    wework/e2e/desktop/scenarios/codex-native-catalog.scenario.mjs)
+    wework/e2e/desktop/scenarios/codex-native-catalog.scenario.mjs | \
+      wework/e2e/desktop/scenarios/codex-catalog-context.mjs | \
+      wework/e2e/desktop/scenarios/codex-catalog-reasoning.mjs)
       select_target "core:codex-native-catalog"
       return
       ;;

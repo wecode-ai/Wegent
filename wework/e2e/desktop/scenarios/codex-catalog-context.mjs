@@ -10,6 +10,11 @@ import {
   selectE2EModel,
 } from '../modules/shared.mjs'
 import {
+  configureCatalogReasoning,
+  selectCatalogEffort,
+  verifyCatalogReasoning,
+} from './codex-catalog-reasoning.mjs'
+import {
   codexRequestKind,
   createSse,
   handleEmptyReplyPrediction,
@@ -91,6 +96,8 @@ export function createCatalogContextVerification({
   let requests = 0
   let compactions = 0
   let heldResponse
+  let expectedEffort
+  const reasoningRequests = []
 
   return {
     attachServer(server) {
@@ -123,6 +130,23 @@ export function createCatalogContextVerification({
       const prewarm = kind === 'prewarm'
       if (!prewarm) {
         assert.equal(body.model, modelId)
+        // Codex resolves Ultra to Max for inference and pins the context baseline.
+        const updates = body.input.filter(item => item.type === 'configuration_update')
+        reasoningRequests.push({
+          expectedEffort,
+          baseline: body.reasoning?.effort,
+          updates: updates.map(item => item.reasoning?.effort),
+        })
+        await writeFile(
+          join(resultDir, 'codex-catalog-reasoning.json'),
+          JSON.stringify(reasoningRequests, null, 2)
+        )
+        assert.equal(
+          updates.at(-1)?.reasoning?.effort ?? body.reasoning?.effort,
+          'max',
+          'The real Codex request must use the Catalog inference effort for Max and Ultra'
+        )
+        assert.equal(body.reasoning?.effort, 'max', 'The context effort baseline must stay pinned')
         assert.ok(JSON.stringify(body).includes(PROMPT), 'Catalog task lost its conversation')
         requests += 1
       }
@@ -151,6 +175,7 @@ export function createCatalogContextVerification({
       await control.command('fill', '[data-testid="local-model-context-window-input"]', {
         value: '500000',
       })
+      await configureCatalogReasoning(control)
       const executorLogPath = join(resultDir, 'executor.log')
       await saveCatalogAndWaitForRestart(control, executorLogPath)
       await control.command(
@@ -161,13 +186,17 @@ export function createCatalogContextVerification({
       await control.command('navigate', 'body', { value: '/' })
       await createSingleRootLocalProject(control, workspacePath, 'catalog-context-500k')
       await selectE2EModel(control, modelId, modelLabel, '', 'openai')
+      await verifyCatalogReasoning(control)
       active = true
       try {
         for (let turn = 1; turn <= 2; turn += 1) {
+          expectedEffort = turn === 1 ? 'max' : 'ultra'
+          await selectCatalogEffort(control, expectedEffort)
           await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
             value: `${PROMPT} turn ${turn}`,
           })
           await control.command('waitFor', ACTIVE_SEND_BUTTON_SELECTOR, { enabled: true })
+          const turnLogOffset = (await readFile(executorLogPath, 'utf8')).length
           await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
           await control.command('waitFor', '[data-testid="message-assistant"]', {
             text: `${PROMPT} complete ${turn}`,
@@ -183,6 +212,14 @@ export function createCatalogContextVerification({
           })
           assert.equal(compactions, 0, 'Catalog context was compacted at the obsolete 256k limit')
           assert.equal(requests, turn, 'The task made an unexpected model request')
+          const turnLog = (await readFile(executorLogPath, 'utf8')).slice(turnLogOffset)
+          assert.match(
+            turnLog,
+            new RegExp(
+              `codex shared thread request finished [^\\n]*reasoning_effort=${expectedEffort} `
+            ),
+            'The selected Catalog effort must reach the real native Codex thread unchanged'
+          )
         }
       } finally {
         active = false
