@@ -14,6 +14,10 @@ sidebar_position: 1
 
 ## 当前实现：受管 wework_control
 
+本机 APP 绑定云项目的会话仍在本机创建和续聊；`projectId`、已上传 `attachmentIds` 和云项目执行权限通过既有 `/runtime-work/materialize` 编译，再走现有本机 Runtime。其他设备沿用后端远控策略。已授权 IM 续聊沿用原有 APP 消息授权读取会话身份，不向普通 HTTP 请求开放远控。没有新增 HTTP API 或 RPC。
+
+本机 APP 绑定云项目的会话仍在本机创建和续聊；`projectId`、已上传 `attachmentIds` 和云项目执行权限通过既有 `/runtime-work/materialize` 编译，再走现有本机 Runtime。其他设备沿用后端远控策略。已授权 IM 续聊沿用原有 APP 消息授权读取会话身份，不向普通 HTTP 请求开放远控。没有新增 HTTP API 或 RPC。
+
 新增 30 个业务工具以及 `list_capabilities`、`describe_capability`、`invoke_capability` 三个发现/调用工具。工具目录来自同一份输入契约；普通 Codex、Claude 会话及个人安排自动接入，不需要用户另配 MCP 或个人 API Key。
 
 同一普通会话在设备、会话地址、后端、凭据和来源身份不变时复用个人控制 MCP 连接，避免每轮续聊重载原生线程而中断后台进程或订阅；每次调用仍校验连接绑定并读取当前执行上下文。身份变化触发原有 MCP 重载，项目授权和受限执行继续使用独立执行上下文。
@@ -131,18 +135,17 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-  A[AI 创建请求] --> B[共享契约与源权限校验]
-  B --> C{创建路径}
-  C -->|本机| L[本机解析模型和项目]
-  L --> F[建立可选项目空间或 Issue 绑定]
-  C -->|远端或云资源| F
-  F --> T{分发位置}
-  T -->|本机| R[现有 Runtime 创建与排队]
-  T -->|远端或云资源| D[原有后端鉴权和创建 API]
-  D --> E[目标设备编译模型和项目配置]
+  A[AI 创建意图] --> B[共享契约与源权限]
+  B --> F[建立可选项目空间或 Issue 绑定]
+  F --> T{所属设备}
+  T -->|本机且需要云资源| M[既有 materialize 与权限校验]
+  T -->|本机且无需云资源| L[本机模型和项目编译器]
+  M --> L
+  L --> R[既有本机 Runtime 创建与排队]
+  T -->|其他设备| D[既有后端鉴权和创建 API]
+  D --> E[目标设备编译器]
   E --> R
-  R --> W[准备环境、分支或 Worktree]
-  W --> N[原生会话应用全部创建配置]
+  R --> W[准备环境与原生会话]
 ```
 
 界面通过可信设备 IPC 发布模型配置到 Executor 内存；准备或刷新目录时重发，包括删除后的空目录，并按设备串行处理，防止旧凭据覆盖新配置。MCP 只能指定模型身份，不能传入 `modelConfig` 或 `executionRequest`。远端创建要求显式模型，协商 `intentCompilation` 能力，并保留后端账户代理及 APP 设备控制策略。源会话的附件、Issue 来源、fork 和继承历史不会自动进入新会话。新会话关联本地项目时仍可离线读取。

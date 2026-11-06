@@ -31,6 +31,9 @@ const SOURCE_MESSAGE = `${SOURCE}: this conversation owns ${PR}`
 const CONTROLLER = 'WEWORK_CONTROL_CONTROLLER_E2E'
 const CREATED = 'WEWORK_CONTROL_CREATED_E2E'
 const CLOUD_CREATED = 'WEWORK_CONTROL_CLOUD_CREATED_E2E'
+const CLOUD_FOLLOW_UP = 'WEWORK_CONTROL_CLOUD_FOLLOW_UP_E2E'
+const CLOUD_UI_FOLLOW_UP = 'WEWORK_CONTROL_CLOUD_UI_FOLLOW_UP_E2E'
+const RESOURCE_CONTENT = 'WEWORK_CONTROL_RESOURCE_CONTENT_E2E'
 const UNIFIED_HISTORY = 'WEWORK_CONTROL_UNIFIED_HISTORY_E2E'
 const REMOTE_CREATED = 'WEWORK_CONTROL_REMOTE_CREATED_E2E'
 const REMOTE_FOLLOW_UP = 'WEWORK_CONTROL_REMOTE_FOLLOW_UP_E2E'
@@ -69,6 +72,8 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
   let active = false
   let sourceId
   let sourceTaskId
+  let sourceDeviceId
+  let attachment
   let operationId
   let automationId
   let createdId
@@ -89,6 +94,8 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
   const remoteFollowUpRequests = new Map()
   let stage = 0
   let followUpRequests = 0
+  let cloudFollowUpRequests = 0
+  let cloudUiFollowUpRequests = 0
   let remoteUiFollowUpRequests = 0
   let failure
   const progress = new EventEmitter()
@@ -232,13 +239,38 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
         message: CLOUD_CREATED,
         title: CLOUD_TITLE,
         project_space: { space_id: String(cloudProject.id), store: 'cloud' },
+        options: { attachmentIds: [attachment.id] },
       }),
       value => {
         const created = findValue(value, item => item.accepted === true && item.conversation_id)
         assert.ok(created)
+        assert.equal(created.deviceId, sourceDeviceId)
         cloudCreatedId = created.conversation_id
         cloudCreatedTaskId = created.taskId
       },
+    ],
+    [
+      'continue_conversation',
+      () => ({
+        conversation_id: cloudCreatedId,
+        message: CLOUD_FOLLOW_UP,
+        request_key: 'local-app:cloud-project:follow-up',
+      }),
+      value => {
+        const receipt = findValue(value, item => item.operation && item.duplicate === false)
+        assert.equal(receipt?.operation.delivery_status, 'accepted')
+        assert.equal(receipt.operation.device_id, sourceDeviceId)
+        assert.equal(receipt.operation.task_id, cloudCreatedTaskId)
+      },
+    ],
+    [
+      'continue_conversation',
+      () => ({
+        conversation_id: cloudCreatedId,
+        message: CLOUD_FOLLOW_UP,
+        request_key: 'local-app:cloud-project:follow-up',
+      }),
+      value => assert.ok(findValue(value, item => item.duplicate === true)),
     ],
     [
       'search_conversations',
@@ -429,6 +461,18 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
         task_provider: 'local',
         visibility: 'private',
       })
+      const form = new FormData()
+      form.set('file', new Blob([RESOURCE_CONTENT], { type: 'text/plain' }), 'control-resource.txt')
+      const upload = await fetch(`${cloud.backendUrl}/api/attachments/upload`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${cloud.authToken}` },
+        body: form,
+        signal: AbortSignal.timeout(uiTimeoutMs),
+      })
+      assert.equal(upload.status, 201, `Attachment upload: ${await upload.clone().text()}`)
+      attachment = await upload.json()
+      assert.ok(attachment.id)
+      assert.equal(attachment.status, 'ready')
       const teamsResponse = await fetch(`${cloud.backendUrl}/api/teams?page=1&limit=100`, {
         headers: { Authorization: `Bearer ${cloud.authToken}` },
         signal: AbortSignal.timeout(uiTimeoutMs),
@@ -506,7 +550,17 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
           events = [assistantMessage('WEWORK_CONTROL_REMOTE_RESUMED'), responseCompleted(id)]
         } else if (serialized.includes(REMOTE_CREATED)) {
           events = [assistantMessage('WEWORK_CONTROL_REMOTE_READY'), responseCompleted(id)]
+        } else if (serialized.includes(CLOUD_UI_FOLLOW_UP)) {
+          cloudUiFollowUpRequests += 1
+          events = [assistantMessage('WEWORK_CONTROL_CLOUD_UI_RESUMED'), responseCompleted(id)]
+        } else if (serialized.includes(CLOUD_FOLLOW_UP)) {
+          cloudFollowUpRequests += 1
+          events = [assistantMessage('WEWORK_CONTROL_CLOUD_RESUMED'), responseCompleted(id)]
         } else if (serialized.includes(CLOUD_CREATED)) {
+          assert.ok(
+            serialized.includes(RESOURCE_CONTENT),
+            'Owned attachment must reach the local turn'
+          )
           events = [assistantMessage('WEWORK_CONTROL_CLOUD_READY'), responseCompleted(id)]
         } else if (serialized.includes(CREATED)) {
           events = [assistantMessage('WEWORK_CONTROL_CREATED_READY'), responseCompleted(id)]
@@ -590,6 +644,16 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       const task = snapshot.workbench.currentRuntimeTask
       assert.ok(task?.deviceId && task.taskId, 'The UI must expose the actual source task address')
       sourceTaskId = task.taskId
+      sourceDeviceId = task.deviceId
+      const devices = await cloudEnvironment.devices()
+      assert.ok(
+        devices.some(
+          device =>
+            device.device_type === 'app' &&
+            [device.device_id, device.execution_target_id].includes(sourceDeviceId)
+        ),
+        'The local source must use a real APP device subject to remote-control restrictions'
+      )
       sourceId = `conv_${Buffer.from(JSON.stringify([task.deviceId, task.taskId])).toString('base64url')}`
       await send(CONTROLLER)
       await waitForScenarioProgress(
@@ -613,6 +677,23 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
         text: 'WEWORK_CONTROL_ORIGINAL_RESUMED',
       })
       assert.equal(followUpRequests, 1, 'A duplicate CI request must not start another native turn')
+      const cloudRow = `[data-testid="runtime-local-task-row-${cloudCreatedTaskId}"]`
+      await control.command('waitFor', cloudRow)
+      await control.command('clickWhenEnabled', cloudRow)
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: 'WEWORK_CONTROL_CLOUD_RESUMED',
+      })
+      assert.equal(cloudFollowUpRequests, 1, 'Local cloud-bound continuation must be idempotent')
+      await control.command('fill', COMPOSER, { value: CLOUD_UI_FOLLOW_UP })
+      await control.command('clickWhenEnabled', `${WORKBENCH} [data-testid="send-message-button"]`)
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: 'WEWORK_CONTROL_CLOUD_UI_RESUMED',
+      })
+      assert.equal(cloudUiFollowUpRequests, 1)
+      const localResumed = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+        .workbench.currentRuntimeTask
+      assert.equal(localResumed.deviceId, sourceDeviceId)
+      assert.equal(localResumed.taskId, cloudCreatedTaskId)
       for (const deviceId of [CLOUD_DEVICE_ID, REMOTE_DOCKER_DEVICE_ID]) {
         assert.equal(
           remoteFollowUpRequests.get(deviceId),
@@ -666,6 +747,8 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
         stage,
         observed,
         followUpRequests,
+        cloudFollowUpRequests,
+        cloudUiFollowUpRequests,
         remoteUiFollowUpRequests,
         remoteFollowUpRequests: Object.fromEntries(remoteFollowUpRequests),
         failure: failure?.message,

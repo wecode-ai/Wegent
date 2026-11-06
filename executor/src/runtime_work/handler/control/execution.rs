@@ -122,13 +122,32 @@ impl RuntimeWorkRpcHandler {
         if let Some(receipt) = existing {
             return Ok(json!({"operation":receipt,"duplicate":true}));
         }
-        let use_backend = device != self.device_id || cloud_bound(&link);
+        let use_backend = device != self.device_id;
         let mut payload = if use_backend {
             // The existing Backend compiler owns project permissions and the current Team profile.
             json!({"modelSelection":link.runtime_handle.get("modelSelection").or_else(|| link.runtime_handle.get("model_selection"))})
         } else {
-            self.control_execution_payload(&link, message, &operation_id)
-                .await?
+            let mut intent = self
+                .control_execution_payload(&link, message, &operation_id)
+                .await?;
+            let team_id = link.runtime_handle["wegentTeam"]["id"]
+                .as_u64()
+                .filter(|id| *id > 0);
+            if cloud_bound(&link) || team_id.is_some() {
+                intent["origin"] = link.runtime_handle["origin"].clone();
+                intent["cloudProjectId"] = link.runtime_handle["cloudProjectId"]
+                    .as_str()
+                    .or_else(|| link.runtime_handle["origin"]["cloudProjectId"].as_str())
+                    .map(|id| json!(id))
+                    .unwrap_or(Value::Null);
+                if let Some(id) = team_id {
+                    intent["wegentTeamId"] = json!(id);
+                }
+                self.control_materialize_local(context, intent, false)
+                    .await?
+            } else {
+                intent
+            }
         };
         payload["queueIfBusy"] = json!(queue_if_busy);
         let mut receipt = json!({"operation_id":operation_id,"conversation_id":args["conversation_id"],

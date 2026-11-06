@@ -456,6 +456,7 @@ async def get_runtime_transcript(
     db: Session,
     user_id: int,
     address: RuntimeTranscriptRequest | RuntimeTaskAddress,
+    allow_app_device_task_reading: bool = False,
 ) -> RuntimeTranscriptResponse | RuntimeTranscriptChunkResponse:
     """Read a session transcript, assembling device chunks for legacy HTTP callers."""
 
@@ -476,6 +477,7 @@ async def get_runtime_transcript(
             user_id=packet_user_id,
             address=request,
             normalized_address=normalized_address,
+            allow_app_device_task_reading=allow_app_device_task_reading,
         )
 
     if address.transcript_protocol_version == 2:
@@ -519,6 +521,7 @@ async def _get_runtime_transcript_packet(
     user_id: int,
     address: RuntimeTranscriptRequest,
     normalized_address: RuntimeTaskAddress,
+    allow_app_device_task_reading: bool = False,
 ) -> RuntimeTranscriptResponse | RuntimeTranscriptChunkResponse:
     """Read one authorized packet without holding its permission transaction open."""
     payload = _runtime_transcript_payload(address, normalized_address)
@@ -542,7 +545,8 @@ async def _get_runtime_transcript_packet(
             timeout_seconds=RUNTIME_TRANSCRIPT_TIMEOUT_SECONDS,
             **(
                 {"allow_app_device_task_reading": True}
-                if getattr(address, "project_session", None) is not None
+                if allow_app_device_task_reading
+                or getattr(address, "project_session", None) is not None
                 else {}
             ),
         )
@@ -867,7 +871,10 @@ async def _dispatch_runtime_send(
     """
     if request.request_user_input_response is None:
         address = await resolve_continuation_address(
-            db=db, user_id=user_id, address=address
+            db=db,
+            user_id=user_id,
+            address=address,
+            allow_app_device_task_messaging=allow_app_device_task_messaging,
         )
         payload.update(_runtime_task_address_payload(address))
         try:
@@ -1539,16 +1546,14 @@ def materialize_runtime_task_create(
 ) -> CompiledRuntimeTaskCreate:
     """Compile the canonical Executor payload without choosing its transport."""
 
+    target = _resolve_runtime_task_target(db, user_id, request)
     if request.wegent_team_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="wegentTeamId is required for runtime materialization",
-        )
+        _ensure_owned_device(db, user_id, target.device_id)
     return _compile_runtime_task_create(
         db=db,
         user_id=user_id,
         request=request,
-        target=_resolve_runtime_task_target(db, user_id, request),
+        target=target,
     )
 
 
@@ -4503,7 +4508,7 @@ def _build_direct_wework_runtime_execution_request(
         enable_tools=True,
         enable_web_search=False,
         enable_deep_thinking=False,
-        new_session=True,
+        new_session=bool(getattr(request, "new_session", True)),
         collaboration_model="single",
         mode="code",
         task_mode="code",

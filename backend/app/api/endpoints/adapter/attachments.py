@@ -11,7 +11,6 @@ Uses the unified context service for managing attachments as subtask contexts.
 import asyncio
 import logging
 from contextlib import suppress
-from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from urllib.parse import quote
@@ -19,15 +18,12 @@ from urllib.parse import quote
 from fastapi import (
     APIRouter,
     Depends,
-    File,
     Header,
     HTTPException,
     Query,
-    Request,
-    UploadFile,
 )
-from fastapi.responses import RedirectResponse, StreamingResponse
-from jose import JWTError, jwt
+from fastapi.responses import StreamingResponse
+from jose import jwt
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -41,22 +37,17 @@ from app.models.user import User
 from app.schemas.subtask_context import (
     AttachmentDetailResponse,
     AttachmentPreviewResponse,
-    AttachmentResponse,
-    TruncationInfo,
 )
 from app.services.attachment.external_storage import (
     ExternalAttachmentPlayback,
     resolve_external_attachment_playback,
 )
-from app.services.attachment.parser import DocumentParseError, DocumentParser
 from app.services.attachment.public_link import (
     InvalidPublicAttachmentToken,
     generate_public_attachment_token,
     verify_public_attachment_token,
 )
-from app.services.auth.task_token import extract_token_from_header, verify_task_token
 from app.services.context import context_service
-from app.services.context.context_service import NotFoundException
 from app.services.knowledge.attachment_download_policy import (
     AttachmentAccessPurpose,
     require_attachment_download_allowed,
@@ -74,22 +65,6 @@ from app.stores.tasks import subtask_store, task_store
 logger = logging.getLogger(__name__)
 
 
-def _extract_subtask_id_from_task_token(authorization: str) -> int:
-    """Extract subtask_id from task token in Authorization header.
-
-    Returns subtask_id if the token is a valid task token, 0 otherwise.
-    """
-    if not authorization:
-        return 0
-    token = extract_token_from_header(authorization)
-    if not token:
-        return 0
-    token_info = verify_task_token(token)
-    if token_info and token_info.subtask_id > 0:
-        return token_info.subtask_id
-    return 0
-
-
 router = APIRouter()
 
 ATTACHMENT_PREVIEW_TEXT_LIMIT = 4000
@@ -98,14 +73,6 @@ REMOTE_MEDIA_CHUNK_SIZE = 1024 * 1024
 ATTACHMENT_STREAM_CHUNK_SIZE = 1024 * 1024
 DOWNLOAD_TOKEN_EXPIRE_SECONDS = 300
 DOWNLOAD_TOKEN_SCOPE = "attachment_download"
-
-
-@dataclass(frozen=True)
-class AttachmentDownloadToken:
-    """The authenticated user and signed purpose of a browser file token."""
-
-    user: User
-    purpose: AttachmentAccessPurpose
 
 
 def _build_content_disposition(filename: str, disposition: str = "attachment") -> str:
@@ -308,47 +275,6 @@ def _create_download_token(
     )
 
 
-def _resolve_user_from_download_token(
-    db: Session,
-    attachment_id: int,
-    download_token: str,
-) -> AttachmentDownloadToken:
-    try:
-        payload = jwt.decode(
-            download_token,
-            settings.SECRET_KEY,
-            algorithms=[settings.ALGORITHM],
-        )
-    except JWTError as exc:
-        logger.warning(
-            "Invalid attachment download token: attachment_id=%s reason=%s",
-            attachment_id,
-            exc.__class__.__name__,
-        )
-        raise HTTPException(status_code=401, detail="Invalid download token")
-
-    purpose = payload.get("purpose", "download")
-    if (
-        payload.get("scope") != DOWNLOAD_TOKEN_SCOPE
-        or payload.get("attachment_id") != attachment_id
-        or purpose not in {"download", "playback"}
-    ):
-        raise HTTPException(status_code=401, detail="Invalid download token")
-
-    user = (
-        db.query(User)
-        .filter(
-            User.id == payload.get("user_id"),
-            User.user_name == payload.get("sub"),
-            User.is_active == True,
-        )
-        .first()
-    )
-    if user is None:
-        raise HTTPException(status_code=401, detail="Invalid download token")
-    return AttachmentDownloadToken(user=user, purpose=purpose)
-
-
 def _require_attachment_download_allowed(
     db: Session,
     context,
@@ -502,22 +428,6 @@ def _get_attachment_context(db: Session, attachment_id: int, current_user: User)
     return context
 
 
-def _build_attachment_response(
-    context,
-    truncation_info: Optional[TruncationInfo],
-) -> AttachmentResponse:
-    response_truncation_info = None
-    if truncation_info and truncation_info.is_truncated:
-        response_truncation_info = TruncationInfo(
-            is_truncated=True,
-            original_length=truncation_info.original_length,
-            truncated_length=truncation_info.truncated_length,
-            truncation_message_key="content_truncated",
-        )
-
-    return AttachmentResponse.from_context(context, response_truncation_info)
-
-
 def _validate_share_token_access(
     db: Session, attachment_id: int, share_token: str
 ) -> bool:
@@ -588,168 +498,11 @@ def _validate_share_token_access(
     return True
 
 
-# MIGRATION-CANDIDATE(api="POST /api/attachments/upload"): remove after final confirmation.
-# @router.post("/upload", response_model=AttachmentResponse)
-async def upload_attachment(
-    file: UploadFile = File(...),
-    overwrite_attachment_id: Optional[int] = None,
-    storage_purpose: str = "default",
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
-    authorization: str = Header(default=""),
-):
-    """
-    Upload a document file for chat attachment.
-
-    Supported file types:
-    - PDF (.pdf)
-    - Word (.doc, .docx)
-    - PowerPoint (.ppt, .pptx)
-    - Excel (.xls, .xlsx, .csv)
-    - XMind (.xmind)
-    - Plain text (.txt)
-    - Markdown (.md)
-    - Images (.jpg, .jpeg, .png, .gif, .bmp, .webp)
-
-    Limits:
-    - Maximum file size: 100 MB
-    - Maximum extracted text: 1,500,000 characters (auto-truncated if exceeded)
-
-    Returns:
-        Attachment details including ID, processing status, and truncation info
-
-    Optional:
-        overwrite_attachment_id: Existing attachment ID to overwrite in-place
-    """
-    # Extract subtask_id from task token (for executor-uploaded attachments)
-    subtask_id = _extract_subtask_id_from_task_token(authorization)
-
-    logger.info(
-        f"[attachments.py] upload_attachment: user_id={current_user.id}, "
-        f"filename={file.filename}, subtask_id={subtask_id}, "
-        f"storage_purpose={storage_purpose}"
-    )
-
-    if storage_purpose not in {"default", "video_reference"}:
-        raise HTTPException(status_code=400, detail="Invalid storage_purpose")
-
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="Filename is required")
-
-    # Read file content
-    try:
-        binary_data = await file.read()
-    except Exception as e:
-        logger.error(f"Error reading uploaded file: {e}")
-        raise HTTPException(
-            status_code=400, detail="Failed to read uploaded file"
-        ) from e
-
-    # Validate file size before processing
-    if not DocumentParser.validate_file_size(len(binary_data)):
-        max_size_mb = DocumentParser.get_max_file_size() / (1024 * 1024)
-        raise HTTPException(
-            status_code=400,
-            detail=f"File size exceeds maximum limit ({max_size_mb} MB)",
-        )
-
-    try:
-        if overwrite_attachment_id is not None:
-            if overwrite_attachment_id <= 0:
-                raise HTTPException(
-                    status_code=400, detail="overwrite_attachment_id must be positive"
-                )
-            context, truncation_info = context_service.overwrite_attachment(
-                db=db,
-                context_id=overwrite_attachment_id,
-                user_id=current_user.id,
-                filename=file.filename,
-                binary_data=binary_data,
-            )
-        else:
-            context, truncation_info = context_service.upload_attachment(
-                db=db,
-                user_id=current_user.id,
-                filename=file.filename,
-                binary_data=binary_data,
-                subtask_id=subtask_id,
-                storage_purpose=storage_purpose,
-            )
-
-        return _build_attachment_response(context, truncation_info)
-
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    except NotFoundException as e:
-        raise HTTPException(status_code=404, detail="Attachment not found") from e
-    except DocumentParseError as e:
-        # Return error with error_code for i18n mapping
-        error_code = getattr(e, "error_code", None)
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "message": str(e),
-                "error_code": error_code,
-            },
-        ) from e
-    except Exception as e:
-        logger.error(f"Error uploading attachment: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500, detail="Failed to upload attachment"
-        ) from e
-
-
 class AttachmentPlaybackResponse(BaseModel):
     """Fresh browser playback information for a media attachment."""
 
     playback_url: str
     cover_url: Optional[str] = None
-
-
-# MIGRATION-CANDIDATE(api="GET /api/attachments/*"): remove after final confirmation.
-# @router.get("/{attachment_id}", response_model=AttachmentDetailResponse)
-async def get_attachment(
-    attachment_id: int,
-    share_token: Optional[str] = Query(
-        None, description="Share token for public access"
-    ),
-    db: Session = Depends(get_db),
-    current_user: Optional[User] = Depends(security.get_current_user_optional),
-):
-    """
-    Get attachment details by ID.
-
-    Supports two authentication methods:
-    1. JWT token (for logged-in users)
-    2. Share token (for public shared task viewers)
-
-    Returns:
-        Attachment details including status and metadata
-    """
-
-    context = None
-
-    # Method 1: Share token authentication (no login required)
-    if share_token:
-        has_access = _validate_share_token_access(db, attachment_id, share_token)
-        if has_access:
-            # Get context for share token access
-            context = context_service.get_context_optional(
-                db=db,
-                context_id=attachment_id,
-            )
-            if context is None:
-                raise HTTPException(status_code=404, detail="Attachment not found")
-        else:
-            raise HTTPException(status_code=403, detail="Share token access denied")
-    # Method 2: JWT token authentication (existing logic)
-    elif current_user:
-        context = _get_attachment_context(db, attachment_id, current_user)
-    else:
-        # No authentication provided
-        raise HTTPException(status_code=401, detail="Authentication required")
-
-    return AttachmentDetailResponse.from_context(context)
 
 
 def _attachment_cover_url(context) -> Optional[str]:
@@ -885,121 +638,6 @@ async def get_attachment_preview(
         preview_type=preview_type,
         preview_text=preview_text,
         download_url=download_url,
-    )
-
-
-# MIGRATION-CANDIDATE(api="GET /api/attachments/*/download"): remove after final confirmation.
-# @router.get("/{attachment_id}/download")
-async def download_attachment(
-    attachment_id: int,
-    request: Request,
-    share_token: Optional[str] = Query(
-        None, description="Share token for public access"
-    ),
-    download_token: Optional[str] = Query(
-        None, description="Short-lived token for browser-native download"
-    ),
-    range_header: Optional[str] = Header(None, alias="Range"),
-    db: Session = Depends(get_db),
-    current_user: Optional[User] = Depends(security.get_current_user_optional),
-):
-    """
-    Download the original file.
-
-    Supports three authentication methods:
-    1. JWT token (for logged-in users)
-    2. Share token (for public shared task viewers)
-    3. Browser redirect (no auth) -> Login page -> Auto download after login
-
-    Returns:
-        File binary data with appropriate content type
-    """
-    has_access = False
-    context = None
-
-    # Method 1: Short-lived token used by browser-native downloads.
-    if download_token:
-        token_context = _resolve_user_from_download_token(
-            db, attachment_id, download_token
-        )
-        current_user = token_context.user
-        context = _get_attachment_context(db, attachment_id, current_user)
-        download_purpose = token_context.purpose
-        has_access = True
-
-    # Method 2: Share token authentication (no login required)
-    elif share_token:
-        has_access = _validate_share_token_access(db, attachment_id, share_token)
-        if has_access:
-            # Get context for share token access
-            context = context_service.get_context_optional(
-                db=db,
-                context_id=attachment_id,
-            )
-            if context is None:
-                raise HTTPException(status_code=404, detail="Attachment not found")
-        download_purpose = "share"
-
-    # Method 3: JWT token authentication (existing logic)
-    elif current_user:
-        context = _get_attachment_context(db, attachment_id, current_user)
-        download_purpose = "download"
-        has_access = True
-
-    # Method 4: No authentication - redirect to login for browser access
-    else:
-        # Check if it's a browser request (accepts HTML)
-        accept_header = request.headers.get("Accept", "")
-        is_browser = "text/html" in accept_header
-
-        if is_browser:
-            # Browser access - redirect to frontend login page
-            from app.core.config import settings
-
-            current_url = str(request.url)
-            login_url = f"{settings.FRONTEND_URL}/login?redirect={quote(current_url)}"
-            return RedirectResponse(url=login_url, status_code=302)
-        else:
-            # API/fetch call - return 401
-            raise HTTPException(status_code=401, detail="Authentication required")
-
-    if not has_access:
-        raise HTTPException(status_code=404, detail="Attachment not found")
-
-    _require_attachment_download_allowed(db, context, download_purpose)
-
-    external_response = await _stream_external_attachment(
-        context,
-        range_header=range_header,
-        disposition="inline" if download_purpose == "playback" else "attachment",
-    )
-    if external_response is not None:
-        return external_response
-
-    # Generated videos are streamed through the backend so the browser receives
-    # attachment headers without the service buffering the complete file.
-    if context.type_data and isinstance(context.type_data, dict):
-        video_metadata = context.type_data.get("video_metadata")
-        if video_metadata and isinstance(video_metadata, dict):
-            video_url = video_metadata.get("video_url")
-            if video_url:
-                logger.info(
-                    "Streaming remote video attachment: attachment_id=%s",
-                    attachment_id,
-                )
-                return await _stream_remote_media(
-                    video_url,
-                    context.original_filename,
-                    default_media_type=context.mime_type or "video/mp4",
-                    range_header=range_header,
-                    disposition=(
-                        "inline" if download_purpose == "playback" else "attachment"
-                    ),
-                )
-
-    return await _stream_stored_attachment(
-        context,
-        disposition="inline" if download_purpose == "playback" else "attachment",
     )
 
 

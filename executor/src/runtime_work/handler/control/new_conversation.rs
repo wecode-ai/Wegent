@@ -17,14 +17,7 @@ impl RuntimeWorkRpcHandler {
         }
         let device = intent["deviceId"].as_str().unwrap().to_owned();
         let task = intent["taskId"].as_str().unwrap().to_owned();
-        let backend_owned = device != self.device_id
-            || intent.get("projectId").is_some()
-            || intent["attachmentIds"]
-                .as_array()
-                .is_some_and(|ids| !ids.is_empty());
-        if !backend_owned {
-            intent = self.compile_creation_intent(intent).await?;
-        }
+        let backend_owned = device != self.device_id;
         let binding = self
             .control_prepare_creation_binding(context, &args, &mut intent)
             .await?;
@@ -38,7 +31,22 @@ impl RuntimeWorkRpcHandler {
             self.control_backend(context, "/runtime-work/create", intent)
                 .await
         } else {
-            self.create_task(intent).await
+            async {
+                let requires_materialization = intent.get("projectId").is_some()
+                    || intent["attachmentIds"]
+                        .as_array()
+                        .is_some_and(|ids| !ids.is_empty())
+                    || (intent["origin"]["projectStore"] != "local"
+                        && intent["cloudProjectId"].is_string());
+                if requires_materialization {
+                    intent = self
+                        .control_materialize_local(context, intent, true)
+                        .await?;
+                }
+                let intent = self.compile_creation_intent(intent).await?;
+                self.create_task(intent).await
+            }
+            .await
         };
         let mut result = match result {
             Ok(result) => result,

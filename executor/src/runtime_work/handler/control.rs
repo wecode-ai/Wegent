@@ -7,11 +7,14 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
 mod execution;
+mod materialization;
 mod new_conversation;
 mod query;
 mod remote_continuation;
 mod schedules;
 use remote_continuation::validate_continuation_target;
+#[cfg(all(test, unix))]
+mod local_execution_tests;
 #[cfg(test)]
 mod tests;
 

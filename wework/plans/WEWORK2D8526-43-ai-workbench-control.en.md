@@ -14,6 +14,8 @@ Updated again to `66e6e3e8a9fe94cf405960e12740cf56c1f9e704` on 2026-10-28, prese
 
 ## Implemented managed wework_control
 
+Local APP conversations bound to cloud projects are created and continued locally. Existing `/runtime-work/materialize` compiles `projectId`, uploaded `attachmentIds` and project execution permissions before existing local Runtime dispatch. Other devices retain Backend remote-control policy. Authorized IM continuation reuses its existing APP messaging grant to read original identity; ordinary HTTP callers gain no remote control. No HTTP API or RPC was added.
+
 The Executor now exposes 30 application tools plus `list_capabilities`, `describe_capability` and `invoke_capability`. Personal Codex/Claude conversations and personal scheduled runs receive the managed MCP automatically, without a separate MCP setup or personal API key.
 
 Ordinary follow-ups reuse the personal-control transport only while device, task address, Backend, credentials and origin remain identical. This preserves the native thread, background processes and subscriptions. Every call still validates its binding and resolves the current execution context. Authority changes use the existing MCP reload path; project grants and restricted executions retain execution-scoped contexts.
@@ -118,17 +120,16 @@ Model options use `reasoning`, `summary` and `speed`; the existing `reasoningEff
 ```mermaid
 flowchart TD
   A[AI creation intent] --> B[Shared contract and source authority]
-  B --> C{Creation path}
-  C -->|Local| L[Resolve local model and project]
-  L --> F[Prepare optional project or Issue binding]
-  C -->|Remote or cloud resources| F
-  F --> T{Dispatch target}
-  T -->|Local| R[Existing Runtime creation and queue]
-  T -->|Remote or cloud resources| D[Existing Backend authorization and create API]
-  D --> E[Target device compiles model and project]
+  B --> F[Prepare optional project or Issue binding]
+  F --> T{Owning device}
+  T -->|Local with cloud resources| M[Existing materialize and permission checks]
+  T -->|Local without cloud resources| L[Device model and project compiler]
+  M --> L
+  L --> R[Existing local Runtime creation and queue]
+  T -->|Other device| D[Existing Backend authorization and create API]
+  D --> E[Target device compiler]
   E --> R
-  R --> W[Prepare environment, branch or Worktree]
-  W --> N[Native session applies creation settings]
+  R --> W[Environment and native session creation]
 ```
 
 The UI publishes model profiles through authenticated device IPC into Executor memory, using the existing model compiler. Refreshes include removals and serialize per device to prevent stale credentials overwriting new profiles. MCP accepts model identities, never materialized `modelConfig` or `executionRequest`. Remote intent compilation requires an advertised capability and preserves Backend account proxy and APP device restrictions. Source attachments, Issue origin, forks and inherited history are cleared for new sessions. Local project bindings remain readable offline.

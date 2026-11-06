@@ -36,6 +36,14 @@ Run the real desktop task-flow E2E:
 pnpm --filter wework e2e:desktop
 ```
 
+Run only the Codex cloud-config recovery regression:
+
+```bash
+pnpm --filter wework e2e:desktop -- --segment codex-cloud-config-recovery
+```
+
+This checkpoint uses real Electron, executor, and Codex processes, with an isolated model subscription service simulating enterprise cloud-config bundle failures. It covers existing-thread continuation, new threads, configuration and model reads, Goal recovery after restart, official subscription authentication recovery, and concurrent authentication protection while a cloud-model turn runs. Assertions include the final reply, native transcripts, and task state after reload. The fixture creates its own account and directories. Existing desktop CI Core shards run this checkpoint.
+
 Run only the cloud-project desktop E2E:
 
 ```bash
@@ -884,7 +892,15 @@ The desktop E2E build additionally injects `VITE_WEWORK_DESKTOP_E2E_CONTROL_URL`
 
 When a built-in action does not handle a command, the public controller delegates it through `@extensions/desktop-control` to a product extension. Without a product extension, unknown actions fail explicitly; public automation does not recognize concrete product protocols.
 
-The controller uses short polling: the server returns `204` when no command is available, and the frontend waits briefly before polling again. This prevents a stale long-poll connection, left behind by a WebView reload, task switch, or stream completion, from consuming later commands. When `fill` targets a Lexical editor, the controller uses the editor's exposed `value` setter so the React/Lexical state is actually committed; do not replace it with raw DOM insertion. Failure diagnostics include delivered `commandHistory` in `scenario-state.json` to aid control-channel debugging.
+The control channel binds commands to the window's current client. The frontend acknowledges each result before starting its next long poll, keeping command requests out of the result acknowledgement path. A ready event after a WebView reload confirms transport reconnection, not that the application shell has mounted. Notification entry uses `clickWhenEnabled` for the button and category, retaining the shared ten-second UI step budget. When `fill` targets a Lexical editor, the controller uses the editor's exposed `value` setter so the React/Lexical state is actually committed; do not replace it with raw DOM insertion.
+
+Failure diagnostics retain delivered `commandHistory` in `scenario-state.json`, including `queuedAt`, `deliveredAt`, `startedAt`, `resultReceivedAt`, and `failedAt`. Compare these timestamps to distinguish queueing, start acknowledgement, and result return delays. The last interval includes both UI execution and result transport; a timeout alone does not prove a missing UI element. A late result for a finished command still returns `404`; it only adds `lateResultAt` and a console timeline without the result body, never converting a failed command into a pass.
+
+Paging diagnostics in `background-terminals` capture the real xterm buffer position alongside accessibility row positions, window focus, and native key modifiers. Successful initial and restored history checks save `background-terminal-keys-initial.json` and `background-terminal-keys-restored.json`; failures retain `nativeTerminalKeys` in `workbench-debug.json`. Diagnostics only read positions and event metadata: they do not change scrolling or retain terminal text, and the read-only buffer bridge exists only in E2E builds. Assertions compare buffer positions around the same trusted native key, then wait for the accessible top row and verify the first twelve output lines. Accessibility rows can lag behind the buffer, so an older row number alone is not the real position immediately before a native key executes.
+
+`responseFinishedAt` records when the control server finishes writing a command response. `desktopControlTransport` in `workbench-debug.json` provides a bounded renderer timeline for receiving response headers, decoding commands, acknowledging start, completing actions, and acknowledging results, including window visibility and focus. Compare both sides to locate delivery-to-start delays without extending timeouts or replaying commands. Diagnostics omit selectors, input values, and result bodies. `reply-predictions` enables existing Composer submission diagnostics only in its isolated environment to distinguish native Enter delivery, input policy, and business submission gates.
+
+Executor-owned turns such as supervisor corrections retain the previous completion internally for ordering and stale-provider recovery, but task wire summaries explicitly return `completedAt: null` while `running=true`. Omitting the field cannot clear the old value in patch-merged frontend caches. `supervisor-lifecycle` checks running state and this wire boundary while deliberately holding the model response. The frontend still rejects active snapshots carrying stale completion data and requires a genuinely new running projection to advance time. Do not relax these stale-state guards or hide autonomous admission behind frontend state activated only after model output.
 
 The desktop controller uses Electron `webContents.capturePage()` for native renderer screenshots. The capability is available only when `VITE_WEWORK_E2E=true`; selector captures crop the native image by the element bounds, so diagnostics preserve the actual Electron rendering.
 

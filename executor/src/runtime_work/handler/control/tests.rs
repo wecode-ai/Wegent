@@ -354,220 +354,6 @@ fn foreign_devices_and_forged_personal_contexts_are_rejected() {
         });
 }
 
-#[cfg(unix)]
-#[test]
-fn continuation_resumes_the_original_native_thread_once_and_injects_control() {
-    use std::os::unix::fs::PermissionsExt;
-    let _guard = crate::test_env::lock();
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(async {
-            let root = tempfile::tempdir().unwrap();
-            let _env = EnvGuard::home(root.path().to_str().unwrap());
-            let _native_env: Vec<_> = [
-                "CODEX_HOME",
-                "WEGENT_CODEX_HOME",
-                "WEGENT_WORKBENCH_HOME",
-                "WEGENT_CAPABILITIES_HOME",
-                "CODEX_SQLITE_HOME",
-            ]
-            .into_iter()
-            .map(|key| EnvGuard::set(key, root.path().join(key).to_str().unwrap()))
-            .collect();
-            let log = root.path().join("native-calls.jsonl");
-            let binary = root.path().join("codex-test.sh");
-            fs::write(&binary, format!(r#"#!/bin/sh
-        active_thread=thread-target
-        while IFS= read -r line; do
-          printf '%s\n' "$line" >> '{}'
-          request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
-          case "$line" in
-            *'"method":"initialize"'*) printf '%s\n' '{{"id":'"$request_id"',"result":{{"protocolVersion":1}}}}' ;;
-            *'"method":"initialized"'*) ;;
-            *'"method":"thread/unsubscribe"'*) printf '%s\n' '{{"id":'"$request_id"',"result":{{"status":"notLoaded"}}}}' ;;
-            *'"method":"thread/resume"'*) active_thread=thread-target; printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-target"}}}}}}' ;;
-            *'"method":"thread/start"'*) active_thread=thread-automation; printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-automation"}}}}}}' ;;
-            *'"method":"thread/read"'*) printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-target","cwd":"/tmp","status":"idle","turns":[]}}}}}}' ;;
-            *'"method":"turn/start"'*)
-              printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-control"}}}}}}'
-              printf '%s\n' '{{"method":"turn/started","params":{{"threadId":"'"$active_thread"'","turn":{{"id":"turn-control","status":"inProgress"}}}}}}'
-              printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"'"$active_thread"'","turn":{{"id":"turn-control","status":"completed"}}}}}}'
-              ;;
-            *) [ -z "$request_id" ] || printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}' ;;
-          esac
-        done
-        "#, log.display())).unwrap();
-            fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
-            let handler = RuntimeWorkRpcHandler::new("control-test-device", binary.to_str().unwrap());
-            seed(&handler, "caller");
-            let mut target = seed(&handler, "target");
-            target.workspace_path = root.path().to_string_lossy().into_owned();
-            handler.store.upsert_task(target);
-            handler.retain_runtime_model_config(
-                "target",
-                &json!({"model_id":"test","protocol":"openai-responses"}),
-            );
-            let args = json!({"conversation_id":workbench_control::conversation_id("control-test-device","target"),"message":"Fix failed checks in this workspace","request_key":"repo:pr:head:run:attempt"});
-            let first = handler
-                .control_operation(&context("caller"), "continue_conversation", args.clone())
-                .await
-                .unwrap();
-            assert_eq!(first["operation"]["delivery_status"], "accepted");
-            let second = handler
-                .control_operation(&context("caller"), "continue_conversation", args)
-                .await
-                .unwrap();
-            assert_eq!(second["duplicate"], true);
-            assert_eq!(
-                second["operation"]["operation_id"],
-                first["operation"]["operation_id"]
-            );
-            let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-            let calls = loop {
-                let calls: Vec<Value> = fs::read_to_string(&log)
-                    .unwrap_or_default()
-                    .lines()
-                    .filter_map(|line| serde_json::from_str(line).ok())
-                    .collect();
-                if calls.iter().any(|call| call["method"] == "turn/start")
-                    && !handler.is_busy_local_task("target")
-                {
-                    break calls;
-                }
-                assert!(
-                    tokio::time::Instant::now() < deadline,
-                    "Native continuation did not finish: {:?}",
-                    handler.store.get_task("target")
-                );
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            };
-            assert_eq!(
-                calls
-                    .iter()
-                    .filter(|call| call["method"] == "turn/start")
-                    .count(),
-                1
-            );
-            let resumed = calls
-                .iter()
-                .find(|call| call["method"] == "thread/resume")
-                .unwrap();
-            let unloaded_at = calls
-                .iter()
-                .position(|call| call["method"] == "thread/unsubscribe")
-                .unwrap();
-            let resumed_at = calls
-                .iter()
-                .position(|call| call["method"] == "thread/resume")
-                .unwrap();
-            assert!(unloaded_at < resumed_at);
-            assert_eq!(calls[unloaded_at]["params"]["threadId"], "thread-target");
-            assert_eq!(resumed["params"]["threadId"], "thread-target");
-            assert_eq!(
-                resumed["params"]["config"]["mcp_servers.wework_control.enabled"],
-                true
-            );
-            assert!(resumed["params"]["developerInstructions"]
-                .as_str()
-                .unwrap()
-                .contains("Wework control routing:"));
-            let automation = handler.control_operation(&context("caller"), "create_automation", json!({"name":"CI monitor","prompt":"Check CI and continue the matching conversation","schedule":{"type":"interval","value":5,"unit":"minutes"},"timezone":"Asia/Shanghai","conversation_id":workbench_control::conversation_id("control-test-device","target"),"enabled":false})).await.unwrap();
-            let run = handler
-                .control_operation(
-                    &context("caller"),
-                    "run_automation",
-                    json!({"automation_id":automation["automation"]["id"]}),
-                )
-                .await
-                .unwrap();
-            assert_eq!(run["run"]["status"], "running");
-            let automation_task = run["run"]["taskId"].as_str().unwrap();
-            let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-            loop {
-                let calls = fs::read_to_string(&log).unwrap();
-                if calls.contains("thread/start") && !handler.is_busy_local_task(automation_task) {
-                    break;
-                }
-                assert!(
-                    tokio::time::Instant::now() < deadline,
-                    "Scheduled native execution did not finish"
-                );
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            }
-            let calls: Vec<Value> = fs::read_to_string(&log)
-                .unwrap()
-                .lines()
-                .map(|line| serde_json::from_str(line).unwrap())
-                .collect();
-            let started = calls
-                .iter()
-                .find(|call| call["method"] == "thread/start")
-                .unwrap();
-            assert_eq!(
-                started["params"]["config"]["mcp_servers.wework_control.enabled"],
-                true
-            );
-            let runs = handler
-                .control_operation(
-                    &context("caller"),
-                    "list_automation_runs",
-                    json!({"automation_id":automation["automation"]["id"]}),
-                )
-                .await
-                .unwrap();
-            assert_eq!(runs["items"][0]["status"], "succeeded");
-            handler
-                .sync_creation_model_profiles(
-                    json!({"profiles":[{"runtime":"codex","modelName":"creation-model",
-                "modelConfig":{"model_id":"test","protocol":"openai-responses"}}]}),
-                )
-                .unwrap();
-            let created = handler.control_operation(&context("caller"), "create_conversation", json!({
-                "message":"Start an independent configured conversation","title":"Configured creation",
-                "workspace_path":root.path(),"options":{"runtime":"codex",
-                "modelSelection":{"modelName":"creation-model","modelType":"runtime","options":{
-                    "reasoningEffort":"high","permissionMode":"read-only","collaborationMode":"plan"}}}
-            })).await.unwrap();
-            assert_eq!(created["accepted"], true);
-            let created_id = created["taskId"].as_str().unwrap();
-            assert!(created.get("runtimeHandle").is_none());
-            let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-            loop {
-                let calls: Vec<Value> = fs::read_to_string(&log)
-                    .unwrap()
-                    .lines()
-                    .filter_map(|line| serde_json::from_str(line).ok())
-                    .collect();
-                let plan_turn = calls
-                    .iter()
-                    .find(|call| call.pointer("/params/collaborationMode/mode") == Some(&json!("plan")));
-                if let Some(turn) = plan_turn {
-                    assert_eq!(
-                        turn["params"]["permissions"],
-                        CODEX_READ_ONLY_PERMISSION_PROFILE
-                    );
-                    assert_eq!(
-                        turn["params"]["collaborationMode"]["settings"]["reasoning_effort"],
-                        "high"
-                    );
-                    assert_eq!(
-                        handler.store.get_task(created_id).unwrap().workspace_path,
-                        root.path().to_string_lossy()
-                    );
-                    break;
-                }
-                assert!(
-                    tokio::time::Instant::now() < deadline,
-                    "Configured creation did not reach the native runtime: {calls:?}"
-                );
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            }
-            handler.codex_app_server.restart().await;
-        });
-}
-
 #[test]
 fn local_creation_binds_project_or_issue_and_preserves_personal_scope() {
     let _guard = crate::test_env::lock();
@@ -802,11 +588,12 @@ fn cloud_mutations_use_the_authorized_backend_and_preserve_deployment_prefixes()
                     post(|| async { axum::http::StatusCode::FORBIDDEN }),
                 )
                 .route(
-                    "/deployed/api/runtime-work/send",
+                    "/deployed/api/runtime-work/materialize",
                     post(|Json(body): Json<Value>| async move {
-                        assert_eq!(body["queueIfBusy"], true);
+                        assert_eq!(body["newSession"], false);
+                        assert_eq!(body["compileOnDevice"], true);
                         assert!(body.get("executionRequest").is_none());
-                        Json(json!({"accepted":true,"taskId":"cloud-target","status":"queued"}))
+                        axum::http::StatusCode::FORBIDDEN
                     }),
                 );
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -819,6 +606,7 @@ fn cloud_mutations_use_the_authorized_backend_and_preserve_deployment_prefixes()
             target.runtime_handle["executionRequest"]["model_config"] =
                 json!({"base_url":"https://stale.invalid","model_id":"old"});
             handler.store.upsert_task(target);
+            handler.retain_runtime_model_config("cloud-target", &json!({"model_id":"test"}));
             let mut ctx = context("caller");
             ctx.request.backend_url = Some(url);
             ctx.request.auth_token = Some("synthetic-session-token".into());
@@ -842,16 +630,15 @@ fn cloud_mutations_use_the_authorized_backend_and_preserve_deployment_prefixes()
                 handler.store.get_task("cloud-target").unwrap().title,
                 "cloud-target"
             );
-            let receipt = handler
+            let error = handler
                 .control_operation(
                     &ctx,
                     "continue_conversation",
                     json!({"conversation_id":id,"message":"Fix CI","request_key":"cloud-ci-run"}),
                 )
                 .await
-                .unwrap();
-            assert_eq!(receipt["operation"]["delivery_status"], "accepted");
-            assert_eq!(receipt["operation"]["result"]["status"], "queued");
+                .unwrap_err();
+            assert_eq!(error.code, "permission_denied");
             let mut links = vec![handler.store.get_task("caller").unwrap()];
             for index in 0..4 {
                 let mut link = handler.store.get_task("cloud-target").unwrap();

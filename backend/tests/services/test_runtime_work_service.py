@@ -3215,25 +3215,79 @@ def test_runtime_create_merges_agent_and_project_plugins() -> None:
     ]
 
 
-def test_materialize_runtime_task_requires_team_intent(
+@pytest.mark.parametrize("new_session", [True, False])
+def test_materialize_owned_direct_task_without_remote_dispatch(
     test_db,
     test_user,
+    monkeypatch,
+    new_session,
 ) -> None:
     from app.schemas.runtime_work import RuntimeTaskMaterializeRequest
     from app.services import runtime_work_service
 
-    with pytest.raises(HTTPException, match="wegentTeamId is required"):
+    owned = MagicMock(return_value=object())
+    monkeypatch.setattr(
+        runtime_work_service.device_service, "get_device_by_device_id", owned
+    )
+    dispatch = AsyncMock()
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", dispatch)
+    compiled = runtime_work_service.materialize_runtime_task_create(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeTaskMaterializeRequest(
+            schemaVersion=2,
+            compileOnDevice=True,
+            newSession=new_session,
+            deviceId="local-device-1",
+            taskId="direct-local-task",
+            workspacePath="/srv/workspaces/Wegent",
+            runtime="codex",
+            message="Run the default assistant",
+            modelId="device-owned-model",
+            modelType="runtime",
+        ),
+    )
+    owned.assert_called_once_with(test_db, test_user.id, "local-device-1")
+    assert compiled.team_id is None
+    assert compiled.target.device_id == "local-device-1"
+    assert compiled.payload["taskId"] == "direct-local-task"
+    assert compiled.payload["executionRequest"]["new_session"] is new_session
+    assert compiled.payload["executionRequest"]["model_config"] == {}
+    dispatch.assert_not_awaited()
+
+
+def test_materialize_direct_task_rejects_unowned_device(
+    test_db, test_user, monkeypatch
+):
+    from app.schemas.runtime_work import RuntimeTaskMaterializeRequest
+    from app.services import runtime_work_service
+
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda *args: None,
+    )
+    monkeypatch.setattr(
+        runtime_work_service,
+        "resolve_runtime_route_identity",
+        lambda *args, **kwargs: None,
+    )
+    compiler = MagicMock()
+    monkeypatch.setattr(runtime_work_service, "_compile_runtime_task_create", compiler)
+    with pytest.raises(HTTPException) as error:
         runtime_work_service.materialize_runtime_task_create(
             db=test_db,
             user_id=test_user.id,
             request=RuntimeTaskMaterializeRequest(
                 schemaVersion=2,
-                deviceId="local-device-1",
-                workspacePath="/srv/workspaces/Wegent",
+                deviceId="unowned-app",
+                workspacePath="/private",
                 runtime="codex",
-                message="Run the default assistant",
+                message="Denied",
             ),
         )
+    assert error.value.status_code == 404
+    compiler.assert_not_called()
 
 
 def test_compile_rejects_project_bound_to_another_device(

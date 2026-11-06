@@ -1,7 +1,8 @@
 """Personal continuation retains native scope and uses collaboration permissions."""
 
 import uuid
-from unittest.mock import AsyncMock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from fastapi import HTTPException
@@ -17,6 +18,74 @@ from app.schemas.runtime_work import (
 )
 from app.services import runtime_work_service as service
 from tests.utils.collaboration import authorize_project
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("authorized_im", [True, False])
+async def test_app_continuation_keeps_existing_im_authorization(
+    test_db, test_user, monkeypatch, authorized_im
+):
+    from app.schemas.device import DeviceType
+    from app.services.device import runtime_rpc_service as rpc_module
+    from app.services.device.runtime_route import RuntimeRoute
+
+    monkeypatch.setattr(service, "_ensure_owned_device", lambda *args: None)
+    monkeypatch.setattr(service, "_touch_workspace_mapping", lambda *args: None)
+    route = RuntimeRoute(
+        logical_device_id="app-device",
+        runtime_device_id="app-runtime",
+        runtime_instance_id="app-instance",
+        device_type=DeviceType.APP,
+        socket_id="app-socket",
+        online_info={"socket_id": "app-socket"},
+    )
+    monkeypatch.setattr(
+        rpc_module.runtime_route_resolver, "resolve", AsyncMock(return_value=route)
+    )
+
+    async def device_call(event, body, **kwargs):
+        assert event == "runtime:rpc"
+        if body["method"] == "runtime.tasks.transcript":
+            assert body["payload"]["conversationContextOnly"] is True
+            return {
+                "taskId": "original-task",
+                "workspacePath": "/original/workspace",
+                "runtime": "codex",
+                "turns": [],
+            }
+        assert body["method"] == "runtime.tasks.send"
+        assert body["payload"]["workspacePath"] == "/original/workspace"
+        return {"accepted": True, "taskId": "original-task"}
+
+    socket_call = AsyncMock(side_effect=device_call)
+    monkeypatch.setattr(
+        rpc_module,
+        "get_sio",
+        lambda: SimpleNamespace(
+            call=socket_call,
+            manager=SimpleNamespace(is_connected=Mock(return_value=True)),
+        ),
+    )
+    if authorized_im:
+        result = await service.send_runtime_message(
+            db=test_db,
+            user_id=test_user.id,
+            request=request(),
+            allow_app_device_task_messaging=True,
+        )
+        assert result.accepted
+        assert [call.args[1]["method"] for call in socket_call.await_args_list] == [
+            "runtime.tasks.transcript",
+            "runtime.tasks.send",
+        ]
+    else:
+        with pytest.raises(HTTPException) as error:
+            await service.send_runtime_message(
+                db=test_db, user_id=test_user.id, request=request()
+            )
+        assert error.value.status_code == 502
+        assert "Remote control" in str(error.value.detail)
+        socket_call.assert_not_awaited()
 
 
 @pytest.fixture
@@ -213,21 +282,22 @@ async def test_continuation_denials_never_dispatch(
     transport.assert_not_awaited()
 
 
-@pytest.mark.parametrize("allowed", [True, False])
+@pytest.mark.parametrize("denial", [None, "viewer", "revoked", "hidden_issue"])
 def test_frontend_materialization_and_http_send_share_permission_check(
-    test_db, scope, monkeypatch, allowed
+    test_db, scope, monkeypatch, denial
 ):
-    user, grant, _, origin = scope
-    if not allowed:
+    user, grant, issue, origin = scope
+    if denial == "viewer":
         grant.role = "Viewer"
-        test_db.commit()
-    from app.services.runtime_work_service import RuntimeTaskTarget
-
-    target = RuntimeTaskTarget(
-        "original-device", "/original/workspace", None, "local_path"
-    )
+    elif denial == "revoked":
+        grant.status = "rejected"
+    elif denial == "hidden_issue":
+        issue.metadata_json = {"security_level": "related"}
+    test_db.commit()
+    monkeypatch.setattr(service, "_ensure_owned_device", Mock())
     intent = RuntimeTaskMaterializeRequest(
         deviceId="original-device",
+        workspacePath="/original/workspace",
         taskId="original-task",
         newSession=False,
         runtime="codex",
@@ -235,15 +305,16 @@ def test_frontend_materialization_and_http_send_share_permission_check(
         origin=origin,
         cloudProjectId=origin["cloudProjectId"],
     )
-    # Both entry points reach this real compiler before any transport send.
-    if allowed:
-        execution = service._build_runtime_execution_request(
-            db=test_db, user_id=user.id, request=intent, target=target
+    # Exercise the public materialization service, including its transport boundary.
+    if denial is None:
+        compiled = service.materialize_runtime_task_create(
+            db=test_db, user_id=user.id, request=intent
         )
-        assert execution.origin == origin
+        assert compiled.payload["executionRequest"]["origin"] == origin
+        assert compiled.payload["executionRequest"]["new_session"] is False
     else:
         with pytest.raises(HTTPException) as error:
-            service._build_runtime_execution_request(
-                db=test_db, user_id=user.id, request=intent, target=target
+            service.materialize_runtime_task_create(
+                db=test_db, user_id=user.id, request=intent
             )
-        assert error.value.status_code == 403
+        assert error.value.status_code == (403 if denial == "viewer" else 404)

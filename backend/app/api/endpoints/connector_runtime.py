@@ -14,7 +14,6 @@ from app.models.user import User
 from app.schemas.connector import (
     ConnectorToolCallRequest,
     ConnectorToolCallResponse,
-    ConnectorToolListResponse,
 )
 from app.services.connector_runtime import connector_runtime_service
 
@@ -57,16 +56,6 @@ def get_connector_runtime_user(
     if not user or not user.is_active:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Connector user unavailable")
     return user
-
-
-# MIGRATION-CANDIDATE(api="GET /api/connector-runtime/tools"): remove after final confirmation.
-# @router.get("/tools", response_model=ConnectorToolListResponse)
-async def list_connector_tools(
-    db: Session = Depends(get_db), user: User = Depends(get_connector_runtime_user)
-) -> ConnectorToolListResponse:
-    return ConnectorToolListResponse(
-        tools=await connector_runtime_service.list_tools(db, user)
-    )
 
 
 @router.post("/call", response_model=ConnectorToolCallResponse)

@@ -1068,7 +1068,7 @@ class RuntimeTaskCreateRequest(BaseModel):
 
 
 class RuntimeTaskMaterializeRequest(RuntimeTaskCreateRequest):
-    """Team intent compiled for direct local Executor dispatch."""
+    """Native or Team intent compiled for direct local Executor dispatch."""
 
     new_session: bool = Field(default=True, alias="newSession")
 

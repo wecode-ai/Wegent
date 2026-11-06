@@ -10,7 +10,11 @@ from app.schemas.runtime_work import RuntimeTaskAddress, RuntimeTranscriptReques
 
 
 async def resolve_continuation_address(
-    *, db: Session, user_id: int, address: RuntimeTaskAddress
+    *,
+    db: Session,
+    user_id: int,
+    address: RuntimeTaskAddress,
+    allow_app_device_task_messaging: bool = False,
 ) -> RuntimeTaskAddress:
     """Take session identity from the existing authorized read, never client origin."""
     from app.services.runtime_work_service import get_runtime_transcript
@@ -24,6 +28,11 @@ async def resolve_continuation_address(
             taskId=address.local_task_id,
             limit=1,
             conversationContextOnly=True,
+        ),
+        **(
+            {"allow_app_device_task_reading": True}
+            if allow_app_device_task_messaging
+            else {}
         ),
     )
     if history.local_task_id != address.local_task_id or not history.workspace_path:
