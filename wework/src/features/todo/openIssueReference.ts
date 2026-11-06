@@ -6,6 +6,8 @@ import {
 import type { WorkspaceTabsContextValue } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import { projectSpaceRouteParam } from './projectSpaceRoute'
 
+/** Opens an Issue reference in the matching board tab without losing the
+ * existing project-space tab when one is available. */
 export function openIssueReference({
   issue,
   label,

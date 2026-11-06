@@ -7,7 +7,8 @@ import {
   requestContainsToolOutput,
   selectShellToolCommand,
 } from '../modules/response-protocol.mjs'
-import { selectE2EModel } from '../modules/shared.mjs'
+import { sendPrompt } from '../modules/conversation-navigation.mjs'
+import { ACTIVE_SEND_BUTTON_SELECTOR, selectE2EModel } from '../modules/shared.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
@@ -15,8 +16,7 @@ const COMPOSER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-messa
 const SOURCE_PROMPT = 'WEWORK_CONVERSATION_REFERENCE_SOURCE: remember the launch code ORBIT-42.'
 const SOURCE_COMPLETION = 'SOURCE_CONVERSATION_COMPLETE: the launch code is ORBIT-42.'
 const TARGET_COMPLETION = 'REFERENCED_CONVERSATION_CONTEXT_RECEIVED'
-const ISSUE_REFERENCE =
-  '[$#113 Issue reference](wework-issue://2753648597973755964/WEWORK2D8526-113)'
+const CLOUD_ISSUE_TITLE = 'Conversation mention Issue fixture'
 const LARGE_SOURCE_PROMPT =
   'WEWORK_CONVERSATION_REFERENCE_LARGE_SOURCE: preserve only this visible conversation.'
 const LARGE_SOURCE_COMPLETION = 'LARGE_SOURCE_CONVERSATION_COMPLETE'
@@ -106,6 +106,92 @@ async function waitForNewTaskRow(control, knownTaskRows, timeoutMs) {
   throw new Error('The conversation mention task row did not appear')
 }
 
+/** Opens the completed target Runtime task and verifies its transcript. */
+async function openTargetTask(control, route, timeoutMs) {
+  await control.command('navigate', 'body', { value: route })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: TARGET_COMPLETION,
+    timeoutMs,
+  })
+}
+
+/** Exercises Issue navigation from sent messages and composer chips. */
+async function verifyComposerIssueReference(
+  control,
+  issueReference,
+  targetTaskRoute,
+  { issueFixture, issueTitle, timeoutMs }
+) {
+  assert.ok(issueFixture, 'The conversation mention Issue fixture is missing')
+  const expectedIssueId = issueFixture.issue.id
+
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs })
+  await control.command('fill', COMPOSER_SELECTOR, { value: issueReference })
+  await control.command('waitFor', '[data-composer-reference-kind="issue"]', { timeoutMs })
+  await control.command('click', '[data-composer-reference-kind="issue"]')
+  await control.command(
+    'waitFor',
+    '[data-testid^="workspace-tab-select-board-"][aria-selected="true"]',
+    { timeoutMs }
+  )
+  const boardTabTestId = await control.command(
+    'getAttribute',
+    '[data-testid^="workspace-tab-select-board-"][aria-selected="true"]',
+    { value: 'data-testid' }
+  )
+  assert.ok(boardTabTestId?.startsWith('workspace-tab-select-board-'))
+  const boardLocation = JSON.parse(await control.command('snapshot', 'body')).location
+  assert.equal(
+    new URL(boardLocation).searchParams.get('itemId'),
+    expectedIssueId,
+    'The composer Issue reference did not preserve the referenced Issue id'
+  )
+  await control.command('waitFor', '[data-testid="collaboration-issue-detail"]', {
+    text: issueTitle,
+    timeoutMs,
+  })
+  const boardTabId = boardTabTestId.slice('workspace-tab-select-'.length)
+  await control.command('clickWhenEnabled', `[data-testid="workspace-tab-close-${boardTabId}"]`, {
+    timeoutMs,
+  })
+  await control.command('waitFor', `[data-testid="${boardTabTestId}"]`, {
+    visible: false,
+    timeoutMs,
+  })
+  await openTargetTask(control, targetTaskRoute, timeoutMs)
+
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs })
+  await control.command('fill', COMPOSER_SELECTOR, {
+    value: '[$#missing](wework-issue://project-only)',
+  })
+  await control.command('waitFor', '[data-composer-reference-kind="issue"]', { timeoutMs })
+  const activeTaskTabBefore = await control.command(
+    'getAttribute',
+    '[data-tab-kind="task"][aria-selected="true"]',
+    { value: 'data-testid' }
+  )
+  await control.command('click', '[data-composer-reference-kind="issue"]')
+  await control.command(
+    'waitFor',
+    '[data-testid^="workspace-tab-select-board-"][aria-selected="true"]',
+    { visible: false, stableMs: 300, timeoutMs }
+  )
+  const activeTaskTabAfter = await control.command(
+    'getAttribute',
+    '[data-tab-kind="task"][aria-selected="true"]',
+    { value: 'data-testid' }
+  )
+  assert.equal(
+    activeTaskTabAfter,
+    activeTaskTabBefore,
+    'A malformed Issue reference navigated away from the active task'
+  )
+  await control.command('fill', COMPOSER_SELECTOR, { value: '' })
+  await openTargetTask(control, targetTaskRoute, timeoutMs)
+}
+
 export function createDesktopScenario({
   captureScreenshot,
   uiTimeoutMs,
@@ -118,9 +204,45 @@ export function createDesktopScenario({
   let targetRequest = null
   let largeSourceToolRequested = false
   let largeTargetRequest = null
+  let cloud = null
+  let issueFixture = null
+
+  /** Calls the real cloud API and rejects unsuccessful fixture operations. */
+  const requestCloud = async (path, method = 'GET', values) => {
+    const response = await fetch(`${cloud.backendUrl}${path}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${cloud.authToken}`,
+        'Content-Type': 'application/json',
+      },
+      ...(values === undefined ? {} : { body: JSON.stringify(values) }),
+    })
+    const body = await response.text()
+    assert.equal(response.ok, true, `${method} ${path}: ${response.status} ${body}`)
+    return body ? JSON.parse(body) : null
+  }
 
   return {
     codexConfigToml: '\n[features]\nplugins = false\n',
+    requiresCloudEnvironment: process.argv.includes('--cloud-only'),
+
+    async prepareCloud(environment) {
+      cloud = environment
+      await requestCloud('/api/admin/setup-complete', 'POST')
+      const workspace = await requestCloud('/api/v1/workspaces', 'POST', {
+        name: `Conversation mention ${process.pid}`,
+      })
+      const project = await requestCloud('/api/v1/cloud-projects', 'POST', {
+        workspace_id: workspace.id,
+        name: `Conversation mention ${process.pid}`,
+        task_provider: 'local',
+        visibility: 'private',
+      })
+      const issue = await requestCloud(`/api/v1/cloud-projects/${project.id}/loop-items`, 'POST', {
+        title: CLOUD_ISSUE_TITLE,
+      })
+      issueFixture = { workspace, project, issue }
+    },
 
     async handleHttp(request, response, url) {
       if (!active) return false
@@ -168,6 +290,12 @@ export function createDesktopScenario({
 
     async verify(control) {
       active = true
+      if (process.argv.includes('--cloud-only')) {
+        assert.ok(issueFixture, 'The conversation mention Issue fixture is missing')
+      }
+      const issueReference = issueFixture
+        ? `[$#${issueFixture.issue.sequence_number ?? issueFixture.issue.id} ${CLOUD_ISSUE_TITLE}](wework-issue://${encodeURIComponent(issueFixture.project.id)}/${encodeURIComponent(issueFixture.issue.id)})`
+        : null
       await control.command('waitFor', ACTIVE_WORKBENCH_SELECTOR, { timeoutMs: uiTimeoutMs })
       await control.command('waitFor', '[data-testid="new-chat-button"]', {
         timeoutMs: uiTimeoutMs,
@@ -179,8 +307,7 @@ export function createDesktopScenario({
           testId.startsWith('runtime-local-task-row-')
         )
       )
-      await control.command('fill', COMPOSER_SELECTOR, { value: SOURCE_PROMPT })
-      await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+      await sendPrompt(control, COMPOSER_SELECTOR, SOURCE_PROMPT)
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: SOURCE_COMPLETION,
         timeoutMs: uiTimeoutMs,
@@ -209,18 +336,26 @@ export function createDesktopScenario({
         control,
         '@WEWORK_CONVERSATION_REFERENCE_SOURCE',
         uiTimeoutMs,
-        `${ISSUE_REFERENCE} `
+        issueReference ? `${issueReference} ` : ''
       )
       await control.command('waitFor', '[data-testid^="conversation-chip-"]', {
         timeoutMs: uiTimeoutMs,
       })
       await capture(control, 'conversation-mention-02-chip.png')
+      await control.command('waitFor', ACTIVE_SEND_BUTTON_SELECTOR, {
+        enabled: true,
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: TARGET_COMPLETION,
         timeoutMs: uiTimeoutMs,
       })
-      const targetTaskRow = await waitForNewTaskRow(control, sourceOnlyTaskRows, uiTimeoutMs)
+      await waitForNewTaskRow(control, sourceOnlyTaskRows, uiTimeoutMs)
+      const targetTaskLocation = JSON.parse(await control.command('snapshot', 'body')).location
+      const targetTaskUrl = new URL(targetTaskLocation)
+      const targetTaskRoute = `${targetTaskUrl.pathname.replace(/^\/wework\/app/, '')}${targetTaskUrl.search}`
 
       assert.ok(targetRequest, 'Selecting the conversation mention did not send a model request')
       const serializedTarget = JSON.stringify(targetRequest)
@@ -252,35 +387,55 @@ export function createDesktopScenario({
           targetTaskTabTestId?.startsWith('workspace-tab-select-task-'),
         `The target task tab was not active before issue reference navigation: ${targetTaskTabTestId}`
       )
-      await control.command('waitFor', '[data-testid^="sent-issue-token-"]', {
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('click', '[data-testid^="sent-issue-token-"]')
-      await control.command(
-        'waitFor',
-        '[data-testid^="workspace-tab-select-board-"][aria-selected="true"]',
-        {
+      if (issueReference) {
+        await control.command('waitFor', '[data-testid^="sent-issue-token-"]', {
           timeoutMs: uiTimeoutMs,
-        }
-      )
-      const issueBoardTabTestId = await control.command(
-        'getAttribute',
-        '[data-testid^="workspace-tab-select-board-"][aria-selected="true"]',
-        { value: 'data-testid' }
-      )
-      assert.ok(
-        issueBoardTabTestId?.startsWith('workspace-tab-select-board-'),
-        'The issue reference did not open a project-space board tab'
-      )
-      await captureScreenshot(control, 'conversation-mention-04-issue-reference.png', 'body')
-      const issueBoardTabId = issueBoardTabTestId.slice('workspace-tab-select-'.length)
-      await control.command('click', `[data-testid="${targetTaskTabTestId}"]`)
-      await control.command('waitFor', '[data-testid="message-assistant"]', {
-        text: TARGET_COMPLETION,
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('click', `[data-testid="workspace-tab-close-${issueBoardTabId}"]`)
-      await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+        })
+        await control.command('click', '[data-testid^="sent-issue-token-"]')
+        await control.command(
+          'waitFor',
+          '[data-testid^="workspace-tab-select-board-"][aria-selected="true"]',
+          {
+            timeoutMs: uiTimeoutMs,
+          }
+        )
+        const issueBoardTabTestId = await control.command(
+          'getAttribute',
+          '[data-testid^="workspace-tab-select-board-"][aria-selected="true"]',
+          { value: 'data-testid' }
+        )
+        assert.ok(
+          issueBoardTabTestId?.startsWith('workspace-tab-select-board-'),
+          'The issue reference did not open a project-space board tab'
+        )
+        const issueBoardLocation = JSON.parse(await control.command('snapshot', 'body')).location
+        assert.equal(
+          new URL(issueBoardLocation).searchParams.get('itemId'),
+          issueFixture.issue.id,
+          'The issue reference did not preserve the referenced Issue id'
+        )
+        await control.command('waitFor', '[data-testid="collaboration-issue-detail"]', {
+          text: CLOUD_ISSUE_TITLE,
+          timeoutMs: uiTimeoutMs,
+        })
+        await captureScreenshot(control, 'conversation-mention-04-issue-reference.png', 'body')
+        const issueBoardTabId = issueBoardTabTestId.slice('workspace-tab-select-'.length)
+        await control.command('click', `[data-testid="${targetTaskTabTestId}"]`)
+        await control.command('waitFor', '[data-testid="message-assistant"]', {
+          text: TARGET_COMPLETION,
+          timeoutMs: uiTimeoutMs,
+        })
+        await control.command('click', `[data-testid="workspace-tab-close-${issueBoardTabId}"]`)
+        await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      }
+
+      if (issueReference) {
+        await verifyComposerIssueReference(control, issueReference, targetTaskRoute, {
+          issueFixture,
+          issueTitle: CLOUD_ISSUE_TITLE,
+          timeoutMs: uiTimeoutMs,
+        })
+      }
 
       await control.command('waitFor', '[data-testid^="sent-conversation-token-"]', {
         timeoutMs: uiTimeoutMs,
@@ -291,11 +446,7 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await capture(control, 'conversation-mention-05-chip-navigation.png')
-      await control.command('click', `[data-testid="${targetTaskRow}"]`)
-      await control.command('waitFor', '[data-testid="message-assistant"]', {
-        text: TARGET_COMPLETION,
-        timeoutMs: uiTimeoutMs,
-      })
+      await openTargetTask(control, targetTaskRoute, uiTimeoutMs)
       const restoredSnapshot = JSON.parse(
         await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
       )
@@ -323,18 +474,13 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await capture(control, 'conversation-mention-07-composer-chip-navigation.png')
-      await control.command('click', `[data-testid="${targetTaskRow}"]`)
-      await control.command('waitFor', '[data-testid="message-assistant"]', {
-        text: TARGET_COMPLETION,
-        timeoutMs: uiTimeoutMs,
-      })
+      await openTargetTask(control, targetTaskRoute, uiTimeoutMs)
       await control.command('fill', COMPOSER_SELECTOR, { value: '' })
 
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
       await selectE2EModel(control, undefined, undefined, ACTIVE_WORKBENCH_SELECTOR)
-      await control.command('fill', COMPOSER_SELECTOR, { value: LARGE_SOURCE_PROMPT })
-      await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+      await sendPrompt(control, COMPOSER_SELECTOR, LARGE_SOURCE_PROMPT)
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: LARGE_SOURCE_COMPLETION,
         // This includes starting the sandbox and processing 18 MB of real tool output.
@@ -353,6 +499,11 @@ export function createDesktopScenario({
         uiTimeoutMs
       )
       await control.command('waitFor', '[data-testid^="conversation-chip-"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', ACTIVE_SEND_BUTTON_SELECTOR, {
+        enabled: true,
+        visible: true,
         timeoutMs: uiTimeoutMs,
       })
       await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
@@ -378,6 +529,23 @@ export function createDesktopScenario({
         Buffer.byteLength(serializedLargeTarget) < MAX_REFERENCED_REQUEST_BYTES,
         `The referenced model request still contained oversized process data: ${Buffer.byteLength(serializedLargeTarget)} bytes`
       )
+    },
+
+    async cleanup() {
+      if (!cloud || !issueFixture) return
+      try {
+        const project = await requestCloud(`/api/v1/cloud-projects/${issueFixture.project.id}`)
+        await requestCloud(
+          `/api/v1/cloud-projects/${issueFixture.project.id}?version=${project.version}`,
+          'DELETE'
+        )
+      } finally {
+        const workspace = await requestCloud(`/api/v1/workspaces/${issueFixture.workspace.id}`)
+        await requestCloud(
+          `/api/v1/workspaces/${issueFixture.workspace.id}?version=${workspace.version}`,
+          'DELETE'
+        )
+      }
     },
 
     diagnostics() {

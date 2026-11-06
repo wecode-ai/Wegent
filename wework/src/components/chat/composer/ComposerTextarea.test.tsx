@@ -1197,6 +1197,37 @@ describe('ComposerTextarea', () => {
     window.history.replaceState({}, '', '/')
   })
 
+  test('opens the referenced conversation when its chip receives Enter', async () => {
+    const reference =
+      '[$修复登录流程](wework-conversation://%7B%22deviceId%22%3A%22local-device%22%2C%22taskId%22%3A%22source-task%22%7D)'
+    const onSubmit = vi.fn()
+
+    render(
+      <ComposerTextarea
+        value={reference}
+        onChange={vi.fn()}
+        onSubmit={onSubmit}
+        canSend={false}
+        placeholder="Message"
+        rows={2}
+        textareaRef={createRef<HTMLElement>()}
+        className="min-h-12"
+      />
+    )
+
+    const chip = await screen.findByTestId(/^conversation-chip-/)
+    await waitFor(() => expect(chip).toHaveAttribute('role', 'link'))
+    expect(chip).toHaveAttribute('tabindex', '0')
+
+    fireEvent.keyDown(chip, { key: 'Enter' })
+
+    expect(`${window.location.pathname}${window.location.search}`).toBe(
+      '/runtime-tasks?deviceId=local-device&taskId=source-task'
+    )
+    expect(onSubmit).not.toHaveBeenCalled()
+    window.history.replaceState({}, '', '/')
+  })
+
   test('opens the referenced issue when its chip is clicked', async () => {
     const reference =
       '[$#113 输出框里用at引用对话](wework-issue://2753648597973755964/WEWORK2D8526-113)'

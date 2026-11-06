@@ -674,6 +674,7 @@ function normalizeRegisteredSkillPath(path: string, homeDirectory?: string): str
   return normalized
 }
 
+/** Renders user message Markdown with navigable composer reference chips. */
 function renderUserContent(
   content: string,
   services: UserMessageServices,

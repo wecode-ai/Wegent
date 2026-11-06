@@ -531,10 +531,13 @@ export const ComposerProseMirrorEditor = forwardRef<
       callbacksRef.current.services.isWindowFocused() && view.hasFocus(),
     );
 
+    /** Lets focused mention nodes handle Enter and Space before composer submit. */
     const handleKeyDownCapture = (event: KeyboardEvent) => {
       if (
         event.target instanceof Element &&
-        event.target.closest('.composer-mention-node[role="button"]')
+        event.target.closest(
+          '.composer-mention-node[role="button"], .composer-mention-node[data-composer-reference-navigation]',
+        )
       )
         return;
       if (event.key.length === 1) {

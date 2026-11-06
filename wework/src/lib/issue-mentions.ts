@@ -5,6 +5,7 @@ export interface IssueMentionAddress {
   issueId: string
 }
 
+/** Parses a `wework-issue://` mention into its project and Issue ids. */
 export function parseIssueMentionHref(href: string): IssueMentionAddress | null {
   if (!href.startsWith(ISSUE_MENTION_SCHEME)) return null
   const [projectId, issueId] = href
@@ -14,6 +15,7 @@ export function parseIssueMentionHref(href: string): IssueMentionAddress | null 
   return projectId && issueId ? { projectId, issueId } : null
 }
 
+/** Builds the board route that selects a referenced Issue. */
 export function buildIssueMentionRoute(
   address: IssueMentionAddress,
   projectStore: 'local' | 'backend' = 'backend'
@@ -25,6 +27,7 @@ export function buildIssueMentionRoute(
   return `/todo?${params.toString()}`
 }
 
+/** Resolves whether the referenced Issue belongs to the local or cloud board. */
 export function issueMentionProjectStore(
   address: IssueMentionAddress,
   activeRoute: string

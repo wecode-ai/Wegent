@@ -132,7 +132,10 @@ describe('WorkItemComposerGuide', () => {
     const onOpen = vi.fn()
     render(<WorkItemComposerGuide item={item} onOpen={onOpen} />)
 
-    await user.click(screen.getByTestId('work-item-guide-open-summary'))
+    const summaryButton = screen.getByTestId('work-item-guide-open-summary')
+    expect(summaryButton).toHaveClass('hover:bg-background/70', 'disabled:hover:bg-transparent')
+
+    await user.click(summaryButton)
 
     expect(onOpen).toHaveBeenCalledOnce()
   })

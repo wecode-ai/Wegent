@@ -3,6 +3,7 @@ import remarkGfm from 'remark-gfm'
 import remarkParse from 'remark-parse'
 import { unified } from 'unified'
 import { describe, expect, test } from 'vitest'
+import { protectComposerReferenceLinks } from './assistantMarkdownLinks'
 import { remarkMathDelimiters } from './remarkMathDelimiters'
 
 function parseMarkdown(source: string): Root {
@@ -15,10 +16,17 @@ function paragraphChildren(source: string) {
   return paragraph.children
 }
 
+function containsInlineMath(node: Root | Root['children'][number]): boolean {
+  if (node.type === 'inlineMath') return true
+  return 'children' in node && node.children.some(child => containsInlineMath(child))
+}
+
 describe('remarkMathDelimiters', () => {
   test('keeps adjacent dollar-prefixed composer links out of inline math', () => {
     const children = paragraphChildren(
-      '[$#113 Issue](wework-issue://p/i) [$Chat](wework-conversation://c)'
+      protectComposerReferenceLinks(
+        '[$#113 Issue](wework-issue://p/i) [$Chat](wework-conversation://c)'
+      )
     )
 
     const links = children.filter((child): child is Link => child.type === 'link')
@@ -29,6 +37,27 @@ describe('remarkMathDelimiters', () => {
   test('keeps regular inline dollar math', () => {
     const children = paragraphChildren('Energy is $E=mc^2$.')
 
-    expect(children.some(child => child.type === 'inlineMath')).toBe(true)
+    expect(containsInlineMath({ type: 'root', children })).toBe(true)
+  })
+
+  test('preserves bracketed inline math that is not a composer reference', () => {
+    expect(protectComposerReferenceLinks('[$Site](wegent-sites-project://project)')).toBe(
+      '[\\$Site](wegent-sites-project://project)'
+    )
+    expect(protectComposerReferenceLinks('[$x$](https://example.com)')).toBe(
+      '[$x$](https://example.com)'
+    )
+    expect(
+      containsInlineMath({
+        type: 'root',
+        children: paragraphChildren('[$x$]'),
+      })
+    ).toBe(true)
+    expect(
+      containsInlineMath({
+        type: 'root',
+        children: paragraphChildren('[$x$](https://example.com)'),
+      })
+    ).toBe(true)
   })
 })

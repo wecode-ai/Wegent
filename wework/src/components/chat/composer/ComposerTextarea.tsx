@@ -11,16 +11,12 @@ import { executeDshCommand } from '@/features/dsh-runtime/dshExtensions'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
 import { buildPluginDetailRoute } from '@/features/plugins/pluginNavigation'
-import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
-import { parseConversationMentionHref } from '@/lib/conversation-mentions'
-import { parseIssueMentionHref } from '@/lib/issue-mentions'
-import { WorkbenchPaneContext } from '@/features/workbench/useWorkbench'
-import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
-import { openIssueReference } from '@/features/todo/openIssueReference'
+import { navigateTo } from '@/lib/navigation'
 import { resolvePluginLogo } from '@/components/plugins/plugin-assets'
 import { useOptionalAppearance } from '@/features/appearance'
 import { canOpenNativeWorkspacePathPicker } from '@/lib/native-workspace-path-picker'
 import type { LocalDeviceApp } from '@/types/api'
+import { useReferenceNavigation } from '../useReferenceNavigation'
 import { useComposerCatalogBinding } from './ComposerCatalogContext'
 import {
   getDesktopComposerEditorServices,
@@ -46,8 +42,7 @@ export const ComposerTextarea = forwardRef<ComposerInputHandle, ComposerTextarea
   function ComposerTextarea(props, ref) {
     const { t } = useTranslation('common')
     const showTrialGuide = useContext(PluginTrialSelectionContext)
-    const openRuntimeTask = useContext(WorkbenchPaneContext)?.openRuntimeTask
-    const workspaceTabs = useOptionalWorkspaceTabs()
+    const { openReference } = useReferenceNavigation()
     const catalog = useComposerCatalogBinding()
     const translate = useCallback(
       (key: string, fallback?: string, options?: Record<string, unknown>) =>
@@ -61,33 +56,6 @@ export const ComposerTextarea = forwardRef<ComposerInputHandle, ComposerTextarea
     const contributions = useDesktopComposerContributions(mentionQuery)
     const editorServices = useMemo(() => getDesktopComposerEditorServices(), [])
     const { openDrawing, drawingDialog } = useComposerDrawing(props.onPasteFiles, props.disabled)
-    const onOpenMentionReference = useCallback(
-      (href: string, label: string) => {
-        const conversation = parseConversationMentionHref(href)
-        if (conversation) {
-          if (openRuntimeTask) {
-            void openRuntimeTask(conversation)
-            return
-          }
-          navigateTo(buildRuntimeTaskRoute(conversation))
-          return
-        }
-
-        const issue = parseIssueMentionHref(href)
-        if (!issue) return
-        const activeRoute =
-          workspaceTabs?.activeTab.contentRoute ??
-          `${window.location.pathname}${window.location.search}`
-        openIssueReference({
-          issue,
-          label,
-          activeRoute,
-          workspaceTabs,
-          navigate: navigateTo,
-        })
-      },
-      [openRuntimeTask, workspaceTabs]
-    )
     const resolveAppLogo = useCallback(
       (app: LocalDeviceApp) =>
         resolvePluginLogo({
@@ -120,7 +88,7 @@ export const ComposerTextarea = forwardRef<ComposerInputHandle, ComposerTextarea
             (openPluginCenterAction ? () => executeDshAction(openPluginCenterAction) : undefined)
           }
           onOpenMentionPlugin={reference => navigateTo(buildPluginDetailRoute(reference))}
-          onOpenMentionReference={onOpenMentionReference}
+          onOpenMentionReference={openReference}
           renderAppIcon={command => (
             <ComposerPluginIcon
               app={command.app!}
