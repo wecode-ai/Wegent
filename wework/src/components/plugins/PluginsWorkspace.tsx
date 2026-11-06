@@ -1,5 +1,5 @@
-import { LOCAL_CONNECTOR_AUTH_CHANGED_EVENT } from '@/api/local/localConnectorAuthEvents'
 import { ExpiredPluginInventoryRequest } from '@/api/local/codexInstalledCatalog'
+import { LOCAL_CONNECTOR_AUTH_CHANGED_EVENT } from '@/api/local/localConnectorAuthEvents'
 import {
   recordPluginInstallationAccepted,
   reconcilePluginInstallation,
@@ -4638,14 +4638,12 @@ export function PluginsWorkspace({
     deferredCodexCatalogRequestRef.current = requestKey
     const inventoryAtStart = getPluginMarketplaceCache(marketplaceCacheKeyValue)
     let cancelled = false
-    const catalogReadIsCurrent = () =>
-      !cancelled &&
+    const isActiveRequest = () =>
+      !cancelled && deferredCodexCatalogRequestRef.current === requestKey
+    const isCurrent = () =>
+      isActiveRequest() &&
       pluginInstallationReadIsCurrent(marketplaceCacheKeyValue, inventoryAtStart) &&
-      sameLocalPluginSources(
-        getPluginMarketplaceCache(marketplaceCacheKeyValue),
-        inventoryAtStart
-      ) &&
-      deferredCodexCatalogRequestRef.current === requestKey
+      sameLocalPluginSources(getPluginMarketplaceCache(marketplaceCacheKeyValue), inventoryAtStart)
     void localPluginApi
       .readState({
         mergeAllMarketplaces: true,
@@ -4658,7 +4656,7 @@ export function PluginsWorkspace({
           if (import.meta.env.VITE_WEWORK_E2E === 'true')
             console.info('[plugin-catalog-publication]', reason)
         }
-        if (!catalogReadIsCurrent()) {
+        if (!isCurrent()) {
           trace('superseded')
           return
         }
@@ -4675,7 +4673,7 @@ export function PluginsWorkspace({
         applyLiveCodexCatalog(localState)
       })
       .catch(error => {
-        if (!catalogReadIsCurrent() || error instanceof ExpiredPluginInventoryRequest) return
+        if (!isCurrent() || error instanceof ExpiredPluginInventoryRequest) return
         setPluginMarketplaceState(previous => ({ ...previous, isLoading: false }))
         setPluginOperationNotice({
           id: 'plugin-catalog-load',
@@ -4684,7 +4682,7 @@ export function PluginsWorkspace({
         })
       })
       .finally(() => {
-        if (!cancelled) setIsMarketplaceRefreshing(false)
+        if (isActiveRequest()) setIsMarketplaceRefreshing(false)
       })
 
     return () => {

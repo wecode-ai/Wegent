@@ -364,6 +364,7 @@ export const MessageList = memo(function MessageList({
     virtualizer: messageVirtualizer,
     tailHeight,
     scrollMargin,
+    viewportReady,
   } = useConversationVirtualizer({
     count: visibleMessages.length + (shouldShowWaitingIndicator ? 1 : 0),
     enabled: virtualLayoutReady,
@@ -710,6 +711,22 @@ export const MessageList = memo(function MessageList({
     <div
       ref={listRef}
       className={cn(listLayoutClass, className, virtualMessages && 'relative gap-0 pb-0 pt-0')}
+      data-conversation-message-list=""
+      data-conversation-layout-width={layoutWidth}
+      data-conversation-message-count={messages.length}
+      data-conversation-visible-count={visibleMessages.length}
+      data-conversation-virtual-messages={virtualMessages}
+      data-conversation-viewport-ready={viewportReady}
+      data-conversation-virtualizer-enabled={messageVirtualizer.options.enabled}
+      data-conversation-virtual-row-count={virtualRows.length}
+      data-conversation-virtual-range={JSON.stringify(messageVirtualizer.range ?? null)}
+      data-conversation-scroll-rect={JSON.stringify(messageVirtualizer.scrollRect ?? null)}
+      data-conversation-scroll-connected={messageVirtualizer.scrollElement?.isConnected ?? false}
+      data-conversation-scroll-element={
+        messageVirtualizer.scrollElement
+          ? (messageVirtualizer.scrollElement.dataset.testid ?? 'unmarked')
+          : 'none'
+      }
     >
       {textSelection && textSelection.conversationKey === conversationKey && (
         <SelectionActionsPopover

@@ -99,7 +99,8 @@ import { detectCoreDshStartupPluginFailure } from './host/core-dsh-startup-failu
 import { materializeBundledRuntimes } from './runtime/bundled-runtime-materializer.js'
 import { waitForRendererSelector } from './host/renderer-readiness.js'
 import { captureProcessExplorerWindowSnapshot } from './host/process-explorer-window-snapshot.js'
-import { desktopWindowFrameOptions } from './host/window-layout.js'
+import { desktopWindowFrameOptions, startupWindowLayout } from './host/window-layout.js'
+import { maximizeStartupWindow, prepareStartupMainWindow } from './host/startup-window-handoff.js'
 import {
   POPOUT_WINDOW_SIZES,
   popoutWindowBounds,
@@ -393,7 +394,7 @@ let lastStartupFailure: StartupFailureSnapshot | null = null
 const startupTiming = desktopE2EStartupTiming(process.env)
 const startupProgress = new StartupProgressReporter(
   update => {
-    logStartupStep('startup-progress', 'started', {
+    logStartupStep('startup-progress', update.completed ? 'completed' : 'started', {
       stage: update.stage.id,
       index: update.index,
     })
@@ -1429,7 +1430,9 @@ async function updateDesktopPreferences(
 }
 
 async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
-  logStartupStep('windows-create', 'started', { theme: startupTheme })
+  const startupDisplay = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+  const startupLayout = startupWindowLayout(startupDisplay.workArea)
+  logStartupStep('windows-create', 'started', { theme: startupTheme, layout: startupLayout })
   const developmentTitle = process.env.WEWORK_PLUGIN_DEVELOPMENT_TITLE?.trim()
   const windowTitle =
     pluginDevelopmentInstance && developmentTitle
@@ -1437,8 +1440,7 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
       : (developmentDockIdentity?.displayName ?? 'Wework')
   mainWindow = new BrowserWindow({
     ...desktopWindowFrameOptions(),
-    width: 1440,
-    height: 960,
+    ...startupLayout.bounds,
     title: windowTitle,
     backgroundColor: startupTheme === 'dark' ? '#181818' : '#fafafa',
     show: false,
@@ -1454,12 +1456,12 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
   installE2ERendererCpuProfiling(mainWindow.webContents)
   startupSplashWindow = new BrowserWindow({
     ...desktopWindowFrameOptions(),
-    width: 1440,
-    height: 960,
+    ...startupLayout.bounds,
     title: windowTitle,
-    backgroundColor: startupTheme === 'dark' ? '#181818' : '#fafafa',
+    backgroundColor: '#05070d',
     show: false,
     webPreferences: {
+      backgroundThrottling: false,
       preload: startupSplashPreloadPath,
       nodeIntegration: false,
       contextIsolation: true,
@@ -1473,9 +1475,14 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
       isVisible: () => startupSplashWindow?.isVisible() ?? false,
       on: (_event, listener) => startupSplashWindow?.on('close', listener),
       once: (_event, listener) => startupSplashWindow?.once('closed', listener),
-      show: () => {
-        if (!keepE2EWindowInBackground) startupSplashWindow?.show()
+      show: async () => {
+        if (keepE2EWindowInBackground) return
+        const target = startupSplashWindow
+        if (!target) throw new Error('Startup splash window is unavailable')
+        if (startupLayout.maximized) await maximizeStartupWindow(target, startupDisplay.workArea)
+        else target.show()
       },
+      setOpacity: opacity => startupSplashWindow?.setOpacity(opacity),
       webContents: {
         capturePage: async () => {
           if (!startupSplashWindow) throw new Error('Startup splash window is unavailable')
@@ -1629,30 +1636,91 @@ async function cancelMainWindowClose(): Promise<void> {
 }
 
 const rendererStartupReady = createStartupReadyHandler(async (source: string) => {
-  if (!mainWindow || mainWindow.isDestroyed()) return
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    if (quitting) return
+    throw new Error('The main window is unavailable during startup')
+  }
   logStartupStep('renderer-startup-ready', 'completed', { source })
-  startupTelemetrySuccess.markRendererReady()
   await holdStartupSplashForDesktopE2e()
   // A quit request during startup owns the exit: never present the
   // workbench while shutdown is already tearing the app down.
-  if (quitting || lastStartupFailure || !mainWindow || mainWindow.isDestroyed()) return
-  if (!keepE2EWindowInBackground) mainWindow.show()
-  logStartupStep('main-window-show', 'completed')
-  await startupSplash?.close({
-    capturePath: process.env.WEWORK_E2E_STARTUP_SPLASH_CAPTURE?.trim(),
-  })
+  if (quitting) return
+  if (lastStartupFailure) throw new Error(lastStartupFailure.message)
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    throw new Error('The main window closed before startup handoff')
+  }
+  const target = mainWindow
+  const splash = startupSplash
+  const splashWindow = startupSplashWindow
+  if (!splash || !splashWindow) throw new Error('Startup splash is unavailable for handoff')
+  const shouldContinue = () => !quitting && !lastStartupFailure && !target.isDestroyed()
+  try {
+    const snapshot = await splash.handoff({
+      update: startupProgress.complete(),
+      capturePath: process.env.WEWORK_E2E_STARTUP_SPLASH_CAPTURE?.trim(),
+      shouldContinue,
+      prepareMainWindow: async () => {
+        const bounds = await prepareStartupMainWindow(
+          target,
+          splashWindow,
+          !keepE2EWindowInBackground,
+          {
+            main: screen.getDisplayMatching(target.getBounds()).id,
+            splash: screen.getDisplayMatching(splashWindow.getBounds()).id,
+          },
+          event => {
+            const geometry = event.splash ?? event.main
+            const display = geometry ? screen.getDisplayMatching(geometry.bounds) : null
+            logStartupStep('startup-window-handoff', event.error ? 'failed' : 'completed', {
+              ...event,
+              display: display
+                ? {
+                    id: display.id,
+                    scaleFactor: display.scaleFactor,
+                    bounds: display.bounds,
+                    workArea: display.workArea,
+                  }
+                : null,
+            })
+          }
+        )
+        logStartupStep('main-window-show', 'completed')
+        return bounds
+      },
+    })
+    if (!shouldContinue() || snapshot.state !== 'closed') {
+      if (!target.isDestroyed()) target.hide()
+      if (quitting) return
+      throw new Error('Startup window handoff was interrupted')
+    }
+  } catch (error) {
+    if (!target.isDestroyed()) target.hide()
+    if (quitting) return
+    if (!lastStartupFailure) {
+      recordStartupFailure(error, 'startup_handoff')
+      startupTelemetry.fail('renderer_initialize')
+      await splash.showError()
+    }
+    throw error
+  }
   logStartupStep('startup-splash-close', 'completed')
   if (!keepE2EWindowInBackground) {
-    mainWindow.focus()
-    mainWindow.webContents.focus()
+    target.focus()
+    target.webContents.focus()
   }
+  startupTelemetrySuccess.markRendererReady()
   scheduleComputerUseStartup()
 })
 
 async function reactivateMainWindow(): Promise<void> {
   focusStartupSplashIfActive()
   await rendererStartupReady.whenReady
-  if (quitting) return
+  if (
+    quitting ||
+    lastStartupFailure ||
+    startupSplashBlocksMainWindowActivation(startupSplash?.snapshot() ?? null)
+  )
+    return
   const target = mainWindow
   if (!target || target.isDestroyed()) return
   if (keepE2EWindowInBackground) {
@@ -2615,7 +2683,7 @@ function scheduleComputerUseStartup(): void {
     void restoreComputerUseAfterStartup({
       isShuttingDown: () => quitting || computerUse !== service,
       readPreferences: () => store.read(),
-      setEnabled: enabled => service.setEnabled(enabled),
+      setEnabled: enabled => service.restoreEnabled(enabled),
     }).catch(error => {
       console.error('[computer-use] lazy startup failed', error)
     })

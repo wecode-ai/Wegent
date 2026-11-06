@@ -16,13 +16,21 @@ Development instances share one Cargo target directory by default so executor so
 
 ## Diagnosing Startup Time
 
-The desktop startup screen waits only for the local executor to report ready through stdout; debug builds do not delay the workbench to finish an animation cycle. On a cold start, Electron starts a new sidecar directly and does not discover or attach to an existing executor.
+Desktop startup is gated by the local runtime and the current route's first-screen readiness conditions. On a cold start, Electron creates a new sidecar and the executor reports ready through stdout. The Renderer sends `renderer.startupReady` after the current surface and its required data are usable, starting the window handoff. Debug and release builds use the same handoff sequence.
 
-When the startup screen remains visible, align `Frontend logging initialized` in the frontend log with `app IPC stdio ready` in the executor log. The interval primarily measures local executor cold startup. Later entries such as `runtime work list finished` identify workbench data-loading time. Do not mistake a background cloud synchronization timeout for the local startup gate.
+The preferred initial window size is 1440×960. If either dimension reaches or exceeds the selected display's work area, both the splash and main window start with standard native maximization; otherwise they remain normal windows. A maximized handoff inherits that state directly without converting full-display dimensions back into normal-window frame bounds.
+
+The splash animation stage supports native window dragging, while the bottom status area and recovery buttons remain interactive. The stage always uses the dark brand background; the light or dark appearance setting determines the destination workbench.
+
+The complete mark and strands scale uniformly within the window and the footer's top edge, including breathing clearance. If an extremely short window's footer covers the full-window center, decorative drawing is omitted until space returns, continuing the same animation timeline.
+
+During handoff, the splash completes the weaving, settles the current breathing pose, and advances progress to 100% over approximately 200ms. After two frame confirmations and a 50ms hold, the host aligns the main window's position and size and uses `capturePage()` to confirm a nonempty composited main-window frame. It then fades out the splash through native window opacity over 600ms on macOS and Windows. Electron native window opacity has no effect on Linux. The host records startup success after closing the splash and focusing the main window. Reduced motion presents the completed frame directly and skips the settling, hold, and fade animations.
+
+When the startup screen remains visible, correlate `Frontend logging initialized`, `app IPC stdio ready`, the current route's data-loading entries such as `runtime work list finished`, and the host's `renderer-startup-ready`, `main-window-show`, and `startup-splash-close` records. These distinguish executor cold startup, first-screen data loading, and window handoff. Measure `renderer-startup-ready` to `startup-splash-close` separately because that interval includes the completed frame, main-window compositing, and fade. Investigate background cloud synchronization through its corresponding sync logs.
 
 ### First-Paint Gates and Idle Work
 
-The workbench first paint depends only on the local executor being available. It does not wait for the Codex app-server, plugin marketplace synchronization, or scans of directories eligible for cleanup. Features that need Codex start it on demand; maintenance such as plugin auto-updates, bundled marketplace preparation, and temporary-image cleanup runs through one renderer idle-task scheduler.
+Workbench first-paint gating requires the local executor and the current route's usable surface and required data. Features that need Codex start it on demand. Maintenance such as plugin auto-updates, bundled marketplace preparation, and temporary-image cleanup runs through one renderer idle-task scheduler.
 
 An idle task starts only when all of these conditions hold:
 
