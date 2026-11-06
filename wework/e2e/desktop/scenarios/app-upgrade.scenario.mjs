@@ -24,7 +24,10 @@ import { finishFailedUpgradeRetry } from '../modules/failed-upgrade-retry.mjs'
 import { prepareReleaseProcess } from '../../../electron/src/runtime/release-preparation-progress.mjs'
 import { stopProcessGroup } from '../process-lifecycle.mjs'
 import { seedUnstartedActivation } from '../modules/unstarted-activation-fixture.mjs'
-import { routeUpgradeRequests } from '../modules/upgrade-request-route.mjs'
+import {
+  routeUpgradeRequests,
+  routeRunningUpgradeRequests,
+} from '../modules/upgrade-request-route.mjs'
 import {
   installPreparedSource,
   installedSourcePlugins,
@@ -138,6 +141,7 @@ export async function createDesktopScenario(options) {
     channel,
   })
   let control
+  let inspectorPort
   let passed = false
   let origin
   let modelRequests = 0
@@ -293,8 +297,14 @@ export async function createDesktopScenario(options) {
     ...(!options.preparationOnly
       ? {
           electronLaunchArguments: ['--inspect-brk=127.0.0.1:0'],
-          appProcessStarted: child =>
-            routeUpgradeRequests(child, origin, join(resultDir, 'upgrade-transport.log')),
+          appProcessStarted: async child => {
+            inspectorPort = await routeUpgradeRequests(
+              child,
+              origin,
+              join(resultDir, 'upgrade-transport.log'),
+              { followHandoffs: true }
+            )
+          },
         }
       : {}),
     appEnvironment,
@@ -653,6 +663,10 @@ export async function createDesktopScenario(options) {
             installedVersion,
             assertSelectedComposition,
             captureScreenshot: options.captureScreenshot,
+            routeCurrentUpdateRequests: async () => {
+              const pid = Number(await readFile(join(root, 'active-pid'), 'utf8'))
+              await routeRunningUpgradeRequests(inspectorPort, pid, origin)
+            },
           })
         passed = true
         return

@@ -75,6 +75,7 @@ export async function finishFailedUpgradeRetry(control, options) {
     installedVersion,
     assertSelectedComposition,
     captureScreenshot,
+    routeCurrentUpdateRequests,
   } = options
   const history = await readRollbackHistory(root, pair.to, 'startup-failed')
   assert.equal(
@@ -90,6 +91,7 @@ export async function finishFailedUpgradeRetry(control, options) {
     appEnvironmentOverrides: { WEWORK_E2E_RELEASE_FAILURE_VERSION: '' },
   })
   assert.equal(await installedVersion(), pair.from.version)
+  await routeCurrentUpdateRequests()
   await about()
   const initial = await requestRetry(control, pair.to.version)
   assert.equal(initial.reason, 'startup-failed')
@@ -146,6 +148,7 @@ export async function finishFailedUpgradeRetry(control, options) {
     'after manually rolling back the retry',
     workbenchReadyTimeoutMs
   )
+  await routeCurrentUpdateRequests()
   await about()
   assert.equal((await requestRetry(control, pair.to.version)).reason, 'rolled-back')
   await captureScreenshot(control, 'app-update-manual-rollback-confirmation.png', RETRY_DIALOG)
