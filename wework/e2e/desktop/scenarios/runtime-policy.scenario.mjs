@@ -18,7 +18,6 @@ import {
   responseCreated,
   selectShellToolCommand,
 } from '../modules/response-protocol.mjs'
-import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
 import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 
@@ -131,14 +130,32 @@ export function createDesktopScenario(options) {
           !developer.includes('window.openai'),
           'Unrelated visualization details were eagerly loaded'
         )
-        browserPath = developer.match(/\(file: ([^\n]*\/skills\/browser\/SKILL\.md)\)/)?.[1]
+        const line = developer
+          .split('\n')
+          .find(line => line.startsWith('- wework-runtime:browser:'))
+        const locator = line?.match(/\(file: ([^)]+)\)/)?.[1]
         assert.ok(
-          browserPath?.includes('wework-runtime'),
-          'The default plugin did not expose its browser skill'
+          locator,
+          'Default browser skill metadata missing: ' +
+            developer
+              .split('\n')
+              .filter(line => line.includes('wework-runtime'))
+              .join('\n')
+        )
+        const roots = new Map(
+          [...developer.matchAll(/^- `(r\d+)` = `([^`]+)`/gm)].map(match => [match[1], match[2]])
+        )
+        const [alias, ...relative] = locator.split('/')
+        browserPath = roots.has(alias) ? join(roots.get(alias), ...relative) : locator
+        assert.ok(
+          browserPath.includes('wework-runtime'),
+          'The resolved browser skill is outside the default plugin'
         )
       } else if (phase === 'browser' || phase === 'updated') {
         if (phase === 'updated') {
-          policyPath = developer.match(/read the complete policy skill at ("[^"\n]+")/)?.[1]
+          policyPath = [...developer.matchAll(/read the complete policy skill at ("[^"\n]+")/g)].at(
+            -1
+          )?.[1]
           assert.ok(policyPath, 'The updated turn lost its current policy reference')
           policyPath = JSON.parse(policyPath)
         }
@@ -183,16 +200,13 @@ export function createDesktopScenario(options) {
         'The native compaction did not finish'
       )
       await send(control, 'compacted')
-      const codex = (method, params) =>
-        requestExecutor(
-          control,
-          'runtime.codex.app_server.request',
-          { method, params },
-          options.uiTimeoutMs
-        )
-      const loaded = await codex('thread/loaded/list', {})
-      assert.ok(loaded.data.length > 0, 'There is no native session to resume')
-      for (const threadId of loaded.data) await codex('thread/unsubscribe', { threadId })
+      const restarted = await waitForValue(
+        async () => JSON.parse(await control.command('restartLocalCodexAppServerIfIdle', 'body')),
+        result => result.restarted === true,
+        'The native app server did not become idle before session restoration',
+        options.uiTimeoutMs
+      )
+      assert.equal(restarted.restarted, true, 'The native session was not unloaded')
       await send(control, 'resumed')
       assert.deepEqual(
         evidence.map(item => item.phase),
