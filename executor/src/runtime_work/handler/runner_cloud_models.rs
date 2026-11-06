@@ -6,6 +6,7 @@ impl RuntimeWorkRpcHandler {
         &self,
         payload: &mut Value,
     ) -> Result<(), AppIpcError> {
+        self.materialize_local_runner_models(payload)?;
         if !has_cloud_routing(payload) {
             return Ok(());
         }

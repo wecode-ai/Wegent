@@ -246,6 +246,76 @@ async fn changed_owner_or_target_cannot_redirect_a_claimed_run() {
 }
 
 #[tokio::test]
+async fn manual_calendar_run_routes_immediately_and_reuses_its_original_receipt() {
+    let root = tempfile::tempdir().unwrap();
+    let handler = handler(root.path());
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    let mut entry = automation();
+    entry.task_request["standInCalendar"] = json!({});
+    handler.automation_store.create(entry).unwrap();
+    let (_, run) = handler.automation_store.start_manual_run("once").unwrap();
+    assert_eq!(run.trigger, "manual");
+    let entry = handler.automation_store.get("once").unwrap();
+    let prepared = handler
+        .prepare_stand_in_schedule(&entry, json!({"message":entry.prompt}))
+        .await
+        .unwrap();
+    assert_eq!(prepared["title"], "Review");
+    assert_eq!(prepared["message"], "Review progress");
+    assert_eq!(run.status, AutomationRunStatus::Pending);
+    assert_eq!(
+        handler
+            .automation_store
+            .start_manual_run("once")
+            .unwrap()
+            .1
+            .status,
+        AutomationRunStatus::Skipped
+    );
+    let contexts = handler.arrangement_contexts(&store).unwrap();
+    assert_eq!(contexts.len(), 1);
+    assert_eq!(contexts[0]["id"], "arrangements:7");
+    assert!(store.stand_in_events(7).unwrap().is_empty());
+    let snapshot = handler
+        .coordination_rpc(
+            "runtime.coordination.snapshot",
+            json!({"contextId":contexts[0]["id"],"revision":contexts[0]["revision"]}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(snapshot["events"].as_array().unwrap().len(), 1);
+    assert_eq!(snapshot["events"][0]["id"], run.id);
+    assert_eq!(snapshot["events"][0]["kind"], "schedule_due");
+    assert_eq!(snapshot["events"][0]["arrangement"], true);
+    assert_eq!(snapshot["events"][0]["processingMode"], "immediate");
+    assert_eq!(snapshot["events"][0]["notBefore"], json!(run.scheduled_for));
+    insert_receipt(&handler, &run, CommandState::Queued);
+    let commit = json!({"contextId":contexts[0]["id"],"revision":contexts[0]["revision"],"snapshotId":snapshot["id"],"actions":[{"kind":"dispatch_arrangement","eventIds":[run.id]}]});
+    let receipt = handler
+        .coordination_rpc("runtime.coordination.commit", commit.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        handler
+            .coordination_rpc("runtime.coordination.commit", commit)
+            .await
+            .unwrap(),
+        receipt
+    );
+    let updated = handler
+        .automation_store
+        .list_runs(None)
+        .into_iter()
+        .find(|saved| saved.id == run.id)
+        .unwrap();
+    assert_eq!(updated.status, AutomationRunStatus::Running);
+    assert_eq!(updated.task_id, Some(run.coordination.unwrap().task_id));
+    assert_eq!(handler.command_journal.lock().unwrap().len(), 1);
+    assert_eq!(store.stand_in_actions(7).unwrap().len(), 1);
+    assert_eq!(store.stand_in_actions(7).unwrap()[0]["status"], "succeeded");
+}
+
+#[tokio::test]
 async fn calendar_due_enters_personal_intake_with_contents_and_saved_route_policy() {
     for immediate in [false, true] {
         let root = tempfile::tempdir().unwrap();
@@ -264,6 +334,13 @@ async fn calendar_due_enters_personal_intake_with_contents_and_saved_route_polic
             .pop()
             .unwrap()
             .1;
+        let entry = handler.automation_store.get("once").unwrap();
+        let prepared = handler
+            .prepare_stand_in_schedule(&entry, json!({"message":entry.prompt}))
+            .await
+            .unwrap();
+        assert_eq!(prepared["title"], "Review");
+        assert_eq!(prepared["message"], "Review progress");
         assert!(handler.arrangement_contexts(&store).unwrap().is_empty());
         handler.arrangement_contexts(&store).unwrap();
         let events = store.stand_in_events(7).unwrap();

@@ -1101,9 +1101,9 @@ async function verifyMarketplacePluginLifecycle({
   try {
     const setupStartedAt = Date.now()
     await control.command('setLocalProxyUrl', 'body', { value: blockingNetworkProxy.url })
-    // Proxy changes restart Codex. Finish that setup before measuring local operations.
-    await control.command('reconcileLocalPluginCatalog', 'body')
-    const reconciledAt = Date.now()
+    // Updating the proxy awaits the old Codex process exit. Keep these disk-only
+    // operations independent of a new app-server and its background catalog sync.
+    const proxyConfiguredAt = Date.now()
     blockingNetworkProxy.block()
     const blockedRequestCount = blockingNetworkProxy.requests.length
     const blockedConnectionCount = blockingNetworkProxy.connections.length
@@ -1169,7 +1169,7 @@ async function verifyMarketplacePluginLifecycle({
     )
     const networkEvidence = {
       setupStartedAt,
-      reconciledAt,
+      proxyConfiguredAt,
       blockedRequestCount,
       blockedConnectionCount,
       importStartedAt,

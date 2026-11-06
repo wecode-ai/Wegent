@@ -2,7 +2,8 @@ import { Button } from '@/components/ui/button'
 import {
   Bell,
   ChevronDown,
-  Circle,
+  Clock,
+  PauseCircle,
   CircleAlert,
   ClipboardList,
   FileSearch,
@@ -73,6 +74,7 @@ export function AutomationListPane({
                 key={filter}
                 type="button"
                 data-testid={`automation-filter-${filter}`}
+                aria-pressed={statusFilter === filter}
                 onClick={() => onFilterChange(filter)}
                 className={cn(
                   'h-8 rounded-lg px-2.5 text-sm transition-colors',
@@ -148,7 +150,8 @@ export function AutomationListPane({
             data-testid="stand-in-weekly-review-template"
             onClick={onReviewTemplate}
           >
-            {t('standIn.onboarding.review')}
+            <Plus aria-hidden="true" className="h-4 w-4" />
+            {t('standIn.onboarding.review_add')}
           </Button>
         ) : null}
         {!calendar && statusFilter === 'all' && !query && allAutomations.length > 0 ? (
@@ -390,47 +393,95 @@ function AutomationRow({
           selected && 'bg-surface'
         )}
       >
-        <Circle
-          className={cn(
-            'mt-1 h-3.5 w-3.5 shrink-0',
-            automation.enabled ? 'text-text-secondary' : 'text-text-tertiary'
-          )}
-        />
+        {automation.enabled ? (
+          <Clock aria-hidden="true" className="mt-1 h-4 w-4 shrink-0 text-text-secondary" />
+        ) : (
+          <PauseCircle aria-hidden="true" className="mt-1 h-4 w-4 shrink-0 text-text-tertiary" />
+        )}
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm font-medium">{automation.name}</span>
-          <span className="block truncate text-xs text-text-tertiary">
-            {formatScheduleSummary(automation.schedule, locale)}
-            {' · '}
-            {t('todo.automation_next_run', '下次运行')} {formatRelativeDate(automation.nextRunAt)}
+          <span className="flex items-center justify-between gap-3">
+            <span className="truncate text-sm font-medium">{automation.name}</span>
+            <span className="shrink-0 rounded-md bg-muted px-2 py-0.5 text-xs text-text-secondary">
+              {t(
+                automation.enabled
+                  ? 'todo.automation_filter_active'
+                  : 'todo.automation_filter_paused'
+              )}
+            </span>
           </span>
+          <span
+            className="mt-1 block text-sm text-text-secondary"
+            title={automation.schedule.type === 'cron' ? automation.schedule.expression : undefined}
+          >
+            {formatScheduleSummary(automation.schedule, locale, t, automation.timezone)}
+          </span>
+          {automation.enabled && (
+            <span className="mt-1 block text-xs text-text-tertiary">
+              {t('todo.automation_next_run_at', {
+                time:
+                  formatNextRun(automation.nextRunAt, locale, automation.timezone) ??
+                  t('todo.automation_waiting_schedule'),
+              })}
+            </span>
+          )}
         </span>
       </button>
     </article>
   )
 }
 
-function formatScheduleSummary(schedule: AutomationSchedule, locale: string): string {
+function formatScheduleSummary(
+  schedule: AutomationSchedule,
+  locale: string,
+  t: ReturnType<typeof useTranslation>['t'],
+  timezone: string
+): string {
   if (schedule.type === 'interval') {
     return locale.startsWith('zh')
       ? `每 ${schedule.value} ${schedule.unit === 'minutes' ? '分钟' : schedule.unit === 'hours' ? '小时' : '天'}`
       : `Every ${schedule.value} ${schedule.unit}`
   }
   if (schedule.type === 'one_time') {
-    return new Intl.DateTimeFormat(locale, { dateStyle: 'short', timeStyle: 'short' }).format(
-      new Date(schedule.executeAt)
-    )
+    return new Intl.DateTimeFormat(locale, {
+      dateStyle: 'short',
+      timeStyle: 'short',
+      timeZone: timezone,
+    }).format(new Date(schedule.executeAt))
   }
   const parts = schedule.expression.trim().split(/\s+/)
-  if (parts.length === 5 && /^\d+$/.test(parts[0]) && /^\d+$/.test(parts[1])) {
+  if (
+    parts.length === 5 &&
+    /^\d+$/.test(parts[0]) &&
+    /^\d+$/.test(parts[1]) &&
+    parts[2] === '*' &&
+    parts[3] === '*'
+  ) {
     const time = `${String(Number(parts[1])).padStart(2, '0')}:${String(Number(parts[0])).padStart(2, '0')}`
     if (parts[4] === '1-5') return locale.startsWith('zh') ? `工作日 ${time}` : `Weekdays ${time}`
     if (parts[4] === '*') return locale.startsWith('zh') ? `每天 ${time}` : `Daily ${time}`
+    if (/^[0-7]$/.test(parts[4])) {
+      const day = new Intl.DateTimeFormat(locale, {
+        weekday: locale.startsWith('zh') ? 'short' : 'long',
+        timeZone: 'UTC',
+      }).format(new Date(Date.UTC(2023, 0, 1 + (Number(parts[4]) % 7))))
+      return t('todo.automation_weekly_at', { day, time })
+    }
   }
-  return schedule.expression
+  return t('todo.automation_custom_schedule')
 }
 
-function formatRelativeDate(value: string | null | undefined): string {
-  if (!value) return '—'
-  const hours = Math.max(0, Math.round((new Date(value).getTime() - Date.now()) / 3_600_000))
-  return hours < 24 ? `${hours}h` : `${Math.round(hours / 24)}d`
+function formatNextRun(
+  value: string | null | undefined,
+  locale: string,
+  timezone: string
+): string | null {
+  if (!value) return null
+  return new Intl.DateTimeFormat(locale, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: timezone,
+    timeZoneName: 'short',
+  }).format(new Date(value))
 }
