@@ -39,24 +39,29 @@ pub(super) fn migrate_agent_binding(identity: &mut Value) -> Result<bool, TaskRu
         .get("agentProject")
         .filter(|project| !project.is_null())
     {
-        if !validate_projects(&json!([project])) || !identity["collaboration"].is_object() {
+        if !validate_projects(&json!([project]))
+            || identity
+                .get("collaboration")
+                .is_some_and(|source| !source.is_object())
+        {
             return Err(TaskRuntimeError::Invalid(
                 "invalid stand-in agent project".into(),
             ));
         }
         let project = project.clone();
-        let source = &mut identity["collaboration"];
-        let selected = source["allProjects"] == true
-            || source["projects"].as_array().is_some_and(|rows| {
-                rows.iter()
-                    .any(|row| row["id"] == project["id"] && row["store"] == project["store"])
-            });
-        source["allProjects"] = json!(false);
-        source["projects"] = if selected {
-            json!([project])
-        } else {
-            json!([])
-        };
+        if let Some(source) = identity.get_mut("collaboration") {
+            let selected = source["allProjects"] == true
+                || source["projects"].as_array().is_some_and(|rows| {
+                    rows.iter()
+                        .any(|row| row["id"] == project["id"] && row["store"] == project["store"])
+                });
+            source["allProjects"] = json!(false);
+            source["projects"] = if selected {
+                json!([project])
+            } else {
+                json!([])
+            };
+        }
     }
     let mut changed = false;
     if let Some(fields) = identity.as_object_mut() {

@@ -10,7 +10,7 @@ As a Wework user, I want a stand-in to be a special agent with its own responsib
 
 - Creation, editing and project summaries show no agent picker or reference and request no personal/project agent catalogs.
 - Execution uses the stand-in’s instructions, explicit model and options, device, workspace and connections. It inherits no external agent prompt, skills, plugins or policies. Missing models use the established independent default.
-- Migration intersects old project restrictions with selected projects, preserves exclusions, switches, confirmation policies, versions and cutoffs, then removes references. Reads and saves are idempotent and never expand grants.
+- Migration intersects old project restrictions with selected projects, preserves exclusions, switches, confirmation policies, versions and cutoffs, then removes references. A primary without project intake gains none and does not block other accounts from loading. Reads and saves are idempotent and never expand grants.
 - Keep default cloud-device selection, explicit device choices, confirmed local-to-cloud migration, draft recovery and conversation identity.
 
 ## E2E cases

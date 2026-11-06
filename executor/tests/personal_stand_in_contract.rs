@@ -379,6 +379,48 @@ fn removing_a_project_binding_intersects_explicit_scopes_even_for_paused_sources
 }
 
 #[test]
+fn primary_project_bindings_without_intake_migrate_without_adding_project_grants() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("tasks.sqlite");
+    let store = LocalTaskStore::open(&path).unwrap();
+    let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    settings["primary"] = json!({"enabled":true,"prompt":"Keep primary instructions","preferences":"Keep preferences"});
+    let mut legacy = store.save_personal_stand_in(7, "mac", settings).unwrap();
+    let other = store.personal_stand_in(8, "mac").unwrap();
+    let other = store.save_personal_stand_in(8, "mac", other).unwrap();
+    legacy["primary"]["agentId"] = json!("old-primary-project");
+    legacy["primary"]["agentProject"] = json!({"id":"one","store":"cloud"});
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    connection
+        .execute(
+            "UPDATE loop_items SET metadata=?1 WHERE id='personal-stand-in:7'",
+            [legacy.to_string()],
+        )
+        .unwrap();
+    let mut expected = legacy.clone();
+    expected["primary"]
+        .as_object_mut()
+        .unwrap()
+        .remove("agentId");
+    expected["primary"]
+        .as_object_mut()
+        .unwrap()
+        .remove("agentProject");
+
+    let accounts = store.all_personal_stand_ins("mac").unwrap();
+    assert_eq!(accounts.len(), 2);
+    assert!(accounts.contains(&other));
+    assert!(accounts.contains(&expected));
+    let migrated = store.personal_stand_in(7, "mac").unwrap();
+    assert_eq!(migrated, expected);
+    assert!(migrated["primary"].get("collaboration").is_none());
+    assert!(!role_project_matches(&migrated["primary"], "one", "cloud"));
+    assert_eq!(store.personal_stand_in(7, "mac").unwrap(), migrated);
+    let updated = store.save_personal_stand_in(7, "mac", migrated).unwrap();
+    assert_eq!(updated["primary"], expected["primary"]);
+}
+
+#[test]
 fn invalid_legacy_project_bindings_cannot_be_removed_by_a_successful_save() {
     let root = tempfile::tempdir().unwrap();
     let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();

@@ -396,9 +396,14 @@ export async function createDesktopScenario({
       legacy.roles[0].agentId = agent.id
       legacy.roles[0].agentProject = { id: project.id, store: 'local' }
       legacy.roles[0].collaboration.allProjects = true
+      assert.equal(Object.hasOwn(legacy.primary, 'collaboration'), false)
+      legacy.primary.agentId = agent.id
+      legacy.primary.agentProject = { id: project.id, store: 'local' }
       const expected = structuredClone(legacy)
       delete expected.roles[0].agentId
       delete expected.roles[0].agentProject
+      delete expected.primary.agentId
+      delete expected.primary.agentProject
       expected.roles[0].collaboration.allProjects = false
       expected.roles[0].collaboration.projects = [{ id: project.id, store: 'local' }]
       const database = new DatabaseSync(join(executorHome, 'data', 'tasks.sqlite'))
@@ -421,6 +426,7 @@ export async function createDesktopScenario({
           expected,
           'Migration must preserve identity, versions and grants'
         )
+        assert.equal(Object.hasOwn(migrated.primary, 'collaboration'), false)
         const persisted = database
           .prepare('SELECT metadata FROM loop_items WHERE id=?')
           .get(`personal-stand-in:${USER_ID}`)
