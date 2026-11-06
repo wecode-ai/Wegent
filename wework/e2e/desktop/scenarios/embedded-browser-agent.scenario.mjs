@@ -685,6 +685,8 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs, wo
         control,
         join(resultDir, 'embedded-browser-setup-rendering.json')
       )
+      let taskId
+      let browserLabel
       let setupCompleted = false
       try {
         await control.command(
@@ -710,6 +712,13 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs, wo
           }
         )
         await captureSetupRendering('submitted')
+        taskId = await waitForRuntimeTaskId(control, uiTimeoutMs)
+        browserLabel = await readBrowserPanelLabel(control, ACTIVE_WORKBENCH_SELECTOR, uiTimeoutMs)
+        assert.equal(
+          browserLabel,
+          `workspace-browser-${taskId.replace(/[^a-zA-Z0-9_-]/g, '-')}`,
+          'The fresh local task did not expose its task-scoped embedded browser label'
+        )
         await control.command('waitFor', '[data-testid="message-assistant"]', {
           text: EMBEDDED_BROWSER_SETUP_COMPLETION_TEXT,
           timeoutMs: uiTimeoutMs,
@@ -728,17 +737,6 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs, wo
           if (setupCompleted) throw error
         }
       }
-      const taskId = await waitForRuntimeTaskId(control, uiTimeoutMs)
-      const browserLabel = await readBrowserPanelLabel(
-        control,
-        ACTIVE_WORKBENCH_SELECTOR,
-        uiTimeoutMs
-      )
-      assert.equal(
-        browserLabel,
-        `workspace-browser-${taskId.replace(/[^a-zA-Z0-9_-]/g, '-')}`,
-        'The fresh local task did not expose its task-scoped embedded browser label'
-      )
       const bridgeIdentity = await waitForBridgeIdentity(executorHome, uiTimeoutMs)
       const originalBridgeRuntime = await readFile(bridgeIdentity.runtimePath, 'utf8')
       const stopForeignBridge = await startForeignBridgeRuntime(bridgeIdentity.runtimePath)
