@@ -161,10 +161,16 @@ class SubscriptionCallbackGateway(unittest.TestCase):
             )
             db.add_all([subtask, execution])
             db.commit()
-            self.task_id, self.subtask_id, self.execution_id = (
+            (
+                self.task_id,
+                self.subtask_id,
+                self.execution_id,
+                self.fixture_subscription_id,
+            ) = (
                 task.id,
                 subtask.id,
                 execution.id,
+                subscription.id,
             )
 
     def _cleanup(self) -> None:
@@ -276,12 +282,19 @@ class SubscriptionCallbackGateway(unittest.TestCase):
     def test_cancelled_callback_persists_subscription_cancellation(self) -> None:
         self._callback("response.incomplete", {}, "CANCELLED")
 
-    def _subscription_tool(self, name: str, arguments: dict) -> dict:
+    def _subscription_tool(
+        self,
+        name: str,
+        arguments: dict,
+        *,
+        user_id: int | None = None,
+        user_name: str | None = None,
+    ) -> dict:
         token = create_task_token(
             task_id=self.task_id,
             subtask_id=self.subtask_id,
-            user_id=self.user_id,
-            user_name=self.marker,
+            user_id=user_id or self.user_id,
+            user_name=user_name or self.marker,
         )
         response = self.mcp_client.post(
             "/api/mcp/subscription/sse",
@@ -301,6 +314,11 @@ class SubscriptionCallbackGateway(unittest.TestCase):
         self.assertNotIn("error", rpc, rpc)
         self.assertFalse(rpc["result"].get("isError", False), rpc)
         return json.loads(rpc["result"]["content"][0]["text"])
+
+    def _cleanup_user(self, user_id: int) -> None:
+        with SessionLocal() as db:
+            db.query(User).filter(User.id == user_id).delete(synchronize_session=False)
+            db.commit()
 
     def _prepare_subscription_mcp(self) -> None:
         with SessionLocal() as db:
@@ -389,7 +407,132 @@ class SubscriptionCallbackGateway(unittest.TestCase):
             )
         with Redis.from_url(os.environ["REDIS_URL"]) as redis:
             self.assertFalse(redis.exists(key), "Creation must consume its preview")
-        self.evidence.append({"preview_id": preview_id, "created": created})
+        subscription_id = created["subscription"]["id"]
+
+        fetched = self._subscription_tool(
+            "get_subscription", {"subscription_id": subscription_id}
+        )
+        self.assertTrue(fetched["success"], fetched)
+        self.assertEqual(fetched["subscription"]["id"], subscription_id)
+        self.assertEqual(fetched["subscription"]["prompt_template"], self.marker)
+        self.assertTrue(fetched["subscription"]["enabled"])
+        self.assertTrue(fetched["subscription"]["is_active"])
+        self.assertEqual(fetched["subscription"]["execution_count"], 0)
+        self.assertIsNotNone(fetched["subscription"]["next_execution_time"])
+
+        listed = self._subscription_tool("list_subscriptions", {})
+        self.assertTrue(listed["success"], listed)
+        self.assertEqual(listed["total"], 2)
+        self.assertEqual(listed["returned"], 2)
+        self.assertEqual(
+            {item["id"] for item in listed["items"]},
+            {self.fixture_subscription_id, subscription_id},
+        )
+        self.assertTrue(all(item["is_active"] for item in listed["items"]))
+        self.assertTrue(all(not item["is_rental"] for item in listed["items"]))
+
+        enabled_list = self._subscription_tool(
+            "list_subscriptions", {"enabled": True, "trigger_type": "one_time"}
+        )
+        self.assertTrue(enabled_list["success"], enabled_list)
+        self.assertEqual(enabled_list["total"], 1)
+        self.assertEqual(enabled_list["returned"], 1)
+        self.assertEqual(enabled_list["items"][0]["id"], subscription_id)
+        self.assertEqual(enabled_list["items"][0]["trigger_type"], "one_time")
+        self.assertNotIn("prompt_template", enabled_list["items"][0])
+
+        page = self._subscription_tool("list_subscriptions", {"offset": 1, "limit": 1})
+        self.assertTrue(page["success"], page)
+        self.assertEqual(page["total"], 2)
+        self.assertEqual(page["returned"], 1)
+
+        with SessionLocal() as db:
+            owner_subscription = db.get(Kind, self.fixture_subscription_id)
+            rental_json = json.loads(json.dumps(owner_subscription.json))
+            rental_internal = rental_json.setdefault("_internal", {})
+            rental_internal["is_rental"] = True
+            rental_json["_internal"] = rental_internal
+            db.add(
+                Kind(
+                    user_id=self.user_id,
+                    kind="Subscription",
+                    name=f"{self.marker}-rental",
+                    namespace="default",
+                    is_active=True,
+                    json=rental_json,
+                )
+            )
+            db.commit()
+
+        rental_excluded = self._subscription_tool("list_subscriptions", {})
+        self.assertTrue(rental_excluded["success"], rental_excluded)
+        self.assertEqual(rental_excluded["total"], 2)
+        self.assertNotIn(
+            f"{self.marker}-rental",
+            {item["name"] for item in rental_excluded["items"]},
+        )
+
+        with SessionLocal() as db:
+            other_user = User(
+                user_name=f"{self.marker[:37]}-other",
+                password_hash=get_password_hash(secrets.token_urlsafe(24)),
+                role="user",
+                auth_source="password",
+                is_active=True,
+            )
+            db.add(other_user)
+            db.commit()
+            self.addCleanup(self._cleanup_user, other_user.id)
+            other_user_id = other_user.id
+
+        other_get = self._subscription_tool(
+            "get_subscription",
+            {"subscription_id": subscription_id},
+            user_id=other_user_id,
+            user_name=f"{self.marker[:37]}-other",
+        )
+        self.assertFalse(other_get["success"], other_get)
+        self.assertIn("not found", other_get["error"])
+        other_list = self._subscription_tool(
+            "list_subscriptions",
+            {},
+            user_id=other_user_id,
+            user_name=f"{self.marker[:37]}-other",
+        )
+        self.assertTrue(other_list["success"], other_list)
+        self.assertEqual(other_list["total"], 0)
+        self.assertEqual(other_list["items"], [])
+
+        with SessionLocal() as db:
+            deleted = db.get(Kind, subscription_id)
+            deleted.is_active = False
+            deleted_internal = deleted.json.setdefault("_internal", {})
+            deleted_internal["enabled"] = False
+            deleted.json["_internal"] = deleted_internal
+            db.commit()
+
+        deleted_get = self._subscription_tool(
+            "get_subscription", {"subscription_id": subscription_id}
+        )
+        self.assertFalse(deleted_get["success"], deleted_get)
+        self.assertIn("not found", deleted_get["error"])
+        deleted_list = self._subscription_tool(
+            "list_subscriptions", {"trigger_type": "one_time"}
+        )
+        self.assertTrue(deleted_list["success"], deleted_list)
+        self.assertEqual(deleted_list["total"], 0)
+
+        self.evidence.append(
+            {
+                "preview_id": preview_id,
+                "created": created,
+                "fetched": fetched,
+                "listed": listed,
+                "rental_excluded": rental_excluded,
+                "other_get": other_get,
+                "deleted_get": deleted_get,
+            }
+        )
 
 
 if __name__ == "__main__":
