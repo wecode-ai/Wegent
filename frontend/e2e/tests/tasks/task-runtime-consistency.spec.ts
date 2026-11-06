@@ -410,7 +410,8 @@ test.describe('Task runtime consistency', () => {
         'finishes',
       ].join(' '),
       chunkDelayMs: 250,
-      doneDelayMs: 20000,
+      // Keep cancellation possible after the partial response is visible.
+      doneDelayMs: 10_000,
     })
 
     await gotoChatWithTestTeam(page)
@@ -455,7 +456,8 @@ test.describe('Task runtime consistency', () => {
     await configureStreamRule(request, messageText, {
       responseContent: `${responseMarker} keeps streaming until the browser cancels this response`,
       chunkDelayMs: 250,
-      doneDelayMs: 20000,
+      // Keep cancellation possible after the partial response is visible.
+      doneDelayMs: 10_000,
     })
     await configureStreamRule(request, followUpMessage, {
       responseContent: `${followUpMarker} is non-empty after cancellation`,

@@ -80,6 +80,15 @@ export function createDesktopScenario({
         join(root, core.sourceFingerprint)
       )
       appEnvironment.NODE_EXTRA_CA_CERTS = mail.certificate
+      // Exercise the real server's 24-hour APPEND parsing regardless of CI wall time.
+      for (const hour of ['00', '12']) {
+        await mail.append(
+          `Historical ${hour}:33 mail must stay out of stand-in work`,
+          'HISTORICAL_MAIL',
+          `<history-${hour}@example.com>`,
+          new Date(`2020-01-01T${hour}:33:30.000Z`)
+        )
+      }
       await mail.deliver(
         'Historical mail must stay out of stand-in work',
         'HISTORICAL_MAIL',

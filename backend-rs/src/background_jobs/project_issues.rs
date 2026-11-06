@@ -48,6 +48,7 @@ pub(super) async fn create(
         let status=project.metadata.0["board_config"]["statuses"].as_array().map(|statuses|statuses.first().and_then(|v|v["id"].as_str()).unwrap_or("")).unwrap_or("inbox");
         let mut metadata=metadata.clone();
         if !status.is_empty(){metadata["status_history"]=json!([{"from_status":"","to_status":status,"from_status_name":"","to_status_name":status_name(&project,status),"trigger":"create","by_user_id":owner,"at":iso(Utc::now().naive_utc())}]);}
+        super::assignments::attribute_history(&mut metadata, "status_history", &super::assignments::automation_actor(context));
         store::insert(tx,"task",json!({"id":id,"cloud_project_id":project.id,"sequence_number":sequence,"created_by_user_id":owner,"title":title,"description":description,"priority":"medium","status":status,"metadata":metadata})).await?;
         tx.execute("UPDATE loop_items SET next_item_number=next_item_number+1,updated_at=UTC_TIMESTAMP(6) WHERE id=?",(project.id.as_str(),)).await?;
         Ok(Issue{id,title:title.clone()})

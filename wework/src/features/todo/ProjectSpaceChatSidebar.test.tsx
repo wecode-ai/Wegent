@@ -11,6 +11,8 @@ import { ProjectSpaceChatSidebar } from './ProjectSpaceChatSidebar'
 const mocks = vi.hoisted(() => ({
   createProjectRuntimeTask: vi.fn(),
   bindTask: vi.fn(),
+  readLocalIdentity: vi.fn(),
+  sendError: vi.fn(),
   chatPanelMounts: 0,
   state: {
     runtimeWork: {
@@ -23,7 +25,10 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@/features/workbench/useWorkbench', () => ({
   useWorkbenchPaneContext: () => ({
-    services: { deliveryApi: { bindTask: mocks.bindTask } },
+    services: {
+      deliveryApi: { bindTask: mocks.bindTask },
+      getLocalRuntimeSidebarIdentity: mocks.readLocalIdentity,
+    },
     state: mocks.state,
     createProjectRuntimeTask: mocks.createProjectRuntimeTask,
   }),
@@ -87,7 +92,7 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
                 content: '管理当前项目',
                 status: 'done',
               },
-              onError: vi.fn(),
+              onError: mocks.sendError,
               onRuntimeTaskOptimisticOpen: address => onAddressChange?.(address),
             })
           }}
@@ -120,6 +125,8 @@ describe('ProjectSpaceChatSidebar', () => {
     window.localStorage.clear()
     mocks.createProjectRuntimeTask.mockReset()
     mocks.bindTask.mockReset()
+    mocks.readLocalIdentity.mockReset().mockResolvedValue({ deviceId: 'this-mac' })
+    mocks.sendError.mockReset()
     mocks.chatPanelMounts = 0
     mocks.state.runtimeWork.projects = []
     mocks.state.runtimeWork.chats = [
@@ -155,6 +162,88 @@ describe('ProjectSpaceChatSidebar', () => {
         ],
       },
     ]
+  })
+
+  it.each(['local', 'backend'] as const)(
+    'creates a %s project conversation on this device with its storage context',
+    async projectStore => {
+      mocks.createProjectRuntimeTask.mockResolvedValue(false)
+      render(
+        <ProjectSpaceChatSidebar
+          project={{ ...project, project_store: projectStore }}
+          localProjects={[]}
+          localExecution
+          onClose={vi.fn()}
+        />
+      )
+      expect(mocks.readLocalIdentity).not.toHaveBeenCalled()
+      expect(screen.queryByTestId('project-space-chat-runtime-project')).not.toBeInTheDocument()
+      await userEvent.click(screen.getByTestId('project-space-chat-new'))
+      await userEvent.click(screen.getByTestId('mock-chat-send'))
+      await waitFor(() => expect(mocks.createProjectRuntimeTask).toHaveBeenCalledOnce())
+      expect(mocks.createProjectRuntimeTask).toHaveBeenCalledWith(
+        '管理当前项目',
+        expect.objectContaining({
+          deviceId: 'this-mac',
+          deviceWorkspaceId: null,
+          origin: {
+            type: 'project_chat',
+            cloudProjectId: '11',
+            projectStore,
+          },
+        })
+      )
+    }
+  )
+
+  it('reports unavailable local execution and allows sending after recovery', async () => {
+    mocks.readLocalIdentity.mockResolvedValueOnce(null)
+    mocks.createProjectRuntimeTask.mockResolvedValue(false)
+    render(
+      <ProjectSpaceChatSidebar
+        project={project}
+        localProjects={[]}
+        localExecution
+        onClose={vi.fn()}
+      />
+    )
+    await userEvent.click(screen.getByTestId('project-space-chat-new'))
+    await userEvent.click(screen.getByTestId('mock-chat-send'))
+    await waitFor(() => expect(mocks.sendError).toHaveBeenCalledOnce())
+    expect(mocks.createProjectRuntimeTask).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByTestId('mock-chat-send'))
+    await waitFor(() => expect(mocks.createProjectRuntimeTask).toHaveBeenCalledOnce())
+  })
+
+  it('keeps local and cloud conversations separate when their project IDs match', async () => {
+    mocks.state.runtimeWork.chats.push({
+      deviceId: 'this-mac',
+      available: true,
+      workspacePath: '/local',
+      tasks: [
+        {
+          taskId: 'local-chat',
+          title: '本地看板会话',
+          runtime: 'codex',
+          workspacePath: '/local',
+          runtimeHandle: {
+            cloudProjectId: '11',
+            origin: { projectStore: 'local' },
+          },
+        },
+      ],
+    } as never)
+    render(
+      <ProjectSpaceChatSidebar
+        project={{ ...project, project_store: 'local' }}
+        localProjects={[]}
+        onClose={vi.fn()}
+      />
+    )
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute('data-task-id', 'local-chat')
+    await userEvent.click(screen.getByTestId('project-space-chat-menu'))
+    expect(screen.getByTestId('project-space-chat-menu-list')).toHaveTextContent('本地看板会话')
+    expect(screen.getByTestId('project-space-chat-menu-list')).not.toHaveTextContent('最近会话')
   })
 
   it('creates a formal project-scoped conversation from a new draft', async () => {
@@ -211,7 +300,9 @@ describe('ProjectSpaceChatSidebar', () => {
       })
     )
     expect(mocks.createProjectRuntimeTask.mock.calls[0]?.[1]).not.toHaveProperty('initialGoal')
-    expect(window.localStorage.getItem('wework-project-space-chat:11')).toBe('device-1:new-task')
+    expect(window.localStorage.getItem('wework-project-space-chat:backend:11')).toBe(
+      'device-1:new-task'
+    )
 
     mocks.state.runtimeWork.chats = [
       ...mocks.state.runtimeWork.chats,

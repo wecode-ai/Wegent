@@ -157,7 +157,7 @@ export function createDesktopScenario({
       assert.ok(prepared.includes(QUESTION), 'Opening should prepare an editable question')
       assert.equal(discussionCalls, 0, 'Opening must not send a model request')
       await captureScreenshot(control, 'question-discussion-02a-unsent-prompt.png', 'body')
-      const editedPrompt = `${prepared}\n请先讨论项目成员方案。`
+      const editedPrompt = `${QUESTION} 请先讨论项目成员方案。`
       await control.command('fill', sideComposer, { value: editedPrompt })
       await control.command('click', `${DIALOG} [data-testid="question-discussion-close"]`)
       await control.command('click', '[data-testid="workspace-tab-add"]')
