@@ -5,13 +5,13 @@ import '@/i18n'
 import { RuntimeWorkLoadStatus } from './RuntimeWorkLoadStatus'
 
 describe('RuntimeWorkLoadStatus', () => {
-  test('distinguishes first load from refresh and successful empty results', () => {
+  test('shows first load and keeps background refresh and successful empty results silent', () => {
     const { rerender } = render(
       <RuntimeWorkLoadStatus load={{ phase: 'loading', error: null }} hasSnapshot={false} />
     )
     expect(screen.getByRole('status')).toHaveTextContent('正在加载任务')
     rerender(<RuntimeWorkLoadStatus load={{ phase: 'refreshing', error: null }} hasSnapshot />)
-    expect(screen.getByRole('status')).toHaveTextContent('正在刷新任务')
+    expect(screen.queryByTestId('runtime-work-load-status')).not.toBeInTheDocument()
     rerender(<RuntimeWorkLoadStatus load={{ phase: 'ready', error: null }} hasSnapshot />)
     expect(screen.queryByTestId('runtime-work-load-status')).not.toBeInTheDocument()
   })
