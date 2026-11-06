@@ -59,7 +59,8 @@ pub(super) fn configure(
 }
 
 pub(super) fn needs_preparation(turn: &SpawnTurnRequest) -> bool {
-    turn.request.extra.contains_key(DEFERRED_ENVIRONMENT)
+    turn.request.extra.contains_key("creation_branch")
+        || turn.request.extra.contains_key(DEFERRED_ENVIRONMENT)
         || turn
             .request
             .extra

@@ -419,7 +419,7 @@ mod tests {
         assert!(candidates.iter().all(|path| {
             path.file_name()
                 .and_then(|name| name.to_str())
-                .is_none_or(|name| !name.starts_with(CLAUDE_SESSION_MARKER))
+                .map_or(true, |name| !name.starts_with(CLAUDE_SESSION_MARKER))
         }));
     }
 }

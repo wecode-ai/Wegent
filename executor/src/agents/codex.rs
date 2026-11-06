@@ -4179,6 +4179,7 @@ fn codex_thread_developer_instructions(user_instructions: &str, task_instruction
         WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS,
         WEWORK_COMPUTER_USE_DEVELOPER_INSTRUCTIONS,
         WEWORK_SPACE_DEVELOPER_INSTRUCTIONS,
+        crate::workbench_control::INSTRUCTIONS,
         local_connector_auth::INSTRUCTIONS,
         github_cli::INSTRUCTIONS,
         inline_visualization::INSTRUCTIONS,
@@ -5689,6 +5690,9 @@ fn global_mcp_config_overrides(
     let mut names = mcps.keys().collect::<Vec<_>>();
     names.sort();
     for name in names {
+        if name == crate::workbench_control::SERVER_NAME {
+            continue;
+        }
         let Some(server) = mcps
             .get(name)
             .and_then(|record| record.get("server"))
@@ -5904,6 +5908,13 @@ fn managed_wework_mcp_config_overrides(
         "WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION".to_owned(),
         format!("Bearer {}", endpoint.token),
     )]);
+    if let Some(config) = crate::task_runtime::mcp::control_mcp_client_config(request)? {
+        append_managed_mcp_config(
+            crate::workbench_control::SERVER_NAME,
+            config,
+            &mut overrides,
+        );
+    }
     if let Some(config) = crate::task_runtime::mcp::notifications_mcp_client_config(request)? {
         append_managed_mcp_config(
             crate::task_runtime::mcp::NOTIFICATIONS_MCP_SERVER_NAME,
@@ -5937,7 +5948,11 @@ fn append_managed_mcp_config(
         format!("{key}.url={}", toml_value(&config.url)),
         format!(
             "{key}.tool_timeout_sec={}",
-            crate::task_runtime::mcp::SPACE_MCP_TOOL_TIMEOUT_SECONDS
+            if server_name == crate::workbench_control::SERVER_NAME {
+                crate::workbench_control::read_budget::TOOL_TIMEOUT_SECONDS
+            } else {
+                crate::task_runtime::mcp::SPACE_MCP_TOOL_TIMEOUT_SECONDS
+            }
         ),
     ]);
     for (header_name, header_value) in config.headers {
