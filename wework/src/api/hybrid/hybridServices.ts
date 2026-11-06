@@ -1,3 +1,7 @@
+import {
+  createLocalDevicePluginApi,
+  resolveLocalPluginDeviceRouteId,
+} from '@/features/plugins/pluginDeviceApi'
 import { createReplyPredictionApi } from '@/api/runtime/replyPredictionApi'
 import {
   assertLocalRuntimeSidebarIdentity,
@@ -381,7 +385,20 @@ export function createHybridWorkbenchServices(
     listCloudModels: () => cloudServices.agentResourceApi!.listModels(),
     user: options.user,
   })
+  const connectionDependencyProfile = { apiBaseUrl: options.apiBaseUrl, token: options.token }
+  const connectionDependencyPlugins = createLocalDevicePluginApi(
+    createPluginApi(
+      createHttpClient({
+        baseUrl: options.apiBaseUrl,
+        getToken: () => options.token,
+        redirectOnUnauthorized: false,
+      }),
+      options.apiBaseUrl
+    ),
+    deviceId => resolveLocalPluginDeviceRouteId(deviceId, connectionDependencyProfile)
+  )
   const localServices = createLocalAppServices({
+    connectionDependencyPlugins,
     listCloudInstalledPlugins: deviceId =>
       createPluginApi(
         createHttpClient({
@@ -726,10 +743,13 @@ export function createHybridWorkbenchServices(
     }
     throw new Error(`executor-not-found:${normalizedDeviceId}`)
   }
-  const mergeKnownDevices = (localDevices: DeviceInfo[], cloudDevices: DeviceInfo[]) =>
+  const mergeKnownDevices = (
+    localDevices: DeviceInfo[],
+    cloudDevices: DeviceInfo[]
+  ): DeviceInfo[] =>
     mergeDeviceLists(localDevices, [...currentAppDeviceRegistrations(), ...cloudDevices]).filter(
       device => !isAppDeviceRegistration(device)
-    )
+    ) as DeviceInfo[]
   const routeLocalSidebarMutation = async (
     deviceId: string,
     options: LocalRuntimeSidebarOptions | undefined,
@@ -748,11 +768,13 @@ export function createHybridWorkbenchServices(
   const listKnownDevices = async (signal?: AbortSignal) =>
     mergeKnownDevices(await listLocalDevices(signal), rememberedCloudDevices)
   const resolveExecutorDevice = async (deviceId: string): Promise<RuntimeDeviceInfo | null> => {
-    const knownDevice = (await listKnownDevices()).find(device => deviceMatchesId(device, deviceId))
+    const knownDevice = createWorkbenchDeviceResolver(await listKnownDevices()).resolve(deviceId)
     if (knownDevice) return knownDevice
 
-    const cloudDevices = await listCloudDevices()
-    return cloudDevices.find(device => deviceMatchesId(device, deviceId)) ?? null
+    await listCloudDevices()
+    return createWorkbenchDeviceResolver(
+      mergeKnownDevices(rememberedLocalDevices, rememberedCloudDevices)
+    ).resolve(deviceId)
   }
   const listLocalRuntimeWork = async (
     requestOptions?: Parameters<
@@ -890,20 +912,26 @@ export function createHybridWorkbenchServices(
       return {
         device_id: deviceId,
         max_concurrent_tasks: settings.maxConcurrentTasks,
+        max_concurrent_stand_in_tasks: settings.maxConcurrentStandInTasks,
+        max_concurrent_agent_tasks: settings.maxConcurrentAgentTasks,
         active_tasks: 0,
         queued_tasks: 0,
       }
     },
-    async updateRuntimeSettings(deviceId, maxConcurrentTasks) {
+    async updateRuntimeSettings(deviceId, limits) {
       if (!isLocalDeviceId(deviceId)) {
-        return deviceApi(deviceId).updateRuntimeSettings(deviceId, maxConcurrentTasks)
+        return deviceApi(deviceId).updateRuntimeSettings(deviceId, limits)
       }
       const settings = await localServices.runtimeWorkApi!.updateRuntimeSettings({
-        maxConcurrentTasks,
+        maxConcurrentTasks: limits.max_concurrent_tasks,
+        maxConcurrentStandInTasks: limits.max_concurrent_stand_in_tasks,
+        maxConcurrentAgentTasks: limits.max_concurrent_agent_tasks,
       })
       return {
         device_id: deviceId,
         max_concurrent_tasks: settings.maxConcurrentTasks,
+        max_concurrent_stand_in_tasks: settings.maxConcurrentStandInTasks,
+        max_concurrent_agent_tasks: settings.maxConcurrentAgentTasks,
         active_tasks: 0,
         queued_tasks: 0,
       }
@@ -979,9 +1007,7 @@ export function createHybridWorkbenchServices(
           error
         )
       }
-      return mergeKnownDevices(localDevices, cloudDevices) as Awaited<
-        ReturnType<WorkbenchServices['deviceApi']['listDevices']>
-      >
+      return mergeKnownDevices(localDevices, cloudDevices)
     },
   }
 
@@ -995,6 +1021,11 @@ export function createHybridWorkbenchServices(
   }
 
   const hybridRuntimeWorkApi: NonNullable<WorkbenchServices['runtimeWorkApi']> = {
+    async getRuntimeTask(address, options) {
+      if (address.projectSession) return null
+      const api = await runtimeApiForDevice(address.deviceId)
+      return api.getRuntimeTask ? api.getRuntimeTask(address, options) : null
+    },
     materializeRuntimeTask(data) {
       return cloudServices.runtimeWorkApi!.materializeRuntimeTask(data)
     },
@@ -1031,12 +1062,13 @@ export function createHybridWorkbenchServices(
     deleteDeviceWorkspace(data: DeleteDeviceWorkspaceRequest) {
       return runtimeApiForDevice(data.deviceId).then(api => api.deleteDeviceWorkspace(data))
     },
-    async getRuntimeTranscript(data: RuntimeTranscriptRequest) {
+    async getRuntimeTranscript(data: RuntimeTranscriptRequest, options?: { signal?: AbortSignal }) {
       const route = isLocalDeviceId(data.deviceId) ? 'local' : 'cloud'
       try {
-        const response = await (
-          data.projectSession ? cloudServices.runtimeWorkApi! : routeByAddress(data)
-        ).getRuntimeTranscript(data)
+        const api = data.projectSession ? cloudServices.runtimeWorkApi! : routeByAddress(data)
+        const response = await (options
+          ? api.getRuntimeTranscript(data, options)
+          : api.getRuntimeTranscript(data))
         const snapshot = runtimeExecutionSnapshot(data, response)
         if (
           snapshot &&
@@ -1113,6 +1145,15 @@ export function createHybridWorkbenchServices(
     },
     compactRuntimeTask(data: RuntimeCompactRequest) {
       return routeByAddress(data.address).compactRuntimeTask(data)
+    },
+    getMcpAppSessionTarget(address: RuntimeTaskAddress) {
+      return isLocalDeviceId(address.deviceId)
+        ? undefined
+        : {
+            apiBaseUrl: options.apiBaseUrl,
+            socketBaseUrl: options.socketBaseUrl,
+            socketPath: options.socketPath,
+          }
     },
     requestMcpApp<T = unknown>(data: import('@/api/mcpApps').McpAppRequest): Promise<T> {
       const api = routeByAddress(data.address)
@@ -1690,6 +1731,70 @@ export function createHybridWorkbenchServices(
     deviceApi: hybridDeviceApi,
     runtimeWorkApi: hybridRuntimeWorkApi,
     standInApi: {
+      taskCommands: {
+        async get(deviceId, target) {
+          return (await standInApiForDevice(deviceId)).taskCommands.get(deviceId, target)
+        },
+        async resolve(deviceId, resolution) {
+          return (await standInApiForDevice(deviceId)).taskCommands.resolve(deviceId, resolution)
+        },
+      },
+      async gitConnection(deviceId, input) {
+        return (await standInApiForDevice(deviceId)).gitConnection(deviceId, input)
+      },
+      async onboarding(userId, deviceId, language) {
+        return (await standInApiForDevice(deviceId)).onboarding(userId, deviceId, language)
+      },
+      async completeOnboarding(userId, deviceId, weeklyReview, time, language) {
+        return (await standInApiForDevice(deviceId)).completeOnboarding(
+          userId,
+          deviceId,
+          weeklyReview,
+          time,
+          language
+        )
+      },
+      async projectProcessing(userId, deviceId, target, check) {
+        return (await standInApiForDevice(deviceId)).projectProcessing(
+          userId,
+          deviceId,
+          target,
+          check
+        )
+      },
+      async projectCoordination(userId, deviceId, target, update) {
+        return (await standInApiForDevice(deviceId)).projectCoordination(
+          userId,
+          deviceId,
+          target,
+          update
+        )
+      },
+      async projectConversation(
+        userId,
+        deviceId,
+        projectId,
+        projectStore,
+        groupId,
+        message,
+        options
+      ) {
+        return (await standInApiForDevice(deviceId)).projectConversation(
+          userId,
+          deviceId,
+          projectId,
+          projectStore,
+          groupId,
+          message,
+          options
+        )
+      },
+      async processingStatus(userId, deviceId) {
+        return (await standInApiForDevice(deviceId)).processingStatus(userId, deviceId)
+      },
+      async checkProcessing(userId, deviceId) {
+        return (await standInApiForDevice(deviceId)).checkProcessing(userId, deviceId)
+      },
       async configureTelemetry(userId, deviceId, enabled, enabledSince) {
         return (await standInApiForDevice(deviceId)).configureTelemetry(
           userId,
@@ -1754,13 +1859,14 @@ export function createHybridWorkbenchServices(
           aliases
         )
       },
-      async searchConnectionResources(deviceId, providerId, kind, query, cursor) {
+      async searchConnectionResources(deviceId, providerId, kind, query, cursor, scope) {
         return (await standInApiForDevice(deviceId)).searchConnectionResources(
           deviceId,
           providerId,
           kind,
           query,
-          cursor
+          cursor,
+          ...(scope ? ([scope] as const) : [])
         )
       },
       async conversation(userId, deviceId, message, roleId, options) {
@@ -1803,6 +1909,9 @@ export function createHybridWorkbenchServices(
       },
       async readTask(deviceId, taskId) {
         return (await standInApiForDevice(deviceId)).readTask(deviceId, taskId)
+      },
+      async assignmentTasks(userId, deviceId, assignments) {
+        return (await standInApiForDevice(deviceId)).assignmentTasks(userId, deviceId, assignments)
       },
       async catalog(deviceId) {
         return (await standInApiForDevice(deviceId)).catalog(deviceId)
@@ -1851,7 +1960,8 @@ export function createHybridWorkbenchServices(
     userApi: cloudServices.userApi,
     cloudBackgroundApi: {
       listTeams: cloudServices.teamApi.listTeams,
-      listDevices: requestOptions => listCloudDevices(requestOptions?.signal),
+      listDevices: async requestOptions =>
+        mergeKnownDevices(rememberedLocalDevices, await listCloudDevices(requestOptions?.signal)),
       listRuntimeWork: requestOptions => listCloudRuntimeWork(requestOptions?.signal),
     },
     getLocalRuntimeSidebarIdentity,
@@ -1893,15 +2003,20 @@ function filterRuntimeChatStreamHandlers(
     onChatChunk: route(handlers.onChatChunk),
     onChatDone: route(handlers.onChatDone),
     onChatError: route(handlers.onChatError),
+    onChatRecovered: route(handlers.onChatRecovered),
     onBlockCreated: route(handlers.onBlockCreated),
     onBlockUpdated: route(handlers.onBlockUpdated),
     onSubagentActivity: route(handlers.onSubagentActivity),
     onRuntimeTaskTitleUpdated: route(handlers.onRuntimeTaskTitleUpdated),
-    onRuntimeWorkChanged: route(handlers.onRuntimeWorkChanged),
+    // The local executor can create work on a remote device through MCP.
+    // Catalog invalidation carries that target address but no conversation data.
+    onRuntimeWorkChanged: localRuntime
+      ? handlers.onRuntimeWorkChanged
+      : route(handlers.onRuntimeWorkChanged),
     onRuntimeGoalUpdated: route(handlers.onRuntimeGoalUpdated),
     onRuntimeGoalCleared: route(handlers.onRuntimeGoalCleared),
     onRuntimeSupervisorUpdated: route(handlers.onRuntimeSupervisorUpdated),
-    onRuntimeGoalContinuation: route(handlers.onRuntimeGoalContinuation),
+    onRuntimeTurnUpdated: route(handlers.onRuntimeTurnUpdated),
     onRuntimePlanUpdated: route(handlers.onRuntimePlanUpdated),
     onGuidanceApplied: route(handlers.onGuidanceApplied),
     onRuntimeEventLagged: handlers.onRuntimeEventLagged,

@@ -10,7 +10,7 @@ import { usePersistentProcessingExpansion } from './processingExpansionState'
 import {
   ProcessFileChangesBlockItem,
   type FileEditDurationsByBlock,
-  useToolDuration,
+  ToolDurationText,
 } from './ToolFileChanges'
 import { getBlockLabel } from './toolBlockLabels'
 import { renderBlockDetail, hasBlockDetail, getWorkspaceFilePath } from './ToolBlockDetails'
@@ -70,11 +70,6 @@ export function ToolBlockItem({
   const showReconnectingStatus = useDelayedBlockVisibility(
     reconnectingBlockId,
     RECONNECTING_DISPLAY_DELAY_MS
-  )
-  const duration = useToolDuration(
-    durationStartedAt ?? block.createdAt,
-    durationEndAt ?? block.completedAt,
-    isRunning
   )
   const hasDetail = block.type === 'tool' && hasBlockDetail(block)
   const expanded = hasDetail && (forceExpanded || userExpanded)
@@ -279,7 +274,11 @@ export function ToolBlockItem({
           className="ml-auto shrink-0 pl-2 font-mono text-xs text-text-muted"
           data-testid="tool-block-duration"
         >
-          {duration}
+          <ToolDurationText
+            startedAt={durationStartedAt ?? block.createdAt}
+            fallbackEndAt={durationEndAt ?? block.completedAt}
+            isRunning={isRunning}
+          />
         </span>
       </div>
       {expanded ? (

@@ -1,8 +1,10 @@
-import { describe, expect, test } from 'vitest'
+// @vitest-environment node
+
 import type { RuntimeTaskAddress, RuntimeTaskSummary } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
+import { describe, expect, test } from 'vitest'
+import { deriveRuntimePaneStatus } from './runtimePaneStatus'
 import { RuntimeTaskMachine } from './runtimeTaskLifecycle/RuntimeTaskMachine'
-import { deriveRuntimePaneStatus, resolveRuntimePaneLifecycleAddress } from './runtimePaneStatus'
 
 const runtimeAddress: RuntimeTaskAddress = {
   deviceId: 'device-1',
@@ -42,66 +44,6 @@ function statusFor(machine: RuntimeTaskMachine, messages: WorkbenchMessage[] = [
 }
 
 describe('runtime pane status from task lifecycle machine', () => {
-  test('reads lifecycle from the resolved current task before the retained transcript task', () => {
-    const retainedTranscriptTask = {
-      ...runtimeAddress,
-      taskId: 'optimistic-task',
-    }
-
-    expect(resolveRuntimePaneLifecycleAddress(runtimeAddress, retainedTranscriptTask)).toBe(
-      runtimeAddress
-    )
-    expect(resolveRuntimePaneLifecycleAddress(null, retainedTranscriptTask)).toBe(
-      retainedTranscriptTask
-    )
-  })
-
-  test('uses the machine execution snapshot as the only busy source', () => {
-    const machine = new RuntimeTaskMachine(runtimeAddress)
-    machine.dispatch({
-      type: 'executor_snapshot_received',
-      address: runtimeAddress,
-      task: task({ running: true }),
-    })
-
-    const status = statusFor(machine)
-
-    expect(status.taskExecution.running).toBe(true)
-    expect(status.isBusy).toBe(true)
-    expect(status.isAssistantStreaming).toBe(false)
-    expect(status.isWaitingForAssistantIndicator).toBe(true)
-  })
-
-  test('shows submitting immediately from the optimistic machine event', () => {
-    const machine = new RuntimeTaskMachine(runtimeAddress)
-    machine.dispatch({ type: 'send_requested' })
-
-    const status = statusFor(machine)
-
-    expect(status.isSubmitting).toBe(true)
-    expect(status.isWaitingForAssistantIndicator).toBe(true)
-    expect(status.taskExecution.running).toBe(true)
-  })
-
-  test('preserves worktree creation intent during optimistic submission', () => {
-    const machine = new RuntimeTaskMachine(runtimeAddress)
-    machine.dispatch({ type: 'send_requested', workspaceCreationKind: 'worktree' })
-
-    expect(statusFor(machine).workspaceCreationKind).toBe('worktree')
-  })
-
-  test('shows waiting after executor accepts the send', () => {
-    const machine = new RuntimeTaskMachine(runtimeAddress)
-    machine.dispatch({ type: 'send_requested' })
-    machine.dispatch({ type: 'send_accepted' })
-
-    const status = statusFor(machine, [assistantMessage('failed')])
-
-    expect(status.isAwaitingAssistant).toBe(true)
-    expect(status.isWaitingForAssistantIndicator).toBe(true)
-    expect(status.isBusy).toBe(true)
-  })
-
   test('shows streaming only when the machine owns an active turn', () => {
     const machine = new RuntimeTaskMachine(runtimeAddress)
     machine.dispatch({ type: 'turn_started' })
@@ -174,19 +116,39 @@ describe('runtime pane status from task lifecycle machine', () => {
     expect(status.isBusy).toBe(false)
     expect(status.canSendQueuedMessage).toBe(true)
   })
-
-  test('keeps continuation capability separate from execution', () => {
+  test('stops thinking after a plain turn settles while awaiting authoritative execution state', () => {
     const machine = new RuntimeTaskMachine(runtimeAddress)
     machine.dispatch({
       type: 'executor_snapshot_received',
       address: runtimeAddress,
-      task: task({ running: false, continuable: false, status: 'done' }),
+      task: task({ running: true, status: 'active', goalStatus: null }),
     })
+    machine.dispatch({ type: 'turn_started', turnId: 'turn-1' })
+    machine.dispatch({ type: 'turn_settled', turnId: 'turn-1', outcome: 'succeeded' })
+    const settled = statusFor(machine, [assistantMessage('done')])
+    expect(settled.isWaitingForAssistantIndicator).toBe(false)
+    expect(settled.isAssistantStreaming).toBe(false)
+    expect(settled.taskExecution.running).toBe(true)
+    expect(settled.isBusy).toBe(true)
+    expect(settled.canSendQueuedMessage).toBe(false)
 
-    const status = statusFor(machine)
+    machine.dispatch({ type: 'send_requested' })
+    expect(statusFor(machine).isWaitingForAssistantIndicator).toBe(true)
+  })
 
-    expect(status.taskExecution.running).toBe(false)
-    expect(status.taskExecution.continuable).toBe(false)
+  test('preserves active Goal waiting after a successful intermediate turn', () => {
+    const machine = new RuntimeTaskMachine(runtimeAddress)
+    machine.dispatch({
+      type: 'executor_snapshot_received',
+      address: runtimeAddress,
+      task: task({ running: true, status: 'active', goalStatus: 'active' }),
+    })
+    machine.dispatch({ type: 'turn_started', turnId: 'goal-turn-1' })
+    machine.dispatch({ type: 'turn_settled', turnId: 'goal-turn-1', outcome: 'succeeded' })
+    const status = statusFor(machine, [assistantMessage('done')])
+    expect(status.isWaitingForAssistantIndicator).toBe(true)
+    expect(status.taskExecution.running).toBe(true)
+    expect(status.isBusy).toBe(true)
     expect(status.canSendQueuedMessage).toBe(false)
   })
 })

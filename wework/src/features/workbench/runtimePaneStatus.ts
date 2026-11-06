@@ -61,6 +61,8 @@ export function deriveRuntimePaneStatus({
   const isBusy = lifecycle?.derived.isBusy ?? false
   const running = lifecycle?.derived.isRunning ?? false
   const continuable = lifecycle?.continuable ?? false
+  const settledResponseAwaitingExecution =
+    turnPhase === 'idle' && lifecycle?.turn.outcome != null && lifecycle.goalStatus !== 'active'
 
   return {
     sendPhase,
@@ -80,7 +82,13 @@ export function deriveRuntimePaneStatus({
     isResponseActive,
     isBusy,
     isWaitingForAssistantIndicator:
-      isSubmitting || isAwaitingAssistant || (running && !activeAssistantMessage),
+      isSubmitting ||
+      isAwaitingAssistant ||
+      (running &&
+        !activeAssistantMessage &&
+        !settledResponseAwaitingExecution &&
+        lifecycle?.execution.phase !== 'continuing' &&
+        lifecycle?.execution.phase !== 'recovering'),
     canSendQueuedMessage: Boolean(currentRuntimeTask) && continuable && !isBusy,
   }
 }

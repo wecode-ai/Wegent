@@ -93,7 +93,7 @@ export { shouldDisableDocumentBatchActions } from '../hooks/useKnowledgeResource
 
 const failClosedDocumentProtection: DocumentProtection = {
   original_download_allowed: false,
-  watermark_text: null,
+  watermark_text: '',
 }
 
 interface DocumentProtectionState {
@@ -1734,8 +1734,11 @@ export function DocumentList({
         isOrganization={isOrganization}
         allowDownload={allowDownload}
         watermarkText={documentProtection.watermark_text}
-        onDocumentSynced={() => {
-          refresh()
+        onDocumentSynced={synchronizedDocument => {
+          setViewingDoc(current =>
+            current?.id === synchronizedDocument.id ? synchronizedDocument : current
+          )
+          void refresh()
           onDocumentsChanged?.()
         }}
       />

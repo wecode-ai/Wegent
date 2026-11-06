@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { execFile, execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
@@ -55,6 +57,56 @@ function gitBash() {
 }
 
 describe('desktop E2E result retention', () => {
+  test.each(['electron-logs', 'release-logs'])(
+    'preserves %s through runner and CI cleanup',
+    async name => {
+      const resultRoot = await temporaryRoot()
+      const resultDirectory = join(resultRoot, '2026-11-01T00-00-00-000Z-123')
+      const logs = join(resultDirectory, name)
+      await mkdir(logs, { recursive: true })
+      const logPath = join(logs, 'executor.log')
+      await writeFile(logPath, 'target executor startup evidence\n')
+
+      await compactDesktopE2EResult(resultDirectory)
+      await execFileAsync(gitBash(), [
+        resolve(
+          import.meta.dirname,
+          '../../.github/scripts/prune-wework-desktop-e2e-diagnostics.sh'
+        ).replaceAll('\\', '/'),
+        resultRoot.replaceAll('\\', '/'),
+      ])
+
+      await expectExists(logPath)
+    }
+  )
+
+  test('retains published recovery diagnostics but removes the recovery working directory', async () => {
+    const resultRoot = await temporaryRoot()
+    const resultDirectory = join(resultRoot, '2026-10-28T00-00-00-000Z-123')
+    const recoveryRoot = join(resultDirectory, 'startup-recovery')
+    await createDirectoryWithFile(join(recoveryRoot, 'user-data'))
+    const diagnostics = [
+      'startup-reset-evidence.json',
+      'startup-reset-recovery.log',
+      'startup-reset-handoff.jsonl',
+    ]
+    for (const name of diagnostics) {
+      await writeFile(join(resultDirectory, name), 'safe recovery diagnostic\n')
+    }
+
+    await compactDesktopE2EResult(resultDirectory)
+    await execFileAsync(gitBash(), [
+      resolve(
+        import.meta.dirname,
+        '../../.github/scripts/prune-wework-desktop-e2e-diagnostics.sh'
+      ).replaceAll('\\', '/'),
+      resultRoot.replaceAll('\\', '/'),
+    ])
+
+    await expectMissing(recoveryRoot)
+    for (const name of diagnostics) await expectExists(join(resultDirectory, name))
+  })
+
   test('retains Rust gateway logs after checkpoint cleanup', async () => {
     const resultDirectory = join(await temporaryRoot(), '2026-09-02T00-00-00-000Z-124')
     const logsDirectory = join(resultDirectory, 'backend-rs-logs')

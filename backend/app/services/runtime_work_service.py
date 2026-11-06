@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.constants import CLIENT_ORIGIN_WEWORK
+from app.db.session import get_db_session
 from app.models.im_session import IMPrivateSession
 from app.models.project import Project
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
@@ -107,6 +108,14 @@ from app.services.im.session_service import (
     im_session_service,
 )
 from app.services.object_storage import object_storage_presign_service
+from app.services.runtime_continuation import (
+    authorize_execution_origin,
+    resolve_continuation_address,
+)
+from app.services.runtime_transcript_reader import (
+    RuntimeTranscriptTransferError,
+    read_complete_transcript,
+)
 from app.services.runtime_work_kind_store import (
     deactivate_device_workspace_kind,
     get_device_workspace_kind_by_id,
@@ -368,11 +377,13 @@ def delete_device_workspace(
     )
 
 
+@trace_async("runtime_work.list", tracer_name="backend")
 async def list_runtime_work(
     *,
     db: Session,
     user_id: int,
     device_id: str | None = None,
+    pending_only: bool = False,
 ) -> RuntimeWorkListResponse:
     """Return runtime-native work grouped by executor workspace."""
 
@@ -383,6 +394,7 @@ async def list_runtime_work(
     runtime_workspaces = await _list_online_runtime_workspaces(
         user_id=user_id,
         devices=devices,
+        pending_only=pending_only,
     )
     device_order = _runtime_device_order(devices)
 
@@ -443,11 +455,75 @@ async def get_runtime_transcript(
     *,
     db: Session,
     user_id: int,
-    address: RuntimeTranscriptRequest,
+    address: RuntimeTranscriptRequest | RuntimeTaskAddress,
+    allow_app_device_task_reading: bool = False,
 ) -> RuntimeTranscriptResponse | RuntimeTranscriptChunkResponse:
-    """Read a LocalTask transcript from the owning local executor."""
+    """Read a session transcript, assembling device chunks for legacy HTTP callers."""
 
-    user_id, normalized_address = _resolve_runtime_session_read(db, user_id, address)
+    if not isinstance(address, RuntimeTranscriptRequest):
+        address = RuntimeTranscriptRequest.model_validate(address.model_dump())
+
+    async def read(
+        request: RuntimeTranscriptRequest,
+    ) -> RuntimeTranscriptResponse | RuntimeTranscriptChunkResponse:
+        """Reauthorize the original caller before requesting each device packet."""
+        # A reused REPEATABLE READ transaction cannot observe committed revocation.
+        # Close each independent authorization transaction before awaiting the device.
+        with get_db_session() as read_db:
+            packet_user_id, normalized_address = _resolve_runtime_session_read(
+                read_db, user_id, request
+            )
+        return await _get_runtime_transcript_packet(
+            user_id=packet_user_id,
+            address=request,
+            normalized_address=normalized_address,
+            allow_app_device_task_reading=allow_app_device_task_reading,
+        )
+
+    if address.transcript_protocol_version == 2:
+        return await read(address)
+    try:
+        return await asyncio.wait_for(
+            read_complete_transcript(address, read),
+            timeout=RUNTIME_TRANSCRIPT_TIMEOUT_SECONDS,
+        )
+    except (RuntimeTranscriptTransferError, ValidationError) as exc:
+        reason = (
+            str(exc)
+            if isinstance(exc, RuntimeTranscriptTransferError)
+            else "invalid_transcript_response"
+        )
+        logger.warning(
+            "[RuntimeWork] Transcript transfer rejected: user_id=%s device_id=%s "
+            "task_id=%s code=%s",
+            user_id,
+            address.device_id,
+            address.local_task_id,
+            reason,
+        )
+        raise HTTPException(
+            502, "Runtime returned an invalid conversation response"
+        ) from exc
+    except asyncio.TimeoutError as exc:
+        logger.warning(
+            "[RuntimeWork] Transcript transfer timed out: user_id=%s device_id=%s "
+            "task_id=%s timeout_seconds=%s",
+            user_id,
+            address.device_id,
+            address.local_task_id,
+            RUNTIME_TRANSCRIPT_TIMEOUT_SECONDS,
+        )
+        raise HTTPException(502, "Runtime transcript transfer timed out") from exc
+
+
+async def _get_runtime_transcript_packet(
+    *,
+    user_id: int,
+    address: RuntimeTranscriptRequest,
+    normalized_address: RuntimeTaskAddress,
+    allow_app_device_task_reading: bool = False,
+) -> RuntimeTranscriptResponse | RuntimeTranscriptChunkResponse:
+    """Read one authorized packet without holding its permission transaction open."""
     payload = _runtime_transcript_payload(address, normalized_address)
     started_at = time.perf_counter()
     logger.info(
@@ -469,7 +545,8 @@ async def get_runtime_transcript(
             timeout_seconds=RUNTIME_TRANSCRIPT_TIMEOUT_SECONDS,
             **(
                 {"allow_app_device_task_reading": True}
-                if getattr(address, "project_session", None) is not None
+                if allow_app_device_task_reading
+                or getattr(address, "project_session", None) is not None
                 else {}
             ),
         )
@@ -487,6 +564,23 @@ async def get_runtime_transcript(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=str(exc),
         ) from exc
+    if result.get("success") is False:
+        code = result.get("code")
+        if not isinstance(code, str) or code not in {
+            "runtime_rpc_response_too_large",
+            "runtime_rpc_response_encoding_failed",
+            "unsupported_transcript_protocol",
+            "transcript_snapshot_expired",
+        }:
+            code = "runtime_rpc_failed"
+        logger.warning(
+            "[RuntimeWork] Runtime transcript device rejected request: user_id=%s "
+            "device_id=%s task_id=%s code=%s",
+            user_id,
+            normalized_address.device_id,
+            normalized_address.local_task_id,
+            code,
+        )
     _raise_runtime_rpc_failure(result)
     elapsed_ms = int((time.perf_counter() - started_at) * 1000)
     logger.info(
@@ -507,7 +601,18 @@ async def get_runtime_transcript(
     )
     try:
         if "transcriptProtocolVersion" in result:
-            return RuntimeTranscriptChunkResponse.model_validate(result)
+            packet = RuntimeTranscriptChunkResponse.model_validate(result)
+            logger.info(
+                "[RuntimeWork] Transcript chunk received: user_id=%s device_id=%s "
+                "task_id=%s offset=%s total_bytes=%s base64_bytes=%s",
+                user_id,
+                normalized_address.device_id,
+                normalized_address.local_task_id,
+                packet.transfer.offset,
+                packet.transfer.total_bytes,
+                len(packet.transfer.payload),
+            )
+            return packet
         if not isinstance(result.get("turns"), list):
             raise HTTPException(
                 502, "Runtime transcript response is missing canonical turns"
@@ -659,6 +764,7 @@ async def revert_runtime_file_changes(
     )
 
 
+@trace_async(span_name="runtime_work.send", tracer_name="backend.runtime_work")
 async def send_runtime_message(
     *,
     db: Session,
@@ -675,6 +781,8 @@ async def send_runtime_message(
         **_runtime_task_address_payload(address),
         "message": request.message,
     }
+    if request.queue_if_busy:
+        payload["queueIfBusy"] = True
     _apply_runtime_user_message_identity(payload, request)
     attachments = _runtime_attachment_payloads(db, user_id, request.attachment_ids)
     if attachments:
@@ -762,6 +870,13 @@ async def _dispatch_runtime_send(
     spawn a new turn, so they intentionally omit ``executionRequest``.
     """
     if request.request_user_input_response is None:
+        address = await resolve_continuation_address(
+            db=db,
+            user_id=user_id,
+            address=address,
+            allow_app_device_task_messaging=allow_app_device_task_messaging,
+        )
+        payload.update(_runtime_task_address_payload(address))
         try:
             execution_request = _build_runtime_send_execution_request(
                 db=db,
@@ -1360,6 +1475,7 @@ async def create_runtime_task(
     return await _dispatch_compiled_runtime_task(
         user_id=user_id,
         compiled=compiled,
+        compile_on_device=request.compile_on_device,
     )
 
 
@@ -1367,6 +1483,7 @@ async def _dispatch_compiled_runtime_task(
     *,
     user_id: int,
     compiled: CompiledRuntimeTaskCreate,
+    compile_on_device: bool = False,
 ) -> RuntimeTaskCreateResponse:
     """Dispatch one already compiled runtime task."""
 
@@ -1374,7 +1491,11 @@ async def _dispatch_compiled_runtime_task(
         result = await runtime_rpc_service.call(
             user_id=user_id,
             device_id=compiled.target.device_id,
-            method="runtime.tasks.create",
+            method=(
+                "runtime.tasks.create_from_intent"
+                if compile_on_device
+                else "runtime.tasks.create"
+            ),
             payload=compiled.payload,
             timeout_seconds=RUNTIME_CREATE_TIMEOUT_SECONDS,
         )
@@ -1425,16 +1546,14 @@ def materialize_runtime_task_create(
 ) -> CompiledRuntimeTaskCreate:
     """Compile the canonical Executor payload without choosing its transport."""
 
+    target = _resolve_runtime_task_target(db, user_id, request)
     if request.wegent_team_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="wegentTeamId is required for runtime materialization",
-        )
+        _ensure_owned_device(db, user_id, target.device_id)
     return _compile_runtime_task_create(
         db=db,
         user_id=user_id,
         request=request,
-        target=_resolve_runtime_task_target(db, user_id, request),
+        target=target,
     )
 
 
@@ -1447,10 +1566,21 @@ def _compile_runtime_task_create(
 ) -> CompiledRuntimeTaskCreate:
     """Compile one already resolved runtime target."""
 
+    identity_request = request
+    if request.compile_on_device and request.model_type == RUNTIME_MODEL_TYPE:
+        # Native model credentials and provider configuration belong to the target device.
+        identity_request = request.model_copy(
+            update={
+                "model_id": None,
+                "model_type": None,
+                "model_options": {},
+                "model_selection": None,
+            }
+        )
     execution_request = _build_runtime_execution_request(
         db=db,
         user_id=user_id,
-        request=request,
+        request=identity_request,
         target=target,
     )
     return CompiledRuntimeTaskCreate(
@@ -1543,12 +1673,18 @@ def _runtime_task_create_payload(
             exclude_none=True,
         )
     if request.initial_supervisor:
-        payload["initialSupervisor"] = _materialize_initial_supervisor(
-            db=db,
-            user_id=user_id,
-            runtime=runtime,
-            supervisor=request.initial_supervisor,
+        payload["initialSupervisor"] = (
+            request.initial_supervisor.model_dump(by_alias=True, exclude_none=True)
+            if request.compile_on_device
+            else _materialize_initial_supervisor(
+                db=db,
+                user_id=user_id,
+                runtime=runtime,
+                supervisor=request.initial_supervisor,
+            )
         )
+        if request.compile_on_device:
+            payload["initialSupervisor"]["modelConfig"] = {}
     if request.side_source:
         payload["sideSource"] = request.side_source.model_dump(
             by_alias=True,
@@ -3037,6 +3173,7 @@ async def _list_online_runtime_workspaces(
     *,
     user_id: int,
     devices: list[dict[str, Any]],
+    pending_only: bool = False,
 ) -> dict[tuple[str, str], RuntimeWorkspaceListing]:
     started_at = time.perf_counter()
     online_devices = [
@@ -3047,7 +3184,9 @@ async def _list_online_runtime_workspaces(
     ]
     results = await asyncio.gather(
         *[
-            _list_runtime_workspaces_for_device(user_id=user_id, device=device)
+            _list_runtime_workspaces_for_device(
+                user_id=user_id, device=device, pending_only=pending_only
+            )
             for device in online_devices
         ],
         return_exceptions=True,
@@ -3056,6 +3195,11 @@ async def _list_online_runtime_workspaces(
     grouped: dict[tuple[str, str], RuntimeWorkspaceListing] = {}
     for result in results:
         if isinstance(result, Exception):
+            if pending_only:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail="Failed to read pending runtime work",
+                ) from result
             logger.warning(
                 "[RuntimeWork] Failed to list runtime workspaces from device: user_id=%s error_type=%s",
                 user_id,
@@ -3081,10 +3225,12 @@ async def _list_online_runtime_workspaces(
     return grouped
 
 
+@trace_async("runtime_work.list_device", tracer_name="backend")
 async def _list_runtime_workspaces_for_device(
     *,
     user_id: int,
     device: dict[str, Any],
+    pending_only: bool = False,
 ) -> dict[tuple[str, str], RuntimeWorkspaceListing]:
     started_at = time.perf_counter()
     device_id = str(device.get("device_id") or "")
@@ -3096,10 +3242,12 @@ async def _list_runtime_workspaces_for_device(
             user_id=user_id,
             device_id=device_id,
             method="runtime.tasks.list",
-            payload={},
+            payload={"pendingOnly": True} if pending_only else {},
             timeout_seconds=RUNTIME_LIST_TIMEOUT_SECONDS,
         )
     except RuntimeRpcError as exc:
+        if pending_only:
+            raise
         logger.warning(
             "[RuntimeWork] Runtime workspace list failed: user_id=%s device_id=%s elapsed_ms=%s error=%s",
             user_id,
@@ -3109,6 +3257,8 @@ async def _list_runtime_workspaces_for_device(
         )
         return {}
 
+    if pending_only:
+        _raise_runtime_rpc_failure(result)
     grouped: dict[tuple[str, str], RuntimeWorkspaceListing] = {}
     for order_index, workspace in enumerate(_iter_runtime_workspaces(result)):
         workspace_path = normalize_workspace_path(workspace["workspacePath"])
@@ -3918,6 +4068,7 @@ def _runtime_transcript_payload(
     for name, alias in (
         ("refresh", "refresh"),
         ("navigation_only", "navigationOnly"),
+        ("reconcile_client_user_message_ids", "reconcileClientUserMessageIds"),
         ("transcript_protocol_version", "transcriptProtocolVersion"),
     ):
         value = getattr(request, name, None)
@@ -4155,6 +4306,7 @@ def _build_runtime_execution_request(
     target: RuntimeTaskTarget,
 ):
     """Compile a Wework task intent without resolving Wegent CRDs."""
+    authorize_execution_origin(db, user_id, request.origin, request.cloud_project_id)
     if request.wegent_team_id is not None:
         return _build_team_runtime_execution_request(
             db=db,
@@ -4353,7 +4505,7 @@ def _build_direct_wework_runtime_execution_request(
         enable_tools=True,
         enable_web_search=False,
         enable_deep_thinking=False,
-        new_session=True,
+        new_session=bool(getattr(request, "new_session", True)),
         collaboration_model="single",
         mode="code",
         task_mode="code",
@@ -4928,6 +5080,7 @@ def _build_runtime_send_execution_request(
         workspace_source="local_path",
     )
     team_id = _runtime_address_team_id(address)
+    handle = address.runtime_handle or {}
     request = RuntimeTaskMaterializeRequest(
         schemaVersion=3 if team_id is not None else 2,
         wegentTeamId=team_id,
@@ -4935,13 +5088,15 @@ def _build_runtime_send_execution_request(
         taskId=address.local_task_id,
         deviceId=address.device_id,
         workspacePath=address.workspace_path,
-        runtime="codex",
+        runtime=handle.get("runtime", "codex"),
         message=message,
         modelId=model_selection.model_name if model_selection else None,
         modelType=model_selection.model_type if model_selection else None,
         modelOptions=model_selection.options if model_selection else {},
         attachmentIds=attachment_ids,
         additionalContext=additional_context,
+        origin=handle.get("origin"),
+        cloudProjectId=handle.get("cloudProjectId"),
     )
     execution_request = _build_runtime_execution_request(
         db=db,

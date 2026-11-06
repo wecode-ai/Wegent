@@ -562,13 +562,13 @@ pub async fn batch_query_workspaces(
 
 /// `list_personal_task_candidates_after`
 /// (the configured store): the owner's routed task table,
-/// ordered `created_at DESC, id DESC`, with the keyset cursor filter.
+/// ordered `id DESC`, with the keyset cursor inside the history window.
 /// `batch_size = max(limit + 1, 100)` mirrors the source.
 pub async fn list_personal_task_candidates_after(
     task_store: &dyn crate::task_store::TaskStore,
     user_id: i64,
     limit: i64,
-    cursor: Option<(NaiveDateTime, i64)>,
+    cursor: Option<i64>,
     client_origin: Option<&str>,
 ) -> brz_mysql::MysqlResult<Vec<TaskCandidateRow>> {
     let rows = task_store
@@ -577,13 +577,6 @@ pub async fn list_personal_task_candidates_after(
     rows.into_iter()
         .map(TaskCandidateRow::from_mysql_row)
         .collect()
-}
-
-impl TaskCandidateRow {
-    /// The keyset cursor key (`(created_at, id)` of the row).
-    pub fn clone_dyn(&self) -> (NaiveDateTime, i64) {
-        (self.created_at, self.id)
-    }
 }
 
 /// `_filter_personal_tasks`: keep tasks matching the requested `types`
@@ -827,8 +820,7 @@ mod sql_tests {
 
     #[tokio::test]
     async fn personal_task_query_keeps_cursor_and_origin_binding_order() {
-        let timestamp = chrono::DateTime::from_timestamp(0, 0).unwrap().naive_utc();
-        for cursor in [None, Some((timestamp, 41))] {
+        for cursor in [None, Some(41)] {
             for origin in [None, Some(""), Some("client'\\name")] {
                 let mysql = KindQueryCapture::default();
                 let store = crate::task_store::DefaultTaskStore::new(mysql.clone());
@@ -839,13 +831,19 @@ mod sql_tests {
                 let query = &queries[0];
                 assert_eq!(
                     query.args,
-                    2 + usize::from(origin.is_some()) + 3 * usize::from(cursor.is_some())
+                    2 + usize::from(origin.is_some()) + usize::from(cursor.is_some())
                 );
                 assert_eq!(
                     query.sql.contains("AND client_origin = ?"),
                     origin.is_some()
                 );
-                assert_eq!(query.sql.contains("created_at < ?"), cursor.is_some());
+                assert_eq!(query.sql.contains("recent.id < ?"), cursor.is_some());
+                assert!(!query.sql.contains("created_at <"));
+                assert!(
+                    query
+                        .sql
+                        .contains("ORDER BY id DESC LIMIT 10000) AS recent")
+                );
                 if origin.is_some() {
                     assert!(
                         query
@@ -854,13 +852,9 @@ mod sql_tests {
                     );
                 }
                 if cursor.is_some() {
-                    assert!(query.sql.contains("AND project_id = 0 AND (created_at < ?"));
+                    assert!(query.sql.contains("WHERE recent.id < ?"));
                 }
-                assert!(
-                    query
-                        .sql
-                        .ends_with("ORDER BY created_at DESC, id DESC LIMIT ?")
-                );
+                assert!(query.sql.ends_with("ORDER BY recent.id DESC LIMIT ?"));
                 assert!(!query.sql.contains("client'"));
             }
         }

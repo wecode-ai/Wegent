@@ -22,6 +22,7 @@ import logging
 from collections import defaultdict
 from typing import Optional
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models.namespace import Namespace
@@ -34,6 +35,82 @@ from app.services.external_entity_resolver import (
 from app.services.group_member_helper import NAMESPACE_RESOURCE_TYPE
 
 logger = logging.getLogger(__name__)
+
+
+def _namespace_id(entity_id: str) -> Optional[int]:
+    try:
+        return int(entity_id)
+    except (ValueError, TypeError):
+        return None
+
+
+def _load_namespace_members(
+    db: Session, user_id: int, namespace_ids: set[int]
+) -> list[ResourceMember]:
+    """Read each reachable namespace once, batching each graph frontier."""
+    visited: set[int] = set()
+    pending = namespace_ids
+    members: list[ResourceMember] = []
+    while pending:
+        visited.update(pending)
+        rows = (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type == NAMESPACE_RESOURCE_TYPE,
+                ResourceMember.resource_id.in_(pending),
+                ResourceMember.status == MemberStatus.APPROVED.value,
+                or_(
+                    ResourceMember.entity_type != "user",
+                    ResourceMember.entity_id == str(user_id),
+                ),
+            )
+            .all()
+        )
+        members.extend(rows)
+        pending = {
+            namespace_id
+            for member in rows
+            if member.entity_type == "namespace"
+            and (namespace_id := _namespace_id(member.entity_id)) is not None
+        } - visited
+    return members
+
+
+def _match_namespace_members(
+    db: Session,
+    user_id: int,
+    members: list[ResourceMember],
+    user_context: Optional[dict],
+) -> set[int]:
+    """Propagate verified user/entity membership; cycles alone grant nothing."""
+    matched: set[int] = set()
+    dependents: dict[int, set[int]] = defaultdict(set)
+    entities: dict[str, dict[str, set[int]]] = defaultdict(lambda: defaultdict(set))
+    for member in members:
+        if member.entity_type == "user":
+            matched.add(member.resource_id)
+        elif member.entity_type == "namespace":
+            namespace_id = _namespace_id(member.entity_id)
+            if namespace_id is not None:
+                dependents[namespace_id].add(member.resource_id)
+        else:
+            entities[member.entity_type][member.entity_id].add(member.resource_id)
+    for entity_type, bindings in entities.items():
+        resolver = get_entity_resolver(entity_type)
+        if resolver is None:
+            continue
+        entity_ids = resolver.match_entity_bindings(
+            db, user_id, entity_type, list(bindings), user_context
+        )
+        for entity_id in entity_ids:
+            matched.update(bindings.get(entity_id, ()))
+    pending = list(matched)
+    while pending:
+        for namespace_id in dependents.get(pending.pop(), ()):
+            if namespace_id not in matched:
+                matched.add(namespace_id)
+                pending.append(namespace_id)
+    return matched
 
 
 class NamespaceEntityResolver(IExternalEntityResolver):
@@ -73,81 +150,20 @@ class NamespaceEntityResolver(IExternalEntityResolver):
         entity_ids: list[str],
         user_context: Optional[dict] = None,
     ) -> list[str]:
-        if entity_type != "namespace":
+        if entity_type != "namespace" or not entity_ids:
             return []
-
-        if not entity_ids:
-            return []
-
-        # Convert entity_ids to int for namespace ID comparison
-        namespace_ids = []
-        namespace_id_map = {}  # id -> entity_id string
-        for eid in entity_ids:
-            try:
-                ns_id = int(eid)
-                namespace_ids.append(ns_id)
-                namespace_id_map[ns_id] = eid
-            except (ValueError, TypeError):
-                continue
-
-        if not namespace_ids:
-            return []
-
-        matched_ns_ids: set[int] = set()
-
-        # 1) Check direct user memberships (entity_type='user')
-        direct_matches = (
-            db.query(ResourceMember.resource_id)
-            .filter(
-                ResourceMember.resource_type == NAMESPACE_RESOURCE_TYPE,
-                ResourceMember.resource_id.in_(namespace_ids),
-                ResourceMember.entity_type == "user",
-                ResourceMember.entity_id == str(user_id),
-                ResourceMember.status == MemberStatus.APPROVED.value,
-            )
-            .all()
-        )
-        for row in direct_matches:
-            matched_ns_ids.add(row.resource_id)
-
-        # 2) Check entity-derived memberships via resolver chain
-        # Get all non-user entity members for these namespaces
-        entity_members = (
-            db.query(ResourceMember)
-            .filter(
-                ResourceMember.resource_type == NAMESPACE_RESOURCE_TYPE,
-                ResourceMember.resource_id.in_(namespace_ids),
-                ResourceMember.entity_type != "user",
-                ResourceMember.status == MemberStatus.APPROVED.value,
-            )
-            .all()
-        )
-
-        # Group by entity_type: entity_type -> [(ns_id, entity_id)]
-        entity_by_type: dict[str, list[tuple[int, str]]] = defaultdict(list)
-        for m in entity_members:
-            entity_by_type[m.entity_type].append((m.resource_id, m.entity_id))
-
-        # For each entity_type, delegate to its resolver
-        for et, entries in entity_by_type.items():
-            resolver = get_entity_resolver(et)
-            if not resolver:
-                continue
-
-            entity_ids_list = [eid for _, eid in entries]
-            matched = resolver.match_entity_bindings(db, user_id, et, entity_ids_list)
-
-            if matched:
-                # Build reverse map: entity_id -> ns_id
-                eid_to_ns_ids: dict[str, list[int]] = defaultdict(list)
-                for ns_id, eid in entries:
-                    eid_to_ns_ids[eid].append(ns_id)
-
-                for eid in matched:
-                    for ns_id in eid_to_ns_ids.get(eid, []):
-                        matched_ns_ids.add(ns_id)
-
-        matched = [namespace_id_map[ns_id] for ns_id in matched_ns_ids]
+        namespace_id_map = {
+            namespace_id: entity_id
+            for entity_id in entity_ids
+            if (namespace_id := _namespace_id(entity_id)) is not None
+        }
+        members = _load_namespace_members(db, user_id, set(namespace_id_map))
+        matched_ns_ids = _match_namespace_members(db, user_id, members, user_context)
+        matched = [
+            entity_id
+            for namespace_id, entity_id in namespace_id_map.items()
+            if namespace_id in matched_ns_ids
+        ]
 
         if matched:
             logger.info(

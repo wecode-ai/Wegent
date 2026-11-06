@@ -5,7 +5,14 @@ export const ELECTRON_HOST_PROTOCOL_VERSION = 1
 const MAX_FRAME_BYTES = 64 * 1024 * 1024
 const DEFAULT_TIMEOUT_MS = 120_000
 const RUNTIME_PREPARATION_TIMEOUT_MS = 15 * 60_000
-const RUNTIME_PREPARATION_CAPABILITIES = new Set(['smartApps.start', 'smartApps.verify'])
+const RUNTIME_PREPARATION_CAPABILITIES = new Set([
+  'smartApps.start',
+  'smartApps.verify',
+  'runtime.installCoreDshPlugin',
+  'runtime.updateCoreDshPlugin',
+  'runtime.setCoreDshPluginEnabled',
+  'runtime.uninstallCoreDshPlugin',
+])
 const DEFAULT_PRINCIPAL = '@wegent/dsh-app-wework'
 
 export class ElectronHostError extends Error {

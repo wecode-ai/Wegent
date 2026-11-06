@@ -23,12 +23,12 @@ The knowledge MCP server uses a decorator-based auto-registration system:
 """
 
 import contextvars
-import json
 import logging
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, replace
 from inspect import isawaitable, iscoroutinefunction
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Optional
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request
 from mcp.server.fastmcp import FastMCP
@@ -49,7 +49,6 @@ from app.mcp_server.auth import (
 )
 from app.mcp_server.context import (
     MCPRequestContext,
-    get_token_info_from_context,
     reset_mcp_context,
     set_mcp_context,
 )
@@ -1028,12 +1027,16 @@ def get_mcp_system_config(backend_url: str, auth_token: str) -> Dict[str, Any]:
     Returns:
         MCP server configuration dictionary
     """
-    # Use API_PREFIX to ensure correct path (e.g., /api/mcp/system)
-    api_prefix = settings.API_PREFIX or ""
-    mcp_path = f"{api_prefix}{SYSTEM_MCP_MOUNT_PATH}"
+    backend = urlsplit(backend_url.strip())
+    base_path = backend.path.rstrip("/")
+    api_prefix = _normalize_prefix(settings.API_PREFIX or "")
+    # BACKEND_INTERNAL_URL may already include the configured API prefix.
+    if api_prefix and not base_path.endswith(api_prefix):
+        base_path = f"{base_path}{api_prefix}"
+    mcp_url = backend._replace(path=f"{base_path}{SYSTEM_MCP_MOUNT_PATH}").geturl()
     return _build_streamable_http_config(
         name="wegent-system",
-        url=f"{backend_url}{mcp_path}",
+        url=mcp_url,
         auth_token=auth_token,
         timeout=60,
     )
@@ -1115,25 +1118,10 @@ def _apply_mount_prefix(spec: McpAppSpec, prefix: str) -> McpAppSpec:
             effective_spec,
             transport_methods=(
                 "GET",
-                # MIGRATION-CANDIDATE(api="POST /api/mcp/interactive-form-question/sse"): remove after final confirmation.
-                # "POST",
                 "DELETE",
                 "OPTIONS",
             ),
         )
-    if effective_spec.mount_path == "/api/mcp/subscription":
-        return replace(
-            effective_spec,
-            transport_methods=(
-                # MIGRATION-CANDIDATE(api="GET /api/mcp/subscription/sse"): remove after final confirmation.
-                # "GET",
-                # MIGRATION-CANDIDATE(api="POST /api/mcp/subscription/sse"): remove after final confirmation.
-                # "POST",
-                "DELETE",
-                "OPTIONS",
-            ),
-        )
-
     return effective_spec
 
 

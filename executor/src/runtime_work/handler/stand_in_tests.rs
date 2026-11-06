@@ -3,6 +3,133 @@ use axum::{routing::get, Json, Router};
 use std::sync::atomic::AtomicUsize;
 
 #[tokio::test]
+async fn assignment_history_includes_archived_work_and_preserves_ownership() {
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.store = RuntimeWorkStore::new(root.path().join("runtime-index.json"));
+    let origin = json!({"initiatedBy":"stand_in","projectStore":"cloud","userId":7,
+        "cloudProjectId":"project","loopItemId":"issue","humanAssignmentId":"human"});
+    for (id, changed) in [
+        ("archived", json!({})),
+        ("other-user", json!({"userId":8})),
+        ("reassigned", json!({"humanAssignmentId":"new-human"})),
+        ("other-project", json!({"cloudProjectId":"other"})),
+        ("other-issue", json!({"loopItemId":"other"})),
+        ("local", json!({"projectStore":"local"})),
+        ("ordinary", json!({"initiatedBy":"user"})),
+        ("deleted", json!({})),
+    ] {
+        let mut task_origin = origin.clone();
+        task_origin
+            .as_object_mut()
+            .unwrap()
+            .extend(changed.as_object().unwrap().clone());
+        let link = RuntimeTaskLink {
+            local_task_id: id.into(),
+            status: "archived".into(),
+            runtime_handle: json!({"origin":task_origin}),
+            ..RuntimeTaskLink::default()
+        };
+        handler.upsert_local_task(link.clone());
+        if id == "deleted" {
+            handler.mark_archived_link_deleted(&link);
+        }
+    }
+    let payload = json!({"userId":7,"assignments":[{
+        "projectId":"project","itemId":"issue","humanAssignmentId":"human"
+    }]});
+    let result = handler
+        .dispatch("runtime.stand_in.assignment_tasks", payload)
+        .await
+        .unwrap();
+    assert_eq!(result["items"].as_array().unwrap().len(), 1);
+    assert_eq!(result["items"][0]["taskId"], "archived");
+    assert_eq!(result["items"][0]["status"], "archived");
+    assert_eq!(result["items"][0]["runtimeHandle"]["origin"], origin);
+    assert!(handler
+        .stand_in_assignment_tasks(json!({"assignments":[]}))
+        .is_err());
+    assert_eq!(
+        handler
+            .stand_in_assignment_tasks(json!({"userId":7,"assignments":[{}]}))
+            .unwrap()["items"],
+        json!([])
+    );
+}
+
+#[tokio::test]
+async fn round_work_validates_the_issue_event_without_replacing_member_identity() {
+    let bindings = Arc::new(AtomicUsize::new(0));
+    let calls = bindings.clone();
+    let router = Router::new()
+        .route("/api/v1/loop-items/issue/assignments", get(|| async {
+            Json(json!({"items":[{"id":"issue-event","status":"active","created_at":"2099-01-01T00:00:00Z"}]}))
+        }))
+        .route("/api/v1/loop-items/issue/tasks", get(move || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            async { Json(json!([{"human_assignment_id":"human","device_id":"other","task_id":"stand-in-human-review"}])) }
+        }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async { axum::serve(listener, router).await.unwrap() });
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.store = RuntimeWorkStore::new(root.path().join("runtime-index.json"));
+    handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
+        backend_url: url,
+        auth_token: "test".into(),
+        ..Default::default()
+    })));
+    let config = json!({"id":"review","projectId":"project","projectStore":"cloud","userId":7,"enabledAfter":"2000-01-01T00:00:00Z"});
+    let mut issue = json!({"id":"issue","assignee_user_id":7,"human_task_binding":{
+        "humanAssignmentId":"human","assignmentId":"member-work", "dispatchRoundId":"round-1","issueAssignmentId":"issue-event"
+    }});
+    handler.start_cloud_stand_in(&config, &issue).await.unwrap();
+    assert_eq!(bindings.load(Ordering::SeqCst), 1);
+    assert_eq!(issue["human_task_binding"]["assignmentId"], "member-work");
+    issue["human_task_binding"]["issueAssignmentId"] = json!("superseded-event");
+    handler.start_cloud_stand_in(&config, &issue).await.unwrap();
+    assert_eq!(bindings.load(Ordering::SeqCst), 1);
+    issue["human_task_binding"]
+        .as_object_mut()
+        .unwrap()
+        .remove("issueAssignmentId");
+    assert_eq!(
+        handler
+            .start_cloud_stand_in(&config, &issue)
+            .await
+            .unwrap_err()
+            .code,
+        "invalid_assignment"
+    );
+    assert_eq!(bindings.load(Ordering::SeqCst), 1);
+    assert!(handler.local_task_links(true).is_empty());
+    server.abort();
+}
+
+#[tokio::test]
+async fn stand_in_entry_futures_leave_room_on_windows_worker_stacks() {
+    let handler = RuntimeWorkRpcHandler::new("measurement", "unused");
+    fn future_size<F: Future>(_: impl FnOnce() -> F) -> usize {
+        std::mem::size_of::<F>()
+    }
+    // Match Clippy's large-future boundary before nested polling amplifies it.
+    for (entry, bytes) in [
+        ("manual", future_size(|| handler.run_stand_in(json!({})))),
+        (
+            "assignment",
+            future_size(|| handler.handle_stand_in_assignment(json!({}))),
+        ),
+        ("scheduler", future_size(|| handler.poll_local_stand_ins())),
+    ] {
+        assert!(
+            bytes < 16 * 1024,
+            "{entry} future uses {bytes} inline bytes"
+        );
+    }
+}
+
+#[tokio::test]
 async fn omitted_manual_identity_uses_a_connected_role_and_rejects_no_connection() {
     let root = tempfile::tempdir().unwrap();
     let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
@@ -403,6 +530,57 @@ async fn existing_matching_role_does_not_revalidate_unrelated_roles() {
 }
 
 #[tokio::test]
+async fn only_validated_intake_can_start_a_same_device_reserved_binding() {
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.store = RuntimeWorkStore::new(root.path().join("runtime-index.json"));
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    handler.backend_connection = Arc::new(Mutex::new(None));
+    let mut config =
+        json!({"id":"default","projectId":"project","projectStore":"cloud","userId":7});
+    let issue = json!({"id":"issue"});
+    let binding = json!({"humanAssignmentId":"human","assignmentId":"event"});
+    let existing = json!([{"human_assignment_id":"human","task_id":"stand-in-human-default","device_id":"mac"}]);
+    handler
+        .dispatch_cloud_stand_in_role(&config, &issue, &binding, &existing)
+        .await
+        .unwrap();
+    assert!(handler.local_task_links(true).is_empty());
+    config["intakeRouted"] = json!(true);
+    let error = handler
+        .dispatch_cloud_stand_in_role(&config, &issue, &binding, &existing)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.code, "cloud_unavailable",
+        "Routed work must revalidate cloud authority before preparing execution"
+    );
+    assert!(handler.local_task_links(true).is_empty());
+    config["intakeRouted"] = json!(false);
+    config["manual"] = json!(true);
+    handler
+        .dispatch_cloud_stand_in_role(&config, &issue, &binding, &existing)
+        .await
+        .unwrap();
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    store
+        .enqueue_stand_in_event(
+            7,
+            json!("queued-assignment"),
+            json!({
+                "kind":"assignment","projectId":"project","projectStore":"cloud",
+                "issueId":"issue","assignmentId":"event","roleIds":["default"]
+            }),
+        )
+        .unwrap();
+    let error = handler
+        .dispatch_cloud_stand_in_role(&config, &issue, &binding, &existing)
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "cloud_unavailable", "Explicit delegation of pending intake must revalidate authority instead of being discarded as duplicate work");
+}
+
+#[tokio::test]
 async fn manual_cloud_retry_reaches_preparation_without_mutating_an_existing_binding() {
     let mutations = Arc::new(AtomicUsize::new(0));
     let writes = mutations.clone();
@@ -428,29 +606,66 @@ async fn manual_cloud_retry_reaches_preparation_without_mutating_an_existing_bin
         auth_token: "test".into(),
         ..Default::default()
     })));
-    handler.upsert_local_task(RuntimeTaskLink {
-        local_task_id: "stand-in-human-default".into(),
-        status: "failed".into(),
-        ..RuntimeTaskLink::default()
-    });
     let mut config = json!({"id":"default","projectId":"project","projectStore":"cloud","userId":7,"manual":true,"workspace":{"projectKey":"unregistered-retry-project"}});
     let issue = json!({"id":"issue","assignee_user_id":7,"human_task_binding":{"humanAssignmentId":"human","assignmentId":"assignment"}});
+    for status in ["failed", "archived"] {
+        handler.upsert_local_task(RuntimeTaskLink {
+            local_task_id: "stand-in-human-default".into(),
+            status: status.into(),
+            ..RuntimeTaskLink::default()
+        });
+        config["manual"] = json!(true);
+        let error = handler
+            .start_cloud_stand_in(&config, &issue)
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "workspace_unavailable");
+        config["manual"] = json!(false);
+        handler.start_cloud_stand_in(&config, &issue).await.unwrap();
+        assert_eq!(mutations.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            handler
+                .local_task_link("stand-in-human-default")
+                .unwrap()
+                .status,
+            status
+        );
+    }
+    server.abort();
+}
+
+#[tokio::test]
+async fn archived_local_stand_in_requires_real_preparation_before_reporting_success() {
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.store = RuntimeWorkStore::new(root.path().join("runtime-index.json"));
+    handler.worktrees = WorktreeManager::new(root.path().join("worktrees.json"));
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    handler.upsert_local_task(RuntimeTaskLink {
+        local_task_id: "stand-in-human-default".into(),
+        status: "archived".into(),
+        ..RuntimeTaskLink::default()
+    });
+    let mut config = json!({"id":"default","projectId":"project","projectStore":"local","userId":7,"workspace":{"projectKey":"unregistered-project"}});
+    let issue = json!({"id":"issue"});
+    let binding = json!({"humanAssignmentId":"human"});
+    handler
+        .start_local_stand_in(&config, &issue, &binding)
+        .await
+        .unwrap();
+    config["manual"] = json!(true);
     let error = handler
-        .start_cloud_stand_in(&config, &issue)
+        .start_local_stand_in(&config, &issue, &binding)
         .await
         .unwrap_err();
     assert_eq!(error.code, "workspace_unavailable");
-    config["manual"] = json!(false);
-    handler.start_cloud_stand_in(&config, &issue).await.unwrap();
-    assert_eq!(mutations.load(Ordering::SeqCst), 0);
     assert_eq!(
         handler
             .local_task_link("stand-in-human-default")
             .unwrap()
             .status,
-        "failed"
+        "archived"
     );
-    server.abort();
 }
 
 #[tokio::test]
@@ -636,15 +851,11 @@ async fn personal_stand_in_checks_actor_without_project_device_setup() {
     };
     let mut config = json!({"id":"default","projectId":"project","userId":8});
     assert_eq!(
-        handler
-            .verify_stand_in_user(&config)
-            .await
-            .unwrap_err()
-            .code,
+        handler.verify_runtime_user(&config).await.unwrap_err().code,
         "permission_denied"
     );
     config["userId"] = json!(7);
-    handler.verify_stand_in_user(&config).await.unwrap();
+    handler.verify_runtime_user(&config).await.unwrap();
     server.abort();
 }
 
@@ -816,4 +1027,30 @@ async fn personal_settings_project_view_retains_the_requested_storage_kind() {
         .unwrap();
     assert_eq!(cloud["projectStore"], "cloud");
     assert_eq!(cloud["projectId"], "future-project");
+}
+
+#[tokio::test]
+async fn project_scoped_agent_connections_return_actionable_settings_code_without_saving() {
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    let initial = store.personal_stand_in(7, "mac").unwrap();
+    let saved = store.save_personal_stand_in(7, "mac", initial).unwrap();
+    let mut draft = saved.clone();
+    draft["roles"][0]["agentId"] = json!("project-agent");
+    draft["roles"][0]["agentProject"] = json!({"id":"project","store":"cloud"});
+    draft["roles"][0]["connections"] = json!([{
+        "providerId":"example","id":"group","kind":"group","profile":"work","name":"Group",
+        "policy":{"automatic":true,"askBeforeAct":true}
+    }]);
+    let error = handler
+        .personal_stand_in_settings(json!({"userId":7,"settings":draft}), true)
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "stand_in_project_connections");
+    assert!(error
+        .message
+        .contains("only receive work from their project"));
+    assert_eq!(store.personal_stand_in(7, "mac").unwrap(), saved);
 }

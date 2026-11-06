@@ -24,6 +24,9 @@ import {
   type WorkbenchRuntimeSnapshot,
 } from './workbench-runtime.js'
 import { applyWorkbenchModeToCorePlugins, type WorkbenchMode } from './workbench-mode.js'
+import { recordReleaseDiagnostic } from './release-diagnostics.js'
+import type { ModelConfigurationStore } from '../host/model-configuration-store.js'
+import { modelInterfaceRunnerModels } from '../host/model-interface-runtime.js'
 
 const CORE_APP_PATH = '/'
 const CORE_DSH_START_TIMEOUT_MS = 120_000
@@ -33,6 +36,7 @@ export interface DesktopRuntimeOptions {
   dataDirectory: string
   logDirectory: string
   hostPipe: HostPipeServer
+  modelConfiguration?: ModelConfigurationStore
   readWorkbenchMode?: () => Promise<WorkbenchMode>
   createWorkbenchHostPipe?: (tabId: string) => {
     hostPipe: HostPipeServer
@@ -98,6 +102,7 @@ export class DesktopRuntime {
   private lifecycleGeneration = 0
   private startOperation: { generation: number; promise: Promise<void> } | null = null
   private restartOperation: { generation: number; promise: Promise<void> } | null = null
+  private localModelSync: Promise<void> = Promise.resolve()
 
   constructor(private readonly options: DesktopRuntimeOptions) {}
 
@@ -168,6 +173,23 @@ export class DesktopRuntime {
     return this.executor.request<Result>(method, params)
   }
 
+  /** Rebuild the Executor's in-memory view from the native model configuration owner. */
+  async syncLocalModels(): Promise<void> {
+    const store = this.options.modelConfiguration
+    if (!store || !this.executor) return
+    const sync = this.localModelSync
+      .catch(() => {})
+      .then(async () => {
+        const snapshot = await store.read()
+        const models = snapshot.error
+          ? []
+          : modelInterfaceRunnerModels((await store.runtime()).models)
+        await this.requestExecutor('runtime.runner.local_models.replace', { models })
+      })
+    this.localModelSync = sync
+    await sync
+  }
+
   openWorkbenchRuntime(launch: WorkbenchRuntimeLaunch): Promise<WorkbenchRuntimeSnapshot> {
     if (!this.started) {
       return Promise.reject(new Error('Core desktop runtime is not ready'))
@@ -179,6 +201,7 @@ export class DesktopRuntime {
 
   private enrichWorkbenchLaunch(launch: WorkbenchRuntimeLaunch): WorkbenchRuntimeLaunch {
     if (launch.hostPipe) return launch
+    if (launch.environment?.WEWORK_DSH_BROWSER_AUTH !== '1') return launch
     const host = this.options.createWorkbenchHostPipe?.(launch.tabId)
     if (!host) return launch
     return {
@@ -294,6 +317,7 @@ export class DesktopRuntime {
         if (this.executor === executor) this.executor = null
         return
       }
+      await this.syncLocalModels()
       this.startupStep('executor-start', 'completed')
     } catch (error) {
       if (this.executor === executor) this.executor = null
@@ -348,7 +372,11 @@ export class DesktopRuntime {
         environment: managedRuntime.environment,
       })
       if (this.options.readWorkbenchMode) {
-        await applyWorkbenchModeToCorePlugins(await this.options.readWorkbenchMode(), plugins)
+        recordReleaseDiagnostic('core-preparation', { phase: 'mode-read-start' }, true)
+        const mode = await this.options.readWorkbenchMode()
+        recordReleaseDiagnostic('core-preparation', { phase: 'mode-apply-start' }, true)
+        await applyWorkbenchModeToCorePlugins(mode, plugins)
+        recordReleaseDiagnostic('core-preparation', { phase: 'mode-apply-finish' }, true)
         if (this.lifecycleGeneration !== generation) return null
       }
       const developmentRoot = this.options.environment.WEWORK_PLUGIN_DEVELOPMENT_ROOT?.trim()

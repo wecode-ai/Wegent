@@ -26,7 +26,7 @@ const source: CollaborationOwnedAgent = {
   owner_type: "workspace",
   owner_id: "space",
   owner_name: "Space",
-  status: "available",
+  status: "unchecked",
   execution_environment_ids: [],
 };
 
@@ -84,7 +84,10 @@ describe("workspace resources in the Issue assignee directory", () => {
     );
     expect(post).not.toHaveBeenCalled();
     expect(
-      get.mock.calls.filter(([endpoint]) => endpoint.endsWith("/space/agents")),
+      get.mock.calls.filter(
+        ([endpoint]) =>
+          endpoint === "/v1/workspaces/space/agents?include_readiness=false",
+      ),
     ).toHaveLength(2);
   });
 
@@ -115,26 +118,30 @@ describe("workspace resources in the Issue assignee directory", () => {
     expect(post).not.toHaveBeenCalled();
   });
 
-  it("lists an unbound shared Agent and explicitly binds it once before reuse", async () => {
-    const { api, directory } = setup();
-    expect(await directory.list(project)).toEqual([source]);
-    expect(api.agents.create).not.toHaveBeenCalled();
-    expect(
-      await Promise.all([
-        directory.bind(project, source.id),
-        directory.bind(project, source.id),
-      ]),
-    ).toEqual(["binding", "binding"]);
-    expect(api.agents.create).toHaveBeenCalledExactlyOnceWith("project", {
-      name: source.name,
-      runtime: "wegent",
-      wegentTeamId: 42,
-      shareWithWorkspace: false,
-    });
-    expect(await directory.list(project)).toEqual([]);
-    expect(await directory.bind(project, source.id)).toBe("binding");
-    expect(api.agents.create).toHaveBeenCalledOnce();
-  });
+  it.each(["available", "unchecked"] as const)(
+    "lists and binds a %s shared Agent once before reuse",
+    async (status) => {
+      const resource = { ...source, status };
+      const { api, directory } = setup([resource]);
+      expect(await directory.list(project)).toEqual([resource]);
+      expect(api.agents.create).not.toHaveBeenCalled();
+      expect(
+        await Promise.all([
+          directory.bind(project, source.id),
+          directory.bind(project, source.id),
+        ]),
+      ).toEqual(["binding", "binding"]);
+      expect(api.agents.create).toHaveBeenCalledExactlyOnceWith("project", {
+        name: source.name,
+        runtime: "wegent",
+        wegentTeamId: 42,
+        shareWithWorkspace: false,
+      });
+      expect(await directory.list(project)).toEqual([]);
+      expect(await directory.bind(project, source.id)).toBe("binding");
+      expect(api.agents.create).toHaveBeenCalledOnce();
+    },
+  );
 
   it.each(["Owner", "Maintainer"] as const)(
     "allows a project %s with a workspace use grant",

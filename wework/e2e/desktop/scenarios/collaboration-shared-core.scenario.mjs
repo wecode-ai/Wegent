@@ -1,3 +1,4 @@
+import { verifyCommentAssignmentTargets } from '../modules/comment-assignment-targets.mjs'
 import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -31,6 +32,7 @@ import {
   openDirectProjectCreation,
   configureFirstProjectExecutionEnvironment,
   selectCollaborationDomain,
+  selectCollaborationProjectView,
 } from '../modules/workspace-flows.mjs'
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
 const WORKSPACE_NAME = '协作共享核心空间'
@@ -52,13 +54,13 @@ async function verifyCurrentTableAssignment(control, scoped, issueId, assigneeNa
     visible: false,
     timeoutMs,
   })
-  await control.command('click', scoped('[data-testid="collaboration-tab-table"]'))
+  await selectCollaborationProjectView(control, scoped('').trim(), 'table')
   await control.command(
     'waitFor',
     scoped(`[data-testid="collaboration-issue-table-row-${issueId}"]`),
     { text: assigneeName, timeoutMs }
   )
-  await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+  await selectCollaborationProjectView(control, scoped('').trim(), 'board')
   await control.command('clickWhenEnabled', scoped(`[data-testid="cloud-todo-card-${issueId}"]`), {
     timeoutMs,
   })
@@ -187,7 +189,11 @@ export function createDesktopScenario({
   workbenchReadyTimeoutMs,
   executorHome,
 }) {
-  const boardReplyModel = createBoardReplyModelRegression({ executorHome, uiTimeoutMs })
+  const boardReplyModel = createBoardReplyModelRegression({
+    executorHome,
+    uiTimeoutMs,
+    workbenchReadyTimeoutMs,
+  })
   const projectOnlyNavigation = createProjectOnlyNavigationRegression({ uiTimeoutMs, executorHome })
   let backendUrl = ''
   let authToken = ''
@@ -198,6 +204,7 @@ export function createDesktopScenario({
   let agent = null
   let cloudEnvironment = null
   let fixtureArchived = false
+  let linkedIssueTaskModel = null
 
   const request = (pathname, options) => requestJson(backendUrl, authToken, pathname, options)
   const projectSpacePicker = createProjectSpacePickerRegression({
@@ -626,7 +633,7 @@ export function createDesktopScenario({
           text: project.name,
           timeoutMs: uiTimeoutMs,
         })
-        await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+        await selectCollaborationProjectView(control, scoped('').trim(), 'board')
         const maintainerProject = await request(`/api/v1/cloud-projects/${project.id}`)
         assert.equal(maintainerProject.access_role, 'Maintainer')
         await verifyPersonalBoardGrouping(control, {
@@ -703,6 +710,15 @@ export function createDesktopScenario({
           agent,
           scoped,
         })
+        await verifyCommentAssignmentTargets(control, {
+          request,
+          project,
+          issue,
+          owner,
+          agent,
+          scoped,
+          capture,
+        })
         await capture(control, 'collaboration-shared-core-05-shared-issue-detail.png')
         const activitySelector = scoped(`[data-testid="cloud-task-activity-${issue.id}"]`)
         const activityListSelector = scoped('[data-testid="cloud-task-activity-list"]')
@@ -733,6 +749,13 @@ export function createDesktopScenario({
         await control.command('fill', replyComposerSelector, {
           value: '在动态卡片内回复',
         })
+        await control.command(
+          'waitFor',
+          scoped(
+            '[data-testid="issue-reply-composer"] [data-testid="send-message-button"]:enabled'
+          ),
+          { timeoutMs: uiTimeoutMs }
+        )
         await control.command('press', replyComposerSelector, { key: 'Enter' })
         await control.command('waitFor', scoped('[data-testid^="cloud-task-activity-replies-"]'), {
           text: '在动态卡片内回复',
@@ -826,10 +849,20 @@ export function createDesktopScenario({
           text: '关联任务',
           timeoutMs: uiTimeoutMs,
         })
-        await control.command('waitFor', scoped('[data-testid="cloud-todo-create-task"]'), {
-          text: '新建任务',
+        await control.command('waitFor', scoped('[data-testid="cloud-todo-personal-task-start"]'), {
+          text: '创建任务',
           timeoutMs: uiTimeoutMs,
         })
+        assert.equal(
+          Number(
+            await control.command(
+              'getElementCount',
+              scoped('[data-testid="cloud-todo-create-task"]')
+            )
+          ),
+          0,
+          'Personal task creation must have one entry in the linked Tasks section'
+        )
         const personalTaskSnapshot = await snapshot(control)
         assert.ok(
           personalTaskSnapshot.testIds.includes('cloud-task-activity-composer'),
@@ -867,7 +900,7 @@ export function createDesktopScenario({
           previousBindings.map(binding => binding.taskId ?? binding.task_id)
         )
 
-        await control.command('click', scoped('[data-testid="cloud-todo-create-task"]'))
+        await control.command('click', scoped('[data-testid="cloud-todo-personal-task-start"]'))
         await control.command('waitFor', scoped('[data-testid="ai-chat-modal"]'), {
           timeoutMs: uiTimeoutMs,
         })
@@ -905,6 +938,7 @@ export function createDesktopScenario({
         const taskComposer = scoped(
           '[data-testid="work-item-new-task-chat-panel"] [data-testid="chat-message-input"]'
         )
+        linkedIssueTaskModel = boardReplyModel.holdLinkedIssueTask(project.id, issue)
         await control.command('press', taskComposer, { key: 'Enter' })
         await control.command(
           'waitFor',
@@ -954,6 +988,12 @@ export function createDesktopScenario({
           'The private personal Task unexpectedly changed the shared Issue assignee'
         )
         await capture(control, 'collaboration-shared-core-08-local-task-bound.png')
+        await waitForApiValue(
+          async () => linkedIssueTaskModel.requests.length,
+          count => count === 1,
+          'The bound Issue did not reach the real local Codex model request',
+          uiTimeoutMs
+        )
         await verifyTaskTabLoadedCollaborationTask(
           control,
           binding.taskId ?? binding.task_id,
@@ -977,6 +1017,7 @@ export function createDesktopScenario({
           taskId: binding.taskId ?? binding.task_id,
         })
       } finally {
+        linkedIssueTaskModel?.release()
         try {
           await archiveFixture()
         } finally {
@@ -990,6 +1031,7 @@ export function createDesktopScenario({
     },
 
     async cleanup() {
+      linkedIssueTaskModel?.release()
       try {
         await archiveFixture()
       } finally {

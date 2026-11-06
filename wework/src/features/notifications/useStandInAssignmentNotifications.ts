@@ -61,6 +61,14 @@ export function useStandInAssignmentNotifications(
             const key = `${accountKey}:${userId}:${deviceId}:${notification.id}`
             if (attempted.current.has(key)) continue
             attempted.current.add(key)
+            console.info('[Stand-in] Forwarding assignment notification', {
+              notificationId: notification.id,
+              projectId: notification.projectId,
+              issueId: notification.itemId,
+              assignmentId: notification.assignmentId,
+              userId,
+              deviceId,
+            })
             void api
               .notifyAssignment(
                 notification.projectId,

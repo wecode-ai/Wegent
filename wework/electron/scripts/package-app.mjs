@@ -11,6 +11,7 @@ import { acquireProcessLock } from '../../scripts/lib/process-lock.mjs'
 import identityModule from './build-identity.cjs'
 import builderConfig from '../electron-builder.config.cjs'
 import macosAppIcon from './macos-app-icon.cjs'
+import bundledComponentLayout from './bundled-component-layout.cjs'
 import { wrapWindowsScriptCommand } from '../../scripts/child-process-command.mjs'
 
 // Electron-as-Node otherwise treats app.asar as a virtual directory during cleanup.
@@ -18,11 +19,12 @@ process.noAsar = true
 
 const { resolveBuildIdentity } = identityModule
 const electronRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const output = join(electronRoot, 'release')
 const staging = join(electronRoot, '.package-staging')
 const sharedResourcesRoot = join(electronRoot, '..', 'resources')
 const repositoryRoot = resolve(electronRoot, '..', '..')
 const sourcePackage = JSON.parse(await readFile(join(electronRoot, 'package.json'), 'utf8'))
+const output = join(electronRoot, 'release')
+const packageVersion = sourcePackage.version
 const identity = resolveBuildIdentity()
 const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 const icon =
@@ -56,12 +58,17 @@ await Promise.all(
   )
 )
 await cp(join(electronRoot, 'dist'), join(staging, 'dist'), { recursive: true })
+const launcherPath = join(
+  electronRoot,
+  'resources',
+  `wework-launcher${process.platform === 'win32' ? '.exe' : ''}`
+)
 await writeFile(
   join(staging, 'package.json'),
   `${JSON.stringify(
     {
       productName: identity.productName,
-      version: sourcePackage.version,
+      version: packageVersion,
       type: sourcePackage.type,
       main: sourcePackage.main,
       dependencies: sourcePackage.dependencies,
@@ -85,8 +92,8 @@ try {
     appBundleId: identity.identifier,
     ...(process.platform === 'darwin' ? { extendInfo: macosAppIcon.extendInfo } : {}),
     protocols: [{ name: 'Wework', schemes: ['wework'] }],
-    appVersion: sourcePackage.version,
-    buildVersion: sourcePackage.version,
+    appVersion: packageVersion,
+    buildVersion: packageVersion,
     executableName: identity.executableName,
     out: output,
     overwrite: true,
@@ -94,14 +101,15 @@ try {
       unpack: '**/*.{node,dylib,so,dll}',
     },
     extraResource: [
+      launcherPath,
       ...(process.platform === 'darwin' ? [macosAppIcon.assetCatalog] : []),
       join(electronRoot, 'resources', 'harness-runtime'),
       join(electronRoot, 'resources', 'bin'),
       join(electronRoot, 'resources', 'codex'),
-      join(electronRoot, 'resources', 'wework-core-plugins'),
-      join(electronRoot, 'resources', 'wework-app-static'),
+      ...bundledComponentLayout.directories.map(name =>
+        join(electronRoot, 'resources', `${name}.tar.gz`)
+      ),
       join(electronRoot, 'resources', 'components.json'),
-      join(electronRoot, 'resources', 'bundled-plugins'),
       join(sharedResourcesRoot, 'licenses'),
       join(sharedResourcesRoot, 'icons'),
       join(repositoryRoot, 'LICENSE'),

@@ -3,7 +3,7 @@
 
 use super::*;
 
-pub(super) fn install_native_history(
+pub(in crate::runtime_work::handler) fn install_native_history(
     handler: &mut RuntimeWorkRpcHandler,
     root: &std::path::Path,
     turns: Vec<Value>,
@@ -52,6 +52,7 @@ pub(super) fn install_native_history(
     }
     for (method, response) in [
         ("initialize", json!({"userAgent":"test"})),
+        ("thread_list", json!({"data":[],"nextCursor":null})),
         (
             "thread_read",
             json!({"thread":{"id":"thread-1","cwd":"/tmp/project","historyMode":"paginated"}}),
@@ -75,9 +76,11 @@ pub(super) fn install_native_history(
             r#"#!/bin/sh
 cd /
 while IFS= read -r line; do
+  printf '%s\n' "$line" >> {directory}/requests.jsonl
   id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
   [ -n "$id" ] || continue
   method=$(printf '%s\n' "$line" | sed -n 's/.*"method":"\([^"]*\)".*/\1/p' | tr '/' '_')
+  case "$method:$line" in thread_list:*'"cursor":"page-2"'*) method=thread_list_page2;; esac
   if [ "$method" = "test_stop" ]; then
     printf '{{"id":%s,"result":{{}}}}\n' "$id"
     exit 0
@@ -106,6 +109,7 @@ done
         fs::write(
             script,
             r#"while ($null -ne ($line = [Console]::ReadLine())) {
+  [IO.File]::AppendAllText((Join-Path $PSScriptRoot 'requests.jsonl'), $line + [Environment]::NewLine)
   $request = ConvertFrom-Json $line
   if ($null -eq $request.id) { continue }
   if ($request.method -eq 'test/stop') {
@@ -113,6 +117,7 @@ done
     break
   }
   $method = $request.method.Replace('/', '_')
+  if ($method -eq 'thread_list' -and $request.params.cursor -eq 'page-2') { $method = 'thread_list_page2' }
   $errorFile = Join-Path $PSScriptRoot ($method + '.error-once.json')
   if (Test-Path $errorFile) {
     $failure = ConvertFrom-Json ([IO.File]::ReadAllText($errorFile))

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { createLocalCollaborationProject, reloadMainWindow } from '../modules/workspace-flows.mjs'
+import { createTaskDeliveryIssueRegression } from '../modules/task-delivery-issue.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const PROJECT = `交付快照验收-${process.pid}`
@@ -17,11 +18,14 @@ async function metrics(control, selector) {
   return result[0]
 }
 
-export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs, captureScreenshot }) {
+export function createDesktopScenario(options) {
+  const { uiTimeoutMs, workbenchReadyTimeoutMs, captureScreenshot } = options
+  const taskDelivery = createTaskDeliveryIssueRegression(options)
   let project
   let issue
   const batches = []
   return {
+    handleHttp: taskDelivery.handleHttp,
     async verify(control) {
       console.log('[delivery-e2e] Starting real delivery snapshot assertions')
       const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
@@ -138,12 +142,28 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs, ca
       assert.doesNotMatch(await control.command('getText', panel), /无交付说明|交付会话/)
       await control.command('click', scoped('[data-testid="todo-detail-delivery-close"]'))
       await control.command('waitFor', panel, { visible: false })
+      // Visibility can end before the exit animation commits the route close.
+      await control.command(
+        'waitFor',
+        `${CONTENT}:not(:has([data-testid="collaboration-issue-detail"]))`
+      )
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            scoped('[data-testid="collaboration-issue-detail"]')
+          )
+        ),
+        0,
+        'The Issue drawer must unmount before reopening the same Issue'
+      )
       await control.command('click', card)
       await control.command('waitFor', row(chatOnly.id), { text: '2 条消息' })
       await control.command('click', row(chatOnly.id))
       await control.command('waitFor', panel, { text: '项目讨论答复' })
       await control.command('click', scoped('[data-testid="todo-detail-delivery-close"]'))
       console.log(`[delivery-e2e] Verified three persisted batches for ${issue.id}`)
+      await taskDelivery.verify(control, { project, issue })
     },
     diagnostics() {
       return {

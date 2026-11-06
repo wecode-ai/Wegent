@@ -4,6 +4,7 @@ import type { AppUpdateError, AppUpdateErrorKind, AppUpdateErrorStage } from './
 type Translate = ReturnType<typeof useTranslation>['t']
 
 export function formatAppUpdateErrorSummary(error: AppUpdateError, t: Translate): string {
+  if (error.kind === 'path-unavailable') return t('workbench.app_update_path_unavailable')
   if (error.kind === 'unsupported') {
     return t('workbench.app_update_endpoint_missing', {
       defaultValue: '当前版本暂不支持自动更新检查',

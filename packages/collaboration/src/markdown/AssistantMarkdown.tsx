@@ -13,9 +13,12 @@ import type { HTMLAttributes, OlHTMLAttributes, ReactNode } from 'react'
 import { Folder, Link2 } from 'lucide-react'
 import { Streamdown, defaultRemarkPlugins, type StreamdownProps } from 'streamdown'
 import remarkBreaks from 'remark-breaks'
+import { math } from '@streamdown/math'
 import type { Element } from 'hast'
 import { ComposerLinkChip } from './ComposerLinkChip'
 import 'streamdown/styles.css'
+import 'katex/dist/katex.min.css'
+import { normalizeMathDelimiters, remarkMathDelimiters } from './remarkMathDelimiters'
 import {
   classifyMarkdownLink,
   isHtmlFilePath,
@@ -27,6 +30,7 @@ import { MarkdownCodeBlock } from './MarkdownCodeBlock'
 import { MarkdownTable } from './MarkdownTable'
 import { createTableMarkdownRehypePlugins } from './markdownTableSource'
 import { MarkdownDiagramPreview } from './MarkdownDiagramPreview'
+import { diagramKind } from './diagramLayout'
 import {
   hasMarkdownReferenceDefinitions,
   splitStaticMarkdownChunks,
@@ -46,6 +50,7 @@ import {
   type AssistantFileCitation,
 } from './assistantAnnotations'
 import { AssistantFollowup } from './AssistantFollowup'
+import { preprocessCjkEmphasis } from './preprocessCjkEmphasis'
 
 const ASSISTANT_MARKDOWN_LINK_CLASS = [
   'inline-flex min-w-0 max-w-full items-center gap-1 rounded-md px-0.5 align-baseline',
@@ -59,7 +64,6 @@ const tableMarkdownRehypePlugins = [
   ...createTableMarkdownRehypePlugins()!,
   rehypeAssistantAnnotations,
 ]
-const DIAGRAM_LANGUAGES = new Set(['mermaid', 'mmd', 'plantuml', 'puml'])
 const STREAMING_DIAGRAM_LANGUAGES = new Map([
   ['weworkstreamingmermaid', 'mermaid'],
   ['weworkstreamingmmd', 'mmd'],
@@ -68,6 +72,7 @@ const STREAMING_DIAGRAM_LANGUAGES = new Map([
 ])
 const MarkdownStreamingContext = createContext(false)
 const completeMarkdownSource = (content: string) => [content]
+const markdownPlugins = { math }
 export interface AssistantMarkdownProps {
   content: string
   isStreaming?: boolean
@@ -134,14 +139,20 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
   // independent blocks; a marker may span more than one Markdown paragraph.
   const displayContent = useMemo(
     () =>
-      variant === 'user'
-        ? bufferedContent
-        : stripUnsupportedContentReferenceCitations(bufferedContent),
+      preprocessCjkEmphasis(
+        normalizeMathDelimiters(
+          variant === 'user'
+            ? bufferedContent
+            : stripUnsupportedContentReferenceCitations(bufferedContent)
+        )
+      ),
     [bufferedContent, variant]
   )
   const remarkPlugins = useMemo<StreamdownProps['remarkPlugins']>(() => {
-    const plugins: NonNullable<StreamdownProps['remarkPlugins']> =
-      Object.values(defaultRemarkPlugins)
+    const plugins: NonNullable<StreamdownProps['remarkPlugins']> = [
+      ...Object.values(defaultRemarkPlugins),
+      remarkMathDelimiters,
+    ]
     if (variant !== 'user') plugins.push([remarkAssistantAnnotations, { isStreaming }])
     if (preserveLineBreaks) plugins.push(remarkBreaks)
     return plugins
@@ -350,6 +361,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
               >
                 <Streamdown
                   mode={streamdownMode}
+                  plugins={markdownPlugins}
                   parseMarkdownIntoBlocksFn={part.wholeSource ? completeMarkdownSource : undefined}
                   isAnimating={false}
                   controls={false}
@@ -371,6 +383,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
             <MarkdownStreamingContext.Provider key={`markdown-${index}`} value={isStreaming}>
               <Streamdown
                 mode={streamdownMode}
+                plugins={markdownPlugins}
                 parseMarkdownIntoBlocksFn={part.wholeSource ? completeMarkdownSource : undefined}
                 isAnimating={false}
                 controls={false}
@@ -424,7 +437,7 @@ function MarkdownCode({ className, children, node, compact = false, ...props }: 
         </MarkdownCodeBlock>
       )
     }
-    if (DIAGRAM_LANGUAGES.has(lang.toLowerCase())) {
+    if (diagramKind(lang) !== null) {
       return <MarkdownDiagramPreview code={text.trimEnd()} language={lang} />
     }
     return (
@@ -507,7 +520,7 @@ function markUnclosedDiagramFence(content: string): string {
     }
   }
 
-  if (!openingFence || !DIAGRAM_LANGUAGES.has(openingFence.language)) return content
+  if (!openingFence || diagramKind(openingFence.language) === null) return content
 
   const [, indent, fence, spacing, , remainder] = openingFence.match
   lines[openingFence.lineIndex] =

@@ -1,3 +1,4 @@
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useEffect, type ReactNode, type Dispatch, type SetStateAction } from 'react'
 import { ModelSelector } from '@/components/chat/composer/ModelSelector'
 import { useStandInModels } from './useStandInModels'
@@ -11,7 +12,7 @@ import { resolveProjectWorktreeAvailability } from '@/lib/worktree-availability'
 import { ProjectWorkBar, ProjectWorkSection } from '@/components/chat/composer/ProjectWorkBar'
 import { BufferedChatInput } from '@/components/layout/BufferedChatInput'
 import { ComposerCatalogContext } from '@/components/chat/composer/ComposerCatalogContext'
-import { useRuntimeComposerCatalog } from '@/components/chat/composer/useRuntimeComposerCatalog'
+import { useStandInComposerCatalog } from './useStandInComposerCatalog'
 import type { ProjectWorkControls } from '@/components/chat/ChatInput'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { listProjectBranches } from '@/api/environment'
@@ -50,7 +51,7 @@ export function StandInComposer({
   showPrompt?: boolean
 }) {
   const { t } = useTranslation('common')
-  const composerCatalog = useRuntimeComposerCatalog(
+  const composerCatalog = useStandInComposerCatalog(
     draft.executionDeviceId
       ? {
           deviceId: draft.executionDeviceId,
@@ -252,7 +253,7 @@ export function StandInComposer({
               <>
                 {models.error && (
                   <span role="status" className="text-xs text-error">
-                    {models.error}
+                    {getStandInErrorMessage(models.error)}
                   </span>
                 )}
               </>

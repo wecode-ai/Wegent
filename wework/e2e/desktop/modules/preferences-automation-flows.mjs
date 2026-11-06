@@ -94,6 +94,7 @@ async function verifyCodexCatalogOverride(control, modelId) {
   await control.command('waitFor', '[data-testid="model-settings-page"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  await control.command('clickWhenEnabled', '[data-testid="codex-models-details-toggle"]')
   await control.command('clickWhenEnabled', '[data-testid^="codex-model-provider-toggle-"]')
   await control.command('clickWhenEnabled', editSelector)
   await control.command('waitFor', '[data-testid="codex-catalog-editor-dialog"]', {
@@ -119,6 +120,7 @@ async function verifyCodexCatalogOverride(control, modelId) {
   await control.command('waitFor', '[data-testid="model-settings-page"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  await control.command('clickWhenEnabled', '[data-testid="codex-models-details-toggle"]')
   await control.command('clickWhenEnabled', '[data-testid^="codex-model-provider-toggle-"]')
   await control.command('waitFor', rowSelector, {
     text: '已自定义',
@@ -194,6 +196,10 @@ async function verifyInitialTelemetryConsent(control, sensitiveValues) {
       `The initial telemetry request contained an unexpected event: ${event.event}`
     )
     assert.ok(event.properties && typeof event.properties === 'object')
+    assert.ok(['mac', 'win', 'linux'].includes(event.properties.platform))
+    assert.equal(event.properties.platform, event.properties.os)
+    assert.equal(event.properties.event_schema_version, 1)
+    assert.equal(event.properties.telemetry_source, 'wework')
     for (const propertyName of Object.keys(event.properties)) {
       assert.equal(
         TELEMETRY_SAFE_PROPERTY_KEYS.has(propertyName),
@@ -250,7 +256,6 @@ async function declineInitialTelemetryConsent(control) {
 }
 
 async function setExperimentalFeaturesEnabled(control, enabled) {
-  if (control.experimentalFeaturesEnabled === enabled) return
   const settingsButtonCount = Number(
     await control.command('getElementCount', '[data-testid="settings-button"]', {
       visible: true,
@@ -260,19 +265,22 @@ async function setExperimentalFeaturesEnabled(control, enabled) {
     await control.command('setAppPreferences', 'body', {
       value: JSON.stringify({ experimentalFeaturesEnabled: enabled }),
     })
-    control.experimentalFeaturesEnabled = enabled
     return
   }
 
   const toggleSelector = '[data-testid="general-experimental-features-toggle"]'
   await control.command('click', '[data-testid="settings-button"]', { visible: true })
   await control.command('click', '[data-testid="settings-menu-button"]')
+  // The first settings visit loads the Core DSH settings module and its dependencies.
+  await control.command('waitFor', '[data-testid="general-settings-page"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
   await waitForSnapshot(
     control,
     snapshot => snapshot.testIds.includes('general-experimental-features-toggle'),
     'The experimental features control did not mount'
   )
-  await control.command('scrollIntoView', toggleSelector, { visible: false })
+  await control.command('scrollIntoView', toggleSelector, { visible: true })
   await control.command('waitFor', toggleSelector, { visible: true })
   if (
     (await control.command('getAttribute', toggleSelector, { value: 'aria-checked' })) !==
@@ -287,7 +295,6 @@ async function setExperimentalFeaturesEnabled(control, enabled) {
       `${enabled ? 'Enabling' : 'Disabling'} experimental features was not persisted`
     )
   }
-  control.experimentalFeaturesEnabled = enabled
   await control.command('click', '[data-testid="settings-back-button"]')
 }
 
@@ -303,9 +310,9 @@ async function verifyAutomationLifecycle(control, executorHome, homePath) {
   const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   assert.ok(
     initialSnapshot.testIds.includes('automation-button'),
-    'Automations remained hidden behind the experimental-features preference'
+    'Independent schedules must remain available when experimental features are disabled'
   )
-  await control.command('click', '[data-testid="automation-button"]')
+  await control.command('navigate', 'body', { value: '/automations' })
   await control.command('waitFor', '[data-testid="create-automation-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
@@ -542,7 +549,7 @@ async function verifyAutomationLifecycle(control, executorHome, homePath) {
         timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
       })
     }
-    await control.command('click', '[data-testid="automation-button"]')
+    await control.command('navigate', 'body', { value: '/automations' })
     await control.command('waitFor', `[data-testid="${automationRow}"]`, {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
@@ -640,7 +647,7 @@ async function verifyAutomationLifecycle(control, executorHome, homePath) {
     })
 
     await control.command('click', '[data-testid="new-chat-button"]')
-    await control.command('click', '[data-testid="automation-button"]')
+    await control.command('navigate', 'body', { value: '/automations' })
     await control.command('waitFor', `[data-testid="${automationRow}"]`, {
       text: AUTOMATION_NAME,
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -664,10 +671,10 @@ async function verifyCloudAutomationLifecycle(
   const automationName = `${AUTOMATION_NAME} ${automationSuffix}`
   const completionText = `${AUTOMATION_COMPLETION_TEXT}_${expectedCompletionIndex}`
   assert.ok(
-    initialSnapshot.testIds.includes('automation-button'),
-    'Automations remained hidden behind the experimental-features preference'
+    initialSnapshot.testIds.includes('personal-stand-in-button'),
+    'The stand-in schedules entry remained hidden behind the experimental-features preference'
   )
-  await control.command('click', '[data-testid="automation-button"]')
+  await control.command('navigate', 'body', { value: '/automations' })
   await control.command('waitFor', '[data-testid="create-automation-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })

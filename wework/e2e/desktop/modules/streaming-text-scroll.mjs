@@ -22,6 +22,7 @@ import {
   THINKING_INDICATOR_SELECTOR,
   waitForBottom,
   getSingleElementMetrics,
+  assertShimmerCopyTracksText,
   assertElementFullyVisible,
   USER_MESSAGE_SELECTOR,
   USER_MESSAGE_E2E_ID,
@@ -95,6 +96,11 @@ export function createStreamingScrollChecks({
       toolDurationSeconds(summaryBeforeSwitch),
       0,
       `The tool summary exposed an aggregate duration: ${summaryBeforeSwitch}`
+    )
+    await assertShimmerCopyTracksText(
+      control,
+      `${ACTIVE_WORKBENCH_SELECTOR} .tool-activity-shimmer`,
+      'The running tool label'
     )
     await capture(control, 'streaming-text-06-running-tool.png')
     await control.command('click', '[data-testid="new-chat-button"]')
@@ -237,6 +243,11 @@ export function createStreamingScrollChecks({
     await control.command('waitFor', THINKING_INDICATOR_SELECTOR, {
       timeoutMs: uiTimeoutMs,
     })
+    await assertShimmerCopyTracksText(
+      control,
+      `${THINKING_INDICATOR_SELECTOR} .activity-shimmer-text`,
+      'The waiting assistant indicator'
+    )
     const waitingScrollerMetrics = await waitForBottom(
       control,
       'The conversation scroller while waiting for the assistant',
@@ -533,6 +544,8 @@ export function createStreamingScrollChecks({
     })
     await control.command('pointerDown', SCROLL_TO_BOTTOM_BUTTON_SELECTOR)
     await control.command('click', SCROLL_TO_BOTTOM_BUTTON_SELECTOR)
+    // A transcript click during follow must not classify subsequent spring steps as reader input.
+    await control.command('pointerClick', SCROLLER_SELECTOR)
     await scrollButtonAppendWritten
     await control.command('waitFor', PROCESS_TEXT_SELECTOR, {
       text: SCROLL_BUTTON_APPEND_MARKER,
@@ -569,6 +582,15 @@ export function createStreamingScrollChecks({
     await new Promise(resolve => setTimeout(resolve, 250))
     await control.command('click', '[data-testid="new-chat-button"]')
     await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+    // Capture the first mounted history frame, before waitForBottom can hide an
+    // erroneous animation from the middle of an already-streaming conversation.
+    await control.command('startScrollStabilitySampling', PROCESS_TEXT_SELECTOR, {
+      value: JSON.stringify({
+        anchorText: MARKER,
+        durationMs: uiTimeoutMs,
+        scrollerSelector: SCROLLER_SELECTOR,
+      }),
+    })
     await control.command('clickWhenEnabled', `[data-testid="${taskRowTestId}"]`, {
       timeoutMs: uiTimeoutMs,
     })
@@ -585,6 +607,14 @@ export function createStreamingScrollChecks({
     assert.ok(
       distanceFromBottom(pinnedAfterSwitch) <= 8,
       `The bottom-pinned streaming conversation reopened ${distanceFromBottom(pinnedAfterSwitch)}px from the bottom`
+    )
+    const switchFrames = JSON.parse(
+      await control.command('stopScrollStabilitySampling', PROCESS_TEXT_SELECTOR)
+    ).frames
+    assert.ok(switchFrames.length > 0, 'The switch did not capture any mounted streaming history')
+    assert.ok(
+      switchFrames.every(frame => distanceFromBottom(frame) <= 8),
+      `Opening existing streaming history animated from the middle: ${JSON.stringify(switchFrames)}`
     )
     await assertComposerDocked(
       control,

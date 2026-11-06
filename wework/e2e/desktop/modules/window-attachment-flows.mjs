@@ -15,6 +15,7 @@ import {
 } from './conversation-navigation.mjs'
 
 import { waitForBlankConversation } from './memory-tool-flows.mjs'
+import { logDesktopE2eSignal } from '../process-lifecycle.mjs'
 
 import {
   ACTIVE_SWITCH_MODEL_RETRY_SELECTOR,
@@ -489,15 +490,23 @@ async function verifyBackgroundTaskWindowLifecycle({
     })
 
     await reactivateMacApplication(appIdentifier, appBundlePath)
+    await waitForWindowVisibility(control, { mainVisible: true })
+    assert.equal(
+      control.ready?.clientId,
+      controlClientIdBeforeClose,
+      'Closing to tray replaced the retained Electron renderer'
+    )
+    // Electron retains its renderer when hidden; reload to verify retired-client isolation.
+    await control.command('reloadMainWindow', 'body')
     await withTimeout(
       control.awaitReadyAfter(readyCountBeforeClose),
       WORKBENCH_READY_TIMEOUT_MS,
-      'The reopened Wework WebView did not reconnect to the desktop controller'
+      'The reloaded Wework WebView did not reconnect to the desktop controller'
     )
     assert.notEqual(
       control.ready?.clientId,
       controlClientIdBeforeClose,
-      'The reopened WebView reused the closed control client identity'
+      'The reloaded WebView reused the closed control client identity'
     )
     const reopenedTaskWait = control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
       stableMs: COMPOSER_READY_STABILITY_MS,
@@ -887,6 +896,7 @@ async function verifyBackgroundTaskWindowLifecycle({
     assert.ok(forcedExitDshPid > 0, 'Core DSH PID was unavailable before forced Electron exit')
     assert.ok(forcedExitExecutorPid > 0, 'Executor PID was unavailable before forced Electron exit')
 
+    logDesktopE2eSignal({ action: 'force-exit-app', pid: forcedExitApp.pid, signal: 'SIGKILL' })
     process.kill(forcedExitApp.pid, 'SIGKILL')
     await Promise.all([
       waitForProcessExit(forcedExitApp.pid, 'Wework remained alive after the forced Electron exit'),

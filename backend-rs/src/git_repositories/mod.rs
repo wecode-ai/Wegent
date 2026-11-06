@@ -24,13 +24,16 @@ mod branches;
 mod cache;
 pub(crate) mod crypto;
 mod digest;
+mod maintenance;
 mod projection;
 mod providers;
 mod search;
 mod service;
 mod worker;
 
+pub(crate) use branch_providers::domains_match;
 pub use branches::Branch;
+pub use maintenance::RepositoryRefreshReport;
 pub use service::GitRepositoriesService;
 
 use serde::{Deserialize, Serialize};

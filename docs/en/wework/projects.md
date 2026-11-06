@@ -28,6 +28,16 @@ If a connected cloud device and the current local Wework executor refer to the s
 
 To create a Git project, select a device, repository, default branch, and destination. If repositories are unavailable, check the Git connection and token permissions in Settings.
 
+## Select and create branches
+
+Use the branch menu in the composer to search and switch local branches, or create and check out a new branch. The list excludes tags and remote-tracking refs and places the current local branch first. Branch listing and current-branch queries use commands compatible with older Git versions, without depending on `git branch --format` or `--show-current`. A detached HEAD has an empty current branch name; local branches remain selectable.
+
+Selecting a branch performs checkout on the execution device even when its name matches the last displayed branch, so cached UI state cannot prevent recovery from detached HEAD.
+
+Pushing also uses a current-branch query compatible with older Git versions. Check out a branch before pushing from a detached HEAD.
+
+If another device still reports `unknown option`, confirm that its Wework executor has been updated. Cloud connections to cloud or remote devices also require an updated Wegent Backend. Git queries run on the device that owns the workspace; updating Git on another machine does not change that device's queries.
+
 ## View pull request and merge request status
 
 When a task is opened or selected, Wework reads the branch, remote URL, PR/MR status, and change counts concurrently. It displays the PR/MR status as soon as that lookup finishes instead of waiting for a slower diff count; changed-file and line counts update independently afterward. These Git queries do not start the user's login shell, so shell startup scripts, SDK initialization, and other personal environment configuration cannot block the environment panel.
@@ -74,6 +84,12 @@ so you can edit it and retry. A successful save opens the new space or continues
 the project creation you started earlier.
 
 The storage location cannot be changed after the project is created. The task source (built-in tasks, GitHub, or GitLab) controls where task data is read from; it does not change whether the project is stored locally or in the cloud.
+
+### Create a cloud collaboration project from a template
+
+Choose a template through **Discover templates** when creating a project. Bundled Agents use the current device and its default model. The device must be online and accessible to the signed-in account; importing into an existing project also requires a device grant for that project. Historical offline records for the same desktop neither block creation nor become execution targets.
+
+If the current execution device is unavailable, check its cloud connection and use permissions. If multiple online records match the same desktop, resolve the execution-device ambiguity before continuing.
 
 ### Configure local project collaborators
 
@@ -170,22 +186,51 @@ The native task board's view dropdown on the right provides switching, creation,
 
 Project administrators can save multiple views, bind each lane to a status or tag, reorder lanes, configure tag filters, and choose the project default view. Entering a project opens its default; subsequent switches apply to the current visit. Views and their default are shared with project members. Deleting the default view restores the base board. Lane settings and card fields are edited in one dialog and saved together; card fields apply to every view in the project.
 
+Add an **Other (unmatched)** lane, name it **Backlog**, and move it to the left. Each view supports one such lane. It displays Issues within the view filters that match none of the other status or tag lanes. New unmatched Issues appear automatically, including those with unrelated business tags. Dragging back removes all stage tags bound by this view while preserving other tags and status. If the status still matches another status lane, change the status first. A return that would violate the view filters is also blocked. The lane’s create action keeps the normal initial status and supplies tags satisfying the view filters. The action is hidden when that status matches another lane or the filters cannot be satisfied.
+
 Tag names allow up to 32 Unicode code points, including supplementary characters such as emoji. Stored names have no leading or trailing whitespace; lanes and filters must reference the same canonical names. Issue tags, project tags, tag lanes, and filters use the same length limit. Longer input displays an error and cannot be saved; names are never automatically truncated. Historical long tags retain their original values when read or when unrelated fields such as titles change.
 
 Each Issue and the tag catalog saved in project settings allow up to 20 distinct tags. Dragging an Issue with 19 tags into a new tag lane adds its twentieth tag. Adding another tag at the limit displays an error, preserves the original tags and version, and shows no success feedback. Replacing a tag between two tag lanes remains available. Tag lists are never automatically truncated; historical lists above the limit remain intact when read or when unrelated fields change.
 
 Renaming or deleting a tag in a native project saves the catalog, tags on undeleted Issues, lane bindings, and filter references together. A project version conflict or any Issue update failure rolls back the entire operation so it can be retried after resolving the error. Externally hosted Issues do not support this transaction across records. Failed bulk status changes in the table list the affected Issues and reasons; successful Issues are deselected while failed Issues stay selected for retry.
 
-| Drag direction | Issue changes |
-| --- | --- |
-| Status → Status | Update status and keep tags |
-| Status → Tag | Add the destination tag and keep status |
-| Tag → Status | Update status and keep tags |
-| Tag → Tag | Remove the source tag, add the destination tag, and keep other tags and status |
+| Drag direction  | Issue changes                                                                  |
+| --------------- | ------------------------------------------------------------------------------ |
+| Status → Status | Update status and keep tags                                                    |
+| Status → Tag    | Add the destination tag and keep status                                        |
+| Tag → Status    | Update status and keep tags                                                    |
+| Tag → Tag       | Remove the source tag, add the destination tag, and keep other tags and status |
 
 An Issue can appear in both its matching status and tag lanes. After a cross-type drag, the destination card is highlighted and feedback describes the actual change. Dragging into a tag lane never reopens a completed Issue. Custom views with In progress or In review lanes also support Focus view to expand execution progress.
 
 Existing projects keep the base board without converting historical Issue statuses or tags. Concurrent configuration changes produce a conflict message and refresh the latest configuration. Older clients cannot edit unknown view formats created by newer versions.
+
+## Quick tag filters
+
+Choose **All tags** in the board toolbar, type to find tags, and select one or more.
+An Issue matches if it contains any selected tag. The filter preserves lane grouping
+and combines with board search and saved-view conditions. Clear the selection to show
+all tags; switching projects or views resets it. Filtering does not change shared views.
+
+## Edit Issue properties
+
+Tags, status, priority, assignee, parent, date range, and milestone save immediately
+for existing Issues. Press Enter or leave the title field to save a title change.
+Type in the milestone picker to search; choose **Not set** to remove its association.
+New Issue properties are still submitted together when creating the Issue.
+
+Only the description requires **Save**. Saving properties never submits an unsaved
+description, and cancelling description editing does not revert saved properties.
+Failures display an error and a retry action. Consecutive changes are saved in order;
+submitted changes continue to finish after leaving the detail view.
+
+## Sub-issue progress on cards
+
+Issue cards with sub-issues show a progress ring and **Sub-issues 2/5**, meaning 2 of 5 direct sub-issues are completed. The ring turns green when all are complete. Select this control to enter the Issue's sub-issue board without opening its details.
+
+Progress counts direct sub-issues that the current user can view and that are not archived. It excludes deeper descendants and is independent of search, tag filters, and grouping. The control is hidden when no eligible sub-issues exist. Local and cloud projects share this presentation.
+
+Desktop regression: `pnpm --filter wework e2e:desktop --segment collaboration-parent-board`. The new progress checks share the existing parent-board CI checkpoint and desktop runtime.
 
 ## Lane sorting
 
@@ -269,6 +314,8 @@ Automation rules can run on a schedule or be triggered by project events such as
 
 When a collaboration group handles an issue, its manager agent always reads the issue and eligible members before creating a workflow plan. The manager writes a specific execution prompt for each child task; members receive that assignment prompt rather than the static role description in group settings. After members report their outcomes, the manager decides whether to continue work, request review, or complete the issue. This flow does not depend on preset stages or a collaboration-mode option.
 
+Issue activity describes assignments as “Project manager assigned ‘Task title’ to Member” without repeating a manager role label. When a linked execution is available, select **View execution** to open its details.
+
 Each rule selects one assignment strategy:
 
 - **Manual selection** fixes one project robot. When the rule fires, the original board task is assigned directly to that robot through the same execution flow used by an ordinary human assignment.
@@ -301,10 +348,13 @@ A project can reference a different folder on each local, cloud, or remote devic
 
 On macOS, open a folder from a terminal with `wework .` or `wework /path/to/project`.
 
-
 ## Editing deliveries
 
 Set a title and Markdown notes when delivering, and select the messages, files, or folders to include. The title initially uses the current task title.
+
+After confirming a delivery from a task, a successful save closes the delivery dialog and opens the linked Issue's detail drawer so you can review its delivery records. If saving fails, the dialog stays open with an error so you can retry.
+
+The delivery is saved in the project space that owns the linked Issue.
 
 Open a delivery from its Issue and select **Edit** to change its title, notes, files, and selected messages. **Select more source messages** reads the source conversation under current access permissions. If the source is offline, deleted, or inaccessible, existing messages can still be kept or removed. Assets referenced by deliverable requirements cannot be removed directly.
 
@@ -313,3 +363,9 @@ Open a delivery from its Issue and select **Edit** to change its title, notes, f
 Local projects support offline editing. Cloud projects require access to the Issue and a Developer or higher project role. The Files tab shows the saved attachments.
 
 Desktop regression: `pnpm --filter wework e2e:desktop --segment collaboration-delivery-editing`. This independent Core CI checkpoint creates its own project and delivery and checks editing, cancellation, version conflicts, and persistence after reloading.
+
+## Copy an Issue web link
+
+Open an Issue in a cloud project space and click **Copy web link** in its detail header to copy its address on the connected Wegent website. The button confirms success with **Copied**; if copying fails, click again to retry. Recipients still need to sign in and have access to the project.
+
+Local project space Issues have no corresponding Wegent webpage, so this action is hidden. It is also hidden until the cloud website address is available.

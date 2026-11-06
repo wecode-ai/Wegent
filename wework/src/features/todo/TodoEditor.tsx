@@ -1,4 +1,7 @@
-import { IssueAssignmentReceipts } from './IssueAssignmentReceipts'
+import {
+  IssueAssignmentReceipts,
+  type IssueAssignmentReceiptState,
+} from './IssueAssignmentReceipts'
 import { useCallback, useMemo, useState, type ReactNode } from 'react'
 import { LockKeyhole, Send } from 'lucide-react'
 import {
@@ -21,6 +24,7 @@ import type { AITableApi } from '@/api/aitable'
 import type { CloudLoopItem, CloudProject, LoopItemTaskBinding } from '@/api/deliveries'
 import type { ProjectWithTasks } from '@/types/api'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import type { RuntimeTaskAddress } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import { saveBlobToDownloads } from '@/lib/blobDownload'
 import { AssignmentChainPopover } from './AssignmentChainPopover'
@@ -34,6 +38,7 @@ import type { StartHumanTaskFromReplyInput } from './TaskActivityView'
 import { createWeworkDeliverySharedWorkspaceApi } from '@/features/collaboration/weworkSharedWorkspaceApi'
 import { canEditProjectSpaceIssue } from './projectSpaceSelection'
 import { CloudFilePreviewDialog } from './CloudFilePreviewDialog'
+import { IssueWebLinkButton } from './IssueWebLinkButton'
 
 type DeliveryApi = NonNullable<WorkbenchServices['deliveryApi']>
 
@@ -107,7 +112,9 @@ export type TodoEditorProps = TodoEditorApiProps & {
   deleteLabel?: string
   onCreateTask?: () => void
   onOpenTaskConversation?: (task: LoopItemTaskBinding) => void
+  onOpenRuntimeTask?: (address: RuntimeTaskAddress) => void
   onOpenChildTask?: (task: CloudLoopItem) => void
+  onOpenRelatedIssue?: (issue: CloudLoopItem) => void
   /** Starts the work item a manager assigned this member, from a reply. */
   onStartHumanTaskFromReply?: (input: StartHumanTaskFromReplyInput) => void | Promise<void>
 } & (TodoEditorCreateProps | TodoEditorEditProps)
@@ -161,6 +168,9 @@ export function TodoEditor(props: TodoEditorProps) {
       },
     }
   }, [props.api, props.projectChatAgentApi, props.sharedApi])
+  const [assignmentReceipts, setAssignmentReceipts] = useState<IssueAssignmentReceiptState | null>(
+    null
+  )
   const receiptApi = useMemo(
     () =>
       workspaceApi.assignmentReceipts
@@ -217,6 +227,7 @@ export function TodoEditor(props: TodoEditorProps) {
     renderActivity: context =>
       props.projectChatClient ? (
         <TaskActivityView
+          assignmentReceipts={assignmentReceipts}
           commentAssignment={context.commentAssignment}
           key={context.item.id}
           client={props.projectChatClient}
@@ -236,6 +247,7 @@ export function TodoEditor(props: TodoEditorProps) {
           projectMembers={context.members as import('@/api/deliveries').CloudProjectMember[]}
           issueTimeline={props.presentation === 'workspace-panel'}
           onOpenTask={props.onOpenTaskConversation}
+          onOpenRuntimeTask={props.onOpenRuntimeTask}
           onStartHumanTaskFromReply={props.onStartHumanTaskFromReply}
           onRefreshExecutionArtifacts={context.onExecutionArtifactsChange}
           members={context.members}
@@ -262,6 +274,7 @@ export function TodoEditor(props: TodoEditorProps) {
           version={item.version}
           currentUserId={props.currentUserId}
           assigneeUserId={item.assignee_user_id}
+          onStateChange={setAssignmentReceipts}
         />
       ) : null,
     renderAssignmentHistory: context => (
@@ -337,7 +350,14 @@ export function TodoEditor(props: TodoEditorProps) {
     ) as SharedIssueDetailTaskBinding[] | undefined,
     taskExecutionStates: props.taskExecutionStates,
     deviceNamesById: props.deviceNamesById,
-    headerActions: props.headerActions,
+    headerActions: (
+      <>
+        {props.mode === 'edit' ? (
+          <IssueWebLinkButton key={props.item.id} project={props.project} issueId={props.item.id} />
+        ) : null}
+        {props.headerActions}
+      </>
+    ),
     canStartWork: false,
     selectedTaskId: props.selectedTaskId,
     currentAssignment: props.currentAssignment,
@@ -387,6 +407,11 @@ export function TodoEditor(props: TodoEditorProps) {
         onAddChild={props.onAddChild}
         onOpenChildTask={
           props.onOpenChildTask ? item => props.onOpenChildTask?.(item as CloudLoopItem) : undefined
+        }
+        onOpenRelatedIssue={
+          props.onOpenRelatedIssue
+            ? item => props.onOpenRelatedIssue?.(item as CloudLoopItem)
+            : undefined
         }
       />
     )

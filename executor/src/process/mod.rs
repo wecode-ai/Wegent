@@ -49,6 +49,7 @@ pub(crate) use windows_batch::shell_command as windows_shell_command;
 mod claude_resume;
 pub(crate) mod debug_stdout;
 mod stream_diagnostics;
+mod stream_session;
 use claude_resume::follow_up_spec as claude_follow_up_resume_spec;
 use debug_stdout::line as debug_claude_stdout_line;
 #[cfg(test)]
@@ -113,6 +114,7 @@ where
         builder: Box<ResponsesEventBuilder>,
         task_id: String,
         subtask_id: String,
+        session: stream_session::SessionRecorder,
     },
 }
 
@@ -128,6 +130,7 @@ where
                 builder,
                 task_id,
                 subtask_id,
+                session,
             } => {
                 run_streaming_command_output(
                     spec,
@@ -136,6 +139,7 @@ where
                     builder.as_ref().clone(),
                     task_id.clone(),
                     subtask_id.clone(),
+                    session.for_reader(),
                 )
                 .await
             }
@@ -336,6 +340,7 @@ impl AgentEngine for StreamProcessEngine {
                 builder: Box::new(builder.clone()),
                 task_id: request.task_id.clone(),
                 subtask_id: request.subtask_id.clone(),
+                session: stream_session::SessionRecorder::new(&request),
             };
             let (spec, outcome) =
                 claude_resume::run(&request, spec, timeout_seconds, &runner).await;
@@ -350,6 +355,7 @@ impl AgentEngine for StreamProcessEngine {
                         builder: Box::new(builder),
                         task_id: request.task_id.clone(),
                         subtask_id: request.subtask_id.clone(),
+                        session: stream_session::SessionRecorder::new(&request),
                     };
                     let summary = handle_retryable_api_errors(
                         spec.clone(),
@@ -386,6 +392,7 @@ impl AgentEngine for StreamProcessEngine {
                             builder: Box::new(builder.clone()),
                             task_id: request.task_id.clone(),
                             subtask_id: request.subtask_id.clone(),
+                            session: stream_session::SessionRecorder::new(&request),
                         };
                         match runner.run(retry_spec, timeout_seconds).await {
                             CommandOutcome::Success { stdout } => {
@@ -825,6 +832,7 @@ async fn run_streaming_command_output<S>(
     builder: ResponsesEventBuilder,
     task_id: String,
     subtask_id: String,
+    session: stream_session::SessionRecorder,
 ) -> CommandOutcome
 where
     S: EventSink,
@@ -873,9 +881,9 @@ where
             spec.stdin.clone(),
             sink,
             builder,
-            task_id.clone(),
-            subtask_id.clone(),
+            (task_id.clone(), subtask_id.clone()),
             debug_stdout_path,
+            session,
         ),
     )
     .await
@@ -943,13 +951,14 @@ async fn run_prepared_streaming_command<S>(
     stdin: Option<String>,
     sink: S,
     builder: ResponsesEventBuilder,
-    task_id: String,
-    subtask_id: String,
+    task_ids: (String, String),
     debug_stdout_path: Option<PathBuf>,
+    session: stream_session::SessionRecorder,
 ) -> CommandOutcome
 where
     S: EventSink,
 {
+    let (task_id, subtask_id) = task_ids;
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error) => {
@@ -979,8 +988,12 @@ where
             stdout_task_id,
             stdout_subtask_id,
             debug_stdout_path,
+            Some(session.clone()),
         ))
     });
+    let _stdout_guard = stdout_task
+        .as_ref()
+        .map(|handle| stream_session::ReaderGuard::new(handle.abort_handle(), session));
     let stderr_task = stderr.map(|stderr| tokio::spawn(read_process_output(stderr)));
 
     let status = child.wait().await;
@@ -1050,6 +1063,7 @@ async fn read_streaming_stdout<R, S>(
     task_id: String,
     subtask_id: String,
     debug_stdout_path: Option<PathBuf>,
+    session: Option<stream_session::SessionRecorder>,
 ) -> StreamingStdoutOutcome
 where
     R: AsyncRead + Unpin,
@@ -1097,6 +1111,9 @@ where
         }) else {
             continue;
         };
+        if let Some(session) = &session {
+            session.observe(&value);
+        }
         diagnostics.observe(&value, &task_id, &subtask_id);
         async_tasks.observe(&value);
         let value = match partial_messages.normalize(value) {

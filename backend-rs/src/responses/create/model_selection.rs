@@ -22,10 +22,11 @@ use brz_mysql::Mysql;
 use serde_json::Value;
 
 use crate::http_compat::FastApiError;
+use crate::request_sql::RequestSql;
 use crate::task_skills::kinds::KindCacheStore;
 
 use super::handler::dependency;
-use super::resolution::{KindRow, kinds_row, model_by_name_namespace};
+use super::resolution::{KindRow, kinds_row, model_by_name_namespace, model_by_name_namespace_on};
 
 /// `resolve_model_category`: the normalized category of a Model `spec`.
 ///
@@ -70,9 +71,68 @@ where
     M: Mysql,
     R: brz_redis::Redis,
 {
+    resolve_model_selection_with(
+        cache,
+        None,
+        user_id,
+        namespace,
+        team_name,
+        team_owner_user_id,
+        team_json,
+        model_id,
+    )
+    .await
+}
+
+/// [`resolve_model_selection`] with the Model read on the caller's request SQL
+/// handle (the source resolves it on the request session).
+#[allow(clippy::too_many_arguments)]
+pub async fn resolve_model_selection_on<M, R>(
+    cache: &KindCacheStore<'_, M, R>,
+    sql: &mut dyn RequestSql,
+    user_id: i64,
+    namespace: &str,
+    team_name: &str,
+    team_owner_user_id: i64,
+    team_json: &Value,
+    model_id: Option<&str>,
+) -> Result<Option<String>, FastApiError>
+where
+    M: Mysql,
+    R: brz_redis::Redis,
+{
+    resolve_model_selection_with(
+        cache,
+        Some(sql),
+        user_id,
+        namespace,
+        team_name,
+        team_owner_user_id,
+        team_json,
+        model_id,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn resolve_model_selection_with<M, R>(
+    cache: &KindCacheStore<'_, M, R>,
+    sql: Option<&mut dyn RequestSql>,
+    user_id: i64,
+    namespace: &str,
+    team_name: &str,
+    team_owner_user_id: i64,
+    team_json: &Value,
+    model_id: Option<&str>,
+) -> Result<Option<String>, FastApiError>
+where
+    M: Mysql,
+    R: brz_redis::Redis,
+{
     let Some(model_id) = model_id else {
         return validate_member_models(
             cache,
+            sql,
             user_id,
             namespace,
             team_name,
@@ -81,8 +141,11 @@ where
         )
         .await;
     };
-    let Some(model) = resolve_requested_model(cache.mysql, user_id, namespace, model_id).await?
-    else {
+    let model = match sql {
+        Some(handle) => resolve_requested_model_on(handle, user_id, namespace, model_id).await?,
+        None => resolve_requested_model(cache.mysql, user_id, namespace, model_id).await?,
+    };
+    let Some(model) = model else {
         return Err(FastApiError::detail(
             StatusCode::BAD_REQUEST,
             format!("Model '{namespace}/{model_id}' not found"),
@@ -110,10 +173,29 @@ pub async fn resolve_requested_model<M: Mysql>(
     Ok(model)
 }
 
+/// [`resolve_requested_model`] on the caller's request SQL handle.
+pub async fn resolve_requested_model_on(
+    sql: &mut dyn RequestSql,
+    user_id: i64,
+    namespace: &str,
+    name: &str,
+) -> Result<Option<KindRow>, FastApiError> {
+    let mut model = model_by_name_namespace_on(sql, user_id, name, namespace)
+        .await
+        .map_err(dependency)?;
+    if model.is_none() && namespace != "default" {
+        model = model_by_name_namespace_on(sql, user_id, name, "default")
+            .await
+            .map_err(dependency)?;
+    }
+    Ok(model)
+}
+
 /// The `model_id`-absent branch: validate every member's Bot `modelRef`, and
 /// take member 0's referenced Model as the resolved category.
 async fn validate_member_models<M, R>(
     cache: &KindCacheStore<'_, M, R>,
+    mut sql: Option<&mut dyn RequestSql>,
     user_id: i64,
     namespace: &str,
     team_name: &str,
@@ -163,13 +245,34 @@ where
         }
 
         // `kindReader.get_by_name_and_namespace`: the same cached read
-        // `get_bot_ids_from_team` performs for this member.
-        let Some(bot) = cache
-            .get_by_name_and_namespace_row(team_owner_user_id, "Bot", bot_namespace, bot_name)
-            .await
-            .map_err(dependency)?
-            .map(kinds_row)
-        else {
+        // `get_bot_ids_from_team` performs for this member. A cache miss runs
+        // on the caller's request handle when one was supplied.
+        let bot = match sql.as_deref_mut() {
+            Some(handle) => {
+                cache
+                    .get_by_name_and_namespace_row_on(
+                        handle,
+                        team_owner_user_id,
+                        "Bot",
+                        bot_namespace,
+                        bot_name,
+                    )
+                    .await
+            }
+            None => {
+                cache
+                    .get_by_name_and_namespace_row(
+                        team_owner_user_id,
+                        "Bot",
+                        bot_namespace,
+                        bot_name,
+                    )
+                    .await
+            }
+        }
+        .map_err(dependency)?
+        .map(kinds_row);
+        let Some(bot) = bot else {
             return Err(FastApiError::detail(
                 StatusCode::BAD_REQUEST,
                 format!("Bot '{bot_namespace}/{bot_name}' not found"),
@@ -209,9 +312,21 @@ where
         }
 
         if index == 0 {
-            let default_model =
-                resolve_requested_model(cache.mysql, user_id, reference_namespace, reference_name)
-                    .await?;
+            let default_model = match sql.as_deref_mut() {
+                Some(handle) => {
+                    resolve_requested_model_on(handle, user_id, reference_namespace, reference_name)
+                        .await?
+                }
+                None => {
+                    resolve_requested_model(
+                        cache.mysql,
+                        user_id,
+                        reference_namespace,
+                        reference_name,
+                    )
+                    .await?
+                }
+            };
             if let Some(model) = default_model {
                 model_type = Some(category_of(&model));
             }

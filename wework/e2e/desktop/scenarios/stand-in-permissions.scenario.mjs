@@ -2,7 +2,11 @@ import { openProjectStandIn } from '../modules/stand-in-flows.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { expandCollaborationWorkspace, reloadMainWindow } from '../modules/workspace-flows.mjs'
+import {
+  expandCollaborationWorkspace,
+  reloadMainWindow,
+  selectCollaborationProjectView,
+} from '../modules/workspace-flows.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 
@@ -64,11 +68,10 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       `${CONTENT} [data-testid="collaboration-workspace-toggle-${workspace.id}"]`
     )
     await control.command(
-      'click',
+      'clickWhenEnabled',
       `${CONTENT} [data-testid="collaboration-workspace-project-${project.id}"]`
     )
-    await control.command('waitFor', `${CONTENT} [data-testid="collaboration-tab-board"]`)
-    await control.command('click', `${CONTENT} [data-testid="collaboration-tab-board"]`)
+    await selectCollaborationProjectView(control, CONTENT, 'board')
     await control.command('waitFor', `${CONTENT} [data-testid="stand-in-open"]`)
   }
 

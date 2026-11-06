@@ -204,7 +204,9 @@ export interface WorkbenchServices {
   projectSpaceDetailServices?: ProjectSpaceDetailServiceMap
   imSessionApi?: ReturnType<typeof createImSessionApi>
   runtimeWorkApi?: ReturnType<typeof createRuntimeWorkApi> &
-    Partial<RuntimeBackgroundTerminalsApi & RuntimeMcpAppsApi>
+    Partial<RuntimeBackgroundTerminalsApi & RuntimeMcpAppsApi> & {
+      getRuntimeTask?: ExecutorClient['runtime']['getRuntimeTask']
+    }
   /** Backend-free execution ports for locally owned projects in a connected workbench. */
   localExecutionServices?: Pick<WorkbenchServices, 'runtimeWorkApi' | 'deviceApi'>
   composerCatalogApi?: Pick<ReturnType<typeof createRuntimeComposerApi>, 'readCatalog'>
@@ -233,7 +235,8 @@ export interface WorkbenchServices {
     resolveLaunch: (
       harnessId: LocalHarnessId,
       option: LocalHarnessModelOption | null,
-      scope?: string
+      scope?: string,
+      includeContext?: boolean
     ) => Promise<LocalHarnessModelLaunchConfig | null>
     unregisterProxy: (token: string) => Promise<void>
     unregisterContext: (token: string) => Promise<void>

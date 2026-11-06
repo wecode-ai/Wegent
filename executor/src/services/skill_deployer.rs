@@ -46,40 +46,66 @@ pub fn resolve_skill_download_map(
     skill_refs: &BTreeMap<String, Value>,
     preload_skill_refs: &BTreeMap<String, Value>,
 ) -> BTreeMap<String, SkillRef> {
-    let config_map = skill_config_map(skill_configs);
-    let mut resolved = BTreeMap::new();
+    let configs = skill_config_map(skill_configs);
+    skills
+        .iter()
+        .chain(preload_skills)
+        .filter_map(|name| {
+            let reference = select_skill_reference(
+                preload_skill_refs.get(name),
+                skill_refs.get(name),
+                configs.get(name.as_str()).copied(),
+            )?;
+            skill_ref_from_value(reference).map(|reference| (name.clone(), reference))
+        })
+        .collect()
+}
 
-    for name in skills {
-        if let Some(skill_ref) = preload_skill_refs
-            .get(name)
-            .and_then(skill_ref_from_value)
-            .or_else(|| skill_refs.get(name).and_then(skill_ref_from_value))
-            .or_else(|| config_map.get(name).cloned())
-        {
-            resolved.insert(name.clone(), skill_ref);
-        }
-    }
+fn resolve_request_skill_references<'a>(
+    bot: &'a Value,
+    request: &'a ExecutionRequest,
+    skills: &[String],
+) -> BTreeMap<String, &'a Value> {
+    let configs = skill_config_map(
+        request
+            .extra
+            .get("skill_configs")
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or_default(),
+    );
+    let lookup = |key: &str, name: &str| {
+        request
+            .extra
+            .get(key)
+            .and_then(|refs| refs.get(name))
+            .or_else(|| bot.get(key).and_then(|refs| refs.get(name)))
+    };
+    skills
+        .iter()
+        .filter_map(|name| {
+            let reference = select_skill_reference(
+                lookup("preload_skill_refs", name),
+                lookup("skill_refs", name),
+                configs.get(name.as_str()).copied(),
+            )?;
+            Some((name.clone(), reference))
+        })
+        .collect()
+}
 
-    for name in preload_skills {
-        if let Some(skill_ref) = preload_skill_refs
-            .get(name)
-            .and_then(skill_ref_from_value)
-            .or_else(|| {
-                (!resolved.contains_key(name))
-                    .then(|| skill_refs.get(name).and_then(skill_ref_from_value))
-                    .flatten()
-            })
-            .or_else(|| {
-                (!resolved.contains_key(name))
-                    .then(|| config_map.get(name).cloned())
-                    .flatten()
-            })
-        {
-            resolved.insert(name.clone(), skill_ref);
-        }
-    }
-
-    resolved
+fn select_skill_reference<'a>(
+    preload: Option<&'a Value>,
+    regular: Option<&'a Value>,
+    config: Option<&'a Value>,
+) -> Option<&'a Value> {
+    [preload, regular, config]
+        .into_iter()
+        .flatten()
+        .find(|value| value_i64(value.get("skill_id")).is_some())
+        // Older requests can carry shell metadata without an exact download ID.
+        .or(preload)
+        .or(regular)
 }
 
 pub fn collect_skill_names_for_deployment(
@@ -175,19 +201,10 @@ pub fn build_skill_deployment_plan(
         .clone()
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| "default".to_owned());
-    let preload_skills = string_array(request.extra.get("preload_skills"));
-    let skill_configs = value_array(request.extra.get("skill_configs"));
-    let mut skill_refs = value_object_map(bot_config.get("skill_refs"));
-    skill_refs.extend(value_object_map(request.extra.get("skill_refs")));
-    let mut preload_skill_refs = value_object_map(bot_config.get("preload_skill_refs"));
-    preload_skill_refs.extend(value_object_map(request.extra.get("preload_skill_refs")));
-    let resolved_skill_map = resolve_skill_download_map(
-        &skills,
-        &preload_skills,
-        &skill_configs,
-        &skill_refs,
-        &preload_skill_refs,
-    );
+    let resolved_skill_map = resolve_request_skill_references(bot_config, request, &skills)
+        .into_iter()
+        .filter_map(|(name, value)| skill_ref_from_value(value).map(|reference| (name, reference)))
+        .collect();
 
     Some(SkillDeploymentPlan {
         skills,
@@ -251,16 +268,15 @@ fn configured_skill_namespaces(value: Option<&Value>) -> BTreeMap<String, String
         .collect()
 }
 
-fn skill_config_map(skill_configs: &[Value]) -> BTreeMap<String, SkillRef> {
+fn skill_config_map(skill_configs: &[Value]) -> BTreeMap<&str, &Value> {
     let mut map = BTreeMap::new();
     for config in skill_configs {
         let Some(name) = config.get("name").and_then(Value::as_str) else {
             continue;
         };
-        let Some(skill_ref) = skill_ref_from_value(config) else {
-            continue;
-        };
-        map.insert(name.to_owned(), skill_ref);
+        if value_i64(config.get("skill_id")).is_some() {
+            map.insert(name, config);
+        }
     }
     map
 }
@@ -317,20 +333,6 @@ fn string_array(value: Option<&Value>) -> Vec<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
-        .collect()
-}
-
-fn value_array(value: Option<&Value>) -> Vec<Value> {
-    value.and_then(Value::as_array).cloned().unwrap_or_default()
-}
-
-fn value_object_map(value: Option<&Value>) -> BTreeMap<String, Value> {
-    let Some(object) = value.and_then(Value::as_object) else {
-        return BTreeMap::new();
-    };
-    object
-        .iter()
-        .map(|(key, value)| (key.clone(), value.clone()))
         .collect()
 }
 

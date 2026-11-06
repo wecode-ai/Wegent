@@ -582,24 +582,28 @@ def iter_user_groups_with_roles(
         if not resolver:
             continue
 
-        matched_resource_ids = resolver.get_resource_ids_by_entity(
-            db, user_id, entity_type, resource_type=NAMESPACE_RESOURCE_TYPE
-        )
-        if not matched_resource_ids:
-            continue
-
-        # Batch query: matched_resource_ids already filtered by resolver,
-        # so no per-row entity_id check is needed here.
+        # Resource visibility cannot identify which binding granted a role.
         entity_members = (
             db.query(ResourceMember)
             .filter(
                 ResourceMember.resource_type == NAMESPACE_RESOURCE_TYPE,
-                ResourceMember.resource_id.in_(matched_resource_ids),
                 ResourceMember.entity_type == entity_type,
                 ResourceMember.status == MemberStatus.APPROVED.value,
             )
             .all()
         )
+        if not entity_members:
+            continue
+        matched_entity_ids = set(
+            resolver.match_entity_bindings(
+                db, user_id, entity_type, list({m.entity_id for m in entity_members})
+            )
+        )
+        entity_members = [
+            member
+            for member in entity_members
+            if member.entity_id in matched_entity_ids
+        ]
 
         entity_namespace_ids = [m.resource_id for m in entity_members]
         entity_namespaces = (

@@ -6,6 +6,7 @@
 
 use brz_http_server::{Response, ResponseStream, StatusCode};
 use brz_metrics::{PrometheusReader, prometheus::CONTENT_TYPE};
+use tokio::io::AsyncReadExt;
 use tokio_util::io::ReaderStream;
 
 #[brz_http_server::get("/metrics", api_log = false, access = public)]
@@ -15,7 +16,8 @@ async fn metrics() -> Response {
 
 /// Creates a streaming response without consuming counters or buffering the body.
 pub fn response() -> Response {
-    let body = ReaderStream::new(PrometheusReader::new());
+    let robot = std::io::Cursor::new(crate::background_jobs::robot::prometheus().into_bytes());
+    let body = ReaderStream::new(PrometheusReader::new().chain(robot));
     Response::stream(StatusCode::OK, ResponseStream::new(body)).content_type(CONTENT_TYPE)
 }
 

@@ -337,7 +337,10 @@ export function createCloudHistorySearchVerification() {
           'The bound cloud task did not open',
           WORKBENCH_READY_TIMEOUT_MS
         )
-        await control.command('waitFor', OLDER)
+        await control.command(
+          'waitFor',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="runtime-transcript-history-start"]`
+        )
         await control.command('waitFor', ANSWERS, { text: answer(TURN_COUNT - 1) })
         const original = await waitForPane(
           control,
@@ -372,8 +375,8 @@ export function createCloudHistorySearchVerification() {
           assert.equal(Number(await control.command('getElementCount', FIND_RETRY)), 0)
           await waitForHighlightedHistoryMatch(control, prompt(index))
         }
-        // Focus an existing pane button; Issue-owned executions have no composer.
-        await control.command('nativePress', OLDER, {
+        // The scrollbar accepts focus without scrolling the transcript; this pane has no composer.
+        await control.command('nativePress', `${ACTIVE_WORKBENCH_SELECTOR} [role="scrollbar"]`, {
           key: `${process.platform === 'darwin' ? 'Meta' : 'Control'}+F`,
         })
         const searchFault = arm('search', entry => entry.path === SEARCH_PATH)

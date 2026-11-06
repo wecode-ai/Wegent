@@ -33,6 +33,10 @@ from app.services.subscription.helpers import (
     resolve_prompt_template,
     validate_subscription_for_read,
 )
+from app.services.subscription.notification_directives import (
+    append_group_notification_instruction,
+    strip_notification_directives,
+)
 from app.services.subscription.state_machine import (
     OptimisticLockError,
     is_terminal_state,
@@ -121,6 +125,9 @@ class BackgroundExecutionManager:
                 f"Prompt template resolved to empty string for subscription {subscription.id} ({subscription.name}). "
                 f"Template: '{subscription_crd.spec.promptTemplate}'"
             )
+        resolved_prompt = append_group_notification_instruction(
+            resolved_prompt, subscription.json
+        )
 
         execution = BackgroundExecution(
             user_id=user_id,
@@ -850,6 +857,10 @@ class BackgroundExecutionManager:
         # Use UTC for all timestamps
         now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
 
+        raw_result_summary = result_summary
+        if result_summary:
+            result_summary = strip_notification_directives(result_summary)
+
         # Build atomic update values
         update_values = {
             "status": status.value,
@@ -934,9 +945,10 @@ class BackgroundExecutionManager:
         else:
             logger.debug(", ".join(log_parts))
 
-        # Emit WebSocket event to notify frontend of the status update
+        # Emit WebSocket event to notify frontend of the status update.
+        # Log only the summary length: a completion reply can be very large.
         logger.debug(
-            f"[Subscription] Emitting WS event for execution {execution_id}, user_id={execution.user_id}, summary={result_summary}"
+            f"[Subscription] Emitting WS event for execution {execution_id}, user_id={execution.user_id}, summary_chars={len(result_summary or '')}"
         )
         emit_background_execution_update(
             db=db,
@@ -952,12 +964,12 @@ class BackgroundExecutionManager:
         # Skip if caller will handle notifications separately (e.g., Chat Shell tasks)
         if status == BackgroundExecutionStatus.COMPLETED and not skip_notifications:
             logger.info(
-                f"[Subscription] Dispatching completion notifications for execution {execution_id}, result_summary={result_summary}"
+                f"[Subscription] Dispatching completion notifications for execution {execution_id}, summary_chars={len(result_summary or '')}"
             )
             self._dispatch_completion_notifications(
                 db=db,
                 execution=execution,
-                result_summary=result_summary or "",
+                result_summary=raw_result_summary or "",
                 status=status.value,
             )
 

@@ -33,7 +33,9 @@ import {
   updatePublicSkillFromGit,
   addSkillToMyDefault,
   removeSkillFromMyDefault,
+  getSkill,
 } from '@/apis/skills'
+import { resourceLibraryApi } from '@/apis/resourceLibrary'
 import SkillUploadModal from './SkillUploadModal'
 import { SkillReferenceConflictDialog } from './SkillReferenceConflictDialog'
 import UnifiedAddButton from '@/components/common/UnifiedAddButton'
@@ -50,7 +52,10 @@ import {
 } from '@/components/ui/dialog'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useUser } from '@/features/common/UserContext'
+import { useWritableGroups } from '@/hooks/useWritableGroups'
 import { MarketplaceTagsDialog } from '@/features/resource-library/components/MarketplaceTagsDialog'
+import type { ResourceCreateTarget } from '@/features/resource-library/components/ResourceCreateButton'
 
 interface SkillManagementModalProps {
   open: boolean
@@ -58,6 +63,56 @@ interface SkillManagementModalProps {
   onSkillsChange?: () => void
   scope?: 'personal' | 'group' | 'all' | 'public'
   groupName?: string | null
+}
+
+type ManageableSkillScope = Exclude<NonNullable<SkillManagementModalProps['scope']>, 'public'>
+
+interface ManageableSkillsResult {
+  skills: UnifiedSkill[]
+  groupSkillIds: Set<number>
+}
+
+function mergeSkills(...skillGroups: UnifiedSkill[][]): UnifiedSkill[] {
+  const skillsById = new Map<number, UnifiedSkill>()
+  for (const skill of skillGroups.flat()) {
+    const existing = skillsById.get(skill.id)
+    // The same skill can be public in one response and non-public in the other.
+    // Keep the non-public copy so the management list does not filter it out.
+    if (!existing || (existing.is_public && !skill.is_public)) {
+      skillsById.set(skill.id, skill)
+    }
+  }
+  return Array.from(skillsById.values())
+}
+
+async function fetchSkillsForManagement(
+  scope: ManageableSkillScope,
+  groupName?: string | null
+): Promise<ManageableSkillsResult> {
+  if (scope !== 'group') {
+    return {
+      skills: await fetchUnifiedSkillsList({
+        scope,
+        groupName: groupName || undefined,
+      }),
+      groupSkillIds: new Set(),
+    }
+  }
+
+  // Agent editing exposes personal and team skills in the same selector, so
+  // management must use the same combined scope. Otherwise personal skills
+  // disappear from this modal and newly uploaded skills look lost.
+  const [personalSkills, groupSkills] = await Promise.all([
+    fetchUnifiedSkillsList({ scope: 'personal' }),
+    fetchUnifiedSkillsList({
+      scope: 'group',
+      groupName: groupName || undefined,
+    }),
+  ])
+  return {
+    skills: mergeSkills(personalSkills, groupSkills),
+    groupSkillIds: new Set(groupSkills.map(skill => skill.id)),
+  }
 }
 
 export default function SkillManagementModal({
@@ -69,10 +124,17 @@ export default function SkillManagementModal({
 }: SkillManagementModalProps) {
   const { t } = useTranslation()
   const { toast } = useToast()
+  const { user } = useUser()
   const [skills, setSkills] = useState<UnifiedSkill[]>([])
+  const [groupSkillIds, setGroupSkillIds] = useState<Set<number>>(new Set())
   const [isLoading, setIsLoading] = useState(true)
   const [uploadModalOpen, setUploadModalOpen] = useState(false)
   const [editingSkill, setEditingSkill] = useState<UnifiedSkill | null>(null)
+  const [createTarget, setCreateTarget] = useState<ResourceCreateTarget>({ scope: 'personal' })
+  const [createOptions, setCreateOptions] = useState<{
+    publishAfterCreate: boolean
+    marketplaceTags: string[]
+  }>({ publishAfterCreate: false, marketplaceTags: [] })
   const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false)
   const [skillToDelete, setSkillToDelete] = useState<UnifiedSkill | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -85,21 +147,52 @@ export default function SkillManagementModal({
   )
   const [referencedGhosts, setReferencedGhosts] = useState<ReferencedGhost[]>([])
 
-  const uploadNamespace = scope === 'group' && groupName ? groupName : undefined
+  const targetGroupName =
+    createTarget.scope === 'group'
+      ? createTarget.groupName || createTarget.groupNames?.[0]
+      : undefined
+  const uploadNamespace = editingSkill?.namespace || targetGroupName
+  const {
+    groups: writableGroups,
+    error: writableGroupsError,
+    loading: writableGroupsLoading,
+    reload: reloadWritableGroups,
+  } = useWritableGroups(open && scope !== 'public' && uploadModalOpen)
+
+  const getSkillSourceLabel = (skill: UnifiedSkill): string => {
+    if (groupSkillIds.has(skill.id) || skill.namespace !== 'default') {
+      return skill.namespace && skill.namespace !== 'default'
+        ? `${t('settings:skills.source.group')} · ${skill.namespace}`
+        : t('settings:skills.source.group')
+    }
+    if (user && skill.user_id === user.id) {
+      return t('settings:skills.source.personal')
+    }
+    if (skill.user_id === 0) {
+      return t('settings:skills.source.system')
+    }
+    return t('settings:skills.source.group')
+  }
+
+  const isPersonalSkill = (skill: UnifiedSkill): boolean =>
+    !groupSkillIds.has(skill.id) &&
+    skill.namespace === 'default' &&
+    Boolean(user && skill.user_id === user.id)
 
   const loadSkills = useCallback(async () => {
     setIsLoading(true)
     try {
       // For public scope, use fetchPublicSkillsList; otherwise use fetchUnifiedSkillsList
-      const skillsData =
+      const result =
         scope === 'public'
-          ? await fetchPublicSkillsList()
-          : await fetchUnifiedSkillsList({
-              scope: scope,
-              groupName: groupName || undefined,
-            })
+          ? {
+              skills: await fetchPublicSkillsList(),
+              groupSkillIds: new Set<number>(),
+            }
+          : await fetchSkillsForManagement(scope, groupName)
       // Filter out public skills for management (only show user's own skills) unless scope is 'public'
-      setSkills(scope === 'public' ? skillsData : skillsData.filter(s => !s.is_public))
+      setSkills(scope === 'public' ? result.skills : result.skills.filter(s => !s.is_public))
+      setGroupSkillIds(result.groupSkillIds)
     } catch (error) {
       toast({
         variant: 'destructive',
@@ -119,8 +212,24 @@ export default function SkillManagementModal({
 
   const handleCreateSkill = () => {
     setEditingSkill(null)
+    // A team entry defaults to that team so the upload lands in the team
+    // namespace; choosing Personal explicitly still targets the default one.
+    setCreateTarget(
+      scope === 'group' && groupName
+        ? { scope: 'group', groupName, groupNames: [groupName] }
+        : { scope: 'personal' }
+    )
+    setCreateOptions({ publishAfterCreate: false, marketplaceTags: [] })
     setUploadModalOpen(true)
   }
+
+  const handleCreateOptionsChange = useCallback(
+    (target: ResourceCreateTarget, publish = false, marketplaceTags: string[] = []) => {
+      setCreateTarget(target)
+      setCreateOptions({ publishAfterCreate: publish, marketplaceTags })
+    },
+    []
+  )
 
   const handleEditSkill = (skill: UnifiedSkill) => {
     setEditingSkill(skill)
@@ -233,10 +342,7 @@ export default function SkillManagementModal({
       if (scope === 'public') {
         await downloadPublicSkill(skill.id, skill.name)
       } else {
-        // For group scope, use the groupName as namespace
-        // For personal scope, use the skill's namespace (usually 'default')
-        const namespace = scope === 'group' && groupName ? groupName : skill.namespace
-        await downloadSkill(skill.id, skill.name, namespace)
+        await downloadSkill(skill.id, skill.name, skill.namespace)
       }
       toast({
         title: t('common:common.success'),
@@ -326,19 +432,50 @@ export default function SkillManagementModal({
     }
   }
 
-  const handleModalClose = (saved: boolean) => {
+  const handleModalClose = async (saved: boolean, skillId?: number) => {
+    const shouldPublish = !editingSkill && createOptions.publishAfterCreate && Boolean(skillId)
     setUploadModalOpen(false)
     setEditingSkill(null)
     if (saved) {
-      loadSkills()
+      await loadSkills()
       onSkillsChange?.()
+      if (shouldPublish && skillId) {
+        try {
+          const skill = await getSkill(skillId)
+          await resourceLibraryApi.createListing({
+            resource_type: 'skill',
+            source_id: skillId,
+            display_name: skill.spec.displayName || skill.metadata.name,
+            description: skill.spec.description || null,
+            icon: null,
+            tags: createOptions.marketplaceTags,
+            version: skill.spec.version || '1.0.0',
+            manifest_options: {},
+          })
+          toast({ title: t('resource-library:messages.publish_success') })
+        } catch (publishError) {
+          toast({
+            variant: 'destructive',
+            title: t('resource-library:messages.publish_failed'),
+            description:
+              publishError instanceof Error
+                ? publishError.message
+                : t('common:common.unknown_error'),
+          })
+        }
+      }
     }
+    setCreateTarget({ scope: 'personal' })
+    setCreateOptions({ publishAfterCreate: false, marketplaceTags: [] })
   }
 
   return (
     <>
       <Dialog open={open} onOpenChange={onClose}>
-        <DialogContent className="sm:max-w-[800px] max-h-[80vh] flex flex-col bg-surface">
+        <DialogContent
+          className="sm:max-w-[800px] max-h-[80vh] flex flex-col bg-surface"
+          data-testid="skill-management-dialog"
+        >
           <DialogHeader>
             <DialogTitle>{t('settings:skills.libraryTitle')}</DialogTitle>
             <DialogDescription>{t('settings:skills.libraryDescription')}</DialogDescription>
@@ -351,7 +488,10 @@ export default function SkillManagementModal({
               <div className="space-y-4">
                 {/* Add Button */}
                 <div className="flex justify-end">
-                  <UnifiedAddButton onClick={handleCreateSkill}>
+                  <UnifiedAddButton
+                    onClick={handleCreateSkill}
+                    data-testid="manage-skills-upload-button"
+                  >
                     {t('common:skills.upload_skill')}
                   </UnifiedAddButton>
                 </div>
@@ -376,6 +516,7 @@ export default function SkillManagementModal({
                       <Card
                         key={skill.id || skill.name}
                         className="p-4 hover:shadow-md transition-shadow"
+                        data-testid={`managed-skill-${skill.id}`}
                       >
                         <div className="flex items-start justify-between">
                           {/* Skill Info */}
@@ -433,16 +574,17 @@ export default function SkillManagementModal({
                                 )}
                               </div>
 
-                              {/* Namespace info for group skills */}
-                              {scope === 'group' &&
-                                skill.namespace &&
-                                skill.namespace !== 'default' && (
-                                  <div className="flex items-center gap-1.5 mt-2">
-                                    <span className="text-xs text-text-muted">
-                                      {t('common:skills.namespace')}: {skill.namespace}
-                                    </span>
-                                  </div>
-                                )}
+                              {/* Source info when personal and team skills are combined */}
+                              {scope === 'group' && (
+                                <div
+                                  className="flex items-center gap-1.5 mt-2"
+                                  data-testid={`managed-skill-source-${skill.id}`}
+                                >
+                                  <Tag variant={isPersonalSkill(skill) ? 'default' : 'info'}>
+                                    {getSkillSourceLabel(skill)}
+                                  </Tag>
+                                </div>
+                              )}
 
                               {/* Git source info */}
                               {skill.source?.type === 'git' && skill.source.repo_url && (
@@ -526,6 +668,7 @@ export default function SkillManagementModal({
                               className="h-8 w-8"
                               onClick={() => handleEditSkill(skill)}
                               title={t('common:skills.update_skill')}
+                              data-testid={`edit-skill-button-${skill.id}`}
                             >
                               <PencilIcon className="w-4 h-4" />
                             </Button>
@@ -563,8 +706,15 @@ export default function SkillManagementModal({
           open={uploadModalOpen}
           onClose={handleModalClose}
           skill={editingSkill}
-          namespace={uploadNamespace}
+          namespace={editingSkill?.namespace || uploadNamespace}
           isPublic={scope === 'public'}
+          createTarget={createTarget}
+          publishAfterCreate={createOptions.publishAfterCreate}
+          writableGroups={writableGroups}
+          writableGroupsError={writableGroupsError}
+          writableGroupsLoading={writableGroupsLoading}
+          onRetryWritableGroups={reloadWritableGroups}
+          onCreateOptionsChange={handleCreateOptionsChange}
         />
       )}
 
@@ -603,7 +753,12 @@ export default function SkillManagementModal({
             >
               {t('common:actions.cancel')}
             </Button>
-            <Button variant="destructive" onClick={handleConfirmDelete} disabled={isDeleting}>
+            <Button
+              variant="destructive"
+              onClick={handleConfirmDelete}
+              disabled={isDeleting}
+              data-testid="confirm-delete-skill-button"
+            >
               {isDeleting ? (
                 <div className="flex items-center">
                   <svg

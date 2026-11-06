@@ -8,6 +8,7 @@ export interface StandInProjectRef {
 export interface StandInHandlingPolicy {
   automatic: boolean
   askBeforeAct: boolean
+  immediate?: boolean
 }
 
 export interface StandInSourceConnection {
@@ -16,7 +17,21 @@ export interface StandInSourceConnection {
   profile: string
   name: string
   kind: string
+  scope?: 'all'
+  /** Plugin-owned collection configuration, separate from resource access identity. */
+  collectionKey?: string
+  configurationSummary?: string
+  /** Git event source selected by the connection UI. */
+  transport?: 'cli'
   policy: StandInHandlingPolicy
+  /** Host-owned intake boundary, prepared when the subscription is enabled. */
+  boundary?: { partition: string; sequence: number }
+  /** Git repository webhook binding; credentials are never stored here. */
+  subscriptionId?: string
+  generation?: string
+  resumePending?: boolean
+  /** Draft-only takeover intent, consumed by the host during save. */
+  pendingTakeover?: boolean
 }
 
 export interface StandInProjectPolicy extends StandInProjectRef {
@@ -29,6 +44,7 @@ export interface StandInIdentity extends Partial<
   enabled: boolean
   prompt: string
   preferences: string
+  calendar?: { policy: StandInHandlingPolicy }
   connections?: StandInSourceConnection[]
   collaboration?: StandInRole['collaboration']
 }
@@ -38,6 +54,7 @@ export interface StandInRole extends WorkspaceStandInSettings {
   name: string
   agentResourceId?: number | null
   agentProject?: StandInProjectRef
+  calendar?: { policy: StandInHandlingPolicy }
   connections?: StandInSourceConnection[]
   collaboration: {
     enabled: boolean
@@ -93,16 +110,19 @@ export function newStandInRole(deviceId: string, id: string = crypto.randomUUID(
       projects: [],
       excludedProjects: [],
       tags: [],
-      policy: { automatic: true, askBeforeAct: true },
+      policy: { automatic: true, askBeforeAct: true, immediate: true },
     },
   }
 }
 
 export function roleIncludesProject(role: StandInRole, project: StandInProjectRef): boolean {
+  return role.collaboration.enabled && roleSelectsProject(role, project)
+}
+
+export function roleSelectsProject(role: StandInRole, project: StandInProjectRef): boolean {
   const matches = (value: StandInProjectRef) =>
     value.id === project.id && value.store === project.store
   return (
-    role.collaboration.enabled &&
     !role.collaboration.excludedProjects.some(matches) &&
     (role.collaboration.allProjects || role.collaboration.projects.some(matches)) &&
     (!role.agentProject || matches(role.agentProject))

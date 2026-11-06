@@ -1,5 +1,5 @@
 export type AppUpdateErrorStage = 'check' | 'download' | 'install'
-export type AppUpdateErrorKind = 'network' | 'unsupported' | 'generic'
+export type AppUpdateErrorKind = 'network' | 'unsupported' | 'path-unavailable' | 'generic'
 
 export interface AppUpdateError {
   stage: AppUpdateErrorStage
@@ -38,6 +38,8 @@ export function createAppUpdateError(
 }
 
 function classifyAppUpdateError(message: string): AppUpdateErrorKind {
+  if (/no verified upgrade (?:path|policy)|no verified upgrade policy/i.test(message))
+    return 'path-unavailable'
   if (UNSUPPORTED_ERROR_PATTERN.test(message)) return 'unsupported'
   if (NETWORK_ERROR_PATTERN.test(message)) return 'network'
   return 'generic'
@@ -46,6 +48,7 @@ function classifyAppUpdateError(message: string): AppUpdateErrorKind {
 function appUpdateErrorCode(kind: AppUpdateErrorKind, stage: AppUpdateErrorStage): string {
   if (kind === 'network') return 'APP_UPDATE_NETWORK_UNAVAILABLE'
   if (kind === 'unsupported') return 'APP_UPDATE_UNAVAILABLE'
+  if (kind === 'path-unavailable') return 'APP_UPDATE_PATH_UNAVAILABLE'
   return `APP_UPDATE_${stage.toUpperCase()}_FAILED`
 }
 

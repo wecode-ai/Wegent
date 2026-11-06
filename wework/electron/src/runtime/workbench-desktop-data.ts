@@ -1,7 +1,8 @@
 import { mkdirSync } from 'node:fs'
-import { dirname, isAbsolute, join, relative, sep } from 'node:path'
+import { isAbsolute, join, relative, sep } from 'node:path'
 
 import {
+  resetMissingWorkbenchDirectory,
   migrateWorkbenchDataEntry,
   recoverWorkbenchDataBridge,
 } from './workbench-data-migration.js'
@@ -15,7 +16,9 @@ export function desktopDataMigration(source: string, desktop: string, name: stri
 }
 
 export function prepareDesktopDataSource(source: string, desktop: string): void {
-  recoverWorkbenchDataBridge(desktopDataMigration(source, desktop, 'user-data'))
+  const migration = desktopDataMigration(source, desktop, 'user-data')
+  resetMissingWorkbenchDirectory(migration)
+  recoverWorkbenchDataBridge(migration)
   mkdirSync(source, { recursive: true, mode: 0o700 })
 }
 
@@ -45,12 +48,10 @@ export function migrateWorkbenchDesktopData(options: {
   if (!isAbsolute(logSuffix) && logSuffix !== '..' && !logSuffix.startsWith(`..${sep}`)) {
     logs = join(migration.target, logSuffix)
   } else {
-    const logMigration = desktopDataMigration(options.logs, desktop, 'electron-logs')
-    mkdirSync(dirname(options.logs), { recursive: true, mode: 0o700 })
-    recoverWorkbenchDataBridge(logMigration, { replaceEmptyDirectory: true })
-    mkdirSync(options.logs, { recursive: true, mode: 0o700 })
-    migrateWorkbenchDataEntry(logMigration)
-    logs = logMigration.target
+    // Logs are diagnostics, not application state. Use the stable destination
+    // directly: cleaners may remove legacy aliases, and stale migration journals
+    // must never prevent opening user data. Leave legacy logs and journals intact.
+    logs = join(desktop, 'electron-logs')
   }
   mkdirSync(logs, { recursive: true, mode: 0o700 })
   return { userData: migration.target, logs }

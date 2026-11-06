@@ -23,6 +23,7 @@
 use brz_json::OpaqueJson;
 use brz_mysql::{Json, Mysql, MysqlResult, MysqlRow};
 use chrono::NaiveDateTime;
+use serde_json::Value;
 
 /// One `tasks`/`tasks_{:04}` row projection used by the response flow.
 #[derive(Debug)]
@@ -58,8 +59,10 @@ pub struct SubtaskRow {
     pub role: String,
     /// Status enum text (`PENDING` / `RUNNING` / ...).
     pub status: String,
-    /// `result` JSON column; SQL NULL stays `None`.
-    pub result: Option<Json<brz_json::JsonProjection<super::output_builder::ResultInput>>>,
+    /// `result` JSON column kept as the raw document: SQL NULL stays `None`
+    /// and any present value (object or not) is retained, so the builder can
+    /// apply the source's `isinstance(result, dict)` guard itself.
+    pub result: Option<Json<Value>>,
 }
 
 impl SubtaskRow {
@@ -72,6 +75,24 @@ impl SubtaskRow {
             role: row.get_required("role")?,
             status: row.get_required("status")?,
             result: row.get("result")?,
+        })
+    }
+
+    /// Decode one row of the labeled (`{table}_{column}`) subtask projection.
+    ///
+    /// The label prefix is the physical table name, which a routed store only
+    /// resolves at execution time (a sharded deployment renders
+    /// `subtasks_0025_id`, …), so the fields are read by projection position:
+    /// `id`, `user_id`, `task_id`, `role` (index 6), `status` (13), `result`
+    /// (15), following the `subtasks` column order.
+    fn from_labeled_row(row: &MysqlRow) -> MysqlResult<Self> {
+        Ok(Self {
+            id: row.get_at::<i64>(0)?,
+            user_id: row.get_at::<i32>(1)?,
+            task_id: row.get_at::<i64>(2)?,
+            role: row.get_at::<String>(6)?,
+            status: row.get_at::<String>(13)?,
+            result: row.get_at::<Option<Json<Value>>>(15)?,
         })
     }
 }
@@ -238,6 +259,21 @@ pub async fn list_subtasks_for_user_ordered(
     rows.iter().map(SubtaskRow::from_row).collect()
 }
 
+/// `subtask_store.list_by_task_for_user_ordered` for the queued/background
+/// response render (`openapi_responses._query_subtasks`): the Source issues
+/// the labeled task/user-scoped list read ordered by `message_id`, not the
+/// id-page batch behind [`list_subtasks_for_user_ordered`].
+pub async fn list_subtasks_for_user_ordered_labeled(
+    task_store: &dyn crate::task_store::TaskStore,
+    task_id: i64,
+    user_id: i32,
+) -> MysqlResult<Vec<SubtaskRow>> {
+    let rows = task_store
+        .list_subtasks_for_user_ordered_labeled(task_id, user_id)
+        .await?;
+    rows.iter().map(SubtaskRow::from_labeled_row).collect()
+}
+
 /// Model string from a task row's CRD team reference:
 /// `{team_namespace}#{team_name}` plus `#{model_id}` when the `modelId` label
 /// is set; `unknown` when the row is absent or has no team reference. Shared
@@ -278,6 +314,21 @@ pub async fn get_task_by_states_active_owned(
 ) -> MysqlResult<Option<TaskRow>> {
     let row = task_store
         .get_active_task_owned(task_id, owner_user_id)
+        .await?;
+    row.as_ref().map(TaskRow::from_row).transpose()
+}
+
+/// [`get_task_by_states_active_owned`] on the caller's request transaction:
+/// the source resolves the `previous_response_id` Task on the request's own
+/// session, before team and model resolution.
+pub async fn get_task_by_states_active_owned_on(
+    sql: &mut dyn crate::request_sql::RequestSql,
+    task_store: &dyn crate::task_store::TaskStore,
+    task_id: i64,
+    owner_user_id: i32,
+) -> MysqlResult<Option<TaskRow>> {
+    let row = task_store
+        .get_active_task_owned_on(sql, task_id, owner_user_id)
         .await?;
     row.as_ref().map(TaskRow::from_row).transpose()
 }

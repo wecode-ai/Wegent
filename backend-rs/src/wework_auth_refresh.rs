@@ -14,8 +14,9 @@
 //! failure is a plain `HTTPException` body (`{"detail": ...}`) with no
 //! `WWW-Authenticate` challenge; the endpoint is public because the device
 //! proof, not a bearer credential, authenticates the caller.
+use crate::jwt_compat::{jose_claims_valid, jose_validation};
 use base64::Engine as _;
-use jsonwebtoken::{Algorithm, DecodingKey, Validation};
+use jsonwebtoken::{Algorithm, DecodingKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
@@ -373,62 +374,6 @@ fn unverified_header(proof: &str) -> Result<serde_json::Value, FastApiError> {
         return Err(invalid_device_proof());
     }
     Ok(header)
-}
-
-/// Verify signatures here. Endpoint-local claim checks below match python-jose
-/// numeric coercion and reject malformed claims jsonwebtoken silently ignores.
-fn jose_validation(algorithm: Algorithm) -> Validation {
-    let mut validation = Validation::new(algorithm);
-    validation.validate_aud = false;
-    validation.validate_exp = false;
-    validation.validate_nbf = false;
-    validation.leeway = 0;
-    validation.required_spec_claims.clear();
-    validation
-}
-
-/// python-jose defaults for this API, which supplies no audience or access_token.
-fn jose_claims_valid(claims: &serde_json::Value, now: i64) -> bool {
-    if !claims.is_object() || claims.get("aud").is_some() || claims.get("at_hash").is_some() {
-        return false;
-    }
-    for field in ["sub", "jti"] {
-        if claims.get(field).is_some_and(|value| !value.is_string()) {
-            return false;
-        }
-    }
-    for field in ["iat", "exp", "nbf"] {
-        if let Some(value) = claims.get(field) {
-            let Some(value) = jose_integer(value) else {
-                return false;
-            };
-            if (field == "exp" && value < i128::from(now))
-                || (field == "nbf" && value > i128::from(now))
-            {
-                return false;
-            }
-        }
-    }
-    true
-}
-
-/// Common Python int() inputs used by JWT NumericDate claims.
-fn jose_integer(value: &serde_json::Value) -> Option<i128> {
-    match value {
-        serde_json::Value::Bool(value) => Some(i128::from(*value)),
-        serde_json::Value::String(value) => value.trim().parse().ok(),
-        serde_json::Value::Number(value) => value
-            .as_i64()
-            .map(i128::from)
-            .or_else(|| value.as_u64().map(i128::from))
-            .or_else(|| {
-                value
-                    .as_f64()
-                    .filter(|value| value.is_finite())
-                    .map(|value| value.trunc() as i128)
-            }),
-        _ => None,
-    }
 }
 
 /// `_token_hash`: base64url(SHA-256(token)) without padding.

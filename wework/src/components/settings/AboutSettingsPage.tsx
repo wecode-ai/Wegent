@@ -1,4 +1,5 @@
 import { formatAppUpdateProgress } from '@/features/app-update/app-update-progress-copy'
+import { ReleaseRollbackSettings } from '@/features/app-update/ReleaseRollbackSettings'
 import { Bot, Download, ExternalLink, Loader2 } from 'lucide-react'
 import type { ComponentType } from 'react'
 import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
@@ -182,6 +183,14 @@ export function AboutSettingsPage() {
       </SettingsGroup>
 
       <div className="mt-4 flex flex-col items-center gap-2">
+        <ReleaseRollbackSettings disabled={isUpdateBusy} />
+        {availableUpdate?.path && availableUpdate.path.length > 1 ? (
+          <span data-testid="about-upgrade-path" className="text-xs text-text-secondary">
+            {t('workbench.app_update_verified_path', {
+              path: [appVersion, ...availableUpdate.path].join(' → '),
+            })}
+          </span>
+        ) : null}
         <AboutActionButton
           testId="about-check-update-button"
           icon={isUpdateBusy ? Loader2 : Download}

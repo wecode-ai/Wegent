@@ -1,11 +1,45 @@
+// @vitest-environment node
+
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
+import { createAndAssignCloudIssue } from '../e2e/desktop/modules/workspace-agent-setup.mjs'
 import {
   openDirectProjectCreation,
   openProjectAgentCreator,
   expandCollaborationWorkspace,
   selectCollaborationIssueAgent,
+  selectCollaborationProjectView,
 } from '../e2e/desktop/modules/workspace-flows.mjs'
+
+test.each([
+  ['expanded', 'manage', 'collaboration-tab-manage'],
+  ['compact', 'manage', 'collaboration-tab-manage'],
+  ['expanded', 'milestones', 'collaboration-milestones-tab'],
+  ['compact', 'milestones', 'collaboration-milestones-tab'],
+])('selects %s navigation view %s after the switcher mounts', async (layout, view, tabId) => {
+  let mounted = false
+  let selected = null
+  const control = {
+    async command(action, selector, options) {
+      if (action === 'waitFor') {
+        mounted = true
+      } else if (action === 'getElementCount') {
+        return Number(mounted && layout === 'compact')
+      } else if (action === 'select') {
+        assert.ok(mounted && layout === 'compact')
+        selected = options.value
+      } else if (action === 'clickWhenEnabled') {
+        assert.equal(layout, 'expanded', 'Compact projects have no tab buttons')
+        assert.equal(selector, `main [data-testid="${tabId}"]`)
+        selected = view
+      } else {
+        throw new Error(`Unexpected action: ${action}`)
+      }
+    },
+  }
+  await selectCollaborationProjectView(control, 'main', view)
+  assert.equal(selected, view)
+})
 
 function projectCreationControl({ menuTrigger = false, menuCount = 0, dialogError } = {}) {
   const calls = []
@@ -213,4 +247,70 @@ test('does not select an Agent when the authorized option never becomes availabl
     error => error === failure
   )
   assert.deepEqual(clicks, [trigger])
+})
+
+test('waits for the saved Issue editor before assigning a persisted Issue', async () => {
+  const detailInteraction = Promise.withResolvers()
+  const detailRendered = Promise.withResolvers()
+  const issue = { id: 'issue-7', title: 'Assign after creation' }
+  const trigger = 'main [data-testid="cloud-todo-detail-assignee"]'
+  const option = '[data-testid="cloud-todo-detail-assignee-option-agent:agent-7"]'
+  let persisted = false
+  let rendered = false
+  let selected = false
+  let saved = false
+  let assigneeClickAction
+  const control = {
+    async command(action, selector) {
+      if (
+        action === 'clickWhenEnabled' &&
+        selector.endsWith('[data-testid="cloud-todo-create-confirm"]')
+      ) {
+        persisted = true
+      }
+      if (selector === trigger) {
+        detailInteraction.resolve()
+        if (action === 'waitFor') await detailRendered.promise
+        if (action === 'click' || action === 'clickWhenEnabled') {
+          assert.ok(rendered, 'The creation panel is still saving')
+          assigneeClickAction = action
+        }
+      }
+      if (action === 'click' && selector === option) {
+        selected = true
+        assert.ok(
+          rendered && selected,
+          'Assignment must be selected through the persisted detail editor'
+        )
+        saved = true
+      }
+    },
+  }
+  const request = async pathname => {
+    assert.equal(pathname, '/api/v1/cloud-projects/project-7/loop-items')
+    assert.ok(persisted)
+    return { items: [issue] }
+  }
+  const outcome = createAndAssignCloudIssue(control, request, {
+    contentSelector: 'main',
+    projectId: 'project-7',
+    title: issue.title,
+    description: 'The server has persisted the Issue before the creation panel closes.',
+    assigneeTarget: 'agent:agent-7',
+    timeoutMs: 10000,
+  }).then(
+    value => ({ value }),
+    error => ({ error })
+  )
+
+  await detailInteraction.promise
+  assert.equal(selected, false)
+  assert.equal(saved, false)
+  rendered = true
+  detailRendered.resolve()
+
+  assert.deepEqual(await outcome, { value: issue })
+  assert.equal(assigneeClickAction, 'clickWhenEnabled')
+  assert.ok(selected)
+  assert.ok(saved)
 })

@@ -26,6 +26,7 @@ type Capture = {
     max_tokens: number
     messages: unknown[]
     thinking?: Record<string, unknown>
+    tools: Array<{ name: string; defer_loading?: boolean }>
   }
 }
 
@@ -180,16 +181,52 @@ test.describe('Real Claude Code cloud-model compaction', () => {
           mode === 'proactive'
             ? ['seed', 'seed', 'compact', 'complete']
             : mode === 'unrelated-error'
-              ? ['seed', 'seed', 'overflow', 'overflow']
+              ? ['seed', 'seed', 'overflow', 'overflow', 'overflow', 'overflow']
               : ['seed', 'seed', 'overflow', 'compact', 'complete']
         expect(captures.map(capture => capture.kind)).toEqual(expected)
         if (mode === 'unrelated-error') {
-          // Claude Code 2.1.310 retries once without thinking.display after this 400 error.
-          const { thinking: initialThinking, ...initialRequest } = captures[2].body
-          const { thinking: retryThinking, ...retryRequest } = captures[3].body
-          expect(initialThinking).toEqual({ type: 'adaptive', display: 'updates' })
-          expect(retryThinking).toEqual({ type: 'adaptive' })
-          expect(retryRequest).toEqual(initialRequest)
+          // Claude Code 2.1.310 removes thinking.display, then falls back from
+          // deferred tools and repeats that negotiation before surfacing the error.
+          for (const index of [2, 4]) {
+            const { thinking: initialThinking, ...initialRequest } = captures[index].body
+            const { thinking: retryThinking, ...retryRequest } = captures[index + 1].body
+            expect(initialThinking).toEqual({ type: 'adaptive', display: 'updates' })
+            expect(retryThinking).toEqual({ type: 'adaptive' })
+            expect(retryRequest).toEqual(initialRequest)
+          }
+          const deferred = captures[2].body
+          const fallback = captures[4].body
+          expect(deferred.tools).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({ name: 'ToolSearch' }),
+              expect.objectContaining({ defer_loading: true }),
+            ])
+          )
+          expect(
+            fallback.tools.some(tool => tool.name === 'ToolSearch' || tool.defer_loading)
+          ).toBe(false)
+          expect(fallback.tools).toEqual(
+            expect.arrayContaining(
+              deferred.tools.filter(
+                tool => !['ToolSearch', 'DeferredToolPlaceholder'].includes(tool.name)
+              )
+            )
+          )
+          expect(fallback.messages.slice(0, -2)).toEqual(deferred.messages.slice(0, -1))
+          expect(fallback.messages.at(-2)).toEqual({
+            role: 'user',
+            content: `Finish the follow-up for ${model}.`,
+          })
+          expect(fallback.messages.at(-1)).toEqual({
+            role: 'system',
+            content: [
+              {
+                type: 'text',
+                text: 'ToolSearch is no longer available. Tools listed earlier as deferred that are still available are declared in full: call them directly.',
+                cache_control: { type: 'ephemeral' },
+              },
+            ],
+          })
         }
         for (const capture of captures) {
           expect(capture.body.model).toBe(model)

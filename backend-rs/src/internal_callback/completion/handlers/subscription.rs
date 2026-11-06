@@ -12,6 +12,10 @@ use brz_mysql::{FromMysqlCol, Json, Mysql, MysqlResult, MysqlRow, MysqlTransacti
 use brz_redis::Redis;
 use serde_json::Value;
 
+use crate::background_jobs::subscription::{
+    completion,
+    model::{self, Execution},
+};
 use crate::executor_manager::{ExecutorManager, SandboxLookup};
 use crate::internal_callback::completion::Completion;
 use crate::internal_callback::completion::Tables;
@@ -21,89 +25,147 @@ use crate::internal_callback::completion::task_column;
 
 use super::{local_datetime, now_local};
 
+#[cfg(test)]
+#[path = "subscription_boundary_tests.rs"]
+mod boundary_tests;
+
 /// `handle_task_completed`.
 ///
-/// `on_task_completed` wraps the execution lookup and the auto-delete cleanup
-/// in one `get_db_session()` block (`task_completion_handler.py:78-90`), so
-/// the first read opens the connection transaction and the cleanup
-/// `db.commit()` ends it. One explicit transaction reproduces that boundary:
-/// every read and the cleanup update share one connection, and it commits only
-/// after the cleanup succeeds.
+/// `on_task_completed` opens one `get_db_session()` block
+/// (`task_completion_handler.py:78-181`) and resolves the execution, applies the
+/// status CAS and writes the subscription statistics inside it; the source
+/// commits at the end of `update_execution_status`, which closes that block. One
+/// explicit transaction reproduces the boundary, so the lookup and the status
+/// update are covered by the same commit.
 pub(crate) async fn handle_task_completed<M: Mysql, R: Redis>(
     ctx: &Completion<'_, M, R>,
     event: &TaskCompletedEvent<'_>,
 ) {
+    // `on_task_completed` logs the event identity before the lookup
+    // (`task_completion_handler.py:72-76`).
+    tracing::info!(
+        task_id = event.task_id,
+        subtask_id = event.subtask_id,
+        status = event.status,
+        "TaskCompletedEvent received"
+    );
     let mysql = ctx
         .mysql
         .route(crate::task_routing::ByTaskId(event.task_id as u64));
     let outcome = mysql
         .with_transaction(async |transaction| {
-            if let Some(execution) = find_execution_by_task_id(transaction, event.task_id).await {
-                // An execution exists: the terminal-status update, inbox
-                // write-back and notification fan-out that follow are outside
-                // this callback's recorded traffic and are not reproduced
-                // here.
-                tracing::debug!(
-                    execution_id = execution,
-                    task_id = event.task_id,
-                    "subscription execution found for completed task"
-                );
-                return Ok(());
-            }
-            cleanup_auto_delete_task_executor(transaction, ctx.tables, ctx.executor_manager, event)
-                .await
+            let Some(execution) = find_execution_by_task_id(transaction, event).await? else {
+                cleanup_auto_delete_task_executor(
+                    transaction,
+                    ctx.tables,
+                    ctx.executor_manager,
+                    event,
+                )
+                .await?;
+                return Ok(None);
+            };
+            let result = completion::terminal_result(event);
+            let applied = completion::apply_status(transaction, event, &execution, &result).await?;
+            Ok(Some((applied, result)))
         })
         .await;
-    if let Err(error) = outcome {
-        // `on_task_completed`'s outer handler logs the failure after
-        // `_db_session` rolled the session back.
-        tracing::error!(
-            task_id = event.task_id,
-            %error,
-            "task completion transaction failed; cleanup rolled back"
-        );
+    match outcome {
+        Ok(Some((Some(execution), result))) => {
+            match completion::after_status(ctx, event, &execution, &result).await {
+                Ok(Some(status)) if matches!(status.as_str(), "COMPLETED" | "COMPLETED_SILENT") => {
+                    if let Err(error) = mysql
+                        .with_transaction(async |tx| {
+                            cleanup_completed_managed_executor(
+                                tx,
+                                ctx.tables,
+                                ctx.executor_manager,
+                                &execution,
+                                event.task_id,
+                            )
+                            .await
+                        })
+                        .await
+                    {
+                        tracing::warn!(%error, task_id=event.task_id, "subscription runtime cleanup failed");
+                    }
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::error!(%error, task_id=event.task_id, "subscription completion failed")
+                }
+            }
+        }
+        Ok(_) => {}
+        Err(error) => {
+            tracing::error!(%error, task_id=event.task_id, "task completion transaction failed; cleanup rolled back")
+        }
     }
 }
 
 /// `_find_execution_by_task_id`: the active execution, the newest execution,
-/// then the code-wiki scheduled-execution recovery read.
+/// then the code-wiki scheduled-execution recovery read. The resolved row is
+/// the handler's single read for the whole completion: the source keeps the ORM
+/// entity and reuses it for the status update.
 async fn find_execution_by_task_id<T: MysqlTransaction>(
     transaction: &mut T,
-    task_id: i64,
-) -> Option<i64> {
-    let running: Option<MysqlRow> = transaction
-        .fetch_optional(sql::background_execution_running(), (task_id,))
-        .await
-        .ok()
-        .flatten();
-    if let Some(row) = running {
-        return row.get::<i64>("background_executions_id").ok().flatten();
+    event: &TaskCompletedEvent<'_>,
+) -> MysqlResult<Option<Execution>> {
+    let running: Option<Execution> = transaction
+        .fetch_optional(model::execution_running_by_task(), (event.task_id,))
+        .await?;
+    if running.is_some() {
+        return Ok(running);
     }
-    let latest: Option<MysqlRow> = transaction
-        .fetch_optional(sql::background_execution_latest(), (task_id,))
-        .await
-        .ok()
-        .flatten();
-    if let Some(row) = latest {
-        return row.get::<i64>("background_executions_id").ok().flatten();
+    let latest: Option<Execution> = transaction
+        .fetch_optional(model::execution_latest_by_task(), (event.task_id,))
+        .await?;
+    if latest.is_some() {
+        return Ok(latest);
     }
-    // `recover_scheduled_execution_for_task`: the code-wiki integration reads
-    // the task's newest wiki generation before giving up.
+    recover_scheduled_execution(transaction, event).await
+}
+
+/// `recover_scheduled_execution_for_task`
+/// (`app/services/knowledge/code_wiki/subscription_integration.py:50-82`): the
+/// launcher's Task can finish before it binds `BackgroundExecution.task_id`, so
+/// the execution id stored on the task's newest wiki generation is bound here.
+async fn recover_scheduled_execution<T: MysqlTransaction>(
+    transaction: &mut T,
+    event: &TaskCompletedEvent<'_>,
+) -> MysqlResult<Option<Execution>> {
     let generation: Option<MysqlRow> = transaction
-        .fetch_optional(sql::wiki_generation_latest(), (task_id,))
-        .await
-        .ok()
-        .flatten();
-    if let Some(row) = generation {
-        // A recovered generation is an execution the subscription handler
-        // completes through the code-wiki runner, which is outside this
-        // callback's recorded traffic.
-        tracing::debug!(
-            generation_id = row.get::<i64>("wiki_generations_id").ok().flatten(),
-            "recovered scheduled wiki generation"
-        );
+        .fetch_optional(sql::wiki_generation_latest(), (event.task_id,))
+        .await?;
+    let Some(generation) = generation else {
+        return Ok(None);
+    };
+    if generation.get::<i64>("wiki_generations_user_id")? != Some(event.user_id) {
+        return Ok(None);
     }
-    None
+    let ext = generation.get::<Json<Value>>("wiki_generations_ext")?;
+    let Some(id) = ext.and_then(|v| v.0["backgroundExecutionId"].as_i64().filter(|id| *id > 0))
+    else {
+        return Ok(None);
+    };
+    let execution: Option<Execution> = transaction
+        .fetch_optional(model::execution_by_id(), (id,))
+        .await?;
+    let Some(mut execution) = execution else {
+        return Ok(None);
+    };
+    if execution.task_id != 0 && execution.task_id != event.task_id {
+        return Ok(None);
+    }
+    if execution.task_id == 0 {
+        transaction
+            .execute(
+                "UPDATE background_executions SET task_id=? WHERE id=? AND task_id=0 AND status IN ('PENDING','RUNNING')",
+                (event.task_id, id),
+            )
+            .await?;
+        execution.task_id = event.task_id;
+    }
+    Ok(Some(execution))
 }
 
 /// `_cleanup_auto_delete_task_executor`: with no execution, the task's
@@ -143,6 +205,40 @@ async fn cleanup_auto_delete_task_executor<T: MysqlTransaction>(
         .await;
     }
     Ok(())
+}
+
+/// `_cleanup_completed_managed_subscription_executor`
+/// (`task_completion_handler.py:336-370`): resolve the execution's subscription
+/// first — a missing subscription skips the runtime cleanup — then tear the
+/// task's runtime down.
+async fn cleanup_completed_managed_executor<T: MysqlTransaction>(
+    transaction: &mut T,
+    tables: Tables,
+    executor_manager: &ExecutorManager,
+    execution: &Execution,
+    task_id: i64,
+) -> MysqlResult<()> {
+    let subscription: Option<MysqlRow> = transaction
+        .fetch_optional(
+            crate::background_jobs::subscription::model::subscription_statement(false),
+            (execution.subscription_id,),
+        )
+        .await?;
+    if subscription.is_none() {
+        tracing::warn!(
+            subscription_id = execution.subscription_id,
+            "cannot clean executor: subscription not found"
+        );
+        return Ok(());
+    }
+    cleanup_task_runtime(
+        transaction,
+        tables,
+        executor_manager,
+        task_id,
+        "subscription completion",
+    )
+    .await
 }
 
 /// `_cleanup_task_runtime`: delete the sandbox or executor runtime of one
@@ -432,12 +528,16 @@ mod tests {
         let redis = NoRedis;
         let manager = manager();
         let ctx = Completion {
+            app: None,
             mysql: &capture,
             redis: &redis,
             tables: tables(),
             executor_manager: &manager,
         };
         let event = TaskCompletedEvent {
+            subtask_id: 0,
+            result: None,
+            error: None,
             task_id: 42,
             user_id: 7,
             status: "COMPLETED",

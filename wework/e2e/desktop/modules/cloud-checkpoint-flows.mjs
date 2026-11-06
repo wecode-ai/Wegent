@@ -18,6 +18,10 @@ import {
 
 import { WORKTREE_CHECKPOINTS, verifyCloudWorktreeCheckpoint } from './cloud-worktree-flows.mjs'
 import { verifyCloudDeviceLifecycleFlow } from './cloud-device-lifecycle-flow.mjs'
+import {
+  verifyCloudSidebarGitClone,
+  verifyGitCloneDeviceRecovery,
+} from './cloud-sidebar-project-flow.mjs'
 import { verifyCloudFileAccessOutsideWorkspace } from './workspace-file-access-flow.mjs'
 import {
   createCloudAttachmentVerification,
@@ -62,6 +66,7 @@ import {
   SELECTED_DESKTOP_SEGMENT,
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
+  fetchJson,
   join,
   mkdir,
   resultDir,
@@ -404,6 +409,8 @@ async function verifyCloudProjectCreationSources(
   await runChecked('git', ['rev-parse', '--is-inside-work-tree'], {
     cwd: clonedProjectPath,
   })
+  await verifyCloudSidebarGitClone(control, workspacePath, homePath)
+  await verifyGitCloneDeviceRecovery(control, workspacePath, cloudEnvironment)
 }
 
 async function waitForCloudProject(control, previousProjectMenus, message) {
@@ -562,13 +569,28 @@ async function verifyPluginWorkspacePublication({ cloudEnvironment, control }) {
   const [shareDialogBeforeSearch] = JSON.parse(
     await control.command('getElementMetrics', '[data-testid="plugin-share-dialog"]')
   )
+  // User search excludes the signed-in owner, so seed a real eligible recipient.
+  const recipient = await fetchJson(`${cloudEnvironment.backendUrl}/api/admin/users`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${cloudEnvironment.authToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      user_name: `plugin-share-recipient-${process.pid}`,
+      password: 'plugin-share-e2e-only',
+      role: 'user',
+      auth_source: 'password',
+    }),
+  })
   await control.command('fill', '[data-testid="plugin-share-search"]', {
-    value: 'admin',
+    value: recipient.user_name,
   })
-  await control.command('waitFor', '[data-testid="plugin-share-search-results"]', {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await new Promise(resolve => setTimeout(resolve, 400))
+  await control.command(
+    'waitFor',
+    `[data-testid="plugin-share-search-results"] [data-testid="plugin-share-user-${recipient.id}"]`,
+    { text: recipient.user_name, visible: true, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+  )
   const [shareDialogAfterSearch] = JSON.parse(
     await control.command('getElementMetrics', '[data-testid="plugin-share-dialog"]')
   )
@@ -756,7 +778,15 @@ async function verifyCloudCheckpoint({
     }
     setPhase('cloud-plugin-auto-update-without-codex-rpc')
     await cloudEnvironment.syncPluginAutoUpdatesToCloudDevice()
-    await cloudEnvironment.assertPluginAutoUpdateComplete(cloudEnvironment.remoteCodexHome, 6)
+    try {
+      await cloudEnvironment.assertPluginAutoUpdateComplete(cloudEnvironment.remoteCodexHome, 6)
+    } catch (error) {
+      console.error(
+        '[plugin-auto-update] object storage transport',
+        JSON.stringify(cloudEnvironment.pluginObjectStorage.transportEvents)
+      )
+      throw error
+    }
     return
   }
 
@@ -874,7 +904,11 @@ async function verifyCloudCheckpoint({
       return
     case 'supervisor-lifecycle':
       setPhase('cloud-supervisor-lifecycle')
-      await verifyTaskSupervisorLifecycle({ composerSelector, control })
+      await verifyTaskSupervisorLifecycle({
+        composerSelector,
+        control,
+        readRuntimeTask: taskId => cloudEnvironment.runtimeTask(taskId),
+      })
       return
     case 'resilience':
       setPhase('cloud-send-rejection')

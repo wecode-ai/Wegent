@@ -10,9 +10,9 @@ impl RuntimeWorkRpcHandler {
         &self,
         payload: Value,
     ) -> Result<Value, AppIpcError> {
-        self.verify_stand_in_user(&payload).await?;
+        self.verify_runtime_user(&payload).await?;
         let resources = self
-            .stand_in_http(reqwest::Method::GET, "/v1/resources", None)
+            .runtime_http(reqwest::Method::GET, "/v1/resources", None)
             .await?;
         let items: Vec<Value> = resources["agents"]
             .as_array()
@@ -50,7 +50,7 @@ impl RuntimeWorkRpcHandler {
         }) && self.backend_connection_snapshot()?.is_some()
         {
             match self
-                .stand_in_http(reqwest::Method::GET, "/v1/cloud-projects", None)
+                .runtime_http(reqwest::Method::GET, "/v1/cloud-projects", None)
                 .await
             {
                 Ok(value) => value["items"].as_array().cloned().unwrap_or_default(),
@@ -143,6 +143,37 @@ impl RuntimeWorkRpcHandler {
         prompt: String,
         schema: Value,
     ) -> Result<Value, AppIpcError> {
+        let request = self
+            .prepare_coordination_text_request(
+                selected_model,
+                prompt,
+                schema,
+                format!("stand-in-grouping-{}", uuid::Uuid::new_v4()),
+            )
+            .await?;
+        let response = tokio::time::timeout(
+            Duration::from_secs(60),
+            self.generate_text(json!({"executionRequest":request})),
+        )
+        .await
+        .map_err(|_| {
+            AppIpcError::new("stand_in_grouping_failed", "Message grouping timed out")
+        })??;
+        serde_json::from_str(response["content"].as_str().unwrap_or_default()).map_err(|_| {
+            AppIpcError::new(
+                "stand_in_grouping_failed",
+                "The model returned an invalid message grouping",
+            )
+        })
+    }
+
+    pub(super) async fn prepare_coordination_text_request(
+        &self,
+        selected_model: Option<&Value>,
+        prompt: String,
+        schema: Value,
+        task: String,
+    ) -> Result<ExecutionRequest, AppIpcError> {
         let catalog = self.runner_catalog().await?;
         let model = selected_model
             .filter(|model| model["runtime"] == "codex")
@@ -163,7 +194,7 @@ impl RuntimeWorkRpcHandler {
                     "Choose an available Codex model for message grouping",
                 )
             })?;
-        let mut payload = json!({"taskId":format!("stand-in-grouping-{}",uuid::Uuid::new_v4()),"message":prompt,"runnerPolicy":{"runtime":"codex","execution_policy":{"mode":"fixed","environment_id":self.device_id},"model_policy":{"mode":"user_select"}},"runnerSelection":{"model":model}});
+        let mut payload = json!({"taskId":task,"message":prompt,"runnerPolicy":{"runtime":"codex","execution_policy":{"mode":"fixed","environment_id":self.device_id},"model_policy":{"mode":"user_select"}},"runnerSelection":{"model":model}});
         crate::task_runtime::runner_routing::resolve_pending(
             &mut payload,
             Some(&catalog),
@@ -184,22 +215,9 @@ impl RuntimeWorkRpcHandler {
             .insert("runtime_permission_profile".into(), json!(":read-only"));
         request.extra.insert("output_schema".into(), schema);
         self.apply_backend_connection(&mut request);
-        let response = tokio::time::timeout(
-            Duration::from_secs(60),
-            self.generate_text(json!({"executionRequest":request})),
-        )
-        .await
-        .map_err(|_| {
-            AppIpcError::new("stand_in_grouping_failed", "Message grouping timed out")
-        })??;
-        serde_json::from_str(response["content"].as_str().unwrap_or_default()).map_err(|_| {
-            AppIpcError::new(
-                "stand_in_grouping_failed",
-                "The model returned an invalid message grouping",
-            )
-        })
+        Ok(request)
     }
-    pub(super) fn personal_stand_in_settings(
+    pub(super) async fn personal_stand_in_settings(
         &self,
         payload: Value,
         save: bool,
@@ -209,14 +227,135 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "userId is required"))?;
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
         if save {
+            let gate = self.task_send_gate(&format!("stand-in-processing:{user}"));
+            let _guard = gate.lock().await;
+            let previous = store
+                .personal_stand_in(user, &self.device_id)
+                .map_err(settings_error)?;
+            let mut settings = payload["settings"].clone();
             store
-                .save_personal_stand_in(user, &self.device_id, payload["settings"].clone())
-                .map_err(settings_error)
+                .validate_personal_stand_in_settings(user, &self.device_id, settings.clone())
+                .map_err(settings_error)?;
+            self.preflight_git_connections(&settings, &previous).await?;
+            self.prepare_connection_boundaries(&mut settings, &previous)
+                .await?;
+            let saved = store
+                .save_personal_stand_in(user, &self.device_id, settings)
+                .map_err(settings_error)?;
+            Ok(saved)
         } else {
             store
                 .personal_stand_in(user, &self.device_id)
                 .map_err(settings_error)
         }
+    }
+
+    pub(super) async fn prepare_connection_boundaries(
+        &self,
+        settings: &mut Value,
+        previous: &Value,
+    ) -> Result<(), AppIpcError> {
+        self.prepare_connection_boundaries_inner(settings, previous)
+            .await
+            .map_err(|error| {
+                let has_git = stand_in_identities(settings).iter().any(|role| {
+                    role["connections"].as_array().into_iter().flatten().any(|source| {
+                        source["providerId"].as_str().is_some_and(|provider| {
+                            provider.starts_with(super::super::git_connections::PACKAGE)
+                        })
+                    })
+                });
+                if has_git {
+                    AppIpcError::new("git_connection_save_incomplete", format!("Cloud connection changes may be partially applied; retry this draft or recover existing receivers ({})", error.code))
+                } else {
+                    error
+                }
+            })
+    }
+
+    async fn prepare_connection_boundaries_inner(
+        &self,
+        settings: &mut Value,
+        previous: &Value,
+    ) -> Result<(), AppIpcError> {
+        let previous_identities =
+            crate::task_runtime::personal_stand_in::stand_in_identities(previous);
+        let mut identities = settings["roles"]
+            .as_array()
+            .cloned()
+            .ok_or_else(|| AppIpcError::new("bad_request", "Personal roles must be an array"))?;
+        let has_primary = settings["primary"].is_object();
+        if has_primary {
+            identities.push(settings["primary"].clone());
+        }
+        let count = identities.len();
+        for (index, identity) in identities.iter_mut().enumerate() {
+            let id = if has_primary && index + 1 == count {
+                json!("@primary")
+            } else {
+                identity["id"].clone()
+            };
+            let before = previous_identities.iter().find(|row| row["id"] == id);
+            let preserve = before.is_some_and(|row| row["enabled"] == identity["enabled"]);
+            let enabled = identity["enabled"] == true;
+            for source in identity
+                .get_mut("connections")
+                .and_then(Value::as_array_mut)
+                .into_iter()
+                .flatten()
+            {
+                if crate::task_runtime::personal_stand_in::source_provider(source)
+                    != crate::task_runtime::personal_stand_in::EMAIL_PROVIDER
+                    && !(crate::task_runtime::personal_stand_in::source_provider(source)
+                        .starts_with(super::super::git_connections::PACKAGE)
+                        && super::super::git_connections::uses_webhook(source))
+                {
+                    continue;
+                }
+                if crate::task_runtime::personal_stand_in::source_provider(source)
+                    .starts_with(super::super::git_connections::PACKAGE)
+                {
+                    self.prepare_git_connection(source).await?;
+                }
+                let existing = before.and_then(|row| {
+                    crate::task_runtime::personal_stand_in::stand_in_collection_connection(
+                        row, source,
+                    )
+                });
+                let boundary = existing
+                    .filter(|row| {
+                        preserve
+                            && row["generation"] == source["generation"]
+                            && row["subscriptionId"] == source["subscriptionId"]
+                    })
+                    .map(|row| row["boundary"].clone())
+                    .filter(Value::is_object);
+                source.as_object_mut().unwrap().remove("boundary");
+                if let Some(boundary) = boundary {
+                    source["boundary"] = boundary;
+                } else if enabled {
+                    let boundary = self
+                        .connection_call(
+                            "initialize",
+                            source["providerId"].as_str(),
+                            source.clone(),
+                        )
+                        .await?;
+                    if !boundary["partition"].is_string() || !boundary["sequence"].is_u64() {
+                        return Err(AppIpcError::new(
+                            "connection_response_invalid",
+                            "Missing ordered connection boundary",
+                        ));
+                    }
+                    source["boundary"] = boundary;
+                }
+            }
+        }
+        if has_primary {
+            settings["primary"] = identities.pop().unwrap();
+        }
+        settings["roles"] = json!(identities);
+        Ok(())
     }
 }
 

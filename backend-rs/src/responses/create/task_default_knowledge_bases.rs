@@ -8,7 +8,7 @@
 //!
 //! Split from [`super::knowledge`] to keep both files under the source-review
 //! size limit; the statements and their ordering contracts are unchanged.
-use brz_mysql::{Json, MysqlResult};
+use brz_mysql::Json;
 use brz_redis::Redis;
 use serde_json::Value;
 
@@ -16,6 +16,7 @@ use super::knowledge::{
     AclContextSource, deduplicate, get_acl_accessible_knowledge_base_ids,
     team_member_default_knowledge_base_ids,
 };
+use super::knowledge_access::KnowledgeAccessError;
 use super::knowledge_prompt::SelectedKnowledgeRef;
 use super::resolution::{KindRow, resolve_task_ref_team};
 use super::selected_knowledge::{
@@ -38,7 +39,7 @@ pub async fn resolve_task_default_knowledge_bases<R: Redis>(
     task_id: i64,
     viewer_user_id: i64,
     knowledge_base_id: Option<i64>,
-) -> MysqlResult<Option<(Option<KindRow>, Vec<i64>)>> {
+) -> Result<Option<(Option<KindRow>, Vec<i64>)>, KnowledgeAccessError> {
     let mysql = acl.mysql();
     // `task_store.get_active_task`: the resolver re-reads the active task it is
     // given the id of and resolves the team from the stored CRD. The store owns
@@ -106,7 +107,7 @@ pub async fn resolve_task_default_knowledge_base_ids<R: Redis>(
     store: &dyn TaskStore,
     task_id: i64,
     viewer_user_id: i64,
-) -> MysqlResult<Vec<i64>> {
+) -> Result<Vec<i64>, KnowledgeAccessError> {
     match resolve_task_default_knowledge_bases(acl, store, task_id, viewer_user_id, None).await? {
         Some((_, ids)) => Ok(ids),
         None => Ok(Vec::new()),
@@ -124,7 +125,7 @@ pub async fn build_inherited_selected_knowledge_refs<R: Redis>(
     task_json: &Value,
     viewer_user_id: i64,
     external_refs: &[Value],
-) -> MysqlResult<Vec<SelectedKnowledgeRef>> {
+) -> Result<Vec<SelectedKnowledgeRef>, KnowledgeAccessError> {
     let mysql = acl.mysql();
     let spec = task_json.get("spec").cloned().unwrap_or(Value::Null);
     let mut persisted: Vec<i64> = index_refs_by_integer_id(

@@ -253,6 +253,10 @@ async def test_dispatch_does_not_scan_historical_deleted_subtasks():
             "app.services.execution.dispatcher.subtask_store.get_by_id",
             return_value=subtask,
         ) as get_subtask_mock,
+        patch(
+            "app.services.execution.dispatcher.executor_pod_missing",
+            AsyncMock(return_value=False),
+        ) as pod_missing_mock,
         patch.object(dispatcher.router, "route", return_value=target),
         patch.object(dispatcher, "_update_subtask_to_running", AsyncMock()),
         patch.object(
@@ -263,7 +267,243 @@ async def test_dispatch_does_not_scan_historical_deleted_subtasks():
 
     recovery_service.recover.assert_not_awaited()
     get_subtask_mock.assert_called_once_with(db, subtask_id=request.subtask_id)
+    pod_missing_mock.assert_awaited_once_with("active-executor", "default")
     db.query.assert_not_called()
+    dispatch_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_recovers_when_bound_executor_pod_is_missing():
+    """A pod lost outside the cleanup path must trigger workspace recovery."""
+    dispatcher = ExecutionDispatcher()
+    request = ExecutionRequest(
+        task_id=1385,
+        subtask_id=1861,
+        message_id=3,
+        user={"id": 7, "name": "user7"},
+        user_id=7,
+        user_name="user7",
+        bot=[{"shell_type": "ClaudeCode"}],
+        executor_name="stale-executor",
+    )
+    emitter = AsyncMock()
+
+    subtask = MagicMock(spec=Subtask)
+    subtask.id = 1861
+    subtask.task_id = 1385
+    subtask.executor_deleted_at = False
+    subtask.executor_name = "stale-executor"
+    subtask.executor_namespace = "wb-plat-ide"
+    subtask.error_message = ""
+
+    task = MagicMock(spec=TaskResource)
+    task.id = 1385
+    task.kind = "Task"
+
+    db = MagicMock()
+
+    async def recover_side_effect(*, db, subtask, task, request):
+        request.executor_name = "recovered-executor"
+        request.executor_namespace = "wb-plat-ide"
+        return {
+            "executor_name": "recovered-executor",
+            "executor_namespace": "wb-plat-ide",
+        }
+
+    recovery_service = MagicMock()
+    recovery_service.recover = AsyncMock(side_effect=recover_side_effect)
+
+    target = ExecutionTarget(
+        mode=CommunicationMode.HTTP_CALLBACK,
+        url="http://executor-manager/executor-manager",
+    )
+
+    with (
+        patch(
+            "app.services.execution.dispatcher.SessionLocal",
+            return_value=db,
+            create=True,
+        ),
+        patch(
+            "app.services.execution.dispatcher.recovery_service",
+            recovery_service,
+            create=True,
+        ),
+        patch(
+            "app.services.execution.dispatcher.subtask_store.get_by_id",
+            return_value=subtask,
+        ),
+        patch(
+            "app.services.execution.dispatcher.subtask_store.update_fields",
+        ) as update_fields_mock,
+        patch(
+            "app.services.execution.dispatcher.task_store.get_by_id",
+            return_value=task,
+        ),
+        patch(
+            "app.services.execution.dispatcher.executor_pod_missing",
+            AsyncMock(return_value=True),
+        ) as pod_missing_mock,
+        patch.object(dispatcher.router, "route", return_value=target),
+        patch.object(dispatcher, "_update_subtask_to_running", AsyncMock()),
+        patch.object(
+            dispatcher, "_dispatch_http_callback", AsyncMock()
+        ) as dispatch_mock,
+    ):
+        await dispatcher.dispatch(request, emitter=emitter)
+
+    pod_missing_mock.assert_awaited_once_with("stale-executor", "wb-plat-ide")
+    marked_deleted = [
+        call
+        for call in update_fields_mock.call_args_list
+        if call.kwargs.get("executor_deleted_at") is True
+    ]
+    assert len(marked_deleted) == 1
+    recovery_service.recover.assert_awaited_once()
+    assert request.executor_name == "recovered-executor"
+    assert request.executor_namespace == "wb-plat-ide"
+    dispatch_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_skips_pod_check_for_device_executor():
+    """Device executors are probed by the device channel, not executor_manager."""
+    dispatcher = ExecutionDispatcher()
+    request = ExecutionRequest(
+        task_id=1385,
+        subtask_id=1861,
+        message_id=3,
+        user={"id": 7, "name": "user7"},
+        user_id=7,
+        user_name="user7",
+        bot=[{"shell_type": "ClaudeCode"}],
+        executor_name="device-local-1",
+    )
+    emitter = AsyncMock()
+
+    subtask = MagicMock(spec=Subtask)
+    subtask.id = 1861
+    subtask.task_id = 1385
+    subtask.executor_deleted_at = False
+    subtask.executor_name = "device-local-1"
+    subtask.executor_namespace = "user-7"
+
+    db = MagicMock()
+    recovery_service = MagicMock()
+    recovery_service.recover = AsyncMock()
+
+    target = ExecutionTarget(
+        mode=CommunicationMode.HTTP_CALLBACK,
+        url="http://executor-manager/executor-manager",
+    )
+
+    with (
+        patch(
+            "app.services.execution.dispatcher.SessionLocal",
+            return_value=db,
+            create=True,
+        ),
+        patch(
+            "app.services.execution.dispatcher.recovery_service",
+            recovery_service,
+            create=True,
+        ),
+        patch(
+            "app.services.execution.dispatcher.subtask_store.get_by_id",
+            return_value=subtask,
+        ),
+        patch(
+            "app.services.execution.dispatcher.executor_pod_missing",
+            AsyncMock(return_value=True),
+        ) as pod_missing_mock,
+        patch.object(dispatcher.router, "route", return_value=target),
+        patch.object(dispatcher, "_update_subtask_to_running", AsyncMock()),
+        patch.object(
+            dispatcher, "_dispatch_http_callback", AsyncMock()
+        ) as dispatch_mock,
+    ):
+        await dispatcher.dispatch(request, emitter=emitter)
+
+    pod_missing_mock.assert_not_awaited()
+    recovery_service.recover.assert_not_awaited()
+    dispatch_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_skips_pod_check_when_subtask_already_marked_deleted():
+    """The existing deleted-executor recovery path must stay authoritative."""
+    dispatcher = ExecutionDispatcher()
+    request = ExecutionRequest(
+        task_id=1385,
+        subtask_id=1861,
+        message_id=3,
+        user={"id": 7, "name": "user7"},
+        user_id=7,
+        user_name="user7",
+        bot=[{"shell_type": "ClaudeCode"}],
+        executor_name="deleted-executor",
+    )
+    emitter = AsyncMock()
+
+    subtask = MagicMock(spec=Subtask)
+    subtask.id = 1861
+    subtask.task_id = 1385
+    subtask.executor_deleted_at = True
+    subtask.executor_name = "deleted-executor"
+    subtask.executor_namespace = "wb-plat-ide"
+    subtask.error_message = ""
+
+    task = MagicMock(spec=TaskResource)
+    task.id = 1385
+    task.kind = "Task"
+
+    db = MagicMock()
+    recovery_service = MagicMock()
+    recovery_service.recover = AsyncMock(
+        return_value={
+            "executor_name": "recovered-executor",
+            "executor_namespace": "wb-plat-ide",
+        }
+    )
+
+    target = ExecutionTarget(
+        mode=CommunicationMode.HTTP_CALLBACK,
+        url="http://executor-manager/executor-manager",
+    )
+
+    with (
+        patch(
+            "app.services.execution.dispatcher.SessionLocal",
+            return_value=db,
+            create=True,
+        ),
+        patch(
+            "app.services.execution.dispatcher.recovery_service",
+            recovery_service,
+            create=True,
+        ),
+        patch(
+            "app.services.execution.dispatcher.subtask_store.get_by_id",
+            return_value=subtask,
+        ),
+        patch(
+            "app.services.execution.dispatcher.task_store.get_by_id",
+            return_value=task,
+        ),
+        patch(
+            "app.services.execution.dispatcher.executor_pod_missing",
+            AsyncMock(return_value=True),
+        ) as pod_missing_mock,
+        patch.object(dispatcher.router, "route", return_value=target),
+        patch.object(dispatcher, "_update_subtask_to_running", AsyncMock()),
+        patch.object(
+            dispatcher, "_dispatch_http_callback", AsyncMock()
+        ) as dispatch_mock,
+    ):
+        await dispatcher.dispatch(request, emitter=emitter)
+
+    pod_missing_mock.assert_not_awaited()
+    recovery_service.recover.assert_awaited_once()
     dispatch_mock.assert_awaited_once()
 
 

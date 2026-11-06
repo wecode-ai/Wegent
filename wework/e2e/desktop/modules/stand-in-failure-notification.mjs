@@ -15,16 +15,16 @@ export function createStandInFailureRegression() {
       response.end(JSON.stringify({ error: { message: FAILURE, type: 'invalid_request_error' } }))
       return true
     },
-    async verify(control, projectId, uiTimeoutMs, modelResponseTimeoutMs) {
+    async verify(control, projectId, uiTimeoutMs, modelResponseTimeoutMs, userId) {
       const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
       const issue = await rpc('todos.create', {
         project_id: projectId,
-        todo: { title: FAILURE, assignee_user_id: 9001 },
+        todo: { title: FAILURE, assignee_user_id: userId },
       })
       const address = await rpc('runtime.stand_in.run', {
         projectId,
         issueId: issue.id,
-        userId: 9001,
+        userId,
         projectStore: 'local',
       })
       const waitForStatus = async status => {
@@ -38,6 +38,15 @@ export function createStandInFailureRegression() {
         assert.fail(`Stand-in did not reach ${status}: ${JSON.stringify(result)}`)
       }
       await waitForStatus('failed')
+      const transcript = await rpc('runtime.tasks.transcript', {
+        ...address,
+        refresh: true,
+        limit: 20,
+      })
+      assert.ok(
+        transcript.turns?.some(turn => turn.error?.includes(FAILURE)),
+        'The original model error must remain in the Runtime transcript'
+      )
       assert.ok(requests > 0, 'Failure must come from the real model transport')
       const id = `stand-in:${encodeURIComponent(`${address.deviceId}\0${address.taskId}`)}`
       const processing = selector(`notification-processing-${id}`)
@@ -45,7 +54,9 @@ export function createStandInFailureRegression() {
       await control.command('click', '[data-testid="wework-notifications-button"]')
       await control.command('click', '[data-testid="wework-notifications-category-collaboration"]')
       await control.command('waitFor', status, { text: '处理失败' })
-      await control.command('waitFor', `${processing} p`, { text: FAILURE })
+      await control.command('waitFor', `${processing} p`, {
+        text: '暂时无法完成此操作。请保留当前修改，重新加载后再试。',
+      })
       const text = await control.command('getText', processing)
       assert.ok(!/模型回复已完成|Model reply is ready/.test(text), text)
       reject = false

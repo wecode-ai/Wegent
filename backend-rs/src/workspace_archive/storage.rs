@@ -12,7 +12,7 @@
 //! bucket existence, object existence, and presigned download URLs.
 use brz_http::Client as HttpClient;
 
-use crate::attachments::minio_client::encode_object_path;
+use crate::attachments::minio_client::{encode_object_path, object_request};
 use crate::attachments::s3_signing;
 
 /// The source `WORKSPACE_ARCHIVE_BUCKET` default (`app/core/config.py`).
@@ -209,6 +209,14 @@ impl ArchiveStorage {
         http: &HttpClient,
         storage_key: &str,
     ) -> anyhow::Result<bool> {
+        Ok(self.archive_size(http, storage_key).await?.is_some())
+    }
+
+    pub(crate) async fn archive_size(
+        &self,
+        http: &HttpClient,
+        storage_key: &str,
+    ) -> anyhow::Result<Option<u64>> {
         self.ensure_ready(http).await?;
         let uri = format!("/{}/{}", self.bucket, encode_object_path(storage_key));
         let url = self.url(&uri);
@@ -222,8 +230,7 @@ impl ArchiveStorage {
             &uri,
             &amz_date,
         );
-        let response = http
-            .request(brz_http::Method::HEAD, &url)?
+        let response = object_request(http, brz_http::Method::HEAD, &url, &self.bucket)?
             .header("authorization", signed.authorization)
             .header("x-amz-content-sha256", signed.content_sha256)
             .header("x-amz-date", signed.amz_date)
@@ -232,12 +239,41 @@ impl ArchiveStorage {
             .await?;
         let status = response.status().as_u16();
         if (200..300).contains(&status) {
-            Ok(true)
+            Ok(Some(
+                response
+                    .headers()
+                    .get("content-length")
+                    .and_then(|value| value.to_str().ok())
+                    .and_then(|value| value.parse().ok())
+                    .unwrap_or(0),
+            ))
         } else if status == 404 {
-            Ok(false)
+            Ok(None)
         } else {
             anyhow::bail!("unexpected archive stat status {status}")
         }
+    }
+
+    pub(crate) async fn generate_upload_url(
+        &self,
+        http: &HttpClient,
+        task_id: i64,
+    ) -> anyhow::Result<(String, String)> {
+        self.ensure_ready(http).await?;
+        let key = format!("workspace-archives/{task_id}/archive.tar.gz");
+        let uri = format!("/{}/{}", self.bucket, encode_object_path(&key));
+        let url = super::s3_presign::presign(
+            self.scheme(),
+            self.host(),
+            "PUT",
+            &uri,
+            &self.access_key,
+            &self.secret_key,
+            &self.region,
+            &s3_signing::amz_timestamp_now(),
+            3600,
+        );
+        Ok((url, key))
     }
 
     /// `generate_download_url`: a presigned `GET` URL for the object, valid
@@ -266,6 +302,7 @@ impl ArchiveStorage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::attachments::minio_client::metrics_tests::{scrape, serve_objects};
 
     fn storage(endpoint: &str, use_ssl: bool) -> ArchiveStorage {
         ArchiveStorage {
@@ -300,5 +337,42 @@ mod tests {
             storage.url("/wegent-archives"),
             "https://s3.example:9100/wegent-archives"
         );
+    }
+
+    #[tokio::test]
+    async fn archive_size_aggregates_metrics_without_changing_object_paths() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let prefix = "/wegent-archives/workspace-archives/";
+        let server = tokio::spawn(serve_objects(listener, 2, prefix));
+        let http = HttpClient::builder()
+            .read_timeout(std::time::Duration::from_secs(5))
+            .configure(|builder| builder.no_proxy())
+            .build()
+            .unwrap();
+        let storage = storage(&origin, false);
+        let keys = [
+            "workspace-archives/42/archive.tar.gz",
+            "workspace-archives/84/archive.tar.gz",
+        ];
+        for key in keys {
+            assert_eq!(storage.archive_size(&http, key).await.unwrap(), Some(0));
+        }
+        let requests = server.await.unwrap();
+        let object_paths: Vec<_> = requests
+            .iter()
+            .filter(|(line, _)| line.starts_with(&format!("HEAD {prefix}")))
+            .map(|(line, _)| line.as_str())
+            .collect();
+        for (line, key) in object_paths.iter().zip(keys) {
+            assert_eq!(*line, format!("HEAD /wegent-archives/{key} HTTP/1.1\r\n"));
+        }
+        assert_eq!(object_paths.len(), 2);
+        let output = scrape();
+        let metric = format!(
+            "brz_req_total{{type=\"HTTP\",name=\"HEAD {origin}/wegent-archives/{{key}}\"}} 2"
+        );
+        assert!(output.lines().any(|line| line == metric));
+        assert!(!output.contains(&format!("{origin}{prefix}")));
     }
 }

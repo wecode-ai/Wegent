@@ -1,17 +1,13 @@
 import {
-  cacheConversationScrollSnapshot,
-  cacheConversationVirtualMeasurements,
+  migrateConversationViewport,
   clearConversationViewportCache,
   evictConversationViewport,
-  getConversationScrollSnapshot,
-  getConversationVirtualMeasurements,
   getConversationViewportCacheStats,
 } from '@wegent/collaboration/conversation/conversationViewportCache'
 import { getUnambiguousWorkbenchDeviceAliases } from '@/lib/workbench-device'
 import type {
   DeviceInfo,
   RuntimeGoal,
-  RuntimeGoalContinuationPayload,
   RuntimePlanEventPayload,
   RuntimeTaskAddress,
 } from '@/types/api'
@@ -35,7 +31,6 @@ interface Subscription {
 
 export interface RuntimeConversationMetadata {
   goal: RuntimeGoal | null
-  goalContinuation: RuntimeGoalContinuationPayload | null
   taskPlan: RuntimePlanEventPayload | null
   subagentStatuses: RuntimeSubagentStatus[]
 }
@@ -187,15 +182,7 @@ function migrateRuntimeConversation(previousKey: string, nextKey: string): void 
   moveEntry(interruptedGuidanceIdsByConversation, previousKey, nextKey, mergeSets)
   moveEntry(goalSnapshotVersionsByConversation, previousKey, nextKey, Math.max)
   reconcileAcceptedQueuedMessages(nextKey, turnsByConversation.get(nextKey) ?? [])
-  const scroll = getConversationScrollSnapshot(previousKey)
-  if (scroll && !getConversationScrollSnapshot(nextKey)) {
-    cacheConversationScrollSnapshot(nextKey, scroll)
-  }
-  const measurements = getConversationVirtualMeasurements(previousKey)
-  if (measurements && !getConversationVirtualMeasurements(nextKey)) {
-    cacheConversationVirtualMeasurements(nextKey, measurements)
-  }
-  evictConversationViewport(previousKey)
+  migrateConversationViewport(previousKey, nextKey)
 }
 
 function moveEntry<T>(
@@ -248,7 +235,6 @@ function mergeMetadata(
         : previousGoalIsNewer
           ? previous.goal
           : current.goal,
-    goalContinuation: current.goalContinuation ?? previous.goalContinuation,
     taskPlan: current.taskPlan ?? previous.taskPlan,
     subagentStatuses: [...statuses.values()]
       .sort((left, right) => (right.updatedAtMs ?? 0) - (left.updatedAtMs ?? 0))
@@ -322,7 +308,12 @@ function reconcileAcceptedQueuedMessages(key: string, turns: RuntimeConversation
     message =>
       message.status !== 'sending' ||
       message.deliveryMode !== 'message' ||
-      !turns.some(turn => turn.id !== null && turnContainsClientUserMessage(turn, message.id))
+      !turns.some(
+        turn =>
+          turn.id !== null &&
+          turn.status !== 'pending' &&
+          turnContainsClientUserMessage(turn, message.id)
+      )
   )
   if (remaining.length === queuedMessages.length) return
   cacheRuntimeConversationQueuedMessagesByKey(key, remaining)
@@ -355,6 +346,10 @@ export function evictRuntimeConversationKey(key: string): void {
 
 export function markRuntimeConversationArchived(key: string): void {
   archivedConversationKeys.add(key)
+}
+
+export function isRuntimeConversationArchived(address: RuntimeTaskAddress): boolean {
+  return archivedConversationKeys.has(runtimeConversationKey(address))
 }
 
 export function unmarkRuntimeConversationArchived(key: string): void {

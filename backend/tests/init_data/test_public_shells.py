@@ -12,7 +12,10 @@ import yaml
 pytestmark = pytest.mark.unit
 
 PUBLIC_SHELLS_PATH = (
-    Path(__file__).resolve().parents[2] / "init_data" / "01-public-shells.yaml"
+    Path(__file__).resolve().parents[2].parent
+    / "backend-rs"
+    / "init_data"
+    / "01-public-shells.yaml"
 )
 
 

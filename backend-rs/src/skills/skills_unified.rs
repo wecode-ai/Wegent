@@ -29,10 +29,15 @@ use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
 use crate::auth::UserRow;
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
+use group_members::namespace_id_by_name;
+pub(crate) use group_members::{direct_member_role, direct_member_role_on};
+
 use crate::teams::group_membership::{
     DirectoryMembership, ErpContext, effective_roles, user_group_memberships,
 };
 
+mod catalog;
+mod group_members;
 mod params;
 
 pub use params::UnifiedParams;
@@ -249,18 +254,23 @@ fn extract_skill_id(input: Option<&SkillDisplayInput>) -> Option<i32> {
 }
 
 /// Escape one string literal for an inline `IN` list.
+///
+/// Iterate Unicode scalar values, not bytes: pushing each byte as `char`
+/// reinterprets UTF-8 continuation bytes as Latin-1 code points, so a
+/// non-ASCII group name (for example `微博运营部`) would be sent as mojibake
+/// and never match the stored `namespace.name`.
 fn quote_literal(value: &str) -> String {
     let mut out = String::with_capacity(value.len() + 2);
     out.push('\'');
-    for byte in value.bytes() {
-        match byte {
-            b'\'' => out.push_str("\\'"),
-            b'\\' => out.push_str("\\\\"),
-            b'\0' => out.push_str("\\0"),
-            b'\n' => out.push_str("\\n"),
-            b'\r' => out.push_str("\\r"),
-            0x1a => out.push_str("\\Z"),
-            other => out.push(other as char),
+    for character in value.chars() {
+        match character {
+            '\'' => out.push_str("\\'"),
+            '\\' => out.push_str("\\\\"),
+            '\0' => out.push_str("\\0"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\u{1a}' => out.push_str("\\Z"),
+            other => out.push(other),
         }
     }
     out.push('\'');
@@ -515,78 +525,6 @@ fn highest_role(roles: &[String]) -> Option<String> {
         .cloned()
 }
 
-/// `namespace` full projection constant (`db.query(Namespace)`).
-const NAMESPACE_COLUMNS: &str = "namespace.id AS namespace_id, \
-     namespace.name AS namespace_name, namespace.display_name AS namespace_display_name, \
-     namespace.owner_user_id AS namespace_owner_user_id, \
-     namespace.visibility AS namespace_visibility, \
-     namespace.description AS namespace_description, \
-     namespace.level AS namespace_level, namespace.is_active AS namespace_is_active, \
-     namespace.created_at AS namespace_created_at, \
-     namespace.updated_at AS namespace_updated_at";
-
-/// `get_namespace_id_by_name` (full `Namespace` projection, `LIMIT 1`).
-async fn namespace_id_by_name<M>(mysql: &M, group_name: &str) -> MysqlResult<Option<i64>>
-where
-    M: Mysql,
-{
-    #[derive(Debug, FromMysqlRow)]
-    struct Row {
-        namespace_id: i64,
-    }
-    let row: Option<Row> = mysql
-        .fetch_optional(
-            &format!(
-                "SELECT {NAMESPACE_COLUMNS} \
-                 FROM namespace \
-                 WHERE namespace.name = {} AND namespace.is_active = 1 \
-                 LIMIT 1",
-                quote_literal(group_name)
-            ),
-            (),
-        )
-        .await?;
-    Ok(row.map(|row| row.namespace_id))
-}
-
-/// `get_group_member` (full `ResourceMember` projection, `LIMIT 1`). Shared
-/// with the task-skills group-member cache fallback.
-pub(crate) async fn direct_member_role<M>(
-    mysql: &M,
-    user_id: i32,
-    group_name: &str,
-) -> MysqlResult<Option<String>>
-where
-    M: Mysql,
-{
-    let Some(namespace_id) = namespace_id_by_name(mysql, group_name).await? else {
-        return Ok(None);
-    };
-    #[derive(Debug, FromMysqlRow)]
-    struct Row {
-        #[mysql(rename = "resource_members_role")]
-        role: Option<String>,
-    }
-    let row: Option<Row> = mysql
-        .fetch_optional(
-            &format!(
-                "SELECT {} \
-                 FROM resource_members \
-                 WHERE resource_members.resource_type = 'Namespace' \
-                 AND resource_members.resource_id = {namespace_id} \
-                 AND resource_members.entity_type = 'user' \
-                 AND resource_members.entity_id = '{}' \
-                 AND resource_members.status = 'approved' \
-                 LIMIT 1",
-                crate::teams::teams_repository::MEMBER_COLUMNS,
-                user_id
-            ),
-            (),
-        )
-        .await?;
-    Ok(row.and_then(|row| row.role))
-}
-
 /// `resolve_entity_roles_for_resource` row fetch: the namespace's approved
 /// entity-type member rows excluding `user` and `namespace`
 /// (`entity_type`, `entity_id`, `role` projection).
@@ -646,15 +584,16 @@ where
 
 /// `get_user_groups`: sorted group names where the user has an effective
 /// role. Shared with the download path's `list_user_group_skill_ids`.
-pub(crate) async fn get_user_groups<M>(
+pub(crate) async fn get_user_groups<M, R: brz_redis::Redis>(
     mysql: &M,
-    erp: &ErpContext<'_>,
+    erp: &ErpContext<'_, R>,
+    resolvers: &crate::permissions::EntityResolvers<R>,
     user_id: i32,
 ) -> MysqlResult<Vec<String>>
 where
     M: Mysql,
 {
-    let resolved = user_group_memberships(mysql, erp, user_id as i64).await?;
+    let resolved = user_group_memberships(mysql, erp, resolvers, user_id as i64).await?;
     let roles = effective_roles(&resolved.memberships, &resolved.active_names);
     let mut groups: Vec<String> = roles.into_keys().collect();
     groups.sort();
@@ -769,10 +708,11 @@ async fn unified_skills(
     let mut group_namespaces: Vec<String> = Vec::new();
     let mut group_shared_skill_ids: HashSet<i32> = HashSet::new();
     if scope != "group" || group_name.is_none() {
-        group_namespaces = match get_user_groups(mysql, &erp, user.id).await {
-            Ok(groups) => groups,
-            Err(error) => return Err(dependency_error(error)),
-        };
+        group_namespaces =
+            match get_user_groups(mysql, &erp, &state.entity_resolvers, user.id).await {
+                Ok(groups) => groups,
+                Err(error) => return Err(dependency_error(error)),
+            };
         group_namespaces.retain(|group| group != "default");
         if !group_namespaces.is_empty() {
             group_shared_skill_ids =
@@ -864,7 +804,7 @@ async fn unified_skills(
         )
     };
 
-    let mut skill_kinds = match fetch_kinds(mysql, scope_sql.as_str()).await {
+    let skill_kinds = match fetch_kinds(mysql, scope_sql.as_str()).await {
         Ok(kinds) => kinds,
         Err(error) => return Err(dependency_error(error)),
     };
@@ -882,73 +822,19 @@ async fn unified_skills(
         bound_skill_ids.extend(group_shared_skill_ids.iter().copied());
     }
 
-    // Bound-but-not-listed skills.
-    let direct_ids: HashSet<i32> = skill_kinds.iter().map(|kind| kind.kinds_id).collect();
-    let mut missing: Vec<i32> = bound_skill_ids.difference(&direct_ids).copied().collect();
-    missing.sort_unstable();
-    if !missing.is_empty() {
-        let list = missing
-            .iter()
-            .map(|id| id.to_string())
-            .collect::<Vec<_>>()
-            .join(", ");
-        let sql = format!(
-            "SELECT {KIND_COLUMNS} \
-             FROM kinds \
-             WHERE kinds.id IN ({list}) AND kinds.kind = 'Skill' \
-             AND kinds.is_active = true ORDER BY kinds.created_at DESC"
-        );
-        match fetch_kinds(mysql, sql.as_str()).await {
-            Ok(rows) => skill_kinds.extend(rows),
-            Err(error) => return Err(dependency_error(error)),
-        }
-    }
-
-    // Convert user/group skills (dedup by (namespace, name)).
-    let mut skills: Vec<SkillItem> = Vec::new();
-    let mut user_skill_keys: HashSet<(String, String)> = HashSet::new();
-    let mut user_skill_names: HashSet<String> = HashSet::new();
-    for kind in &skill_kinds {
-        let key = (kind.kinds_namespace.clone(), kind.kinds_name.clone());
-        if user_skill_keys.insert(key) {
-            user_skill_names.insert(kind.kinds_name.clone());
-            skills.push(user_skill_item(
-                kind,
-                group_shared_skill_ids.contains(&kind.kinds_id),
-                &user_default_ids,
-            ));
-        }
-    }
-
-    // Public skills not shadowed by a user/group skill of the same name.
-    let public_sql = format!(
-        "SELECT {KIND_COLUMNS} \
-         FROM kinds \
-         WHERE kinds.user_id = 0 AND kinds.kind = 'Skill' \
-         AND kinds.namespace = 'default' AND kinds.is_active = true \
-         ORDER BY kinds.created_at DESC"
-    );
-    let public_kinds = match fetch_kinds(mysql, public_sql.as_str()).await {
-        Ok(kinds) => kinds,
-        Err(error) => return Err(dependency_error(error)),
-    };
-    for kind in &public_kinds {
-        if user_skill_names.insert(kind.kinds_name.clone()) {
-            let mut item = user_skill_item(
-                kind,
-                group_shared_skill_ids.contains(&kind.kinds_id),
-                &user_default_ids,
-            );
-            item.is_public = true;
-            item.source = None;
-            skills.push(item);
-        }
-    }
-
-    // Pagination (`user_skills[skip : skip + limit]`).
-    let page: Vec<SkillItem> = skills.into_iter().skip(skip).take(limit).collect();
-
-    Ok(page)
+    catalog::assemble(
+        skill_kinds,
+        catalog::CatalogSelection {
+            bound_ids: &bound_skill_ids,
+            shared_ids: &group_shared_skill_ids,
+            default_ids: &user_default_ids,
+            skip,
+            limit,
+        },
+        |sql| async move { fetch_kinds(mysql, &sql).await },
+    )
+    .await
+    .map_err(dependency_error)
 }
 
 fn dependency_error(error: brz_mysql::MysqlError) -> FastApiError {

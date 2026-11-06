@@ -392,7 +392,7 @@ describe('ProjectManageView project scope', () => {
     expect(findByTestId(tree, 'cloud-member-search')).toBeTruthy()
   })
 
-  it('reloads the authoritative member list after adding a member', async () => {
+  it.each([false, true])('reloads members after adding, with initial failure: %s', async failed => {
     vi.useFakeTimers()
     vi.stubGlobal('window', globalThis)
     const api = createApi()
@@ -419,7 +419,10 @@ describe('ProjectManageView project scope', () => {
       email: null,
     }
     vi.mocked(api.listMembers)
-      .mockResolvedValueOnce([owner])
+      .mockImplementationOnce(async () => {
+        if (failed) throw new Error('Member service unavailable')
+        return [owner]
+      })
       .mockResolvedValueOnce([owner, addedMember])
     vi.mocked(api.searchUsers).mockResolvedValue({ users: [user] })
     vi.mocked(api.addMember).mockResolvedValue(addedMember)
@@ -429,6 +432,8 @@ describe('ProjectManageView project scope', () => {
       let tree = renderView(api, host, currentProject, vi.fn())
       await flushPromises()
       tree = renderView(api, host, currentProject, vi.fn())
+
+      expect(Boolean(findByTestId(tree, 'cloud-project-members-error'))).toBe(failed)
 
       findByTestId(tree, 'cloud-project-members-toggle').props.onClick()
       tree = renderView(api, host, currentProject, vi.fn())
@@ -451,6 +456,7 @@ describe('ProjectManageView project scope', () => {
       expect(api.addMember).toHaveBeenCalledWith('project-a', 2, 'Viewer')
       expect(api.listMembers).toHaveBeenCalledTimes(2)
       expect(findByTestId(tree, 'cloud-project-member-2')).toBeTruthy()
+      expect(findByTestId(tree, 'cloud-project-members-error')).toBeNull()
     } finally {
       vi.unstubAllGlobals()
       vi.useRealTimers()
@@ -824,4 +830,29 @@ it('discards late tag discovery after switching projects and leaves the next ove
   tree = renderView(api, host, second, vi.fn(), undefined, 'overview')
   expect(findByTestId(tree, 'cloud-project-tag-old-task-tag')).toBeNull()
   expect(api.listItems).toHaveBeenCalledOnce()
+})
+
+it('isolates a member load failure and retries only the member list', async () => {
+  const api = createApi()
+  const host = createHost()
+  const current = project('project-a', 'private')
+  vi.mocked(api.listMembers)
+    .mockRejectedValueOnce(new Error('Unavailable'))
+    .mockResolvedValueOnce([])
+  const render = () => renderView(api, host, current, vi.fn(), undefined, 'members')
+  render()
+  await flushPromises()
+  let tree = render()
+  const failure = findByTestId(tree, 'cloud-project-members-error')
+  expect(failure.props.children[0].props.children).toBe('加载协作数据失败')
+  expect(findByTestId(tree, 'cloud-project-manage-error')).toBeNull()
+  expect(findByTestId(tree, 'cloud-project-members-empty')).toBeNull()
+  findByTestId(tree, 'cloud-project-members-retry').props.onClick()
+  render()
+  await flushPromises()
+  tree = render()
+  expect(findByTestId(tree, 'cloud-project-members-error')).toBeNull()
+  expect(findByTestId(tree, 'cloud-project-members-empty')).not.toBeNull()
+  expect(api.listMembers).toHaveBeenCalledTimes(2)
+  expect(api.listItems).not.toHaveBeenCalled()
 })

@@ -18,6 +18,10 @@ export function formatAppUpdateProgress(
       completed: progress?.completedComponents ?? 0,
       total: progress?.totalComponents ?? 0,
     })
+  } else if (phase === 'extracting') {
+    message = t('workbench.app_update_extracting', { defaultValue: '正在解压新版程序' })
+  } else if (phase === 'runtime') {
+    message = t('workbench.app_update_runtime', { defaultValue: '正在准备新版运行环境' })
   } else if (phase === 'ready') {
     message = t('workbench.app_update_ready', { defaultValue: '更新已就绪，可以重启安装' })
   } else {

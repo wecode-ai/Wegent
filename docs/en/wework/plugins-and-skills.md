@@ -8,11 +8,17 @@ A Skill gives AI task-specific instructions and resources. A plugin can package 
 
 Open **Plugins** to inspect installed plugins and manage their capabilities. Review a plugin's tools and permissions before enabling it for a workspace.
 
+When installing an unofficial plugin from Enterprise, Personal, or an external marketplace, including public community submissions, the confirmation dialog warns that it may execute code, access local files, or send data to external services. Public visibility does not establish official provenance. Only continue if you trust its source. Focus starts on **Cancel**, and Escape closes the dialog. Trying an uninstalled unofficial plugin also requires confirmation before installation and placing the example in a new conversation. OpenAI official and Wework official plugins retain their existing installation flow. Personal ZIP imports show the same source warning in the preview dialog.
+
 ## Conversation picker and app authorization
 
 The marketplace, plugin manager, and conversation picker share the installed inventory for the current account and device. The picker retains all installed, enabled plugins; scroll or search when the visible list has a fixed height. Plugins awaiting authorization remain selectable. Disabled plugins stay in the management list but are excluded from new conversation pickers.
 
 Manage the matching app under **App authorizations** on the plugin detail page; authorization for one app cannot authorize another. GitHub uses GitHub CLI (`gh`) on the execution device: Wework checks existing authentication first, offers logout when connected, and starts GitHub login only when needed. That device's `gh` manages the credentials, without authorizing ChatGPT. Environment-provided credentials cannot be removed by logout; remove them from the execution device's configuration instead.
+
+The GitHub plugin, the GitHub.com check under **Settings → Git hosting**, and task execution use the same credential environment. Network, permission, and CLI execution errors are reported as detection failures rather than missing authentication. Open settings and plugin details refresh after login, logout, or returning to Wework. To change device-synchronized credentials, update the Git account and synchronize it again; interactive login and logout do not write to the synchronized store.
+
+For device authorization, enter the code shown on the card into GitHub's authorization page and complete confirmation. Wework offers the browser action only after obtaining a valid device code and GitHub authorization URL. Missing codes and authorization-prompt timeouts display an error and allow another attempt. Signing into the website alone does not complete CLI authorization. Ordinary Git commits, pushes, and GitLab operations do not require GitHub login.
 
 Other Codex apps use their own provided authorization entry. Complete that app's authorization in the browser, then return to Wework and choose **Authorization completed, verify connection**. Opening a browser does not establish a connection. A blocked, timed-out, or unavailable app catalog produces a short message and leaves the app disconnected, rather than displaying a raw HTML error page as an authorization result.
 

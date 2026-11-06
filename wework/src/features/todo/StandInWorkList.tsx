@@ -1,3 +1,4 @@
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useStandInOpened } from '@/telemetry/useStandInOpened'
 import { ArrowUpRight, ChevronRight, GripVertical, Layers, Split, X } from 'lucide-react'
 import { useState } from 'react'
@@ -7,11 +8,11 @@ import type { RuntimeTaskAddress } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { StandInExecutorApi, StandInInboxWork } from '@/api/standIn'
 import { StandInWorkMessages } from './StandInWorkMessages'
-import { StandInWorkConfirmation } from './StandInWorkConfirmation'
+import { useRuntimeInteractions } from '@/features/notifications/RuntimeInteractionsContext'
 import { useStandInWorkOrganization } from './useStandInWorkOrganization'
 import { inboxRuntimeItem } from './useStandInInbox'
 
-type WorkFilter = 'all' | 'waiting' | 'running' | 'completed'
+type WorkFilter = 'all' | 'running' | 'completed'
 
 export function StandInWorkList({
   items,
@@ -33,6 +34,7 @@ export function StandInWorkList({
   active?: boolean
 }) {
   const { t } = useTranslation('common')
+  const interactions = useRuntimeInteractions()
   const [filter, setFilter] = useState<WorkFilter>('all')
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -57,7 +59,9 @@ export function StandInWorkList({
     (selectedWork?.roleId ?? selectedOrigin?.standInId) === '@primary' ? 'primary' : 'role'
   useStandInOpened('work', identity, active && !!selected, selected?.key)
   const needsStart =
-    selectedWork && ['pending', 'failed', 'needs_grouping'].includes(selectedWork.status)
+    selectedWork &&
+    selectedState?.status !== 'waiting' &&
+    ['pending', 'failed', 'needs_grouping'].includes(selectedWork.status)
   const statusLabel = (item: RuntimeTaskReminderItem) => {
     const work = inbox.find(value => value.taskId === item.task.taskId)
     return work && work.status !== 'sent'
@@ -81,7 +85,7 @@ export function StandInWorkList({
     <div className="flex min-h-0 flex-1" data-testid="stand-in-activity">
       <div className="min-w-0 flex-1 overflow-y-auto p-5">
         <nav aria-label={t('standIn.workspace.work_filters')} className="mb-4 flex flex-wrap gap-1">
-          {(['all', 'waiting', 'running', 'completed'] as const).map(value => (
+          {(['all', 'running', 'completed'] as const).map(value => (
             <button
               key={value}
               type="button"
@@ -91,9 +95,6 @@ export function StandInWorkList({
               className={`min-h-11 md:min-h-8 rounded-md px-3 text-sm ${filter === value ? 'bg-muted font-medium' : 'text-text-muted hover:bg-muted'}`}
             >
               {t(`standIn.workspace.filter_${value}`)}
-              {value === 'waiting' &&
-                items.some(item => filterStatus(item) === 'waiting') &&
-                ` ${items.filter(item => filterStatus(item) === 'waiting').length}`}
             </button>
           ))}
         </nav>
@@ -381,8 +382,19 @@ export function StandInWorkList({
               )}
             </div>
           )}
-          {active && (!selectedWork || selectedWork.task) && (
-            <StandInWorkConfirmation key={selected.key} address={selected.address} />
+          {selectedState.status === 'waiting' && interactions && (
+            <button
+              type="button"
+              data-testid="stand-in-work-open-pending"
+              className="mt-5 inline-flex min-h-11 items-center justify-center rounded-lg bg-text-primary px-3 py-2 text-sm text-background md:min-h-9"
+              onClick={() =>
+                interactions.open(
+                  interactions.pending.find(item => item.task.key === selected.key)?.id
+                )
+              }
+            >
+              {t('interactions.title')}
+            </button>
           )}
           {selectedWork && api && userId !== undefined && deviceId && (
             <StandInWorkMessages
@@ -436,7 +448,7 @@ export function StandInWorkList({
                   onRefresh?.()
                   await onOpenTask?.(address)
                 } catch (cause) {
-                  setError(String(cause))
+                  setError(getStandInErrorMessage(cause))
                 } finally {
                   setBusy(false)
                 }
@@ -446,6 +458,37 @@ export function StandInWorkList({
               {t(needsStart ? 'standIn.workspace.start_work' : 'standIn.workspace.open_work')}
               <ArrowUpRight className="h-4 w-4" />
             </button>
+            {selectedWork?.task &&
+              ['pending', 'failed', 'needs_grouping'].includes(selectedWork.status) &&
+              selectedState.status !== 'running' &&
+              selectedState.status !== 'waiting' &&
+              selectedState.status !== 'completed' &&
+              api &&
+              userId !== undefined &&
+              deviceId && (
+                <button
+                  type="button"
+                  data-testid="stand-in-preview-confirm-once"
+                  disabled={busy}
+                  className="mt-2 min-h-11 w-full rounded-lg border border-border px-3 text-sm hover:bg-muted disabled:opacity-50 md:min-h-9"
+                  onClick={async () => {
+                    try {
+                      setBusy(true)
+                      const address = await api.runWork(userId, deviceId, selectedWork.id, {
+                        confirmThisRun: true,
+                      })
+                      onRefresh?.()
+                      await onOpenTask?.(address)
+                    } catch (cause) {
+                      setError(getStandInErrorMessage(cause))
+                    } finally {
+                      setBusy(false)
+                    }
+                  }}
+                >
+                  {t('standIn.authorization.confirm_once')}
+                </button>
+              )}
           </div>
         </aside>
       )}

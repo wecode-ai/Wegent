@@ -28,6 +28,7 @@ test('registers export commands, menus, and the dialog overlay', async () => {
   const commands = []
   const menus = []
   const contributions = []
+  let locale = 'en'
   const ctx = {
     slots: {
       inject(_slot, factory) {
@@ -47,8 +48,9 @@ test('registers export commands, menus, and the dialog overlay', async () => {
         },
       },
       localization: {
-        translate(_messages, fallback) {
-          return fallback
+        translate(messages, fallback) {
+          if (typeof messages === 'string') return messages
+          return messages[locale] ?? fallback
         },
       },
       menus: {
@@ -65,6 +67,11 @@ test('registers export commands, menus, and the dialog overlay', async () => {
     menus.map(entry => entry.location),
     ['conversation.toolbar', 'conversation.context']
   )
+  assert.equal(commands[0].definition.title, 'Export conversation')
+  assert.equal(typeof menus[0].item.title, 'function')
+  locale = 'zh-CN'
+  assert.equal(menus[0].item.title(), '导出会话')
+  assert.equal(menus[1].item.title(), '导出会话')
   assert.equal(contributions[0].descriptor.module, 'plugins/wework-ui-conversation-export.js')
 
   commands[0].handler({ deviceId: 'device-1', taskId: 'task-1' })

@@ -1,5 +1,7 @@
 .section {
   padding: 0;
+  max-width: 64rem;
+  margin: 0 auto;
 }
 
 .header {
@@ -22,14 +24,14 @@
   border: 1px solid rgb(var(--color-border));
   border-radius: 8px;
   padding: 0 12px;
-  color: rgb(var(--color-text-primary));
-  background: rgb(var(--color-bg-base));
+  color: rgb(var(--color-bg-base));
+  background: rgb(var(--color-text-primary));
   font-size: var(--text-sm);
   font-weight: 500;
 }
 
 .addButton:hover {
-  background: rgb(var(--color-bg-hover));
+  opacity: 0.9;
 }
 
 .addButton:disabled {
@@ -39,7 +41,7 @@
 
 .title {
   margin: 0;
-  font-size: var(--text-heading-sm);
+  font-size: var(--text-heading-md);
   font-weight: 500;
   line-height: 1.33;
   color: rgb(var(--color-text-primary));
@@ -62,14 +64,12 @@
   font-size: var(--text-sm);
 }
 
-.sectionHeading {
+.titleRow {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 16px;
 }
 
-.sectionHeading h3,
 .composerHeader h3 {
   margin: 0;
   color: rgb(var(--color-text-primary));
@@ -77,13 +77,13 @@
   font-weight: 500;
 }
 
-.sectionHeading > span {
+.count {
   display: inline-flex;
   min-width: 22px;
   height: 22px;
   align-items: center;
   justify-content: center;
-  border-radius: 999px;
+  border-radius: 6px;
   color: rgb(var(--color-text-secondary));
   background: rgb(var(--color-bg-surface));
   font-size: var(--text-xs);
@@ -93,9 +93,8 @@
 .list {
   display: grid;
   overflow: hidden;
-  border: 1px solid rgb(var(--color-border));
-  border-radius: 12px;
-  margin-top: 10px;
+  border-top: 1px solid rgb(var(--color-border));
+  margin-top: 24px;
   background: rgb(var(--color-bg-base));
 }
 
@@ -103,8 +102,8 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  min-height: 56px;
-  padding: 8px 12px;
+  min-height: 72px;
+  padding: 12px 8px;
   background: rgb(var(--color-bg-base));
 }
 
@@ -123,7 +122,7 @@
   color: rgb(var(--color-text-secondary));
   background: rgb(var(--color-bg-subtle));
   font-size: var(--text-xs);
-  font-weight: 650;
+  font-weight: 500;
 }
 
 .agentIdentity {
@@ -303,5 +302,26 @@
     border-bottom: 0;
     border-left: 0;
     border-radius: 20px 20px 0 0;
+  }
+}
+
+.retryButton {
+  min-height: 32px;
+  margin-left: 12px;
+  padding: 0 12px;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 6px;
+  color: rgb(var(--color-text-primary));
+  background: rgb(var(--color-bg-base));
+  cursor: pointer;
+}
+
+@media (max-width: 767px) {
+  .addButton,
+  .retryButton {
+    min-height: 44px;
+  }
+  .agentDetails {
+    flex-wrap: wrap;
   }
 }

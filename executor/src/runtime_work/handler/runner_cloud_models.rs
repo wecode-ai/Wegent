@@ -6,6 +6,7 @@ impl RuntimeWorkRpcHandler {
         &self,
         payload: &mut Value,
     ) -> Result<(), AppIpcError> {
+        self.materialize_local_runner_models(payload)?;
         if !has_cloud_routing(payload) {
             return Ok(());
         }
@@ -15,10 +16,13 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| cloud_error("Connect to the cloud before using a cloud model"))?;
         let response = crate::agents::backend_url::backend_http_client()
             .map_err(|_| cloud_error("Cannot configure the backend connection"))?
-            .get(format!(
-                "{}/api/models/unified",
-                connection.backend_url.trim_end_matches('/')
-            ))
+            .get(
+                crate::agents::runtime_capabilities::api_url(
+                    &connection.backend_url,
+                    "/api/models/unified",
+                )
+                .map_err(|_| cloud_error("Invalid backend API URL"))?,
+            )
             .query(&[
                 ("scope", "all"),
                 ("include_config", "false"),
@@ -118,6 +122,40 @@ fn cloud_protocol(model: &Value) -> Option<&'static str> {
     }
 }
 
+fn cloud_catalog_model_id(model: &Value) -> String {
+    [
+        "/config/codex_catalog_model_id",
+        "/config/codexCatalogModelId",
+    ]
+    .iter()
+    .find_map(|path| {
+        model
+            .pointer(path)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+    })
+    .or_else(|| {
+        let model_id = [
+            "/modelId",
+            "/config/model_id",
+            "/config/modelId",
+            "/config/model",
+        ]
+        .iter()
+        .find_map(|path| {
+            model
+                .pointer(path)
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+        })
+        .or_else(|| model["name"].as_str())?;
+        crate::server::codex_model_catalog::catalog_model_id_for_upstream(model_id)
+    })
+    .unwrap_or_else(|| "wework-gpt-6.1-sol".to_owned())
+}
+
 fn materialize_cloud_payload(
     payload: &mut Value,
     models: &[Value],
@@ -147,10 +185,11 @@ fn materialize_cloud_payload(
         let protocol = cloud_protocol(model)
             .ok_or_else(|| cloud_error("The cloud model protocol is unavailable"))?;
         let claude = identity["runtime"] == "claude_code";
-        let base_url = format!(
-            "{}/api/runtime-work/llm-responses-proxy",
-            backend_url.trim_end_matches('/')
-        );
+        let base_url = crate::agents::runtime_capabilities::api_url(
+            backend_url,
+            "/api/runtime-work/llm-responses-proxy",
+        )
+        .map_err(|_| cloud_error("Invalid backend gateway URL"))?;
         let headers = json!({
             "X-Wegent-Model-Type": reference["type"],
             "X-Wegent-Model-Namespace": reference["namespace"],
@@ -164,7 +203,7 @@ fn materialize_cloud_payload(
         if !claude {
             config.as_object_mut().expect("config is an object").extend(
                 json!({
-                    "codex_catalog_model_id":model.pointer("/config/codex_catalog_model_id").and_then(Value::as_str).unwrap_or("wework-gpt-5.6-sol"),
+                    "codex_catalog_model_id":cloud_catalog_model_id(model),
                     "codex_responses_compat_proxy":true,"tool_profile":"custom",
                     "native_tool_search":model.pointer("/config/native_tool_search").and_then(Value::as_bool).unwrap_or(protocol=="openai-responses"),
                     "native_namespace_tools":model.pointer("/config/native_namespace_tools").and_then(Value::as_bool).unwrap_or(protocol=="openai-responses"),
@@ -221,6 +260,45 @@ fn materialize_cloud_payload(
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn cloud_catalog_and_execution_use_the_connected_users_token() {
+        use axum::{http::HeaderMap, routing::get, Json, Router};
+
+        let router = Router::new().route(
+            "/api/models/unified",
+            get(|headers: HeaderMap| async move {
+                assert_eq!(headers["authorization"], "Bearer synthetic-session-token");
+                Json(json!({"data":[model("openai-responses")]}))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let handler = RuntimeWorkRpcHandler::new("mac", "unused").with_backend_connection(
+            Arc::new(Mutex::new(Some(ConnectionConfig {
+                backend_url: url.clone(),
+                auth_token: "synthetic-session-token".into(),
+                runtime_auth_token: "synthetic-device-token".into(),
+                ..Default::default()
+            }))),
+        );
+        let mut payload = cloud_payload("codex");
+        handler
+            .materialize_runner_cloud_models(&mut payload)
+            .await
+            .unwrap();
+        server.abort();
+        let config = &payload["executionRequest"]["model_config"];
+        assert_eq!(config["api_key"], "synthetic-session-token");
+        assert_eq!(
+            config["base_url"],
+            format!("{url}/api/runtime-work/llm-responses-proxy")
+        );
+        assert_eq!(config["runtime_config"]["codex"]["use_user_config"], false);
+        assert_eq!(config["default_headers"]["X-Wegent-Model-User-Id"], "0");
+        assert_eq!(payload["modelConfig"], *config);
+    }
+
     fn cloud_payload(runtime: &str) -> Value {
         json!({
             "runnerRouting": {"model": {
@@ -253,6 +331,37 @@ mod tests {
         assert_eq!(config["model_context_window"], 100_000);
         assert_eq!(config["default_headers"]["X-Wegent-Model-User-Id"], "0");
         assert_eq!(config["default_headers"]["X-Wegent-Model-Type"], "public");
+        assert_eq!(config["codex_catalog_model_id"], "wework-gpt-6.1-sol");
+    }
+
+    #[test]
+    fn cloud_gateway_keeps_inferred_and_explicit_compatibility_profiles() {
+        for protocol in [
+            "openai-responses",
+            "openai-chat-completions",
+            "anthropic-messages",
+        ] {
+            let mut selected = model(protocol);
+            selected["modelId"] = json!("moonshot-kimi-k3.1-pro");
+            let mut payload = cloud_payload("codex");
+            materialize_cloud_payload(&mut payload, &[selected.clone()], "http://backend", "token")
+                .unwrap();
+            assert_eq!(
+                payload["modelConfig"]["codex_catalog_model_id"],
+                "wework-kimi-k3-1-pro"
+            );
+            selected["config"]["codexCatalogModelId"] = json!("custom-catalog");
+            materialize_cloud_payload(&mut payload, &[selected], "http://backend", "token")
+                .unwrap();
+            assert_eq!(
+                payload["modelConfig"]["codex_catalog_model_id"],
+                "custom-catalog"
+            );
+        }
+        assert_eq!(
+            cloud_catalog_model_id(&json!({"name": "kimi-k3", "modelId": "unknown-model"})),
+            "wework-gpt-6.1-sol"
+        );
     }
 
     #[test]

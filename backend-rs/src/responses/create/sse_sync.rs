@@ -19,15 +19,23 @@
 //!
 //! Cancellation polling (`session_manager.register_stream` / `is_cancelled` /
 //! `unregister_stream`) is reproduced so a cross-worker cancel stops the read
-//! at the source's one-second cadence.
+//! at the source's GET -> one-second -> GET cadence. `_wait_for_sse_cancellation`
+//! is an independent task created before the stream opens and cancelled only in
+//! `finally`, so one pinned poll future spans the open wait, the event consume
+//! loop, and the terminal drain.
 
+use std::future::Future;
+use std::pin::Pin;
 use std::time::Duration;
 
 use brz_http::Client as HttpClient;
-use brz_redis::Redis as _;
+use brz_mysql::Mysql;
+use brz_redis::Redis;
 use serde_json::Value;
 
+use crate::executor_manager::ExecutorManager;
 use crate::internal_callback::completion;
+use crate::internal_callback::completion::Tables;
 use crate::internal_callback::emitter::StatusUpdatingEmitter;
 use crate::internal_callback::event::{EventType, ExecutionEvent};
 use crate::internal_callback::is_cancelled;
@@ -36,11 +44,48 @@ use crate::state::AppState;
 
 use super::dispatch::{self, ExecutionRequest};
 
+/// The dependencies one chat-shell SSE consumer needs.
+///
+/// The synchronous create branch builds this from `AppState`; the background
+/// dispatch worker owns its handles in
+/// [`crate::responses::dispatch::ConsumerState`] and upgrades the request-time
+/// `Weak<AppState>` for the completion notification path. Keeping the inputs
+/// explicit lets a focused test drive the real consumer through the worker with
+/// recording MySQL/Redis doubles.
+pub(crate) struct ConsumerContext<'a, M: Mysql, R: Redis> {
+    pub package_mode: bool,
+    pub mysql: &'a M,
+    pub redis: Option<&'a R>,
+    pub tables: Tables,
+    pub executor_manager: &'a ExecutorManager,
+    /// `Completion.app`: the subscription notification handler reads it.
+    pub app: Option<&'a AppState>,
+}
+
+impl<'a> ConsumerContext<'a, brz_mysql::MysqlService, brz_redis::RedisService> {
+    /// The production context for one request whose dispatch runs inside the
+    /// request (the synchronous create branch and the background job paths).
+    pub(crate) fn from_app(state: &'a AppState) -> Self {
+        Self {
+            package_mode: false,
+            mysql: &state.mysql,
+            redis: state.redis.as_ref(),
+            tables: crate::internal_callback::tables(state),
+            executor_manager: &state.executor_manager,
+            app: Some(state),
+        }
+    }
+}
+
 /// `session_manager._get_cancel_key` (`app/services/chat/storage/session.py`).
 const CANCEL_KEY_PREFIX: &str = "chat:cancel:";
 /// `_SSE_CANCEL_POLL_INTERVAL_SECONDS`.
 const CANCEL_POLL_INTERVAL: Duration = Duration::from_secs(1);
-/// The chat-shell request timeout (`httpx`'s 300-second default).
+/// The chat-shell per-read timeout (`httpx`'s 300-second default).
+///
+/// This is an inactivity window, not a total request deadline. A streaming
+/// response may legitimately run longer than this as long as chunks keep
+/// arriving.
 const STREAM_TIMEOUT: Duration = Duration::from_secs(300);
 /// `_SSE_TERMINAL_DRAIN_TIMEOUT_SECONDS`: the bounded tail read after a
 /// delivered terminal event.
@@ -52,7 +97,8 @@ const RESPONSES_PATH: &str = "/v1/responses";
 const TERMINAL_EVENT_TYPES: [&str; 3] = ["response.completed", "error", "response.incomplete"];
 
 /// The collected result of a synchronous chat-shell dispatch.
-pub(super) struct Collected {
+#[derive(Debug)]
+pub(crate) struct Collected {
     /// `QueueBasedEmitter.collect`'s accumulated `chunk` content.
     pub content: String,
 }
@@ -75,34 +121,47 @@ impl Failure {
             error_code: None,
         }
     }
+
+    /// A transport failure the dispatcher's `except` branch persists as
+    /// FAILED with the Source's classified error code
+    /// (`ExecutionDispatcher`'s `classify_error` returns `network_error` for
+    /// a connection failure, which `collect_completed_result` writes into
+    /// `result.error_type`).
+    fn network(message: String) -> Self {
+        Self {
+            message,
+            persist: true,
+            error_code: Some("network_error"),
+        }
+    }
 }
 
 /// Consume one chat-shell event stream for the synchronous create branch.
 ///
 /// The returned error message is the source's `str(exception)` rendered into
 /// `500 {"detail": "LLM request failed: <message>"}` by the caller.
-pub(super) async fn collect(
-    state: &AppState,
+pub(crate) async fn collect<M: Mysql, R: Redis + Clone>(
+    ctx: &ConsumerContext<'_, M, R>,
     target_url: &str,
     request: &ExecutionRequest,
     request_id: &str,
     message_id: Option<i64>,
 ) -> Result<Collected, String> {
-    let Some(redis) = state.redis.as_ref() else {
+    let Some(redis) = ctx.redis else {
         return Err("Connection error.".to_string());
     };
 
     let mut emitter =
-        StatusUpdatingEmitter::new(redis.to_owned(), request.task_id, request.subtask_id);
+        StatusUpdatingEmitter::new(redis.clone(), request.task_id, request.subtask_id);
     let cancel_key = format!("{CANCEL_KEY_PREFIX}{}", request.subtask_id);
-    // `register_stream`: clear a stale cross-worker cancellation flag.
-    let _ = redis.del(cancel_key.as_str()).await;
-    // `_wait_for_sse_cancellation` starts its poll loop with an immediate
-    // `is_cancelled` read, before the SSE dispatch emits the START event.
-    let _ = is_cancelled(redis, cancel_key.as_str()).await;
+    // A package job starts after the public request has returned or subscribed.
+    // Clearing its flag here could erase a cancellation admitted while queued.
+    if !ctx.package_mode {
+        let _ = redis.del(cancel_key.as_str()).await;
+    }
 
     let result = read_stream(
-        state,
+        ctx,
         target_url,
         request,
         request_id,
@@ -122,16 +181,70 @@ pub(super) async fn collect(
         Ok(collected) => Ok(collected),
         Err(failure) => {
             if failure.persist {
-                complete_failure(state, request, &failure).await;
+                complete_failure(ctx, request, &failure).await;
             }
             Err(failure.message)
         }
     }
 }
 
+/// `_wait_for_sse_cancellation`'s Redis half, driven as one future for the
+/// whole dispatch.
+///
+/// The Source's `poll_redis` issues a GET, sleeps one full interval, then
+/// issues the next GET (`chat_shell_sse.py:97-101`), so a slow read delays the
+/// following poll instead of firing on a fixed grid. The loop is created before
+/// the stream opens (`:235`) and cancelled in `finally` (`:533-548`); the call
+/// site waits for the cancelled poller before `unregister_stream`.
+///
+/// `stop` halts scheduling of new reads, but it never interrupts an admitted
+/// `is_cancelled` GET: dropping an already-admitted command does not recall it
+/// (`brz-redis` admits the envelope before returning the response future), so
+/// its bytes could reach Redis after the unregister `DEL`. The loop therefore
+/// awaits every GET to completion and only races `stop` against the interval
+/// sleep.
+async fn poll_cancellation<R: Redis>(
+    redis: &R,
+    key: &str,
+    mut stop: tokio::sync::oneshot::Receiver<()>,
+) {
+    loop {
+        if is_cancelled(redis, key).await {
+            return;
+        }
+        tokio::select! {
+            biased;
+            _ = &mut stop => return,
+            _ = tokio::time::sleep(CANCEL_POLL_INTERVAL) => {}
+        }
+    }
+}
+
+/// Poll `future` once, returning its output when it is immediately ready.
+///
+/// Used to issue the poll loop's initial GET before the stream opens without
+/// waiting for the read or for the next interval.
+async fn poll_once<F: Future>(mut future: Pin<&mut F>) -> Option<F::Output> {
+    tokio::select! {
+        biased;
+        output = &mut future => Some(output),
+        _ = std::future::ready(()) => None,
+    }
+}
+
+/// How the consume phase ended when the stream branch won the cancel race.
+enum StreamEnd {
+    /// A terminal event was delivered; `_drain_terminal_stream` still owns the
+    /// framing tail.
+    Terminal(brz_http::Response),
+    /// The `error` terminal event's FAILED state was already persisted; drain,
+    /// then report the failure.
+    ErrorTerminal(brz_http::Response, Failure),
+}
+
 #[allow(clippy::too_many_arguments)]
-async fn read_stream<R: brz_redis::Redis>(
-    state: &AppState,
+async fn read_stream<M: Mysql, R: Redis>(
+    ctx: &ConsumerContext<'_, M, R>,
     target_url: &str,
     request: &ExecutionRequest,
     request_id: &str,
@@ -140,6 +253,98 @@ async fn read_stream<R: brz_redis::Redis>(
     emitter: &mut StatusUpdatingEmitter<R>,
     cancel_key: &str,
 ) -> Result<Collected, Failure> {
+    let mut content = String::new();
+    // `_wait_for_sse_cancellation` is created before `stream_open_task`
+    // (`chat_shell_sse.py:235`) and cancelled in `finally` (`:533-548`), so this
+    // one pinned future spans the open wait, the consume loop, and the drain.
+    let (stop, stop_rx) = tokio::sync::oneshot::channel();
+    let cancel = poll_cancellation(redis, cancel_key, stop_rx);
+    tokio::pin!(cancel);
+
+    // The poll loop's first `is_cancelled` GET runs before the stream opens, so
+    // drive that one step now: an already-set flag resolves without waiting an
+    // interval, while the same pinned future keeps running afterwards.
+    let already_cancelled = poll_once(cancel.as_mut()).await.is_some();
+    // A completed `async fn` future must never be polled again. Track the
+    // poller's completion wherever it resolves (initial poll, the main race, or
+    // the terminal drain) and join only a still-pending poll.
+    let mut cancel_done = already_cancelled;
+
+    // Scoped so the stream future releases its borrows of `emitter` and
+    // `content` before the remaining phases use them.
+    let end = {
+        let open = open_and_consume(
+            ctx,
+            target_url,
+            request,
+            request_id,
+            message_id,
+            emitter,
+            &mut content,
+        );
+        tokio::pin!(open);
+        if already_cancelled {
+            // The Source still creates `stream_open_task` before waiting on the
+            // race and then drops it through `_cancel_sse_stream_open`; start
+            // the request so an in-flight open is not skipped.
+            if !ctx.package_mode {
+                let _ = poll_once(open.as_mut()).await;
+            }
+            None
+        } else {
+            // `asyncio.wait({stream_task, cancel_task})`: the Source prefers the
+            // stream branch when both complete in the same instant, and the
+            // cancellation future keeps running across both phases.
+            tokio::select! {
+                biased;
+                end = &mut open => Some(end),
+                () = &mut cancel => {
+                    cancel_done = true;
+                    None
+                }
+            }
+        }
+    };
+    let result = match end {
+        None => finish_cancelled(ctx, request, emitter, &content).await,
+        Some(Ok(StreamEnd::Terminal(mut response))) => {
+            cancel_done |= drain_with_cancel_poll(&mut response, cancel.as_mut()).await;
+            Ok(Collected { content })
+        }
+        Some(Ok(StreamEnd::ErrorTerminal(mut response, failure))) => {
+            cancel_done |= drain_with_cancel_poll(&mut response, cancel.as_mut()).await;
+            Err(failure)
+        }
+        Some(Err(failure)) => Err(failure),
+    };
+    // `finally` (`chat_shell_sse.py:533-548`): stop scheduling cancellation
+    // reads, then await the one already-admitted GET before the caller runs
+    // `unregister_stream`'s `DEL`. The join is a shutdown join, not a timer, and
+    // it runs only for a still-pending poller: a late poll result is discarded
+    // and can never reclassify the terminal outcome already decided above.
+    let _ = stop.send(());
+    if !cancel_done {
+        let _ = cancel.as_mut().await;
+    }
+    result
+}
+
+/// Open the chat-shell stream and consume events until a terminal event, EOF,
+/// or a transport failure.
+///
+/// Everything after `send()` - including the terminal event's persistence -
+/// stays inside this future so the outer cancel race can interrupt it, exactly
+/// like the Source's `stream_task.cancel()`.
+#[allow(clippy::too_many_arguments)]
+async fn open_and_consume<M: Mysql, R: Redis>(
+    ctx: &ConsumerContext<'_, M, R>,
+    target_url: &str,
+    request: &ExecutionRequest,
+    request_id: &str,
+    message_id: Option<i64>,
+    emitter: &mut StatusUpdatingEmitter<R>,
+    content: &mut String,
+) -> Result<StreamEnd, Failure> {
     let url = format!("{}{RESPONSES_PATH}", target_url.trim_end_matches('/'));
     // The source's OpenAI/httpx client uses a 300-second per-read timeout
     // (`x-stainless-read-timeout: 300.0` in the recorded request). The
@@ -148,21 +353,15 @@ async fn read_stream<R: brz_redis::Redis>(
     let client = HttpClient::builder()
         .read_timeout(STREAM_TIMEOUT)
         .build()
-        .map_err(|_| Failure::persisted("Connection error.".to_string()))?;
+        .map_err(|_| Failure::network("Connection error.".to_string()))?;
     let payload = dispatch::assemble(request, true, false);
     let body = serde_json::to_value(&payload).unwrap_or(Value::Null);
+    let http_request = stream_request(&client, &url, &body, request_id)
+        .map_err(|_| Failure::network("Connection error.".to_string()))?;
     let mut response = client
-        .post(&url)
-        .map_err(|_| Failure::persisted("Connection error.".to_string()))?
-        .header("content-type", "application/json")
-        .header("accept", dispatch::OPENAI_ACCEPT)
-        .header("authorization", dispatch::OPENAI_DUMMY_AUTHORIZATION)
-        .header("X-Request-ID", request_id)
-        .json(&body)
-        .timeout(STREAM_TIMEOUT)
-        .send()
+        .execute(http_request)
         .await
-        .map_err(|_| Failure::persisted("Connection error.".to_string()))?;
+        .map_err(|_| Failure::network("Connection error.".to_string()))?;
 
     if !response.status().is_success() {
         return Err(Failure::persisted(format!(
@@ -172,12 +371,7 @@ async fn read_stream<R: brz_redis::Redis>(
     }
 
     let mut frames = SseFrames::default();
-    let mut content = String::new();
     let mut event_count = 0_u64;
-    let mut terminal = false;
-    let mut poll = tokio::time::interval(CANCEL_POLL_INTERVAL);
-    poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    poll.tick().await;
 
     loop {
         // `_flush_stream_storage_after_delay` wakes exactly one second after
@@ -200,14 +394,9 @@ async fn read_stream<R: brz_redis::Redis>(
                 emitter.flush_due().await;
                 continue;
             }
-            _ = poll.tick() => {
-                if is_cancelled(redis, cancel_key).await {
-                    return finish_cancelled(state, request, emitter, &content).await;
-                }
-                continue;
-            }
         };
-        let chunk = chunk.map_err(|error| Failure::persisted(error.to_string()))?;
+        let chunk = chunk
+            .map_err(|error| Failure::persisted(stream_transport_error(&error, STREAM_TIMEOUT)))?;
         let Some(chunk) = chunk else { break };
         for event in frames.push(&chunk) {
             event_count += 1;
@@ -231,47 +420,67 @@ async fn read_stream<R: brz_redis::Redis>(
                     // `StatusUpdatingEmitter`'s terminal branch flushes the
                     // buffered stream content before completing the task.
                     emitter.close().await;
-                    complete(state, &parsed).await;
+                    complete(ctx, &parsed).await?;
                     if parsed.event_type == "error" {
-                        // The FAILED state is already persisted.
-                        drain_terminal_stream(&mut response).await;
-                        return Err(Failure {
-                            message: parsed
-                                .error
-                                .clone()
-                                .unwrap_or_else(|| "Unknown error".to_string()),
-                            persist: false,
-                            error_code: None,
-                        });
+                        // The FAILED state is already persisted; the caller
+                        // drains the framing tail before reporting it.
+                        return Ok(StreamEnd::ErrorTerminal(
+                            response,
+                            Failure {
+                                message: parsed
+                                    .error
+                                    .clone()
+                                    .unwrap_or_else(|| "Unknown error".to_string()),
+                                persist: false,
+                                error_code: None,
+                            },
+                        ));
                     }
+                } else if ctx.package_mode {
+                    emit_package_event(ctx, &parsed).await?;
                 } else if let Err(error) = emitter.emit_persist_only(&mut parsed).await {
                     tracing::warn!(%error, "chat-shell stream persistence failed");
                 }
             }
             if TERMINAL_EVENT_TYPES.contains(&event_type) {
-                terminal = true;
-                break;
+                // `_drain_terminal_stream`: the source keeps reading to EOF (up
+                // to one second) after a terminal event so the HTTP framing
+                // completes; the delivered terminal state is unchanged.
+                return Ok(StreamEnd::Terminal(response));
             }
-        }
-        if terminal {
-            // `_drain_terminal_stream`: the source keeps reading to EOF (up
-            // to one second) after a terminal event so the HTTP framing
-            // completes; the delivered terminal state is unchanged.
-            drain_terminal_stream(&mut response).await;
-            break;
         }
     }
 
-    if !terminal {
-        return Err(Failure {
-            message: format!(
-                "Chat Shell SSE stream ended without terminal event after {event_count} events"
-            ),
-            persist: true,
-            error_code: Some("sse_stream_no_terminal"),
-        });
-    }
-    Ok(Collected { content })
+    Err(Failure {
+        message: format!(
+            "Chat Shell SSE stream ended without terminal event after {event_count} events"
+        ),
+        persist: true,
+        // `classify_error` falls back to `generic_error` for an exception it
+        // cannot match by type or message (`shared/utils/error_classifier.py`).
+        error_code: Some("generic_error"),
+    })
+}
+
+/// Build the Chat Shell SSE request without a total request deadline.
+///
+/// `read_timeout` on the client bounds inactivity between chunks. A request
+/// deadline would also cap healthy streams that keep producing events.
+pub(super) fn stream_request(
+    client: &HttpClient,
+    url: &str,
+    body: &Value,
+    request_id: &str,
+) -> brz_http::Result<brz_http::Request> {
+    let request = client
+        .post(url)?
+        .header("content-type", "application/json")
+        .header("accept", dispatch::OPENAI_ACCEPT)
+        .header("X-Request-ID", request_id)
+        .json(body);
+    // The Source client identity (`AsyncOpenAI`) on the streaming path; the
+    // executor-manager dispatch applies the same shared set.
+    super::package_runtime::authorize(dispatch::apply_openai_client_headers(request), url).build()
 }
 
 /// `_drain_terminal_stream`: finish the HTTP response framing after a
@@ -283,25 +492,89 @@ pub(super) async fn drain_terminal_stream(response: &mut brz_http::Response) {
     let _ = tokio::time::timeout(TERMINAL_DRAIN_TIMEOUT, drain).await;
 }
 
+/// Render a stream transport failure without hiding an inactivity timeout
+/// behind reqwest's generic body-decode message.
+pub(super) fn stream_transport_error(error: &brz_http::Error, read_timeout: Duration) -> String {
+    if error.is_timeout() {
+        format!(
+            "Chat Shell SSE stream read timed out after {}s without data",
+            read_timeout.as_secs()
+        )
+    } else {
+        error.to_string()
+    }
+}
+
+/// `_drain_terminal_stream` driven alongside the still-live cancel poll.
+///
+/// The Source cancels `_wait_for_sse_cancellation` only in `finally`, so the
+/// poll keeps issuing GETs through the drain. The stream branch has already
+/// won, so a poll that completes here has no business effect: its result is
+/// ignored and the drain stays non-cancellable.
+async fn drain_with_cancel_poll<F: Future<Output = ()>>(
+    response: &mut brz_http::Response,
+    mut cancel: Pin<&mut F>,
+) -> bool {
+    let drain = drain_terminal_stream(response);
+    tokio::pin!(drain);
+    tokio::select! {
+        () = &mut drain => return false,
+        () = &mut cancel => {}
+    }
+    // The delivered terminal state already won; finish the bounded drain that
+    // was under way without emitting another terminal event.
+    drain.await;
+    true
+}
+
+/// Package execution fans out to Socket.IO and callback subscribers just like
+/// the in-process Python emitter, through the same handler as executor events.
+async fn emit_package_event<M: Mysql, R: Redis>(
+    ctx: &ConsumerContext<'_, M, R>,
+    event: &ExecutionEvent,
+) -> Result<(), Failure> {
+    let app = ctx
+        .app
+        .ok_or_else(|| Failure::persisted("Package dispatch lost application state".to_owned()))?;
+    crate::internal_callback::process_execution_event(
+        app,
+        event.clone(),
+        Some("inprocess-chat"),
+        Some("standalone"),
+    )
+    .await
+    .map_err(|error| {
+        tracing::error!(task_id = event.task_id, error = ?error, "package event processing failed");
+        Failure::persisted("Package event processing failed".to_owned())
+    })
+}
+
 /// `StatusUpdatingEmitter`'s terminal branch: collect, persist, publish.
-async fn complete(state: &AppState, event: &ExecutionEvent) {
-    let Some(redis) = state.redis.as_ref() else {
-        return;
+async fn complete<M: Mysql, R: Redis>(
+    ctx: &ConsumerContext<'_, M, R>,
+    event: &ExecutionEvent,
+) -> Result<(), Failure> {
+    if ctx.package_mode {
+        return emit_package_event(ctx, event).await;
+    }
+    let Some(redis) = ctx.redis else {
+        return Ok(());
     };
     let Some(status) = completion::terminal_status(&event.event_type) else {
-        return;
+        return Ok(());
     };
-    let ctx = completion::Completion {
-        mysql: &state.mysql,
+    let completion = completion::Completion {
+        app: ctx.app,
+        mysql: ctx.mysql,
         redis,
-        tables: crate::internal_callback::tables(state),
-        executor_manager: &state.executor_manager,
+        tables: ctx.tables,
+        executor_manager: ctx.executor_manager,
     };
     // `StatusUpdatingEmitter`'s terminal branch. The create flow wraps an
     // `SSEResultEmitter`, so the callback's `task:status` owner pre-read does
     // not run here.
     completion::complete_terminal_event(
-        &ctx,
+        &completion,
         event.task_id,
         event.subtask_id,
         status,
@@ -312,25 +585,48 @@ async fn complete(state: &AppState, event: &ExecutionEvent) {
         None,
     )
     .await;
+    Ok(())
 }
 
 /// The dispatcher's `except` branch: `emit_error` persists FAILED.
-async fn complete_failure(state: &AppState, request: &ExecutionRequest, failure: &Failure) {
-    let Some(redis) = state.redis.as_ref() else {
+async fn complete_failure<M: Mysql, R: Redis>(
+    ctx: &ConsumerContext<'_, M, R>,
+    request: &ExecutionRequest,
+    failure: &Failure,
+) {
+    if ctx.package_mode {
+        let mut event = ExecutionEvent::new(EventType::Error, request.task_id, request.subtask_id);
+        event.error = Some(failure.message.clone());
+        event.error_code = failure.error_code.map(str::to_owned);
+        event.result = failure_result(failure);
+        if emit_package_event(ctx, &event).await.is_err() {
+            tracing::error!(
+                task_id = request.task_id,
+                "package terminal failure could not be delivered"
+            );
+        }
+        return;
+    }
+    let Some(redis) = ctx.redis else {
         return;
     };
-    let ctx = completion::Completion {
-        mysql: &state.mysql,
+    let completion = completion::Completion {
+        app: ctx.app,
+        mysql: ctx.mysql,
         redis,
-        tables: crate::internal_callback::tables(state),
-        executor_manager: &state.executor_manager,
+        tables: ctx.tables,
+        executor_manager: ctx.executor_manager,
     };
+    // `collect_completed_result` (`chat/trigger/lifecycle.py:590-591`) sets
+    // `result.error_type` from the classified error code, so the persisted
+    // terminal row carries the Source's result payload instead of a NULL one.
+    let result = failure_result(failure);
     completion::complete_terminal_event(
-        &ctx,
+        &completion,
         request.task_id,
         request.subtask_id,
         "FAILED",
-        None,
+        result.as_ref(),
         Some(&failure.message),
         failure.error_code,
         None,
@@ -339,17 +635,26 @@ async fn complete_failure(state: &AppState, request: &ExecutionRequest, failure:
     .await;
 }
 
+/// The `result` payload `collect_completed_result` builds for a persisted
+/// failure: `{"error_type": <classified code>}` when the failure carries one,
+/// and no result otherwise.
+fn failure_result(failure: &Failure) -> Option<Value> {
+    failure
+        .error_code
+        .map(|code| serde_json::json!({ "error_type": code }))
+}
+
 /// `dispatch_sse` emits a cancelled terminal event and stops reading;
 /// `collect` keeps the accumulated content.
-async fn finish_cancelled<R: brz_redis::Redis>(
-    state: &AppState,
+async fn finish_cancelled<M: Mysql, R: Redis>(
+    ctx: &ConsumerContext<'_, M, R>,
     request: &ExecutionRequest,
     emitter: &mut StatusUpdatingEmitter<R>,
     content: &str,
 ) -> Result<Collected, Failure> {
     let event = ExecutionEvent::new(EventType::Cancelled, request.task_id, request.subtask_id);
     emitter.close().await;
-    complete(state, &event).await;
+    complete(ctx, &event).await?;
     Ok(Collected {
         content: content.to_string(),
     })
@@ -417,6 +722,30 @@ fn parse_frame(frame: &[u8]) -> Option<Value> {
 mod tests {
     use super::*;
 
+    /// Recorded a4130073 seq95: the dispatcher's `except` branch persists a
+    /// transport failure as `result='{"error_type": "network_error"}'`
+    /// (`classify_error` + `collect_completed_result`), not a NULL result.
+    #[test]
+    fn a_persisted_failure_carries_the_classified_error_type() {
+        let network = Failure::network("Connection error.".to_string());
+        assert_eq!(
+            failure_result(&network),
+            Some(serde_json::json!({"error_type": "network_error"}))
+        );
+        // A terminal error event was already persisted by its emitter, and a
+        // failure without a classified code writes no result column.
+        let already_persisted = Failure {
+            message: "terminal error".to_string(),
+            persist: false,
+            error_code: None,
+        };
+        assert_eq!(failure_result(&already_persisted), None);
+        assert_eq!(
+            failure_result(&Failure::persisted("boom".to_string())),
+            None
+        );
+    }
+
     #[test]
     fn splits_frames_on_both_delimiters() {
         let mut frames = SseFrames::default();
@@ -445,3 +774,7 @@ mod tests {
         assert_eq!(frames.push(b"\n\ndata: {\"type\":\"b\"}\n\n").len(), 2);
     }
 }
+
+#[cfg(test)]
+#[path = "sse_sync_tests.rs"]
+mod consumer_tests;

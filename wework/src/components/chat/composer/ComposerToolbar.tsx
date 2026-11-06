@@ -28,6 +28,7 @@ interface ComposerToolbarProps {
   className?: string
   canSend: boolean
   disabled?: boolean
+  showPluginPicker?: boolean
   pluginPickerIconOnly?: boolean
   showModelSelector?: boolean
   showExecutionTools?: boolean
@@ -88,6 +89,7 @@ export function ComposerToolbar(props: ComposerToolbarProps) {
   const {
     disabled = false,
     showExecutionTools = true,
+    showPluginPicker = true,
     pluginPickerIconOnly = false,
     onListLocalApps,
     projectPhrases = [],
@@ -127,12 +129,14 @@ export function ComposerToolbar(props: ComposerToolbarProps) {
                   projectPhrases={projectPhrases}
                   onSelect={onQuickPhraseSelect}
                 />
-                <PluginPickerMenu
-                  disabled={disabled}
-                  iconOnly={compact || pluginPickerIconOnly}
-                  onListLocalApps={onListLocalApps}
-                  onInsertReference={props.onInsertPluginReference}
-                />
+                {showPluginPicker && (
+                  <PluginPickerMenu
+                    disabled={disabled}
+                    iconOnly={compact || pluginPickerIconOnly}
+                    onListLocalApps={onListLocalApps}
+                    onInsertReference={props.onInsertPluginReference}
+                  />
+                )}
               </>
             ) : null}
           </>

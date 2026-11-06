@@ -12,6 +12,8 @@
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 
+use crate::sql_support::DecimalCount;
+
 use super::knowledge_prompt::{
     SelectedKnowledgeContext, SelectedKnowledgeRef, SelectedKnowledgeResource,
 };
@@ -22,6 +24,16 @@ pub const ROUTING_SUMMARY_MAX_LENGTH: usize = 200;
 pub const ROUTING_TOPIC_MAX_LENGTH: usize = 48;
 /// `MAX_ROUTING_TOPICS`.
 pub const MAX_ROUTING_TOPICS: usize = 5;
+
+/// `db.query(Kind)`'s labeled full-entity projection, in SQLAlchemy column
+/// order. Both `_build_wegent_refs_for_ids` and
+/// `task_knowledge_base_service.get_knowledge_bases_by_ids` read the complete
+/// mapped entity, so the dependency carries every direct output column.
+const KIND_COLUMNS: &str = "kinds.id AS kinds_id, kinds.user_id AS kinds_user_id, \
+     kinds.kind AS kinds_kind, kinds.name AS kinds_name, \
+     kinds.namespace AS kinds_namespace, kinds.json AS kinds_json, \
+     kinds.is_active AS kinds_is_active, kinds.created_at AS kinds_created_at, \
+     kinds.updated_at AS kinds_updated_at";
 
 /// `(provider, knowledge_base_id)`.
 fn ref_key(reference: &SelectedKnowledgeRef) -> (String, String) {
@@ -486,10 +498,10 @@ pub async fn build_wegent_refs_for_ids<M: brz_mysql::Mysql>(
     Ok(result)
 }
 
-/// `db.query(Kind).filter(Kind.id.in_(ids), Kind.kind == "KnowledgeBase",
-/// Kind.is_active)` → `{id: spec}`. The recorded read is
-/// `... WHERE kinds.id IN (?) AND kinds.kind = 'KnowledgeBase' AND
-/// kinds.is_active IS true`.
+/// `db.query(Kind).filter(Kind.id.in_(ids))` → `{id: spec}`. The Source builds
+/// the capabilities from the full mapped entity, so the recorded read is
+/// `SELECT <Kind entity> FROM kinds WHERE kinds.id IN (263078)` with no
+/// kind/is_active filter and integer-bound ids.
 async fn knowledge_base_specs_by_ids<M: brz_mysql::Mysql>(
     mysql: &M,
     ids: &[i64],
@@ -503,11 +515,10 @@ async fn knowledge_base_specs_by_ids<M: brz_mysql::Mysql>(
     let rows: Vec<Row> = mysql
         .fetch_all(
             &format!(
-                "SELECT kinds.id AS kinds_id, kinds.json AS kinds_json \nFROM kinds \n\
-                 WHERE kinds.id IN ({placeholders}) AND kinds.kind = 'KnowledgeBase' \
-                 AND kinds.is_active IS true"
+                "SELECT {KIND_COLUMNS} \nFROM kinds \n\
+                 WHERE kinds.id IN ({placeholders})"
             ),
-            ids.iter().map(i64::to_string).collect::<Vec<String>>(),
+            ids.to_vec(),
         )
         .await?;
     Ok(rows
@@ -673,6 +684,12 @@ pub fn apply_selected_knowledge_context(
 }
 
 /// The recorded `knowledge_documents` prompt-stat row (`get_document_prompt_stats`).
+///
+/// `count(...)` is `BIGINT`, but each `sum(CASE ...)` is `DECIMAL`
+/// (`NEWDECIMAL` on the wire), so those two columns decode through
+/// [`DecimalCount`]. They are `Option` fields because a `sum()` can be SQL
+/// NULL; the derive reads them with `MysqlRow::get`, and
+/// [`KbPromptStats::counts`] applies the source's `int(value or 0)`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, brz_mysql::FromMysqlRow)]
 pub struct KbPromptStats {
     #[mysql(rename = "knowledge_documents_kind_id")]
@@ -680,9 +697,9 @@ pub struct KbPromptStats {
     #[mysql(rename = "total_count")]
     pub total: Option<i64>,
     #[mysql(rename = "searchable_count")]
-    pub searchable: Option<i64>,
+    pub searchable: Option<DecimalCount>,
     #[mysql(rename = "spreadsheet_count")]
-    pub spreadsheet: Option<i64>,
+    pub spreadsheet: Option<DecimalCount>,
 }
 
 impl KbPromptStats {
@@ -690,8 +707,8 @@ impl KbPromptStats {
     pub fn counts(&self) -> (i64, i64, i64) {
         (
             self.total.unwrap_or(0),
-            self.searchable.unwrap_or(0),
-            self.spreadsheet.unwrap_or(0),
+            DecimalCount::or_zero(self.searchable),
+            DecimalCount::or_zero(self.spreadsheet),
         )
     }
 }
@@ -719,13 +736,76 @@ pub async fn document_prompt_stats<M: brz_mysql::Mysql>(
                  WHERE knowledge_documents.kind_id IN ({placeholders}) \
                  GROUP BY knowledge_documents.kind_id"
             ),
-            knowledge_base_ids
-                .iter()
-                .map(i64::to_string)
-                .collect::<Vec<String>>(),
+            // `get_document_prompt_stats` takes `list[int]`: the Source binds
+            // each id as an integer, so the target must not stringify them.
+            knowledge_base_ids.to_vec(),
         )
         .await?;
     Ok(rows.into_iter().map(|row| (row.kind_id, row)).collect())
+}
+
+/// The source's inline `wegent` id comprehension, shared by
+/// `_resolve_effective_wegent_access_mode` and `_enrich_wegent_routing_metadata`:
+/// the context's positive `wegent` knowledge-base ids in ref order. It does not
+/// deduplicate, because neither source list does.
+pub fn wegent_knowledge_base_ids(context: &SelectedKnowledgeContext) -> Vec<i64> {
+    context
+        .refs
+        .iter()
+        .filter_map(|reference| {
+            (reference.provider == "wegent")
+                .then(|| positive_int(&Value::String(reference.knowledge_base_id.clone())))
+                .flatten()
+        })
+        .collect()
+}
+
+/// `_resolve_effective_wegent_access_mode`: resolve tool exposure against every
+/// effective internal source of the selected-knowledge context.
+///
+/// This is one of the create flow's two calls to
+/// `get_knowledge_base_tool_access_mode_by_ids`; the other one is
+/// `_prepare_kb_tools_from_contexts`' lookup over the task-level ids, and it
+/// runs later. An empty `wegent` id list returns `full` before any read.
+pub async fn resolve_effective_wegent_access_mode<R: brz_redis::Redis>(
+    mysql: &brz_mysql::MysqlService,
+    resolvers: &crate::permissions::EntityResolvers<R>,
+    redis: Option<&R>,
+    context: &SelectedKnowledgeContext,
+    user_id: i64,
+) -> brz_mysql::MysqlResult<String> {
+    let knowledge_base_ids = wegent_knowledge_base_ids(context);
+    Ok(
+        super::kb_tool_access_mode::get_knowledge_base_tool_access_mode_by_ids(
+            mysql,
+            resolvers,
+            redis,
+            user_id,
+            &knowledge_base_ids,
+        )
+        .await?
+        .mode,
+    )
+}
+
+/// `_filter_native_refs`: a restricted analyst keeps no `wegent` source, so
+/// every `wegent` ref is dropped from the final context and only the
+/// `evidence_required` flag survives.
+pub fn filter_native_refs(
+    context: SelectedKnowledgeContext,
+    access_mode: &str,
+) -> SelectedKnowledgeContext {
+    if access_mode != super::kb_tool_access_mode::RESTRICTED_SEARCH_ONLY {
+        return context;
+    }
+    SelectedKnowledgeContext {
+        refs: context
+            .refs
+            .into_iter()
+            .filter(|reference| reference.provider != "wegent")
+            .collect(),
+        evidence_required: context.evidence_required,
+    }
 }
 
 /// `_enrich_wegent_routing_metadata`: the final `knowledge_base_name` /
@@ -738,15 +818,7 @@ pub async fn enrich_wegent_routing_metadata<M: brz_mysql::Mysql>(
     mysql: &M,
     context: &SelectedKnowledgeContext,
 ) -> brz_mysql::MysqlResult<SelectedKnowledgeContext> {
-    let wegent_ids: Vec<i64> = context
-        .refs
-        .iter()
-        .filter_map(|reference| {
-            (reference.provider == "wegent")
-                .then(|| positive_int(&Value::String(reference.knowledge_base_id.clone())))
-                .flatten()
-        })
-        .collect();
+    let wegent_ids = wegent_knowledge_base_ids(context);
     if wegent_ids.is_empty() {
         return Ok(context.clone());
     }
@@ -762,15 +834,11 @@ pub async fn enrich_wegent_routing_metadata<M: brz_mysql::Mysql>(
     let rows: Vec<KbRow> = mysql
         .fetch_all(
             &format!(
-                "SELECT kinds.id AS kinds_id, kinds.name AS kinds_name, \
-                 kinds.json AS kinds_json \nFROM kinds \n\
+                "SELECT {KIND_COLUMNS} \nFROM kinds \n\
                  WHERE kinds.id IN ({placeholders}) AND kinds.kind = 'KnowledgeBase' \
-                 AND kinds.is_active IS true"
+                 AND kinds.is_active = true"
             ),
-            wegent_ids
-                .iter()
-                .map(i64::to_string)
-                .collect::<Vec<String>>(),
+            wegent_ids.clone(),
         )
         .await?;
     let knowledge_bases: BTreeMap<i64, (String, Value)> = rows
@@ -781,7 +849,6 @@ pub async fn enrich_wegent_routing_metadata<M: brz_mysql::Mysql>(
         })
         .collect();
 
-    let _ = document_prompt_stats(mysql, &wegent_ids).await?;
     let mut enriched: Vec<SelectedKnowledgeRef> = Vec::with_capacity(context.refs.len());
     for reference in &context.refs {
         let Some(kb_id) = positive_int(&Value::String(reference.knowledge_base_id.clone())) else {
@@ -837,157 +904,5 @@ pub async fn enrich_wegent_routing_metadata<M: brz_mysql::Mysql>(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::responses::create::knowledge_prompt::{
-        SelectedKnowledgeRef, SelectedKnowledgeResource,
-    };
-    use serde_json::json;
-
-    fn reference(id: &str, name: &str) -> SelectedKnowledgeRef {
-        SelectedKnowledgeRef {
-            provider: "wegent".to_string(),
-            knowledge_base_id: id.to_string(),
-            knowledge_base_name: name.to_string(),
-            ..Default::default()
-        }
-    }
-
-    #[test]
-    fn explicit_refs_override_the_same_source_and_set_evidence_required() {
-        let task = vec![reference("239607", "task-name")];
-        let explicit = vec![SelectedKnowledgeRef {
-            knowledge_base_name: "explicit".to_string(),
-            resources: vec![SelectedKnowledgeResource {
-                scope_type: "document".to_string(),
-                resource_id: Some("7".to_string()),
-                ..Default::default()
-            }],
-            ..reference("239607", "explicit")
-        }];
-        let context = resolve_selected_knowledge_context(&task, &explicit);
-        assert!(context.evidence_required);
-        assert_eq!(context.refs.len(), 1);
-        assert_eq!(context.refs[0].knowledge_base_name, "explicit");
-        assert_eq!(context.refs[0].resources.len(), 1);
-    }
-
-    #[test]
-    fn an_empty_explicit_set_keeps_the_task_refs_and_clears_evidence() {
-        let context = resolve_selected_knowledge_context(&[reference("1", "a")], &[]);
-        assert!(!context.evidence_required);
-        assert_eq!(context.refs.len(), 1);
-    }
-
-    #[test]
-    fn sanitize_replaces_unsafe_characters_and_truncates() {
-        assert_eq!(sanitize_prompt_text("a{b}[c]%", "", 120), "a b c");
-        assert_eq!(sanitize_prompt_text("  hi\nthere  ", "", 120), "hi there");
-        assert_eq!(
-            sanitize_prompt_text("x".repeat(300).as_str(), "", 200).len(),
-            200
-        );
-        assert_eq!(sanitize_prompt_text("", "fallback", 120), "fallback");
-    }
-
-    #[test]
-    fn retrieval_capabilities_match_the_mode() {
-        assert_eq!(
-            derive_retrieval_capabilities(&json!({"retrieval_mode": "vector"})),
-            json!({"retrieval_mode": "vector", "semantic_query": false, "keywords": false, "phrases": false})
-        );
-        assert_eq!(
-            derive_retrieval_capabilities(&json!({"retrieval_mode": "hybrid"})),
-            json!({"retrieval_mode": "hybrid", "semantic_query": true, "keywords": true, "phrases": true})
-        );
-        assert_eq!(
-            derive_retrieval_capabilities(&json!({})),
-            json!({"retrieval_mode": null, "semantic_query": false, "keywords": false, "phrases": false})
-        );
-    }
-
-    #[test]
-    fn routing_summary_and_topics_follow_the_source_gates() {
-        let manual = json!({"manual_long_summary": "long", "topics": ["t1", "t2"]});
-        assert_eq!(routing_summary(&json!({}), &manual), "long");
-        assert_eq!(
-            routing_topics(&json!({}), &manual),
-            vec![json!("t1"), json!("t2")]
-        );
-
-        let short = json!({"status": "completed", "short_summary": "s"});
-        assert_eq!(
-            routing_summary(&json!({"summaryEnabled": true}), &short),
-            "s"
-        );
-        assert!(routing_topics(&json!({"summaryEnabled": false}), &short).is_empty());
-        assert_eq!(
-            routing_summary(&json!({"summaryEnabled": false}), &short),
-            ""
-        );
-    }
-
-    #[test]
-    fn int_values_ignore_booleans_and_non_positive_entries() {
-        assert_eq!(
-            int_values(&json!([1, "2", 0, -3, true, "x", 1])),
-            vec![1, 2]
-        );
-        assert_eq!(positive_int(&json!("239607")), Some(239_607));
-        assert_eq!(positive_int(&json!(0)), None);
-        assert_eq!(positive_int(&json!(false)), None);
-    }
-
-    #[test]
-    fn index_refs_keeps_only_dicts_with_a_positive_id() {
-        let indexed = index_refs_by_integer_id(&json!([
-            {"id": 5, "name": "a"},
-            {"id": "6", "name": "b"},
-            {"name": "c"},
-            "d",
-        ]));
-        assert_eq!(indexed.len(), 2);
-        assert_eq!(indexed.get(&5).unwrap()["name"], json!("a"));
-        assert_eq!(indexed.get(&6).unwrap()["name"], json!("b"));
-    }
-
-    #[test]
-    fn wegent_scope_prefers_the_request_scope_only_when_asked() {
-        let persisted =
-            json!({"scopeRestricted": true, "folderIds": [7], "explicitDocumentIds": ["8"]});
-        assert_eq!(
-            resolve_wegent_scope(1, &persisted, &[], false),
-            (true, vec![7], vec![8])
-        );
-        let scopes = vec![KnowledgeBaseScope {
-            knowledge_base_id: 1,
-            scope_restricted: false,
-            document_ids: vec![9],
-        }];
-        assert_eq!(
-            resolve_wegent_scope(1, &persisted, &scopes, true),
-            (false, Vec::new(), vec![9])
-        );
-        // A non-matching request scope falls back to the persisted scope.
-        assert_eq!(
-            resolve_wegent_scope(2, &persisted, &scopes, true),
-            (true, vec![7], vec![8])
-        );
-    }
-
-    #[test]
-    fn knowledge_base_scopes_parse_from_the_request_list() {
-        let scopes = parse_knowledge_base_scopes(&json!([
-            {"knowledge_base_id": 239607, "scope_restricted": true, "document_ids": [1, "2"]},
-            {"knowledge_base_id": 0},
-        ]));
-        assert_eq!(
-            scopes,
-            vec![KnowledgeBaseScope {
-                knowledge_base_id: 239_607,
-                scope_restricted: true,
-                document_ids: vec![1, 2],
-            }]
-        );
-    }
-}
+#[path = "selected_knowledge_tests.rs"]
+mod tests;

@@ -282,10 +282,14 @@ export function matchesStandardCloudBoardColumn<
   groupBy: ProjectBoardGroupBy,
   extensions: Pick<StandardCloudBoardHostExtensions<T>, "noTagGroupValue">,
 ): boolean {
-  groupBy = column.type ?? groupBy;
-  if (groupBy === "status") return item.status === column.groupValue;
-  if (groupBy === "priority") return item.priority === column.groupValue;
-  if (groupBy === "assignee") {
+  const type = column.type ?? groupBy;
+  if (type === "unmatched")
+    return !(column.unmatchedColumns ?? []).some((candidate) =>
+      matchesStandardCloudBoardColumn(item, candidate, groupBy, extensions),
+    );
+  if (type === "status") return item.status === column.groupValue;
+  if (type === "priority") return item.priority === column.groupValue;
+  if (type === "assignee") {
     const assignee = itemAssignee(item);
     return assignee
       ? standardCloudBoardAssigneeValue(assignee) === column.groupValue
@@ -358,6 +362,7 @@ export function resolveStandardCloudBoardDrop<
   groupBy,
   items,
   sourceColumnKey,
+  targetParentId,
 }: {
   activeItemId: string;
   beforeItemId: string | null;
@@ -367,6 +372,7 @@ export function resolveStandardCloudBoardDrop<
   groupBy: ProjectBoardGroupBy;
   items: T[];
   sourceColumnKey: string;
+  targetParentId?: string | null;
 }): StandardCloudBoardDrop | null {
   const sourceColumn = columns.find((column) => column.key === sourceColumnKey);
   const column = columns.find((column) => column.key === columnDropKey);
@@ -375,6 +381,7 @@ export function resolveStandardCloudBoardDrop<
     !sourceColumn ||
     !column ||
     !item ||
+    (targetParentId !== undefined && item.parent_id !== targetParentId) ||
     !matchesStandardCloudBoardColumn(item, sourceColumn, groupBy, extensions)
   )
     return null;
@@ -403,11 +410,13 @@ export interface StandardCloudBoardControllerOptions<
   T extends StandardCloudBoardItem,
 > extends ProjectBoardStateOptions {
   view?: SavedBoardView | null;
+  tagFilter?: readonly string[];
   createColumns(groupBy: ProjectBoardGroupBy): ProjectBoardColumn[];
   currentParentId?: string | null;
   supportsOrder?: boolean;
   extensions: StandardCloudBoardHostExtensions<T>;
   items: T[];
+  hierarchyItems?: T[];
   onCurrentParentIdChange?(parentId: string | null): void;
   tagLimitError: string;
   onMove(
@@ -546,8 +555,15 @@ function resolveStandardCloudBoardGroupMutation<
   sourceColumn: ProjectBoardColumn;
   extensions: Pick<StandardCloudBoardHostExtensions<T>, "noTagGroupValue">;
 }): StandardCloudBoardMutation<T> | null {
-  groupBy = column.type ?? groupBy;
-  if (groupBy === "status") {
+  const type = column.type ?? groupBy;
+  if (
+    type === "unmatched" &&
+    column.unmatchedColumns?.some(
+      (lane) => lane.type === "status" && lane.groupValue === item.status,
+    )
+  )
+    return null;
+  if (type === "status") {
     return {
       kind: "status",
       status: column.groupValue,
@@ -558,7 +574,7 @@ function resolveStandardCloudBoardGroupMutation<
       ),
     };
   }
-  if (groupBy === "priority") {
+  if (type === "priority") {
     return {
       kind: "priority",
       optimisticItems: items.map((candidate) =>
@@ -569,7 +585,7 @@ function resolveStandardCloudBoardGroupMutation<
       priority: column.groupValue,
     };
   }
-  if (groupBy === "assignee") {
+  if (type === "assignee") {
     const [type, id] = column.groupValue.includes(":")
       ? column.groupValue.split(":", 2)
       : ["user", column.groupValue];
@@ -597,17 +613,30 @@ function resolveStandardCloudBoardGroupMutation<
     };
   }
   const sourceType = sourceColumn.type ?? groupBy;
+  const stageTags = new Set(
+    column.unmatchedColumns
+      ?.filter((lane) => lane.type === "tag")
+      .map((lane) => lane.groupValue),
+  );
   const tags =
-    column.groupValue === (extensions.noTagGroupValue ?? "")
-      ? []
-      : [
-          ...new Set([
-            ...item.tags.filter(
-              (tag) => sourceType !== "tag" || tag !== sourceColumn.groupValue,
-            ),
-            column.groupValue,
-          ]),
-        ];
+    type === "unmatched"
+      ? item.tags.filter((tag) => !stageTags.has(tag))
+      : column.groupValue === (extensions.noTagGroupValue ?? "")
+        ? []
+        : [
+            ...new Set([
+              ...item.tags.filter(
+                (tag) =>
+                  sourceType !== "tag" || tag !== sourceColumn.groupValue,
+              ),
+              column.groupValue,
+            ]),
+          ];
+  if (
+    type === "unmatched" &&
+    !matchesBoardView({ tags }, { filter: column.unmatchedFilter })
+  )
+    return null;
   return {
     kind: "tag",
     optimisticItems: items.map((candidate) =>
@@ -720,11 +749,13 @@ export function useStandardCloudBoardController<
   currentParentId: controlledCurrentParentId,
   extensions,
   items,
+  hierarchyItems = items,
   onCurrentParentIdChange,
   onMove,
   supportsOrder = true,
   tagLimitError,
   view,
+  tagFilter,
   ...stateOptions
 }: StandardCloudBoardControllerOptions<T>) {
   const boardState = useProjectBoardState(stateOptions);
@@ -761,10 +792,10 @@ export function useStandardCloudBoardController<
     [boardState.groupBy, createColumns],
   );
   const currentParent =
-    items.find((item) => item.id === currentParentId) ?? null;
+    hierarchyItems.find((item) => item.id === currentParentId) ?? null;
   const breadcrumb = useMemo(
-    () => buildStandardCloudBoardBreadcrumb(items, currentParentId),
-    [currentParentId, items],
+    () => buildStandardCloudBoardBreadcrumb(hierarchyItems, currentParentId),
+    [currentParentId, hierarchyItems],
   );
 
   const moveItem = useCallback(
@@ -835,12 +866,14 @@ export function useStandardCloudBoardController<
       columnDropKey,
       sourceColumnKey,
       groupBy,
+      targetParentId,
     }: {
       activeItemId: string | null;
       beforeItemId: string | null;
       columnDropKey: string | null;
       sourceColumnKey: string | undefined;
       groupBy: ProjectBoardGroupBy | undefined;
+      targetParentId?: string | null;
     }) => {
       if (!activeItemId || !sourceColumnKey || groupBy !== boardState.groupBy)
         return;
@@ -853,6 +886,7 @@ export function useStandardCloudBoardController<
         groupBy: boardState.groupBy,
         items,
         sourceColumnKey,
+        targetParentId,
       });
       if (drop)
         moveItem(
@@ -865,18 +899,30 @@ export function useStandardCloudBoardController<
     [boardState.groupBy, columns, extensions, items, moveItem],
   );
 
+  const visibleItems = useMemo(
+    () =>
+      items.filter(
+        (item) =>
+          matchesBoardView(item, view) &&
+          (!tagFilter?.length ||
+            tagFilter.some((tag) => item.tags.includes(tag))),
+      ),
+    [items, view, tagFilter],
+  );
   const getColumnItems = useCallback(
-    (column: ProjectBoardColumn, state: ProjectBoardStatePort) =>
+    (
+      column: ProjectBoardColumn,
+      state: ProjectBoardStatePort,
+      parentId = currentParentId,
+    ) =>
       filterStandardCloudBoardItems({
         column,
-        currentParentId,
+        currentParentId: parentId,
         extensions,
-        items: view
-          ? items.filter((item) => matchesBoardView(item, view))
-          : items,
+        items: visibleItems,
         state,
       }),
-    [currentParentId, extensions, items, view],
+    [currentParentId, extensions, visibleItems],
   );
 
   return {
@@ -892,6 +938,7 @@ export function useStandardCloudBoardController<
     columns,
     currentParent,
     currentParentId,
+    filteredItems: visibleItems,
     getColumnItems,
     moveItem,
     moveDroppedItem,

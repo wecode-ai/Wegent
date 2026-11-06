@@ -4,6 +4,12 @@
 
 """HTTP relays transcript chunks without decoding or bypassing session access."""
 
+import asyncio
+import base64
+import copy
+import gzip
+import hashlib
+import json
 from unittest.mock import AsyncMock
 
 import pytest
@@ -16,6 +22,277 @@ from app.services import runtime_work_service
 from tests.services.test_project_comment_execution import scenario  # noqa: F401
 
 SNAPSHOT_ID = "a" * 64
+
+
+def packed_transcript_chunks(
+    accepted_client_message_ids: list[str] | None = None,
+) -> tuple[str, list[dict]]:
+    """Split high-entropy tool output into multiple valid device packet fixtures."""
+    output = "\n".join(
+        hashlib.sha256(str(index).encode()).hexdigest() for index in range(12_000)
+    )
+    packed = {
+        "transcript": {
+            "taskId": "original-session",
+            "workspacePath": "/workspace",
+            "runtime": "codex",
+            "messages": [],
+            "turns": [{"id": "large-turn", "toolOutput": None}],
+        },
+        "strings": [output],
+        "references": [{"path": ["turns", 0, "toolOutput"], "index": 0}],
+    }
+    if accepted_client_message_ids is not None:
+        packed["transcript"][
+            "acceptedClientUserMessageIds"
+        ] = accepted_client_message_ids
+    compressed = gzip.compress(json.dumps(packed).encode())
+    snapshot = hashlib.sha256(compressed).hexdigest()
+    chunks = []
+    for offset in range(0, len(compressed), TRANSCRIPT_CHUNK_BYTES):
+        data = compressed[offset : offset + TRANSCRIPT_CHUNK_BYTES]
+        next_offset = offset + len(data)
+        chunks.append(
+            {
+                "success": True,
+                "transcriptProtocolVersion": 2,
+                "transfer": {
+                    "snapshotId": snapshot,
+                    "encoding": "gzip+base64+json",
+                    "offset": offset,
+                    "nextOffset": (
+                        next_offset if next_offset < len(compressed) else None
+                    ),
+                    "totalBytes": len(compressed),
+                    "payload": base64.b64encode(data).decode(),
+                },
+            }
+        )
+    assert len(chunks) > 1
+    return output, chunks
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("version", [None, 1])
+async def test_legacy_http_read_uses_device_chunks_and_preserves_json(
+    scenario, version, caplog
+):
+    """Preserve legacy JSON and owner authorization without logging tool output."""
+    output, chunks = packed_transcript_chunks()
+
+    async def rpc(**values):
+        """Model a device that requires v2 for this oversized transcript."""
+        payload = values["payload"]
+        if payload.get("transcriptProtocolVersion") != 2:
+            return {
+                "success": False,
+                "code": "runtime_rpc_response_too_large",
+                "error": "Response exceeded the transport payload limit",
+            }
+        offset = payload.get("transcriptTransfer", {}).get("offset", 0)
+        return chunks[offset // TRANSCRIPT_CHUNK_BYTES]
+
+    scenario.rpc.side_effect = rpc
+    request = bound_request(scenario, limit=20, includeFullContent=True)
+    request.transcript_protocol_version = version
+
+    with caplog.at_level("INFO", logger=runtime_work_service.__name__):
+        result = await runtime_work_service.get_runtime_transcript(
+            db=scenario.db, user_id=scenario.member.id, address=request
+        )
+
+    body = result.model_dump(by_alias=True)
+    assert "transcriptProtocolVersion" not in body
+    assert body["turns"][0]["toolOutput"] == output
+    assert request.transcript_protocol_version == version
+    assert scenario.rpc.await_count == len(chunks)
+    for call in scenario.rpc.await_args_list:
+        assert call.kwargs["user_id"] == scenario.owner.id
+        assert call.kwargs["device_id"] == "admin-cloud"
+        assert call.kwargs["allow_app_device_task_reading"] is True
+        assert call.kwargs["payload"]["transcriptProtocolVersion"] == 2
+    assert f"total_bytes={chunks[0]['transfer']['totalBytes']}" in caplog.text
+    assert "base64_bytes=" in caplog.text
+    assert output[:100] not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("accepted", [None, [], ["accepted-before-tail"]])
+async def test_project_receipt_query_survives_authorized_chunk_assembly(
+    scenario, accepted
+):
+    """Retain explicit acceptance evidence without synthesizing missing receipts."""
+    _, chunks = packed_transcript_chunks(accepted)
+    scenario.rpc.side_effect = chunks
+    request = bound_request(
+        scenario,
+        reconcileClientUserMessageIds=["accepted-before-tail", "unconfirmed"],
+    )
+    request.transcript_protocol_version = None
+
+    result = await runtime_work_service.get_runtime_transcript(
+        db=scenario.db, user_id=scenario.member.id, address=request
+    )
+
+    body = result.model_dump(by_alias=True)
+    if accepted is None:
+        assert "acceptedClientUserMessageIds" not in body
+    else:
+        assert body["acceptedClientUserMessageIds"] == accepted
+    assert scenario.rpc.await_count == len(chunks)
+    for call in scenario.rpc.await_args_list:
+        assert call.kwargs["user_id"] == scenario.owner.id
+        assert call.kwargs["allow_app_device_task_reading"] is True
+        assert call.kwargs["payload"]["reconcileClientUserMessageIds"] == [
+            "accepted-before-tail",
+            "unconfirmed",
+        ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("queried", [None, [], ["accepted-before-tail"]])
+async def test_owned_remote_receipt_query_preserves_explicit_request(
+    test_db, test_user, monkeypatch, runtime_transcript_sessions, queried
+):
+    """Forward requested identities through the owned-device path and opaque v2 reply."""
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    packet = chunk_response()
+    rpc = AsyncMock(return_value=packet)
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+    request = RuntimeTranscriptRequest(
+        deviceId="remote-device",
+        taskId="task-1",
+        transcriptProtocolVersion=2,
+        **({"reconcileClientUserMessageIds": queried} if queried is not None else {}),
+    )
+
+    result = await runtime_work_service.get_runtime_transcript(
+        db=test_db, user_id=test_user.id, address=request
+    )
+
+    assert result.model_dump(by_alias=True) == packet
+    payload = rpc.await_args.kwargs["payload"]
+    if queried is None:
+        assert "reconcileClientUserMessageIds" not in payload
+    else:
+        assert payload["reconcileClientUserMessageIds"] == queried
+    assert rpc.await_args.kwargs["user_id"] == test_user.id
+    assert rpc.await_args.kwargs["device_id"] == "remote-device"
+    assert "allow_app_device_task_reading" not in rpc.await_args.kwargs
+
+
+@pytest.mark.asyncio
+async def test_packet_authorization_sessions_end_before_rpc(
+    scenario, runtime_transcript_sessions
+):
+    """Never keep an authorization snapshot open while waiting for the device."""
+    _, chunks = packed_transcript_chunks()
+    caller_transaction = scenario.db.get_transaction()
+
+    async def rpc(**_values):
+        assert runtime_transcript_sessions
+        assert all(not db.in_transaction() for db in runtime_transcript_sessions)
+        return chunks[scenario.rpc.await_count - 1]
+
+    scenario.rpc.side_effect = rpc
+    request = bound_request(scenario)
+    request.transcript_protocol_version = None
+    await runtime_work_service.get_runtime_transcript(
+        db=scenario.db, user_id=scenario.member.id, address=request
+    )
+
+    assert len(runtime_transcript_sessions) == len(chunks)
+    assert len({id(db) for db in runtime_transcript_sessions}) == len(chunks)
+    assert scenario.db.get_transaction() is caller_transaction
+
+
+@pytest.mark.asyncio
+async def test_legacy_transfer_rechecks_access_before_reading_next_chunk(scenario):
+    """Stop assembly when the original caller loses access after the first chunk."""
+    _, chunks = packed_transcript_chunks()
+
+    async def revoke_access(**_values):
+        """Revoke the caller's grant as the device returns its first chunk."""
+        scenario.db.delete(scenario.grant)
+        scenario.db.commit()
+        return chunks[0]
+
+    scenario.rpc.side_effect = revoke_access
+    request = bound_request(scenario)
+    request.transcript_protocol_version = None
+
+    with pytest.raises(HTTPException) as error:
+        await runtime_work_service.get_runtime_transcript(
+            db=scenario.db, user_id=scenario.member.id, address=request
+        )
+
+    assert error.value.status_code == 404
+    assert scenario.rpc.await_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["snapshot", "offset", "base64", "digest"])
+async def test_legacy_transfer_rejects_inconsistent_or_corrupt_packets(
+    scenario, failure
+):
+    """Return a safe gateway error for corrupt data or inconsistent continuations."""
+    output, packets = packed_transcript_chunks()
+    chunks = copy.deepcopy(packets)
+    if failure == "snapshot":
+        chunks[1]["transfer"]["snapshotId"] = "b" * 64
+    elif failure == "offset":
+        chunks[1]["transfer"]["offset"] = 0
+    elif failure == "base64":
+        chunks[0]["transfer"]["payload"] = "!invalid!"
+    else:
+        for chunk in chunks:
+            chunk["transfer"]["snapshotId"] = "c" * 64
+    scenario.rpc.side_effect = chunks
+    request = bound_request(scenario)
+    request.transcript_protocol_version = None
+
+    with pytest.raises(HTTPException) as error:
+        await runtime_work_service.get_runtime_transcript(
+            db=scenario.db, user_id=scenario.member.id, address=request
+        )
+
+    assert error.value.status_code == 502
+    assert error.value.detail == "Runtime returned an invalid conversation response"
+    assert output not in str(error.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_legacy_transfer_has_one_end_to_end_timeout(scenario, monkeypatch):
+    """Cancel a stalled device read within the existing whole-transfer budget."""
+    cancelled = asyncio.Event()
+
+    async def stalled(**_values):
+        """Keep the device request pending until the aggregation timeout cancels it."""
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    scenario.rpc.side_effect = stalled
+    monkeypatch.setattr(
+        runtime_work_service, "RUNTIME_TRANSCRIPT_TIMEOUT_SECONDS", 0.02
+    )
+    request = bound_request(scenario)
+    request.transcript_protocol_version = None
+
+    with pytest.raises(HTTPException) as error:
+        await runtime_work_service.get_runtime_transcript(
+            db=scenario.db, user_id=scenario.member.id, address=request
+        )
+
+    assert error.value.status_code == 502
+    assert error.value.detail == "Runtime transcript transfer timed out"
+    assert cancelled.is_set()
+    assert scenario.rpc.await_count == 1
 
 
 def chunk_response(offset: int = 0) -> dict:
@@ -188,6 +465,7 @@ def test_transcript_endpoint_preserves_opaque_chunk_and_request_fields(
         "transcriptTransfer": cursor,
         "refresh": True,
         "navigationOnly": True,
+        "reconcileClientUserMessageIds": ["queued-request"],
     }
 
     response = test_client.post(

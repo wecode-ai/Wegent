@@ -20,9 +20,27 @@ use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
 use serde_json::Value;
 use std::collections::HashSet;
 
+use crate::http_compat::FastApiError;
+use crate::mcp_provider_registry::{get_mcp_service_by_skill_name, list_mcp_providers};
+use crate::mcp_user_service::enabled_provider_server;
+use crate::provider_guidance::build_provider_configuration_prompt;
 use crate::teams::group_membership::ErpContext;
+use crate::user_mcp_oauth::UserMcpAccessTokens;
 
 use super::ghost::MergedGhostCapabilities;
+
+/// MySQL failures in `_get_bot_skills` surface as the create request's
+/// dependency error, matching the other request-builder reads.
+fn dependency(error: brz_mysql::MysqlError) -> FastApiError {
+    super::request::dependency(error)
+}
+
+#[path = "skills_requested.rs"]
+mod requested;
+pub(super) use requested::{
+    append_coding_mcp, append_requested_skills, is_coding_shell, late_bot_reads,
+    resolve_request_preload_skills,
+};
 
 /// `SKILL_BINDING_KIND` / `SKILL_BINDING_NAMESPACE`.
 const SKILL_BINDING_KIND: &str = "SkillBinding";
@@ -94,20 +112,16 @@ impl SkillRefMeta {
             content_hash: file_hash.map(|hash| format!("sha256:{hash}")),
         }
     }
+}
 
-    /// The Ghost-stored ref plus the derived `content_hash` fallback.
-    pub fn from_ghost_ref(reference: &Value, fallback: &SkillRefMeta) -> Self {
-        let value = |key: &str| reference.get(key).cloned().unwrap_or(Value::Null);
-        Self {
-            skill_id: value("skill_id").as_i64().unwrap_or(fallback.skill_id),
-            namespace: value("namespace").as_str().unwrap_or("default").to_string(),
-            is_public: value("is_public").as_bool().unwrap_or(fallback.is_public),
-            content_hash: value("content_hash")
-                .as_str()
-                .map(str::to_string)
-                .or_else(|| fallback.content_hash.clone()),
-        }
-    }
+/// `_get_bot_skills`' Ghost-skill ref (`request_builder.py:1685-1701`):
+/// `skill_refs[skill_name] = build_skill_ref_meta(skill)`. Every field —
+/// including `content_hash` — comes from the resolved Skill row: the Ghost's
+/// stored ref only selects which Skill to read (`skill_id`), so a stale stored
+/// hash never reaches the dispatch body. The live row is the version source
+/// (`skill_resolution.py:19-25`).
+fn ghost_skill_ref_meta(skill: &SkillKindRow) -> Value {
+    serde_json::to_value(SkillRefMeta::from_kind(skill)).unwrap_or(Value::Null)
 }
 
 /// `_find_attached_skill_by_ref`: the exact Skill dependency validated on
@@ -254,6 +268,77 @@ fn is_excluded_by_context(binding_json: &Value, context: &SkillBindingContext<'_
             .iter()
             .any(|(candidate, expected)| *candidate == kind && expected == value)
     })
+}
+
+/// `_inject_conditional_provider_skills`: preload the runtime Skill of every
+/// provider service whose `message_keywords` appear in the prompt.
+///
+/// The provider's own keywords must match before any service is considered; a
+/// provider whose keywords match but whose services do not preloads every
+/// service it declares. A matched provider therefore makes its Skills part of
+/// `preload_skills`, which adds them to the request metadata and lets
+/// `apply_provider_configuration_guidance` find their guidance. The create
+/// flow's prompt is a string, so `_extract_prompt_text` is the identity here.
+pub fn inject_conditional_provider_skills(prompt: &str, references: &mut Vec<Value>) {
+    let text = normalize_provider_keyword_text(prompt);
+    if text.is_empty() {
+        return;
+    }
+    let mut existing: Vec<String> = references
+        .iter()
+        .filter_map(|reference| match reference {
+            Value::String(name) => Some(name.clone()),
+            Value::Object(_) => reference
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            _ => None,
+        })
+        .collect();
+    for provider in list_mcp_providers() {
+        if provider.message_keywords.is_empty()
+            || !matches_any_keyword(provider.message_keywords, &text)
+        {
+            continue;
+        }
+        let mut matched: Vec<&crate::mcp_provider_registry::McpProviderServiceDefinition> =
+            provider
+                .services
+                .iter()
+                .filter(|service| matches_any_keyword(service.message_keywords, &text))
+                .collect();
+        if matched.is_empty() {
+            matched = provider.services.iter().collect();
+        }
+        for service in matched {
+            let skill_name = service.skill_name;
+            if skill_name.is_empty() || existing.iter().any(|name| name == skill_name) {
+                continue;
+            }
+            references.push(serde_json::json!({
+                "name": skill_name,
+                "namespace": "default",
+                "is_public": true,
+            }));
+            existing.push(skill_name.to_string());
+        }
+    }
+}
+
+/// `_normalize_provider_keyword_text`: remove every whitespace character and
+/// case-fold, so a keyword matches regardless of spacing or case.
+fn normalize_provider_keyword_text(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn matches_any_keyword(keywords: &[&str], text: &str) -> bool {
+    keywords
+        .iter()
+        .any(|keyword| text.contains(&normalize_provider_keyword_text(keyword)))
 }
 
 /// `_inject_subscription_manager_skill`: the always-injected available
@@ -434,6 +519,14 @@ fn is_published_public(json: &Value) -> bool {
 /// bindings plus the team's group bindings (`context.group_namespace`), each
 /// filtered by the binding exceptions, deduped by skill id, and resolved to an
 /// active Skill in query order (newest binding first).
+///
+/// The source resolves a user-default binding twice: `list_user_default_bindings`
+/// (`skill_binding_service.py:403`) reads `_get_active_skill` by id to drop
+/// inactive/inaccessible bindings, then `list_user_default_skill_refs`
+/// (`skill_binding_service.py:460-469`) reads the same Skill by id again to
+/// build the ref. Both are business SELECTs, so the second read is reproduced
+/// here rather than reusing the first row. Group bindings have no
+/// `list_user_default_bindings` pass; the loop's read is their only one.
 pub async fn list_user_default_skill_refs<M: Mysql>(
     mysql: &M,
     user_id: i64,
@@ -441,17 +534,38 @@ pub async fn list_user_default_skill_refs<M: Mysql>(
     context: &SkillBindingContext<'_>,
     access: Option<&SkillAccess<'_>>,
 ) -> MysqlResult<Vec<Value>> {
+    // `list_user_default_bindings` (`skill_binding_service.py:403-431`): the
+    // user's default bindings whose Skill is active and accessible.
+    //
     // `kinds.user_id` is an integer column: the source renders the bound value
     // as the unquoted literal `kinds.user_id = 6582`, so it must not be bound
     // as a string.
     let bindings: Vec<SkillKindRow> = mysql
         .fetch_all(user_default_bindings_statement(), (user_id,))
         .await?;
-    let mut candidates: Vec<SkillKindRow> = bindings
-        .into_iter()
-        .filter(|row| is_user_default_binding(&row.kinds_json.0, target_id))
-        .filter(|row| !is_excluded_by_context(&row.kinds_json.0, context))
-        .collect();
+    let mut candidates: Vec<SkillKindRow> = Vec::new();
+    for binding in bindings {
+        if !is_user_default_binding(&binding.kinds_json.0, target_id) {
+            continue;
+        }
+        let Some(skill_id) = extract_skill_id(&binding.kinds_json.0) else {
+            continue;
+        };
+        let skill: Option<SkillKindRow> = mysql
+            .fetch_optional(active_skill_by_id_statement(), (skill_id,))
+            .await?;
+        let Some(skill) = skill else {
+            continue;
+        };
+        let accessible = match access {
+            Some(access) => access.can_user_access_skill(user_id, &skill).await?,
+            None => true,
+        };
+        if !accessible {
+            continue;
+        }
+        candidates.push(binding);
+    }
     if let Some(group) = context.group_namespace {
         // `list_group_bindings` returns nothing without Reporter access.
         let allowed = match access {
@@ -465,12 +579,13 @@ pub async fn list_user_default_skill_refs<M: Mysql>(
             candidates.extend(
                 group_rows
                     .into_iter()
-                    .filter(|row| is_group_binding(&row.kinds_json.0, group))
-                    .filter(|row| !is_excluded_by_context(&row.kinds_json.0, context)),
+                    .filter(|row| is_group_binding(&row.kinds_json.0, group)),
             );
         }
     }
 
+    // `list_user_default_skill_refs`'s own loop: exception filter, id dedupe,
+    // then a fresh `_get_active_skill` read for the ref.
     let mut seen: Vec<i64> = Vec::new();
     let mut refs = Vec::new();
     for binding in candidates {
@@ -481,6 +596,9 @@ pub async fn list_user_default_skill_refs<M: Mysql>(
             continue;
         }
         seen.push(skill_id);
+        if is_excluded_by_context(&binding.kinds_json.0, context) {
+            continue;
+        }
         let skill: Option<SkillKindRow> = mysql
             .fetch_optional(active_skill_by_id_statement(), (skill_id,))
             .await?;
@@ -510,6 +628,14 @@ pub struct BotSkills {
     pub user_selected_skills: Vec<String>,
     /// `skill_refs` keyed by skill name.
     pub skill_refs: serde_json::Map<String, Value>,
+    /// The index where the request-selected Skill entries belong.
+    ///
+    /// `_get_bot_skills` resolves the Ghost's Skills, then the caller's
+    /// preloaded Skills, then the injected available Skills, so an entry added
+    /// by a later pass must not land behind an available one. Zero is the end
+    /// of a Skill-free Ghost, which is also the correct position for a caller
+    /// that resolves no Ghost Skills.
+    pub preload_insert_at: usize,
 }
 
 /// `_get_bot_skills` for the create flow: the merged Ghost capabilities'
@@ -523,16 +649,22 @@ pub struct BotSkills {
 /// ["wegent-knowledge"]`, and `skill_refs` keyed by both names with the
 /// `skill_id`/`namespace`/`is_public`/`content_hash` metadata.
 #[allow(clippy::too_many_arguments)]
-pub async fn get_bot_skills<M: Mysql>(
+pub(crate) async fn get_bot_skills<M: Mysql, T: UserMcpAccessTokens>(
     mysql: &M,
     merged: &MergedGhostCapabilities,
     bot_capability_mode: &str,
     user_id: i64,
+    user_preferences: Option<&str>,
+    tokens: &T,
     is_subscription: bool,
     user_default_target_id: &str,
     binding_context: &SkillBindingContext<'_>,
     access: Option<&SkillAccess<'_>>,
-) -> MysqlResult<BotSkills> {
+    // `user_available_skills` (`_get_bot_skills`' third input): the automatic
+    // user-default/group binding refs. The late `resolve_request_preload_skills`
+    // re-resolution passes none, so it must not re-read the SkillBinding rows.
+    include_available_skills: bool,
+) -> Result<BotSkills, FastApiError> {
     let mut result = BotSkills::default();
     let include_ghost = bot_capability_mode != "follow_device";
     let preload_set: Vec<&String> = if include_ghost {
@@ -548,86 +680,91 @@ pub async fn get_bot_skills<M: Mysql>(
                 Some(reference) => {
                     let skill_id = reference.get("skill_id").and_then(Value::as_i64);
                     match skill_id {
-                        Some(skill_id) => {
-                            mysql
-                                .fetch_optional(
-                                    attached_skill_statement(),
-                                    (skill_id, skill_name.clone()),
-                                )
-                                .await?
-                        }
-                        None => {
-                            mysql
-                                .fetch_optional(public_skill_statement(), (skill_name.clone(),))
-                                .await?
-                        }
+                        Some(skill_id) => mysql
+                            .fetch_optional(
+                                attached_skill_statement(),
+                                (skill_id, skill_name.clone()),
+                            )
+                            .await
+                            .map_err(dependency)?,
+                        None => mysql
+                            .fetch_optional(public_skill_statement(), (skill_name.clone(),))
+                            .await
+                            .map_err(dependency)?,
                     }
                 }
-                None => {
-                    mysql
-                        .fetch_optional(public_skill_statement(), (skill_name.clone(),))
-                        .await?
-                }
+                None => mysql
+                    .fetch_optional(public_skill_statement(), (skill_name.clone(),))
+                    .await
+                    .map_err(dependency)?,
             };
             let Some(skill) = skill else {
                 continue;
             };
-            let fallback = SkillRefMeta::from_kind(&skill);
-            result.skills.push(build_skill_data(&skill));
-            if let Some(reference) = reference {
-                result.skill_refs.insert(
-                    skill_name.clone(),
-                    serde_json::to_value(SkillRefMeta::from_ghost_ref(reference, &fallback))
-                        .unwrap_or(Value::Null),
-                );
-            } else {
-                result.skill_refs.insert(
-                    skill_name.clone(),
-                    serde_json::to_value(fallback).unwrap_or(Value::Null),
-                );
-            }
+            result
+                .skills
+                .push(build_skill_data_with_oauth(&skill, user_preferences, tokens).await?);
+            result
+                .skill_refs
+                .insert(skill_name.clone(), ghost_skill_ref_meta(&skill));
             if preload_set.contains(&skill_name) {
                 result.preload_skills.push(skill_name.clone());
                 result.user_selected_skills.push(skill_name.clone());
             }
         }
     }
+    // The Ghost's Skills end here; the caller's preloaded Skills belong before
+    // the injected available ones that follow.
+    result.preload_insert_at = result.skills.len();
 
     // The injected `subscription-manager` available skill: added to `skills`
-    // and `skill_refs` but never to the preload lists.
-    for injected in inject_subscription_manager_skill(is_subscription) {
-        let name = injected
-            .get("name")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string();
-        if result.skill_refs.contains_key(&name) {
-            continue;
+    // and `skill_refs` but never to the preload lists. The caller builds it as
+    // part of `user_available_skills` (`request_builder.py:364`) and
+    // `_get_bot_skills` only consumes it inside `if user_available_skills:`
+    // (`:1815`), so a re-resolution without available skills must not add it.
+    if include_available_skills {
+        for injected in inject_subscription_manager_skill(is_subscription) {
+            let name = injected
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            if result.skill_refs.contains_key(&name) {
+                continue;
+            }
+            let skill: Option<SkillKindRow> = mysql
+                .fetch_optional(public_skill_statement(), (name.clone(),))
+                .await
+                .map_err(dependency)?;
+            let Some(skill) = skill else {
+                continue;
+            };
+            result
+                .skills
+                .push(build_skill_data_with_oauth(&skill, user_preferences, tokens).await?);
+            result.skill_refs.insert(
+                name,
+                serde_json::to_value(SkillRefMeta::from_kind(&skill)).unwrap_or(Value::Null),
+            );
         }
-        let skill: Option<SkillKindRow> = mysql
-            .fetch_optional(public_skill_statement(), (name.clone(),))
-            .await?;
-        let Some(skill) = skill else {
-            continue;
-        };
-        result.skills.push(build_skill_data(&skill));
-        result.skill_refs.insert(
-            name,
-            serde_json::to_value(SkillRefMeta::from_kind(&skill)).unwrap_or(Value::Null),
-        );
     }
 
     // The user-default binding refs (available, not preloaded, unless
     // `force_preload`).
-    for reference in list_user_default_skill_refs(
-        mysql,
-        user_id,
-        user_default_target_id,
-        binding_context,
-        access,
-    )
-    .await?
-    {
+    let available_refs = if include_available_skills {
+        list_user_default_skill_refs(
+            mysql,
+            user_id,
+            user_default_target_id,
+            binding_context,
+            access,
+        )
+        .await
+        .map_err(dependency)?
+    } else {
+        Vec::new()
+    };
+    for reference in available_refs {
         let name = reference
             .get("name")
             .and_then(Value::as_str)
@@ -638,7 +775,9 @@ pub async fn get_bot_skills<M: Mysql>(
             continue;
         }
         let skill_id = reference.get("skill_id").and_then(Value::as_i64);
-        let skill = resolve_binding_ref_skill(mysql, skill_id, &name).await?;
+        let skill = resolve_binding_ref_skill(mysql, skill_id, &name)
+            .await
+            .map_err(dependency)?;
         let Some(skill) = skill else {
             continue;
         };
@@ -646,11 +785,14 @@ pub async fn get_bot_skills<M: Mysql>(
         if let (Some(access), Some(skill_id)) = (access, skill_id)
             && !access
                 .find_skill_by_ref_accessible(user_id, user_default_target_id, skill_id, &skill)
-                .await?
+                .await
+                .map_err(dependency)?
         {
             continue;
         }
-        result.skills.push(build_skill_data(&skill));
+        result
+            .skills
+            .push(build_skill_data_with_oauth(&skill, user_preferences, tokens).await?);
         result.skill_refs.insert(
             name.clone(),
             serde_json::to_value(SkillRefMeta::from_kind(&skill)).unwrap_or(Value::Null),
@@ -666,9 +808,21 @@ pub async fn get_bot_skills<M: Mysql>(
 /// `_build_skill_data` (the reachable fields): the Skill CRD's metadata name,
 /// spec description/prompt/displayName, and the ids. An absent or `null`
 /// spec field stays JSON `null` (the source serializes the pydantic `None`
-/// value), and `config`/`runtime`/`mcpServers` are copied only when the
-/// source's truthiness check accepts them.
-fn build_skill_data(skill: &SkillKindRow) -> Value {
+/// value), and `config`/`runtime`/`mcpServers`/`tools`/`provider` are copied
+/// only when the source's truthiness check accepts them.
+///
+/// `provider` also gates `binary_download_url`
+/// (`request_builder.py:2042-2054`): the field exists for a public skill
+/// (`user_id == 0`, the source's security restriction) with a provider, and
+/// points at the backend's internal binary endpoint.
+///
+/// `user_preferences` is the request user's `users.preferences`, read by the
+/// user-managed runtime-service branch below; the create flow always carries
+/// the reloaded row.
+fn build_skill_data(
+    skill: &SkillKindRow,
+    user_preferences: Option<&str>,
+) -> Result<Value, FastApiError> {
     let spec = skill
         .kinds_json
         .0
@@ -692,242 +846,111 @@ fn build_skill_data(skill: &SkillKindRow) -> Value {
             data[key] = value.clone();
         }
     }
-    data
+    // `_build_skill_data`'s user-managed runtime-service branch
+    // (`request_builder.py:2004-2035`): a public Skill in the `default`
+    // namespace whose name is registered by a user-mode provider renders the
+    // configuration guidance instead of its stored MCP servers when the request
+    // user has not configured that service. The branch runs after
+    // `mcpServers` was copied, so it removes a field that is otherwise present.
+    let is_public_default_runtime_skill =
+        skill.kinds_user_id == 0 && skill_namespace(skill) == "default";
+    if is_public_default_runtime_skill
+        && let Some((provider, service)) = get_mcp_service_by_skill_name(&skill.kinds_name)
+        && provider.configuration_mode == "user"
+    {
+        // `configured_server = None; if user: configured_server = ...`: a
+        // request without a user record has no configured server and therefore
+        // requires configuration.
+        let configured_server = match user_preferences {
+            Some(preferences) => {
+                enabled_provider_server(preferences, provider.provider_id, service.service_id)?
+            }
+            None => None,
+        };
+        if configured_server.is_none() {
+            if let Some(object) = data.as_object_mut() {
+                object.remove("mcpServers");
+            }
+            data["configuration_required"] = Value::Bool(true);
+            data["prompt"] = Value::String(build_provider_configuration_prompt(provider, service));
+        }
+    }
+    // `skill_crd.spec.tools`: `[tool.model_dump(exclude_none=True) for tool in
+    // skill_crd.spec.tools]` — the declaration's `name`/`provider` plus its
+    // `config` only when it is not `None`.
+    if let Some(tools) = spec
+        .get("tools")
+        .filter(|value| brz_json::adapters::python_truthy(value))
+    {
+        let tools = tools
+            .as_array()
+            .map(|tools| tools.iter().map(skill_tool_declaration).collect())
+            .unwrap_or_default();
+        data["tools"] = Value::Array(tools);
+    }
+    // `skill_crd.spec.provider`: the loader `module` (the pydantic default when
+    // the spec omits it) and the `class` alias, emitted verbatim.
+    if let Some(provider) = spec
+        .get("provider")
+        .filter(|value| brz_json::adapters::python_truthy(value))
+    {
+        let module = provider
+            .get("module")
+            .and_then(Value::as_str)
+            .unwrap_or("provider");
+        let class = provider.get("class").and_then(Value::as_str).unwrap_or("");
+        data["provider"] = serde_json::json!({"module": module, "class": class});
+        // "For HTTP mode: include download URL for remote skill binary loading.
+        // Only for public skills (user_id=0) for security."
+        if skill.kinds_user_id == 0 {
+            data["binary_download_url"] = Value::String(binary_download_url(
+                &super::bot_config::backend_url(),
+                skill.kinds_id,
+            ));
+        }
+    }
+    Ok(data)
+}
+
+#[path = "skills_oauth.rs"]
+mod oauth;
+use oauth::build_skill_data_with_oauth;
+
+/// `skill_crd.metadata.namespace`; the pydantic `ObjectMeta` defaults an
+/// omitted namespace to `"default"`.
+fn skill_namespace(skill: &SkillKindRow) -> &str {
+    if skill.kinds_namespace.is_empty() {
+        "default"
+    } else {
+        &skill.kinds_namespace
+    }
+}
+
+/// One `SkillToolDeclaration.model_dump(exclude_none=True)`: `name` and
+/// `provider` are required, `config` is kept only when it is not `None`, and
+/// undeclared keys are dropped by the pydantic model.
+fn skill_tool_declaration(tool: &Value) -> Value {
+    let mut dumped = serde_json::Map::new();
+    for key in ["name", "provider"] {
+        if let Some(value) = tool.get(key) {
+            dumped.insert(key.to_string(), value.clone());
+        }
+    }
+    if let Some(config) = tool.get("config").filter(|value| !value.is_null()) {
+        dumped.insert("config".to_string(), config.clone());
+    }
+    Value::Object(dumped)
+}
+
+/// `f"{settings.BACKEND_INTERNAL_URL.rstrip('/')}/api/internal/skills/{id}/binary"`
+/// (`request_builder.py:2050-2053`).
+fn binary_download_url(base_url: &str, skill_id: i64) -> String {
+    format!(
+        "{}/api/internal/skills/{skill_id}/binary",
+        base_url.trim_end_matches('/')
+    )
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    fn normalize(sql: &str) -> String {
-        sql.split_whitespace().collect::<Vec<_>>().join(" ")
-    }
-
-    #[test]
-    fn skill_reads_match_the_recorded_statements() {
-        let attached = normalize(&attached_skill_statement());
-        assert!(attached.contains(
-            "WHERE kinds.id = ? AND kinds.kind = 'Skill' AND kinds.name = ? \
-             AND kinds.is_active = true LIMIT 1"
-        ));
-        let public = normalize(&public_skill_statement());
-        assert!(public.contains(
-            "WHERE kinds.user_id = 0 AND kinds.kind = 'Skill' AND kinds.name = ? \
-             AND kinds.is_active = true LIMIT 1"
-        ));
-    }
-
-    /// `_get_bot_skills` re-resolves each binding ref through
-    /// `find_skill_by_ref`'s explicit-id branch (`id` + `name`), not a second
-    /// id-only `_get_active_skill` read: the recorded case reads each Skill
-    /// once by id while resolving the binding and once by id+name here.
-    #[tokio::test]
-    async fn binding_ref_lookup_uses_the_attached_skill_statement() {
-        let mysql = crate::sql_test_support::KindQueryCapture::writing();
-        let _ =
-            resolve_binding_ref_skill(&mysql, Some(1_757_975), "lbs-concert-json2table-star-uid")
-                .await
-                .expect("read");
-        let queries = mysql.queries();
-        assert_eq!(queries.len(), 1);
-        assert!(queries[0].sql.contains(
-            "WHERE kinds.id = ? AND kinds.kind = 'Skill' AND kinds.name = ? \
-             AND kinds.is_active = true LIMIT 1"
-        ));
-        assert_eq!(queries[0].args, 2);
-        assert_eq!(queries[0].first_integer, Some(1_757_975));
-    }
-
-    #[test]
-    fn ref_meta_derives_from_the_kind_row() {
-        let row = SkillKindRow {
-            kinds_id: 200_318,
-            kinds_user_id: 0,
-            kinds_kind: "Skill".to_string(),
-            kinds_name: "subscription-manager".to_string(),
-            kinds_namespace: "default".to_string(),
-            kinds_json: Json(json!({
-                "status": {"fileHash": "d9f8d69053873ea444f69e871cf9ce542d8315869b0f1b0bfe3aa00c26c50caa"}
-            })),
-            kinds_is_active: 1,
-            kinds_created_at: None,
-            kinds_updated_at: None,
-        };
-        assert_eq!(
-            SkillRefMeta::from_kind(&row),
-            SkillRefMeta {
-                skill_id: 200_318,
-                namespace: "default".to_string(),
-                is_public: true,
-                content_hash: Some(
-                    "sha256:d9f8d69053873ea444f69e871cf9ce542d8315869b0f1b0bfe3aa00c26c50caa"
-                        .to_string()
-                ),
-            }
-        );
-    }
-
-    /// `_build_skill_data` keeps a present-or-absent text field as JSON
-    /// `null` and omits `config`/`runtime`/`mcpServers` the source's
-    /// truthiness check rejects. The chat-shell body compares values exactly,
-    /// so `""` or `"mcpServers": null` would never match the recorded body.
-    #[test]
-    fn skill_data_keeps_present_nulls_and_omits_absent_optional_keys() {
-        let skill = SkillKindRow {
-            kinds_id: 1_757_975,
-            kinds_user_id: 655,
-            kinds_kind: "Skill".to_string(),
-            kinds_name: "lbs-concert-json2table-star-uid".to_string(),
-            kinds_namespace: "lbs-group1".to_string(),
-            kinds_json: Json(json!({
-                "spec": {"description": "convert", "prompt": "# prompt"},
-            })),
-            kinds_is_active: 1,
-            kinds_created_at: None,
-            kinds_updated_at: None,
-        };
-        let data = build_skill_data(&skill);
-        let object = data.as_object().expect("object");
-        assert_eq!(object["displayName"], Value::Null);
-        assert!(!object.contains_key("mcpServers"));
-        assert!(!object.contains_key("config"));
-        assert!(!object.contains_key("runtime"));
-        assert_eq!(
-            object.keys().map(String::as_str).collect::<Vec<_>>(),
-            [
-                "name",
-                "description",
-                "prompt",
-                "displayName",
-                "skill_id",
-                "skill_user_id"
-            ]
-        );
-    }
-
-    /// A truthy `mcpServers` descriptor is copied verbatim (including the
-    /// unsubstituted `${{...}}` placeholders the source keeps), while a falsy
-    /// `config` object is omitted.
-    #[test]
-    fn skill_data_copies_truthy_optional_keys() {
-        let skill = SkillKindRow {
-            kinds_id: 200_318,
-            kinds_user_id: 0,
-            kinds_kind: "Skill".to_string(),
-            kinds_name: "subscription-manager".to_string(),
-            kinds_namespace: "default".to_string(),
-            kinds_json: Json(json!({
-                "spec": {
-                    "description": "d",
-                    "prompt": "p",
-                    "displayName": "订阅任务管理",
-                    "mcpServers": {
-                        "wegent-subscription": {"url": "${{backend_url}}/mcp/subscription/sse"}
-                    },
-                    "config": {},
-                },
-            })),
-            kinds_is_active: 1,
-            kinds_created_at: None,
-            kinds_updated_at: None,
-        };
-        let data = build_skill_data(&skill);
-        let object = data.as_object().expect("object");
-        assert_eq!(object["displayName"], json!("订阅任务管理"));
-        assert_eq!(
-            object["mcpServers"],
-            json!({"wegent-subscription": {"url": "${{backend_url}}/mcp/subscription/sse"}})
-        );
-        assert!(!object.contains_key("config"));
-    }
-
-    #[test]
-    fn binding_predicates_and_extractors_follow_the_source() {
-        let binding = json!({
-            "spec": {
-                "targetType": "user",
-                "targetId": "user-5831",
-                "skillRef": {"skillId": 128913, "name": "wegent-knowledge"},
-                "forcePreload": true,
-            }
-        });
-        assert!(is_user_default_binding(&binding, "user-5831"));
-        assert!(!is_user_default_binding(&binding, "other"));
-        assert_eq!(extract_skill_id(&binding), Some(128_913));
-        assert!(extract_force_preload(&binding));
-
-        let group = json!({"spec": {"targetType": "group", "targetId": "ns-a"}});
-        assert!(is_group_binding(&group, "ns-a"));
-        assert_eq!(extract_skill_id(&group), None);
-        assert!(!extract_force_preload(&group));
-    }
-
-    #[test]
-    fn subscription_manager_injection_skips_subscription_tasks() {
-        assert_eq!(inject_subscription_manager_skill(true), Vec::<Value>::new());
-        assert_eq!(
-            inject_subscription_manager_skill(false),
-            vec![json!({
-                "name": "subscription-manager",
-                "namespace": "default",
-                "is_public": true,
-            })]
-        );
-    }
-
-    #[test]
-    fn binding_exceptions_filter_by_mode_agent_and_project() {
-        let context = SkillBindingContext {
-            mode: "chat",
-            agent_id: 302_292,
-            project_id: Some(2571),
-            group_namespace: Some("lbs-group1"),
-        };
-        let binding = |exceptions: Value| json!({"spec": {"exceptions": exceptions}});
-        assert!(is_excluded_by_context(
-            &binding(json!([{"type": "mode", "value": "chat"}])),
-            &context
-        ));
-        assert!(is_excluded_by_context(
-            &binding(json!([{"type": "agent", "value": "302292"}])),
-            &context
-        ));
-        assert!(is_excluded_by_context(
-            &binding(json!([{"type": "project", "value": " 2571 "}])),
-            &context
-        ));
-        assert!(!is_excluded_by_context(
-            &binding(json!([{"type": "mode", "value": "video"}])),
-            &context
-        ));
-        assert!(!is_excluded_by_context(&binding(json!([])), &context));
-    }
-
-    /// The recorded statement carries `kinds.user_id = 6582`, an integer
-    /// literal, so the read binds an integer (`kinds.user_id = ?`). A
-    /// stringified id never matched the recorded exchange.
-    #[tokio::test]
-    async fn user_default_binding_read_binds_the_user_id_as_an_integer() {
-        let mysql = crate::sql_test_support::KindQueryCapture::writing();
-        let context = SkillBindingContext {
-            mode: "chat",
-            agent_id: 302_292,
-            project_id: None,
-            group_namespace: None,
-        };
-        let refs = list_user_default_skill_refs(&mysql, 6582, "user:6582", &context, None)
-            .await
-            .expect("read");
-        assert!(refs.is_empty());
-        let queries = mysql.queries();
-        assert_eq!(queries.len(), 1);
-        assert!(queries[0].sql.contains("kinds.user_id = ?"));
-        assert!(
-            queries[0]
-                .sql
-                .contains("WHERE kinds.user_id = ? AND kinds.kind = 'SkillBinding'")
-        );
-        assert_eq!(queries[0].first_integer, Some(6582));
-    }
-}
+#[path = "skills_tests.rs"]
+mod tests;

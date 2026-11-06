@@ -2,6 +2,7 @@ import type { ChatCancelAck, ChatCancelPayload, ChatGuideAck, ChatGuidePayload }
 import type { ChatStreamHandlers } from '@/stream/chatStream'
 import type { LocalExecutorEvent } from '@/desktop/localExecutor'
 import { observeRuntimePluginInvocation } from '@/features/plugins/pluginInvocationTelemetry'
+import { measureRuntimeStreamEvent } from '@/stream/runtimeStreamDiagnostics'
 import {
   createResponseApiStreamState,
   emitResponseApiEvent,
@@ -83,6 +84,14 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
       }
       if (event.event === 'executor.event_lagged') {
         const payload = runtimeEventLaggedPayload(event.payload)
+        if (import.meta.env.VITE_WEWORK_E2E === 'true') {
+          console.debug('[Wework] Runtime lag recovery dispatch', {
+            sequence: event.sequence,
+            subscriptionId,
+            validPayload: payload !== null,
+            hasRecoveryHandler: Boolean(subscription.handlers.onRuntimeEventLagged),
+          })
+        }
         if (payload) subscription.handlers.onRuntimeEventLagged?.(payload)
         continue
       }
@@ -106,7 +115,9 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
         subscription.eventCount,
         subscription.textDeltaCount
       )
-      emitResponseApiEvent(subscription.handlers, event.event, event.payload, subscription.state)
+      measureRuntimeStreamEvent(event.event, () => {
+        emitResponseApiEvent(subscription.handlers, event.event, event.payload, subscription.state)
+      })
     }
   }
 
@@ -130,6 +141,10 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
   }
 
   function handleNativeEvent(event: LocalExecutorEvent): void {
+    measureRuntimeStreamEvent(event.event, () => queueNativeEvent(event), 'native')
+  }
+
+  function queueNativeEvent(event: LocalExecutorEvent): void {
     if (!isBatchableRuntimeStreamEvent(event)) {
       flushPendingStreamEvent()
       processNativeEvent(event)
@@ -467,6 +482,7 @@ function hasLocalExecutorResponseHandlers(handlers: ChatStreamHandlers): boolean
     handlers.onChatChunk ||
     handlers.onChatDone ||
     handlers.onChatError ||
+    handlers.onChatRecovered ||
     handlers.onBlockCreated ||
     handlers.onBlockUpdated ||
     handlers.onSubagentActivity ||
@@ -475,6 +491,7 @@ function hasLocalExecutorResponseHandlers(handlers: ChatStreamHandlers): boolean
     handlers.onRuntimeGoalUpdated ||
     handlers.onRuntimeGoalCleared ||
     handlers.onRuntimeSupervisorUpdated ||
+    handlers.onRuntimeTurnUpdated ||
     handlers.onRuntimePlanUpdated ||
     handlers.onGuidanceApplied ||
     handlers.onRuntimeEventLagged ||
@@ -615,6 +632,9 @@ function logRuntimeChatStreamNativeEvent(
     subtaskId: stringField(payload, 'subtaskId'),
     deviceId: stringField(payload, 'deviceId'),
     blockId: stringField(data, 'blockId') ?? stringField(data, 'block_id'),
+    blockType: stringField(asRecord(data.block), 'type'),
+    replacesItemId: stringField(data, 'replacesItemId'),
+    itemId: stringField(data, 'itemId'),
     contentDeltaLength: contentDelta?.length,
     contentDeltaFingerprint: contentDelta ? textFingerprint(contentDelta) : undefined,
     matchingSubscriptionIds: subscriptions

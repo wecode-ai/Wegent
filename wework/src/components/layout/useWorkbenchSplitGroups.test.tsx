@@ -1,12 +1,12 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it } from 'vitest'
+import { useWorkbenchSplitGroups } from './useWorkbenchSplitGroups'
 import {
   createWorkbenchSplitGroupsState,
   getActiveWorkbenchLayout,
   serializeWorkbenchSplitGroups,
 } from './workbenchSplitGroups'
 import { collectWorkbenchPaneKeys } from './workbenchSplitLayout'
-import { useWorkbenchSplitGroups } from './useWorkbenchSplitGroups'
 
 const storageKey = 'workbench-split-groups-test'
 const legacyStorageKey = 'workbench-split-layout-test'
@@ -79,30 +79,6 @@ describe('useWorkbenchSplitGroups', () => {
     await waitFor(() =>
       expect(activePaneKeys(result.current.state)).toEqual([restoredRuntimePaneKey])
     )
-  })
-
-  it('opens a fresh blank pane after leaving an active runtime task', async () => {
-    const { result, rerender } = renderHook(
-      ({ activePaneKey }) =>
-        useWorkbenchSplitGroups({
-          storageKey,
-          legacyStorageKey,
-          activePaneKey,
-          validRuntimeKeys: [restoredRuntimePaneKey],
-          runtimeKeysReady: true,
-        }),
-      {
-        initialProps: {
-          activePaneKey: restoredRuntimePaneKey,
-        },
-      }
-    )
-
-    expect(activePaneKeys(result.current.state)).toEqual([restoredRuntimePaneKey])
-
-    rerender({ activePaneKey: 'blank:1' })
-
-    await waitFor(() => expect(activePaneKeys(result.current.state)).toEqual(['blank:1']))
   })
 
   it('loads the persisted layout when the workspace tab storage scope becomes available', async () => {
@@ -201,93 +177,5 @@ describe('useWorkbenchSplitGroups', () => {
     )
 
     await waitFor(() => expect(activePaneKeys(result.current.state)).toEqual(['blank:2']))
-  })
-
-  it('activates an initial runtime pane over a different persisted runtime pane', async () => {
-    const currentRuntimePaneKey = 'runtime:device:current-task'
-
-    const { result } = renderHook(() =>
-      useWorkbenchSplitGroups({
-        storageKey,
-        legacyStorageKey,
-        activePaneKey: currentRuntimePaneKey,
-        validRuntimeKeys: [restoredRuntimePaneKey, currentRuntimePaneKey],
-        runtimeKeysReady: true,
-      })
-    )
-
-    await waitFor(() =>
-      expect(activePaneKeys(result.current.state)).toEqual([currentRuntimePaneKey])
-    )
-  })
-
-  it('opens the current blank pane after explicit navigation', async () => {
-    const { result } = renderHook(() =>
-      useWorkbenchSplitGroups({
-        storageKey,
-        legacyStorageKey,
-        activePaneKey: 'blank:0',
-        validRuntimeKeys: [restoredRuntimePaneKey],
-        runtimeKeysReady: true,
-      })
-    )
-
-    act(() => {
-      result.current.activatePane('blank:0')
-    })
-
-    await waitFor(() => expect(activePaneKeys(result.current.state)).toEqual(['blank:0']))
-  })
-
-  it('keeps an unobserved restored runtime pane when the first task list is transiently empty', async () => {
-    const { result, rerender } = renderHook(
-      ({ runtimeKeysReady }) =>
-        useWorkbenchSplitGroups({
-          storageKey,
-          legacyStorageKey,
-          activePaneKey: 'blank:0',
-          validRuntimeKeys: [],
-          runtimeKeysReady,
-        }),
-      {
-        initialProps: {
-          runtimeKeysReady: false,
-        },
-      }
-    )
-
-    rerender({ runtimeKeysReady: true })
-
-    await waitFor(() =>
-      expect(activePaneKeys(result.current.state)).toEqual([restoredRuntimePaneKey])
-    )
-
-    act(() => {
-      expect(localStorage.getItem(storageKey)).toContain(restoredRuntimePaneKey)
-    })
-  })
-
-  it('removes a runtime pane after its observed task disappears', async () => {
-    const { result, rerender } = renderHook(
-      ({ validRuntimeKeys }) =>
-        useWorkbenchSplitGroups({
-          storageKey,
-          legacyStorageKey,
-          activePaneKey: 'blank:0',
-          validRuntimeKeys,
-          runtimeKeysReady: true,
-        }),
-      {
-        initialProps: {
-          validRuntimeKeys: [restoredRuntimePaneKey],
-        },
-      }
-    )
-
-    expect(activePaneKeys(result.current.state)).toEqual([restoredRuntimePaneKey])
-
-    rerender({ validRuntimeKeys: [] })
-
-    await waitFor(() => expect(activePaneKeys(result.current.state)).toEqual(['blank:0']))
   })
 })

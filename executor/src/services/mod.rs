@@ -5,6 +5,7 @@
 pub mod api_client;
 pub mod capability_activation;
 pub(crate) mod git_credentials;
+pub(crate) mod github_cli;
 pub mod skill_deployer;
 pub mod turn_file_changes;
 pub mod updater;

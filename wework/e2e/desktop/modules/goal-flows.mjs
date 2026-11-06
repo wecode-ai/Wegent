@@ -12,6 +12,7 @@ import { waitForBlankConversation } from './memory-tool-flows.mjs'
 import { ensureExperimentalFeaturesEnabled } from './preferences-automation-flows.mjs'
 
 import { snapshotHasAssistantActivity } from './response-protocol.mjs'
+import { findRuntimeWorkTask, waitForRunningRuntimeTask } from './runtime-task-evidence.mjs'
 
 import {
   COMPOSER_READY_STABILITY_MS,
@@ -57,6 +58,7 @@ import {
 
 import { captureVerificationScreenshot, waitForWorkbenchDebugState } from './workspace-flows.mjs'
 import { prepareGoalCompletionRace } from './goal-completion-race.mjs'
+import { runtimeTransportGates } from './runtime-transport-gates.mjs'
 
 const SUPERVISOR_MODEL_KEY = `public:${CLOUD_PUBLIC_MODEL_NAME}:default:0`
 
@@ -105,25 +107,49 @@ async function verifyMissingGoalSnapshotReconciliation({ composerSelector, contr
   await control.command('dropNextRuntimeEvent', 'body', {
     value: 'runtime.goal.cleared',
   })
-  const clearResponse = JSON.parse(
-    await control.command('clearRuntimeGoalDirectly', 'body', {
-      value: JSON.stringify({ address }),
-    })
-  )
-  assert.equal(clearResponse.accepted, true, 'The executor rejected the direct Goal clear')
-  const staleSnapshot = JSON.parse(await control.command('snapshot', 'body'))
-  assert.equal(
-    staleSnapshot.testIds.includes('goal-status-bar'),
-    true,
-    'The dropped Goal clear event did not preserve the stale Goal bar fixture'
-  )
-  assert.equal(
-    staleSnapshot.testIds.includes(goalDotTestId),
-    true,
-    'The dropped Goal clear event did not preserve the stale sidebar Goal fixture'
-  )
+  const gates = runtimeTransportGates(control)
+  // Match the cleared snapshot rather than consuming an unrelated in-flight update.
+  await gates.arm({
+    id: 'missing-goal-cleared-snapshot',
+    kind: 'event',
+    name: 'runtime.turn.updated',
+    holdFollowing: true,
+    where: [
+      { path: 'payload.taskId', equals: goalTaskId },
+      { path: 'payload.data.task.goalStatus', equals: null },
+    ],
+  })
+  // A refreshed task list can independently repair the sidebar from the same snapshot.
+  await gates.arm({
+    id: 'missing-goal-task-list',
+    kind: 'response',
+    name: 'runtime.tasks.list',
+    holdFollowing: true,
+  })
+  try {
+    const clearResponse = JSON.parse(
+      await control.command('clearRuntimeGoalDirectly', 'body', {
+        value: JSON.stringify({ address }),
+      })
+    )
+    assert.equal(clearResponse.accepted, true, 'The executor rejected the direct Goal clear')
+    await gates.wait('missing-goal-cleared-snapshot')
+    const staleSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+    assert.equal(
+      staleSnapshot.testIds.includes('goal-status-bar'),
+      true,
+      'The dropped Goal clear event did not preserve the stale Goal bar fixture'
+    )
+    assert.equal(
+      staleSnapshot.testIds.includes(goalDotTestId),
+      true,
+      'The dropped Goal clear event did not preserve the stale sidebar Goal fixture'
+    )
 
-  await control.command('dispatchRuntimeEventLagged', 'body')
+    await control.command('dispatchRuntimeEventLagged', 'body')
+  } finally {
+    await gates.reset()
+  }
   await waitForSnapshot(
     control,
     snapshot =>
@@ -475,6 +501,12 @@ async function verifyActiveGoalIdleUnreadLifecycle({
       completedDebugSnapshot.workbench?.runningState ?? null
     )}`
   )
+  assert.equal(completedDebugSnapshot.workbench?.activeLifecycle?.task?.goalStatus, 'complete')
+  assert.equal(
+    completedDebugSnapshot.workbench?.activeLifecycle?.task?.goalExecutionStatus,
+    null,
+    'The completed Goal retained its obsolete autonomous execution hint'
+  )
   await waitForSnapshot(
     control,
     snapshot =>
@@ -702,7 +734,7 @@ async function verifyBusyTurnGoalHandoff({ composerSelector, control, executorLo
   )
 }
 
-async function verifyTaskSupervisorLifecycle({ composerSelector, control }) {
+async function verifyTaskSupervisorLifecycle({ composerSelector, control, readRuntimeTask }) {
   await ensureExperimentalFeaturesEnabled(control)
   control.setScenario('supervisor')
   const taskRowsBeforeSupervisor = new Set(
@@ -790,8 +822,32 @@ async function verifyTaskSupervisorLifecycle({ composerSelector, control }) {
   await control.command('waitFor', `[data-testid="${supervisorRunningTestId}"]`, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  const beforeStaleSettlement = JSON.parse(
-    await control.command('getWorkbenchDebugSnapshot', 'body')
+  const readOwnerTask =
+    readRuntimeTask ??
+    (async taskId =>
+      findRuntimeWorkTask(JSON.parse(await control.command('getLocalRuntimeWork', 'body')), taskId))
+  // Read the owner's wire response independently of the UI's last cached summary.
+  const runningWireTask = await waitForRunningRuntimeTask(
+    readOwnerTask,
+    supervisorTaskId,
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  const beforeStaleSettlement = await waitForWorkbenchDebugState(
+    control,
+    snapshot =>
+      snapshot.workbench?.currentRuntimeTask?.taskId === supervisorTaskId &&
+      snapshot.workbench?.activeLifecycle?.execution.running === true,
+    'The supervisor correction was not represented as running'
+  )
+  assert.equal(
+    beforeStaleSettlement.workbench?.activeLifecycle?.execution.running,
+    true,
+    'The autonomous supervisor correction was not recognized before its first model output'
+  )
+  assert.equal(
+    runningWireTask.completedAt,
+    null,
+    'The running correction wire summary retained the preceding turn completion'
   )
   assert.equal(
     beforeStaleSettlement.workbench?.currentRuntimeTask?.taskId,

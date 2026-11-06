@@ -1,9 +1,14 @@
-import { describe, expect, test, vi } from 'vitest'
+// @vitest-environment node
+
 import type { InstalledPlugin, PluginDeviceSyncResponse } from '@/types/api'
+import { describe, expect, test, vi } from 'vitest'
 import {
   reconcilePluginRefresh,
   verifyReconciledPluginInventory,
 } from './pluginRefreshReconciliation'
+import { logPluginRefreshPhase } from './pluginRefreshDiagnostics'
+
+vi.mock('./pluginRefreshDiagnostics', () => ({ logPluginRefreshPhase: vi.fn() }))
 
 function plugin(id: number, enabled = true): InstalledPlugin {
   return {
@@ -34,20 +39,30 @@ function operations() {
 }
 
 describe('plugin refresh reconciliation', () => {
-  test('verifies a fresh store inventory after synchronizing and invalidating caches', async () => {
+  test('reports the pending native phase without changing request order or adding authority checks', async () => {
+    vi.mocked(logPluginRefreshPhase).mockClear()
     const ops = operations()
-    ops.readStore.mockResolvedValueOnce([plugin(99)]).mockResolvedValueOnce([plugin(12)])
-    await reconcilePluginRefresh(ops)
-    expect(ops.sync).toHaveBeenCalledOnce()
+    let finish!: (result: PluginDeviceSyncResponse) => void
+    const response = await ops.sync()
+    ops.sync.mockClear().mockReturnValue(new Promise(resolve => (finish = resolve)))
+    const pending = reconcilePluginRefresh({ ...ops, diagnosticRequest: 4 })
+    await vi.waitFor(() => expect(ops.sync).toHaveBeenCalledOnce())
+    expect(logPluginRefreshPhase).toHaveBeenLastCalledWith('reconcile-sync-start', { request: 4 })
+    expect(ops.readCloud).not.toHaveBeenCalled()
+    expect(ops.isCurrent).toHaveBeenCalledOnce()
+    finish(response)
+    await pending
     expect(ops.readStore).toHaveBeenCalledTimes(2)
-    expect(ops.invalidate).toHaveBeenCalledOnce()
+    expect(ops.sync).toHaveBeenCalledOnce()
+    expect(ops.readCloud).toHaveBeenCalledOnce()
+    expect(ops.isCurrent).toHaveBeenCalledTimes(3)
+    expect(logPluginRefreshPhase).toHaveBeenLastCalledWith('reconcile-readback-end', {
+      request: 4,
+      elapsedMs: expect.any(Number),
+      outcome: 'completed',
+    })
   })
-  test('does not mutate unsupported or unreadable local inventories', async () => {
-    const ops = operations()
-    ops.readStore.mockRejectedValue(new Error('unsupported'))
-    await expect(reconcilePluginRefresh(ops)).rejects.toThrow('unsupported')
-    expect(ops.sync).not.toHaveBeenCalled()
-  })
+
   test('does not report success for HTTP success with failed device synchronization', async () => {
     const ops = operations()
     ops.sync.mockResolvedValue({

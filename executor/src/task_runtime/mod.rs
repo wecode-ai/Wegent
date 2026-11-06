@@ -11,6 +11,7 @@ pub mod mcp;
 pub(crate) mod mcp_http;
 mod model;
 pub use store::personal_stand_in;
+pub(crate) use store::project_router_store;
 pub(crate) use store::stand_in_telemetry;
 mod router;
 pub(crate) mod runner_routing;
@@ -28,6 +29,7 @@ pub use model::{
     TaskAttachment, TaskBinding, TaskCreate, TaskProviderKind, TaskReorder, TaskSearch, TaskUpdate,
 };
 pub use router::TaskRuntime;
+pub(crate) use store::milestones::MilestoneInput;
 pub use store::{LocalTaskStore, TaskRuntimeError};
 
 const COLLABORATION_MEMBER_RESULT_INSTRUCTIONS: &str = "\

@@ -320,6 +320,29 @@ def test_db(
 
 
 @pytest.fixture(scope="function")
+def runtime_transcript_sessions(
+    test_db: Session, monkeypatch: pytest.MonkeyPatch
+) -> list[Session]:
+    """Keep packet sessions independent inside a unit test's outer transaction."""
+    from app.services import runtime_work_service
+
+    sessions: list[Session] = []
+
+    @contextmanager
+    def session() -> Generator[Session, None, None]:
+        with Session(
+            bind=test_db.get_bind(),
+            autoflush=False,
+            join_transaction_mode="create_savepoint",
+        ) as db:
+            sessions.append(db)
+            yield db
+
+    monkeypatch.setattr(runtime_work_service, "get_db_session", session, raising=False)
+    return sessions
+
+
+@pytest.fixture(scope="function")
 def plugin_write_sessions(test_db: Session, monkeypatch: pytest.MonkeyPatch):
     """Give plugin workers independent sessions inside the test transaction."""
     from app.services import plugin_write_operations

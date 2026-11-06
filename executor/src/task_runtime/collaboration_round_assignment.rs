@@ -11,6 +11,7 @@ pub(super) fn apply_round_assignee(
     connection: &Connection,
     item_id: &str,
     dispatched: &[Value],
+    actor: i64,
 ) -> Result<(), TaskRuntimeError> {
     let Some(target) = dispatched
         .iter()
@@ -74,7 +75,7 @@ pub(super) fn apply_round_assignee(
         .metadata
         .get("collaboration_group")
         .map_or(true, Value::is_null);
-    if assignee_matches && group_cleared {
+    if assignee_matches && group_cleared && to_type != "user" {
         return Ok(());
     }
     let mut metadata = current.metadata;
@@ -88,7 +89,7 @@ pub(super) fn apply_round_assignee(
     }
     record_assignment_change(
         &mut metadata,
-        0,
+        actor,
         Some(to_type),
         Some(&to_id),
         to_name.as_deref(),
@@ -105,6 +106,15 @@ pub(super) fn apply_round_assignee(
             now(),
             item_id,
         ],
+    )?;
+    assignment_receipts::sync_assignment_receipt(
+        connection,
+        current
+            .cloud_project_id
+            .as_deref()
+            .ok_or(TaskRuntimeError::TaskNotFound)?,
+        item_id,
+        &metadata,
     )?;
     Ok(())
 }

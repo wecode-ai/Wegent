@@ -154,6 +154,15 @@ fn render_json_value(value: &Value, ensure_ascii: bool, compact: bool) -> String
     }
 }
 
+/// Python `str.strip()`, including its additional information separators.
+pub fn python_strip(value: &str) -> String {
+    value
+        .trim_matches(|character: char| {
+            character.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&character)
+        })
+        .to_string()
+}
+
 /// Python truthiness (`bool(value)`) for a decoded JSON value: `None`,
 /// `False`, numeric zero, the empty string, and empty arrays/objects are
 /// falsy; every other value is truthy.

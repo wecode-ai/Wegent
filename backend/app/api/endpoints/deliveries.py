@@ -17,6 +17,7 @@ from fastapi import (
     UploadFile,
     status,
 )
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
@@ -68,7 +69,6 @@ from app.schemas.delivery import (
 from app.schemas.issue_assignment import (
     IssueAssignmentCreate,
     IssueAssignmentCreateResponse,
-    IssueAssignmentListResponse,
     IssueAssignmentResponse,
 )
 from app.schemas.project_chat import LoopItemAssign
@@ -409,7 +409,10 @@ async def create_loop_item(
             requested_id=values.automation_rule_id,
         )
 
-    created = loop_item_provider_router.create(db, project, current_user, values)
+    # Lock waits must leave the event loop free to finish other transactions.
+    created = await run_in_threadpool(
+        loop_item_provider_router.create, db, project, current_user, values
+    )
     response = LoopItemResponse.model_validate(created.values)
 
     try:
@@ -549,7 +552,7 @@ async def update_loop_item(
     )
     status_changed = requested_status != previous_status
     entered_processing = status_changed and requested_transition.entered_processing
-    if entered_processing:
+    if status_changed:
         event_payload = _loop_item_response(
             db,
             existing,
@@ -612,9 +615,15 @@ async def update_loop_item(
         and not values.assignee_group_id
         and ("execution_config" in values.model_fields_set or entered_processing)
     )
+    status_event = None
     try:
         item = loop_item_service.update(
-            db, item_id, current_user.id, values, commit=False
+            db,
+            item_id,
+            current_user.id,
+            values,
+            commit=False,
+            emit_status_event=not status_changed,
         )
         if refresh_execution and item.assignee_agent_id:
             item = loop_item_service.refresh_agent_execution_configuration(
@@ -622,6 +631,19 @@ async def update_loop_item(
                 item=item,
                 user_id=current_user.id,
                 commit=False,
+            )
+        if status_changed:
+            from app.services.project_internal_events import queue_issue_status_changed
+
+            status_event = queue_issue_status_changed(
+                db,
+                item=item,
+                previous_status=previous_status,
+                actor_user_id=current_user.id,
+                automation_id=selected_status_automation_id,
+                payload=_loop_item_response(db, item, current_user).model_dump(
+                    mode="json"
+                ),
             )
         db.commit()
         db.refresh(item)
@@ -648,25 +670,9 @@ async def update_loop_item(
         from app.tasks.robot_queue_tasks import consume_queues_background
 
         background_tasks.add_task(consume_queues_background)
-    if status_changed:
+    if status_event is not None:
         try:
-            await project_incoming_hook_service.ingest_internal(
-                db,
-                ProjectAutomationEvent(
-                    event_type="task.status_changed",
-                    project_id=str(item.cloud_project_id),
-                    subject_id=str(item.id),
-                    source="board",
-                    actor_user_id=current_user.id,
-                    payload={
-                        **_loop_item_response(db, item, current_user).model_dump(
-                            mode="json"
-                        ),
-                        "previous_status": previous_status,
-                    },
-                ),
-                automation_id=selected_status_automation_id,
-            )
+            await project_incoming_hook_service.process_event(db, str(status_event.id))
             db.refresh(item)
         except Exception:
             db.rollback()
@@ -850,39 +856,6 @@ def list_loop_item_comments(
         LoopItemCommentResponse.model_validate(comment)
         for comment in loop_item_service.list_comments(db, item_id, current_user.id)
     ]
-
-
-# MIGRATION-CANDIDATE(api="GET /api/v1/loop-items/*/assignments"): remove after final confirmation.
-# @router.get(
-#     "/loop-items/{item_id}/assignments",
-#     response_model=IssueAssignmentListResponse,
-# )
-def list_issue_assignments(
-    item_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
-) -> IssueAssignmentListResponse:
-    if external_loop_item_provider.is_external_item(db, item_id):
-        external_loop_item_provider.ensure_shadow(db, item_id, current_user.id)
-    project, _ = issue_assignment_service.project_for_issue(
-        db,
-        issue_id=item_id,
-        user_id=current_user.id,
-    )
-    rows = issue_assignment_service.list(
-        db,
-        project_id=int(project.id),
-        issue_id=item_id,
-        user_id=current_user.id,
-    )
-    return IssueAssignmentListResponse(
-        items=[
-            IssueAssignmentResponse.model_validate(
-                issue_assignment_service.response_values(db, row)
-            )
-            for row in rows
-        ]
-    )
 
 
 @router.post(
@@ -1192,21 +1165,6 @@ def delete_loop_item_attachment(
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> None:
     loop_item_attachment_provider_router.delete(db, attachment_id, current_user.id)
-
-
-# MIGRATION-CANDIDATE(api="GET /api/v1/loop-items/*/tasks"): remove after final confirmation.
-# @router.get(
-#     "/loop-items/{item_id}/tasks",
-#     response_model=list[LoopItemTaskBindingResponse],
-# )
-def list_loop_item_tasks(
-    item_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
-) -> list[LoopItemTaskBindingResponse]:
-    external_loop_item_provider.ensure_shadow(db, item_id, current_user.id)
-    bindings = loop_item_service.list_task_bindings(db, item_id, current_user.id)
-    return [LoopItemTaskBindingResponse.model_validate(binding) for binding in bindings]
 
 
 @router.delete(

@@ -9,7 +9,6 @@ export {
 import type { RuntimePaneMessageAction } from './runtimePaneMessages'
 import type {
   RuntimeGoal,
-  RuntimeGoalContinuationPayload,
   RuntimeGuidanceAppliedPayload,
   RuntimePlanEventPayload,
   RuntimeSubagentActivityPayload,
@@ -40,7 +39,7 @@ import {
   createAppliedRuntimeGuidanceMessage,
   createOptimisticRuntimeGuidanceMessage,
 } from './runtimeGuidanceMessages'
-import { reconcileRuntimeGoal, updateRuntimeGoalContinuation } from '@/lib/runtime-goal'
+import { reconcileRuntimeGoal } from '@/lib/runtime-goal'
 import {
   cacheBoundedEntry,
   cacheRuntimeConversationQueuedMessagesByKey,
@@ -106,7 +105,6 @@ export function beginRuntimeConversationOperation(
 
 const EMPTY_RUNTIME_CONVERSATION_METADATA: RuntimeConversationMetadata = {
   goal: null,
-  goalContinuation: null,
   taskPlan: null,
   subagentStatuses: [],
 }
@@ -129,10 +127,6 @@ export function setRuntimeConversationGoal(
   updateRuntimeConversationMetadata(address, current => ({
     ...current,
     goal: resolvedGoal,
-    goalContinuation:
-      resolvedGoal?.status === 'active'
-        ? current.goalContinuation
-        : updateRuntimeGoalContinuation(current.goalContinuation, { type: 'goal_inactive' }),
   }))
   return resolvedGoal
 }
@@ -156,28 +150,6 @@ function invalidateRuntimeGoalSnapshots(address: RuntimeTaskAddress): void {
   const key = runtimeConversationKey(address)
   goalSnapshotVersionsByConversation.set(key, nextRuntimeGoalSnapshotVersion)
   nextRuntimeGoalSnapshotVersion += 1
-}
-
-export function applyRuntimeConversationGoalContinuation(
-  address: RuntimeTaskAddress,
-  payload: RuntimeGoalContinuationPayload
-): void {
-  updateRuntimeConversationMetadata(address, current => ({
-    ...current,
-    goalContinuation: updateRuntimeGoalContinuation(current.goalContinuation, {
-      type: 'turn_lifecycle',
-      payload,
-    }),
-  }))
-}
-
-export function markRuntimeConversationAssistantStarted(address: RuntimeTaskAddress): void {
-  updateRuntimeConversationMetadata(address, current => ({
-    ...current,
-    goalContinuation: updateRuntimeGoalContinuation(current.goalContinuation, {
-      type: 'assistant_started',
-    }),
-  }))
 }
 
 export function setRuntimeConversationTaskPlan(
@@ -281,6 +253,7 @@ export function runtimeConversationMessageHasStartedTurn(
   return (touchEntry(turnsByConversation, key) ?? []).some(
     turn =>
       turn.id !== null &&
+      turn.status !== 'pending' &&
       (turn.clientUserMessageId === messageId ||
         turn.items.some(item => item.type === 'user_message' && item.id === messageId))
   )
@@ -491,7 +464,7 @@ export function replaceRuntimeConversationFromUserMessage(
 ): WorkbenchMessage[] {
   return updateRuntimeConversationTurns(address, turns => {
     const sourceTurnIndex = turns.findIndex(turn =>
-      turn.items.some(item => item.type === 'user_message' && item.id === sourceClientUserMessageId)
+      turnContainsClientUserMessage(turn, sourceClientUserMessageId)
     )
     if (sourceTurnIndex < 0) return turns
     const retainedTurns = turns.slice(0, sourceTurnIndex)
@@ -566,13 +539,16 @@ export function settleRuntimeConversationAcceptedMessage(
 
 export function reconcileRuntimeConversationQueueAfterTransportReplacement(
   address: RuntimeTaskAddress,
-  snapshotTurns: RuntimeConversationTurn[]
+  snapshotTurns: RuntimeConversationTurn[],
+  confirmation: {
+    acceptedClientUserMessageIds: string[]
+  }
 ): void {
   const key = runtimeConversationKey(address)
   const queuedMessages = queuedMessagesByConversation.get(key)
   if (!queuedMessages) return
 
-  const acceptedMessageIds = new Set<string>()
+  const acceptedMessageIds = new Set(confirmation.acceptedClientUserMessageIds)
   for (const turn of snapshotTurns) {
     if (turn.clientUserMessageId) acceptedMessageIds.add(turn.clientUserMessageId)
     for (const item of turn.items) {
@@ -580,26 +556,9 @@ export function reconcileRuntimeConversationQueueAfterTransportReplacement(
     }
   }
 
-  const nextQueuedMessages = queuedMessages.flatMap(message => {
-    if (acceptedMessageIds.has(message.id)) return []
-    if (message.status !== 'sending') return [message]
-    return [
-      {
-        ...message,
-        status: 'queued' as const,
-        deliveryMode: undefined,
-        awaitingTurnStart: undefined,
-        error: undefined,
-        notice: undefined,
-      },
-    ]
-  })
-  if (
-    nextQueuedMessages.length === queuedMessages.length &&
-    nextQueuedMessages.every((message, index) => message === queuedMessages[index])
-  ) {
-    return
-  }
+  // Missing turn bindings cannot prove rejection: accepted work may still be queued.
+  const nextQueuedMessages = queuedMessages.filter(message => !acceptedMessageIds.has(message.id))
+  if (nextQueuedMessages.length === queuedMessages.length) return
 
   cacheRuntimeConversationQueuedMessagesByKey(key, nextQueuedMessages)
 }

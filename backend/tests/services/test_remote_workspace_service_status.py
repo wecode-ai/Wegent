@@ -164,6 +164,39 @@ def test_executor_alive_treats_unknown_error_as_alive() -> None:
     assert result is True
 
 
+def test_executor_alive_returns_false_for_terminal_pod_phase() -> None:
+    """A pod that exited cannot accept a new task even though it still exists."""
+    service = RemoteWorkspaceService(executor_manager_url="http://executor-manager")
+    for phase in ("Failed", "Succeeded"):
+        with patch.object(
+            service,
+            "_get_executor_payload",
+            return_value={
+                "status": "failed",
+                "error_msg": f"Pod executor-1 is not running (status: {phase})",
+                "phase": phase,
+            },
+        ):
+            assert service.executor_alive("executor-1", "default") is False
+
+
+def test_executor_alive_keeps_pending_pod_alive() -> None:
+    """A starting pod must not trigger duplicate recovery."""
+    service = RemoteWorkspaceService(executor_manager_url="http://executor-manager")
+    with patch.object(
+        service,
+        "_get_executor_payload",
+        return_value={
+            "status": "failed",
+            "error_msg": "Pod executor-1 has no IP address",
+            "phase": "Pending",
+        },
+    ):
+        result = service.executor_alive("executor-1", "default")
+
+    assert result is True
+
+
 def test_status_prefers_latest_non_deleted_executor_binding():
     service = RemoteWorkspaceService(executor_manager_url="http://executor-manager")
     task_detail = {

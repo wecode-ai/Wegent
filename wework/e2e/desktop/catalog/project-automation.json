@@ -1,0 +1,16 @@
+{
+  "order": 91000,
+  "scenario": "./scenarios/project-automation.scenario.mjs",
+  "ci": {
+    "core": {
+      "order": 66000,
+      "shard": 2,
+      "position": 5000
+    },
+    "cloud": {
+      "order": 26000,
+      "shard": 5,
+      "position": 3000
+    }
+  }
+}

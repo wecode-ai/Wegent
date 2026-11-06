@@ -8,7 +8,7 @@ sidebar_position: 5
 
 macOS uses the system menu bar. The frameless Windows and Linux windows show an application-menu button at the left of the title bar (also reachable with `Alt+F` or `F10`).
 
-The menu contains only unambiguous, genuinely useful items: Application (About, Settings, Services, Hide, Quit), Edit (undo, redo, cut, copy, paste, select all), File (new task tab, new project space tab, close workspace tab), Work (Tasks, Project spaces, Plugins, Scheduled, Applications), View (Search tasks, toggle sidebar/side panel/terminal, toggle full screen, font size), Window (Minimize, Close window, Show main window), and Help (GitHub project, report an issue, developer tools).
+The menu contains only unambiguous, genuinely useful items: Application (About, Settings, Services, Hide, Quit; About opens the in-app About page), Edit (undo, redo, cut, copy, paste, select all), File (new task tab, new project space tab, close workspace tab), Work (Tasks, Project spaces, Plugins, Scheduled, Applications), View (Search tasks, toggle sidebar/side panel/terminal, toggle full screen, font size), Window (Minimize, Close window, Show main window), and Help (GitHub project, report an issue, developer tools; report an issue opens the in-app feedback form).
 
 Menu items follow the current workbench state: when an action is not available on the current surface — for example there is no closable tab, or the active surface is not a task workspace — the item is hidden instead of remaining as a clickable entry that does nothing. Menu actions reuse the controls that already exist in the interface; they never introduce a second navigation path.
 
@@ -110,6 +110,16 @@ When checks fail, a merge conflict exists, or Merge Queue enters an abnormal sta
 Select a project name to expand or collapse its runtime tasks. Collapsed projects use a closed-folder icon; expanding a project changes the icon to an open folder so its state is easy to recognize.
 
 New tasks appear immediately at the top of their project's task list. Tasks with a saved drag order continue to follow that manual order; after a new task receives its persisted order, it remains stable within the same project ordering.
+
+## Handle AI questions
+
+The top-level **Needs your input** tab collects structured questions from task conversations, projects, and your stand-in. Its left list groups questions under **Tasks, Projects, and Stand-in**, newest first within each group. Empty groups are hidden. Each question appears once; project questions initiated by your stand-in belong to Stand-in.
+
+When in-app notifications are enabled for the relevant source, new questions show a reminder while the app is in the foreground. Questions already being viewed in Needs your input do not trigger another reminder. Closing the reminder only hides the popup; the question stays pending. Select a question to read its original conversation or Issue context, or use **Open in original view** to return to its source.
+
+To leave a question unhandled, hover over its left-list entry and click the cross, **Dismiss item**. The action is also reachable by keyboard and remains visible in narrow windows. It moves the question to **Handled** without sending an answer or approving an operation. Later questions in the same conversation still appear normally.
+
+Answering or cancelling a question in its original task or project view automatically synchronizes and archives it. Handled history retains the source groups. Both handled and dismissed records are stored locally for the current account and survive restarts. Already loaded questions remain available offline and synchronize when the device reconnects. Discovery of questions on a healthy local executor does not depend on its cloud device status.
 
 ## Use IM notifications
 

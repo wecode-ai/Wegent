@@ -26,16 +26,25 @@ def agent_values(
     grant: ResourceMember,
     team: Kind,
     execution_user_id: int,
+    include_readiness: bool = True,
+    owner: tuple[str, str, str, int | None] | None = None,
+    environment_ids: list[str] | None = None,
+    editable: bool | None = None,
+    readiness: "TeamReadinessContext | None" = None,
 ) -> dict[str, object]:
-    owner_type, owner_id, owner_name, owner_user_id = owner_values(
+    owner_type, owner_id, owner_name, owner_user_id = owner or owner_values(
         db, grant=grant, resource=team
     )
-    environment_ids = [
-        str(row.resource_id)
-        for row in _workspace_grants(
-            db, int(grant.entity_id), ResourceType.DEVICE.value
-        )
-    ]
+    environment_ids = (
+        environment_ids
+        if environment_ids is not None
+        else [
+            str(row.resource_id)
+            for row in workspace_resource_grants(
+                db, int(grant.entity_id), ResourceType.DEVICE.value
+            )
+        ]
+    )
     return {
         "id": team.id,
         "workspace_id": grant.entity_id,
@@ -45,11 +54,19 @@ def agent_values(
         "owner_type": owner_type,
         "owner_id": owner_id,
         "owner_name": owner_name,
-        "status": agent_status(db, team, execution_user_id=execution_user_id),
+        "status": (
+            agent_status(
+                db, team, execution_user_id=execution_user_id, readiness=readiness
+            )
+            if include_readiness
+            else "unchecked"
+        ),
         "execution_environment_ids": environment_ids,
         "owner_user_id": owner_user_id,
         "added_by_user_id": grant.invited_by_user_id,
-        "can_edit": can_edit_team(db, team, execution_user_id),
+        "can_edit": (
+            can_edit_team(db, team, execution_user_id) if editable is None else editable
+        ),
         "created_at": grant.created_at,
         "updated_at": grant.updated_at,
     }
@@ -151,11 +168,9 @@ def owner_values(
     grant: ResourceMember,
     resource: Kind,
 ) -> tuple[str, str, str, int | None]:
-    workspace_owner = _kind_spec(resource).get("workspaceOwnerId")
-    if workspace_owner or (
-        resource.kind != "Device" and grant.role == BaseRole.Owner.value
-    ):
-        workspace_id = str(workspace_owner or grant.entity_id)
+    owner_type, owner_id = owner_identity(grant, resource)
+    if owner_type == "workspace":
+        workspace_id = owner_id
         workspace_kind = db.get(Kind, int(workspace_id))
         workspace = (
             workspace_from_kind(workspace_kind) if workspace_kind is not None else None
@@ -173,6 +188,16 @@ def owner_values(
         owner.user_name if owner is not None else "",
         int(resource.user_id),
     )
+
+
+def owner_identity(grant: ResourceMember, resource: Kind) -> tuple[str, str]:
+    """Resolve owner identity without loading owner records."""
+    workspace_owner = _kind_spec(resource).get("workspaceOwnerId")
+    if workspace_owner or (
+        resource.kind != "Device" and grant.role == BaseRole.Owner.value
+    ):
+        return "workspace", str(workspace_owner or grant.entity_id)
+    return "user", str(resource.user_id)
 
 
 def agent_display_name(team: Kind) -> str:
@@ -220,7 +245,7 @@ def execution_environment_kind(device_type: str) -> str:
     return "cloud_host" if device_type in {"cloud", "remote"} else "local_device"
 
 
-def _workspace_grants(
+def workspace_resource_grants(
     db: Session, workspace_id: int, resource_type: str
 ) -> list[ResourceMember]:
     return (

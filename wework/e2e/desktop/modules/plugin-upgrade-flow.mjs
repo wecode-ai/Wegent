@@ -3,6 +3,7 @@ import { access, cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fetchJson, resultDir } from './shared.mjs'
 import { captureVerificationScreenshot } from './workspace-flows.mjs'
+import { cleanupPluginUpgradeFixtures } from './plugin-upgrade-fixture-cleanup.mjs'
 
 const pluginKey = 'desktop-e2e-upgrade'
 const oldVersion = '0.1.1'
@@ -34,9 +35,14 @@ async function waitForManagedPlugin(manifestPath, managedKey, timeoutMs = PLUGIN
 }
 
 export async function verifyPluginUpgrade({ cloudEnvironment: env, control, codexHome, setPhase }) {
-  const deviceId = (
-    await readFile(join(resultDir, 'electron-user-data/desktop-device-id'), 'utf8')
-  ).trim()
+  const device = await env.waitForConnectedAppDevice()
+  const deviceId = device.execution_target_id
+  assert.ok(deviceId, 'Plugin fixture needs a registered Runtime route')
+  assert.equal(
+    deviceId,
+    device.socket_device_id,
+    'Plugin fixture must use its registered Runtime route'
+  )
   const headers = { Authorization: `Bearer ${env.authToken}`, 'Content-Type': 'application/json' }
   const request = (path, method = 'GET', body) =>
     fetchJson(`${env.backendUrl}/api${path}`, {
@@ -128,16 +134,7 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
     managed,
     'Installing other plugins must preserve the existing plugin and its sync generation'
   )
-  await Promise.all(
-    parallelInstalls.map(async installation => {
-      // Uninstall answers 204 No Content, so the JSON helper cannot parse it.
-      const removed = await fetch(
-        `${env.backendUrl}/api/plugins/installed/${installation.plugin.metadata.labels.id}`,
-        { method: 'DELETE', headers }
-      )
-      assert.equal(removed.status, 204)
-    })
-  )
+  await cleanupPluginUpgradeFixtures(env, parallelInstalls, PLUGIN_SYNC_TIMEOUT_MS)
   await control.command('click', '[data-testid="plugins-button"]')
   await control.command('waitFor', `[data-testid="plugin-marketplace-row-${old.pluginId}"]`, {
     timeoutMs: 30000,

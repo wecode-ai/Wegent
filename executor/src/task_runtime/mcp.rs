@@ -20,7 +20,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-use crate::logging::log_executor_event;
 use crate::protocol::ExecutionRequest;
 
 mod assignment_notifications;
@@ -35,8 +34,17 @@ use super::{
 };
 
 mod comments;
+pub(crate) mod connection_context;
+mod context;
+pub(crate) mod git_connections;
+mod parent_issue;
 mod stand_in;
-pub(crate) use stand_in::{stand_in_identity, stand_in_mcp_client_config};
+pub(crate) mod stand_in_tasks;
+#[cfg(test)]
+use context::role_categories;
+use context::space_context_grant;
+pub(crate) use stand_in::stand_in_mcp_client_config;
+pub(crate) use stand_in::StandInMcpIdentity;
 
 pub const SPACE_MCP_SERVER_NAME: &str = "wework_space";
 pub const NOTIFICATIONS_MCP_SERVER_NAME: &str = "wework_notifications";
@@ -123,6 +131,7 @@ pub(crate) struct SpaceMcpRequestContext {
     cloud_collaboration_dispatcher: Option<CloudCollaborationRoundDispatcher>,
     event_sender: Option<tokio::sync::broadcast::Sender<Value>>,
     stand_in: Option<stand_in::StandInMcpIdentity>,
+    control: Option<crate::workbench_control::ControlContext>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -131,16 +140,40 @@ pub(crate) enum WeworkMcpSurface {
     ProjectSpace,
     Notifications,
     StandIn,
+    Control,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SpaceMcpClientConfig {
     pub(crate) url: String,
     pub(crate) headers: BTreeMap<String, String>,
-    pub(crate) context_bound: bool,
+    pub(crate) auto_approve: bool,
 }
 
 impl SpaceMcpRequestContext {
+    pub(super) fn shares_unbound_authority(&self, other: &Self) -> bool {
+        matches!(
+            self.surface,
+            WeworkMcpSurface::ProjectSpace | WeworkMcpSurface::Notifications
+        ) && self.surface == other.surface
+            && self.grant.is_none()
+            && other.grant.is_none()
+            && self.backend_url == other.backend_url
+            && self.auth_token == other.auth_token
+    }
+
+    pub(super) fn shares_control_conversation(&self, other: &Self) -> bool {
+        let (Some(current), Some(next)) = (&self.control, &other.control) else {
+            return false;
+        };
+        current.device_id == next.device_id
+            && current.task_id == next.task_id
+            && current.request.backend_url == next.request.backend_url
+            && current.request.auth_token == next.request.auth_token
+            && current.request.runtime_auth_token == next.request.runtime_auth_token
+            && current.request.extra.get("origin") == next.request.extra.get("origin")
+    }
+
     pub(crate) fn new(
         grant: Option<SpaceContextGrant>,
         backend_url: Option<String>,
@@ -154,6 +187,7 @@ impl SpaceMcpRequestContext {
             cloud_collaboration_dispatcher: None,
             event_sender: None,
             stand_in: None,
+            control: None,
         }
     }
 
@@ -166,6 +200,7 @@ impl SpaceMcpRequestContext {
             cloud_collaboration_dispatcher: None,
             event_sender: None,
             stand_in: None,
+            control: None,
         }
     }
 
@@ -175,6 +210,14 @@ impl SpaceMcpRequestContext {
             non_empty_env("WEWORK_SPACE_BACKEND_URL"),
             non_empty_env("WEWORK_SPACE_AUTH_TOKEN"),
         )
+    }
+
+    pub(crate) fn control(context: crate::workbench_control::ControlContext) -> Self {
+        Self {
+            surface: WeworkMcpSurface::Control,
+            control: Some(context),
+            ..Self::default()
+        }
     }
 
     fn grant(&self) -> Option<&SpaceContextGrant> {
@@ -190,6 +233,7 @@ impl SpaceMcpRequestContext {
             WeworkMcpSurface::ProjectSpace => SPACE_MCP_SERVER_NAME,
             WeworkMcpSurface::Notifications => NOTIFICATIONS_MCP_SERVER_NAME,
             WeworkMcpSurface::StandIn => STAND_IN_MCP_SERVER_NAME,
+            WeworkMcpSurface::Control => crate::workbench_control::SERVER_NAME,
         }
     }
 
@@ -208,12 +252,16 @@ impl SpaceMcpRequestContext {
     }
 }
 
+pub(crate) fn has_bound_issue_context(request: &ExecutionRequest) -> Result<bool, String> {
+    space_context_grant(request)
+        .map(|grant| grant.is_some_and(|grant| grant.space_id.is_some() && grant.item_id.is_some()))
+}
+
 pub(crate) fn space_mcp_client_config(
     request: &ExecutionRequest,
 ) -> Result<SpaceMcpClientConfig, String> {
-    let grant = encoded_space_context_grant(request);
     let context = SpaceMcpRequestContext::new(
-        grant.as_deref().and_then(decode_space_context_grant),
+        space_context_grant(request)?,
         request
             .backend_url
             .as_deref()
@@ -241,7 +289,7 @@ pub(crate) fn space_mcp_client_config(
             ),
             ("X-Wework-Mcp-Context".to_owned(), registered.context_handle),
         ]),
-        context_bound: grant.is_some(),
+        auto_approve: true,
     })
 }
 
@@ -279,7 +327,7 @@ pub(crate) fn notifications_mcp_client_config(
             ),
             ("X-Wework-Mcp-Context".to_owned(), registered.context_handle),
         ]),
-        context_bound: false,
+        auto_approve: false,
     }))
 }
 
@@ -287,159 +335,28 @@ pub fn is_space_mcp_command() -> bool {
     env::args().nth(1).as_deref() == Some("space-mcp-server")
 }
 
-pub fn encoded_space_context_grant(request: &ExecutionRequest) -> Option<String> {
-    let origin = request.extra.get("origin").and_then(Value::as_object);
-    let role = origin.and_then(|origin| {
-        origin
-            .get("dispatchRole")
-            .or_else(|| origin.get("dispatch_role"))
-            .and_then(Value::as_str)
-            .and_then(space_context_role)
-    });
-    let categories = role
-        .map(role_categories)
-        .unwrap_or_default()
-        .iter()
-        .copied()
-        .collect();
-    let space_id = request
-        .extra
-        .get("cloudProjectId")
-        .or_else(|| request.extra.get("cloud_project_id"))
-        .and_then(id_value)
-        .or_else(|| {
-            origin
-                .and_then(|value| {
-                    value
-                        .get("cloudProjectId")
-                        .or_else(|| value.get("cloud_project_id"))
-                })
-                .and_then(id_value)
-        })
-        .filter(|value| !value.is_empty());
-    let item_id = origin
-        .and_then(|value| {
-            value
-                .get("loopItemId")
-                .or_else(|| value.get("loop_item_id"))
-        })
-        .and_then(id_value)
-        .filter(|value| !value.is_empty());
-    let execution_device_id = request
-        .extra
-        .get("executionDeviceId")
-        .or_else(|| request.extra.get("execution_device_id"))
-        .and_then(id_value)
-        .filter(|value| !value.is_empty());
-    let prompt_has_cloud_ref = prompt_references_cloud_projects(&request.prompt);
-    if role == Some(SpaceContextRole::Executor) && (space_id.is_none() || item_id.is_none()) {
-        return None;
-    }
-    log_executor_event(
-        "space capability context decision",
-        &[
-            ("task_id", request.task_id.clone()),
-            ("space_id", space_id.as_deref().unwrap_or("").to_owned()),
-            ("item_id", item_id.as_deref().unwrap_or("").to_owned()),
-            (
-                "origin_type",
-                origin
-                    .and_then(|value| value.get("type"))
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_owned(),
-            ),
-            ("prompt_has_cloud_ref", prompt_has_cloud_ref.to_string()),
-            (
-                "shell_type",
-                request.resolved_shell_type().unwrap_or_default(),
-            ),
-        ],
-    );
-    if space_id.is_none() && !prompt_has_cloud_ref {
-        return None;
-    }
-    let grant = SpaceContextGrant {
-        version: 1,
-        task_id: request.task_id.clone(),
-        space_id,
-        item_id,
-        device_id: execution_device_id
-            .or_else(|| request.device_id.clone().filter(|value| !value.is_empty())),
-        dispatch_id: origin
-            .and_then(|origin| {
-                origin
-                    .get("dispatchId")
-                    .or_else(|| origin.get("dispatch_id"))
-            })
-            .and_then(id_value)
-            .filter(|value| !value.is_empty()),
-        manager_agent_id: origin
-            .and_then(|origin| {
-                origin
-                    .get("managerAgentId")
-                    .or_else(|| origin.get("manager_agent_id"))
-            })
-            .and_then(id_value)
-            .filter(|value| !value.is_empty()),
-        automation_run_id: None,
-        role,
-        categories,
-        expires_at_unix: Local::now().timestamp() + SPACE_CONTEXT_GRANT_TTL_SECONDS,
+pub(crate) fn control_mcp_client_config(
+    request: &ExecutionRequest,
+) -> Result<Option<SpaceMcpClientConfig>, String> {
+    let Some(context) = crate::workbench_control::ControlContext::from_request(request) else {
+        return Ok(None);
     };
-    let encoded = serde_json::to_vec(&grant)
-        .ok()
-        .map(|bytes| STANDARD.encode(bytes))?;
-    log_executor_event(
-        "space capability context prepared",
-        &[
-            ("task_id", request.task_id.clone()),
-            ("grant_version", grant.version.to_string()),
-        ],
-    );
-    Some(encoded)
-}
-
-fn space_context_role(value: &str) -> Option<SpaceContextRole> {
-    match value.trim() {
-        "manager" | "leader" | "manager_review" => Some(SpaceContextRole::Manager),
-        "executor" | "member" | "worker" => Some(SpaceContextRole::Executor),
-        _ => None,
+    if !crate::workbench_control::available(&context) {
+        return Ok(None);
     }
-}
-
-fn role_categories(role: SpaceContextRole) -> &'static [BoardToolCategory] {
-    match role {
-        SpaceContextRole::Manager => &[BoardToolCategory::Management, BoardToolCategory::Execution],
-        SpaceContextRole::Executor => &[BoardToolCategory::Execution],
-    }
-}
-
-fn prompt_references_cloud_projects(prompt: &Value) -> bool {
-    match prompt {
-        Value::String(text) => text.contains("cloud://projects"),
-        Value::Array(blocks) => blocks.iter().any(|block| match block {
-            Value::String(text) => text.contains("cloud://projects"),
-            Value::Object(object) => object
-                .get("text")
-                .and_then(Value::as_str)
-                .is_some_and(|text| text.contains("cloud://projects")),
-            _ => false,
-        }),
-        Value::Object(object) => object
-            .get("text")
-            .and_then(Value::as_str)
-            .is_some_and(|text| text.contains("cloud://projects")),
-        _ => false,
-    }
-}
-
-fn id_value(value: &Value) -> Option<String> {
-    match value {
-        Value::String(value) => Some(value.clone()),
-        Value::Number(value) => Some(value.to_string()),
-        _ => None,
-    }
+    let registered = super::mcp_http::register_control_mcp_context(context)?;
+    let base_url = registered.endpoint.url.trim_end_matches("/mcp");
+    Ok(Some(SpaceMcpClientConfig {
+        url: format!("{base_url}/control/mcp"),
+        headers: BTreeMap::from([
+            (
+                "Authorization".to_owned(),
+                format!("Bearer {}", registered.endpoint.token),
+            ),
+            ("X-Wework-Mcp-Context".to_owned(), registered.context_handle),
+        ]),
+        auto_approve: true,
+    }))
 }
 
 pub async fn run() -> Result<(), String> {
@@ -554,6 +471,16 @@ pub(crate) async fn handle_request_with_context(
                 tools.len(),
                 names,
             ));
+            if context
+                .stand_in
+                .as_ref()
+                .is_some_and(|identity| identity.coordinator_batch.is_some())
+            {
+                write_space_mcp_log(&format!(
+                    "[wework-space-mcp] stage=coordinator_tool_contracts contracts={}",
+                    stand_in::tool_contract_diagnostics(&tools),
+                ));
+            }
             result_response(id, json!({"tools": tools}))
         }),
         "tools/call" => {
@@ -571,6 +498,12 @@ pub(crate) async fn handle_request_with_context(
                 "[wework-space-mcp] stage=tool_call tool={} argument_keys={}",
                 name, argument_keys,
             ));
+            if let Some(control) = context.control.as_ref() {
+                return Some(result_response(
+                    id,
+                    crate::workbench_control::call(control, name, arguments).await,
+                ));
+            }
             Some(result_response(
                 id,
                 call_tool_with_context(runtime, name, arguments, context).await,
@@ -966,7 +899,11 @@ async fn call_tool_with_runtime_context(
         .as_ref()
         .and_then(|grant| context_scope_error(grant, &arguments))
     {
-        return text_result(error, true);
+        match parent_issue::authorize_read(runtime, name, &arguments, context).await {
+            Ok(true) => {}
+            Ok(false) => return text_result(error, true),
+            Err(error) => return text_result(error, true),
+        }
     }
     let default_project_id = grant
         .as_ref()
@@ -1563,6 +1500,7 @@ async fn call_tool_with_runtime_context(
                                     .and_then(Value::as_array)
                                     .cloned()
                                     .unwrap_or_default(),
+                                runtime_origin: Some(address.clone()),
                             };
                             runtime
                                 .finalize_delivery(item_id, delivery_id, input)
@@ -2944,7 +2882,7 @@ fn tools() -> Vec<Value> {
     vec![
         tool(
             "submit_workflow_plan",
-            "Dispatch one concurrent collaboration round. Assign each item to a non-leader group agent or human member; the leader only coordinates and cannot execute an item. For an agent with multiple models from get_assignment_candidates, choose one allowed model and set model_id. Agent items start separate Executor runs, while human items wait for delivery. After every item finishes, the Executor starts a fresh manager run with the batch results.",
+            "For a manager-bound Issue, first read get_board_item and get_assignment_candidates, then submit exactly one concurrent batch. Assign each item to a non-leader group agent or human member; the leader only coordinates and cannot execute an item. Use this tool instead of Codex subagents or doing member work yourself. For an agent with multiple models, choose one allowed model_id. Agent items start independent Executor runs; human items wait for delivery. End the manager turn after submitting. The Executor starts a fresh manager run after the batch finishes.",
             json!({
                 "type": "object",
                 "properties": {
@@ -2982,7 +2920,7 @@ fn tools() -> Vec<Value> {
         ),
         tool(
             "update_issue_status",
-            "Record the collaboration manager's explicit Issue status decision after evaluating the current round results.",
+            "Only the manager may record the parent Issue status after evaluating round results. Runs are already recorded in Issue activity. Use the optional comment for the status explanation; do not duplicate it with add_board_item_comment.",
             json!({
                 "type": "object",
                 "properties": {
@@ -3001,12 +2939,12 @@ fn tools() -> Vec<Value> {
         ),
         tool(
             "list_spaces",
-            "List WeWork project spaces available to the current user",
+            "List Wework project spaces accessible to the current user. Use this when a personal conversation has no project binding; pass the selected space_id to board, file and table tools. Backend access errors must be resolved through Wework, never by substituting Git or provider APIs.",
             json!({"type": "object", "properties": {}}),
         ),
         tool(
             "get_current_context",
-            "Get the project space and board item bound to this conversation, including the Issue description",
+            "Resolve the conversation's optional default project and Issue. Read get_board_item and list_board_item_comments before interpreting a bound Issue; comments include PR links, follow-up requirements and review feedback. Inspect attachments with list_item_attachments and read_item_attachment. Reuse the returned IDs instead of asking the user to repeat them. A personal session with no Issue binding returns bound:false; discover targets with list_spaces, list_board_items or search_board_items. Personal bindings are defaults, while dispatched agents must stay within their assigned scope.",
             json!({"type": "object", "properties": {}}),
         ),
         tool(
@@ -3109,7 +3047,7 @@ fn tools() -> Vec<Value> {
         ),
         tool(
             "get_board_item",
-            "Get one board item in a project space",
+            "Get one board item in a project space. An Executor-bound agent may explicitly read its Issue's direct parent_id in the same project, subject to existing parent visibility. Use that parent item_id with list_board_item_comments, list_deliveries, read_delivery and download_delivery_asset to read requirements, comments and handoffs. Parent access is read-only; get_current_context and Delivery writes remain bound to the child Issue. Ancestors, siblings and unrelated Issues are outside this exception.",
             json!({
                 "type": "object",
                 "properties": {
@@ -3523,6 +3461,9 @@ fn visible_tools(runtime: &TaskRuntime, context: &SpaceMcpRequestContext) -> Vec
     if context.surface == WeworkMcpSurface::StandIn {
         return stand_in::tools(context);
     }
+    if context.surface == WeworkMcpSurface::Control {
+        return crate::workbench_control::tools();
+    }
     if context.surface == WeworkMcpSurface::Notifications {
         return tools()
             .into_iter()
@@ -3759,9 +3700,9 @@ mod tests {
     };
 
     fn decode_grant(request: &ExecutionRequest) -> SpaceContextGrant {
-        let encoded = encoded_space_context_grant(request).expect("space context grant");
-        let decoded = STANDARD.decode(encoded).expect("base64 grant");
-        serde_json::from_slice(&decoded).expect("JSON grant")
+        space_context_grant(request)
+            .expect("valid context")
+            .expect("space context grant")
     }
 
     fn role_grant(role: SpaceContextRole) -> SpaceContextGrant {
@@ -3776,7 +3717,7 @@ mod tests {
     fn leaves_space_context_unbound_without_project_context() {
         let request = ExecutionRequest::default();
 
-        assert!(encoded_space_context_grant(&request).is_none());
+        assert!(space_context_grant(&request).unwrap().is_none());
     }
 
     #[test]
@@ -3896,16 +3837,13 @@ mod tests {
     }
 
     #[test]
-    fn creates_unbound_context_grant_for_explicit_cloud_reference() {
+    fn cloud_reference_does_not_create_a_project_binding() {
         let request = ExecutionRequest {
             prompt: json!("请查看 [任务:T-1](cloud://projects/cloud-42/todos/T-1)"),
             ..ExecutionRequest::default()
         };
 
-        let grant = decode_grant(&request);
-
-        assert_eq!(grant.space_id, None);
-        assert_eq!(grant.item_id, None);
+        assert!(space_context_grant(&request).unwrap().is_none());
     }
 
     #[test]
@@ -3915,17 +3853,17 @@ mod tests {
             ..ExecutionRequest::default()
         };
 
-        assert!(encoded_space_context_grant(&request).is_none());
+        assert!(space_context_grant(&request).unwrap().is_none());
     }
 
     #[test]
-    fn creates_context_grant_for_array_prompt_cloud_reference() {
+    fn array_prompt_does_not_create_a_project_binding() {
         let request = ExecutionRequest {
             prompt: json!([{"type": "text", "text": "参考 [整个空间](cloud://projects/proj-7)"}]),
             ..ExecutionRequest::default()
         };
 
-        assert!(encoded_space_context_grant(&request).is_some());
+        assert!(space_context_grant(&request).unwrap().is_none());
     }
 
     #[test]
@@ -4183,6 +4121,54 @@ mod tests {
             current_context["inputSchema"],
             json!({"type": "object", "properties": {}})
         );
+    }
+
+    #[test]
+    fn discovered_tools_include_project_space_workflows_and_boundaries() {
+        let discovered = tools();
+        for (name, requirements) in [
+            (
+                "get_current_context",
+                vec![
+                    "get_board_item",
+                    "list_board_item_comments",
+                    "list_item_attachments",
+                    "read_item_attachment",
+                    "bound:false",
+                    "list_spaces",
+                    "list_board_items",
+                    "search_board_items",
+                    "dispatched agents must stay within their assigned scope",
+                ],
+            ),
+            (
+                "submit_workflow_plan",
+                vec![
+                    "get_board_item",
+                    "get_assignment_candidates",
+                    "exactly one concurrent batch",
+                    "instead of Codex subagents or doing member work yourself",
+                    "End the manager turn",
+                ],
+            ),
+            (
+                "update_issue_status",
+                vec!["Only the manager", "do not duplicate"],
+            ),
+            (
+                "list_spaces",
+                vec!["accessible to the current user", "never by substituting"],
+            ),
+        ] {
+            let description = discovered
+                .iter()
+                .find(|tool| tool["name"] == name)
+                .and_then(|tool| tool["description"].as_str())
+                .expect("discoverable tool description");
+            for requirement in requirements {
+                assert!(description.contains(requirement), "{name}: {requirement}");
+            }
+        }
     }
 
     #[test]
@@ -4797,6 +4783,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Investigate load".to_owned(),
                     description: String::new(),
                     status: "in_progress".to_owned(),
@@ -4979,6 +4966,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Fix OAuth callback".to_owned(),
                     description: "Login fails after redirect".to_owned(),
                     status: "in_progress".to_owned(),
@@ -4996,6 +4984,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Write deployment guide".to_owned(),
                     description: String::new(),
                     status: "pending".to_owned(),
@@ -5059,6 +5048,7 @@ mod tests {
                 .create_task(
                     project_id,
                     TaskCreate {
+                        milestone_id: None,
                         title: title.to_owned(),
                         description: String::new(),
                         status: "inbox".to_owned(),
@@ -5105,6 +5095,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Inspect attachment".to_owned(),
                     description: String::new(),
                     status: "pending".to_owned(),

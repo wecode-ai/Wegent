@@ -511,102 +511,243 @@ fn temp_root(label: &str) -> PathBuf {
 
 #[test]
 fn task_sessions_roundtrip_across_home_layouts_for_both_engines_and_runtime_modes() {
-    use wegent_executor::envd::{
-        archive::{create_runtime_archive_with_roots, restore_runtime_archive_with_roots},
-        archive_sessions::SessionArchiveRoots,
-    };
     for mode in [ArchiveMode::Executor, ArchiveMode::Sandbox] {
         for claude in [true, false] {
-            let source = tempfile::tempdir().unwrap();
-            let target = tempfile::tempdir().unwrap();
-            let home = source.path().join("home");
-            fs::create_dir_all(&home).unwrap();
-            let mut roots = SessionArchiveRoots::for_home(&home);
-            roots.executor = home.join("mounted-executor");
-            roots.workbench = home.join("mounted-workbench");
-            let agent = roots.workbench.join("agents/test-user/default/agent");
-            let marker = if claude {
-                ".claude_session_id_1"
-            } else {
-                ".codex_thread_id_1"
-            };
-            let transcript = if claude {
-                "projects/project/session-1.jsonl"
-            } else {
-                "sessions/2026/09/23/rollout-date-session-1.jsonl"
-            };
-            let record = if claude {
-                "{\"sessionId\":\"session-1\"}\n"
-            } else {
-                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"session-1\"}}\n"
-            };
-            write_file(
-                &roots.executor.join("sessions/42").join(marker),
-                "session-1",
-            );
-            write_file(&agent.join("agent.json"), "{}");
-            write_file(&agent.join("runtime/tasks/42.json"), "{\"task_id\":\"42\"}");
-            write_file(&agent.join(transcript), record);
-            write_file(&agent.join("auth.json"), "not-for-backup");
-            write_file(
-                &agent.join("projects/project/other-session.jsonl"),
-                "not-for-backup",
-            );
-            write_file(&source.path().join("workspace/README.md"), "task code");
-            let options = ArchiveOptions {
-                mode,
-                task_id: "42".into(),
-                workspace_path: source.path().join("workspace"),
-                home_path: home,
-                max_size_bytes: 1_000_000,
-            };
-            let archive = create_runtime_archive_with_roots(options.clone(), None, &roots).unwrap();
-            assert!(archive.session_file_included);
-            let names = archive_names(&archive.bytes);
-            assert!(!names
-                .iter()
-                .any(|name| name.contains("auth.json") || name.contains("other-session")));
-            let restored_roots = SessionArchiveRoots::for_home(target.path());
-            let result = restore_runtime_archive_with_roots(
-                &archive.bytes,
-                mode,
-                "42",
-                &target.path().join("workspace"),
-                target.path(),
-                &restored_roots,
-            )
-            .unwrap();
-            assert!(result.session_restored);
-            assert_eq!(
-                fs::read_to_string(restored_roots.executor.join("sessions/42").join(marker))
-                    .unwrap(),
-                "session-1"
-            );
-            assert_eq!(
-                fs::read_to_string(
-                    restored_roots
-                        .workbench
-                        .join("agents/test-user/default/agent")
-                        .join(transcript)
+            for pipeline in [false, true] {
+                let source = tempfile::tempdir().unwrap();
+                let target = tempfile::tempdir().unwrap();
+                let home = source.path().join("home");
+                fs::create_dir_all(&home).unwrap();
+                let mut roots = SessionArchiveRoots::for_home(&home);
+                roots.executor = home.join("mounted-executor");
+                roots.workbench = home.join("mounted-workbench");
+                let relative_homes = if pipeline {
+                    vec![
+                        "test-user/default/agent/bots/1",
+                        "test-user/default/agent/bots/2",
+                    ]
+                } else {
+                    vec!["test-user/default/agent"]
+                };
+                let sessions: Vec<_> = relative_homes
+                    .iter()
+                    .enumerate()
+                    .map(|(index, relative)| {
+                        write_task_session(&roots, relative, &(index + 1).to_string(), claude)
+                    })
+                    .collect();
+                let unrelated = roots
+                    .workbench
+                    .join("agents/test-user/default/other-task-agent/bots/3");
+                write_file(&unrelated.join("agent.json"), "{}");
+                write_file(&unrelated.join("runtime/tasks/other-task.json"), "{}");
+                write_file(
+                    &unrelated.join("projects/project/session-1.jsonl"),
+                    "not-for-backup",
+                );
+                write_file(&source.path().join("workspace/README.md"), "task code");
+                let options = ArchiveOptions {
+                    mode,
+                    task_id: "42".into(),
+                    workspace_path: source.path().join("workspace"),
+                    home_path: home,
+                    max_size_bytes: 1_000_000,
+                };
+                let archive =
+                    create_runtime_archive_with_roots(options.clone(), None, &roots).unwrap();
+                assert!(archive.session_file_included);
+                let names = archive_names(&archive.bytes);
+                assert!(!names.iter().any(|name| {
+                    name.contains("auth.json")
+                        || name.contains("other-session")
+                        || name.contains("other-task")
+                        || name.contains("mounted-")
+                }));
+                for session in &sessions {
+                    for relative in [
+                        PathBuf::from("agent.json"),
+                        PathBuf::from("runtime/tasks/42.json"),
+                        session.transcript.clone(),
+                    ] {
+                        let member = Path::new("agent-homes")
+                            .join(&session.relative_home)
+                            .join(relative);
+                        assert!(names.contains(&member.to_string_lossy().into_owned()));
+                    }
+                    assert!(
+                        names.contains(&format!("executor-state/sessions/42/{}", session.marker))
+                    );
+                }
+                let restored_roots = SessionArchiveRoots::for_home(target.path());
+                let result = restore_runtime_archive_with_roots(
+                    &archive.bytes,
+                    mode,
+                    "42",
+                    &target.path().join("workspace"),
+                    target.path(),
+                    &restored_roots,
                 )
-                .unwrap(),
-                record
-            );
-            assert_eq!(
-                fs::read_to_string(target.path().join("workspace/README.md")).unwrap(),
-                "task code"
-            );
-            // A recorded ID without a valid native conversation must never produce a backup.
-            fs::remove_file(agent.join(transcript)).unwrap();
-            assert!(
-                create_runtime_archive_with_roots(options.clone(), None, &roots)
-                    .unwrap_err()
-                    .to_string()
-                    .contains("incomplete")
-            );
-            write_file(&agent.join(transcript), "{\"sessionId\":\"wrong\"}\n");
-            assert!(create_runtime_archive_with_roots(options, None, &roots).is_err());
+                .unwrap();
+                assert!(result.session_restored);
+                for session in &sessions {
+                    let restored_agent = restored_roots
+                        .workbench
+                        .join("agents")
+                        .join(&session.relative_home);
+                    assert_eq!(
+                        fs::read_to_string(
+                            restored_roots
+                                .executor
+                                .join("sessions/42")
+                                .join(&session.marker)
+                        )
+                        .unwrap(),
+                        session.session_id
+                    );
+                    for (relative, expected) in [
+                        (PathBuf::from("agent.json"), &session.identity),
+                        (PathBuf::from("runtime/tasks/42.json"), &session.binding),
+                        (session.transcript.clone(), &session.record),
+                    ] {
+                        assert_eq!(
+                            fs::read_to_string(restored_agent.join(relative)).unwrap(),
+                            *expected
+                        );
+                    }
+                    assert!(!restored_agent.join("auth.json").exists());
+                    assert!(!restored_agent
+                        .join("runtime/tasks/other-task.json")
+                        .exists());
+                }
+                assert_eq!(
+                    fs::read_to_string(target.path().join("workspace/README.md")).unwrap(),
+                    "task code"
+                );
+                // A recorded ID without a valid native conversation must never produce a backup.
+                let session = sessions.last().unwrap();
+                let transcript = roots
+                    .workbench
+                    .join("agents")
+                    .join(&session.relative_home)
+                    .join(&session.transcript);
+                fs::remove_file(&transcript).unwrap();
+                assert!(
+                    create_runtime_archive_with_roots(options.clone(), None, &roots)
+                        .unwrap_err()
+                        .to_string()
+                        .contains("incomplete")
+                );
+                write_file(&transcript, "{\"sessionId\":\"wrong\"}\n");
+                assert!(create_runtime_archive_with_roots(options, None, &roots).is_err());
+            }
         }
+    }
+}
+
+struct TaskSessionFixture {
+    relative_home: PathBuf,
+    marker: String,
+    session_id: String,
+    transcript: PathBuf,
+    record: String,
+    identity: String,
+    binding: String,
+}
+
+fn write_task_session(
+    roots: &SessionArchiveRoots,
+    relative_home: &str,
+    bot_id: &str,
+    claude: bool,
+) -> TaskSessionFixture {
+    let session_id = format!("session-{bot_id}");
+    let (marker, transcript, record) = if claude {
+        (
+            format!(".claude_session_id_{bot_id}"),
+            format!("projects/project/{session_id}.jsonl"),
+            serde_json::json!({"sessionId": session_id}).to_string(),
+        )
+    } else {
+        (
+            format!(".codex_thread_id_{bot_id}"),
+            format!("sessions/2026/09/23/rollout-date-{session_id}.jsonl"),
+            serde_json::json!({"type": "session_meta", "payload": {"id": session_id}}).to_string(),
+        )
+    };
+    let record = format!("{record}\n");
+    let identity = serde_json::json!({"bot_id": bot_id, "user_name": "test-user"}).to_string();
+    let binding = serde_json::json!({"task_id": "42", "bot_id": bot_id}).to_string();
+    let agent = roots.workbench.join("agents").join(relative_home);
+    write_file(
+        &roots.executor.join("sessions/42").join(&marker),
+        &session_id,
+    );
+    for (relative, content) in [
+        ("agent.json", identity.as_str()),
+        ("runtime/tasks/42.json", binding.as_str()),
+        (transcript.as_str(), record.as_str()),
+        ("runtime/tasks/other-task.json", "not-for-backup"),
+        ("auth.json", "not-for-backup"),
+        ("projects/project/other-session.jsonl", "not-for-backup"),
+        (
+            "sessions/2026/09/23/rollout-date-other-session.jsonl",
+            "not-for-backup",
+        ),
+    ] {
+        write_file(&agent.join(relative), content);
+    }
+    TaskSessionFixture {
+        relative_home: relative_home.into(),
+        marker,
+        session_id,
+        transcript: transcript.into(),
+        record,
+        identity,
+        binding,
+    }
+}
+
+#[test]
+fn pipeline_backup_rejects_an_executing_bot_and_succeeds_after_its_lock_is_released() {
+    use fs2::FileExt;
+
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("home");
+    let roots = SessionArchiveRoots::for_home(&home);
+    write_task_session(&roots, "test-user/default/agent/bots/1", "1", true);
+    let session = write_task_session(&roots, "test-user/default/agent/bots/2", "2", true);
+    let lock = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(
+            roots
+                .workbench
+                .join("agents")
+                .join(session.relative_home)
+                .join(".execution.lock"),
+        )
+        .unwrap();
+    lock.try_lock_exclusive().unwrap();
+    let workspace = root.path().join("workspace");
+    fs::create_dir_all(&workspace).unwrap();
+    let options = ArchiveOptions {
+        mode: ArchiveMode::Executor,
+        task_id: "42".into(),
+        workspace_path: workspace,
+        home_path: home,
+        max_size_bytes: 1_000_000,
+    };
+    let error = create_runtime_archive_with_roots(options.clone(), None, &roots).unwrap_err();
+    assert!(error.to_string().contains("Agent is running"));
+    drop(lock);
+    let archive = create_runtime_archive_with_roots(options, None, &roots).unwrap();
+    let names = archive_names(&archive.bytes);
+    for bot_id in ["1", "2"] {
+        assert!(names.contains(&format!(
+            "executor-state/sessions/42/.claude_session_id_{bot_id}"
+        )));
     }
 }
 
@@ -701,24 +842,67 @@ fn repository_restore_rejects_symlink_parents() {
 #[cfg(unix)]
 #[test]
 fn restore_rejects_a_symlink_inside_an_agent_home() {
-    let root = tempfile::tempdir().unwrap();
-    let outside = tempfile::tempdir().unwrap();
-    let agent = root
-        .path()
-        .join(".wegent/workbench/agents/test/default/agent");
-    fs::create_dir_all(&agent).unwrap();
-    symlink(outside.path(), agent.join("projects")).unwrap();
-    let archive = archive_with_entries(&[(
-        "agent-homes/test/default/agent/projects/session.jsonl",
-        "private",
-    )]);
-    assert!(restore_runtime_archive(
-        &archive,
-        ArchiveMode::Sandbox,
-        "42",
-        &root.path().join("workspace"),
-        root.path()
-    )
-    .is_err());
-    assert!(!outside.path().join("session.jsonl").exists());
+    for component in ["projects", "bots", "bots/1", "bots/1/projects"] {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let agent = root
+            .path()
+            .join(".wegent/workbench/agents/test/default/agent");
+        let link = agent.join(component);
+        fs::create_dir_all(link.parent().unwrap()).unwrap();
+        symlink(outside.path(), &link).unwrap();
+        let member = if component == "projects" {
+            "agent-homes/test/default/agent/projects/session.jsonl"
+        } else {
+            "agent-homes/test/default/agent/bots/1/projects/session.jsonl"
+        };
+        let archive = archive_with_entries(&[(member, "private")]);
+        assert!(restore_runtime_archive(
+            &archive,
+            ArchiveMode::Sandbox,
+            "42",
+            &root.path().join("workspace"),
+            root.path()
+        )
+        .is_err());
+        assert!(fs::read_dir(outside.path()).unwrap().next().is_none());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn pipeline_backup_does_not_follow_symlink_bot_homes() {
+    for component in ["bots", "bots/1"] {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let home = root.path().join("home");
+        let roots = SessionArchiveRoots::for_home(&home);
+        write_task_session(&roots, "test-user/default/agent/bots/1", "1", true);
+        let agent = roots.workbench.join("agents/test-user/default/agent");
+        let link = agent.join(component);
+        let external = outside.path().join("moved");
+        fs::rename(&link, &external).unwrap();
+        symlink(&external, &link).unwrap();
+        let workspace = root.path().join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        let error = create_runtime_archive_with_roots(
+            ArchiveOptions {
+                mode: ArchiveMode::Executor,
+                task_id: "42".into(),
+                workspace_path: workspace,
+                home_path: home,
+                max_size_bytes: 1_000_000,
+            },
+            None,
+            &roots,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("incomplete"));
+        let external_home = if component == "bots" {
+            external.join("1")
+        } else {
+            external
+        };
+        assert!(!external_home.join(".execution.lock").exists());
+    }
 }

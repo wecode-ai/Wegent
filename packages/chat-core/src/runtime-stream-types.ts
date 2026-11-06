@@ -15,13 +15,14 @@ export interface RuntimeGoal {
   updatedAt: number;
 }
 
-export interface RuntimeGoalContinuationPayload {
+export interface RuntimeTurnUpdatedPayload {
+  task?: import("./runtime-task-api-types").RuntimeTaskSummary;
   taskId?: string;
   subtaskId?: string;
   deviceId?: string;
   threadId?: string;
   turnId?: string;
-  status: RuntimeGoalContinuationStatus;
+  status: RuntimeTurnUpdateStatus;
 }
 
 export interface RuntimeSupervisorState {
@@ -54,6 +55,7 @@ export interface ChatChunkPayload {
 }
 
 export interface ChatDonePayload {
+  task?: import("./runtime-task-api-types").RuntimeTaskSummary;
   taskId?: string;
   subtaskId?: string;
   offset?: number;
@@ -62,6 +64,7 @@ export interface ChatDonePayload {
 }
 
 export interface ChatErrorPayload {
+  task?: import("./runtime-task-api-types").RuntimeTaskSummary;
   taskId?: string;
   subtaskId?: string;
   error: string;
@@ -72,7 +75,15 @@ export interface ChatErrorPayload {
   durationMs?: number;
 }
 
+export interface ChatRecoveredPayload {
+  taskId?: string;
+  subtaskId?: string;
+  deviceId?: string;
+  turnId: string;
+}
+
 export interface ChatStartPayload {
+  task?: import("./runtime-task-api-types").RuntimeTaskSummary;
   taskId?: string;
   subtaskId?: string;
   clientUserMessageId?: string;
@@ -176,7 +187,7 @@ export type RuntimeGoalStatus =
   | "budgetLimited"
   | "complete";
 
-export type RuntimeGoalContinuationStatus = "started" | "settled";
+export type RuntimeTurnUpdateStatus = "started" | "settled";
 
 export type RuntimeSupervisorMode = "suggest" | "auto";
 
@@ -262,6 +273,7 @@ export interface ChatStreamHandlers {
   onChatChunk?: (payload: ChatChunkPayload) => void;
   onChatDone?: (payload: ChatDonePayload) => void;
   onChatError?: (payload: ChatErrorPayload) => void;
+  onChatRecovered?: (payload: ChatRecoveredPayload) => void;
   onBlockCreated?: (payload: ChatBlockCreatedPayload) => void;
   onBlockUpdated?: (payload: ChatBlockUpdatedPayload) => void;
   onSubagentActivity?: (payload: RuntimeSubagentActivityPayload) => void;
@@ -270,7 +282,7 @@ export interface ChatStreamHandlers {
   onRuntimeGoalUpdated?: (payload: RuntimeGoalEventPayload) => void;
   onRuntimeGoalCleared?: (payload: RuntimeGoalEventPayload) => void;
   onRuntimeSupervisorUpdated?: (payload: RuntimeSupervisorEventPayload) => void;
-  onRuntimeGoalContinuation?: (payload: RuntimeGoalContinuationPayload) => void;
+  onRuntimeTurnUpdated?: (payload: RuntimeTurnUpdatedPayload) => void;
   onRuntimePlanUpdated?: (payload: RuntimePlanEventPayload) => void;
   onGuidanceApplied?: (payload: RuntimeGuidanceAppliedPayload) => void;
   onRuntimeEventLagged?: (payload: RuntimeEventLaggedPayload) => void;

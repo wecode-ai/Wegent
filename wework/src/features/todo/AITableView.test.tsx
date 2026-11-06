@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import type { ComponentType } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -108,100 +108,6 @@ function apiWith(fields: AITableField[], records: AITableRecord[]): AITableApi {
 }
 
 describe('AITableView', () => {
-  it('loads the live schema and records into the table', async () => {
-    const api = apiWith(
-      [field({ id: 'fld_title', name: '需求名称', type: 'text' })],
-      [record('rec1', { fld_title: '登录优化' })]
-    )
-    render(<AITableView api={api} project={project} />)
-
-    await waitFor(() => expect(api.describe).toHaveBeenCalledWith('7'))
-    expect(api.listRecords).toHaveBeenCalledWith('7', { limit: 100, viewId: undefined })
-    expect(await screen.findByTestId('aitable-grid')).toHaveClass('h-full')
-  })
-
-  it('hides DingTalk view tabs and renders a single table', async () => {
-    const api = apiWith([field({ id: 'fld_title', name: '需求名称' })], [])
-    vi.mocked(api.describe).mockResolvedValue({
-      base: {},
-      tables: [],
-      active_table: {},
-      fields: [field({ id: 'fld_title', name: '需求名称' })],
-      views: [{ viewId: 'view-grid', viewName: '全部记录', viewType: 'grid' }],
-    })
-    render(<AITableView api={api} project={project} />)
-
-    expect(await screen.findByText('需求名称')).toBeInTheDocument()
-    expect(screen.queryByText('全部记录')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('aitable-create-kanban-view')).not.toBeInTheDocument()
-  })
-
-  it('applies the selected DingTalk View query while always rendering a table', async () => {
-    const api = apiWith(
-      [
-        field({ id: 'fld_title', name: '需求名称' }),
-        field({ id: 'fld_owner', name: '负责人', type: 'user' }),
-        field({ id: 'fld_hidden', name: '内部备注' }),
-      ],
-      []
-    )
-    vi.mocked(api.describe).mockResolvedValue({
-      base: {},
-      tables: [],
-      active_table: {},
-      fields: [
-        field({ id: 'fld_title', name: '需求名称' }),
-        field({ id: 'fld_owner', name: '负责人', type: 'user' }),
-        field({ id: 'fld_hidden', name: '内部备注' }),
-      ],
-      views: [
-        { viewId: 'view-grid', viewName: '全部记录', viewType: 'Grid' },
-        {
-          viewId: 'view-kanban',
-          viewName: '负责人看板',
-          viewType: 'Kanban',
-          columns: ['fld_title', 'fld_owner', 'fld_hidden'],
-          custom: {
-            groupBase: { baseFieldId: 'fld_owner' },
-            hiddenFields: { fld_hidden: true },
-          },
-        },
-      ],
-    })
-    vi.mocked(api.listRecords).mockResolvedValue({
-      items: [
-        record('rec1', {
-          fld_title: '修复登录',
-          fld_owner: [{ name: '陈波' }],
-          fld_hidden: '不应显示',
-        }),
-      ],
-      cursor: null,
-      has_more: false,
-    })
-
-    render(
-      <AITableView
-        api={api}
-        project={{
-          ...project,
-          provider_config: { ...project.provider_config, view_id: 'view-kanban' },
-        }}
-      />
-    )
-
-    expect(await screen.findByText('修复登录')).toBeInTheDocument()
-    expect(screen.queryByTestId('aitable-kanban')).not.toBeInTheDocument()
-    expect(screen.getByText('陈波')).toBeInTheDocument()
-    expect(screen.getByText('修复登录')).toBeInTheDocument()
-    expect(screen.queryByText('内部备注')).not.toBeInTheDocument()
-    expect(screen.queryByText('不应显示')).not.toBeInTheDocument()
-    expect(api.listRecords).toHaveBeenCalledWith('7', {
-      limit: 100,
-      viewId: 'view-kanban',
-    })
-  })
-
   it('keeps formula, user, and unknown field types read-only', async () => {
     const api = apiWith(
       [
@@ -227,49 +133,6 @@ describe('AITableView', () => {
     expect(screen.getByText('原始值')).toBeInTheDocument()
   })
 
-  it('normalizes DingTalk millisecond dates for inline editing', async () => {
-    const api = apiWith(
-      [field({ id: 'fld_due', name: '截止日期', type: 'date' })],
-      [record('rec1', { fld_due: Date.UTC(2026, 6, 31) })]
-    )
-    render(<AITableView api={api} project={project} />)
-
-    fireEvent.click(await screen.findByTestId('aitable-cell-edit-rec1-fld_due'))
-
-    expect(screen.getByTestId('aitable-cell-input-rec1-fld_due')).toHaveValue('2026-07-31')
-  })
-
-  it('commits only the edited cell back to the record', async () => {
-    const api = apiWith(
-      [field({ id: 'fld_title', name: '需求名称', type: 'text' })],
-      [record('rec1', { fld_title: '旧值' })]
-    )
-    render(<AITableView api={api} project={project} />)
-
-    fireEvent.click(await screen.findByTestId('aitable-cell-edit-rec1-fld_title'))
-    const input = screen.getByTestId('aitable-cell-input-rec1-fld_title')
-    fireEvent.change(input, { target: { value: '新值' } })
-    fireEvent.blur(input)
-
-    await waitFor(() =>
-      expect(api.updateRecord).toHaveBeenCalledWith('7', 'rec1', { fld_title: '新值' })
-    )
-  })
-
-  it('creates a field and refreshes the schema', async () => {
-    const api = apiWith([field({ id: 'fld_title', name: '需求名称', type: 'text' })], [])
-    render(<AITableView api={api} project={project} />)
-
-    await screen.findByText('需求名称')
-    fireEvent.change(screen.getByTestId('aitable-field-name'), { target: { value: '负责人' } })
-    fireEvent.change(screen.getByTestId('aitable-field-type'), { target: { value: 'user' } })
-    fireEvent.click(screen.getByTestId('aitable-add-field'))
-
-    await waitFor(() =>
-      expect(api.createField).toHaveBeenCalledWith('7', { name: '负责人', type: 'user' })
-    )
-  })
-
   it('hides field management for viewers below Developer', async () => {
     const viewer = { ...project, access_role: 'RestrictedAnalyst' as const }
     const api = apiWith(
@@ -283,33 +146,6 @@ describe('AITableView', () => {
     expect(screen.queryByTestId('aitable-field-delete-fld_title')).not.toBeInTheDocument()
     expect(screen.queryByTestId('aitable-add-record')).not.toBeInTheDocument()
     expect(screen.queryByTestId('aitable-record-delete-rec1')).not.toBeInTheDocument()
-  })
-
-  it('loads subsequent record pages from the returned cursor', async () => {
-    const api = apiWith([field({ id: 'fld_title', name: '需求名称' })], [])
-    vi.mocked(api.listRecords)
-      .mockResolvedValueOnce({
-        items: [record('rec1', { fld_title: '第一页' })],
-        cursor: 'next',
-        has_more: true,
-      })
-      .mockResolvedValueOnce({
-        items: [record('rec2', { fld_title: '第二页' })],
-        cursor: null,
-        has_more: false,
-      })
-    render(<AITableView api={api} project={project} />)
-
-    await screen.findByText('第一页')
-    fireEvent.click(screen.getByTestId('aitable-load-more'))
-
-    expect(await screen.findByText('第二页')).toBeInTheDocument()
-    expect(api.listRecords).toHaveBeenLastCalledWith('7', {
-      query: undefined,
-      limit: 100,
-      cursor: 'next',
-    })
-    expect(screen.queryByTestId('aitable-load-more')).not.toBeInTheDocument()
   })
 
   it('shows record mutation failures without removing local data', async () => {

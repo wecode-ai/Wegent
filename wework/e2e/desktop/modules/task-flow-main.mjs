@@ -4,6 +4,8 @@ import {
 } from './cloud-environment.mjs'
 
 import { tmpdir } from 'node:os'
+import { UPGRADE_DIAGNOSTIC_CHECKPOINTS } from '../upgrade-suite.mjs'
+import { waitForColdPackageStartup } from './cold-package-startup.mjs'
 
 import { verifyCloudCheckpoint } from './cloud-checkpoint-flows.mjs'
 import { createCloudHistorySearchVerification } from './cloud-history-search.mjs'
@@ -11,6 +13,7 @@ import { verifyLocalBoardUnread } from './local-board-unread.mjs'
 import { verifyMcpElicitationInFullAccess } from './mcp-elicitation-flow.mjs'
 import { MCP_URL_TIMEOUT_MS, MCP_FORM_TIMEOUT_MS } from './mcp-elicitation-evidence.mjs'
 import { verifyPendingTaskAcrossTabs } from './pending-task-tab-flow.mjs'
+import { prepareStandInOnboardingFixture } from './stand-in-onboarding-fixture.mjs'
 
 import {
   createCheckpointTaskFixture,
@@ -37,6 +40,7 @@ import {
   verifyFollowUpMessageRestoration,
   verifyForegroundGuidanceScroll,
   verifyEnvironmentPanelScrollStability,
+  verifyTurnNavigationComposerClearance,
   verifyLastUserMessageEdit,
   verifyPausedQueueLifecycle,
   verifyQueuedFollowUpNavigation,
@@ -68,6 +72,8 @@ import {
 import { verifyCoreDshUiPluginComposition } from './core-dsh-ui-plugin-flows.mjs'
 
 import { DesktopE2EServer } from './desktop-server.mjs'
+import { upgradeUserEnvironment } from './upgrade-user-environment.mjs'
+import { desktopApplicationDataDirectory, resolveUpgradeUserHome } from './upgrade-user-home.mjs'
 
 import { resolveElectronLaunchArguments } from './electron-launch-arguments.mjs'
 
@@ -140,7 +146,7 @@ import {
   observeWindowsSocketExhaustion,
 } from './windows-network-diagnostics.mjs'
 import { collectCodexSqliteDiagnostics } from './codex-sqlite-diagnostics.mjs'
-
+import { captureFailureFollowup } from './failure-followup.mjs'
 import {
   ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_SWITCH_MODEL_RETRY_SELECTOR,
@@ -848,6 +854,8 @@ async function verifyLocalModelRouting({
     enabled: true,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  // The compact panel requires a model whose catalog declares reasoning levels.
+  await selectE2EModel(control, REMEMBERED_TASK_MODEL_ID, REMEMBERED_TASK_MODEL_LABEL)
   const selectedModelLabel = await control.command('getText', modelSelector)
   assert.ok(
     selectedModelLabel,
@@ -1093,16 +1101,30 @@ async function main() {
   const workspacePath = join(resultDir, 'workspace')
   const secondaryProjectPath = join(resultDir, 'Codex', 'secondary-project-root')
   const composerProjectPath = join(resultDir, 'composer-project')
-  const homePath = join(resultDir, 'home')
-  const executorHome = join(resultDir, 'executor-home')
-  const codexHome = join(executorHome, 'codex')
+  const usesDefaultUserData = UPGRADE_DIAGNOSTIC_CHECKPOINTS.includes(DESKTOP_SEGMENT)
+  const nativeApplicationData = usesDefaultUserData ? desktopApplicationDataDirectory() : null
+  if (nativeApplicationData) await mkdir(nativeApplicationData, { recursive: true })
+  const upgradeHome = nativeApplicationData
+    ? await resolveUpgradeUserHome(resultDir, nativeApplicationData)
+    : null
+  const homePath = upgradeHome?.homePath ?? join(resultDir, 'home')
+  const executorHome = usesDefaultUserData
+    ? join(homePath, '.wegent/workbench/wework/default')
+    : join(resultDir, 'executor-home')
+  const codexHome = usesDefaultUserData
+    ? join(homePath, '.wework/codex')
+    : join(executorHome, 'codex')
   const codexSqliteHome = join(tmpdir(), 'wework-desktop-e2e', String(process.pid), 'codex-sqlite')
   const nativeCodexHome = join(resultDir, 'native-codex')
   const staleBundledMarketplacePath = join(resultDir, 'stale-wework-personal')
   const pluginMarketplacePath = join(resultDir, 'plugin-marketplace')
   const marketplacePluginPath = join(resultDir, 'marketplace-plugin')
   const officialPluginRepositoryPath = join(resultDir, 'openai-plugins')
-  const electronUserDataDirectory = join(resultDir, 'electron-user-data')
+  // Cover the production path resolver in the existing upgrade flow. Other
+  // checkpoints retain explicit userData isolation, including rollback coverage.
+  const electronUserDataDirectory = usesDefaultUserData
+    ? join(homePath, '.wegent/workbench/wework/default/user-data')
+    : join(resultDir, 'electron-user-data')
   const appLogPath = join(resultDir, 'app.log')
   const executorLogPath = join(resultDir, 'executor.log')
   await Promise.all([
@@ -1220,7 +1242,9 @@ async function main() {
       codexSqliteHome,
       executorHome,
       electronUserDataDirectory,
+      usesDefaultUserData,
       homePath,
+      upgradeHome,
       resultDir,
       standalone: DESKTOP_SCENARIO_ONLY,
       uiTimeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -1373,6 +1397,7 @@ async function main() {
         desktopScenario?.authToken ??
         'wework-desktop-e2e-cloud-token',
       WEWORK_E2E_CONTROL_URL: control.controlUrl,
+      WEWORK_DESKTOP_CONTROL_REGISTRY_DIR: join(resultDir, 'desktop-control'),
       WEWORK_E2E_MODEL_API_KEY: MODEL_API_KEY,
       WEWORK_E2E_MODEL_SERVER_URL: control.url,
       WEWORK_E2E_CODEX_HOME_INITIALIZATION: RUNS_PLUGIN_E2E ? 'true' : 'false',
@@ -1426,6 +1451,12 @@ async function main() {
       'WEWORK_CORE_PLUGINS_SHA256',
       'WEWORK_HARNESS_RESOURCE_ROOT',
       'WEWORK_HARNESS_RUNTIME_ROOT',
+      'WEWORK_RELEASE_SUPERVISED',
+      'WEWORK_RELEASE_ROOT',
+      'WEWORK_ACTIVE_RELEASE_ID',
+      'WEWORK_COMPONENT_DATA_DIRECTORY',
+      'WEWORK_E2E_RELEASE_FAILURE_VERSION',
+      'WEWORK_E2E_ROLLBACK_FAILURE',
       'WEWORK_NODE_BIN',
       'WEWORK_NODE_PATH',
       'WEWORK_NODE_RUNTIME_ROOT',
@@ -1446,7 +1477,13 @@ async function main() {
       delete appEnvironment.WEWORK_E2E_RUNTIME_TRANSCRIPT_DELAY_MS
     }
     appEnvironment.WEWORK_APP_IDENTIFIER = appIdentifier
+    if (usesDefaultUserData) {
+      const cleanEnvironment = upgradeUserEnvironment(appEnvironment, homePath)
+      for (const key of Object.keys(appEnvironment)) delete appEnvironment[key]
+      Object.assign(appEnvironment, cleanEnvironment)
+    }
     await desktopScenario?.prepareApp?.({ appBinary, appEnvironment, codexHome, control })
+    await desktopScenario?.prepareUserDataLaunch?.()
     const electronLaunchArguments = resolveElectronLaunchArguments({
       extraArguments: [
         ...(process.platform === 'win32'
@@ -1467,6 +1504,9 @@ async function main() {
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: process.platform !== 'win32',
       })
+      const scenarioStartup = desktopScenario?.appProcessStarted?.(child)
+      // Observe early failure now; the await below still propagates it after log setup.
+      scenarioStartup?.catch(() => undefined)
       const processState = { pid: child.pid, launchedAt: new Date().toISOString() }
       applicationProcessHistory.push(processState)
       child.once('error', error => {
@@ -1503,12 +1543,19 @@ async function main() {
         })
         child.once('exit', stopObserving)
       }
+      try {
+        await scenarioStartup
+      } catch (error) {
+        await stopDesktopAppProcess(child)
+        throw error
+      }
       return child
     }
     app = await startDesktopAppProcess()
     const restartDesktopApp = async (options = null) => {
       const beforeStart = typeof options === 'function' ? options : options?.afterStop
-      const previousUserDataDirectory = activeAppEnvironment.WEWORK_USER_DATA_DIR
+      const previousUserDataDirectory =
+        activeAppEnvironment.WEWORK_USER_DATA_DIR || electronUserDataDirectory
       const desktopDeviceIdPath = join(previousUserDataDirectory, 'desktop-device-id')
       const desktopDeviceIdBeforeRestart = (await readFile(desktopDeviceIdPath, 'utf8')).trim()
       assert.match(
@@ -1517,7 +1564,16 @@ async function main() {
         'Wework did not persist a valid Electron device identity before restart'
       )
       const readyCountBeforeRestart = control.readyCount
-      await stopDesktopAppProcess(app)
+      const forceSnapshot = options?.forceStop
+        ? JSON.parse(await control.command('getOwnedProcessSnapshot', 'body'))
+        : null
+      if (forceSnapshot) {
+        await writeFile(
+          join(resultDir, 'forced-restart-process-tree.json'),
+          JSON.stringify(forceSnapshot, null, 2)
+        )
+      }
+      await stopDesktopAppProcess(app, { forceSnapshot })
       await beforeStart?.()
       if (typeof options === 'object' && options?.appEnvironmentOverrides) {
         activeAppEnvironment = {
@@ -1531,7 +1587,8 @@ async function main() {
         WORKBENCH_READY_TIMEOUT_MS,
         'The restarted Wework application did not reconnect to the desktop controller'
       )
-      const nextUserDataDirectory = activeAppEnvironment.WEWORK_USER_DATA_DIR
+      const nextUserDataDirectory =
+        activeAppEnvironment.WEWORK_USER_DATA_DIR || electronUserDataDirectory
       const nextDeviceIdPath = join(nextUserDataDirectory, 'desktop-device-id')
       const desktopDeviceIdAfterRestart = (await readFile(nextDeviceIdPath, 'utf8')).trim()
       assert.match(
@@ -1566,11 +1623,16 @@ async function main() {
     }
     desktopScenario?.setRestartDesktopApp?.(restartDesktopApp)
 
-    const ready = await withTimeout(
-      control.awaitReady(),
-      DESKTOP_READY_TIMEOUT_MS,
-      'Timed out waiting for the real Electron application to connect to the Desktop E2E controller'
-    )
+    const readiness = control.awaitReady()
+    const ready = desktopScenario?.usesColdPackageStartup
+      ? await waitForColdPackageStartup(readiness, appLogPath, {
+          phaseTimeoutMs: DESKTOP_READY_TIMEOUT_MS,
+        })
+      : await withTimeout(
+          readiness,
+          DESKTOP_READY_TIMEOUT_MS,
+          'Timed out waiting for the real Electron application to connect to the Desktop E2E controller'
+        )
     assert.match(
       String(ready.location ?? ''),
       /^https?:/,
@@ -1652,6 +1714,14 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
 
     if (desktopScenario && DESKTOP_SCENARIO_ONLY) {
       phase = 'desktop-extension-scenario'
+      if (
+        !desktopScenario.verifiesStandInOnboarding &&
+        (DESKTOP_SEGMENT.startsWith('stand-in') ||
+          DESKTOP_SEGMENT === 'application-menu' ||
+          DESKTOP_SEGMENT.startsWith('coordination-'))
+      ) {
+        await prepareStandInOnboardingFixture(control, cloudEnvironment, WORKBENCH_READY_TIMEOUT_MS)
+      }
       await desktopScenario.verify(control)
       if (DESKTOP_SEGMENT === 'local-harness') {
         await writeLocalHarnessDiagnostics(control, resultDir)
@@ -3730,6 +3800,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         )
       }
       await verifyEnvironmentPanelScrollStability(control)
+      await verifyTurnNavigationComposerClearance(control, environmentPanelTurnCount)
       if (shouldStopAfterDesktopCheckpoint('environment-panel-scroll')) {
         console.log(`Wework desktop environment-panel-scroll E2E passed. Evidence: ${resultDir}`)
         return
@@ -3851,7 +3922,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         'The encoded Markdown file link did not resolve to the workspace file path'
       )
       await control.command('finishAnimations', 'body')
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
       const filePanelScrollerAfterOpen = await waitForElementWidth(
         control,
         conversationScrollerSelector,
@@ -3914,7 +3984,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         ACTIVE_WORKBENCH_SELECTOR
       )
       await control.command('finishAnimations', 'body')
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
       const filePanelScrollerAfterClose = await waitForElementWidth(
         control,
         conversationScrollerSelector,
@@ -4319,8 +4388,15 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         Math.abs(sidebarHiddenPanelMetrics.left - collapsedWorkbenchMetrics.left) <= 1,
         `The expanded right workspace panel was not aligned with the collapsed workbench: ${sidebarHiddenPanelMetrics.left}px versus ${collapsedWorkbenchMetrics.left}px`
       )
-      await control.command('pointerLeave', '[data-testid="desktop-sidebar-hover-edge"]')
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 350))
+      await control.command('pointerLeave', '[data-testid="desktop-sidebar-preview"]')
+      await control.command(
+        'waitFor',
+        '[data-testid="desktop-sidebar-preview"][aria-hidden="true"]',
+        {
+          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        }
+      )
+      await control.command('finishAnimations', 'body')
       await captureVerificationScreenshot(control, 'workspace-panel-03-expanded-sidebar-hidden.png')
 
       await control.command('toggleSidebar', '')
@@ -4690,9 +4766,24 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     }
     await writeFile(
       join(resultDir, 'failure.txt'),
-      `${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`,
+      `${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n${JSON.stringify(
+        {
+          code: error?.code,
+          errno: error?.errno,
+          syscall: error?.syscall,
+          errcode: error?.errcode,
+          errstr: error?.errstr,
+        }
+      )}\n`,
       'utf8'
     )
+    try {
+      // Record whether the observed state settled after the step timeout so
+      // slow asynchronous updates are distinguishable from stuck states.
+      await captureFailureFollowup(control, resultDir)
+    } catch {
+      // The follow-up is best-effort evidence; never mask the original failure.
+    }
     throw error
   } finally {
     const teardownFailures = []
@@ -4706,6 +4797,16 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     await runTeardownStep('desktop application', async () => stopDesktopAppProcess(app))
     // Scenario fixtures can still need the controller, proxies, and backend during cleanup.
     await runTeardownStep('desktop scenario', async () => desktopScenario?.cleanup?.())
+    await runTeardownStep('default upgrade Home', async () => {
+      if (upgradeHome?.external && teardownFailures.length === 0) {
+        await rm(upgradeHome.homePath, {
+          recursive: true,
+          force: true,
+          maxRetries: 20,
+          retryDelay: 100,
+        })
+      }
+    })
     await runTeardownStep('desktop controller', async () => control.close())
     await runTeardownStep('blocking network proxy', async () => blockingNetworkProxy?.stop())
     await runTeardownStep('cloud history search proxy', async () => cloudHistorySearch?.cleanup())

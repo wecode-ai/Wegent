@@ -28,6 +28,7 @@ extern crate self as wegent_backend_rs;
 use std::sync::Arc;
 
 pub use application::Application;
+pub use attachments::context_store::{SubtaskContextRow, get_context_optional_with_user};
 pub use attachments::external_media::{
     AttachmentDownload, ExternalMediaReference, ExternalMediaRelay, ExternalMediaRequest,
     ExternalPlayback, ExternalPlaybackResolver, MediaStream, NoExternalPlaybackResolver,
@@ -37,6 +38,7 @@ pub use attachments::minio_client::{MinioConfig, encode_object_path, ensure_buck
 pub use attachments::s3_signing::{
     EMPTY_BODY_SHA256, SignedRequest, amz_timestamp_now, hex_sha256, sign_headers,
 };
+pub use attachments::storage::get_attachment_binary_data;
 pub use attachments::upload::{
     AttachmentUploadBackend, ExternalAttachmentStorageResult, ExternalAttachmentUploadError,
     ExternalAttachmentUploadRequest, ImagePid, ImageUploadRequest, S3StorageBackend,
@@ -53,15 +55,23 @@ pub use config::{init_env, init_env_file};
 pub use filters::RequestIdFilter;
 pub use git_repositories::GitRepositoriesService;
 pub use hybrid::{
-    HybridConfig, load_routes_config, run_hybrid, run_hybrid_with_gateway, serve_hybrid,
-    serve_hybrid_application, serve_hybrid_application_with_gateway,
+    HybridConfig, load_routes_config, run_hybrid, run_hybrid_with_gateway,
+    run_hybrid_with_services, serve_hybrid, serve_hybrid_application,
+    serve_hybrid_application_with_gateway, serve_hybrid_application_with_services,
 };
 pub use knowledge_documents_content::access::is_organization_namespace;
 pub use repository_tokens::{RepositoryTokenResolver, StoredRepositoryTokens};
 pub use startup::app::build as build_app_state;
+pub use startup::app::{
+    build_with_clients as build_app_state_with_clients, clients as build_database_clients,
+};
+pub use startup::database::prepare as prepare_database;
+pub mod initialization;
+pub mod migrations;
 pub use startup::mysql::connect as connect_mysql;
 pub use startup::redis::cache_client as build_cache_client;
 pub use state::AppState;
+pub use workspace_archive::save::archive as archive_task_workspace;
 
 mod admin_connector_apps;
 mod admin_im_channels;
@@ -87,6 +97,7 @@ mod attachments_task_all;
 pub mod auth;
 mod auth_login;
 mod authenticate;
+pub mod background_jobs;
 mod board_snapshot;
 mod bots;
 mod celery_broker;
@@ -101,6 +112,7 @@ mod cloud_project_automations;
 mod cloud_projects;
 mod cloud_projects_members;
 mod cloud_projects_runtime_default;
+mod collaboration_templates;
 pub mod config;
 mod connector_runtime;
 mod conversion_callback;
@@ -112,6 +124,7 @@ mod device_artifacts;
 mod device_command;
 pub mod device_commands;
 pub mod device_identity;
+mod device_identity_lock;
 mod device_online_state;
 mod device_records;
 mod device_running_tasks;
@@ -141,6 +154,7 @@ mod internal_callback;
 mod internal_conversion_callback;
 mod internal_robot_queue;
 pub mod json_decode_error;
+mod jwt_compat;
 mod knowledge_artifacts;
 mod knowledge_base_detail;
 mod knowledge_bases_all_grouped;
@@ -160,10 +174,15 @@ mod loop_item_attachments;
 mod loop_item_executions;
 pub(crate) mod loop_item_pages;
 mod loop_items;
+mod loop_node_storage;
 mod loop_tasks;
 mod market_subscriptions;
 mod marketplace_tags;
 mod mcp;
+mod milestones;
+mod project_coordination;
+pub mod task_store_background;
+pub mod task_store_maintenance;
 
 pub use mcp::interactive_form_question::{
     InteractiveFormQuestionNormalizer, InteractiveFormRegistry,
@@ -171,8 +190,13 @@ pub use mcp::interactive_form_question::{
 pub use mcp::knowledge_external::auth::{
     ExternalKnowledgeAuth, ExternalKnowledgeUser, PersonalApiKeyAuth,
 };
+#[cfg(test)]
+mod app_test_support;
 mod mcp_identity;
+pub(crate) mod mcp_oauth_credentials;
+pub mod mcp_provider_registry;
 pub mod mcp_providers;
+pub(crate) mod mcp_user_service;
 pub mod media_policy;
 mod method_call_anon;
 mod method_login;
@@ -188,11 +212,13 @@ mod oidc_login;
 pub mod oidc_service;
 pub mod permissions;
 mod pet;
+mod plugin_account_auth;
 mod plugin_publications;
 mod plugins_capabilities_probe;
 mod plugins_installed;
 mod plugins_marketplace;
 mod projects;
+pub(crate) mod provider_guidance;
 mod py_set_order;
 mod quota;
 mod remote_workspace_status;
@@ -224,6 +250,7 @@ mod skills;
 mod smart_apps_download;
 mod smart_apps_marketplace;
 mod snapshots;
+pub mod socketio;
 mod socketio_emit;
 pub mod socketio_rpc;
 mod sql_support;
@@ -238,6 +265,8 @@ mod subscriptions_item;
 mod subscriptions_list;
 pub use subscriptions_item::random_token_urlsafe;
 pub use subscriptions_list::workspaces as subscription_workspaces;
+/// Caller-owned SQL handle for one request-scoped transaction.
+pub mod request_sql;
 mod subtasks;
 mod system_execute_sql_for_single;
 mod tables;
@@ -261,6 +290,7 @@ mod task_store_default;
 mod task_store_edit;
 mod task_store_executor_reference;
 mod task_store_listing;
+mod task_store_personal;
 mod task_store_pipeline;
 mod task_store_project;
 mod task_store_project_count;
@@ -280,14 +310,17 @@ mod tasks_search;
 pub use tasks_search::statements as tasks_search_statements;
 mod admin_marketplace_resources;
 mod admin_templates;
+mod git_connection_inbox;
 mod teams;
 pub mod token_issuers;
 mod tokens_probe;
+mod transaction_outcome;
 mod url_metadata;
 mod url_metadata_extract;
 mod url_ssrf;
 mod user_git_accounts_sync_summary;
 mod user_login_probe;
+mod user_mcp_oauth;
 pub mod user_profile;
 pub mod user_reader;
 mod users_default_teams;
@@ -334,6 +367,9 @@ mod workspaces_execution_environments;
 brz_http_server::registry!(
     dependencies(state: Arc<AppState>),
     auth = auth::AppAuthenticator
+);
+brz_socket_io::registry!(
+    dependencies(app: Arc<AppState>, runtime: Arc<crate::socketio::runtime::SocketRuntime>)
 );
 brz_http_server::registry!(
     group = runtime_check,

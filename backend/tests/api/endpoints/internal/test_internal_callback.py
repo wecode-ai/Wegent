@@ -6,10 +6,24 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from app.api.endpoints.internal import callback
 from shared.models.responses_api import ResponsesAPIStreamEvents
+
+
+@pytest.fixture
+def reference_app(test_app: FastAPI, monkeypatch: pytest.MonkeyPatch) -> FastAPI:
+    """Mount the retained Python handler only for its HTTP contract tests."""
+    monkeypatch.setattr(test_app.router, "routes", list(test_app.router.routes))
+    test_app.add_api_route(
+        "/api/internal/callback",
+        callback.handle_callback,
+        methods=["POST"],
+        response_model=callback.CallbackResponse,
+    )
+    return test_app
 
 
 class _SessionContext:
@@ -65,14 +79,14 @@ def _patch_emitters(monkeypatch, state):
         ),
     ],
 )
-async def test_single_callback_http_route_reaches_python_handler(
-    test_app, monkeypatch, event_type, data
+async def test_retained_single_callback_preserves_http_contract(
+    reference_app, monkeypatch, event_type, data
 ):
     emitter = _patch_emitters(monkeypatch, {"open": False})
     monkeypatch.setattr(callback, "_get_task_status_user_id", lambda *args: 7)
 
     async with AsyncClient(
-        transport=ASGITransport(app=test_app), base_url="http://test"
+        transport=ASGITransport(app=reference_app), base_url="http://test"
     ) as client:
         response = await client.post(
             "/api/internal/callback",
@@ -88,10 +102,13 @@ async def test_single_callback_http_route_reaches_python_handler(
     assert response.json()["status"] == "ok"
     emitter.emit.assert_awaited_once()
     emitter.close.assert_awaited_once()
+    callback.session_manager.publish_callback_event.assert_awaited_once()
+    callback.forward_event_to_channel_callbacks.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_streaming_callback_does_not_open_database_session(monkeypatch):
+@pytest.mark.parametrize("batch", [False, True], ids=["single", "batch"])
+async def test_streaming_callback_does_not_open_database_session(monkeypatch, batch):
     state = {"open": False}
     emitter = _patch_emitters(monkeypatch, state)
     monkeypatch.setattr(
@@ -100,13 +117,16 @@ async def test_streaming_callback_does_not_open_database_session(monkeypatch):
         lambda: pytest.fail("streaming callback must not open a database session"),
     )
 
-    response = await callback.handle_callback(
-        callback.CallbackRequest(
-            event_type=ResponsesAPIStreamEvents.REASONING_SUMMARY_TEXT_DELTA.value,
-            task_id=1,
-            subtask_id=2,
-            data={"delta": "thinking"},
-        )
+    request = callback.CallbackRequest(
+        event_type=ResponsesAPIStreamEvents.REASONING_SUMMARY_TEXT_DELTA.value,
+        task_id=1,
+        subtask_id=2,
+        data={"delta": "thinking"},
+    )
+    response = await (
+        callback.handle_batch_callback([request])
+        if batch
+        else callback.handle_callback(request)
     )
 
     assert response.status == "ok"
@@ -114,7 +134,8 @@ async def test_streaming_callback_does_not_open_database_session(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_terminal_callback_closes_database_before_async_emit(monkeypatch):
+@pytest.mark.parametrize("batch", [False, True], ids=["single", "batch"])
+async def test_terminal_callback_closes_database_before_async_emit(monkeypatch, batch):
     state = {"open": False}
     session = object()
     emitter = _patch_emitters(monkeypatch, state)
@@ -129,13 +150,16 @@ async def test_terminal_callback_closes_database_before_async_emit(monkeypatch):
         lambda db, **kwargs: SimpleNamespace(user_id=7),
     )
 
-    response = await callback.handle_callback(
-        callback.CallbackRequest(
-            event_type=ResponsesAPIStreamEvents.ERROR.value,
-            task_id=1,
-            subtask_id=2,
-            data={"message": "failed", "code": "runtime_error"},
-        )
+    request = callback.CallbackRequest(
+        event_type=ResponsesAPIStreamEvents.ERROR.value,
+        task_id=1,
+        subtask_id=2,
+        data={"message": "failed", "code": "runtime_error"},
+    )
+    response = await (
+        callback.handle_batch_callback([request])
+        if batch
+        else callback.handle_callback(request)
     )
 
     assert response.status == "ok"

@@ -18,11 +18,22 @@ use crate::task_store_executor_reference::{
 };
 use crate::task_store_statements::{subtask_projection, update_task_json_statement};
 
+/// `advance_pipeline_stage_from_auto_completion` loads the request `User` row
+/// before `trigger_ai_response_unified`. `user_name` names the request user and
+/// `preferences` carries the user-managed provider configuration
+/// `_build_skill_data` reads.
+pub(crate) const USER_FOR_PIPELINE: &str =
+    "SELECT users.user_name, users.preferences FROM users WHERE users.id = ?";
+
 /// Committed next turn; executor dispatch happens after the transaction closes.
 pub struct PipelineStageAdvance {
     pub task_id: i64,
     pub user_id: i64,
     pub user_name: String,
+    /// The committed turn's `users.preferences`; the source loads the whole
+    /// `User` row before `trigger_ai_response_unified` passes it down, and
+    /// `_build_skill_data` reads its user-managed provider configuration.
+    pub user_preferences: String,
     pub message_id: i64,
     pub message: String,
     pub task_json: Value,
@@ -87,15 +98,20 @@ async fn advance_on<T: MysqlTransaction>(
         return Ok(None);
     };
     let user_id = task_column::<i64>(&task, "user_id").unwrap_or_default();
-    let user_name: Option<String> = transaction
-        .fetch_optional(
-            "SELECT users.user_name FROM users WHERE users.id = ?",
-            (user_id,),
-        )
+    let user: Option<MysqlRow> = transaction
+        .fetch_optional(USER_FOR_PIPELINE, (user_id,))
         .await?;
-    let Some(user_name) = user_name else {
+    let Some(user) = user else {
         return Ok(None);
     };
+    let Some(user_name) = user.get_at::<Option<String>>(0).ok().flatten() else {
+        return Ok(None);
+    };
+    let user_preferences = user
+        .get_at::<Option<String>>(1)
+        .ok()
+        .flatten()
+        .unwrap_or_default();
     let completed: Option<MysqlRow> = transaction
         .fetch_optional(
             format!(
@@ -227,6 +243,7 @@ async fn advance_on<T: MysqlTransaction>(
         task_id,
         user_id,
         user_name,
+        user_preferences,
         message_id: ids.next_message_id,
         message,
         task_json,
@@ -379,6 +396,18 @@ fn is_current_completion(completed_id: i64, latest_assistant_id: Option<i64>) ->
 mod tests {
     use super::*;
     use crate::sql_test_support::mysql_pool_server;
+
+    /// `advance_pipeline_stage_from_auto_completion` loads the same `User` row
+    /// before dispatching the next turn; `_build_skill_data` reads
+    /// `user.preferences` for its user-managed provider branch, so the
+    /// pipeline request must not lose the stored document.
+    #[test]
+    fn pipeline_user_read_carries_the_preferences_document() {
+        assert_eq!(
+            USER_FOR_PIPELINE,
+            "SELECT users.user_name, users.preferences FROM users WHERE users.id = ?"
+        );
+    }
 
     #[tokio::test]
     async fn pipeline_advance_starts_with_the_writer_transaction_task_lock() {

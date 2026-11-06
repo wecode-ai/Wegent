@@ -45,7 +45,7 @@ if (requestedArgs.length === 0) {
 if (
   requestedArgs.length === 0 ||
   rendererTestTargets.length > 0 ||
-  (scriptTestTargets.length === 0 && vitestArgs.length > 0)
+  (requestedElectronTests.length === 0 && scriptTestTargets.length === 0 && vitestArgs.length > 0)
 ) {
   run('vitest', [
     'run',
@@ -74,6 +74,9 @@ if (requestedArgs.length === 0) {
     'electron',
     'test',
     ...requestedElectronTests.map(argument => relative(electronRoot, resolve(root, argument))),
+    ...vitestArgs.filter(
+      argument => !rendererTestTargets.includes(argument) && !scriptTestTargets.includes(argument)
+    ),
   ])
 }
 

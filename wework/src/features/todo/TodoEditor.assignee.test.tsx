@@ -1,9 +1,9 @@
+import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
+import '@/i18n'
+import { act, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
-import { act, render, screen, within } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
-import '@/i18n'
-import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import { TodoEditor } from './TodoEditor'
 
 const item = {
@@ -82,95 +82,31 @@ function setup(
 }
 
 describe('workspace Issue assignee', () => {
-  it('keeps one inline save action in the read-first two-column layout', async () => {
-    setup({}, 'Owner', 'modal')
-    const user = userEvent.setup()
-    await user.click(screen.getAllByTestId('cloud-todo-detail-assignee')[0])
-    await user.click(await screen.findByTestId('cloud-todo-detail-assignee-option-empty'))
-    const save = screen.getByTestId('cloud-todo-save')
-    expect(save.closest('.task-detail-meta-line')).not.toBeNull()
-    expect(save).toHaveTextContent('保存分配')
-  })
-
-  it('retains the inline save action and draft after a rejected assignment', async () => {
+  it('assigns immediately, keeps the failed choice and retries without a save action', async () => {
     const api = setup()
     api.assignLoopItem.mockRejectedValueOnce(new Error('Assignment rejected'))
     const user = userEvent.setup()
     await user.click(screen.getByTestId('cloud-todo-detail-assignee'))
     await user.click(await screen.findByTestId('cloud-todo-detail-assignee-option-user:5'))
-    await user.click(screen.getByTestId('cloud-todo-save-options'))
-    await user.click(screen.getByTestId('cloud-todo-save-without-notification'))
     expect(await screen.findByText('Assignment rejected')).toBeVisible()
-    const save = within(screen.getByTestId('cloud-todo-state-summary')).getByTestId(
-      'cloud-todo-save'
-    )
-    expect(save).toBeEnabled()
-    expect(save).toHaveTextContent('保存并通知')
     expect(screen.getByTestId('cloud-todo-state-assignee')).toHaveTextContent('张三')
-    await user.click(save)
-    await vi.waitFor(() => expect(screen.queryByTestId('cloud-todo-save')).not.toBeInTheDocument())
-    expect(api.assignLoopItem).toHaveBeenNthCalledWith(
-      1,
-      '11',
-      'WEG-1',
-      expect.objectContaining({ notifyAssignee: false })
-    )
-    expect(api.assignLoopItem).toHaveBeenNthCalledWith(
-      2,
+    expect(screen.queryByTestId('cloud-todo-save')).toBeNull()
+    await user.click(screen.getByTestId('cloud-todo-field-retry'))
+    await waitFor(() => expect(api.assignLoopItem).toHaveBeenCalledTimes(2))
+    expect(api.assignLoopItem).toHaveBeenLastCalledWith(
       '11',
       'WEG-1',
       expect.objectContaining({ notifyAssignee: true })
     )
+    await waitFor(() => expect(screen.queryByTestId('cloud-todo-save-error')).toBeNull())
   })
 
-  it.each([true, false])('switches the completed automation owner with notify=%s', async notify => {
-    const api = setup()
-    const user = userEvent.setup()
-    const summary = screen.getByTestId('cloud-todo-state-summary')
-    const owner = within(summary).getByTestId('cloud-todo-state-assignee')
-    expect(owner).toHaveTextContent('Codex 工程师')
-    const select = within(owner).getByRole('button', { name: '负责人' })
-    await user.click(select)
-    await user.click(await screen.findByRole('option', { name: '张三' }))
-    expect(owner.querySelector('strong')).toHaveTextContent('张三')
-    expect(screen.queryByText('是否通知负责人')).not.toBeInTheDocument()
-    const inlineSave = within(summary).getByTestId('cloud-todo-save')
-    expect(inlineSave).toHaveTextContent('保存并通知')
-    expect(
-      screen
-        .getByTestId('cloud-todo-detail')
-        .querySelector('header [data-testid="cloud-todo-save"]')
-    ).toBeNull()
-    if (notify) {
-      await user.click(inlineSave)
-    } else {
-      await user.click(within(summary).getByTestId('cloud-todo-save-options'))
-      expect(api.assignLoopItem).not.toHaveBeenCalled()
-      await user.click(screen.getByRole('menuitem', { name: '仅保存不通知' }))
-    }
-    await vi.waitFor(() => {
-      expect(api.assignLoopItem).toHaveBeenCalledWith('11', 'WEG-1', {
-        version: 1,
-        assigneeType: 'user',
-        assigneeId: '5',
-        notifyAssignee: notify,
-      })
-      expect(screen.queryByTestId('cloud-todo-save')).not.toBeInTheDocument()
-    })
-    expect(owner.querySelector('strong')).toHaveTextContent('张三')
-    expect(api.updateLoopItem).not.toHaveBeenCalled()
-  })
-
-  it('clears the owner and shows the add-owner entry', async () => {
+  it('clears the owner immediately and shows the add-owner entry', async () => {
     const api = setup({ assignee_user_id: 5, assignee_name: '张三', assignee_agent_id: null })
     const user = userEvent.setup()
     await user.click(screen.getByTestId('cloud-todo-detail-assignee'))
     await user.click(await screen.findByTestId('cloud-todo-detail-assignee-option-empty'))
-    const owner = screen.getByTestId('cloud-todo-state-assignee')
-    expect(owner.querySelector('strong')).toHaveTextContent('未指派')
-    expect(screen.queryByTestId('cloud-todo-save-options')).not.toBeInTheDocument()
-    await user.click(screen.getByTestId('cloud-todo-save'))
-    await vi.waitFor(() =>
+    await waitFor(() =>
       expect(api.updateLoopItem).toHaveBeenLastCalledWith('WEG-1', {
         version: 1,
         assignee_user_id: null,
@@ -178,40 +114,40 @@ describe('workspace Issue assignee', () => {
         assignee_team_id: null,
       })
     )
+    expect(
+      screen.getByTestId('cloud-todo-state-assignee').querySelector('strong')
+    ).toHaveTextContent('未指派')
+    expect(screen.queryByTestId('cloud-todo-save')).toBeNull()
     expect(api.assignLoopItem).not.toHaveBeenCalled()
   })
 
-  it('dismisses the notification menu with Escape and restores keyboard focus without saving', async () => {
+  it('does not assign while searching or dismissing the picker', async () => {
     const api = setup()
     const user = userEvent.setup()
     await user.click(screen.getByTestId('cloud-todo-detail-assignee'))
-    await user.click(await screen.findByRole('option', { name: '张三' }))
-    const options = screen.getByTestId('cloud-todo-save-options')
-    options.focus()
-    await user.keyboard('{ArrowDown}')
-    const silentSave = await screen.findByRole('menuitem', { name: '仅保存不通知' })
-    await vi.waitFor(() => expect(silentSave).toHaveFocus())
+    await user.type(screen.getByTestId('cloud-todo-detail-assignee-search'), '张三')
     await user.keyboard('{Escape}')
-    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
-    await vi.waitFor(() => expect(options).toHaveFocus())
-    expect(screen.getByTestId('cloud-todo-detail')).toBeInTheDocument()
-    expect(api.onClose).not.toHaveBeenCalled()
     expect(api.assignLoopItem).not.toHaveBeenCalled()
-    await user.keyboard('{ArrowDown}')
-    await vi.waitFor(() =>
-      expect(screen.getByRole('menuitem', { name: '仅保存不通知' })).toHaveFocus()
-    )
-    await user.keyboard('{Enter}')
-    await vi.waitFor(() =>
+    expect(api.onClose).not.toHaveBeenCalled()
+  })
+
+  it('allows silent assignment before selecting the new owner', async () => {
+    const api = setup()
+    const user = userEvent.setup()
+    await user.click(screen.getByTestId('cloud-todo-detail-assignee'))
+    await user.click(screen.getByTestId('cloud-todo-assignee-notify'))
+    await user.click(await screen.findByRole('option', { name: '张三' }))
+    await waitFor(() =>
       expect(api.assignLoopItem).toHaveBeenCalledWith(
         '11',
         'WEG-1',
         expect.objectContaining({ notifyAssignee: false })
       )
     )
+    expect(screen.queryByTestId('cloud-todo-save')).toBeNull()
   })
 
-  it('disables both save actions while an assignment is pending', async () => {
+  it('keeps the picker usable while an assignment is pending', async () => {
     const api = setup()
     let complete!: (value: Awaited<ReturnType<typeof api.assignLoopItem>>) => void
     api.assignLoopItem.mockReturnValueOnce(
@@ -222,13 +158,9 @@ describe('workspace Issue assignee', () => {
     const user = userEvent.setup()
     await user.click(screen.getByTestId('cloud-todo-detail-assignee'))
     await user.click(await screen.findByRole('option', { name: '张三' }))
-    await user.click(screen.getByTestId('cloud-todo-save'))
-    expect(screen.getByTestId('cloud-todo-save')).toBeDisabled()
-    expect(screen.getByTestId('cloud-todo-save-options')).toBeDisabled()
-    expect(screen.getByTestId('cloud-todo-save')).toHaveTextContent('保存中')
-    await user.click(screen.getByTestId('cloud-todo-save-options'))
-    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
     expect(api.assignLoopItem).toHaveBeenCalledOnce()
+    expect(screen.getByTestId('cloud-todo-detail-assignee')).toBeEnabled()
+    expect(screen.queryByTestId('cloud-todo-save')).toBeNull()
     await act(async () => {
       complete({
         ...item,
@@ -239,7 +171,7 @@ describe('workspace Issue assignee', () => {
         version: 2,
       })
     })
-    expect(screen.queryByTestId('cloud-todo-save')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-state-assignee')).toHaveTextContent('张三')
   })
 
   it.each([
@@ -253,12 +185,6 @@ describe('workspace Issue assignee', () => {
       expect(screen.getByTestId('cloud-todo-detail-assignee')).toBeDisabled()
     }
   )
-
-  it('switches the owner for a Developer without project management role', () => {
-    setup({}, 'Developer')
-    expect(screen.getByTestId('cloud-todo-state-assignee')).toHaveTextContent('Codex 工程师')
-    expect(screen.getByTestId('cloud-todo-detail-assignee')).not.toBeDisabled()
-  })
 
   it('keeps a Viewer Issue creator read-only under CP06 and CP07', () => {
     const api = setup({ created_by_user_id: 1 }, 'Viewer')

@@ -1,0 +1,12 @@
+{
+  "order": 115000,
+  "scenario": "./scenarios/plugin-uninstall-resilience.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "cloud": {
+      "order": 37000,
+      "shard": 5,
+      "position": 2000
+    }
+  }
+}

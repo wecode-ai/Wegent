@@ -52,6 +52,7 @@ export function defaultContentRoute(kind: WorkspaceTabKind): string {
 }
 
 export function resolveWorkspaceTabKind(pathname: string): WorkspaceTabKind | null {
+  if (pathname === '/pending-interactions') return 'auxiliary'
   const route = resolveDshRoute(pathname)
   if (route?.workspaceTabKind) return route.workspaceTabKind
   if (pathname === '/todo') return 'board'
@@ -59,6 +60,7 @@ export function resolveWorkspaceTabKind(pathname: string): WorkspaceTabKind | nu
   if (
     pathname === '/' ||
     pathname === '/runtime-tasks' ||
+    pathname === '/stand-in' ||
     pathname === '/settings' ||
     pathname.startsWith('/settings/')
   ) {

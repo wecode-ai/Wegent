@@ -24,6 +24,7 @@ export function createAgentRoutingCatalog(client: HttpClient, readCatalog?: Read
   ): RunnerEnvironment => ({
     id: String(device.device_id ?? device.id),
     device_key: device.device_key ?? device.id,
+    ...(device.app_device_id ? { app_device_id: device.app_device_id } : {}),
     name: device.name,
     owner_type: device.owner_type,
     owner_id: device.owner_id,
@@ -68,9 +69,13 @@ export function createAgentRoutingCatalog(client: HttpClient, readCatalog?: Read
         personalTypes.clear()
         for (const device of filterClaudeCodeDevices(personal.items)) {
           personalTypes.set(device.device_id, device.device_type)
+          if (device.app_device_id) {
+            personalTypes.set(device.app_device_id, device.device_type)
+          }
           rows.set(String(device.id), {
             id: String(device.id),
             device_key: device.device_id,
+            ...(device.app_device_id ? { app_device_id: device.app_device_id } : {}),
             name: device.name,
             owner_type: 'user',
             owner_id: '',

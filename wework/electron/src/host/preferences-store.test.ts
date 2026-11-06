@@ -11,6 +11,22 @@ afterEach(async () => {
 })
 
 describe('PreferencesStore', () => {
+  test('drains accepted writes and rejects later writers before an upgrade snapshot', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-preferences-close-'))
+    roots.push(root)
+    const store = new PreferencesStore(root)
+    const first = store.update({ locale: 'zh-CN' })
+    const second = store.update({ theme: 'dark' })
+    await store.close()
+    await Promise.all([first, second])
+    await expect(store.update({ theme: 'light' })).rejects.toThrow('closed')
+    await expect(store.clear()).rejects.toThrow('closed')
+    expect(JSON.parse(await readFile(join(root, 'app-preferences.json'), 'utf8'))).toEqual({
+      locale: 'zh-CN',
+      theme: 'dark',
+    })
+  })
+
   test('persists merged updates atomically', async () => {
     const root = await mkdtemp(join(tmpdir(), 'wework-preferences-'))
     roots.push(root)

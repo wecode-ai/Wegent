@@ -21,12 +21,15 @@
 //! task row (`id + kind = 'Task' + is_active IN (1, 2)`), returns early for
 //! that row's owner, and only otherwise probes `resource_members`.
 //!
-//! Known gap: the two branches that resolve persisted refs
-//! (`KnowledgeBaseNameResolver.resolve` for `knowledgeBaseScopes` and
-//! `resolve_kb_refs_batch` for `knowledgeBaseRefs`) need the accessible-KB
-//! grouping and folder-scope subsystems, which this flow does not host yet.
-//! A task without persisted KB refs — every recorded create case — never
-//! reaches them.
+//! `spec.knowledgeBaseScopes` resolve through
+//! [`super::kb_resolver::resolve_scope_refs`]
+//! (`KnowledgeBaseNameResolver.resolve`), including its `404` / `403`
+//! rejections.
+//!
+//! Known gap: `resolve_kb_refs_batch` for the fallback branch's
+//! `knowledgeBaseRefs` (the id/name batch lookup and its legacy ref migration)
+//! is still not part of this flow; a task without persisted refs never reaches
+//! it.
 use brz_mysql::{Json, Mysql, MysqlResult, MysqlRow};
 use serde_json::Value;
 
@@ -44,17 +47,20 @@ pub struct BoundKnowledgeBases {
 }
 
 /// `_prepare_kb_tools_from_contexts`' priority-2 KB resolution.
-pub async fn resolve_bound_knowledge_bases<M: Mysql>(
+pub async fn resolve_bound_knowledge_bases<M: Mysql, R: brz_redis::Redis>(
     mysql: &M,
+    acl: &super::knowledge::AclContextSource<'_, R>,
     store: &dyn TaskStore,
     task_id: i64,
     user_id: i64,
-) -> MysqlResult<BoundKnowledgeBases> {
-    let scopes = bound_knowledge_base_scopes(store, task_id).await?;
+) -> Result<BoundKnowledgeBases, crate::http_compat::FastApiError> {
+    let scopes = bound_knowledge_base_scopes(acl, store, task_id, user_id).await?;
     // `bound_knowledge_base_ids = [scope ids] or _get_bound_knowledge_base_ids`:
     // the ids chain runs only when the scopes produced no ids.
     let ids = if scopes.is_empty() {
-        bound_knowledge_base_ids(mysql, store, task_id, user_id).await?
+        bound_knowledge_base_ids(mysql, store, task_id, user_id)
+            .await
+            .map_err(super::request::dependency)?
     } else {
         scopes.iter().map(|scope| scope.knowledge_base_id).collect()
     };
@@ -62,12 +68,19 @@ pub async fn resolve_bound_knowledge_bases<M: Mysql>(
 }
 
 /// `_get_bound_knowledge_base_scopes`: the regular-active task read, then the
-/// persisted scope refs resolved against the caller's accessible KBs.
-async fn bound_knowledge_base_scopes(
+/// persisted scope refs resolved through `KnowledgeBaseNameResolver`
+/// (`contexts.py:2177-2212`).
+async fn bound_knowledge_base_scopes<R: brz_redis::Redis>(
+    acl: &super::knowledge::AclContextSource<'_, R>,
     store: &dyn TaskStore,
     task_id: i64,
-) -> MysqlResult<Vec<KnowledgeBaseScope>> {
-    let Some(task) = store.get_regular_active_task(task_id).await? else {
+    user_id: i64,
+) -> Result<Vec<KnowledgeBaseScope>, crate::http_compat::FastApiError> {
+    let Some(task) = store
+        .get_regular_active_task(task_id)
+        .await
+        .map_err(super::request::dependency)?
+    else {
         return Ok(Vec::new());
     };
     let task_json = task_json(&task);
@@ -75,14 +88,15 @@ async fn bound_knowledge_base_scopes(
     if refs.is_empty() {
         return Ok(Vec::new());
     }
-    // GAP: `KnowledgeBaseNameResolver.resolve` (accessible-KB grouping plus
-    // folder/document scope resolution) is not part of this flow yet.
-    tracing::warn!(
-        task_id,
-        refs = refs.len(),
-        "bound knowledge-base scopes are not resolved in the create flow yet"
-    );
-    Ok(Vec::new())
+    let resolved = super::kb_resolver::resolve_scope_refs(acl, user_id, &refs).await?;
+    Ok(resolved
+        .into_iter()
+        .map(|reference| KnowledgeBaseScope {
+            knowledge_base_id: reference.kb_id,
+            scope_restricted: reference.scope_restricted,
+            document_ids: reference.resolved_document_ids,
+        })
+        .collect())
 }
 
 /// `_get_bound_knowledge_base_ids`: the second regular-active task read, the

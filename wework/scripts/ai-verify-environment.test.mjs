@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, test } from 'vitest'
 import path from 'node:path'
 import {
@@ -17,6 +19,15 @@ describe('buildAiVerifyEnvironment', () => {
         WEGENT_CLAUDE_HOME: '/personal/claude',
         CLAUDE_CONFIG_DIR: '/personal/claude-config',
         CODEX_SQLITE_HOME: '/personal/codex-state',
+        WEWORK_RELEASE_SUPERVISED: 'personal-release',
+        WEWORK_RELEASE_ROOT: '/personal/releases',
+        WEWORK_ACTIVE_RELEASE_ID: 'personal-release',
+        WEWORK_COMPONENT_DATA_DIRECTORY: '/personal/releases/slots/personal-release',
+        WEWORK_APP_WEB_ROOT: '/personal/components/wework-app/web',
+        WEWORK_CORE_PLUGIN_ROOT: '/personal/components/wework-core-plugins',
+        WEWORK_CORE_PLUGINS_SHA256: 'personal-component-fingerprint',
+        WEWORK_E2E_RELEASE_FAILURE_VERSION: '1.0.0',
+        WEWORK_E2E_ROLLBACK_FAILURE: 'after-journal',
       })
     ).toEqual({ PATH: '/usr/bin' })
   })
@@ -34,11 +45,15 @@ describe('buildAiVerifyEnvironment', () => {
         WEGENT_EXECUTOR_BINARY: '/tmp/foreign-executor',
         WEGENT_EXECUTOR_SOURCE_DIR: '/tmp/foreign-source',
         WEGENT_APP_IPC_ENDPOINT: '/tmp/foreign-app-ipc.sock',
+        WEGENT_APP_IPC_DEVICE_ID: 'electron-parent-device',
         WEGENT_APP_IPC_TOKEN: 'foreign-app-ipc-token',
         WEGENT_TASK_ID: 'runtime-parent-task',
         WEGENT_TASK_WORKSPACE: '/tmp/parent-workspace',
         ELECTRON_RUN_AS_NODE: '1',
         WEWORK_APP_HOT_RELOAD: '1',
+        WEWORK_APP_WEB_ROOT: '/tmp/foreign-components/wework-app/web',
+        WEWORK_CORE_PLUGIN_ROOT: '/tmp/foreign-components/wework-core-plugins',
+        WEWORK_CORE_PLUGINS_SHA256: 'foreign-component-fingerprint',
         WEWORK_COMPONENT_RESOURCES_ROOT: '/tmp/foreign-components',
         WEWORK_DESKTOP_CONTROL_REGISTRY_DIR: '/tmp/personal-desktop-instances',
         WEWORK_DEV_DOCK_TITLE: 'Parent task · 1234',
@@ -78,6 +93,8 @@ describe('buildAiVerifyEnvironment', () => {
     expect(environment.DEVICE_SESSION_GATEWAY_HOST).toBe('127.0.0.1')
     expect(environment.DEVICE_SESSION_GATEWAY_PORT).toBe('0')
     expect(environment.WEGENT_EXECUTOR_HOME).toBe('/tmp/session/executor-home')
+    expect(environment.DEVICE_ID).toBe('device-1')
+    expect(environment.WEGENT_APP_IPC_DEVICE_ID).toBe(environment.DEVICE_ID)
     expect(environment.WEGENT_EXECUTOR_PROJECTS_DIR).toBe(
       path.join('/tmp/session/executor-home', 'workspace', 'projects')
     )
@@ -96,6 +113,9 @@ describe('buildAiVerifyEnvironment', () => {
     expect(environment.DWS_BINARY_PATH).toBeUndefined()
     expect(environment.ELECTRON_RUN_AS_NODE).toBeUndefined()
     expect(environment.WEWORK_APP_HOT_RELOAD).toBeUndefined()
+    expect(environment.WEWORK_APP_WEB_ROOT).toBeUndefined()
+    expect(environment.WEWORK_CORE_PLUGIN_ROOT).toBeUndefined()
+    expect(environment.WEWORK_CORE_PLUGINS_SHA256).toBeUndefined()
     expect(environment.WEWORK_COMPONENT_RESOURCES_ROOT).toBeUndefined()
     expect(environment.WEWORK_DEV_DOCK_TITLE).toBeUndefined()
     expect(environment.WEWORK_DEV_INSTANCE_LABEL).toBeUndefined()

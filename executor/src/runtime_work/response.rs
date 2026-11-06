@@ -77,6 +77,8 @@ pub(crate) struct RuntimeTaskLink {
     pub recency_at: i64,
     pub completed_at: Option<i64>,
     pub runtime_handle: Value,
+    #[serde(skip)]
+    pub execution_state: Option<super::lifecycle::NativeExecutionState>,
     pub parent: Option<Value>,
     pub ephemeral: bool,
     pub runtime_project_key: Option<String>,
@@ -133,6 +135,7 @@ impl RuntimeTaskLink {
             recency_at: now,
             completed_at: None,
             runtime_handle: json!({ "runtime": runtime }),
+            execution_state: None,
             parent: None,
             ephemeral: false,
             runtime_project_key: None,
@@ -179,6 +182,7 @@ impl RuntimeTaskLink {
             recency_at: now,
             completed_at: None,
             runtime_handle,
+            execution_state: None,
             parent: Some(parent),
             ephemeral: false,
             runtime_project_key: None,
@@ -301,6 +305,9 @@ impl RuntimeTaskLink {
             } else {
                 local_completed_at.or_else(|| timestamp_ms_field(thread, "updatedAt"))
             },
+            execution_state: local_link
+                .as_ref()
+                .and_then(|link| link.execution_state.clone()),
             runtime_handle: local_link
                 .as_ref()
                 .map(|link| link.runtime_handle.clone())
@@ -354,6 +361,7 @@ impl RuntimeTaskLink {
             recency_at: self.recency_at,
             completed_at: self.completed_at,
             runtime_handle: Value::Object(runtime_handle_list_summary_map(&self.runtime_handle)),
+            execution_state: self.execution_state.clone(),
             parent: self.parent.clone(),
             ephemeral: self.ephemeral,
             runtime_project_key: self.runtime_project_key.clone(),
@@ -480,6 +488,7 @@ impl Default for RuntimeTaskLink {
             recency_at: now,
             completed_at: None,
             runtime_handle: json!({}),
+            execution_state: None,
             parent: None,
             ephemeral: false,
             runtime_project_key: None,
@@ -644,9 +653,21 @@ pub(crate) fn search_result_item(
     })
 }
 
-pub(crate) fn local_task_json(link: RuntimeTaskLink) -> Value {
+pub(crate) fn local_task_json(mut link: RuntimeTaskLink) -> Value {
+    if let Some(state) = crate::runtime_work::lifecycle::native_execution_state(&link) {
+        crate::runtime_work::lifecycle::project_native_execution(&mut link, &state);
+    }
+    let native_state = crate::runtime_work::lifecycle::native_execution_state(&link);
     let runtime_handle = runtime_handle_with_thread_id(&link);
     let mut task = Map::new();
+    task.insert(
+        "modelSelection".to_owned(),
+        runtime_handle
+            .get("modelSelection")
+            .or_else(|| runtime_handle.get("model_selection"))
+            .cloned()
+            .unwrap_or(Value::Null),
+    );
     task.insert("taskId".to_owned(), Value::String(link.local_task_id));
     task.insert(
         "workspacePath".to_owned(),
@@ -660,6 +681,9 @@ pub(crate) fn local_task_json(link: RuntimeTaskLink) -> Value {
     );
     if let Some(worktree_id) = infer_worktree_id(&link.workspace_path) {
         task.insert("worktreeId".to_owned(), Value::String(worktree_id));
+    }
+    if let Some(state) = native_state.as_ref() {
+        task.insert("executionState".to_owned(), json!(state));
     }
     task.insert("runtimeHandle".to_owned(), Value::Object(runtime_handle));
     if let Some(queue_position) = link
@@ -678,8 +702,8 @@ pub(crate) fn local_task_json(link: RuntimeTaskLink) -> Value {
     if let Some(turn_status) = link.turn_status.clone() {
         task.insert("turnStatus".to_owned(), Value::String(turn_status));
     }
-    if let Some(goal_status) = link.goal_status.clone() {
-        task.insert("goalStatus".to_owned(), Value::String(goal_status));
+    if link.goal_status.is_some() || native_state.is_some() {
+        task.insert("goalStatus".to_owned(), json!(link.goal_status));
     }
     if let Some(goal_execution_status) = link.goal_execution_status.clone() {
         task.insert(
@@ -725,7 +749,11 @@ pub(crate) fn local_task_json(link: RuntimeTaskLink) -> Value {
         "recencyAt".to_owned(),
         Value::Number(link.recency_at.into()),
     );
-    if let Some(completed_at) = link.completed_at {
+    // Explicitly clear completion in patch-merged clients while retaining the
+    // historical timestamp internally for ordering and stale-provider recovery.
+    if link.running {
+        task.insert("completedAt".to_owned(), Value::Null);
+    } else if let Some(completed_at) = link.completed_at {
         task.insert("completedAt".to_owned(), Value::Number(completed_at.into()));
     }
     if let Some(parent) = link.parent {
@@ -837,7 +865,7 @@ fn runtime_handle_with_thread_id(link: &RuntimeTaskLink) -> Map<String, Value> {
 }
 
 pub(crate) fn runtime_handle_list_summary_map(runtime_handle: &Value) -> Map<String, Value> {
-    runtime_handle
+    let mut summary: Map<String, Value> = runtime_handle
         .as_object()
         .map(|object| {
             object
@@ -846,7 +874,23 @@ pub(crate) fn runtime_handle_list_summary_map(runtime_handle: &Value) -> Map<Str
                 .map(|(key, value)| (key.clone(), value.clone()))
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    if let Some(presentations) = runtime_handle["userMessagePresentations"].as_array() {
+        summary.remove("latestUserMessageSource");
+        if let Some(turn) = runtime_handle["lastTurnId"].as_str() {
+            if let Some(source) = presentations.iter().rev().find_map(|presentation| {
+                (presentation["turnId"] == turn)
+                    .then(|| presentation["source"]["source"].as_str())
+                    .flatten()
+            }) {
+                summary.insert(
+                    "latestUserMessageSource".into(),
+                    json!({"source":source,"turnId":turn}),
+                );
+            }
+        }
+    }
+    summary
 }
 
 fn runtime_handle_list_payload_key(key: &str) -> bool {
@@ -988,7 +1032,7 @@ pub(super) fn runtime_status_is_running(status: &str) -> bool {
     )
 }
 
-fn codex_thread_status_type(thread: &Value) -> Option<String> {
+pub(super) fn codex_thread_status_type(thread: &Value) -> Option<String> {
     let status = thread.get("status")?;
     status.as_str().map(str::to_owned).or_else(|| {
         status

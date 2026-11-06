@@ -106,9 +106,9 @@ async def test_resource_catalog_batches_distinct_dependencies_and_entity_permiss
     size: int,
 ) -> None:
     """Keep dependency and group lookups bounded as distinct agent count grows."""
-    group = _catalog(test_db, test_user.id, test_admin_user.id, size)
+    _catalog(test_db, test_user.id, test_admin_user.id, size)
     resolver = Mock(spec=external_entity_resolver.IExternalEntityResolver)
-    resolver.get_resource_ids_by_entity.return_value = [group.id]
+    resolver.match_entity_bindings.return_value = ["department"]
     monkeypatch.setattr(
         external_entity_resolver,
         "_external_entity_resolvers",
@@ -148,7 +148,7 @@ async def test_resource_catalog_batches_distinct_dependencies_and_entity_permiss
 
     assert len(resources["agents"]) == size
     assert {agent["status"] for agent in resources["agents"]} == {"available"}
-    assert resolver.get_resource_ids_by_entity.call_count == 1
+    resolver.match_entity_bindings.assert_called_once()
 
     assert (
         len(statements) <= 16
@@ -156,14 +156,14 @@ async def test_resource_catalog_batches_distinct_dependencies_and_entity_permiss
     record_property("agent_count", size)
     record_property("catalog_selects", len(statements))
 
-    resolver.get_resource_ids_by_entity.reset_mock()
-    resolver.get_resource_ids_by_entity.return_value = []
+    resolver.match_entity_bindings.reset_mock()
+    resolver.match_entity_bindings.return_value = []
     with Session(bind=connection) as db:
         revoked = await WorkspacePersonalResourceService().list_personal_resources(
             db, user_id
         )
     assert {agent["status"] for agent in revoked["agents"]} == {"unavailable"}
-    assert resolver.get_resource_ids_by_entity.call_count == 1
+    resolver.match_entity_bindings.assert_called_once()
 
 
 @pytest.mark.parametrize("size", [2, 86])

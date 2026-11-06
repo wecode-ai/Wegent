@@ -4,7 +4,10 @@
 
 """Tests for NamespaceEntityResolver."""
 
+from unittest.mock import patch
+
 import pytest
+from sqlalchemy import event
 from sqlalchemy.orm import Session
 
 from app.core.security import get_password_hash
@@ -18,8 +21,9 @@ from app.services.external_entity_resolver import (
     _external_entity_resolvers,
     register_entity_resolver,
 )
+from app.services.group_permission import get_effective_roles_in_groups
 from app.services.share.namespace_entity_resolver import NamespaceEntityResolver
-from tests.utils.mock_resolver import MockDepartmentResolver
+from tests.utils.mock_resolver import MockDepartmentResolver, cleanup_resolvers
 
 resolver = NamespaceEntityResolver()
 
@@ -108,6 +112,107 @@ def _add_kb_entity_member(
 
 
 class TestMatchEntityBindings:
+    @pytest.mark.parametrize("size", [2, 86])
+    def test_batches_namespace_frontiers(self, test_db: Session, size: int):
+        owner = _create_user(test_db, "batch-owner")
+        user = _create_user(test_db, "batch-user")
+        source = _create_namespace(test_db, owner, "batch-source")
+        _add_ns_member(test_db, source, user, "Viewer")
+        targets = [
+            _create_namespace(test_db, owner, f"batch-target-{index}")
+            for index in range(size)
+        ]
+        for target in targets:
+            test_db.add(
+                ResourceMember.create(
+                    resource_type="Namespace",
+                    resource_id=target.id,
+                    entity_type="namespace",
+                    entity_id=str(source.id),
+                    role="Viewer",
+                    status=MemberStatus.APPROVED.value,
+                    invited_by_user_id=owner.id,
+                )
+            )
+        test_db.commit()
+        user_id, entity_ids = user.id, [str(target.id) for target in targets]
+        connection = test_db.connection()
+        statements = []
+
+        def record_select(_conn, _cursor, statement, _params, _context, _many):
+            if statement.lstrip().upper().startswith("SELECT"):
+                statements.append(statement)
+
+        event.listen(connection, "before_cursor_execute", record_select)
+        try:
+            result = resolver.match_entity_bindings(
+                test_db, user_id, "namespace", entity_ids
+            )
+        finally:
+            event.remove(connection, "before_cursor_execute", record_select)
+        assert set(result) == set(entity_ids)
+        assert len(statements) == 2
+
+    @pytest.mark.parametrize(
+        "seed", ["none", "direct", "department", "pending", "rejected"]
+    )
+    def test_cycles_require_an_actual_membership_seed(
+        self, test_db: Session, seed: str
+    ):
+        owner = _create_user(test_db, "cycle-owner")
+        user = _create_user(test_db, "cycle-user")
+        first = _create_namespace(test_db, owner, "cycle-first")
+        second = _create_namespace(test_db, owner, "cycle-second")
+        outer = _create_namespace(test_db, owner, "outer")
+        unrelated = _create_namespace(test_db, owner, "unrelated")
+        for target, source in [(first, second), (second, first), (outer, first)]:
+            test_db.add(
+                ResourceMember.create(
+                    resource_type="Namespace",
+                    resource_id=target.id,
+                    entity_type="namespace",
+                    entity_id=str(source.id),
+                    role="Viewer",
+                    status=MemberStatus.APPROVED.value,
+                    invited_by_user_id=owner.id,
+                )
+            )
+        test_db.add(
+            ResourceMember.create(
+                resource_type="Namespace",
+                resource_id=second.id,
+                entity_type="mock_department",
+                entity_id="department",
+                role="Viewer",
+                status=MemberStatus.APPROVED.value,
+                invited_by_user_id=owner.id,
+            )
+        )
+        test_db.commit()
+        if seed in {"direct", "pending", "rejected"}:
+            member = _add_ns_member(test_db, second, user, "Viewer")
+            if seed != "direct":
+                member.status = seed
+                test_db.commit()
+        department = MockDepartmentResolver(
+            {user.id: {"department"}} if seed == "department" else {}
+        )
+        register_entity_resolver("namespace", NamespaceEntityResolver)
+        register_entity_resolver("mock_department", lambda: department)
+        with patch.object(
+            department, "match_entity_bindings", wraps=department.match_entity_bindings
+        ) as match:
+            result = resolver.match_entity_bindings(
+                test_db, user.id, "namespace", [str(outer.id), str(unrelated.id)]
+            )
+            authorized = seed in {"direct", "department"}
+            assert result == ([str(outer.id)] if authorized else [])
+            match.assert_called_once()
+        roles = get_effective_roles_in_groups(
+            test_db, user.id, [outer.name, unrelated.name]
+        )
+        assert roles == ({outer.name: GroupRole.Viewer} if authorized else {})
+
     def test_match_single_namespace_returns_matched_id(self, test_db: Session):
         owner = _create_user(test_db, "owner1")
         user = _create_user(test_db, "user1")

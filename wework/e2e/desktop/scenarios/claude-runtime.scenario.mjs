@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url'
 
 import { localHarnessCliPath, localHarnessCliVersion } from '../modules/local-harness-cli.mjs'
 import { createSharedSkillRuntime } from '../modules/shared-skill-runtime.mjs'
+import { createConcurrentClaudeHomes } from '../modules/concurrent-claude-homes.mjs'
+import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   responseCompleted,
   responseCreated,
@@ -177,16 +179,10 @@ async function waitForTaskIdle(control, taskRowTestId, timeoutMs) {
 }
 
 async function configureClaude(control, executablePath, version, timeoutMs) {
+  await ensureExperimentalFeaturesEnabled(control)
   await control.command('click', '[data-testid="settings-button"]')
   await control.command('click', '[data-testid="settings-menu-button"]')
-  const snapshot = JSON.parse(await control.command('snapshot', 'body'))
-  if (!snapshot.testIds.includes('settings-nav-harnesses')) {
-    await control.command('waitFor', '[data-testid="general-experimental-features-toggle"]', {
-      timeoutMs,
-    })
-    await control.command('click', '[data-testid="general-experimental-features-toggle"]')
-    await control.command('waitFor', '[data-testid="settings-nav-harnesses"]', { timeoutMs })
-  }
+  await control.command('waitFor', '[data-testid="settings-nav-harnesses"]', { timeoutMs })
   await control.command('click', '[data-testid="settings-nav-harnesses"]')
   await control.command('waitFor', '[data-testid="harness-settings-page"]', { timeoutMs })
   await control.command('setLocalHarnessExecutablePaths', 'body', {
@@ -362,6 +358,12 @@ export async function createDesktopScenario({
   await writeFile(join(remoteWorkspacePath, 'README.md'), '# Claude remote E2E\n', 'utf8')
 
   const requests = []
+  const concurrentHomes = createConcurrentClaudeHomes({
+    resultDir,
+    workspacePath: remoteWorkspacePath,
+    writeBashToolCall,
+    writeText,
+  })
   const sharedSkills = createSharedSkillRuntime({
     resultDir,
     workspacePath: remoteWorkspacePath,
@@ -398,6 +400,7 @@ export async function createDesktopScenario({
       if (!['/v1/responses', '/responses'].includes(url.pathname)) return false
 
       const body = await readJson(request)
+      if (concurrentHomes.handleModel(body, response)) return true
       if (sharedSkills.handleModel(body, response)) return true
       if (codexSkills.handleModel(body, response)) return true
       const serialized = JSON.stringify(body)
@@ -627,9 +630,11 @@ export async function createDesktopScenario({
       }
       await sharedSkills.verify(cloudEnvironment)
       await codexSkills.verify(cloudEnvironment)
+      await concurrentHomes.verify(cloudEnvironment)
     },
 
     async cleanup() {
+      concurrentHomes.cleanup()
       await rm(localClaudeAlias, {
         force: true,
         maxRetries: process.platform === 'win32' ? 20 : 0,

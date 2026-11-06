@@ -4,6 +4,7 @@ export async function openProjectStandIn(
   entry,
   { connect = false, requirements = true, onConnections } = {}
 ) {
+  await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
   // Returning from personal settings remounts the project page asynchronously.
   await control.command('clickWhenEnabled', entry)
   await control.command('waitFor', '[data-testid="stand-in-project-select"]')
@@ -21,7 +22,7 @@ export async function openProjectStandIn(
   await control.command('waitFor', '[data-testid="stand-in-auto"]')
   if (connect) {
     await control.command('click', '[data-testid="stand-in-connections-open"]')
-    await control.command('click', '[data-testid="stand-in-add-connection"]')
+    await openConnectionTypePicker(control)
     await control.command('click', '[data-testid="stand-in-add-projects-connection"]')
     await control.command('waitFor', '[data-testid="stand-in-source-collaboration"]')
     const enabled = await control.command(
@@ -42,4 +43,21 @@ export async function discardStandInDraft(control) {
   await control.command('click', '[data-testid="stand-in-close"]')
   await control.command('click', '[data-testid="stand-in-discard"]')
   await control.command('waitFor', '[data-testid="stand-in-settings"]', { visible: false })
+}
+
+/** Control-channel readiness precedes the notification shell after reload. */
+export async function openCollaborationNotifications(control) {
+  await control.command('clickWhenEnabled', '[data-testid="wework-notifications-button"]')
+  await control.command(
+    'clickWhenEnabled',
+    '[data-testid="wework-notifications-category-collaboration"]'
+  )
+}
+
+/** Empty settings show connection types immediately; populated settings use Add connection. */
+export async function openConnectionTypePicker(control) {
+  const button = '[data-testid="stand-in-add-connection"]'
+  if (Number(await control.command('getElementCount', button)) > 0)
+    await control.command('click', button)
+  await control.command('waitFor', '[data-testid="stand-in-connection-type-picker"]')
 }

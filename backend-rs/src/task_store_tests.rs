@@ -252,7 +252,7 @@ async fn mutation_statements_match_the_recorded_single_table_shapes() {
             .is_none()
     );
     let _ = store
-        .list_subtasks_by_task_unfiltered(7, 157)
+        .list_subtasks_by_task_unfiltered(7, Some(157))
         .await
         .unwrap();
     let _ = store
@@ -372,5 +372,181 @@ async fn cancel_flow_statements_match_the_recorded_shapes() {
         writes[1],
         "UPDATE subtasks SET status=?, progress=?, error_message=?, updated_at=?, \
          completed_at=? WHERE subtasks.id = ?"
+    );
+}
+
+/// Records what one `TaskStore` read issues through the request handle.
+#[derive(Default)]
+struct LineageRecorder {
+    calls: std::sync::Mutex<Vec<(crate::request_sql::RouteKey, String, usize)>>,
+}
+
+#[async_trait::async_trait]
+impl crate::request_sql::RequestSql for LineageRecorder {
+    async fn execute_statement(
+        &mut self,
+        route: crate::request_sql::RouteKey,
+        sql: &str,
+        arguments: crate::request_sql::StatementArgs,
+    ) -> MysqlResult<brz_mysql::MysqlExecution> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push((route, sql.to_string(), arguments.len()));
+        Ok(brz_mysql::MysqlExecution {
+            rows_affected: 1,
+            last_insert_id: 0,
+        })
+    }
+
+    async fn fetch_optional_row(
+        &mut self,
+        route: crate::request_sql::RouteKey,
+        sql: &str,
+        arguments: crate::request_sql::StatementArgs,
+    ) -> MysqlResult<Option<brz_mysql::MysqlRow>> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push((route, sql.to_string(), arguments.len()));
+        Ok(None)
+    }
+
+    async fn fetch_all_rows(
+        &mut self,
+        route: crate::request_sql::RouteKey,
+        sql: &str,
+        arguments: crate::request_sql::StatementArgs,
+    ) -> MysqlResult<Vec<brz_mysql::MysqlRow>> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push((route, sql.to_string(), arguments.len()));
+        Ok(Vec::new())
+    }
+}
+
+/// The `previous_response_id` lookup runs on the request handle, on the task
+/// shard, with the active-owned statement and `(task_id, owner_user_id)`.
+#[tokio::test]
+async fn active_task_owned_on_uses_the_request_handle_and_the_owner_guard() {
+    let store = DefaultTaskStore::new(crate::sql_test_support::KindQueryCapture::writing());
+    let mut sql = LineageRecorder::default();
+    let row = store
+        .get_active_task_owned_on(&mut sql, 893_078_319_907_087, 6498)
+        .await
+        .expect("read");
+    assert!(row.is_none(), "the recorder returns no row");
+    let calls = sql.calls.lock().unwrap().clone();
+    assert_eq!(calls.len(), 1, "{calls:?}");
+    assert_eq!(
+        calls[0].0,
+        crate::request_sql::RouteKey::Task(893_078_319_907_087)
+    );
+    assert_eq!(calls[0].1, active_task_owned_statement(TASKS_TABLE));
+    assert_eq!(calls[0].2, 2, "binds (task_id, owner_user_id)");
+}
+
+/// The resumed Task's `update_json` runs on the request handle, on the task
+/// shard, with the source's `json`/`updated_at`/`id` binding.
+#[tokio::test]
+async fn update_task_json_on_runs_on_the_request_handle() {
+    let store = DefaultTaskStore::new(crate::sql_test_support::KindQueryCapture::writing());
+    let mut sql = LineageRecorder::default();
+    let affected = store
+        .update_task_json_on(
+            &mut sql,
+            893_078_319_907_087,
+            6498,
+            "{\"status\": \"PENDING\"}",
+            "2026-10-27 07:00:42.000000",
+        )
+        .await
+        .expect("update");
+    assert_eq!(affected, 1, "the recorder reports one affected row");
+    let calls = sql.calls.lock().unwrap().clone();
+    assert_eq!(calls.len(), 1, "{calls:?}");
+    assert_eq!(
+        calls[0].0,
+        crate::request_sql::RouteKey::Task(893_078_319_907_087)
+    );
+    assert_eq!(calls[0].1, update_task_json_statement(TASKS_TABLE));
+    assert_eq!(calls[0].2, 3, "binds (json, updated_at, task_id)");
+}
+
+/// The depth-0 lineage read (qs25) runs on the request handle, on the task
+/// shard, with the owner guard's statement and `(task_id, owner_user_id)`.
+#[tokio::test]
+async fn lineage_task_read_uses_the_request_handle_and_the_owner_guard() {
+    let store = DefaultTaskStore::new(crate::sql_test_support::KindQueryCapture::writing());
+    let mut sql = LineageRecorder::default();
+    let row = store
+        .lineage_task_on(&mut sql, 904_623_194_249_955, 6582)
+        .await
+        .expect("read");
+    assert!(row.is_none(), "the recorder returns no row");
+    let calls = sql.calls.lock().unwrap().clone();
+    assert_eq!(calls.len(), 1, "{calls:?}");
+    assert_eq!(
+        calls[0].0,
+        crate::request_sql::RouteKey::Task(904_623_194_249_955)
+    );
+    assert_eq!(
+        calls[0].1,
+        crate::task_store_statements::owner_matches_task_id_statement(TASKS_TABLE)
+    );
+    assert_eq!(calls[0].2, 2, "binds (task_id, owner_user_id)");
+}
+
+/// The create path's post-commit refresh is Source's plain PK re-read: one
+/// `task_by_id_refresh_statement` on the task shard, and no owner probe.
+#[tokio::test]
+async fn refresh_task_on_is_a_plain_primary_key_read() {
+    let store = DefaultTaskStore::new(crate::sql_test_support::KindQueryCapture::writing());
+    let mut sql = LineageRecorder::default();
+    let _ = store
+        .refresh_task_on(&mut sql, 904_623_194_249_955, 6582)
+        .await
+        .expect("refresh");
+    let calls = sql.calls.lock().unwrap().clone();
+    assert_eq!(calls.len(), 1, "exactly one statement: {calls:?}");
+    assert_eq!(
+        calls[0].0,
+        crate::request_sql::RouteKey::Task(904_623_194_249_955)
+    );
+    assert_eq!(calls[0].1, task_by_id_refresh_statement(TASKS_TABLE));
+    assert_eq!(calls[0].2, 1, "binds the primary key only");
+    assert!(
+        !calls
+            .iter()
+            .any(|(_, sql, _)| sql == &owner_matches_task_id_statement(TASKS_TABLE)),
+        "no owner probe may accompany the refresh: {calls:?}"
+    );
+}
+
+/// The executor-reference resolution is its own request-handle step (qs27/28),
+/// so the task's rename UPDATE can run between it and the subtask savepoint.
+#[tokio::test]
+async fn resolve_task_executor_reads_the_task_for_update_on_the_handle() {
+    let store = DefaultTaskStore::new(crate::sql_test_support::KindQueryCapture::writing());
+    let mut sql = LineageRecorder::default();
+    let _ = store
+        .resolve_task_executor_on(&mut sql, 904_623_194_249_955)
+        .await
+        .expect("resolve");
+    let calls = sql.calls.lock().unwrap().clone();
+    assert!(!calls.is_empty(), "the resolution reads the task row");
+    assert_eq!(
+        calls[0].0,
+        crate::request_sql::RouteKey::Task(904_623_194_249_955)
+    );
+    assert_eq!(
+        calls[0].1,
+        task_for_update_first_statement(TASKS_TABLE),
+        "the locking task read is the resolution's first statement"
+    );
+    assert!(
+        !calls.iter().any(|(_, sql, _)| sql.starts_with("SAVEPOINT")),
+        "the savepoint must not be part of the resolution step: {calls:?}"
     );
 }

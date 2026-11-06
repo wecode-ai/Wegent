@@ -56,6 +56,10 @@ def api(test_db, test_user, monkeypatch):
     app = FastAPI()
     app.include_router(wework_api.router, prefix="/api")
     app.include_router(openapi_responses.router, prefix=f"{PREFIX}/responses")
+    # Exercise the retained reference after production ownership moves to Rust.
+    app.add_api_route(
+        f"{PREFIX}/responses", openapi_responses.create_response, methods=["POST"]
+    )
     app.dependency_overrides[get_db] = lambda: test_db
     monkeypatch.setattr(openapi_responses.limiter, "enabled", False)
     monkeypatch.setattr(
@@ -347,9 +351,9 @@ def test_unsupported_or_invalid_input_fails_before_dispatch(api, fields):
     api.create.assert_not_awaited()
 
 
-def test_actual_backend_registers_exact_public_prefix(test_app):
+def test_python_backend_keeps_conversations_after_responses_cutover(test_app):
     paths = {route.path for route in test_app.routes if hasattr(route, "path")}
-    assert f"{PREFIX}/responses" in paths
+    assert f"{PREFIX}/responses" not in paths
     assert f"{PREFIX}/conversations" in paths
     assert "/v1/api/wework/responses" not in paths
 
@@ -424,7 +428,9 @@ async def test_runtime_work_filters_devices_before_rpc(monkeypatch):
     monkeypatch.setattr(native.runtime, "_list_online_runtime_workspaces", listing)
     await native.runtime.list_runtime_work(db=None, user_id=1, device_id="target")
     listing.assert_awaited_once_with(
-        user_id=1, devices=[{"device_id": "target", "status": "online"}]
+        user_id=1,
+        devices=[{"device_id": "target", "status": "online"}],
+        pending_only=False,
     )
 
 

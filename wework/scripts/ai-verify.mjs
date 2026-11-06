@@ -14,8 +14,15 @@ import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path
 import { fileURLToPath } from 'node:url'
 import { buildAiVerifyEnvironment } from './ai-verify-environment.mjs'
 import { readRolloutHeader, seedAiVerifyRollout } from './ai-verify-rollout.mjs'
+import { WindowCommandQueue } from './desktop-control-queue.mjs'
 import { wrapWindowsScriptCommand } from './child-process-command.mjs'
 import { processIsAlive, windowsTaskkillArguments } from '../e2e/desktop/process-lifecycle.mjs'
+import {
+  createDevtoolsClient,
+  startPerformanceRecording,
+  stopPerformanceRecording,
+  writeDiagnosticFile,
+} from './ai-verify-devtools.mjs'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..')
@@ -89,6 +96,7 @@ export const AI_VERIFY_ACTIONS = Object.freeze({
   'verify-browser-inspector': 'verifyEmbeddedBrowserDetachedInspector',
   'wait-for': 'waitFor',
   'window-focus-snapshot': 'getWindowFocusSnapshot',
+  'window-size': 'setMainWindowSize',
   text: 'getText',
   value: 'getValue',
 })
@@ -135,16 +143,22 @@ function usage() {
   console.error(`Usage:
   pnpm --filter wework ai:verify start
   pnpm --filter wework ai:verify start --packaged true
+  pnpm --filter wework ai:verify devtools --session PATH --value '{"action":"targets"}'
+  pnpm --filter wework ai:verify devtools --session PATH --value '{"action":"command","target":ID,"method":"Network.enable"}'
+  pnpm --filter wework ai:verify performance-start --session PATH --target ID
+  pnpm --filter wework ai:verify performance-stop --session PATH --target ID --output report.json
   pnpm --filter wework ai:verify <${Object.keys(AI_VERIFY_ACTIONS).join('|')}|status|stop> --session PATH [options]
 
 Options:
   --codex-home-initialization true
                             Seed and verify isolated first-run Codex migration
   --executor-home PATH      Use an explicitly selected existing executor home
+  --device-id ID            Preserve that existing home's device identity
   --packaged true           Launch the packaged app instead of Electron source mode
   --rollout PATH            Copy a real JSONL history into the isolated Rollout replay project
   --selector CSS_SELECTOR   Target selector (required by click, fill, press and wait-for)
   --window LABEL            Target window label (defaults to main)
+                            window-size uses --selector body --value '{"width":1280,"height":900}'
   --value TEXT_OR_JSON      Replacement value for fill or paste-text; JSON for
                             click-at, seed-local-project, archive-local-project,
                             paste-paths, or drop-paths
@@ -203,6 +217,7 @@ export function validateStartOptions(options) {
   const allowedOptions = new Set([
     'codex-home-initialization',
     'executor-home',
+    'device-id',
     'packaged',
     'timeout',
     'rollout',
@@ -212,6 +227,14 @@ export function validateStartOptions(options) {
     throw new Error(`Unexpected option for start: --${unexpectedOption}`)
   }
   resolveOptionalBoolean(options.packaged, 'packaged')
+  if (options['device-id'] !== undefined) {
+    if (!options['executor-home']) {
+      throw new Error('--device-id requires --executor-home')
+    }
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(options['device-id'])) {
+      throw new Error('--device-id must be a valid nonempty device identifier')
+    }
+  }
   if (options['executor-home'] !== undefined) {
     const executorHome = options['executor-home'].trim()
     if (!executorHome || !isAbsolute(executorHome)) {
@@ -486,17 +509,11 @@ export function monitorAppProcess(app, pending, onExit) {
   })
 }
 
-export function takeWindowCommand(queue, windowLabel) {
-  const index = queue.findIndex(command => command.windowLabel === windowLabel)
-  return index < 0 ? null : queue.splice(index, 1)[0]
-}
-
 async function runServer(sessionPath, token) {
   const session = JSON.parse(await readFile(sessionPath, 'utf8'))
-  const queue = []
+  const queue = new WindowCommandQueue(corsHeaders)
   const pending = new Map()
   let ready = null
-  const readyByClientId = new Map()
   let app = null
   let appExit = null
   let shutdownPromise = null
@@ -512,15 +529,15 @@ async function runServer(sessionPath, token) {
       if (!authorized(request, token)) return json(response, 401, { error: 'Unauthorized' })
       if (request.method === 'POST' && url.pathname === '/ready') {
         ready = await readBody(request)
-        readyByClientId.set(ready.clientId, ready)
+        queue.register(ready.clientId, ready.windowLabel)
         return json(response, 200, { ok: true })
       }
       if (request.method === 'GET' && url.pathname === '/commands') {
-        const client = readyByClientId.get(url.searchParams.get('clientId'))
-        const command = takeWindowCommand(queue, client?.windowLabel)
-        if (command) return json(response, 200, command)
-        response.writeHead(204, corsHeaders)
-        return response.end()
+        return queue.poll(
+          url.searchParams.get('clientId'),
+          response,
+          url.searchParams.get('wait') === '1'
+        )
       }
       if (request.method === 'GET' && url.pathname === '/control-tick') {
         return setTimeout(() => {
@@ -566,7 +583,7 @@ async function runServer(sessionPath, token) {
           pending.set(id, { resolve: resolvePromise, reject })
         )
         const nextCommand = { id, windowLabel: 'main', ...command }
-        queue.push(nextCommand)
+        queue.enqueue(nextCommand)
         try {
           return json(response, 200, {
             ok: true,
@@ -578,8 +595,7 @@ async function runServer(sessionPath, token) {
           })
         } catch (error) {
           pending.delete(id)
-          const queuedIndex = queue.findIndex(item => item.id === id)
-          if (queuedIndex >= 0) queue.splice(queuedIndex, 1)
+          queue.remove(id)
           return json(response, 500, { ok: false, error: String(error.message ?? error) })
         }
       }
@@ -605,6 +621,7 @@ async function runServer(sessionPath, token) {
   }
   const shutdown = exitCode => {
     if (shutdownPromise) return shutdownPromise
+    queue.close()
     shutdownPromise = stopOwnedSessionProcesses({ launcherPid: app?.pid })
       .then(() => removeSessionAuthLink(session))
       .finally(() => {
@@ -725,7 +742,7 @@ async function main() {
       `${JSON.stringify(
         {
           version: 1,
-          deviceId: `ai-verify-${randomUUID()}`,
+          deviceId: options['device-id'] ?? `ai-verify-${randomUUID()}`,
           directory,
           token,
           status: 'starting',
@@ -817,6 +834,39 @@ async function main() {
   }
   if (command === 'status') {
     console.log(JSON.stringify(await request(session, session.token, '/status'), null, 2))
+    return
+  }
+  if (['devtools', 'performance-start', 'performance-stop'].includes(command)) {
+    const client = await createDevtoolsClient(
+      session.directory,
+      resolveCommandTimeout(options.timeout)
+    )
+    let result
+    if (command === 'devtools') {
+      const input = options.file ? await readFile(options.file, 'utf8') : options.value
+      if (!input) throw new Error('devtools requires --value JSON or --file PATH')
+      result = await client(JSON.parse(input))
+      if (options.output) {
+        await writeDiagnosticFile(resolve(options.output), result)
+        console.log(resolve(options.output))
+        return
+      }
+    } else {
+      const target = Number(options.target)
+      if (!Number.isSafeInteger(target) || target <= 0)
+        throw new Error('--target must be a webContents id')
+      if (command === 'performance-stop' && !options.output) throw new Error('--output is required')
+      result =
+        command === 'performance-start'
+          ? await startPerformanceRecording(client, session.directory, target)
+          : await stopPerformanceRecording(
+              client,
+              session.directory,
+              target,
+              resolve(options.output)
+            )
+    }
+    console.log(JSON.stringify(result, null, 2))
     return
   }
   const action = AI_VERIFY_ACTIONS[command]

@@ -428,6 +428,14 @@ async fn upload_new_attachment(
 #[derive(Debug)]
 pub(crate) struct UploadContextError;
 
+impl std::fmt::Display for UploadContextError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("attachment context upload failed")
+    }
+}
+
+impl std::error::Error for UploadContextError {}
+
 /// `ContextService.upload_attachment` for internal callers that render their
 /// own response (the conversion callback).
 ///

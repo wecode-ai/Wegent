@@ -118,7 +118,7 @@ e2e/
 
 ## 钉钉导入 remote 检索验证
 
-`tests/knowledge/dingtalk-import.spec.ts` 的 7 个场景由 CI 的
+`tests/knowledge/dingtalk-import.spec.ts` 的 8 个场景由 CI 的
 `provider-native-chromium` 项目执行。Backend 不再需要设置模式变量，只需设置
 `KNOWLEDGE_RUNTIME_URL`，并启动真实 Knowledge Runtime、Qdrant、MySQL 和 Redis。
 Runtime 与 Backend 共用数据库、`INTERNAL_SERVICE_TOKEN` 和 `GIT_TOKEN_AES_KEY/IV`，
@@ -131,6 +131,11 @@ Runtime 与 Backend 共用数据库、`INTERNAL_SERVICE_TOKEN` 和 `GIT_TOKEN_AE
 格式可选性单独验证：PDF 可选，普通表格和 AI 表格缺少各自 MCP 配置时不可选并展示配置入口。
 批量导入目录固定为三篇在线文档；文件下载契约由后端 Provider 测试覆盖，
 本套 E2E 不覆盖 PDF 下载到检索的完整链路。
+
+外部链接预览使用真实 HTTPS、Range 请求、浏览器 canvas 和原生 video 元素，覆盖允许／禁止
+下载时的身份水印、单层水印、生成失败后的内容隐藏与重试，以及受限视频禁用原生全屏入口。
+这属于模拟钉钉 OAuth、MCP 和文件下载的协议集成测试；Wegent 内部链路保持真实，但不代表已经
+验证真实钉钉账号和线上文件服务的兼容性。
 
 本地服务就绪后，在 `frontend` 目录执行：
 

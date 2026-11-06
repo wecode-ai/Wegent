@@ -28,6 +28,7 @@ import {
   openDirectProjectCreation,
   configureFirstProjectExecutionEnvironment,
   selectCollaborationDomain,
+  selectCollaborationProjectView,
 } from '../modules/workspace-flows.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -252,10 +253,7 @@ async function createIssue(
   title = ISSUE,
   { notifyAssignee = true, beforeSave } = {}
 ) {
-  await control.command('waitFor', scoped('[data-testid="collaboration-tab-board"]'), {
-    timeoutMs: uiTimeoutMs,
-  })
-  await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+  await selectCollaborationProjectView(control, CONTENT, 'board', uiTimeoutMs)
   await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-issue-create"]'))
   await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), { value: title })
   await control.command('fill', scoped('[data-testid="cloud-todo-detail-description"]'), {
@@ -298,12 +296,20 @@ async function createIssue(
     await control.command('click', scoped('[data-testid="cloud-todo-create-confirm-options"]'))
     await control.command('click', silentSave, { visible: true })
   }
-  return waitForValue(
+  const created = await waitForValue(
     async () => (await request(`/api/v1/cloud-projects/${projectId}/loop-items`)).items,
     items => items.find(item => item.title === title),
     '端上创建 Issue 未持久化',
     uiTimeoutMs
   )
+  const detailTitle = scoped('[data-testid="cloud-todo-detail-title"]')
+  await control.command('waitFor', detailTitle, { visible: true, timeoutMs: uiTimeoutMs })
+  assert.equal(
+    await control.command('getValue', detailTitle),
+    title,
+    'The created Issue must own the visible detail before interacting with its properties'
+  )
+  return created
 }
 
 async function verifyIssueTags(control, request, issue, uiTimeoutMs) {
@@ -331,6 +337,8 @@ async function verifyIssueTags(control, request, issue, uiTimeoutMs) {
       1
     )
   }
+  // The list API can observe the new row before the create request finishes.
+  await control.command('waitFor', trigger, { visible: true, timeoutMs: uiTimeoutMs })
   await control.command('click', trigger)
   assert.equal(
     await control.command('getComputedStyleValue', input, { value: 'opacity' }),
@@ -356,7 +364,7 @@ async function verifyIssueTags(control, request, issue, uiTimeoutMs) {
   await assertDismissed()
   await control.command('click', trigger)
   await control.command('waitFor', chip, { visible: true, timeoutMs: uiTimeoutMs })
-  await control.command('pointerClick', scoped('[data-testid="cloud-todo-save"]'))
+  await control.command('pointerClick', scoped('[data-testid="cloud-todo-detail-title"]'))
   await assertDismissed()
   const updated = await waitForValue(
     () => request(`/api/v1/loop-items/${issue.id}`),
@@ -376,9 +384,6 @@ async function changeIssueStatus(control, request, issueId, status, uiTimeoutMs)
   await control.command('waitFor', statusSelect, { timeoutMs: uiTimeoutMs })
   await control.command('select', statusSelect, {
     value: status,
-  })
-  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
-    timeoutMs: uiTimeoutMs,
   })
   return waitForValue(
     () => request(`/api/v1/loop-items/${issueId}`),

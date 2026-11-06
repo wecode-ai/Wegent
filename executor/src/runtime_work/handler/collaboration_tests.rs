@@ -7,6 +7,47 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use axum::{extract::State, http::StatusCode, routing::post, Json, Router};
 
+#[test]
+fn native_member_does_not_complete_before_its_first_turn_starts() {
+    use crate::runtime_work::lifecycle::begin_native_request;
+
+    let mut link = RuntimeTaskLink::new_pending(
+        "member-task".to_owned(),
+        "/tmp/project".to_owned(),
+        "Member".to_owned(),
+    );
+    begin_native_request(&mut link);
+
+    assert_eq!(link.turn_status.as_deref(), Some("completed"));
+    assert!(link.running);
+    assert_eq!(collaboration_member_status(&link), "running");
+}
+
+#[test]
+fn native_member_waits_for_the_execution_after_a_completed_turn() {
+    use crate::runtime_work::lifecycle::{
+        begin_native_request, native_execution_state, project_native_execution,
+        settle_native_execution, NativeExecutionPhase,
+    };
+
+    let mut link = RuntimeTaskLink::new_pending(
+        "member-task".to_owned(),
+        "/tmp/project".to_owned(),
+        "Member".to_owned(),
+    );
+    begin_native_request(&mut link);
+    settle_native_execution(&mut link, "succeeded");
+    assert_eq!(collaboration_member_status(&link), "completed");
+
+    let mut state = native_execution_state(&link).unwrap();
+    state.phase = NativeExecutionPhase::Continuing;
+    project_native_execution(&mut link, &state);
+
+    assert_eq!(link.turn_status.as_deref(), Some("completed"));
+    assert!(link.completed_at.is_none());
+    assert_eq!(collaboration_member_status(&link), "running");
+}
+
 async fn assignment_report_backend() -> (String, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
     assignment_report_backend_with_status(StatusCode::SERVICE_UNAVAILABLE).await
 }
@@ -683,6 +724,106 @@ fn fresh_cloud_manager_reuses_the_in_memory_runtime_model_config() {
 
     assert_eq!(payload["executionRequest"]["model_config"], model_config);
     assert!(source.runtime_handle["executionRequest"]["model_config"].is_null());
+}
+
+#[test]
+fn coordination_manager_round_retains_enabling_identity_instead_of_device_account() {
+    use super::super::project_coordination_execution::{capture_identity, IDENTITY_KEY};
+    let snapshot = Arc::new(Mutex::new(Some(ConnectionConfig {
+        backend_url: "https://backend.example.com".into(),
+        socket_url: "wss://backend.example.com".into(),
+        auth_token: "device-owner-session".into(),
+        runtime_auth_token: "device-owner-runtime".into(),
+    })));
+    let handler =
+        RuntimeWorkRpcHandler::new("runner-device", "/bin/false").with_backend_connection(snapshot);
+    let mut source = source_link();
+    let scope = json!({"userId":7,"deviceId":"coordination-host","projectId":"1001",
+        "groupId":"101","commandId":"command","generation":"one","inputDigest":"digest"});
+    source.runtime_handle["origin"]["project_coordination"] = scope.clone();
+    let original = ExecutionRequest {
+        auth_token: Some("enabling-member-token".into()),
+        runtime_auth_token: Some("enabling-member-runtime".into()),
+        skill_identity_token: Some("enabling-member-skill".into()),
+        extra: serde_json::from_value(json!({"origin":{"project_coordination":scope}})).unwrap(),
+        ..Default::default()
+    };
+    source.runtime_handle[IDENTITY_KEY] = capture_identity(&original).unwrap();
+    let result = handler
+        .prepare_fresh_cloud_manager(&source, &command(), &[])
+        .unwrap();
+    assert_eq!(
+        result["executionRequest"]["auth_token"],
+        "enabling-member-token"
+    );
+    assert_eq!(
+        result["executionRequest"]["runtime_auth_token"],
+        "enabling-member-runtime"
+    );
+    assert_eq!(
+        result["executionRequest"]["skill_identity_token"],
+        "enabling-member-skill"
+    );
+    assert_eq!(result["origin"]["project_coordination"], scope);
+    assert_eq!(
+        result["runtimeHandle"][IDENTITY_KEY],
+        source.runtime_handle[IDENTITY_KEY]
+    );
+    let mut missing_optional = original.clone();
+    missing_optional.runtime_auth_token = None;
+    missing_optional.skill_identity_token = None;
+    source.runtime_handle[IDENTITY_KEY] = capture_identity(&missing_optional).unwrap();
+    let result = handler
+        .prepare_fresh_cloud_manager(&source, &command(), &[])
+        .unwrap();
+    assert_eq!(
+        result["executionRequest"]["auth_token"],
+        "enabling-member-token"
+    );
+    assert!(result["executionRequest"]["runtime_auth_token"].is_null());
+    assert!(result["executionRequest"]["skill_identity_token"].is_null());
+    let mut without_identity = missing_optional;
+    without_identity.auth_token = None;
+    handler.apply_backend_connection(&mut without_identity);
+    assert!(without_identity.auth_token.is_none());
+    assert!(without_identity.runtime_auth_token.is_none());
+    source.runtime_handle[IDENTITY_KEY]["context"]["generation"] = json!("another");
+    assert!(handler
+        .prepare_fresh_cloud_manager(&source, &command(), &[])
+        .is_err());
+    source
+        .runtime_handle
+        .as_object_mut()
+        .unwrap()
+        .remove(IDENTITY_KEY);
+    assert!(handler
+        .prepare_fresh_cloud_manager(&source, &command(), &[])
+        .is_err());
+}
+
+#[test]
+fn coordination_member_materialization_keeps_exact_original_command_scope() {
+    let scope = json!({"userId":7,"projectId":"1001","groupId":"101","commandId":"command",
+        "deviceId":"coordination-host","generation":"one","inputDigest":"digest"});
+    let mut payload = json!({"taskId":"profile","origin":{"project_coordination":scope,"executionId":91},
+        "executionRequest":{"extra":{"origin":{"project_coordination":scope,"executionId":91}}}});
+    let command = command();
+    materialize_collaboration_member_payload(
+        &mut payload,
+        "member-task",
+        &command,
+        &command.assignments[0],
+    )
+    .unwrap();
+    assert_eq!(payload["origin"]["project_coordination"], scope);
+    assert_eq!(
+        payload["executionRequest"]["extra"]["origin"]["project_coordination"],
+        scope
+    );
+    assert!(payload["origin"].get("executionId").is_none());
+    assert!(payload["executionRequest"]["extra"]["origin"]
+        .get("executionId")
+        .is_none());
 }
 
 #[test]

@@ -16,9 +16,17 @@ export default defineConfig([
     'electron/release',
     'electron/release-installer',
     'electron/resources',
+    'electron/src/vendor',
     '**/public/vendor',
     'test-results',
   ]),
+  {
+    files: ['e2e/desktop/**/*.mjs'],
+    languageOptions: {
+      globals: { ...globals.node, ...globals.browser },
+    },
+    rules: { 'no-undef': 'error' },
+  },
   {
     files: ['**/*.{ts,tsx}'],
     extends: [

@@ -40,11 +40,16 @@ use super::claude_code::has_task_skill_names;
 mod claude_mcp;
 mod codex;
 mod codex_mcp;
+#[path = "runtime_capabilities/execution_snapshot.rs"]
+mod execution_snapshot;
 mod home_skills;
+mod json_file;
 mod skill_archive;
 pub use codex::prepare_codex_runtime;
 pub(crate) use codex::prepare_codex_runtime_locked;
+pub(super) use execution_snapshot::publish_agent_skills;
 use home_skills::HomeSkillsStage;
+pub(super) use json_file::write_json_file;
 pub(crate) mod mcp_environment;
 #[cfg(test)]
 use crate::services::workbench::archive_hash;
@@ -360,8 +365,12 @@ pub async fn prepare_claude_runtime(
         )
     })?;
 
-    let config_dir =
-        claude_config_dir(request, Some(&task_dir)).unwrap_or_else(|| task_dir.join(".claude"));
+    let config_dir = spec
+        .envs()
+        .get("CLAUDE_CONFIG_DIR")
+        .map(PathBuf::from)
+        .or_else(|| claude_config_dir(request, Some(&task_dir)))
+        .unwrap_or_else(|| task_dir.join(".claude"));
     crate::artifact_workspace::bind(request, Some(&task_dir))?;
     fs::create_dir_all(&config_dir).map_err(|error| {
         format!(
@@ -417,9 +426,7 @@ pub async fn prepare_claude_runtime(
             ),
         ],
     );
-    if managed_wework_mcp_required(request) {
-        crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint().await?;
-    }
+    crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint().await?;
     spec = claude_mcp::prepare(&config_dir, request, &global_mcps, spec)?;
     log_runtime_event(
         request,
@@ -433,24 +440,20 @@ pub async fn prepare_claude_runtime(
     Ok(spec)
 }
 
-fn managed_wework_mcp_required(request: &ExecutionRequest) -> bool {
-    let notifications_available = request
-        .backend_url
-        .as_deref()
-        .is_some_and(|value| !value.trim().is_empty())
-        && request
-            .auth_token
-            .as_deref()
-            .is_some_and(|value| !value.trim().is_empty());
-    notifications_available
-        || crate::task_runtime::mcp::stand_in_identity(request).is_some()
-        || crate::task_runtime::mcp::encoded_space_context_grant(request).is_some()
-}
-
 fn inject_managed_wework_mcps(
     request: &ExecutionRequest,
     mcp_servers: &mut BTreeMap<String, Value>,
 ) -> Result<(), String> {
+    mcp_servers.remove(crate::workbench_control::SERVER_NAME);
+    if let Some(config) = crate::task_runtime::mcp::control_mcp_client_config(request)? {
+        mcp_servers.insert(
+            crate::workbench_control::SERVER_NAME.to_owned(),
+            json!({
+                "type": "http", "url": config.url, "headers": config.headers,
+                "timeout": crate::workbench_control::read_budget::TOOL_TIMEOUT_SECONDS * 1000,
+            }),
+        );
+    }
     if let Some(config) = crate::task_runtime::mcp::stand_in_mcp_client_config(request)? {
         mcp_servers.insert(
             crate::task_runtime::mcp::STAND_IN_MCP_SERVER_NAME.into(),
@@ -475,9 +478,6 @@ fn inject_managed_wework_mcps(
                 "timeout": crate::task_runtime::mcp::SPACE_MCP_TOOL_TIMEOUT_SECONDS * 1000,
             }),
         );
-    }
-    if crate::task_runtime::mcp::encoded_space_context_grant(request).is_none() {
-        return Ok(());
     }
     let config = crate::task_runtime::mcp::space_mcp_client_config(request)?;
     let headers = config
@@ -593,6 +593,7 @@ async fn deploy_request_skills(
     ) else {
         if required_skills.is_empty() {
             return super::instance_home::request_home(request)
+                .and_then(|_| skills_dir.parent().map(Path::to_owned))
                 .map(|home| {
                     let skills = HomeSkillsStage::prepare(&home)?;
                     skills.activate()
@@ -607,7 +608,8 @@ async fn deploy_request_skills(
         });
     };
     let home_skills = super::instance_home::request_home(request)
-        .map(|home| HomeSkillsStage::prepare(&home))
+        .and_then(|_| skills_dir.parent())
+        .map(HomeSkillsStage::prepare)
         .transpose()?;
     if let Some(home_skills) = &home_skills {
         home_skills.reuse(&plan.skills)?;
@@ -1373,23 +1375,7 @@ fn write_skill_manifest(
     skills_dir: &Path,
     manifest: &BTreeMap<String, InstalledSkillRecord>,
 ) -> Result<(), String> {
-    let path = skill_manifest_path(skills_dir);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
-    }
-    let content = serde_json::to_string_pretty(manifest)
-        .map_err(|error| format!("failed to serialize skill manifest: {error}"))?;
-    use std::io::Write;
-    let mut staging = tempfile::NamedTempFile::new_in(skills_dir)
-        .map_err(|error| format!("failed to stage skill manifest: {error}"))?;
-    staging
-        .write_all(content.as_bytes())
-        .map_err(|error| format!("failed to write skill manifest: {error}"))?;
-    staging
-        .persist(&path)
-        .map_err(|error| format!("failed to publish {}: {error}", path.display()))?;
-    Ok(())
+    write_json_file(&skill_manifest_path(skills_dir), manifest)
 }
 
 #[cfg(test)]
@@ -2198,12 +2184,18 @@ fn install_deferred_mcp_hook(config_dir: &Path) {
         }]
     });
     if let Some(items) = pre_tool_use.as_array_mut() {
-        items.retain(
-            |item| match item.pointer("/hooks/0/command").and_then(Value::as_str) {
-                Some(command) => command != hook_command,
-                None => true,
-            },
-        );
+        items.retain(|item| {
+            let managed = item["matcher"] == "mcp__.*interactive_form_question.*"
+                && item
+                    .pointer("/hooks/0/command")
+                    .and_then(Value::as_str)
+                    .is_some_and(|command| {
+                        Path::new(command)
+                            .file_name()
+                            .is_some_and(|name| name == "defer-interactive-mcp-hook.sh")
+                    });
+            !managed
+        });
         items.push(hook_entry);
     } else {
         *pre_tool_use = Value::Array(vec![hook_entry]);
@@ -2255,6 +2247,7 @@ fn ensure_object<'a>(object: &'a mut Map<String, Value>, key: &str) -> &'a mut M
 fn collect_request_mcp_servers(request: &ExecutionRequest) -> BTreeMap<String, Value> {
     let mut servers = extract_claude_options(request, &BTreeMap::new()).mcp_servers;
     preserve_explicit_mcp_approval_modes(request, &mut servers);
+    servers.remove(crate::workbench_control::SERVER_NAME);
     servers
 }
 
@@ -2495,7 +2488,7 @@ fn request_api_base_url(_request: &ExecutionRequest) -> String {
     request_backend_url_or_default(_request)
 }
 
-fn api_url(backend_url: &str, path: &str) -> Result<String, String> {
+pub(crate) fn api_url(backend_url: &str, path: &str) -> Result<String, String> {
     let mut backend =
         url::Url::parse(backend_url.trim()).map_err(|_| "invalid backend API URL".to_owned())?;
     let base_path = backend.path().trim_end_matches('/');
@@ -2506,27 +2499,6 @@ fn api_url(backend_url: &str, path: &str) -> Result<String, String> {
         .join(path.trim_start_matches('/'))
         .map(Into::into)
         .map_err(|_| "invalid backend API path".to_owned())
-}
-
-pub(super) fn write_json_file(path: &Path, value: &Value) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
-    }
-    let content = serde_json::to_string_pretty(value)
-        .map_err(|error| format!("failed to serialize JSON: {error}"))?;
-    let parent = path.parent().ok_or("JSON file has no parent")?;
-    let mut file = tempfile::NamedTempFile::new_in(parent)
-        .map_err(|error| format!("failed to stage JSON: {error}"))?;
-    use std::io::Write;
-    file.write_all(content.as_bytes())
-        .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
-    file.as_file()
-        .sync_all()
-        .map_err(|error| error.to_string())?;
-    file.persist(path)
-        .map_err(|error| format!("failed to publish JSON: {}", error.error))?;
-    Ok(())
 }
 
 fn primary_bot(request: &ExecutionRequest) -> Option<&Value> {
@@ -2646,6 +2618,8 @@ fn toml_json_value(value: &Value) -> String {
 #[cfg(test)]
 mod tests {
     mod codex;
+    #[path = "workbench_control.rs"]
+    mod workbench_control;
 
     use super::*;
     use std::io::{Cursor, Write};
@@ -2790,7 +2764,7 @@ mod tests {
         inject_managed_wework_mcps(&request, &mut servers)
             .expect("notifications MCP should be injected");
 
-        assert!(!servers.contains_key(crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME));
+        assert!(servers.contains_key(crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME));
         let server = &servers[crate::task_runtime::mcp::NOTIFICATIONS_MCP_SERVER_NAME];
         assert_eq!(server["type"], "http");
         let url = server["url"]
@@ -2804,6 +2778,27 @@ mod tests {
         let serialized = serde_json::to_string(server).expect("serialized Claude MCP config");
         assert!(!serialized.contains("https://wework.example.com"));
         assert!(!serialized.contains("runtime-token"));
+    }
+
+    #[test]
+    fn claude_discovers_project_space_without_a_project_binding() {
+        let mut servers = BTreeMap::new();
+        inject_managed_wework_mcps(&ExecutionRequest::default(), &mut servers).unwrap();
+        let server = &servers[crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME];
+        assert_eq!(server["type"], "http");
+        assert!(server["headers"]["X-Wework-Mcp-Context"].as_str().is_some());
+    }
+
+    #[test]
+    fn claude_rejects_incomplete_dispatch_instead_of_exposing_personal_tools() {
+        let mut request = ExecutionRequest::default();
+        request.extra.insert(
+            "origin".into(),
+            json!({
+                "type":"issue_dispatch", "dispatchRole":"manager", "cloudProjectId":"space-1"
+            }),
+        );
+        assert!(inject_managed_wework_mcps(&request, &mut BTreeMap::new()).is_err());
     }
 
     #[test]

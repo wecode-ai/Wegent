@@ -643,7 +643,7 @@ pub(crate) fn subtask_responses(
     contexts: &[ContextRow],
     bots: &[SubtaskBotResponse],
     inherited_task_ids: &[i64],
-) -> Vec<SubtaskResponse> {
+) -> Result<Vec<SubtaskResponse>, String> {
     subtasks
         .iter()
         .map(|subtask| {
@@ -662,8 +662,8 @@ pub(crate) fn subtask_responses(
                 .iter()
                 .filter(|context| context.subtask_contexts_subtask_id == subtask.id)
                 .map(context_brief)
-                .collect();
-            SubtaskResponse {
+                .collect::<Result<_, _>>()?;
+            Ok(SubtaskResponse {
                 id: subtask.id,
                 task_id: subtask.task_id,
                 inherited,
@@ -700,7 +700,7 @@ pub(crate) fn subtask_responses(
                 sender_user_id: subtask.sender_user_id,
                 sender_user_name: None,
                 reply_to_subtask_id: subtask.reply_to_subtask_id,
-            }
+            })
         })
         .collect()
 }
@@ -751,8 +751,31 @@ fn selected_document_count(document_ids: &Option<OpaqueJson>) -> i64 {
         .map_or(0, |ids| ids.len() as i64)
 }
 
-/// `SubtaskContextBrief.from_model` + `build_context_display_fields`.
-pub(crate) fn context_brief(context: &ContextRow) -> ContextBriefResponse {
+/// The current Python model's `ContextType` values (`shared/models/db/enums.py`).
+pub(crate) const CONTEXT_TYPES: [&str; 6] = [
+    "attachment",
+    "knowledge_base",
+    "selected_documents",
+    "external_knowledge",
+    "remote_workspace_artifact",
+    "conversation",
+];
+
+/// Validate `SubtaskContextBrief.from_model` and preserve its current fields.
+pub(crate) fn context_brief(context: &ContextRow) -> Result<ContextBriefResponse, String> {
+    let context_type = context.subtask_contexts_context_type.as_str();
+    if !CONTEXT_TYPES.contains(&context_type) {
+        return Err(format!(
+            "context_type: Input should be one of {CONTEXT_TYPES:?}, got {context_type:?}"
+        ));
+    }
+    Ok(context_brief_fields(context))
+}
+
+/// `ctx_dict` + `build_context_display_fields` without the `from_model`
+/// enum validation. Callers that build the context dictionary directly
+/// use this renderer; `context_brief` validates the model conversion first.
+pub(crate) fn context_brief_fields(context: &ContextRow) -> ContextBriefResponse {
     let data = context
         .subtask_contexts_type_data
         .as_ref()
@@ -848,6 +871,9 @@ mod json_contract_tests {
     #[test]
     fn context_json_baseline() {
         let mut output = Vec::new();
+        // The baseline asserts the field projection for every recorded shape;
+        // enum validation is covered separately because `from_model` rejects
+        // unknown types before rendering.
         for kind in [
             "attachment",
             "knowledge_base",
@@ -898,8 +924,8 @@ mod json_contract_tests {
                         Value::Object(data),
                     ))),
                 };
-                output
-                    .push(crate::json_contract_tests::serialized(context_brief(&context)).unwrap());
+                let brief = context_brief_fields(&context);
+                output.push(crate::json_contract_tests::serialized(brief).unwrap());
             }
         }
         crate::json_contract_tests::assert_fixture("task_contexts", output);
@@ -934,12 +960,10 @@ mod json_contract_tests {
                 reply_to_subtask_id: populated.then_some(0),
             };
             output.push(
-                crate::json_contract_tests::serialized(subtask_responses(
-                    &[subtask],
-                    &[],
-                    &[],
-                    if populated { &[2] } else { &[] },
-                ))
+                crate::json_contract_tests::serialized(
+                    subtask_responses(&[subtask], &[], &[], if populated { &[2] } else { &[] })
+                        .unwrap(),
+                )
                 .unwrap(),
             );
         }

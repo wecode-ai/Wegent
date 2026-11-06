@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import assert from 'node:assert/strict'
 import { Readable } from 'node:stream'
 import { test } from 'vitest'
@@ -209,6 +211,19 @@ test('recognizes converted Chat and Anthropic predictions without native metadat
     }),
     false
   )
+})
+
+test('recognizes Responses predictions after the proxy omits native metadata', () => {
+  const prediction = {
+    role: 'user',
+    content: [{ type: 'input_text', text: REPLY_PREDICTION_PROMPT }],
+  }
+  assert.equal(isReplyPredictionRequest({ input: [prediction] }), true)
+  assert.equal(
+    isReplyPredictionRequest({ input: [prediction, { role: 'user', content: 'Continue' }] }),
+    false
+  )
+  assert.equal(isReplyPredictionRequest({ input: [{ ...prediction, role: 'assistant' }] }), false)
 })
 
 test('serves background predictions without advancing the active tool scenario', async () => {

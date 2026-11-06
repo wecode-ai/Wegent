@@ -104,6 +104,32 @@ pub struct ExecutorManager {
 }
 
 impl ExecutorManager {
+    /// Ask a runtime to upload its workspace to an application-signed object URL.
+    pub async fn archive_workspace(
+        &self,
+        task_id: i64,
+        upload_url: &str,
+        executor_name: &str,
+        executor_namespace: &str,
+        max_size_mb: u64,
+    ) -> Result<serde_json::Value> {
+        let response = self
+            .client
+            .post(format!("{}/executor-manager/executor/archive", self.base))?
+            .json(&serde_json::json!({
+                "task_id": task_id, "upload_url": upload_url,
+                "executor_name": executor_name, "executor_namespace": executor_namespace,
+                "max_size_mb": max_size_mb, "runtime_type": "executor",
+            }))
+            .timeout(Duration::from_secs(120))
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            anyhow::bail!("executor archive returned HTTP {}", response.status());
+        }
+        Ok(response.json().await?)
+    }
+
     /// Build the client from `EXECUTOR_MANAGER_URL` and
     /// `EXECUTOR_CANCEL_TASK_URL`, falling back to the source defaults when
     /// either is unset.
@@ -294,7 +320,8 @@ impl ExecutorManager {
         if (200..300).contains(&status) {
             Ok(())
         } else {
-            anyhow::bail!("executor delete returned HTTP {status}")
+            let detail = response.text().await.unwrap_or_default();
+            anyhow::bail!("executor delete returned HTTP {status}: {detail}")
         }
     }
 

@@ -18,6 +18,9 @@ from tests.api.test_workspace_collaboration_api import (
 from tests.api.test_workspace_shared_agents import _native_team
 
 
+@pytest.mark.parametrize(
+    "catalog_query", ["", "?include_readiness=true", "?include_readiness=false"]
+)
 @pytest.mark.parametrize("display_name", ["代码审查智能体", "Review Agent", None, ""])
 def test_discover_and_bind_workspace_agent_by_display_name(
     test_client: TestClient,
@@ -25,6 +28,7 @@ def test_discover_and_bind_workspace_agent_by_display_name(
     test_user: User,
     test_token: str,
     display_name: str | None,
+    catalog_query: str,
 ) -> None:
     workspace, project, maintainer, token = _workspace_project_with_maintainer(
         test_client, test_db, test_token
@@ -58,14 +62,17 @@ def test_discover_and_bind_workspace_agent_by_display_name(
     assert shared.status_code == 201
     assert shared.json()["name"] == expected_name
     catalog = test_client.get(
-        f"/api/v1/workspaces/{workspace['id']}/agents", headers=_auth(token)
+        f"/api/v1/workspaces/{workspace['id']}/agents{catalog_query}",
+        headers=_auth(token),
     )
     assert catalog.status_code == 200
     selected = next(
         agent for agent in catalog.json()["items"] if agent["name"] == expected_name
     )
     assert selected["team_id"] == team.id
-    assert selected["status"] == "available"
+    assert selected["status"] == (
+        "unchecked" if catalog_query.endswith("false") else "available"
+    )
     assert selected["can_edit"] is False
 
     response = test_client.post(

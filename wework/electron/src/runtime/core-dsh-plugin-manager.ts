@@ -11,8 +11,10 @@ import {
   stat,
   writeFile,
 } from 'node:fs/promises'
-import { isAbsolute, join, relative, resolve } from 'node:path'
+import { isAbsolute, join, relative, resolve, toNamespacedPath } from 'node:path'
 import { runtimeNodeArgs } from './electron-node-runtime.js'
+import { recordReleaseDiagnostic } from './release-diagnostics.js'
+import { terminateProcessTree } from './runtime-supervisor.js'
 
 const PROFILE_NAME = 'wework-core'
 const STATE_FILE = '.wework-core-plugins.json'
@@ -33,7 +35,8 @@ export const IMMUTABLE_CORE_DSH_PLUGINS = new Set([
   '@wegent/dsh-executor-runtime',
   '@wegent/dsh-terminal-runtime',
   '@wegent/dsh-plugin-runtime',
-  '@wegent/dsh-connection-runtime',
+  '@wegent/dsh-connection-host',
+  '@wegent/dsh-coordination-runtime',
   '@wegent/dsh-wework-plugin-developer',
 ])
 
@@ -128,6 +131,7 @@ export class CoreDshPluginManager {
   }
 
   install(spec: string): Promise<CoreDshPlugin[]> {
+    logPluginCommand(this.options.environment, { stage: 'install-requested' })
     return this.mutate(async () => {
       validateSpec(spec)
       const before = await this.readManifest()
@@ -170,11 +174,13 @@ export class CoreDshPluginManager {
         await this.preflight()
         return source
       } catch (error) {
+        logPluginCommand(this.options.environment, { stage: 'rollback-started' })
         await this.restore(snapshot).catch(restoreError => {
           throw new Error(
             `${errorMessage(error)}\nProfile recovery failed: ${errorMessage(restoreError)}`
           )
         })
+        logPluginCommand(this.options.environment, { stage: 'rollback-completed' })
         throw error
       }
     })
@@ -235,16 +241,23 @@ export class CoreDshPluginManager {
 
   private mutate(action: () => Promise<void>): Promise<CoreDshPlugin[]> {
     return this.serial(async () => {
+      logPluginCommand(this.options.environment, { stage: 'snapshot-started' })
       const snapshot = await this.snapshot()
       try {
+        logPluginCommand(this.options.environment, { stage: 'mutation-started' })
         await action()
-        return await this.readInventory()
+        logPluginCommand(this.options.environment, { stage: 'inventory-started' })
+        const inventory = await this.readInventory()
+        logPluginCommand(this.options.environment, { stage: 'mutation-completed' })
+        return inventory
       } catch (error) {
+        logPluginCommand(this.options.environment, { stage: 'rollback-started' })
         await this.restore(snapshot).catch(restoreError => {
           throw new Error(
             `${errorMessage(error)}\nProfile recovery failed: ${errorMessage(restoreError)}`
           )
         })
+        logPluginCommand(this.options.environment, { stage: 'rollback-completed' })
         throw error
       }
     })
@@ -388,6 +401,8 @@ export class CoreDshPluginManager {
     const pnpmEntry = join(this.options.runtimeRoot, 'node_modules', 'pnpm', 'bin', 'pnpm.cjs')
     const commandArgs = runtimeNodeArgs(this.options.environment, [
       pnpmEntry,
+      '--dir',
+      this.profileRoot,
       '--store-dir',
       join(this.options.dshHome, 'pnpm-store'),
       ...args,
@@ -650,11 +665,52 @@ function commandError(stage: string, error: unknown): Error {
 function redactDiagnostics(value: string): string {
   return value
     .replace(/(https?:\/\/)[^/\s:@]+:[^/\s@]+@/gi, '$1[redacted]@')
-    .replace(/((?:token|password|authorization|_authToken)\s*[:=]\s*)[^\s]+/gi, '$1[redacted]')
+    .replace(/(\bBearer\s+)[^\s'"]+/gi, '$1[redacted]')
+    .replace(
+      /(["']?(?:token|password|authorization|_authToken)["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s]+)/gi,
+      '$1[redacted]'
+    )
 }
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+function logPluginCommand(environment: NodeJS.ProcessEnv, fields: Record<string, unknown>): void {
+  if (environment.VITE_WEWORK_E2E === 'true') {
+    recordReleaseDiagnostic('core-plugin-command', fields, true)
+    console.info('[core-dsh-plugin-command]', fields)
+  }
+}
+
+function packageManagerProgress(output: string): Record<string, number | string[]> {
+  const progress = [
+    ...output.matchAll(/Progress: resolved (\d+), reused (\d+), downloaded (\d+), added (\d+)/g),
+  ].at(-1)
+  const knownCodes = [
+    'EAI_AGAIN',
+    'ECONNRESET',
+    'ECONNREFUSED',
+    'ETIMEDOUT',
+    'ENOTFOUND',
+    'ERR_PNPM_META_FETCH_FAIL',
+    'ERR_PNPM_FETCH_FAILED',
+    'ERR_PNPM_NO_MATCHING_VERSION',
+    'ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED',
+    'ERR_PNPM_TARBALL_INTEGRITY',
+    ...[400, 401, 403, 404, 429, 500, 502, 503, 504].map(code => `ERR_PNPM_FETCH_${code}`),
+  ]
+  return {
+    ...(progress
+      ? {
+          resolved: Number(progress[1]),
+          reused: Number(progress[2]),
+          downloaded: Number(progress[3]),
+          added: Number(progress[4]),
+        }
+      : {}),
+    errorCodes: knownCodes.filter(code => new RegExp(`\\b${code}\\b`).test(output)),
+  }
 }
 
 function runCommand(
@@ -663,31 +719,105 @@ function runCommand(
   options: { cwd: string; env: NodeJS.ProcessEnv }
 ): Promise<CommandResult> {
   return new Promise((resolve, reject) => {
+    const startedAt = Date.now()
+    const phase = args.includes('--dump-config') ? 'profile-validation' : 'package-manager'
+    logPluginCommand(options.env, { stage: 'command-spawning', phase, command, cwd: options.cwd })
     const child = spawn(command, args, {
-      cwd: options.cwd,
+      cwd: toNamespacedPath(options.cwd),
       env: options.env,
       shell: false,
+      detached: process.platform !== 'win32',
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
+    logPluginCommand(options.env, { stage: 'command-started', phase, pid: child.pid })
     let stdout = ''
     let stderr = ''
+    let settled = false
+    let streamError: Error | undefined
     const timeout = setTimeout(() => {
-      child.kill()
+      logPluginCommand(options.env, {
+        stage: 'command-timed-out',
+        phase,
+        elapsedMs: Date.now() - startedAt,
+      })
+      fail(Object.assign(new Error(`${command} timed out`), { code: 'ETIMEDOUT' }), true)
     }, 120_000)
     timeout.unref()
     child.stdout.on('data', chunk => {
       stdout += chunk
+      if (phase === 'package-manager')
+        logPluginCommand(options.env, {
+          stage: 'command-output',
+          phase,
+          stream: 'stdout',
+          bytes: Buffer.byteLength(stdout),
+          ...packageManagerProgress(stdout),
+        })
     })
     child.stderr.on('data', chunk => {
       stderr += chunk
+      logPluginCommand(options.env, {
+        stage: 'command-output',
+        phase,
+        stream: 'stderr',
+        bytes: Buffer.byteLength(stderr),
+        ...(phase === 'package-manager' ? packageManagerProgress(stderr) : {}),
+      })
     })
-    child.once('error', error => {
+    const fail = (error: Error, stop = false): void => {
+      if (settled) return
+      settled = true
       clearTimeout(timeout)
-      reject(Object.assign(error, { stdout, stderr }))
-    })
-    child.once('exit', code => {
+      logPluginCommand(options.env, {
+        stage: 'command-failed',
+        phase,
+        code: (error as NodeJS.ErrnoException).code,
+        message: error.message,
+        elapsedMs: Date.now() - startedAt,
+      })
+      const failure = Object.assign(error, { stdout, stderr })
+      if (stop && child.pid) {
+        void terminateProcessTree(child, 1000).then(
+          () => reject(failure),
+          cleanupError =>
+            reject(
+              Object.assign(
+                new AggregateError(
+                  [failure, cleanupError],
+                  `${failure.message}; command cleanup failed: ${errorMessage(cleanupError)}`
+                ),
+                { stdout, stderr }
+              )
+            )
+        )
+      } else reject(failure)
+    }
+    const streamFailed = (error: Error) => {
+      const failure = (streamError ??= error)
+      // A failed Windows spawn also reports disconnected stdio pipes. Let the
+      // process error from the same tick preserve its original failure code.
+      queueMicrotask(() => {
+        fail(failure, true)
+      })
+    }
+    child.once('error', fail)
+    child.stdout.once('error', streamFailed)
+    child.stderr.once('error', streamFailed)
+    child.once('close', code => {
+      if (settled) return
+      if (streamError) {
+        fail(streamError)
+        return
+      }
+      settled = true
       clearTimeout(timeout)
+      logPluginCommand(options.env, {
+        stage: 'command-exited',
+        phase,
+        code,
+        elapsedMs: Date.now() - startedAt,
+      })
       if (code === 0) resolve({ stdout, stderr })
       else
         reject(Object.assign(new Error(`${command} exited with code ${code}`), { stdout, stderr }))

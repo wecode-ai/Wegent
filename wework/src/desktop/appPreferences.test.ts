@@ -15,6 +15,7 @@ const mergedDefaultPreferences = {
     { id: 'fixed-task', kind: 'task' },
     { id: 'fixed-board', kind: 'board' },
     { id: 'fixed-agent', kind: 'agent' },
+    { id: 'pending-interactions', kind: 'auxiliary', contentRoute: '/pending-interactions' },
   ],
   startupWorkspaceTabId: 'fixed-task',
   systemDragEnabled: true,
@@ -22,11 +23,12 @@ const mergedDefaultPreferences = {
   closeToTrayHintSeen: false,
   language: 'zh-CN',
   terminalContextInjectionEnabled: true,
-  contextCompactionThreshold: 85,
+  contextCompactionThreshold: 75,
   experimentalFeaturesEnabled: false,
   localCodexSubscriptionEnabled: true,
   telemetryConsentAsked: false,
   telemetryEnabled: false,
+  performanceRecordingEnabled: false,
   supervisorPrinciples: '',
   supervisorModelSelection: null,
   projectAiModelSelection: null,
@@ -38,6 +40,7 @@ const mergedDefaultPreferences = {
   browserExternalLinkTarget: 'system',
   browserLocalLinkTarget: 'wework',
   browserDownloadDirectory: null,
+  browserFullControl: false,
   browserAskBeforeDownload: false,
   appshotsPlaySound: true,
   computerUseEnabled: false,
@@ -110,6 +113,35 @@ describe('appPreferences', () => {
     await expect(getAppPreferences()).resolves.toEqual({
       ...mergedDefaultPreferences,
       showMainWindowOnLaunch: false,
+    })
+  })
+
+  test.each([
+    [undefined, false],
+    [null, false],
+    ['true', false],
+    [true, true],
+    [false, false],
+  ])('loads performance recording preference %j as %j', async (stored, expected) => {
+    invokeMock.mockResolvedValue({ performanceRecordingEnabled: stored })
+
+    const { getAppPreferences } = await import('./appPreferences')
+
+    await expect(getAppPreferences()).resolves.toMatchObject({
+      performanceRecordingEnabled: expected,
+    })
+  })
+
+  test('persists performance recording through desktop preferences', async () => {
+    invokeMock.mockResolvedValue({ performanceRecordingEnabled: true })
+
+    const { updateAppPreferences } = await import('./appPreferences')
+
+    await expect(
+      updateAppPreferences({ performanceRecordingEnabled: true })
+    ).resolves.toMatchObject({ performanceRecordingEnabled: true })
+    expect(invokeMock).toHaveBeenCalledWith('preferences.update', {
+      patch: { performanceRecordingEnabled: true },
     })
   })
 
@@ -263,6 +295,16 @@ describe('appPreferences', () => {
       startupWorkspaceTabId: '',
     })
   })
+
+  test.each([undefined, false, 'true', 1, true])(
+    'only enables full control for boolean true (%s)',
+    async value => {
+      const { mergeAppPreferences } = await import('./appPreferences')
+      expect(mergeAppPreferences({ browserFullControl: value }).browserFullControl).toBe(
+        value === true
+      )
+    }
+  )
 
   test('normalizes stored browser preferences', async () => {
     invokeMock.mockResolvedValue({

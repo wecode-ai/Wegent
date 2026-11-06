@@ -173,13 +173,19 @@ fn is_protected_upstream_header(name: &str) -> bool {
 /// `POST /api/runtime-work/llm-responses-proxy/responses`.
 pub struct LlmResponsesProxyRoute {
     state: Arc<AppState>,
+    upstream_http: brz_http::Client,
 }
 
 impl LlmResponsesProxyRoute {
     /// Builds the route handler over the shared application state.
-    #[must_use]
-    pub fn new(state: Arc<AppState>) -> Self {
-        Self { state }
+    ///
+    /// # Errors
+    /// Returns an error when the dedicated upstream transport cannot be built.
+    pub fn new(state: Arc<AppState>) -> anyhow::Result<Self> {
+        Ok(Self {
+            state,
+            upstream_http: super::transport::build_http()?,
+        })
     }
 }
 
@@ -212,20 +218,33 @@ impl Handler<AppAuthenticator> for LlmResponsesProxyRoute {
         request: Request<'a>,
         authenticator: &'a AppAuthenticator,
     ) -> Response {
-        let user: SessionUser = match brz_http_server::__private::authenticate_required(
+        let deadline = tokio::time::Instant::now() + super::REQUEST_TIMEOUT;
+        let authentication = brz_http_server::__private::authenticate_required(
             authenticator,
             AuthRequest::from_request(&request),
             request.response_arena(),
-        )
-        .await
-        {
-            Ok(user) => user,
-            Err(response) => return response,
+        );
+        let user: SessionUser = match tokio::time::timeout_at(deadline, authentication).await {
+            Ok(Ok(user)) => user,
+            Ok(Err(response)) => return response,
+            Err(_) => {
+                return super::httpx_request_error("authentication exceeded the request deadline")
+                    .into_http_error(request.response_arena());
+            }
         };
         let headers = InboundHeaders {
             headers: request.headers(),
         };
-        match super::proxy_llm_responses(&self.state, &user.0, &headers, request.body()).await {
+        match super::proxy_llm_responses(
+            &self.state,
+            &self.upstream_http,
+            &user.0,
+            &headers,
+            request.body(),
+            deadline,
+        )
+        .await
+        {
             Ok(reply) => reply.into_http_response(request.response_arena()),
             Err(error) => error.into_http_error(request.response_arena()),
         }

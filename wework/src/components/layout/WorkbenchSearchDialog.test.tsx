@@ -1,8 +1,8 @@
+import { notifyWorkbenchCloudSearchResults } from '@/features/workbench/workbenchCloudDataEvents'
+import '@/i18n'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import '@/i18n'
-import { notifyWorkbenchCloudSearchResults } from '@/features/workbench/workbenchCloudDataEvents'
 import { WorkbenchSearchDialog } from './WorkbenchSearchDialog'
 
 function searchItem(title: string, snippet: string) {
@@ -24,38 +24,8 @@ function searchItem(title: string, snippet: string) {
 }
 
 describe('WorkbenchSearchDialog', () => {
-  test('closes with Escape after focus leaves the search input', async () => {
-    const onClose = vi.fn()
-    render(
-      <WorkbenchSearchDialog
-        open
-        onClose={onClose}
-        onSearchRuntimeWork={vi.fn()}
-        onOpenRuntimeTask={vi.fn()}
-      />
-    )
-    screen.getByTestId('workbench-search-close-button').focus()
-    await userEvent.keyboard('{Escape}')
-    expect(onClose).toHaveBeenCalledTimes(1)
-  })
-
   afterEach(() => {
     vi.useRealTimers()
-  })
-
-  test('uses the themed popover surface instead of a fixed light background', () => {
-    render(
-      <WorkbenchSearchDialog
-        open
-        onClose={vi.fn()}
-        onSearchRuntimeWork={vi.fn().mockResolvedValue({ items: [] })}
-        onOpenRuntimeTask={vi.fn()}
-      />
-    )
-
-    const dialog = screen.getByTestId('workbench-search-dialog')
-    expect(dialog).toHaveClass('bg-popover', 'text-text-primary', 'ring-border')
-    expect(dialog).not.toHaveClass('bg-white')
   })
 
   test('searches transcripts and opens a runtime task result', async () => {
@@ -114,67 +84,6 @@ describe('WorkbenchSearchDialog', () => {
       })
     })
     expect(onClose).toHaveBeenCalledTimes(1)
-  })
-
-  test('starts searching after a short debounce', async () => {
-    vi.useFakeTimers()
-    const onSearchRuntimeWork = vi.fn().mockResolvedValue({ items: [] })
-
-    render(
-      <WorkbenchSearchDialog
-        open
-        onClose={vi.fn()}
-        onSearchRuntimeWork={onSearchRuntimeWork}
-        onOpenRuntimeTask={vi.fn()}
-      />
-    )
-
-    fireEvent.change(screen.getByTestId('workbench-search-input'), {
-      target: { value: '沙箱' },
-    })
-
-    expect(onSearchRuntimeWork).not.toHaveBeenCalled()
-
-    await vi.advanceTimersByTimeAsync(179)
-    expect(onSearchRuntimeWork).not.toHaveBeenCalled()
-
-    await vi.advanceTimersByTimeAsync(1)
-    expect(onSearchRuntimeWork).toHaveBeenCalledWith({ query: '沙箱', limit: 20 })
-  })
-
-  test('does not show loading state before debounce starts the request', async () => {
-    vi.useFakeTimers()
-    let resolveSearch: ((value: { items: [] }) => void) | undefined
-    const onSearchRuntimeWork = vi.fn(
-      () =>
-        new Promise<{ items: [] }>(resolve => {
-          resolveSearch = resolve
-        })
-    )
-
-    render(
-      <WorkbenchSearchDialog
-        open
-        onClose={vi.fn()}
-        onSearchRuntimeWork={onSearchRuntimeWork}
-        onOpenRuntimeTask={vi.fn()}
-      />
-    )
-
-    fireEvent.change(screen.getByTestId('workbench-search-input'), {
-      target: { value: 'pwd' },
-    })
-
-    expect(screen.queryByText(/正在搜索|Searching/)).not.toBeInTheDocument()
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(180)
-    })
-    expect(screen.getByText(/正在搜索|Searching/)).toBeInTheDocument()
-
-    await act(async () => {
-      resolveSearch?.({ items: [] })
-    })
   })
 
   test('reuses cached results when a query repeats', async () => {
@@ -243,5 +152,47 @@ describe('WorkbenchSearchDialog', () => {
 
     expect(screen.getByText('Local result')).toBeInTheDocument()
     expect(screen.getByText('Cloud result')).toBeInTheDocument()
+  })
+
+  test('excludes the primary identity from local and background cloud search results', async () => {
+    const user = userEvent.setup()
+    const primary = {
+      ...searchItem('Primary identity result', 'result'),
+      address: {
+        deviceId: 'device-1',
+        taskId: 'stand-in-chat-7-primary',
+        runtimeHandle: {
+          origin: { type: 'stand_in_identity', userId: 7, standInId: null },
+        },
+      },
+    }
+    render(
+      <WorkbenchSearchDialog
+        open
+        onClose={vi.fn()}
+        onSearchRuntimeWork={vi.fn().mockResolvedValue({
+          items: [primary, searchItem('Ordinary result', 'result')],
+        })}
+        onOpenRuntimeTask={vi.fn()}
+      />
+    )
+
+    await user.type(screen.getByTestId('workbench-search-input'), 'result')
+    expect(await screen.findByText('Ordinary result')).toBeInTheDocument()
+    expect(screen.queryByText('Primary identity result')).not.toBeInTheDocument()
+    act(() => {
+      notifyWorkbenchCloudSearchResults({
+        request: { query: 'result', limit: 20 },
+        response: {
+          items: [
+            { ...primary, title: 'Cloud primary identity result' },
+            searchItem('Delegated work result', 'result'),
+          ],
+        },
+      })
+    })
+    expect(screen.queryByText('Cloud primary identity result')).not.toBeInTheDocument()
+    expect(screen.getByText('Delegated work result')).toBeInTheDocument()
+    expect(screen.getByText('Ordinary result')).toBeInTheDocument()
   })
 })

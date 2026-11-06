@@ -251,7 +251,7 @@ describe("createSharedWorkspaceHttpApi", () => {
     );
     expect(get).toHaveBeenNthCalledWith(
       3,
-      "/v1/workspaces/workspace%2F1/agents",
+      "/v1/workspaces/workspace%2F1/agents?include_readiness=false",
     );
     expect(post).toHaveBeenCalledWith("/v1/workspaces/workspace%2F1/members", {
       user_id: 8,

@@ -1,0 +1,12 @@
+{
+  "order": 128000,
+  "scenario": "./scenarios/codex-account-login.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 77000,
+      "shard": 1,
+      "position": 17000
+    }
+  }
+}

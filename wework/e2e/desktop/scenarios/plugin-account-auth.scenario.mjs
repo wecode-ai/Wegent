@@ -1,5 +1,11 @@
-import { createAccountAuthFixture } from '../modules/plugin-account-auth-fixture.mjs'
+import {
+  createAccountAuthFixture,
+  seedHistoricalAccountAuth,
+} from '../modules/plugin-account-auth-fixture.mjs'
 import { verifyPluginAuthCoordination } from '../modules/plugin-auth-coordination.mjs'
+import { verifyPluginAuthDetailRefresh } from '../modules/plugin-auth-detail-refresh.mjs'
+import { createGithubAuthProtocol } from '../modules/github-auth-protocol.mjs'
+import { createGithubAuthBoundaries } from '../modules/github-auth-boundaries.mjs'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
@@ -8,6 +14,8 @@ import { promisify } from 'node:util'
 import { verifyDwsCloudAccount } from '../modules/dws-account-auth.mjs'
 import { accountCommandResult } from '../modules/account-auth-command.mjs'
 import { managedRoot } from '../modules/managed-plugin-root.mjs'
+import { verifyResponsesApiGateway } from './responses-api-gateway.scenario.mjs'
+import { DESKTOP_CHECKPOINT_CI_HOSTS } from '../checkpoints.mjs'
 import {
   createConversationAuthModelFixture,
   sendOrdinaryChat,
@@ -64,6 +72,8 @@ export async function createDesktopScenario({
   executorHome,
   homePath,
   resultDir,
+  uiTimeoutMs,
+  modelResponseTimeoutMs,
   workbenchReadyTimeoutMs,
 }) {
   const dwsSourceRoot = join(resultDir, 'dws-source')
@@ -71,6 +81,21 @@ export async function createDesktopScenario({
   await mkdir(ghConfigDir, { recursive: true })
   await run('gh', ['--version'])
   const githubConfig = await createGithubManageConnectionFixture(resultDir)
+  const githubProtocol =
+    checkpoint === 'plugin-account-auth-github'
+      ? await createGithubAuthProtocol({ resultDir })
+      : null
+  const githubBoundaries = githubProtocol
+    ? createGithubAuthBoundaries({
+        protocol: githubProtocol,
+        ghConfigDir,
+        homePath,
+        resultDir,
+        uiTimeoutMs,
+        modelResponseTimeoutMs,
+        waitForValue,
+      })
+    : null
   const reconcileMarker = join(resultDir, 'plugin-account-reconcile.log')
   const retrySignal = join(resultDir, 'plugin-account-retry.signal')
   let retrySignalGeneration = 0
@@ -153,6 +178,8 @@ export async function createDesktopScenario({
 
   return {
     requiresCloudEnvironment: true,
+    prepareApp: context => githubProtocol?.prepareApp(context),
+    cleanup: () => githubProtocol?.cleanup(),
     codexConfigToml: githubConfig,
     appEnvironment: {
       GH_CONFIG_DIR: ghConfigDir,
@@ -179,8 +206,11 @@ export async function createDesktopScenario({
       let events
       const requestText = JSON.stringify(body)
       const authEvents = await authModel.respond(body)
+      const githubEvents = githubBoundaries?.handleModel(body)
       if (authEvents) {
         events = authEvents
+      } else if (githubEvents) {
+        events = githubEvents
       } else if (latestModelInputText(body).includes(ordinaryPrompt)) {
         const message = `${ordinaryPrompt} #${ordinaryRequests + 1}`
         assert.ok(latestModelInputText(body).includes(message), 'Unexpected ordinary chat message')
@@ -224,6 +254,14 @@ export async function createDesktopScenario({
         false,
         'Plugin account auth scenario must not start background reply predictions'
       )
+      if (checkpoint === DESKTOP_CHECKPOINT_CI_HOSTS.get('responses-api-gateway')) {
+        await verifyResponsesApiGateway(control, cloud, {
+          checkpoint,
+          resultDir,
+          uiTimeoutMs,
+          modelResponseTimeoutMs,
+        })
+      }
       const local = await cloud.waitForConnectedAppDevice()
       assert.equal((await api('/plugin-connections/automation')).enabled, true)
       await rm(sourceAuth)
@@ -232,6 +270,9 @@ export async function createDesktopScenario({
         version: '1.0.0',
         packageRoot: fixtureRoot,
       })
+      if (checkpoint === 'plugin-account-auth-password') {
+        await seedHistoricalAccountAuth(cloud, 'scan', release.releaseId)
+      }
       await control.command('click', '[data-testid="plugins-button"]')
       await control.command('waitFor', '[data-testid="plugins-search-input"]')
       await control.command('fill', '[data-testid="plugins-search-input"]', { value: slug })
@@ -257,6 +298,28 @@ export async function createDesktopScenario({
         item => item.spec.source.pluginKey === slug
       )
       const installedId = Number(installed.metadata.labels.id)
+      if (checkpoint === 'plugin-account-auth-password') {
+        assert.ok(
+          installed.spec.components.connectors.find(connector => connector.slug === 'mail')
+            ?.accountAuth,
+          'Installing a historical release must preserve manifest accountAuth'
+        )
+        await seedHistoricalAccountAuth(cloud, 'installed', installedId)
+        await api(
+          `/plugins/installed/sync-device?device_id=${encodeURIComponent(local.device_id)}`,
+          'POST'
+        )
+        const repaired = (await api('/plugins/installed')).items.find(
+          item => Number(item.metadata.labels.id) === installedId
+        )
+        assert.ok(
+          repaired.spec.components.connectors.find(connector => connector.slug === 'mail')
+            ?.accountAuth,
+          'Synchronizing a historical installation must restore manifest accountAuth'
+        )
+        assert.equal(repaired.spec.releaseId, installed.spec.releaseId)
+        assert.equal(repaired.spec.packageRef.checksum, installed.spec.packageRef.checksum)
+      }
       const cloudHome = dirname(cloud.remoteCodexHome)
       const cloudRoot = await waitForValue(
         () => managedRoot(cloudHome, installedId),
@@ -588,6 +651,14 @@ export async function createDesktopScenario({
               '[data-testid="plugin-connection-manage-connector:conversation-qr"]:not([disabled])'
             )
 
+            await verifyPluginAuthDetailRefresh({
+              control,
+              slug,
+              homePath,
+              captureScreenshot,
+              waitForValue,
+              uiTimeoutMs,
+            })
             await verifyConversationQrAuthorization({
               control,
               slug,
@@ -649,6 +720,14 @@ export async function createDesktopScenario({
               const previousRequests = authModel.getGithubRequests()
               await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: ghDraft })
               await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+              // Native turn startup/model response precede the UI authorization
+              // step. Do not charge that phase to the card's 10-second UI budget.
+              await waitForValue(
+                () => authModel.getGithubRequests(),
+                count => count === previousRequests + 1,
+                modelResponseTimeoutMs,
+                'GitHub authorization request did not reach the model service'
+              )
               await control.command('waitFor', '[data-testid="github-cli-login"]')
               assert.equal(
                 authModel.getGithubRequests(),
@@ -686,6 +765,11 @@ export async function createDesktopScenario({
               )
             }
             await captureScreenshot(control, 'github-cli-ordinary-chat-recovered.png', 'body')
+            await githubBoundaries.verify(control, { api, cloud, deviceId: CLOUD_DEVICE_ID })
+            // Restore the original marketplace filter for the shared final assertion.
+            await control.command('click', '[data-testid="plugin-detail-back-button"]')
+            await control.command('click', '[data-testid="plugins-distribution-tab-all"]')
+            await control.command('fill', '[data-testid="plugins-search-input"]', { value: slug })
           },
         ],
       ])
@@ -721,13 +805,29 @@ export async function createDesktopScenario({
           transferSecret,
           'synthetic-desktop-dws-access',
           'synthetic-desktop-dws-refresh',
+          'wegent-e2e-native-protocol-token',
+          'wegent-e2e-synced-protocol-token',
         ]) {
           assert.ok(!contents.includes(value), 'Provider credential appeared in runtime logs')
         }
       }
       await writeFile(
         join(resultDir, `${checkpoint}-verification.json`),
-        JSON.stringify({ checkpoint, completed: true, noCredentialLogs: true }, null, 2)
+        JSON.stringify(
+          {
+            checkpoint,
+            completed: true,
+            noCredentialLogs: true,
+            environment: {
+              processId: process.pid,
+              backendUrl: cloud.backendUrl,
+              backendLogPath: cloud.backendLogPath,
+              runtimeLogPath: cloud.remoteExecutorLogPath,
+            },
+          },
+          null,
+          2
+        )
       )
     },
   }

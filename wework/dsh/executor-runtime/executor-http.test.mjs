@@ -2,8 +2,98 @@ import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { Readable } from 'node:stream'
 import test from 'node:test'
+import { createRequestSecurity } from '../electron-host/request-security.js'
 import { apply, handleExecutorEvents, handleExecutorRpc } from './index.js'
 import { ExecutorRuntimeClient, ExecutorRuntimeError } from './executor-runtime-client.js'
+
+test('serves a scoped plugin image as same-origin inert image bytes', async t => {
+  const request = executorEventRequest()
+  const path = '/device/plugins/healthy-plugin/assets/logo.svg'
+  request.url = `/wework/executor/v1/plugin-image?path=${encodeURIComponent(path)}`
+  request.headers = {
+    host: '127.0.0.1:3000',
+    cookie: 'session=authenticated',
+    origin: 'http://127.0.0.1:3000',
+    'sec-fetch-site': 'same-origin',
+  }
+  const response = responseFixture()
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg"/>'
+  const image = await registeredHandler(
+    t,
+    {
+      async request(method, params) {
+        assert.equal(method, 'executor.plugins.image.read')
+        assert.deepEqual(params, { path })
+        return { mimeType: 'image/svg+xml', bytesBase64: Buffer.from(svg).toString('base64') }
+      },
+    },
+    '/wework/executor/v1/plugin-image'
+  )
+  await image(request, response)
+  assert.equal(response.status, 200)
+  assert.equal(response.body, svg)
+  assert.equal(response.headers['content-type'], 'image/svg+xml')
+  assert.equal(response.headers['cache-control'], 'no-store')
+  assert.equal(response.headers['x-content-type-options'], 'nosniff')
+  assert.equal(response.headers['content-security-policy'], "default-src 'none'; sandbox")
+  assert.equal(response.headers['cross-origin-resource-policy'], 'same-origin')
+})
+
+test('rejects cross-origin and non-loopback image reads before calling the executor', async t => {
+  for (const config of [
+    { origin: 'https://other.example' },
+    { remoteAddress: '192.0.2.10' },
+    { fetchSite: 'cross-site' },
+  ]) {
+    const request = executorEventRequest()
+    request.url = '/wework/executor/v1/plugin-image?path=%2Fdevice%2Fplugins%2Flogo.svg'
+    request.headers = {
+      host: '127.0.0.1:3000',
+      cookie: 'session=authenticated',
+      origin: config.origin ?? 'http://127.0.0.1:3000',
+      'sec-fetch-site': config.fetchSite ?? 'same-origin',
+    }
+    request.socket.remoteAddress = config.remoteAddress ?? '127.0.0.1'
+    const response = responseFixture()
+    const image = await registeredHandler(
+      t,
+      {
+        request() {
+          throw new Error('Must not reach executor')
+        },
+      },
+      '/wework/executor/v1/plugin-image'
+    )
+    await image(request, response)
+    assert.equal(response.status, 403)
+  }
+})
+
+test('missing, invalid, and oversized plugin images fail locally without leaking paths', async t => {
+  for (const result of [
+    null,
+    { mimeType: 'text/html', bytesBase64: 'aGVsbG8=' },
+    { mimeType: 'image/png', bytesBase64: Buffer.alloc(2 * 1024 * 1024 + 1).toString('base64') },
+  ]) {
+    const request = executorEventRequest()
+    request.url = '/wework/executor/v1/plugin-image?path=%2Fprivate%2Fplugin%2Flogo.svg'
+    const response = responseFixture()
+    const image = await registeredHandler(
+      t,
+      {
+        request() {
+          if (!result) throw new Error('Sensitive local path and error')
+          return result
+        },
+      },
+      '/wework/executor/v1/plugin-image'
+    )
+    await image(request, response)
+    assert.equal(response.status, 404)
+    assert.equal(response.body, '')
+    assert.equal(response.headers['cache-control'], 'no-store')
+  }
+})
 
 test('GET and HEAD describe use the negotiated identity without issuing another RPC', async t => {
   const description = {
@@ -76,7 +166,42 @@ test('describe remains unavailable until the bridge has a negotiated method tabl
   assert.equal(requests, 0)
 })
 
+test('describe rejects unauthenticated and rebinding requests before reading identity', async t => {
+  let reads = 0
+  const describe = await registeredDescribeHandler(t, {
+    describe: () => {
+      reads++
+      return { protocol_version: 1 }
+    },
+  })
+  for (const [headers, status] of [
+    [{ host: '127.0.0.1:3000' }, 401],
+    [
+      {
+        host: 'rebind.attacker.test:3000',
+        origin: 'http://rebind.attacker.test:3000',
+        cookie: 'session=authenticated',
+      },
+      403,
+    ],
+  ]) {
+    const request = executorEventRequest()
+    request.headers = headers
+    const response = responseFixture()
+
+    await describe(request, response)
+
+    assert.equal(response.status, status)
+    assert.equal(JSON.parse(response.body).ok, false)
+  }
+  assert.equal(reads, 0)
+})
+
 async function registeredDescribeHandler(t, client) {
+  return registeredHandler(t, client, '/wework/executor/v1')
+}
+
+async function registeredHandler(t, client, path) {
   t.mock.method(ExecutorRuntimeClient, 'fromEnvironment', () => ({
     start: async () => {},
     ...client,
@@ -84,6 +209,13 @@ async function registeredDescribeHandler(t, client) {
   const handlers = new Map()
   await apply({
     sessions: {},
+    weworkRequestSecurity: createRequestSecurity(
+      {
+        requestRejection: request =>
+          request.headers.cookie === 'session=authenticated' ? undefined : 401,
+      },
+      3000
+    ),
     webServer: {
       register: ({ path, handler }) => handlers.set(path, handler),
     },
@@ -91,7 +223,7 @@ async function registeredDescribeHandler(t, client) {
       if (label.startsWith('wework-executor-runtime: /')) callback()
     },
   })
-  return handlers.get('/wework/executor/v1')
+  return handlers.get(path)
 }
 
 test('preserves one request id across browser, DSH, and executor RPC', async () => {
@@ -117,6 +249,70 @@ test('preserves one request id across browser, DSH, and executor RPC', async () 
   assert.deepEqual(JSON.parse(response.body), { ok: true, result: { items: [] } })
 })
 
+test('HTTP disconnect cancels only its history request and removes abort listeners', async () => {
+  const request = executorRpcRequest({
+    id: 'closed-read',
+    method: 'runtime.tasks.transcript',
+    params: {},
+  })
+  const response = responseFixture()
+  let signal
+  let entered
+  const started = new Promise(resolve => {
+    entered = resolve
+  })
+  const serving = handleExecutorRpc(request, response, {
+    request(_method, _params, _timeout, _id, options) {
+      signal = options.signal
+      entered()
+      return new Promise((_resolve, reject) => {
+        signal.addEventListener(
+          'abort',
+          () => reject(new ExecutorRuntimeError('request_cancelled', 'Cancelled')),
+          { once: true }
+        )
+      })
+    },
+  })
+  await started
+  response.destroyed = true
+  response.emit('close')
+  await serving
+  assert.equal(signal.aborted, true)
+  assert.equal(response.headersSent, false)
+  assert.equal(request.listenerCount('aborted'), 0)
+  for (const event of ['close', 'error']) assert.equal(response.listenerCount(event), 0)
+})
+
+test('HTTP disconnect leaves an accepted send running to completion', async () => {
+  const request = executorRpcRequest({
+    id: 'closed-send',
+    method: 'runtime.tasks.send',
+    params: {},
+  })
+  const response = responseFixture()
+  let release
+  let entered
+  const started = new Promise(resolve => {
+    entered = resolve
+  })
+  const serving = handleExecutorRpc(request, response, {
+    request(_method, _params, _timeout, _id, options) {
+      assert.equal(options.signal, undefined)
+      entered()
+      return new Promise(resolve => {
+        release = resolve
+      })
+    },
+  })
+  await started
+  response.destroyed = true
+  response.emit('close')
+  release({ accepted: true })
+  await serving
+  assert.equal(response.headersSent, false)
+})
+
 test('does not forward an unsafe browser request id to the executor', async () => {
   const request = executorRpcRequest({
     id: 'unsafe\nrequest-id',
@@ -137,6 +333,63 @@ test('does not forward an unsafe browser request id to the executor', async () =
   assert.match(receivedRequestId, /^[0-9a-f-]{36}$/)
   assert.notEqual(receivedRequestId, 'unsafe\nrequest-id')
   assert.equal(response.headers['x-request-id'], receivedRequestId)
+})
+
+for (const event of ['finish', 'close']) {
+  test(`records HTTP ${event} separately from executor completion without payloads`, async t => {
+    const log = t.mock.method(console, 'info', () => {})
+    const response = responseFixture()
+    await handleExecutorRpc(
+      executorRpcRequest({ id: 'http-lifecycle', method: 'runtime.tasks.get', params: {} }),
+      response,
+      { request: async () => ({ privateTaskContent: 'must-not-be-logged' }) }
+    )
+    assert.equal(log.mock.calls.length, 2)
+
+    response.emit(event)
+
+    assert.equal(log.mock.calls.length, 3)
+    const [label, fields] = log.mock.calls[2].arguments
+    assert.equal(label, '[wework-executor-runtime] RPC HTTP response')
+    assert.equal(fields.request_id, 'http-lifecycle')
+    assert.equal(fields.event, event === 'finish' ? 'finished' : 'closed')
+    assert.equal(fields.headers_sent, true)
+    assert.equal(fields.writable_ended, true)
+    assert.ok(!JSON.stringify(log.mock.calls).includes('must-not-be-logged'))
+    for (const name of ['finish', 'close', 'error']) assert.equal(response.listenerCount(name), 0)
+  })
+}
+
+test('retains recovery events until the RPC bridge can reconcile them', async () => {
+  let ready = false
+  let stopped = 0
+  const stream = () =>
+    eventStreamFixture(
+      {},
+      {
+        events: [executorEvent(8, 'executor.event_lagged')],
+        onStop: () => {
+          stopped++
+        },
+      }
+    )
+  const options = {
+    assertReady: () => {
+      if (!ready) throw new ExecutorRuntimeError('runtime_not_ready', 'Not negotiated', true)
+    },
+  }
+  const unavailable = responseFixture()
+  await handleExecutorEvents(executorEventRequest('?after=7'), unavailable, stream, options)
+  assert.equal(unavailable.status, 503)
+  assert.equal(JSON.parse(unavailable.body).error.code, 'runtime_not_ready')
+  assert.doesNotMatch(unavailable.body, /executor.event_lagged/)
+  assert.equal(stopped, 2)
+  ready = true
+  const recovered = responseFixture()
+  await handleExecutorEvents(executorEventRequest('?after=7'), recovered, stream, options)
+  assert.equal(recovered.status, 200)
+  assert.match(recovered.body, /executor.event_lagged/)
+  assert.match(recovered.body, /"sequence":8/)
 })
 
 test('passes the browser cursor to the executor-owned event stream', async () => {
@@ -307,7 +560,7 @@ function executorEventRequest(query = '') {
   const request = new EventEmitter()
   request.method = 'GET'
   request.url = `/wework/executor/v1/events${query}`
-  request.headers = {}
+  request.headers = { host: '127.0.0.1:3000', cookie: 'session=authenticated' }
   request.socket = { remoteAddress: '127.0.0.1' }
   return request
 }

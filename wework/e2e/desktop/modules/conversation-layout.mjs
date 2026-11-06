@@ -1,6 +1,16 @@
 import { readFile, readdir } from 'node:fs/promises'
+import { waitForElementTop, waitForElementWidth } from './layout-metrics.mjs'
+import { verifyConversationDiagrams } from './conversation-diagrams.mjs'
+import {
+  verifyComposerFadeAfterSubmit,
+  verifyComposerFadeBeforeSubmit,
+} from './composer-scroll-fade.mjs'
+import { verifyComposerMarkdownDraftAcknowledgement } from './composer-markdown-draft.mjs'
 
 import { sendPrompt } from './conversation-navigation.mjs'
+import { verifyShortConversationTopAlignment } from './conversation-short-layout.mjs'
+import { verifyConversationPanelLayout } from './conversation-panel-layout.mjs'
+import { distanceFromBottom, distanceFromTop } from './streaming-text-fixture.mjs'
 import {
   verifyConversationShortcuts,
   verifyEmptyConversationFind,
@@ -65,16 +75,19 @@ async function verifyShortConversationLayout({ composerSelector, control, restar
     text: FRESH_CHAT_COMPLETION_TEXT,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await sendPrompt(
-    control,
-    composerSelector,
-    `${FRESH_CHAT_PROMPT} FOLLOW_UP\n${Array.from({ length: 40 }, (_, index) => `Expansion line ${index + 1}`).join('\n')}`
-  )
+  const followUpPrompt = `${FRESH_CHAT_PROMPT} FOLLOW_UP\n${Array.from({ length: 40 }, (_, index) => `Expansion line ${index + 1}`).join('\n')}`
+  // Prime scrolling while preserving the existing follow-up submission path.
+  await verifyComposerFadeBeforeSubmit(control, composerSelector, followUpPrompt)
+  await sendPrompt(control, composerSelector, followUpPrompt)
   await waitForScenarioRequestCount(control, 'fresh_chat', 2)
   await control.command('waitFor', ACTIVE_SEND_BUTTON_SELECTOR, {
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await verifyComposerFadeAfterSubmit(control, composerSelector)
+  await verifyComposerMarkdownDraftAcknowledgement(control, composerSelector)
+  await verifyShortConversationTopAlignment(control, 'The initial four-message conversation')
+  await verifyConversationPanelLayout(control)
   const shortConversationTaskRowTestId = await waitForNewTaskRow(
     control,
     taskRowsBeforeConversation,
@@ -126,15 +139,14 @@ async function verifyShortConversationLayout({ composerSelector, control, restar
     4,
     'The unified virtual list did not mount every short-conversation turn'
   )
-  assert.equal(
-    await control.command(
-      'getStyle',
-      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll-content"] [data-index]`,
-      { value: 'position' }
-    ),
-    'absolute',
-    'Short conversations did not use the unified virtual row layout'
-  )
+  for (const [index, row] of virtualRows.entries()) {
+    assert.ok(row.height > 0, `Short-conversation virtual row ${index} has no layout height`)
+    if (index > 0)
+      assert.ok(
+        row.top >= virtualRows[index - 1].bottom - 1,
+        `Short-conversation virtual rows overlap: ${JSON.stringify({ previous: virtualRows[index - 1], row })}`
+      )
+  }
   const conversationSnapshot = JSON.parse(
     await control.command(
       'snapshot',
@@ -298,6 +310,7 @@ async function verifyShortConversationLayout({ composerSelector, control, restar
     text: FRESH_CHAT_COMPLETION_TEXT,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  await verifyShortConversationTopAlignment(control, 'The four-message conversation after restart')
   await waitForComposerFocus(
     control,
     DEFAULT_STEP_TIMEOUT_MS,
@@ -325,6 +338,7 @@ async function verifyShortConversationLayout({ composerSelector, control, restar
     DEFAULT_STEP_TIMEOUT_MS,
     'Pasting after copying a message did not transfer keyboard focus to the composer'
   )
+  await verifyConversationDiagrams(control, composerSelector, shortConversationTaskRowTestId)
   return shortConversationTaskRowTestId
 }
 
@@ -709,20 +723,41 @@ async function waitForElementInsideScroller(
   elementSelector,
   scrollerSelector,
   description,
-  timeoutMs = 3_000
+  timeoutMs = 3_000,
+  { occluderSelector, clipToViewport = false } = {}
 ) {
   const startedAt = Date.now()
   let element
   let scroller
+  let occluder
   while (Date.now() - startedAt < timeoutMs) {
     scroller = await getSingleElementMetrics(control, scrollerSelector, description)
     element = (await getElementMetrics(control, elementSelector)).at(-1)
-    if (element && element.top >= scroller.top - 2 && element.bottom <= scroller.bottom + 2) {
-      return { element, scroller }
+    occluder = occluderSelector
+      ? (await getElementMetrics(control, occluderSelector)).at(-1)
+      : undefined
+    const bottom = Math.min(
+      scroller.bottom,
+      occluder?.height > 0 ? occluder.top : scroller.bottom,
+      clipToViewport ? scroller.viewportHeight : Infinity
+    )
+    if (
+      element &&
+      (!occluderSelector || occluder?.height > 0) &&
+      element.height > 0 &&
+      element.top >= Math.max(scroller.top, clipToViewport ? 0 : -Infinity) - 2 &&
+      element.bottom <= bottom + 2 &&
+      (!clipToViewport ||
+        (element.left >= Math.max(scroller.left, 0) - 2 &&
+          element.right <= Math.min(scroller.right, scroller.viewportWidth) + 2))
+    ) {
+      return { element, scroller, ...(occluder ? { occluder } : {}) }
     }
     await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
   }
-  throw new Error(`${description} after ${timeoutMs}ms: ${JSON.stringify({ element, scroller })}`)
+  throw new Error(
+    `${description} after ${timeoutMs}ms: ${JSON.stringify({ element, scroller, occluder })}`
+  )
 }
 
 async function waitForTopMetrics(control, selector, description, timeoutMs = 3_000) {
@@ -736,28 +771,6 @@ async function waitForTopMetrics(control, selector, description, timeoutMs = 3_0
   throw new Error(
     `${description} remained ${distanceFromTop(metrics)}px from the top after ${timeoutMs}ms`
   )
-}
-
-async function waitForElementWidth(control, selector, predicate, description, timeoutMs = 1_500) {
-  const startedAt = Date.now()
-  let metrics
-  while (Date.now() - startedAt < timeoutMs) {
-    metrics = await getSingleElementMetrics(control, selector, description)
-    if (predicate(metrics.width)) return metrics
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
-  }
-  throw new Error(`${description} remained ${metrics.width}px wide after ${timeoutMs}ms`)
-}
-
-async function waitForElementTop(control, selector, predicate, description, timeoutMs = 1_500) {
-  const startedAt = Date.now()
-  let metrics
-  while (Date.now() - startedAt < timeoutMs) {
-    metrics = await getSingleElementMetrics(control, selector, description)
-    if (predicate(metrics.top)) return metrics
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
-  }
-  throw new Error(`${description} remained at ${metrics.top}px after ${timeoutMs}ms`)
 }
 
 async function waitForProcessingBlock(
@@ -875,20 +888,6 @@ async function verifyViewImageProcessingBlock(control) {
     '04-view-image-expanded.png',
     '[data-testid="processing-live-preview"]'
   )
-}
-
-function distanceFromBottom(metrics) {
-  if (metrics.scrollOrigin === 'bottom') {
-    return Math.max(0, -metrics.scrollTop)
-  }
-  return Math.max(0, metrics.scrollHeight - metrics.clientHeight - metrics.scrollTop)
-}
-
-function distanceFromTop(metrics) {
-  if (metrics.scrollOrigin === 'bottom') {
-    return Math.max(0, metrics.scrollHeight - metrics.clientHeight + metrics.scrollTop)
-  }
-  return Math.max(0, metrics.scrollTop)
 }
 
 async function openBottomWorkspaceTerminal(control, description) {

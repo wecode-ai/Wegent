@@ -4,12 +4,14 @@ import {
   localMaterializedVersion,
   localPluginId,
 } from '@/components/plugins/installedPluginMerge'
+import { logPluginRefreshPhase, type PluginSyncOwner } from './pluginRefreshDiagnostics'
 
 const attemptedDeviceIds = new Set<string>()
 const reportedDeviceIds = new Set<string>()
 const reportedPayloadKeys = new Set<string>()
 const settledDeviceIds = new Set<string>()
-const inFlightDeviceIds = new Map<string, symbol>()
+const inFlightDeviceIds = new Map<string, { owner: PluginSyncOwner; lease: number; at: number }>()
+let nextLease = 0
 const deviceSyncListeners = new Set<() => void>()
 const deviceSyncRevisions = new Map<string, number>()
 
@@ -38,19 +40,65 @@ export function clearPluginDeviceAutoSyncAttempts() {
 }
 
 /** Acquire the shared per-device plugin synchronization single-flight lock. */
-export function beginPluginDeviceSync(deviceId: string): (() => void) | null {
+export function beginPluginDeviceSync(
+  deviceId: string,
+  operation: PluginSyncOwner = 'unspecified'
+): (() => void) | null {
   const normalized = deviceId.trim()
   if (!normalized || inFlightDeviceIds.has(normalized)) return null
-  const owner = Symbol(normalized)
+  const owner = { owner: operation, lease: ++nextLease, at: Date.now() }
   inFlightDeviceIds.set(normalized, owner)
+  logPluginRefreshPhase('lease-acquired', owner)
   notifyDeviceSyncListeners(normalized)
   return () => {
     // A late completion must not release a newer synchronization lease.
     if (inFlightDeviceIds.get(normalized) === owner) {
       inFlightDeviceIds.delete(normalized)
+      logPluginRefreshPhase('lease-released', { ...owner, elapsedMs: Date.now() - owner.at })
       notifyDeviceSyncListeners(normalized)
     }
   }
+}
+
+/** Wait for the existing device lease without dropping a requested operation. */
+export function acquirePluginDeviceSync(
+  deviceId: string,
+  signal?: AbortSignal,
+  operation: PluginSyncOwner = 'unspecified'
+): Promise<() => void> {
+  if (!deviceId.trim()) return Promise.reject(new Error('A plugin device identity is required'))
+  return new Promise((resolve, reject) => {
+    const startedAt = Date.now()
+    const previous = inFlightDeviceIds.get(deviceId.trim())
+    if (previous) logPluginRefreshPhase('lease-wait', previous)
+    const cleanup = () => {
+      unsubscribe()
+      signal?.removeEventListener('abort', abort)
+    }
+    const abort = () => {
+      cleanup()
+      reject(signal?.reason)
+    }
+    const acquire = () => {
+      if (signal?.aborted) return abort()
+      const finish = beginPluginDeviceSync(deviceId, operation)
+      if (!finish) return
+      cleanup()
+      logPluginRefreshPhase('lease-wait-completed', {
+        owner: operation,
+        elapsedMs: Date.now() - startedAt,
+      })
+      resolve(finish)
+    }
+    const unsubscribe = subscribePluginDeviceSync(acquire)
+    signal?.addEventListener('abort', abort, { once: true })
+    acquire()
+  })
+}
+
+export function pluginDeviceSyncDiagnostic(deviceId: string) {
+  const lease = inFlightDeviceIds.get(deviceId.trim())
+  return lease ? { owner: lease.owner, lease: lease.lease, elapsedMs: Date.now() - lease.at } : {}
 }
 
 export function hasAttemptedPluginDeviceAutoSync(deviceId: string): boolean {

@@ -42,6 +42,11 @@ const CONTEXT_HANDLE_HEADER: &str = "x-wework-mcp-context";
 const MCP_SESSION_ID_HEADER: &str = "mcp-session-id";
 const CONTEXT_HANDLE_TTL: Duration = Duration::from_secs(60 * 60);
 
+mod contexts;
+#[cfg(test)]
+use contexts::register_context;
+use contexts::{register_context_with_lifetime, ContextLifetime};
+
 #[derive(Debug, Clone)]
 pub(crate) struct SpaceMcpEndpoint {
     pub(crate) url: String,
@@ -57,13 +62,20 @@ pub(crate) struct RegisteredSpaceMcpContext {
 struct RegisteredContext {
     context: SpaceMcpRequestContext,
     expires_at: Instant,
+    lifetime: ContextLifetime,
+}
+
+#[derive(Clone)]
+struct McpSession {
+    context: SpaceMcpRequestContext,
+    context_handle: String,
 }
 
 #[derive(Clone)]
 struct SpaceMcpHttpState {
     runtime: TaskRuntime,
     token: String,
-    sessions: std::sync::Arc<Mutex<HashMap<String, SpaceMcpRequestContext>>>,
+    sessions: std::sync::Arc<Mutex<HashMap<String, McpSession>>>,
     contexts: std::sync::Arc<StdMutex<HashMap<String, RegisteredContext>>>,
     collaboration_dispatcher: std::sync::Arc<StdMutex<Option<CloudCollaborationRoundDispatcher>>>,
     event_sender: std::sync::Arc<StdMutex<Option<tokio::sync::broadcast::Sender<Value>>>>,
@@ -156,11 +168,15 @@ pub(crate) async fn ensure_space_mcp_http_endpoint() -> Result<SpaceMcpEndpoint,
         .route("/mcp", post(handle_mcp).delete(delete_mcp_session))
         .route(
             "/notifications/mcp",
-            post(handle_notifications_mcp).delete(delete_mcp_session),
+            post(handle_notifications_mcp).delete(delete_notifications_session),
+        )
+        .route(
+            "/control/mcp",
+            post(handle_control_mcp).delete(delete_control_session),
         )
         .route(
             "/stand-in/mcp",
-            post(handle_stand_in_mcp).delete(delete_mcp_session),
+            post(handle_stand_in_mcp).delete(delete_stand_in_session),
         )
         .with_state(state);
     let server_endpoint = endpoint.clone();
@@ -249,6 +265,22 @@ fn active_endpoint() -> Option<SpaceMcpEndpoint> {
 pub(crate) fn register_space_mcp_context(
     context: SpaceMcpRequestContext,
 ) -> Result<RegisteredSpaceMcpContext, String> {
+    register_mcp_context(context, ContextLifetime::Execution)
+}
+
+pub(crate) fn register_control_mcp_context(
+    context: crate::workbench_control::ControlContext,
+) -> Result<RegisteredSpaceMcpContext, String> {
+    register_mcp_context(
+        SpaceMcpRequestContext::control(context),
+        ContextLifetime::Conversation,
+    )
+}
+
+fn register_mcp_context(
+    context: SpaceMcpRequestContext,
+    lifetime: ContextLifetime,
+) -> Result<RegisteredSpaceMcpContext, String> {
     let running = running_endpoint()
         .lock()
         .map_err(|_| "project-space MCP endpoint state is poisoned".to_owned())?;
@@ -263,20 +295,12 @@ pub(crate) fn register_space_mcp_context(
         #[cfg(not(test))]
         return Err("project-space MCP endpoint is not ready".to_owned());
     };
-    let context_handle = Uuid::new_v4().to_string();
     let mut contexts = running
         .contexts
         .lock()
         .map_err(|_| "project-space MCP context registry is poisoned".to_owned())?;
-    let now = Instant::now();
-    contexts.retain(|_, registered| registered.expires_at > now);
-    contexts.insert(
-        context_handle.clone(),
-        RegisteredContext {
-            context,
-            expires_at: now + CONTEXT_HANDLE_TTL,
-        },
-    );
+    let context_handle =
+        register_context_with_lifetime(&mut contexts, context, Instant::now(), lifetime);
     Ok(RegisteredSpaceMcpContext {
         endpoint: running.endpoint.clone(),
         context_handle,
@@ -352,6 +376,14 @@ async fn handle_stand_in_mcp(
     handle_mcp_for_surface(state, headers, request, WeworkMcpSurface::StandIn).await
 }
 
+async fn handle_control_mcp(
+    State(state): State<SpaceMcpHttpState>,
+    headers: HeaderMap,
+    Json(request): Json<Value>,
+) -> Response {
+    handle_mcp_for_surface(state, headers, request, WeworkMcpSurface::Control).await
+}
+
 async fn handle_mcp_for_surface(
     state: SpaceMcpHttpState,
     headers: HeaderMap,
@@ -376,11 +408,13 @@ async fn handle_mcp_for_surface(
             );
         };
         let session_id = Uuid::new_v4().to_string();
-        state
-            .sessions
-            .lock()
-            .await
-            .insert(session_id.clone(), context.clone());
+        state.sessions.lock().await.insert(
+            session_id.clone(),
+            McpSession {
+                context: context.clone(),
+                context_handle: header_text(&headers, CONTEXT_HANDLE_HEADER).unwrap_or_default(),
+            },
+        );
         (session_id, context)
     } else {
         let Some(session_id) = header_text(&headers, MCP_SESSION_ID_HEADER) else {
@@ -391,7 +425,7 @@ async fn handle_mcp_for_surface(
                 StatusCode::BAD_REQUEST,
             );
         };
-        let Some(context) = state.sessions.lock().await.get(&session_id).cloned() else {
+        let Some(session) = state.sessions.lock().await.get(&session_id).cloned() else {
             return json_rpc_http_error(
                 request.get("id").cloned().unwrap_or(Value::Null),
                 -32003,
@@ -399,10 +433,23 @@ async fn handle_mcp_for_surface(
                 StatusCode::NOT_FOUND,
             );
         };
-        (session_id, context)
+        if expected_surface == WeworkMcpSurface::Control
+            && header_text(&headers, CONTEXT_HANDLE_HEADER).as_deref()
+                != Some(session.context_handle.as_str())
+        {
+            return StatusCode::UNAUTHORIZED.into_response();
+        }
+        (session_id, session.context)
     };
     if context.surface() != expected_surface {
         return StatusCode::FORBIDDEN.into_response();
+    }
+    if expected_surface == WeworkMcpSurface::Control {
+        let Some(current) = registered_context(&state, &headers, expected_surface) else {
+            return StatusCode::UNAUTHORIZED.into_response();
+        };
+        // A persistent conversation transport must use this turn's execution context.
+        context = current;
     }
     context.set_cloud_collaboration_dispatcher(
         state
@@ -428,13 +475,54 @@ async fn delete_mcp_session(
     State(state): State<SpaceMcpHttpState>,
     headers: HeaderMap,
 ) -> Response {
+    delete_session_for_surface(state, headers, WeworkMcpSurface::ProjectSpace).await
+}
+
+async fn delete_notifications_session(
+    State(state): State<SpaceMcpHttpState>,
+    headers: HeaderMap,
+) -> Response {
+    delete_session_for_surface(state, headers, WeworkMcpSurface::Notifications).await
+}
+
+async fn delete_control_session(
+    State(state): State<SpaceMcpHttpState>,
+    headers: HeaderMap,
+) -> Response {
+    delete_session_for_surface(state, headers, WeworkMcpSurface::Control).await
+}
+
+async fn delete_stand_in_session(
+    State(state): State<SpaceMcpHttpState>,
+    headers: HeaderMap,
+) -> Response {
+    delete_session_for_surface(state, headers, WeworkMcpSurface::StandIn).await
+}
+
+async fn delete_session_for_surface(
+    state: SpaceMcpHttpState,
+    headers: HeaderMap,
+    surface: WeworkMcpSurface,
+) -> Response {
     if !authorized(&headers, &state.token) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
     let Some(session_id) = header_text(&headers, MCP_SESSION_ID_HEADER) else {
         return StatusCode::BAD_REQUEST.into_response();
     };
-    state.sessions.lock().await.remove(&session_id);
+    let mut sessions = state.sessions.lock().await;
+    let Some(session) = sessions.get(&session_id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if session.context.surface() != surface
+        || (surface == WeworkMcpSurface::Control
+            && (header_text(&headers, CONTEXT_HANDLE_HEADER).as_deref()
+                != Some(session.context_handle.as_str())
+                || registered_context(&state, &headers, surface).is_none()))
+    {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    sessions.remove(&session_id);
     StatusCode::NO_CONTENT.into_response()
 }
 
@@ -492,10 +580,78 @@ fn json_rpc_http_error(id: Value, code: i64, message: &str, status: StatusCode) 
 }
 
 #[cfg(test)]
+#[path = "mcp_http_control_tests.rs"]
+mod control_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use axum::http::header::AUTHORIZATION;
     use base64::{engine::general_purpose::STANDARD, Engine as _};
+
+    #[test]
+    fn identical_unbound_authority_reuses_and_renews_its_handle() {
+        let mut contexts = HashMap::new();
+        let now = Instant::now();
+        let context = SpaceMcpRequestContext::new(
+            None,
+            Some("https://backend.example".into()),
+            Some("user-a".into()),
+        );
+        let handle = register_context(&mut contexts, context.clone(), now);
+        register_context(
+            &mut contexts,
+            SpaceMcpRequestContext::new(None, None, None),
+            now,
+        );
+        let later = now + CONTEXT_HANDLE_TTL + Duration::from_secs(1);
+        assert_eq!(register_context(&mut contexts, context, later), handle);
+        assert_eq!(contexts.len(), 1);
+        assert_eq!(contexts[&handle].expires_at, later + CONTEXT_HANDLE_TTL);
+    }
+
+    #[test]
+    fn unbound_handles_do_not_share_credentials_backends_or_surfaces() {
+        let mut contexts = HashMap::new();
+        let now = Instant::now();
+        let backend = Some("https://backend.example".to_owned());
+        let token = Some("user-a".to_owned());
+        let personal = register_context(
+            &mut contexts,
+            SpaceMcpRequestContext::new(None, backend.clone(), token.clone()),
+            now,
+        );
+        for context in [
+            SpaceMcpRequestContext::new(None, backend.clone(), Some("user-b".into())),
+            SpaceMcpRequestContext::new(None, Some("https://other.example".into()), token.clone()),
+            SpaceMcpRequestContext::notifications(backend.clone(), token.clone()),
+        ] {
+            assert_ne!(register_context(&mut contexts, context, now), personal);
+        }
+        let notifications = SpaceMcpRequestContext::notifications(backend, token);
+        assert_eq!(
+            register_context(&mut contexts, notifications.clone(), now),
+            register_context(&mut contexts, notifications, now),
+        );
+        assert_eq!(contexts.len(), 4);
+    }
+
+    #[test]
+    fn bound_grants_never_reuse_a_previous_execution_handle() {
+        let grant = serde_json::from_value(json!({
+            "version":1, "task_id":"task-1", "space_id":"space-1", "item_id":"issue-1",
+            "expires_at_unix":chrono::Local::now().timestamp() + 3600
+        }))
+        .unwrap();
+        let context = SpaceMcpRequestContext::new(Some(grant), None, None);
+        let mut contexts = HashMap::new();
+        let now = Instant::now();
+        assert_ne!(
+            register_context(&mut contexts, context.clone(), now),
+            register_context(&mut contexts, context, now),
+        );
+        assert_eq!(contexts.len(), 2);
+    }
 
     #[test]
     fn authorization_requires_the_exact_instance_token() {
@@ -515,6 +671,7 @@ mod tests {
                 RegisteredContext {
                     context: SpaceMcpRequestContext::new(None, None, None),
                     expires_at: now,
+                    lifetime: ContextLifetime::Execution,
                 },
             ),
             (
@@ -522,6 +679,7 @@ mod tests {
                 RegisteredContext {
                     context: SpaceMcpRequestContext::notifications(None, None),
                     expires_at: now + Duration::from_secs(1),
+                    lifetime: ContextLifetime::Execution,
                 },
             ),
         ]);

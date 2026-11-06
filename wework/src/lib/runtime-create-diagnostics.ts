@@ -13,13 +13,61 @@ function serializeDiagnostic(entry: Record<string, unknown>): string {
   }
 }
 
-export function logRuntimeTaskCreateStage(stage: string, details: Record<string, unknown>): void {
+export function logRuntimeTaskCreateStage(
+  stage: string,
+  details: Record<string, unknown>,
+  level: 'info' | 'debug' = 'info'
+): void {
   const entry = {
     timestamp: new Date().toISOString(),
     stage,
     ...details,
   }
-  console.info(LOG_PREFIX, serializeDiagnostic(entry))
+  console[level](LOG_PREFIX, serializeDiagnostic(entry))
+}
+
+export function runtimeOriginDiagnostic(origin: unknown): Record<string, unknown> {
+  if (!origin || typeof origin !== 'object' || Array.isArray(origin)) {
+    return { originPresent: false }
+  }
+  const source = origin as Record<string, unknown>
+  const knownValues = [
+    'board_task',
+    'issue_dispatch',
+    'stand_in_identity',
+    'connection_work',
+    'dingtalk_work',
+    'stand_in',
+    'manager',
+    'executor',
+  ]
+  const fields = [
+    'type',
+    'initiatedBy',
+    'dispatchRole',
+    'dispatch_role',
+    'dispatchId',
+    'dispatch_id',
+  ]
+  const markers = Object.fromEntries(
+    fields.map(field => {
+      const value = source[field]
+      const classification =
+        value === undefined
+          ? 'missing'
+          : value === null
+            ? 'null'
+            : typeof value !== 'string'
+              ? 'non_string'
+              : !value.trim()
+                ? 'empty_string'
+                : knownValues.includes(value)
+                  ? value
+                  : 'nonempty_string'
+      return [field, classification]
+    })
+  )
+  return { originPresent: true, originMarkers: markers }
 }
 
 export function summarizeRuntimeQueue(messages: readonly RuntimePaneQueuedMessage[]) {

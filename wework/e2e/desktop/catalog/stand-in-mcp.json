@@ -1,0 +1,12 @@
+{
+  "order": 44000,
+  "scenario": "./scenarios/stand-in-mcp.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 33000,
+      "shard": 3,
+      "position": 4000
+    }
+  }
+}

@@ -18,12 +18,7 @@ import {
 } from '@/features/todo/projectSpaceRoute'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { truncateRuntimeTaskTitle } from '@/features/workbench/workbenchRuntimeHelpers'
-import {
-  hydrateLocalWorkItems,
-  loadLocalWorkItems,
-  saveLocalWorkItems,
-  type LocalWorkItem,
-} from '@/features/todo/todoModel'
+import { hydrateLocalWorkItems, type LocalWorkItem } from '@/features/todo/todoModel'
 import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
@@ -40,6 +35,7 @@ import {
   rememberProjectTaskStore,
   type ProjectTaskRuntimeApi,
 } from '@/features/workbench/projectTaskTracking'
+import { useProjectSpaceProjects } from './useProjectSpaceProjects'
 
 interface PendingTodoBinding {
   paneKey: string
@@ -374,7 +370,7 @@ export function useWorkbenchCloudProjectContext({
     pendingProjectForTask(contextRuntimeTask, paneKey)
   )
   const [todoBindingError, setTodoBindingError] = useState<string | null>(null)
-  const [cloudProjects, setCloudProjects] = useState<CloudProject[]>([])
+  const cloudProjects = useProjectSpaceProjects(contextActive, projectSpaceDataApis)
   const [dismissedDefaultCloudProjectKey, setDismissedDefaultCloudProjectKey] = useState<
     string | null
   >(null)
@@ -770,48 +766,6 @@ export function useWorkbenchCloudProjectContext({
       : []
 
   useEffect(() => {
-    if (!contextActive) return
-    let active = true
-    const apis = projectSpaceDataApis
-    if (!apis.length) {
-      queueMicrotask(() => {
-        if (active) setCloudProjects([])
-      })
-      return () => {
-        active = false
-      }
-    }
-    const projectsByApi: Array<CloudProject[] | undefined> = new Array(apis.length)
-    const publishSettledProjects = () => {
-      if (!active) return
-      const candidates = projectsByApi.flatMap(projects => projects ?? [])
-      setCloudProjects(
-        candidates.filter(
-          (candidate, index) =>
-            candidates.findIndex(
-              other => other.id === candidate.id && other.project_store === candidate.project_store
-            ) === index
-        )
-      )
-    }
-    apis.forEach((api, index) => {
-      void Promise.resolve()
-        .then(() => api.listCloudProjects())
-        .then(result => {
-          projectsByApi[index] = result.items
-          publishSettledProjects()
-        })
-        .catch(() => {
-          projectsByApi[index] = []
-          publishSettledProjects()
-        })
-    })
-    return () => {
-      active = false
-    }
-  }, [contextActive, projectSpaceDataApis])
-
-  useEffect(() => {
     const pendingAutoJoin = pendingAutoJoinResolutionRef.current
     const pendingTargetMatchesCurrentTask =
       pendingAutoJoin?.target &&
@@ -1039,34 +993,10 @@ export function useWorkbenchCloudProjectContext({
     navigateTo(contentRoute)
   }, [boundCloudItem, boundCloudProject, workspaceTabs])
 
-  const finishLocalDelivery = useCallback(async () => {
-    if (!activeDeliveryItem) return
-    const items = await loadLocalWorkItems(userId)
-    const now = new Date().toISOString()
-    await saveLocalWorkItems(
-      userId,
-      items.map(item =>
-        item.id === activeDeliveryItem.id
-          ? {
-              ...item,
-              state: 'completed',
-              updatedAt: now,
-              events: [
-                ...item.events,
-                {
-                  id: `delivery-${now}`,
-                  type: 'confirmed' as const,
-                  summary: t('delivery.completed_activity', '任务已交付并完成'),
-                  createdAt: now,
-                },
-              ],
-            }
-          : item
-      )
-    )
+  const finishDelivery = useCallback(() => {
     setDeliveryDialogOpen(false)
-    navigateTo('/todo')
-  }, [activeDeliveryItem, userId, t])
+    openBoundProjectSpaceTask()
+  }, [openBoundProjectSpaceTask])
 
   const prepareSubmission = useCallback(
     async (description: string): Promise<CloudSubmissionContext> => {
@@ -1256,7 +1186,7 @@ export function useWorkbenchCloudProjectContext({
     composerCloudProject,
     defaultProject,
     deliveryDialogOpen,
-    finishLocalDelivery,
+    finishDelivery,
     handleSelectCloudProject,
     handleTodoBound,
     openDelivery,

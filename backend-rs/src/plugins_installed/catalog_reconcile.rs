@@ -26,8 +26,8 @@ use serde_json::Value;
 
 use crate::permissions::EntityResolvers;
 use crate::plugins_marketplace::db::{
-    DEVICE_COLUMNS, DeviceInstallationRow, GRANT_COLUMNS, InstalledKindRow, KIND_COLUMNS,
-    PLUGIN_COLUMNS, PluginReleaseRow, PluginRow, RELEASE_COLUMNS, ResourceMemberRow,
+    GRANT_COLUMNS, InstalledKindRow, KIND_COLUMNS, PLUGIN_COLUMNS, PluginReleaseRow, PluginRow,
+    RELEASE_COLUMNS, ResourceMemberRow,
 };
 use crate::plugins_marketplace::query::PluginQuery;
 
@@ -63,16 +63,8 @@ const PUBLISHED_BY_KEY_QUERY: &str = "SELECT {cols} FROM plugins WHERE plugins.s
      'published' AND plugins.visibility IN ('personal', 'workspace', 'public') AND \
      (plugins.name = ? OR plugins.slug = ?) ORDER BY plugins.id DESC";
 
-/// `reconcile_stale_installed_catalog_refs`'s `stale_device_rows` read.
-const USER_DEVICE_ROWS_QUERY: &str =
-    "SELECT {cols} FROM plugin_device_installations WHERE plugin_device_installations.user_id = ?";
-
 /// `_clear_device_installations`.
 pub(super) const DELETE_DEVICE_BY_KIND_QUERY: &str = "DELETE FROM plugin_device_installations WHERE plugin_device_installations.installed_kind_id = ?";
-
-/// `db.delete(device_row)`.
-const DELETE_DEVICE_BY_ID_QUERY: &str =
-    "DELETE FROM plugin_device_installations WHERE plugin_device_installations.id = ?";
 
 /// `_reset_failed_device_installations`'s failing-row read.
 pub(super) const FAILED_DEVICE_ROWS_QUERY: &str = "SELECT plugin_device_installations.id AS \
@@ -199,7 +191,7 @@ async fn plugin_can_access<Q, R>(
     user_id: i64,
 ) -> MysqlResult<bool>
 where
-    Q: PluginQuery,
+    Q: PluginQuery + crate::permissions::EntityQuery,
     R: brz_redis::Redis,
 {
     if plugin.visibility == "public" {
@@ -251,7 +243,7 @@ async fn published_plugin_by_key<Q, R>(
     marketplace: &str,
 ) -> MysqlResult<Option<PluginRow>>
 where
-    Q: PluginQuery,
+    Q: PluginQuery + crate::permissions::EntityQuery,
     R: brz_redis::Redis,
 {
     let normalized = plugin_key.trim();
@@ -302,7 +294,7 @@ async fn matching_published_plugin<Q, R>(
     request: &PluginMatch<'_>,
 ) -> MysqlResult<Option<PluginRow>>
 where
-    Q: PluginQuery,
+    Q: PluginQuery + crate::permissions::EntityQuery,
     R: brz_redis::Redis,
 {
     let alive = [matched_alive, caller_plugin];
@@ -404,7 +396,7 @@ async fn reconcile_installed_kind_catalog_ref<Q, R>(
     plugin_key: &str,
 ) -> MysqlResult<bool>
 where
-    Q: PluginQuery,
+    Q: PluginQuery + crate::permissions::EntityQuery,
     R: brz_redis::Redis,
 {
     let json = row.json.0.to_value();
@@ -504,7 +496,7 @@ pub(super) async fn reconcile_stale_installed_catalog_refs<Q, R>(
     user_id: i64,
 ) -> MysqlResult<usize>
 where
-    Q: PluginQuery,
+    Q: PluginQuery + crate::permissions::EntityQuery,
     R: brz_redis::Redis,
 {
     let rows: Vec<InstalledKindRow> = mysql
@@ -617,26 +609,6 @@ where
         {
             changed += 1;
         }
-    }
-
-    // Drop device-install rows that no longer point at an active install.
-    let device_rows: Vec<DeviceInstallationRow> = mysql
-        .fetch_all(sql(USER_DEVICE_ROWS_QUERY, DEVICE_COLUMNS), (user_id,))
-        .await?;
-    let active: HashMap<i64, &InstalledKindRow> = rows.iter().map(|row| (row.id, row)).collect();
-    for device_row in &device_rows {
-        let keep = active
-            .get(&device_row.installed_kind_id)
-            .is_some_and(|kind| {
-                kind.is_active && spec_str(&kind.json.0.to_value(), "installState") != "uninstalled"
-            });
-        if keep {
-            continue;
-        }
-        mysql
-            .execute(DELETE_DEVICE_BY_ID_QUERY, (device_row.id,))
-            .await?;
-        changed += 1;
     }
 
     if changed > 0 {

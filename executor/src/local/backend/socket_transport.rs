@@ -29,6 +29,10 @@ use super::{
 const NAMESPACE: &str = "/local-executor";
 const NAMESPACE_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
+mod completed_event_budget;
+
+#[cfg(test)]
+mod completed_event_tests;
 #[cfg(test)]
 mod correlation_tests;
 
@@ -73,7 +77,12 @@ where
     F: Future<Output = ()> + Send + 'static,
 {
     if run_in_background {
-        std::mem::drop(tokio::spawn(future));
+        // Capability publication includes synchronous filesystem verification.
+        // Keep it off reactor workers so sockets, heartbeats and IPC stay live.
+        let runtime = tokio::runtime::Handle::current();
+        std::mem::drop(tokio::task::spawn_blocking(move || {
+            runtime.block_on(future)
+        }));
     } else {
         future.await;
     }
@@ -87,6 +96,7 @@ struct ConnectedSocket {
 
 #[derive(Clone, Default)]
 pub struct SocketIoTransport {
+    namespace: Option<&'static str>,
     client: Arc<tokio::sync::Mutex<Option<ConnectedSocket>>>,
     generation: Arc<AtomicU64>,
     handlers: Arc<Mutex<Vec<(String, EventHandler)>>>,
@@ -94,6 +104,23 @@ pub struct SocketIoTransport {
 }
 
 impl SocketIoTransport {
+    async fn acknowledge(
+        &self,
+        generation: u64,
+        socket: &Client,
+        event: &str,
+        ack_id: i32,
+        payload: Value,
+    ) {
+        if let Err(error) = socket.ack_with_id(ack_id, payload).await {
+            eprintln!(
+                "local backend {}",
+                format_socket_error("ack", Some(event), &error)
+            );
+            self.invalidate_generation(generation).await;
+        }
+    }
+
     async fn connected_socket(&self) -> Result<ConnectedSocket, String> {
         self.client
             .lock()
@@ -124,105 +151,122 @@ impl SocketIoTransport {
     }
 }
 
+impl SocketIoTransport {
+    pub(crate) fn for_namespace(namespace: &'static str) -> Self {
+        Self {
+            namespace: Some(namespace),
+            ..Self::default()
+        }
+    }
+
+    pub(crate) async fn connect_authenticated(
+        &self,
+        socket_url: &str,
+        token: &str,
+    ) -> Result<(), String> {
+        let generation = self.generation.fetch_add(1, Ordering::AcqRel) + 1;
+        let previous = self.client.lock().await.take();
+        if let Some(previous) = previous {
+            let _ = previous.client.disconnect().await;
+        }
+        let handlers = self.handlers.lock().expect("handler lock").clone();
+        let socket_url = normalize_socket_url(socket_url);
+        let (connect_sender, connect_receiver) = oneshot::channel();
+        let connect_sender = Arc::new(Mutex::new(Some(connect_sender)));
+        let closed = Arc::new(AtomicBool::new(false));
+        let close_transport = self.clone();
+        let close_flag = Arc::clone(&closed);
+        let mut builder = ClientBuilder::new(socket_url)
+            .namespace(self.namespace.unwrap_or(NAMESPACE))
+            .auth(json!({ "token": token }))
+            .transport_type(TransportType::Websocket)
+            .reconnect(false)
+            .reconnect_on_disconnect(false)
+            .on(Event::Connect, move |_payload: Payload, _socket: Client| {
+                let connect_sender = Arc::clone(&connect_sender);
+                async move {
+                    if let Some(sender) = connect_sender.lock().expect("connect lock").take() {
+                        let _ = sender.send(());
+                    }
+                }
+                .boxed()
+            })
+            .on("error", |payload: Payload, _socket: Client| {
+                async move {
+                    eprintln!("local backend socket error: {payload:?}");
+                }
+                .boxed()
+            })
+            .on(Event::Close, move |_payload: Payload, _socket: Client| {
+                let close_transport = close_transport.clone();
+                let close_flag = Arc::clone(&close_flag);
+                async move {
+                    close_flag.store(true, Ordering::Release);
+                    close_transport.invalidate_generation(generation).await;
+                }
+                .boxed()
+            });
+
+        for (event, handler) in handlers {
+            let run_in_background = event == DEVICE_SYNC_CAPABILITIES_EVENT;
+            let handler_event = event.clone();
+            let ack_transport = self.clone();
+            builder = builder.on(event, move |payload: Payload, socket: Client| {
+                let handler = Arc::clone(&handler);
+                let handler_event = handler_event.clone();
+                let ack_transport = ack_transport.clone();
+                async move {
+                    dispatch_handler(run_in_background, async move {
+                        let ack_id = payload.ack_id();
+                        let value = payload_to_value(payload);
+                        let ack_payload = handler(value).await;
+                        if let (Some(ack_id), Some(ack_payload)) = (ack_id, ack_payload) {
+                            ack_transport
+                                .acknowledge(
+                                    generation,
+                                    &socket,
+                                    &handler_event,
+                                    ack_id,
+                                    ack_payload,
+                                )
+                                .await;
+                        }
+                    })
+                    .await;
+                }
+                .boxed()
+            });
+        }
+
+        let socket = builder
+            .connect()
+            .await
+            .map_err(|error| format_socket_error("connect", None, &error))?;
+        let namespace_result = tokio::time::timeout(NAMESPACE_CONNECT_TIMEOUT, connect_receiver)
+            .await
+            .map_err(|_| "Socket.IO namespace connection timed out".to_owned())?
+            .map_err(|_| "Socket.IO namespace connection signal was dropped".to_owned());
+        if let Err(error) = namespace_result {
+            let _ = socket.disconnect().await;
+            return Err(error);
+        }
+        let mut client_state = self.client.lock().await;
+        if closed.load(Ordering::Acquire) || self.generation.load(Ordering::Acquire) != generation {
+            drop(client_state);
+            let _ = socket.disconnect().await;
+            return Err("Socket.IO connection closed during namespace setup".to_owned());
+        }
+        *client_state = Some(ConnectedSocket {
+            generation,
+            client: socket,
+        });
+        Ok(())
+    }
+}
+
 impl LocalBackendTransport for SocketIoTransport {
     fn connect<'a>(&'a self, config: &'a LocalBackendConfig) -> TransportFuture<'a, ()> {
-        Box::pin(async move {
-            let generation = self.generation.fetch_add(1, Ordering::AcqRel) + 1;
-            let previous = self.client.lock().await.take();
-            if let Some(previous) = previous {
-                let _ = previous.client.disconnect().await;
-            }
-            let handlers = self.handlers.lock().expect("handler lock").clone();
-            let socket_url = normalize_socket_url(&config.socket_url);
-            let (connect_sender, connect_receiver) = oneshot::channel();
-            let connect_sender = Arc::new(Mutex::new(Some(connect_sender)));
-            let closed = Arc::new(AtomicBool::new(false));
-            let close_transport = self.clone();
-            let close_flag = Arc::clone(&closed);
-            let mut builder = ClientBuilder::new(socket_url)
-                .namespace(NAMESPACE)
-                .auth(json!({ "token": config.auth_token }))
-                .transport_type(TransportType::Websocket)
-                .reconnect(false)
-                .reconnect_on_disconnect(false)
-                .on(Event::Connect, move |_payload: Payload, _socket: Client| {
-                    let connect_sender = Arc::clone(&connect_sender);
-                    async move {
-                        if let Some(sender) = connect_sender.lock().expect("connect lock").take() {
-                            let _ = sender.send(());
-                        }
-                    }
-                    .boxed()
-                })
-                .on("error", |payload: Payload, _socket: Client| {
-                    async move {
-                        eprintln!("local backend socket error: {payload:?}");
-                    }
-                    .boxed()
-                })
-                .on(Event::Close, move |_payload: Payload, _socket: Client| {
-                    let close_transport = close_transport.clone();
-                    let close_flag = Arc::clone(&close_flag);
-                    async move {
-                        close_flag.store(true, Ordering::Release);
-                        close_transport.invalidate_generation(generation).await;
-                    }
-                    .boxed()
-                });
-
-            for (event, handler) in handlers {
-                let run_in_background = event == DEVICE_SYNC_CAPABILITIES_EVENT;
-                let handler_event = event.clone();
-                builder = builder.on(event, move |payload: Payload, socket: Client| {
-                    let handler = Arc::clone(&handler);
-                    let handler_event = handler_event.clone();
-                    async move {
-                        dispatch_handler(run_in_background, async move {
-                            let ack_id = payload.ack_id();
-                            let value = payload_to_value(payload);
-                            let ack_payload = handler(value).await;
-                            if let (Some(ack_id), Some(ack_payload)) = (ack_id, ack_payload) {
-                                if let Err(error) = socket.ack_with_id(ack_id, ack_payload).await {
-                                    eprintln!(
-                                        "local backend {}",
-                                        format_socket_error("ack", Some(&handler_event), &error,)
-                                    );
-                                }
-                            }
-                        })
-                        .await;
-                    }
-                    .boxed()
-                });
-            }
-
-            let socket = builder
-                .connect()
-                .await
-                .map_err(|error| format_socket_error("connect", None, &error))?;
-            let namespace_result =
-                tokio::time::timeout(NAMESPACE_CONNECT_TIMEOUT, connect_receiver)
-                    .await
-                    .map_err(|_| "Socket.IO namespace connection timed out".to_owned())?
-                    .map_err(|_| "Socket.IO namespace connection signal was dropped".to_owned());
-            if let Err(error) = namespace_result {
-                let _ = socket.disconnect().await;
-                return Err(error);
-            }
-            let mut client_state = self.client.lock().await;
-            if closed.load(Ordering::Acquire)
-                || self.generation.load(Ordering::Acquire) != generation
-            {
-                drop(client_state);
-                let _ = socket.disconnect().await;
-                return Err("Socket.IO connection closed during namespace setup".to_owned());
-            }
-            *client_state = Some(ConnectedSocket {
-                generation,
-                client: socket,
-            });
-            Ok(())
-        })
+        Box::pin(self.connect_authenticated(&config.socket_url, &config.auth_token))
     }
 
     fn disconnect<'a>(&'a self) -> TransportFuture<'a, ()> {
@@ -283,6 +327,7 @@ impl LocalBackendTransport for SocketIoTransport {
     fn emit<'a>(&'a self, event: &'a str, payload: Value) -> TransportFuture<'a, ()> {
         Box::pin(async move {
             let connected = self.connected_socket().await?;
+            let (event, payload) = completed_event_budget::fit_completed_event(event, payload)?;
             if let Err(error) = connected.client.emit(event.to_owned(), payload).await {
                 self.invalidate_generation(connected.generation).await;
                 return Err(format_socket_error("emit", Some(event), &error));
@@ -423,5 +468,41 @@ mod tests {
             .await
             .expect("background handler should finish")
             .expect("finished signal should be sent");
+    }
+
+    #[tokio::test]
+    async fn synchronous_capability_work_does_not_starve_transport_reactor() {
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            mpsc, Arc,
+        };
+
+        let (started, start) = oneshot::channel();
+        let (released, release) = mpsc::channel();
+        let (finished, finish) = oneshot::channel();
+        let completed = Arc::new(AtomicBool::new(false));
+        let completed_work = completed.clone();
+        dispatch_handler(true, async move {
+            started.send(()).unwrap();
+            // A bounded real blocking operation makes a reactor-thread regression
+            // fail deterministically rather than hanging this current-thread test.
+            let _ = release.recv_timeout(Duration::from_secs(2));
+            completed_work.store(true, Ordering::Release);
+            let _ = finished.send(());
+        })
+        .await;
+        tokio::time::timeout(Duration::from_secs(1), start)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            !completed.load(Ordering::Acquire),
+            "The reactor must run while synchronous publication is still blocked"
+        );
+        released.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(1), finish)
+            .await
+            .unwrap()
+            .unwrap();
     }
 }

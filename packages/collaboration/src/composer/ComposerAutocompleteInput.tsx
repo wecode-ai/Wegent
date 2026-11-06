@@ -114,6 +114,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
   cloudSpaceEnabled = false,
   onSelectCloudProject,
   onSelectExternalMention,
+  onActivateMention,
   onListLocalSkills,
   onListLocalApps,
   models = [],
@@ -176,6 +177,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
   const editorRef = useRef<ComposerEditorHandle | null>(null)
   const focusRequestExpiresAtRef = useRef(0)
   const valueRef = useRef(value)
+  const restoredAutocompleteValueRef = useRef<string | null>(value)
 
   const activeMenuRef = useRef<ActiveComposerMenu | null>(null)
   const highlightedIndexRef = useRef(0)
@@ -471,6 +473,8 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
         }
       },
       setValue: (nextValue, selectionOffset = nextValue.length) => {
+        restoredAutocompleteValueRef.current = nextValue
+        closeAutocompleteMenu()
         valueRef.current = nextValue
         editorRef.current?.setValue(nextValue, selectionOffset)
       },
@@ -497,6 +501,8 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
       const editor = editorRef.current
       const current = snapshot ?? editor?.getSnapshot()
       if (!current) return
+      if (restoredAutocompleteValueRef.current === current.value) return
+      restoredAutocompleteValueRef.current = null
 
       const { nextTrigger: resolvedTrigger, triggerUnchanged } = resolveComposerAutocompleteTrigger(
         current,
@@ -872,7 +878,10 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
     onBlur,
     onCompositionStart,
     onCompositionEnd,
-    onKeyUp: updateAutocompleteTrigger,
+    onKeyUp: () => {
+      restoredAutocompleteValueRef.current = null
+      updateAutocompleteTrigger()
+    },
     onSnapshotChange: updateAutocompleteTrigger,
     debug,
     autocomplete: {
@@ -943,8 +952,12 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
         onDrop={handleDrop}
         onOpenMentionFile={onOpenSkillFile}
         onOpenMentionPlugin={onOpenMentionPlugin}
+        onActivateMention={onActivateMention}
         onEditComposerLink={editComposerLink}
-        onClick={() => updateAutocompleteTrigger()}
+        onClick={() => {
+          restoredAutocompleteValueRef.current = null
+          updateAutocompleteTrigger()
+        }}
         onFocus={() => updateAutocompleteTrigger()}
         onReady={() => {
           if (focusRequestExpiresAtRef.current >= Date.now()) {

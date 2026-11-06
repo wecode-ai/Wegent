@@ -1,5 +1,11 @@
 import { readRequestBody as readJson } from './response-protocol.mjs'
-import { selectE2EModel, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL } from './shared.mjs'
+import {
+  selectE2EModel,
+  DEFAULT_MODEL_ID,
+  DEFAULT_MODEL_LABEL,
+  WORKBENCH_READY_TIMEOUT_MS,
+} from './shared.mjs'
+import { waitForWorkbenchDebugState } from './workspace-flows.mjs'
 import assert from 'node:assert/strict'
 
 export const ACTIVE_WORKBENCH_SELECTOR =
@@ -642,16 +648,10 @@ export async function getSingleElementMetrics(control, selector, description) {
 }
 
 export function distanceFromBottom(metrics) {
-  if (metrics.scrollOrigin === 'bottom') {
-    return Math.max(0, -metrics.scrollTop)
-  }
   return Math.max(0, metrics.scrollHeight - metrics.clientHeight - metrics.scrollTop)
 }
 
 export function distanceFromTop(metrics) {
-  if (metrics.scrollOrigin === 'bottom') {
-    return Math.max(0, metrics.scrollHeight - metrics.clientHeight + metrics.scrollTop)
-  }
   return Math.max(0, metrics.scrollTop)
 }
 
@@ -664,6 +664,37 @@ export function assertElementFullyVisible(elementMetrics, scrollerMetrics, descr
 
 export function toolDurationSeconds(text) {
   return Number(text.match(/(\d+(?:\.\d+)?)s/)?.[1] ?? 0)
+}
+
+async function readPixelValue(control, selector, property) {
+  const raw = await control.command('getComputedStyleValue', selector, { value: property })
+  const value = Number.parseFloat(raw)
+  assert.ok(Number.isFinite(value), `${property} on "${selector}" was not a pixel value: "${raw}"`)
+  return value
+}
+
+export async function assertShimmerCopyTracksText(control, shimmerSelector, description) {
+  const bandSelector = `${shimmerSelector} .activity-shimmer-band`
+  const textMetrics = await getSingleElementMetrics(control, shimmerSelector, description)
+  const shimmerWidth = await readPixelValue(
+    control,
+    shimmerSelector,
+    '--activity-shimmer-text-width'
+  )
+  assert.ok(
+    Math.abs(shimmerWidth - textMetrics.width) <= 0.05,
+    `${description} shimmer width ${shimmerWidth} drifted from the text width ${textMetrics.width}`
+  )
+  const bandWidth = await readPixelValue(control, bandSelector, 'width')
+  assert.ok(
+    Math.abs(bandWidth - textMetrics.width) <= 0.05,
+    `${description} highlight copy width ${bandWidth} drifted from the text width ${textMetrics.width}`
+  )
+  assert.equal(
+    await control.command('getComputedStyleValue', shimmerSelector, { value: 'text-overflow' }),
+    'ellipsis',
+    `${description} base text lost its own truncation ellipsis`
+  )
 }
 
 export async function assertComposerDocked(control, scrollerMetrics, description) {
@@ -855,6 +886,14 @@ export async function createLocalProject(control, workspacePath, timeoutMs) {
   await control.command('clickWhenEnabled', '[data-testid="confirm-local-project-create-button"]', {
     timeoutMs,
   })
+  // Native project registration persists Codex state and refreshes executor workspaces.
+  // Wait for that initialization before applying the ordinary UI assertion budget.
+  await waitForWorkbenchDebugState(
+    control,
+    snapshot => snapshot.workbench?.currentProject?.name === 'streaming-navigation',
+    'The streaming project did not finish native workspace initialization',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
   await control.command('waitFor', '[data-testid="project-work-button"]', {
     text: 'streaming-navigation',
     timeoutMs,

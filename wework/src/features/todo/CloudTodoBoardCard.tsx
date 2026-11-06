@@ -128,6 +128,8 @@ export interface CloudTodoBoardTaskBinding {
 }
 
 interface CloudTodoBoardCardProps {
+  metadata?: ReactNode
+  childrenAction?: ReactNode
   statusNames?: Record<string, string>
   item: CloudLoopItem
   unread?: boolean
@@ -164,6 +166,8 @@ interface CloudTodoBoardCardProps {
 }
 
 export function CloudTodoBoardCard({
+  metadata,
+  childrenAction,
   statusNames,
   item,
   unread,
@@ -237,6 +241,7 @@ export function CloudTodoBoardCard({
         : []
   return (
     <IssueBoardCard
+      metadata={metadata}
       item={item}
       unread={unread}
       reference={item.id}
@@ -280,32 +285,35 @@ export function CloudTodoBoardCard({
         ) : null
       }
       childrenAction={
-        cardAction ? (
-          <span className="absolute right-2 top-2 z-20">
-            <Tooltip label={cardAction.label} side="bottom" align="end">
-              <button
-                type="button"
-                data-testid={cardAction.testId}
-                aria-label={cardAction.label}
-                onClick={event => {
-                  event.stopPropagation()
-                  cardAction.onClick()
-                }}
-                className={
-                  cardAction.kind === 'archive'
-                    ? 'flex h-7 w-7 items-center justify-center rounded-md bg-background/90 text-text-muted opacity-0 shadow-sm transition hover:bg-muted hover:text-red-600 focus:opacity-100 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 group-hover/cloud-todo-card:opacity-100'
-                    : 'flex h-7 w-7 items-center justify-center rounded-md bg-background/90 text-text-muted opacity-0 shadow-sm transition hover:bg-muted hover:text-text-primary focus:opacity-100 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 group-hover/cloud-todo-card:opacity-100'
-                }
-              >
-                {cardAction.kind === 'archive' ? (
-                  <Archive className="h-3.5 w-3.5" />
-                ) : (
-                  <CircleCheck className="h-3.5 w-3.5" />
-                )}
-              </button>
-            </Tooltip>
-          </span>
-        ) : undefined
+        <>
+          {childrenAction}
+          {cardAction ? (
+            <span className="absolute right-2 top-2 z-20">
+              <Tooltip label={cardAction.label} side="bottom" align="end">
+                <button
+                  type="button"
+                  data-testid={cardAction.testId}
+                  aria-label={cardAction.label}
+                  onClick={event => {
+                    event.stopPropagation()
+                    cardAction.onClick()
+                  }}
+                  className={
+                    cardAction.kind === 'archive'
+                      ? 'flex h-7 w-7 items-center justify-center rounded-md bg-background/90 text-text-muted opacity-0 shadow-sm transition hover:bg-muted hover:text-red-600 focus:opacity-100 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 group-hover/cloud-todo-card:opacity-100'
+                      : 'flex h-7 w-7 items-center justify-center rounded-md bg-background/90 text-text-muted opacity-0 shadow-sm transition hover:bg-muted hover:text-text-primary focus:opacity-100 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 group-hover/cloud-todo-card:opacity-100'
+                  }
+                >
+                  {cardAction.kind === 'archive' ? (
+                    <Archive className="h-3.5 w-3.5" />
+                  ) : (
+                    <CircleCheck className="h-3.5 w-3.5" />
+                  )}
+                </button>
+              </Tooltip>
+            </span>
+          ) : undefined}
+        </>
       }
       renderTaskSummary={(binding, compact) => (
         <RuntimeTaskProgressSummary

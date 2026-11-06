@@ -4,6 +4,7 @@
 use serde_json::{json, Value};
 use std::{
     fs,
+    io::Write,
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -133,9 +134,30 @@ async fn declared_local_configuration_reaches_export_but_not_business() {
         root.path().join("scripts/account-auth.py"),
         format!(
             r#"
-import json, os, sys
+with open("bootstrap-stages.txt", "w", encoding="utf-8") as probe:
+    probe.write("python_started\n")
+import faulthandler, sys, time
+bootstrap_trace = open("bootstrap-stack.txt", "w", encoding="utf-8")
+faulthandler.dump_traceback_later(5, file=bootstrap_trace)
+started = time.monotonic()
+def record_stage(stage):
+    with open("bootstrap-stages.txt", "a", encoding="utf-8") as probe:
+        probe.write(f"{{time.monotonic() - started:.6f}} {{stage}}\n")
+record_stage("diagnostics_ready")
+import json, os
+record_stage("stdlib_loaded")
 from wegent_plugin_auth import AccountAuthAdapter, local_configuration
+record_stage("sdk_loaded")
+faulthandler.cancel_dump_traceback_later()
+bootstrap_trace.close()
+def trace_transport(frame, event, argument):
+    if (frame.f_globals.get("__name__") == "wegent_plugin_auth.transport"
+            and frame.f_code.co_name in ("_open_socket", "_read_exact", "write_frame")
+            and event in ("call", "return")):
+        record_stage(f"{{frame.f_code.co_name}}:{{event}}")
+sys.setprofile(trace_transport)
 def export():
+    record_stage("export_called")
     assert local_configuration() == {{{name:?}: os.environ[{name:?}]}}
     return {{"username":"alice", "password":"synthetic-native-secret"}}
 def execute(value, arguments):
@@ -151,10 +173,25 @@ raise SystemExit(adapter.main(sys.argv[1:]))
     )
     .unwrap();
     let adapter = NativeAdapter::load(root.path(), "mail", &declaration).unwrap();
-    let exported = adapter
-        .export(&python(), Duration::from_secs(10))
-        .await
-        .unwrap();
+    let started = std::time::Instant::now();
+    let exported = adapter.export(&python(), Duration::from_secs(10)).await;
+    // Keep sanitized bootstrap timings visible for successful CI runs too.
+    let _ = writeln!(
+        std::io::stderr(),
+        "native_auth_export elapsed_ms={} bootstrap_stages={}",
+        started.elapsed().as_millis(),
+        fs::read_to_string(root.path().join("bootstrap-stages.txt"))
+            .unwrap_or_else(|_| "python_not_started".into())
+    );
+    if exported.is_err() {
+        let _ = writeln!(
+            std::io::stderr(),
+            "native_auth_bootstrap_stack={}",
+            fs::read_to_string(root.path().join("bootstrap-stack.txt"))
+                .unwrap_or_else(|_| "stack_unavailable".into())
+        );
+    }
+    let exported = exported.unwrap();
     let output = adapter
         .run(
             &python(),

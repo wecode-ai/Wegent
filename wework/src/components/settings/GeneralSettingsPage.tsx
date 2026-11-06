@@ -1,3 +1,4 @@
+import { TelemetryCollectionNotice } from '@/telemetry/TelemetryCollectionNotice'
 import { DefaultRunnerSetting } from './DefaultRunnerSetting'
 import { ReplyPredictionSettings } from './ReplyPredictionSettings'
 import { useContext, useEffect, useState } from 'react'
@@ -19,6 +20,7 @@ import {
 import { KeyboardShortcut } from '@/components/common/KeyboardShortcut'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { useTranslation } from '@/hooks/useTranslation'
+import { INTERACTIONS_PATH } from '@/features/notifications/RuntimeInteractionsContext'
 import {
   SettingsGroup,
   SettingsPage,
@@ -50,8 +52,8 @@ import { WorkbenchContext } from '@/features/workbench/useWorkbench'
 import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
 import { harnessAppsApi, type HarnessAppInstallation } from '@/api/local/harnessApps'
 import { changeWorkbenchMode } from '@/features/workbench-mode/workbenchMode'
-import { getTelemetryConfig } from '@/telemetry/config'
 import { getPlatform } from '@/lib/platform'
+import { RuntimeConcurrencySettings } from './RuntimeConcurrencySettings'
 
 type BooleanPreferenceKey = {
   [Key in keyof AppPreferencesPatch]-?: AppPreferencesPatch[Key] extends boolean | undefined
@@ -69,8 +71,6 @@ interface SwitchRowProps {
 const GENERAL_ROW_CLASS_NAME = 'py-4'
 const GENERAL_ROW_LABEL_CLASS_NAME = 'font-normal'
 const FRIENDLY_TITLE_TASK_MODEL_VALUE = 'task-model'
-const DEFAULT_MAX_CONCURRENT_TASKS = 10
-const MAX_CONCURRENT_TASKS_LIMIT = 20
 const BUILT_IN_FIXED_TAB_OPTIONS = ['task', 'board', 'agent'] as const
 
 function moveFixedTab(
@@ -94,12 +94,10 @@ interface TrayDisplayOption {
 }
 
 export function GeneralSettingsPage() {
-  const telemetryDistribution = getTelemetryConfig().distribution
   const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
   const appPreferences = useAppPreferencesState()
   const workbench = useContext(WorkbenchContext)
-  const runtimeWorkApi = workbench?.services?.runtimeWorkApi
   const [preferences, setPreferences] = useState<AppPreferences>(
     appPreferences?.loaded ? appPreferences.preferences : defaultAppPreferences
   )
@@ -110,7 +108,6 @@ export function GeneralSettingsPage() {
   const [showImportDialog, setShowImportDialog] = useState(false)
   const [pendingWorkbenchMode, setPendingWorkbenchMode] = useState<WorkbenchMode | null>(null)
   const [recordingPopoutShortcut, setRecordingPopoutShortcut] = useState(false)
-  const [maxConcurrentTasks, setMaxConcurrentTasks] = useState(DEFAULT_MAX_CONCURRENT_TASKS)
   const [installedSmartApps, setInstalledSmartApps] = useState<HarnessAppInstallation[]>([])
   const [pendingSendKey, setPendingSendKey] = useState<'enter' | 'cmd_enter' | null>(null)
   const [pendingFollowUpBehavior, setPendingFollowUpBehavior] = useState<'queue' | 'guide' | null>(
@@ -127,22 +124,14 @@ export function GeneralSettingsPage() {
 
     let cancelled = false
 
-    const runtimeSettings = Promise.resolve()
-      .then(() => runtimeWorkApi?.getRuntimeSettings())
-      .catch(runtimeSettingsError => {
-        console.debug('[Wework] Runtime settings are unavailable', runtimeSettingsError)
-        return null
-      })
-
     const preferences = appPreferences
       ? Promise.resolve(appPreferences.preferences)
       : getAppPreferences()
 
-    Promise.all([preferences, runtimeSettings])
-      .then(([nextPreferences, runtimeSettings]) => {
+    preferences
+      .then(nextPreferences => {
         if (!cancelled) {
           setPreferences(nextPreferences)
-          setMaxConcurrentTasks(runtimeSettings?.maxConcurrentTasks ?? DEFAULT_MAX_CONCURRENT_TASKS)
           setError(null)
         }
       })
@@ -161,7 +150,7 @@ export function GeneralSettingsPage() {
     return () => {
       cancelled = true
     }
-  }, [appPreferences, runtimeWorkApi, t])
+  }, [appPreferences, t])
 
   useEffect(() => {
     if (!preferences.experimentalFeaturesEnabled) return
@@ -474,33 +463,6 @@ export function GeneralSettingsPage() {
     }
   }
 
-  const saveMaxConcurrentTasks = async (value: number) => {
-    const previousValue = maxConcurrentTasks
-    setMaxConcurrentTasks(value)
-    setSaving(true)
-    setError(null)
-    try {
-      const settings = await runtimeWorkApi?.updateRuntimeSettings({
-        maxConcurrentTasks: value,
-      })
-      setMaxConcurrentTasks(settings?.maxConcurrentTasks ?? value)
-      try {
-        await workbench?.refreshWorkLists()
-      } catch (refreshError) {
-        console.warn(
-          '[Wework] Failed to refresh runtime tasks after updating concurrency settings',
-          refreshError
-        )
-      }
-    } catch (saveError) {
-      console.error('[Wework] Failed to update runtime concurrency settings', saveError)
-      setMaxConcurrentTasks(previousValue)
-      setError(t('workbench.general_settings_save_failed'))
-    } finally {
-      setSaving(false)
-    }
-  }
-
   const friendlyTitleModel = preferences.friendlyTaskTitleModel
   const fixedWorkspaceTabs =
     preferences.fixedWorkspaceTabs ?? defaultAppPreferences.fixedWorkspaceTabs
@@ -681,7 +643,10 @@ export function GeneralSettingsPage() {
                     tab.kind === 'smart_app'
                       ? (tab.title ?? t('workbench.smart_apps_title', '智能工作台'))
                       : tab.kind === 'auxiliary'
-                        ? (tab.title ?? t('workbench.workspace_tab_auxiliary', '工作区'))
+                        ? (tab.title ??
+                          (tab.contentRoute === INTERACTIONS_PATH
+                            ? t('interactions.title', '待你处理')
+                            : t('workbench.workspace_tab_auxiliary', '工作区')))
                         : (tab.title ??
                           t(`workbench.general_settings_default_workspace_tab_${tab.kind}`))
                   return (
@@ -847,32 +812,7 @@ export function GeneralSettingsPage() {
           {t('workbench.general_settings_runtime_title')}
         </div>
         <SettingsGroup className="rounded-xl !bg-background">
-          <SettingsRow
-            label={t('workbench.general_settings_max_concurrent_tasks')}
-            description={t('workbench.general_settings_max_concurrent_tasks_description')}
-            className={GENERAL_ROW_CLASS_NAME}
-            labelClassName={GENERAL_ROW_LABEL_CLASS_NAME}
-            control={
-              <select
-                data-testid="general-max-concurrent-tasks-select"
-                value={maxConcurrentTasks}
-                disabled={loading || saving}
-                aria-label={t('workbench.general_settings_max_concurrent_tasks')}
-                onChange={event => {
-                  void saveMaxConcurrentTasks(Number(event.target.value))
-                }}
-                className="h-8 w-24 rounded-md border border-border bg-background px-2 text-sm text-text-primary"
-              >
-                {Array.from({ length: MAX_CONCURRENT_TASKS_LIMIT }, (_, index) => index + 1).map(
-                  value => (
-                    <option key={value} value={value}>
-                      {value}
-                    </option>
-                  )
-                )}
-              </select>
-            }
-          />
+          <RuntimeConcurrencySettings />
           {renderSwitchRow({
             preferenceKey: 'closeToTrayEnabled',
             testId: 'general-close-to-tray-toggle',
@@ -888,6 +828,12 @@ export function GeneralSettingsPage() {
             description: t(
               'workbench.general_settings_prevent_sleep_while_tasks_running_description'
             ),
+          })}
+          {renderSwitchRow({
+            preferenceKey: 'performanceRecordingEnabled',
+            testId: 'general-performance-recording-toggle',
+            label: t('workbench.general_settings_performance_recording'),
+            description: t('workbench.general_settings_performance_recording_description'),
           })}
           <SettingsRow
             label={
@@ -1033,21 +979,20 @@ export function GeneralSettingsPage() {
         </SettingsGroup>
       </section>
 
-      {telemetryDistribution === 'public' ? (
-        <section data-testid="general-settings-privacy-section" className="mt-12">
-          <div className="mb-2 px-0.5 text-sm font-semibold text-text-primary">
-            {t('workbench.general_settings_privacy_title')}
-          </div>
-          <SettingsGroup className="rounded-xl !bg-background">
-            {renderSwitchRow({
-              preferenceKey: 'telemetryEnabled',
-              testId: 'general-telemetry-toggle',
-              label: t('workbench.general_settings_telemetry'),
-              description: t('workbench.general_settings_telemetry_description'),
-            })}
-          </SettingsGroup>
-        </section>
-      ) : null}
+      <section data-testid="general-settings-privacy-section" className="mt-12">
+        <div className="mb-2 px-0.5 text-sm font-semibold text-text-primary">
+          {t('workbench.general_settings_privacy_title')}
+        </div>
+        <SettingsGroup className="rounded-xl !bg-background">
+          {renderSwitchRow({
+            preferenceKey: 'telemetryEnabled',
+            testId: 'general-telemetry-toggle',
+            label: t('workbench.general_settings_telemetry'),
+            description: t('workbench.general_settings_telemetry_description'),
+          })}
+        </SettingsGroup>
+        <TelemetryCollectionNotice />
+      </section>
 
       <section data-testid="general-settings-popout-section" className="mt-12">
         <div className="mb-2 px-0.5 text-sm font-semibold text-text-primary">

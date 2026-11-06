@@ -1,0 +1,5 @@
+{
+  "order": 39000,
+  "scenario": "./scenarios/serialized-calendar-arrangements.scenario.mjs",
+  "scenarioOnly": true
+}

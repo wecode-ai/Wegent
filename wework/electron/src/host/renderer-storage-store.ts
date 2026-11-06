@@ -23,8 +23,14 @@ export interface RendererStorageCleanup {
 
 export class RendererStorageStore {
   private operation = Promise.resolve()
+  private closed = false
 
   constructor(private readonly dataDirectory: string) {}
+
+  close(): Promise<void> {
+    this.closed = true
+    return this.operation
+  }
 
   prepareOrigin(origin: string, cleanup: RendererStorageCleanup): Promise<void> {
     return this.serial(async () => {
@@ -43,6 +49,10 @@ export class RendererStorageStore {
       if (state?.origins.length === 1 && state.origins[0] === origin) return
       await this.writeOriginFile({ version: 1, origins: [origin] })
     })
+  }
+
+  read(): Promise<Record<string, string>> {
+    return this.serial(async () => (await this.readFile())?.entries ?? {})
   }
 
   initialize(seed: Record<string, string>): Promise<Record<string, string>> {
@@ -136,6 +146,7 @@ export class RendererStorageStore {
   }
 
   private serial<Result>(operation: () => Promise<Result>): Promise<Result> {
+    if (this.closed) return Promise.reject(new Error('Renderer storage is closed'))
     const result = this.operation.then(operation, operation)
     this.operation = result.then(
       () => undefined,

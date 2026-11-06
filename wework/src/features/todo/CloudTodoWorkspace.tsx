@@ -11,7 +11,6 @@ import {
   createCollaborationTranslator,
   boardDropHint,
   saveProjectBoardViews,
-  matchesBoardView,
 } from '@wegent/collaboration'
 import { useAssignmentNotificationChoice } from '@/features/notifications/useAssignmentNotificationChoice'
 import { runtimeTaskBindingAddress } from './runtimeTaskBindingAddress'
@@ -100,6 +99,7 @@ import {
   ProjectBoardBody,
   ProjectBoardGroupPicker,
   useStandardCloudBoardController,
+  useBoardTagFilter,
   type ProjectBoardColumn,
   type ProjectBoardGroupBy,
   type StandardCloudBoardMutation,
@@ -205,6 +205,7 @@ import { CloudFilesView, LocalFilesView } from './CloudFilesView'
 import { ProjectSpaceChatSidebar } from './ProjectSpaceChatSidebar'
 import { GlobalTodoSearch } from './GlobalTodoSearch'
 import { BoardQuickCreate } from './BoardQuickCreate'
+import { useParentIssueBoard } from '@wegent/collaboration/project-board'
 import { BoardQuickStartGuide } from './BoardQuickStartGuide'
 import { parseDingTalkAITableLink } from './projectProviderConfig'
 import { createLocalWorkspaceApi, toWeworkIssueTaskBinding } from './WeworkCollaborationPlatform'
@@ -1980,7 +1981,13 @@ export function CloudTodoWorkspace({
   const canManageViews =
     selectedProject?.location === 'local' ||
     ['Owner', 'Maintainer'].includes(selectedProject?.access_role ?? '')
+  const tagFilter = useBoardTagFilter({
+    scope: `${selectedProjectKey}:${savedViews.view?.id ?? 'default'}`,
+    tags: availableTags,
+    translate: boardTranslate,
+  })
   const standardBoardController = useStandardCloudBoardController({
+    tagFilter: tagFilter.tags,
     tagLimitError: boardTranslate('todo.tag_limit_exceeded', '最多添加 20 个不同标签'),
     view: savedViews.view,
     viewScope: `${selectedProjectKey}:${savedViews.view?.id ?? 'default'}`,
@@ -2031,6 +2038,18 @@ export function CloudTodoWorkspace({
     setProjectSearchFilters(emptyTaskSearchFilters)
   }, [setNativeBoardQuery, setNativeGroupFilter])
 
+  const parentIssueBoard = useParentIssueBoard({
+    scope: `${user.id}:${selectedProjectKey}:${savedViews.view?.id ?? 'default'}`,
+    enabled:
+      Boolean(selectedProject) && !isMyTasksBoard && !isAITableProject && !isExternalGitBoard,
+    items: boardItems,
+    columns: boardColumns,
+    currentParentId: boardParentId,
+    state: boardState,
+    getColumnItems: standardBoardController.getColumnItems,
+    translate: boardTranslate,
+  })
+
   useEffect(() => {
     if (activeProjectKey === undefined) return
     const locallyRequestedProject = locallyRequestedProjectRef.current
@@ -2047,8 +2066,8 @@ export function CloudTodoWorkspace({
     resetProjectViewState()
   }, [activeProjectKey, resetProjectViewState])
 
-  const boardLayerCount = boardItems.filter(
-    item => item.parent_id === boardParentId && matchesBoardView(item, savedViews.view)
+  const boardLayerCount = standardBoardController.filteredItems.filter(
+    item => item.parent_id === boardParentId
   ).length
   const rootBoardItems = boardItems.filter(item => item.parent_id === null)
   const firstRootBoardItem = rootBoardItems[0] ?? null
@@ -4271,7 +4290,7 @@ export function CloudTodoWorkspace({
                   ) : null
                 }
                 embedded={embedded}
-                hasCreateAction={canCreateBoardTask}
+                hasCreateAction={projectView === 'board' && canCreateBoardTask}
                 renderRightActions={({ actionRefs, level, showLabels }) => (
                   <>
                     {projectView === 'board' && level < 2 ? (
@@ -4428,7 +4447,7 @@ export function CloudTodoWorkspace({
                 sidebarCollapsed={sidebarCollapsed}
                 title={
                   embedded && embeddedTitle === 'workspace'
-                    ? t('workbench.workspace_tab_board', '协作 (Beta)')
+                    ? t('workbench.workspace_tab_board', '协作')
                     : selectedProject.name
                 }
                 titleIcon={
@@ -4698,6 +4717,25 @@ export function CloudTodoWorkspace({
                   ) : null,
                   board: (
                     <ProjectBoardBody<LocatedLoopItem>
+                      filterAction={
+                        !isAITableProject && !isExternalGitBoard && !isMyTasksBoard
+                          ? tagFilter.control
+                          : undefined
+                      }
+                      toolbarAction={parentIssueBoard.toggle}
+                      parentRows={
+                        parentIssueBoard.active
+                          ? {
+                              rows: parentIssueBoard.rows,
+                              scopeKey: parentIssueBoard.scopeKey,
+                              translate: boardTranslate,
+                              getParentTitle: item => item.title,
+                              getParentKey: item => item.id,
+                              onOpenParent: openBoardItem,
+                              onEnterParent: item => setBoardParentId(item.id),
+                            }
+                          : undefined
+                      }
                       customView={Boolean(savedViews.view)}
                       dropFeedback={
                         standardBoardController.lastMove
@@ -4885,7 +4923,7 @@ export function CloudTodoWorkspace({
                         return canCreateBoardTask &&
                           !isAITableProject &&
                           (column.type ?? state.groupBy) === 'status' &&
-                          status === 'inbox' &&
+                          (status === 'inbox' || (status === 'pending' && Boolean(boardParent))) &&
                           state.quickCreateStatus === status ? (
                           <BoardQuickCreate
                             key={`${selectedProjectKey}:${boardParentId ?? 'root'}:${column.key}`}
@@ -5424,6 +5462,16 @@ export function CloudTodoWorkspace({
                   project={selectedItemProject}
                   allItems={detailAllItems}
                   showChildren={false}
+                  onAddChild={
+                    canEditProjectSpaceIssue(selectedItem)
+                      ? () => openTodoCreation(selectedItem)
+                      : undefined
+                  }
+                  onOpenRelatedIssue={related => {
+                    if (related.can_view_detail === false) return
+                    closeTaskPanel()
+                    setSelectedItem({ ...related, project_store: selectedItem.project_store })
+                  }}
                   initialTaskBindings={activeItemTaskBindings[selectedItem.id]}
                   taskExecutionStates={taskExecutionStatesByBindingId}
                   deviceNamesById={deviceNamesById}

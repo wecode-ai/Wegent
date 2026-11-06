@@ -1,4 +1,5 @@
 import { BrowserTaskDrafts } from "./issue-detail/BrowserTaskDrafts";
+import type { BoardIssueCreateDefaults } from "./project-board/projectBoardViews";
 import { isIssueVersionConflict } from "./issue-detail/issueVersionConflict";
 import { RuntimeConversationScope } from "./conversation/RuntimeConversationScope";
 import { IssueTaskConversation } from "./issue-detail/IssueTaskConversation";
@@ -9,13 +10,7 @@ import type { RuntimeExecutionTarget } from "./issue-detail/runtimeExecutionTarg
 // SPDX-License-Identifier: Apache-2.0
 
 import { collaborationTestIds } from "./testIds";
-import {
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { useLayoutEffect, useMemo, useState, type ReactNode } from "react";
 
 import {
   collaborationMessages,
@@ -95,6 +90,7 @@ interface IssueDetailProps {
 }
 
 interface IssueCreateProps {
+  defaults?: BoardIssueCreateDefaults;
   api: IssueDetailProps["api"];
   project: CollaborationProject;
   allIssues: CollaborationIssue[];
@@ -125,56 +121,8 @@ function browserSave(blob: Blob, filename: string): Promise<void> {
   return Promise.resolve();
 }
 
-function useBrowserIssueDetailPort(
-  api: IssueDetailProps["api"],
-  onError: () => void,
-  onConflict?: () => Promise<void>,
-) {
-  const callbacks = useRef({ onError, onConflict });
-  useLayoutEffect(() => {
-    callbacks.current = { onError, onConflict };
-  }, [onError, onConflict]);
-
-  return useMemo(() => {
-    const basePort = createSharedIssueDetailPort(api, browserSave);
-    return {
-      ...basePort,
-      issues: {
-        ...basePort.issues,
-        create: async (...args: Parameters<typeof basePort.issues.create>) => {
-          try {
-            return await basePort.issues.create(...args);
-          } catch (error) {
-            callbacks.current.onError();
-            throw error;
-          }
-        },
-        update: async (...args: Parameters<typeof basePort.issues.update>) => {
-          try {
-            return await basePort.issues.update(...args);
-          } catch (error) {
-            if (callbacks.current.onConflict && isIssueVersionConflict(error)) {
-              await callbacks.current.onConflict();
-            } else {
-              callbacks.current.onError();
-            }
-            throw error;
-          }
-        },
-        assign: async (...args: Parameters<typeof basePort.issues.assign>) => {
-          try {
-            return await basePort.issues.assign(...args);
-          } catch (error) {
-            callbacks.current.onError();
-            throw error;
-          }
-        },
-      },
-    };
-  }, [api]);
-}
-
 export function IssueCreate({
+  defaults,
   api,
   project,
   allIssues,
@@ -186,7 +134,10 @@ export function IssueCreate({
   onCreated,
   onError,
 }: IssueCreateProps) {
-  const port = useBrowserIssueDetailPort(api, onError);
+  const port = useMemo(
+    () => createSharedIssueDetailPort(api, browserSave),
+    [api],
+  );
   const editorTranslate =
     translate ??
     createCollaborationTranslator(
@@ -202,10 +153,19 @@ export function IssueCreate({
         mode="create"
         project={project as SharedEditorProject}
         allItems={allIssues as SharedEditorIssue[]}
-        initialParent={null}
-        initialStatus={project.board_config?.statuses?.[0]?.id ?? "inbox"}
+        initialParent={defaults?.parent ?? null}
+        initialStatus={
+          defaults?.status ?? project.board_config?.statuses?.[0]?.id ?? "inbox"
+        }
+        initialTags={defaults?.tags}
+        initialMilestoneId={defaults?.milestoneId}
+        draftScope={defaults?.draftScope}
         onClose={onClose}
         onCreated={onCreated}
+        onCreateError={() => {
+          onError();
+          return false;
+        }}
         translate={editorTranslate}
         extensions={{
           ...browserDueDateExtensions,
@@ -280,7 +240,10 @@ function BrowserIssueDetail({
     selection?.issueId === issue.id ? selection.target : null;
   const closeExecution = () => setSelection(null);
   const permissions = getCollaborationIssueActionPermissions(project, issue);
-  const port = useBrowserIssueDetailPort(api, onError, onConflict);
+  const port = useMemo(
+    () => createSharedIssueDetailPort(api, browserSave),
+    [api],
+  );
   const editorTranslate =
     translate ??
     createCollaborationTranslator(
@@ -345,8 +308,16 @@ function BrowserIssueDetail({
             translate={editorTranslate}
             extensions={{
               ...browserDueDateExtensions,
+              onSaveError: (error) => {
+                if (isIssueVersionConflict(error)) void onConflict();
+                else onError();
+              },
               openAttachment: async (attachmentId, filename) => {
-                setAttachmentPreview({ issueId: issue.id, attachmentId, filename });
+                setAttachmentPreview({
+                  issueId: issue.id,
+                  attachmentId,
+                  filename,
+                });
               },
               renderActivity: ({ tasks, commentAssignment }) => (
                 <IssueActivityPanel

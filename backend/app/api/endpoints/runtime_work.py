@@ -92,6 +92,8 @@ async def _runtime_worktree_rpc(
 
 @router.get("", response_model=RuntimeWorkListResponse, response_model_by_alias=True)
 async def list_runtime_work_endpoint(
+    pending_only: bool = Query(False),
+    device_id: str | None = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -100,6 +102,8 @@ async def list_runtime_work_endpoint(
     return await runtime_work_service.list_runtime_work(
         db=db,
         user_id=current_user.id,
+        pending_only=pending_only,
+        device_id=device_id,
     )
 
 
@@ -799,7 +803,7 @@ async def materialize_runtime_task_endpoint(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Compile a Team task for direct dispatch by a local runtime."""
+    """Compile an authorized task for direct dispatch by a local runtime."""
 
     compiled = runtime_work_service.materialize_runtime_task_create(
         db=db,
@@ -808,12 +812,14 @@ async def materialize_runtime_task_endpoint(
     )
     return RuntimeTaskMaterializeResponse(
         payload=compiled.payload,
-        runtimeHandle={"wegentTeam": {"id": compiled.team_id}},
+        runtimeHandle=(
+            {"wegentTeam": {"id": compiled.team_id}}
+            if compiled.team_id is not None
+            else None
+        ),
     )
 
 
-# MIGRATION-CANDIDATE(api="POST /api/runtime-work/llm-responses-proxy/responses"): remove after final confirmation.
-# @router.post("/llm-responses-proxy/responses")
 @router.post("/llm-responses-proxy/chat/completions")
 @router.post("/llm-responses-proxy/messages")
 @router.post("/llm-responses-proxy/v1/messages")

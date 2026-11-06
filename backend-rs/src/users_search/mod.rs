@@ -29,6 +29,7 @@ impl std::ops::Deref for UsersSearchUser {
     }
 }
 
+const USERS_SEARCH_MISSING: &str = "Wegent-Users-Search-Missing";
 const USERS_SEARCH_INACTIVE: &str = "Wegent-Users-Search-Inactive";
 
 impl brz_http_server::Authenticator<UsersSearchUser> for crate::auth::AppAuthenticator {
@@ -45,6 +46,8 @@ impl brz_http_server::Authenticator<UsersSearchUser> for crate::auth::AppAuthent
             .map_err(|error| {
                 if error.status() == brz_http_server::StatusCode::INTERNAL_SERVER_ERROR {
                     brz_http_server::AuthFailure::Internal
+                } else if error.detail() == "Not authenticated" {
+                    brz_http_server::AuthFailure::missing_credentials(USERS_SEARCH_MISSING)
                 } else if error.detail() == "User not activated" {
                     brz_http_server::AuthFailure::invalid_credentials(USERS_SEARCH_INACTIVE)
                 } else {
@@ -69,6 +72,9 @@ impl brz_http_server::Authenticator<UsersSearchUser> for crate::auth::AppAuthent
         use brz_http_server::IntoHttpError as _;
 
         match failure {
+            brz_http_server::AuthFailure::MissingCredentials {
+                challenge: USERS_SEARCH_MISSING,
+            } => crate::http_compat::FastApiError::unauthorized("Not authenticated"),
             brz_http_server::AuthFailure::InvalidCredentials {
                 challenge: USERS_SEARCH_INACTIVE,
             } => crate::http_compat::FastApiError::unauthorized("User not activated"),

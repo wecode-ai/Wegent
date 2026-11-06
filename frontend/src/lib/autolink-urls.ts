@@ -102,6 +102,64 @@ function isAlreadyLinked(text: string, urlStart: number, urlEnd: number): boolea
 }
 
 /**
+ * Protect link/image labels too: a URL used as display text is not a bare URL.
+ * Match balanced brackets so formatted labels and nested images stay intact.
+ */
+function linkLabelRanges(text: string): Array<{ start: number; end: number }> {
+  const ranges: Array<{ start: number; end: number }> = []
+  const brackets: number[] = []
+  const referenceLabels = new Set(
+    Array.from(text.matchAll(/^ {0,3}\[([^\]]+)\]:/gm), match => normalizeReferenceLabel(match[1]))
+  )
+  for (let index = 0; index < text.length; index++) {
+    if (text[index] === '\\') {
+      index++
+    } else if (text[index] === '`') {
+      let runLength = 1
+      while (text[index + runLength] === '`') runLength++
+      let closingIndex = -1
+      for (let cursor = index + runLength; cursor < text.length; ) {
+        const candidate = text.indexOf('`', cursor)
+        if (candidate === -1) break
+        let candidateLength = 1
+        while (text[candidate + candidateLength] === '`') candidateLength++
+        if (candidateLength === runLength) {
+          closingIndex = candidate
+          break
+        }
+        cursor = candidate + candidateLength
+      }
+      if (closingIndex !== -1) index = closingIndex + runLength - 1
+    } else if (text[index] === '[') {
+      brackets.push(index)
+    } else if (text[index] === ']') {
+      const start = brackets.pop()
+      if (start === undefined) continue
+      if (text[index + 1] === '(') {
+        ranges.push({ start, end: index })
+        continue
+      }
+      const label = text.slice(start + 1, index)
+      if (text[index + 1] === '[') {
+        const referenceEnd = text.indexOf(']', index + 2)
+        if (referenceEnd === -1) continue
+        const reference = text.slice(index + 2, referenceEnd) || label
+        if (referenceLabels.has(normalizeReferenceLabel(reference))) {
+          ranges.push({ start, end: index })
+        }
+      } else if (referenceLabels.has(normalizeReferenceLabel(label))) {
+        ranges.push({ start, end: index })
+      }
+    }
+  }
+  return ranges
+}
+
+function normalizeReferenceLabel(label: string): string {
+  return label.trim().replace(/\s+/g, ' ').toLowerCase()
+}
+
+/**
  * Pre-process markdown text to convert bare URLs to markdown link format
  *
  * @param text - The markdown text to process
@@ -115,6 +173,7 @@ export function autolinkUrls(text: string): string {
   if (!text) return text
 
   const matches: Array<{ start: number; end: number; url: string }> = []
+  const labels = linkLabelRanges(text)
 
   // Find all URL matches
   let match: RegExpExecArray | null
@@ -129,7 +188,10 @@ export function autolinkUrls(text: string): string {
     }
 
     // Skip if already linked
-    if (isAlreadyLinked(text, start, end)) {
+    if (
+      isAlreadyLinked(text, start, end) ||
+      labels.some(label => start > label.start && end <= label.end)
+    ) {
       continue
     }
 

@@ -1,4 +1,10 @@
 import { APIRequestContext, expect, test } from '@playwright/test'
+import {
+  verifyAllowedPreviewCoverWatermarks,
+  verifyProtectedPreviewUsesOneWatermark,
+  verifyRestrictedFilePreviews,
+  verifyWatermarkFailureRecovery,
+} from '../../utils/restricted-preview-test-support'
 import { REGULAR_USER } from '../../config/test-users'
 import { createApiClient } from '../../utils/api-client'
 import { createExternalImportRetrieval } from '../../utils/external-import-retrieval'
@@ -22,6 +28,7 @@ import {
   authHeaders,
   getMcpCalls,
   PROVIDER_NATIVE_API_URL,
+  PROVIDER_NATIVE_MOCK_URL,
 } from '../../utils/provider-native-test-support'
 
 /**
@@ -160,6 +167,175 @@ test.describe('External DingTalk document import', () => {
       await page.reload({ waitUntil: 'domcontentloaded' })
       await expect(page.getByTestId(`document-row-${document.id}`)).toBeVisible({
         timeout: 30_000,
+      })
+    })
+  })
+
+  test.describe('real HTTPS file previews', () => {
+    // Only this fixture origin uses an ephemeral self-signed certificate.
+    test.use({ ignoreHTTPSErrors: true })
+    test.afterAll(async ({ request }) => {
+      const response = await request.delete(`${PROVIDER_NATIVE_MOCK_URL}/preview-file-source`)
+      expect(response.ok()).toBeTruthy()
+    })
+
+    test('blocks embedded sources and keeps restricted file previews in the document dialog', async ({
+      page,
+      request,
+    }) => {
+      test.setTimeout(120_000)
+      await runScenario(request, 'restricted-preview', async context => {
+        const blockedEmbedRequests: string[] = []
+        page.on('request', browserRequest => {
+          if (browserRequest.url().startsWith('https://outside.example/')) {
+            blockedEmbedRequests.push(browserRequest.url())
+          }
+        })
+        const fileSource = await request.get(`${PROVIDER_NATIVE_MOCK_URL}/preview-file-source`)
+        expect(fileSource.ok(), await fileSource.text()).toBeTruthy()
+        const { port } = (await fileSource.json()) as { port: number }
+        const origin = new URL(PROVIDER_NATIVE_MOCK_URL)
+        origin.protocol = 'https:'
+        origin.port = String(port)
+        await configureMockImport(request, {
+          documentContents: {
+            [EXTERNAL_IMPORT_NODES.product]: `# Restricted preview
+
+<iframe src="https://outside.example/iframe"></iframe>
+
+<object data="https://outside.example/object"></object>
+
+<embed src="https://outside.example/embed">
+
+[preview.pdf](${origin.origin}/preview.pdf)
+
+[preview.docx](${origin.origin}/preview.docx)
+
+[preview.mp4](${origin.origin}/preview.mp4)
+
+[preview.txt](${origin.origin}/preview.txt)
+
+[unavailable.txt](${origin.origin}/unavailable.txt)`,
+          },
+        })
+
+        await openKnowledgeBase(page, context.knowledgeBaseId)
+        await importThroughDialog(page, [EXTERNAL_IMPORT_NODES.product], {
+          sourceFolderPath: [EXTERNAL_IMPORT_NODES.folderRoot],
+        })
+        await page.getByTestId('dingtalk-import-done').click()
+        const document = await waitForDocument(
+          request,
+          context.token,
+          context.knowledgeBaseId,
+          'E2E_产品说明'
+        )
+
+        // The dialog fetches its body from the detail API exactly once, so a
+        // response without content would leave it permanently blank. Wait for
+        // the restricted body on the same endpoint the dialog consumes.
+        await expect
+          .poll(
+            async () => {
+              const detailResponse = await request.get(
+                `${PROVIDER_NATIVE_API_URL}/api/knowledge-bases/${context.knowledgeBaseId}/documents/${document.id}/detail`,
+                {
+                  headers: authHeaders(context.token),
+                  params: { include_content: 'true', include_summary: 'false' },
+                }
+              )
+              const detail = (await detailResponse.json()) as { content?: string }
+              return detail.content ?? ''
+            },
+            {
+              timeout: 45_000,
+              message: 'Restricted preview body should be served by the detail API',
+            }
+          )
+          .toContain('Restricted preview')
+
+        const currentUserResponse = await request.get(`${PROVIDER_NATIVE_API_URL}/api/users/me`, {
+          headers: authHeaders(context.token),
+        })
+        expect(currentUserResponse.ok(), await currentUserResponse.text()).toBeTruthy()
+        const currentUser = (await currentUserResponse.json()) as {
+          user_name: string
+          preferences?: { employee_id?: string | number | null } | null
+        }
+        const employeeId = currentUser.preferences?.employee_id
+        const employeeIdText =
+          typeof employeeId === 'string' && employeeId.trim()
+            ? employeeId.trim()
+            : typeof employeeId === 'number'
+              ? String(employeeId)
+              : ''
+        const watermarkText =
+          employeeIdText && employeeIdText !== currentUser.user_name
+            ? `${currentUser.user_name} ${employeeIdText}`
+            : currentUser.user_name
+
+        const allowedProtectionResponse = page.waitForResponse(response =>
+          response
+            .url()
+            .includes(
+              `/api/knowledge-bases/${context.knowledgeBaseId}/document-protection?preview_watermark=true`
+            )
+        )
+        await page.reload({ waitUntil: 'domcontentloaded' })
+        const allowedProtection = await allowedProtectionResponse
+        expect(allowedProtection.status()).toBe(200)
+        expect(await allowedProtection.json()).toEqual({
+          original_download_allowed: true,
+          watermark_text: watermarkText,
+        })
+        // The row's center can overlap its inline Edit button at the CI viewport.
+        // Click the document name to open the content preview through the row handler.
+        await page
+          .getByTestId(`document-row-${document.id}`)
+          .getByText(document.name, { exact: true })
+          .click()
+        await expect(page.getByRole('heading', { name: 'Restricted preview' })).toBeVisible({
+          timeout: 30_000,
+        })
+
+        await expect(page.getByTestId('document-embedded-content-blocked')).toHaveCount(3)
+        await expect(page.locator('iframe, object, embed')).toHaveCount(0)
+        expect(blockedEmbedRequests).toEqual([])
+        await expect(page.getByTestId('document-link-preview-card')).toHaveCount(5)
+        await verifyAllowedPreviewCoverWatermarks(page, watermarkText)
+        await verifyWatermarkFailureRecovery(page, watermarkText)
+        await verifyRestrictedFilePreviews(page, origin.origin, test.info(), watermarkText)
+        expect(blockedEmbedRequests).toEqual([])
+
+        const updateProtection = await request.put(
+          `${PROVIDER_NATIVE_API_URL}/api/knowledge-bases/${context.knowledgeBaseId}`,
+          {
+            headers: authHeaders(context.token),
+            data: { allow_document_download: false },
+          }
+        )
+        expect(updateProtection.ok(), await updateProtection.text()).toBeTruthy()
+
+        const protectedResponse = page.waitForResponse(response =>
+          response
+            .url()
+            .includes(
+              `/api/knowledge-bases/${context.knowledgeBaseId}/document-protection?preview_watermark=true`
+            )
+        )
+        await page.reload({ waitUntil: 'domcontentloaded' })
+        expect(await (await protectedResponse).json()).toEqual({
+          original_download_allowed: false,
+          watermark_text: watermarkText,
+        })
+        await page
+          .getByTestId(`document-row-${document.id}`)
+          .getByText(document.name, { exact: true })
+          .click()
+        await expect(page.getByRole('heading', { name: 'Restricted preview' })).toBeVisible({
+          timeout: 30_000,
+        })
+        await verifyProtectedPreviewUsesOneWatermark(page, watermarkText)
       })
     })
   })

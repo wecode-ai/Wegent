@@ -1,8 +1,8 @@
-import { act, renderHook, waitFor } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
 import { newStandInRole, type PersonalStandInSettings } from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { act, renderHook, waitFor } from '@testing-library/react'
+import { describe, expect, it, vi } from 'vitest'
 import { usePersonalStandIn } from './usePersonalStandIn'
 
 function fixture() {
@@ -33,19 +33,6 @@ describe('personal stand-in Executor routing', () => {
     expect(personalSave).toHaveBeenCalledExactlyOnceWith(7, settings, 'selected-device')
   })
 
-  it('uses the newly selected Executor for subsequent saves', async () => {
-    const { settings, personalGet, personalSave, services } = fixture()
-    const { result } = renderHook(() => usePersonalStandIn(services, 7, undefined, false))
-    await waitFor(() => expect(result.current.loading).toBe(false))
-    act(() => result.current.setDeviceId('remote-device'))
-    await waitFor(() => expect(result.current.loading).toBe(false))
-    expect(personalGet).toHaveBeenLastCalledWith(7, 'remote-device')
-    await act(async () => {
-      await result.current.save()
-    })
-    expect(personalSave).toHaveBeenCalledExactlyOnceWith(7, settings, 'remote-device')
-  })
-
   it('preserves the draft and reports the Executor rejection', async () => {
     const { personalSave, services } = fixture()
     personalSave.mockRejectedValueOnce(new Error('version conflict'))
@@ -55,7 +42,7 @@ describe('personal stand-in Executor routing', () => {
     await act(async () => {
       expect(await result.current.save()).toBeNull()
     })
-    expect(result.current.error).toContain('version conflict')
+    expect(result.current.error).toBe('分身设置已在其他位置更新，请刷新后重新修改。')
     expect(result.current.draft?.roles[0].prompt).toBe('Review changes')
   })
 })

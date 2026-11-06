@@ -208,6 +208,25 @@ pub fn ready_wegent_refs(contexts: &[SubtaskContextRow]) -> Vec<SelectedKnowledg
     refs
 }
 
+/// `_prepare_kb_tools_from_contexts`' priority-1 input
+/// (`contexts.py:1871-1877`): the current subtask's ready `knowledge_base`
+/// contexts in creation order. A non-empty list means the caller selected the
+/// knowledge bases for this message, so the task-level fallback must not run.
+pub fn subtask_knowledge_base_contexts(contexts: &[SubtaskContextRow]) -> Vec<&SubtaskContextRow> {
+    contexts
+        .iter()
+        .filter(|context| context.context_type == "knowledge_base" && context.status == "ready")
+        .collect()
+}
+
+/// `SubtaskContext.knowledge_id`: `type_data["knowledge_id"]` as a positive id.
+pub fn knowledge_id(context: &SubtaskContextRow) -> Option<i64> {
+    context
+        .type_data_object()
+        .and_then(|data| data.get("knowledge_id"))
+        .and_then(positive_int)
+}
+
 /// `_positive_int`: an int-like JSON value when it is positive.
 fn positive_int(value: &Value) -> Option<i64> {
     let parsed = match value {
@@ -275,6 +294,54 @@ mod tests {
         assert!(by_task.contains("subtask_contexts.context_type = 'attachment'"));
         assert!(by_task.contains("subtask_contexts.status = 'ready'"));
         assert!(by_task.ends_with("ORDER BY subtask_contexts.created_at"));
+    }
+
+    /// `_prepare_kb_tools_from_contexts`' priority-1 input: only ready
+    /// `knowledge_base` contexts count, in creation order; `selected_documents`,
+    /// attachments and non-ready rows do not select the priority-1 branch.
+    #[test]
+    fn ready_knowledge_contexts_select_the_subtask_knowledge_bases() {
+        let mut not_ready = row(5, 10, 6582, "knowledge_base", json!({"knowledge_id": 9}));
+        not_ready.status = "pending".to_string();
+        let rows = vec![
+            row(
+                1,
+                10,
+                6582,
+                "knowledge_base",
+                json!({"knowledge_id": 157464}),
+            ),
+            not_ready,
+            row(2, 10, 6582, "attachment", json!({"knowledge_id": 1})),
+            row(
+                3,
+                10,
+                6582,
+                "selected_documents",
+                json!({"knowledge_base_id": 5}),
+            ),
+            row(
+                4,
+                10,
+                6582,
+                "knowledge_base",
+                json!({"knowledge_id": "161644"}),
+            ),
+            // A ready knowledge-base context without an id is skipped, not an
+            // empty selection.
+            row(6, 10, 6582, "knowledge_base", json!({})),
+        ];
+        let selected = subtask_knowledge_base_contexts(&rows);
+        let ids: Vec<_> = selected
+            .iter()
+            .filter_map(|context| knowledge_id(context))
+            .collect();
+        assert_eq!(ids, vec![157464, 161644]);
+        assert_eq!(
+            subtask_knowledge_base_contexts(&[]).len(),
+            0,
+            "no contexts leave the task-level fallback in charge"
+        );
     }
 
     /// `_build_executor_attachment_payload`: the five executor fields, with the

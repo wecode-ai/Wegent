@@ -6,9 +6,10 @@ import { LocalEndpointEventByteStream } from './local-endpoint-event-stream.js'
 import { ExecutorSessionProjector } from './session-projector.js'
 import { ExecutorSessionProjectionStream } from './session-projection-stream.js'
 import { TranscriptSource } from './transcript-source.js'
+import { isCancellableRuntimeRead } from './read-cancellation.js'
 
 export const name = 'wework-executor-runtime'
-export const inject = ['webServer', 'sessions']
+export const inject = ['webServer', 'sessions', 'weworkRequestSecurity']
 
 const BASE_PATH = '/wework/executor/v1'
 const MAX_REQUEST_BODY_BYTES = 1024 * 1024
@@ -50,7 +51,10 @@ export async function apply(ctx) {
   }, 'wework-executor-runtime: session projection')
   register(ctx, BASE_PATH, (req, res) => describe(req, res, client))
   register(ctx, `${BASE_PATH}/rpc`, (req, res) => handleExecutorRpc(req, res, client))
-  register(ctx, `${BASE_PATH}/events`, (req, res) => handleExecutorEvents(req, res))
+  register(ctx, `${BASE_PATH}/plugin-image`, (req, res) => handlePluginImage(req, res, client))
+  register(ctx, `${BASE_PATH}/events`, (req, res) =>
+    handleExecutorEvents(req, res, undefined, { assertReady: () => client.describe() })
+  )
 }
 
 export function createTranscriptTarget(client) {
@@ -191,13 +195,17 @@ function completionFromExecutorTurn(turn) {
 
 function register(ctx, path, handler) {
   ctx.effect(
-    () => ctx.webServer.register({ kind: 'exact', path, handler }),
+    () =>
+      ctx.webServer.register({
+        kind: 'exact',
+        path,
+        handler: ctx.weworkRequestSecurity.wrap(handler),
+      }),
     `wework-executor-runtime: ${path}`
   )
 }
 
 async function describe(req, res, client) {
-  if (!trustedBrowserRequest(req)) return forbidden(res)
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     return methodNotAllowed(res, 'GET, HEAD')
   }
@@ -218,12 +226,57 @@ async function describe(req, res, client) {
   }
 }
 
+export async function handlePluginImage(req, res, client) {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return methodNotAllowed(res, 'GET, HEAD')
+  const path = new URL(req.url ?? '/', 'http://localhost').searchParams.get('path')
+  if (!path || path.length > 32768) {
+    res.writeHead(400, { 'cache-control': 'no-store' })
+    return res.end()
+  }
+  try {
+    const result = await client.request('executor.plugins.image.read', { path })
+    const allowedTypes = [
+      'image/png',
+      'image/jpeg',
+      'image/gif',
+      'image/webp',
+      'image/bmp',
+      'image/svg+xml',
+    ]
+    if (!allowedTypes.includes(result?.mimeType) || typeof result?.bytesBase64 !== 'string') {
+      throw new Error('Invalid plugin image')
+    }
+    const bytes = Buffer.from(result.bytesBase64, 'base64')
+    if (bytes.length === 0 || bytes.length > 2 * 1024 * 1024)
+      throw new Error('Invalid plugin image')
+    res.writeHead(200, {
+      'content-type': result.mimeType,
+      'content-length': bytes.length,
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+      'content-security-policy': "default-src 'none'; sandbox",
+      'cross-origin-resource-policy': 'same-origin',
+    })
+    res.end(req.method === 'HEAD' ? undefined : bytes)
+  } catch {
+    // A missing image affects only its avatar; never expose local paths or native errors.
+    res.writeHead(404, { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' })
+    res.end()
+  }
+}
+
 export async function handleExecutorRpc(req, res, client) {
-  if (!trustedBrowserRequest(req)) return forbidden(res)
   if (req.method !== 'POST') return methodNotAllowed(res, 'POST')
   const startedAt = Date.now()
   let requestId = requestIdFromRequest(req)
   let method = '<invalid>'
+  const controller = new AbortController()
+  const disconnect = () => {
+    if (!res.writableEnded) controller.abort()
+  }
+  req.once('aborted', disconnect)
+  res.once('close', disconnect)
+  res.once('error', disconnect)
   try {
     const body = await readJsonBody(req)
     if (!isRecord(body) || typeof body.method !== 'string' || !isRecord(body.params)) {
@@ -235,24 +288,56 @@ export async function handleExecutorRpc(req, res, client) {
       request_id: requestId,
       method,
     })
-    const result = await client.request(body.method, body.params, undefined, requestId)
+    observeRpcResponse(res, requestId, method, startedAt)
+    if (req.aborted || res.destroyed) controller.abort()
+    const result = await client.request(body.method, body.params, undefined, requestId, {
+      ...(isCancellableRuntimeRead(method) ? { signal: controller.signal } : {}),
+    })
     console.info('[wework-executor-runtime] RPC request finished', {
       request_id: requestId,
       method,
       elapsed_ms: Date.now() - startedAt,
       ok: true,
     })
-    sendJson(res, 200, { ok: true, result: result ?? null }, false, requestId)
+    if (!res.destroyed && !controller.signal.aborted) {
+      sendJson(res, 200, { ok: true, result: result ?? null }, false, requestId)
+    }
   } catch (error) {
     requestId ??= randomUUID()
-    console.error('[wework-executor-runtime] RPC request failed', {
+    const logFailure = controller.signal.aborted ? console.debug : console.error
+    logFailure('[wework-executor-runtime] RPC request failed', {
       request_id: requestId,
       method,
       elapsed_ms: Date.now() - startedAt,
       error: error instanceof Error ? error.message : String(error),
     })
-    sendError(res, error, requestId)
+    if (!res.destroyed && !controller.signal.aborted) sendError(res, error, requestId)
+  } finally {
+    req.off('aborted', disconnect)
+    res.off('close', disconnect)
+    res.off('error', disconnect)
   }
+}
+
+function observeRpcResponse(res, requestId, method, startedAt) {
+  const finish = () => complete('finished')
+  const close = () => complete('closed')
+  function complete(event) {
+    res.off('finish', finish)
+    res.off('close', close)
+    console.info('[wework-executor-runtime] RPC HTTP response', {
+      request_id: requestId,
+      method,
+      event,
+      elapsed_ms: Date.now() - startedAt,
+      headers_sent: res.headersSent,
+      writable_ended: res.writableEnded,
+      writable_finished: res.writableFinished,
+      destroyed: res.destroyed,
+    })
+  }
+  res.once('finish', finish)
+  res.once('close', close)
 }
 
 export async function handleExecutorEvents(
@@ -261,7 +346,6 @@ export async function handleExecutorEvents(
   createEventStream = options => LocalEndpointEventByteStream.fromEnvironment(options),
   options = {}
 ) {
-  if (!trustedBrowserRequest(req)) return forbidden(res)
   if (req.method !== 'GET') return methodNotAllowed(res, 'GET')
   const after = eventCursor(req)
   const replayExisting = shouldReplayExistingEvents(req)
@@ -284,6 +368,8 @@ export async function handleExecutorEvents(
     })
     source = await eventStream.start()
     if (!active || res.writableEnded || res.destroyed) return
+    // Recovery events must only reach consumers once their RPC path can reconcile them.
+    options.assertReady?.()
     res.writeHead(200, {
       'content-type': 'text/event-stream',
       'cache-control': 'no-cache, no-store',
@@ -424,22 +510,6 @@ async function readJsonBody(req) {
   }
 }
 
-function trustedBrowserRequest(req) {
-  const remoteAddress = req.socket?.remoteAddress ?? ''
-  if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(remoteAddress)) return false
-  const fetchSite = singleHeader(req.headers['sec-fetch-site'])
-  if (fetchSite && !['same-origin', 'none'].includes(fetchSite)) return false
-  const origin = singleHeader(req.headers.origin)
-  const host = singleHeader(req.headers.host)
-  if (!origin) return true
-  if (!host) return false
-  try {
-    return new URL(origin).host === host
-  } catch {
-    return false
-  }
-}
-
 function sendError(res, error, requestId) {
   const body = errorBody(error)
   const status = ['invalid_json', 'invalid_params', 'request_too_large'].includes(body.error.code)
@@ -481,13 +551,6 @@ function sendJson(res, status, value, head = false, requestId) {
     ...(requestId ? { 'x-request-id': requestId } : {}),
   })
   res.end(head ? undefined : body)
-}
-
-function forbidden(res) {
-  sendJson(res, 403, {
-    ok: false,
-    error: { code: 'forbidden', message: 'Forbidden', retryable: false },
-  })
 }
 
 function methodNotAllowed(res, allow) {

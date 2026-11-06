@@ -19,14 +19,15 @@
 //! handle, and the `TaskStore` trait object requires a `Send` method future.
 //! The owning store supplies the resolved table names and (for a sharded
 //! deployment) the ids it allocated before the insert.
-use brz_mysql::{MysqlResult, MysqlRow, MysqlService, MysqlTransaction};
+use brz_mysql::{MysqlResult, MysqlRow, MysqlTransaction, MysqlTransactionService};
 use serde_json::{Map, Value};
 
 use crate::internal_callback::completion::task_column;
 use crate::json_compat::python_json_value;
+use crate::request_sql::{RequestSql, RouteKey};
 use crate::task_store_create::{CreateSubtasksRequest, NewSubtaskRow, subtask_insert_arguments};
 use crate::task_store_statements::{
-    insert_subtask_statement, task_projection, update_task_json_statement,
+    StatementArg, insert_subtask_statement, task_projection, update_task_json_statement,
 };
 
 /// `_consume_task_executor_reference`'s result (`ExecutorReference`).
@@ -155,40 +156,122 @@ pub struct SubtaskPairInsert {
 
 /// `create_assistant_subtask` + `create_user_and_assistant_subtasks`: resolve
 /// the executor reference (locking task read, label consumption, fallback
-/// assistant read) and insert the paired rows inside `SAVEPOINT {savepoint}`,
-/// all in one transaction.
+/// assistant read) and insert the paired rows inside the Source's
+/// `begin_nested()` block, all in one transaction.
 pub async fn create_subtask_pair_with_executor_reference(
-    mysql: &MysqlService,
+    transaction: &mut MysqlTransactionService,
     tasks_table: &str,
     subtasks_table: &str,
-    savepoint: &str,
     with_id: bool,
     request: &CreateSubtasksRequest<'_>,
 ) -> MysqlResult<SubtaskPairInsert> {
-    let task_id = request.user_subtask.task_id;
-    mysql
-        .with_transaction(async |transaction| {
-            let executor =
-                resolve_executor_reference(transaction, tasks_table, subtasks_table, task_id)
-                    .await?;
-            let assistant_subtask =
-                assistant_row_with_executor(&request.assistant_subtask, &executor);
-            transaction
-                .execute(format!("SAVEPOINT {savepoint}"), ())
-                .await?;
+    let executor = resolve_executor_reference_on(
+        &mut *transaction,
+        tasks_table,
+        subtasks_table,
+        request.user_subtask.task_id,
+    )
+    .await?;
+    create_subtask_pair_with_resolved_executor(
+        transaction,
+        subtasks_table,
+        with_id,
+        request,
+        &executor,
+    )
+    .await
+}
+
+/// [`resolve_executor_reference`] on the caller's request transaction.
+pub async fn resolve_executor_reference_on(
+    sql: &mut dyn RequestSql,
+    tasks_table: &str,
+    subtasks_table: &str,
+    task_id: i64,
+) -> MysqlResult<AssistantExecutor> {
+    let route = RouteKey::Task(task_id as u64);
+    let task = sql
+        .fetch_optional_row(
+            route,
+            &task_for_update_first_statement(tasks_table),
+            vec![StatementArg::Int(task_id)],
+        )
+        .await?;
+    let Some(task) = task else {
+        return Ok(AssistantExecutor::default());
+    };
+    let task_json = task_column::<brz_mysql::Json<Value>>(&task, "json").map(|json| json.0);
+    let consumed = match task_json {
+        Some(json) => consume_executor_reference(&json),
+        None => ConsumedExecutorReference {
+            executor: AssistantExecutor::default(),
+            stripped_json: None,
+        },
+    };
+    if let Some(stripped) = consumed.stripped_json {
+        let updated_at = chrono::Local::now()
+            .naive_local()
+            .format("%Y-%m-%d %H:%M:%S%.6f")
+            .to_string();
+        sql.execute_statement(
+            route,
+            &update_task_json_statement(tasks_table),
+            vec![
+                StatementArg::Str(python_json_value(&stripped)),
+                StatementArg::Str(updated_at),
+                StatementArg::Int(task_id),
+            ],
+        )
+        .await?;
+    }
+    if !consumed.executor.name.is_empty() {
+        return Ok(consumed.executor);
+    }
+    let Some(previous) = sql
+        .fetch_optional_row(
+            route,
+            &latest_assistant_executor_statement(subtasks_table),
+            vec![StatementArg::Int(task_id)],
+        )
+        .await?
+    else {
+        return Ok(AssistantExecutor::default());
+    };
+    Ok(AssistantExecutor {
+        namespace: previous.get_at::<Option<String>>(0)?.unwrap_or_default(),
+        name: previous.get_at::<Option<String>>(1)?.unwrap_or_default(),
+        deleted_at: i64::from(previous.get_at::<Option<bool>>(2)?.unwrap_or(false)),
+    })
+}
+
+/// The Source's subtask `begin_nested()` block, given an executor already
+/// resolved by the caller: the paired inserts and the `after_flush_postexec`
+/// timestamp read, all inside one nested `with_transaction` scope. The Source
+/// emits the task's rename UPDATE between the executor reads and this block.
+pub async fn create_subtask_pair_with_resolved_executor(
+    transaction: &mut MysqlTransactionService,
+    subtasks_table: &str,
+    with_id: bool,
+    request: &CreateSubtasksRequest<'_>,
+    executor: &AssistantExecutor,
+) -> MysqlResult<SubtaskPairInsert> {
+    let assistant_subtask = assistant_row_with_executor(&request.assistant_subtask, executor);
+    let route = RouteKey::Task(request.user_subtask.task_id as u64);
+    let (user_subtask_id, assistant_subtask_id, assistant_created_at) = transaction
+        .with_transaction(async |nested| {
             let user_subtask_id =
-                insert_subtask_row(transaction, subtasks_table, with_id, &request.user_subtask)
+                insert_subtask_row_on(nested, subtasks_table, with_id, &request.user_subtask)
                     .await?;
             let assistant_subtask_id =
-                insert_subtask_row(transaction, subtasks_table, with_id, &assistant_subtask)
-                    .await?;
+                insert_subtask_row_on(nested, subtasks_table, with_id, &assistant_subtask).await?;
             // `after_flush_postexec` reads the new assistant subtask's
             // `created_at`; the ORM loads the expired timestamp pair on this
             // same connection before the savepoint is released.
-            let timestamps: Option<MysqlRow> = transaction
-                .fetch_optional(
-                    inserted_subtask_timestamps_statement(subtasks_table),
-                    (assistant_subtask_id,),
+            let timestamps = nested
+                .fetch_optional_row(
+                    route,
+                    &inserted_subtask_timestamps_statement(subtasks_table),
+                    vec![StatementArg::Int(assistant_subtask_id)],
                 )
                 .await?;
             let assistant_created_at = timestamps.as_ref().and_then(|row| {
@@ -196,17 +279,36 @@ pub async fn create_subtask_pair_with_executor_reference(
                     .ok()
                     .flatten()
             });
-            transaction
-                .execute(format!("RELEASE SAVEPOINT {savepoint}"), ())
-                .await?;
-            Ok(SubtaskPairInsert {
-                user_subtask_id,
-                assistant_subtask_id,
-                executor,
-                assistant_created_at,
-            })
+            Ok((user_subtask_id, assistant_subtask_id, assistant_created_at))
         })
-        .await
+        .await?;
+    Ok(SubtaskPairInsert {
+        user_subtask_id,
+        assistant_subtask_id,
+        executor: (*executor).clone(),
+        assistant_created_at,
+    })
+}
+
+/// One `subtasks` row insert on the caller's request transaction.
+pub(crate) async fn insert_subtask_row_on(
+    sql: &mut dyn RequestSql,
+    table: &str,
+    with_id: bool,
+    row: &NewSubtaskRow<'_>,
+) -> MysqlResult<i64> {
+    let execution = sql
+        .execute_statement(
+            RouteKey::Task(row.task_id as u64),
+            &insert_subtask_statement(table, with_id),
+            subtask_insert_arguments(row, with_id),
+        )
+        .await?;
+    Ok(if with_id {
+        row.id
+    } else {
+        execution.last_insert_id as i64
+    })
 }
 
 /// `_take_task_executor_reference` then the fallback assistant read.

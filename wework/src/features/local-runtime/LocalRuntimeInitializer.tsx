@@ -1,13 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { AlertCircle, Check, Copy, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import { getRuntimeConfig } from '@/config/runtime'
-import {
-  applyLocalExecutorCloudConnection,
-  type LocalExecutorCloudConnection,
-} from '@/features/cloud-connection/localExecutorCloudConnection'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getPlatform } from '@/lib/platform'
 import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
@@ -18,7 +14,7 @@ import {
   type LocalExecutorLog,
   type LocalExecutorStatus,
 } from '@/desktop/localExecutor'
-import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { reportDesktopStartupFailure } from '@/desktop/startupFailure'
 import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
 
 function getLocalExecutorLogDisplayPath(): string {
@@ -33,14 +29,12 @@ type CopyDebugState = 'idle' | 'copying' | 'copied' | 'failed'
 
 interface LocalRuntimeInitializerProps {
   children: ReactNode
-  initialCloudConnection?: LocalExecutorCloudConnection
   startupReady?: boolean
 }
 
-interface LocalRuntimeState {
-  phase: LocalRuntimePhase
-  error: string | null
-}
+type LocalRuntimeState =
+  | { phase: 'starting' | 'ready'; error: null }
+  | { phase: 'failed'; error: string; cause: unknown }
 
 interface LocalRuntimeErrorText {
   notRunning: string
@@ -111,6 +105,7 @@ async function resolveLocalRuntimeState(
     return {
       phase: 'failed',
       error: errorMessage(error, fallbackError),
+      cause: error,
     }
   }
 }
@@ -220,13 +215,11 @@ function SlowStartupHelp({ copyState, onCopyDebugInfo }: SlowStartupHelpProps) {
 
 export function LocalRuntimeInitializer({
   children,
-  initialCloudConnection,
   startupReady = true,
 }: LocalRuntimeInitializerProps) {
   const { t } = useTranslation('localRuntime')
   const enabled = useMemo(() => shouldInitializeLocalRuntime(), [])
   const fallbackError = t('fallback_error')
-  const initialCloudConnectionRef = useRef(initialCloudConnection)
   const [slowStartupTimedOut, setSlowStartupTimedOut] = useState(false)
   const [startupAttempt, setStartupAttempt] = useState(0)
   const [copyDebugState, setCopyDebugState] = useState<CopyDebugState>('idle')
@@ -241,10 +234,6 @@ export function LocalRuntimeInitializer({
     phase: enabled ? 'starting' : 'ready',
     error: null,
   }))
-
-  useEffect(() => {
-    initialCloudConnectionRef.current = initialCloudConnection
-  }, [initialCloudConnection])
 
   useEffect(() => {
     if (!enabled) {
@@ -280,21 +269,13 @@ export function LocalRuntimeInitializer({
   }, [enabled, fallbackError, runtimeErrorText])
 
   useEffect(() => {
-    if (!enabled || state.phase !== 'ready' || !initialCloudConnectionRef.current) return
-
-    void applyLocalExecutorCloudConnection(initialCloudConnectionRef.current).catch(error => {
-      console.error('[Wework] Failed to apply cloud connection to local executor:', error)
-    })
-  }, [enabled, state.phase])
-
-  useEffect(() => {
     if (state.phase !== 'failed' || !isElectronRuntime() || getDesktopWindowLabel() !== 'main') {
       return
     }
-    void invokeDesktopHost<void>('renderer.startupFailed').catch(error => {
+    void reportDesktopStartupFailure(state.cause, 'local_runtime_initialize').catch(error => {
       console.error('[Wework] Failed to report the local runtime startup error', error)
     })
-  }, [state.phase])
+  }, [state])
 
   const handleCopyDebugInfo = useCallback(async () => {
     setCopyDebugState('copying')

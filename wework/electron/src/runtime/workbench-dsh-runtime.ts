@@ -1,7 +1,9 @@
 import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, delimiter, dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import semver from 'semver'
+import { isSeq, parseDocument } from 'yaml'
 import { runtimeNodeArgs } from './electron-node-runtime.js'
 import * as tar from 'tar'
 import { materializeBundledRuntimes } from './bundled-runtime-materializer.js'
@@ -56,6 +58,7 @@ export interface PrepareWorkbenchDshOptions {
   environment: NodeJS.ProcessEnv
   port: number
   modelBaseUrl?: string | null
+  additionalModels?: Array<{ modelKey: string; displayName: string; baseUrl: string }>
   contextBaseUrl?: string | null
   contextToken?: string | null
   decisionBaseUrl?: string | null
@@ -112,6 +115,13 @@ export async function prepareWorkbenchDshLaunch(
 ): Promise<WorkbenchDshLaunch> {
   const runtime = await resolveWorkbenchRuntime(options, options.manifest.requirements.dsh)
   validateRequirements(options.manifest, runtime)
+  // Legacy apps retain their declared runtime. The privileged host bridge also
+  // needs the native connection service's authenticated request checks.
+  const includeElectronHostBridge =
+    options.includeElectronHostBridge ?? runtime.version === WORKBENCH_DSH_VERSION
+  if (includeElectronHostBridge && runtime.version !== WORKBENCH_DSH_VERSION) {
+    throw new Error(`The trusted Electron host bridge requires DSH ${WORKBENCH_DSH_VERSION}`)
+  }
   const nodeCommand = options.environment.WEWORK_NODE_PATH?.trim() || 'node'
   const dshHome = resolve(
     options.dataDirectory,
@@ -149,20 +159,24 @@ export async function prepareWorkbenchDshLaunch(
       environment,
       run
     )
+  } else {
+    // Legacy DSH has an origin fence, but no browser session authentication.
+    // Install the HTTP boundary before any of its routes can begin listening.
+    await cp(
+      new URL('./legacy-dsh-browser-auth.cjs', import.meta.url),
+      join(dshHome, 'browser-auth.cjs')
+    )
+    environment.WEWORK_DSH_BROWSER_AUTH = 'legacy'
   }
-  if (options.includeElectronHostBridge !== false) {
+  if (includeElectronHostBridge) {
     // The workbench is an isolated harness profile. Without the electron-host
     // plugin its DSH client has no route to the scoped host pipe, so calling
     // /wework/electron-host/v1/invoke hits a plain page and every capability
     // (including dshCapture.*) silently degrades. Install the trusted host bridge
     // into the profile so the workbench can reach the owner-scoped capabilities.
-    const hostPluginPath = join(runtime.pluginsRoot, 'wework-electron-host')
     const corePluginsRoot = options.environment.WEWORK_CORE_PLUGIN_ROOT?.trim()
-    const resolvedHostPluginPath = (await isDirectory(hostPluginPath))
-      ? hostPluginPath
-      : corePluginsRoot && (await isDirectory(join(corePluginsRoot, 'wework-electron-host')))
-        ? join(corePluginsRoot, 'wework-electron-host')
-        : null
+    const hostPluginPath = join(corePluginsRoot || runtime.pluginsRoot, 'wework-electron-host')
+    const resolvedHostPluginPath = (await isDirectory(hostPluginPath)) ? hostPluginPath : null
     if (!resolvedHostPluginPath) {
       throw new Error(
         'Workbench Smart App runtime requires the trusted wework-electron-host plugin'
@@ -205,6 +219,9 @@ export async function prepareWorkbenchDshLaunch(
     command: nodeCommand,
     entry: runtime.entry,
     args: runtimeNodeArgs(environment, [
+      ...(environment.WEWORK_DSH_BROWSER_AUTH === 'legacy'
+        ? ['--require', join(dshHome, 'browser-auth.cjs')]
+        : []),
       runtime.entry,
       '--profile',
       options.manifest.entry.profile,
@@ -268,7 +285,7 @@ async function prepareInstanceBundle(
   await copyDirectoryContents(resolve(options.packagePath), destination)
   const packages = await materializeManifestPackages(options.manifest, destination)
   if (options.modelBaseUrl?.trim()) {
-    await writeModelSettings(dshHome, options.modelBaseUrl)
+    await writeModelSettings(dshHome, options.modelBaseUrl, options.additionalModels ?? [])
     await patchModelProvider(
       join(destination, options.manifest.entry.installPackage, 'cordis.patch.yml')
     )
@@ -537,6 +554,15 @@ async function patchModelProvider(path: string): Promise<void> {
 }
 
 export function injectModelProviderPatch(source: string): string {
+  const document = parseDocument(source)
+  if (document.errors.length) {
+    throw new Error('Smart app model patch contains invalid YAML', {
+      cause: document.errors[0],
+    })
+  }
+  if (document.contents !== null && !isSeq(document.contents)) {
+    throw new Error('Smart app model patch must contain a plugin list')
+  }
   let provider = false
   let model = false
   const patched = source.split('\n').map(line => {
@@ -568,7 +594,29 @@ export function injectModelProviderPatch(source: string): string {
   return `${patched.join('\n').replace(/\n+$/, '')}\n`
 }
 
-async function writeModelSettings(dshHome: string, baseUrl: string): Promise<void> {
+function additionalProviderId(modelKey: string): string {
+  return `wework-model-${createHash('sha256').update(modelKey).digest('hex').slice(0, 16)}`
+}
+
+async function writeModelSettings(
+  dshHome: string,
+  baseUrl: string,
+  additionalModels: NonNullable<PrepareWorkbenchDshOptions['additionalModels']>
+): Promise<void> {
+  const providers = additionalModels
+    .map(model =>
+      [
+        `    ${additionalProviderId(model.modelKey)}:`,
+        `      displayName: ${JSON.stringify(model.displayName)}`,
+        '      apiKeyEnv: WEWORK_HARNESS_API_KEY',
+        '      api: anthropic-messages',
+        `      baseURL: ${model.baseUrl.replace(/\/+$/, '')}`,
+        '      models:',
+        '        - id: wework-selected',
+        `          name: ${JSON.stringify(model.displayName)}`,
+      ].join('\n')
+    )
+    .join('\n')
   await writeFile(
     join(dshHome, 'settings.yaml'),
     `llm-pi-ai:
@@ -581,6 +629,7 @@ async function writeModelSettings(dshHome: string, baseUrl: string): Promise<voi
       models:
         - id: wework-selected
           name: Wework selected model
+${providers ? `${providers}\n` : ''}
 `,
     { mode: 0o600 }
   )
@@ -593,8 +642,12 @@ function runtimeEnvironment(
   nodeCommand: string,
   options: PrepareWorkbenchDshOptions
 ): NodeJS.ProcessEnv {
+  const inherited = withRuntimePath(environment, runtimeRoot, nodeCommand)
+  // Browser authentication belongs to this runtime's launch, not its parent.
+  delete inherited.WEWORK_DSH_BROWSER_AUTH
+  delete inherited.WEWORK_DSH_BROWSER_AUTH_FD
   return {
-    ...withRuntimePath(environment, runtimeRoot, nodeCommand),
+    ...inherited,
     DSH_HOME: dshHome,
     ...(options.modelBaseUrl ? { WEWORK_HARNESS_API_KEY: 'wework-local-router' } : {}),
     ...(options.contextBaseUrl ? { WEWORK_HARNESS_CONTEXT_BASE_URL: options.contextBaseUrl } : {}),

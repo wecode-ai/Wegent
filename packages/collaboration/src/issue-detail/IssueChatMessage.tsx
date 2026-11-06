@@ -309,12 +309,10 @@ export function IssueChatMessage({
     !isManagerStatusComment &&
     !message.replyToMessageId
   ) {
-    const failed = displayStatus === "failed";
-    const completed = displayStatus === "succeeded";
     const presentation = managerActivityPresentation(
       t,
       message.metadata,
-      failed ? "failed" : completed ? "completed" : "running",
+      displayStatus ?? "unknown",
     );
     return (
       <div
@@ -335,10 +333,6 @@ export function IssueChatMessage({
           <div className="flex items-start gap-2 text-sm">
             <div className="min-w-0 flex-1">
               <span className="font-medium">{message.sender.name}</span>{" "}
-              <span className="text-xs text-text-muted">
-                {t("activity.task_activity_manager_role")}
-              </span>
-              {" · "}
               {presentation.label}
             </div>
             {openExecution || onStopExecution ? (

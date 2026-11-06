@@ -40,6 +40,9 @@ const PERSISTED_RUNTIME_HANDLE_KEYS: &[&str] = &[
     "modelSelection",
     "model_selection",
     "origin",
+    "standInOwnerRequest",
+    "standInResult",
+    "standInResultReceipt",
     "overloadRecoveryTurnIds",
     "runtime",
     "supersededTranscriptTurnIds",
@@ -47,6 +50,7 @@ const PERSISTED_RUNTIME_HANDLE_KEYS: &[&str] = &[
     "wegentTeam",
     "turnIdsBySubtask",
     "userMessagePresentations",
+    "changeRequests",
 ];
 static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -60,6 +64,8 @@ pub(crate) struct RuntimeWorkStore {
     last_written_payload: Arc<Mutex<Option<Vec<u8>>>>,
     #[cfg(test)]
     write_attempts: Arc<AtomicU64>,
+    #[cfg(test)]
+    full_task_reads: Arc<AtomicU64>,
 }
 
 #[derive(Clone, Default, Deserialize, Serialize)]
@@ -232,6 +238,7 @@ impl PersistedRuntimeTask {
             recency_at,
             completed_at: None,
             runtime_handle: persisted_runtime_handle(&self.runtime_handle, &self.runtime),
+            execution_state: None,
             parent: self.parent,
             ephemeral: self.ephemeral,
             runtime_project_key: self.runtime_project_key,
@@ -325,12 +332,13 @@ fn merge_persisted_runtime_handle(current: &Value, persisted: Value, runtime: &s
         .cloned()
         .unwrap_or_default();
     let current = current.as_object();
-    // Member profiles contain materialized credentials and remain memory-only.
+    // Materialized profiles and coordinator identities remain memory-only.
     for key in [
         "queuePosition",
         "lastError",
         "lastErrorCode",
         "collaborationMemberRuntimeProfiles",
+        "collaborationCoordinatorIdentity",
     ] {
         if let Some(value) = current.and_then(|runtime_handle| runtime_handle.get(key)) {
             merged.insert(key.to_owned(), value.clone());
@@ -379,6 +387,8 @@ impl RuntimeWorkStore {
             last_written_payload: Arc::new(Mutex::new(last_written_payload)),
             #[cfg(test)]
             write_attempts: Arc::new(AtomicU64::new(0)),
+            #[cfg(test)]
+            full_task_reads: Arc::new(AtomicU64::new(0)),
         };
         if migration_required {
             store.persist_current_index();
@@ -422,18 +432,28 @@ impl RuntimeWorkStore {
     }
 
     pub fn get_task(&self, local_task_id: &str) -> Option<RuntimeTaskLink> {
-        self.refresh_index_from_disk_if_changed();
-        self.index.lock().ok()?.tasks.get(local_task_id).cloned()
+        #[cfg(test)]
+        self.full_task_reads.fetch_add(1, Ordering::Relaxed);
+        self.read_task(local_task_id, Clone::clone)
+    }
+
+    #[cfg(test)]
+    pub fn full_task_read_count(&self) -> u64 {
+        self.full_task_reads.load(Ordering::Relaxed)
     }
 
     pub fn get_task_summary(&self, local_task_id: &str) -> Option<RuntimeTaskLink> {
+        self.read_task(local_task_id, RuntimeTaskLink::list_summary)
+    }
+
+    /// Read task metadata without copying its buffered transcript.
+    pub fn read_task<T>(
+        &self,
+        local_task_id: &str,
+        read: impl FnOnce(&RuntimeTaskLink) -> T,
+    ) -> Option<T> {
         self.refresh_index_from_disk_if_changed();
-        self.index
-            .lock()
-            .ok()?
-            .tasks
-            .get(local_task_id)
-            .map(RuntimeTaskLink::list_summary)
+        self.index.lock().ok()?.tasks.get(local_task_id).map(read)
     }
 
     pub fn find_summary_by_thread_id(&self, thread_id: &str) -> Option<RuntimeTaskLink> {
@@ -507,7 +527,41 @@ impl RuntimeWorkStore {
         local_task_id: &str,
         updater: impl FnOnce(&mut RuntimeTaskLink),
     ) -> Option<RuntimeTaskLink> {
-        self.update_task_with_persistence(local_task_id, updater, true)
+        self.update_task_with_persistence(local_task_id, updater, true, Clone::clone)
+    }
+
+    /// Mutate metadata without copying the task's in-memory transcript into a discarded result.
+    pub fn update_task_without_snapshot(
+        &self,
+        local_task_id: &str,
+        updater: impl FnOnce(&mut RuntimeTaskLink),
+    ) -> Option<()> {
+        self.update_task_with_persistence(local_task_id, updater, true, |_| ())
+    }
+
+    /// Commit durable application metadata before making the update visible in memory.
+    pub fn try_update_task(
+        &self,
+        local_task_id: &str,
+        updater: impl FnOnce(&mut RuntimeTaskLink),
+    ) -> io::Result<Option<RuntimeTaskLink>> {
+        self.refresh_index_from_disk_if_changed();
+        let poisoned = || io::Error::other("Runtime index lock is poisoned");
+        let _write_guard = self.write_lock.lock().map_err(|_| poisoned())?;
+        let mut index = self.index.lock().map_err(|_| poisoned())?;
+        let mut next = index.clone();
+        let Some(task) = next.tasks.get_mut(local_task_id) else {
+            return Ok(None);
+        };
+        updater(task);
+        let updated = task.clone();
+        let payload = serialize_index(&next)?;
+        atomic_write_file(&self.index_path, &payload)?;
+        *index = next;
+        drop(index);
+        *self.last_written_payload.lock().map_err(|_| poisoned())? = Some(payload);
+        self.update_index_signature();
+        Ok(Some(updated))
     }
 
     pub fn rekey_task(
@@ -531,39 +585,58 @@ impl RuntimeWorkStore {
         Some(updated)
     }
 
-    fn update_task_with_persistence(
+    fn update_task_with_persistence<T>(
         &self,
         local_task_id: &str,
         updater: impl FnOnce(&mut RuntimeTaskLink),
         persist: bool,
-    ) -> Option<RuntimeTaskLink> {
+        snapshot: impl FnOnce(&RuntimeTaskLink) -> T,
+    ) -> Option<T> {
         self.refresh_index_from_disk_if_changed();
         let mut index = self.index.lock().ok()?;
         let task = index.tasks.get_mut(local_task_id)?;
         let before = persisted_task_fingerprint(task);
+        let revision_before = task
+            .execution_state
+            .as_ref()
+            .map(|state| state.revision.clone());
+        let updated_at_before = task.updated_at;
         let lifecycle_before = (
             task.running,
             task.status.clone(),
+            task.thread_status.clone(),
             task.turn_status.clone(),
             task.interaction_status.clone(),
+            task.completed_at,
             task.runtime_handle["lastTurnId"].clone(),
             task.runtime_handle["origin"].clone(),
         );
         updater(task);
-        if lifecycle_before
+        let lifecycle_changed = lifecycle_before
             != (
                 task.running,
                 task.status.clone(),
+                task.thread_status.clone(),
                 task.turn_status.clone(),
                 task.interaction_status.clone(),
+                task.completed_at,
                 task.runtime_handle["lastTurnId"].clone(),
                 task.runtime_handle["origin"].clone(),
-            )
-        {
+            );
+        let metadata_changed = before != persisted_task_fingerprint(task);
+        if lifecycle_changed || metadata_changed || task.updated_at != updated_at_before {
+            if let Some(state) = task.execution_state.as_mut() {
+                // The revision versions the whole snapshot, not only native turn progress.
+                if Some(&state.revision) == revision_before.as_ref() {
+                    state.revision = super::events::next_runtime_event_sequence().to_string();
+                }
+            }
+        }
+        if lifecycle_changed {
             self.observe_stand_in(task);
         }
-        let updated = task.clone();
-        let should_persist = persist && before != persisted_task_fingerprint(task);
+        let updated = snapshot(task);
+        let should_persist = persist && metadata_changed;
         drop(index);
         if should_persist {
             self.persist_current_index();
@@ -794,7 +867,7 @@ fn temporary_index_path(index_path: &Path) -> PathBuf {
     ))
 }
 
-pub(super) fn atomic_write_file(index_path: &Path, payload: &[u8]) -> io::Result<()> {
+pub(crate) fn atomic_write_file(index_path: &Path, payload: &[u8]) -> io::Result<()> {
     let parent = index_parent(index_path);
     fs::create_dir_all(parent)
         .map_err(|error| io_error_with_context("create index parent directory", parent, error))?;

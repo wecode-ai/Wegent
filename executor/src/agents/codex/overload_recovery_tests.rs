@@ -37,6 +37,41 @@ fn state() -> CodexRunState {
     state
 }
 
+#[tokio::test]
+async fn recovery_scope_exit_notifies_the_native_owner_without_an_observer() {
+    for restarted in [false, true] {
+        let hub = super::super::CodexNotificationHub::new();
+        let mut receiver = hub.subscribe_runtime();
+        let mut recovery = OverloadRecovery::new(Some(hub.clone()), None);
+        recovery.observe(&overload_error(), &state());
+        assert!(matches!(
+            recovery.observe(&completed("failed"), &state()),
+            RecoveryAction::Retry { .. }
+        ));
+        if restarted {
+            recovery.observe(
+                &json!({"method": "turn/started", "params": {
+                    "threadId": "root-thread", "turn": {"id": "next-turn"}
+                }}),
+                &state(),
+            );
+        }
+        drop(recovery);
+        drop(hub);
+        let message = tokio::time::timeout(Duration::from_secs(1), receiver.recv())
+            .await
+            .unwrap();
+        if restarted {
+            assert!(message.is_none());
+        } else {
+            let message = message.unwrap();
+            assert_eq!(message["method"], "runtime/overloadRecoverySettled");
+            assert_eq!(message["params"]["threadId"], "root-thread");
+            assert_eq!(message["params"]["turnId"], "failed-turn");
+        }
+    }
+}
+
 #[test]
 fn overload_recovery_waits_for_saved_history_and_uses_bounded_backoff() {
     let mut recovery = OverloadRecovery::default();
@@ -310,6 +345,7 @@ fn shared_options(
     cancellation: Option<oneshot::Receiver<()>>,
 ) -> super::super::SharedTurnNotificationOptions {
     super::super::SharedTurnNotificationOptions {
+        runtime_notifications: None,
         overload_turn_recovering: None,
         overload_continuation_params: json!({"threadId": "root-thread", "input": []}),
         active_turn_id: Some("failed-turn".to_owned()),
@@ -670,7 +706,15 @@ async fn overload_recovery_serializes_user_mutations_between_goal_read_and_resum
         sync::Mutex,
     };
     for method in ["thread/goal/set", "thread/goal/clear"] {
-        let client = CodexAppServerClient::new(format!("goal-recovery-gate-{method}"));
+        let directory = tempfile::tempdir().unwrap();
+        // Manually driven children must not join executor-wide shutdown or reload.
+        let client = CodexAppServerClient {
+            binary: format!("goal-recovery-gate-{method}"),
+            home: Some(directory.path().to_path_buf()),
+            state: Arc::new(Mutex::new(
+                super::super::CodexAppServerSharedState::default(),
+            )),
+        };
         client.mark_thread_active("root-thread").await;
         let mut command = tokio::process::Command::new("sh");
         command
@@ -689,7 +733,7 @@ async fn overload_recovery_serializes_user_mutations_between_goal_read_and_resum
             shared.process_environment =
                 client.process_environment(&shared.runtime_proxy_env, &BTreeMap::new());
             shared.process = Some(CodexAppServerProcess {
-                child,
+                child: child.into(),
                 stdin: Arc::new(Mutex::new(stdin)),
                 pending: Arc::clone(&pending),
                 notifications: CodexNotificationHub::new(),
@@ -728,6 +772,7 @@ async fn overload_recovery_serializes_user_mutations_between_goal_read_and_resum
             .await
             .remove(&read["id"].as_u64().unwrap())
             .unwrap()
+            .sender
             .send(Ok(json!({"goal": expected})))
             .unwrap();
         let resume: Value =
@@ -744,6 +789,7 @@ async fn overload_recovery_serializes_user_mutations_between_goal_read_and_resum
             .await
             .remove(&resume["id"].as_u64().unwrap())
             .unwrap()
+            .sender
             .send(Ok(json!({"goal": active})))
             .unwrap();
         assert!(recovery.await.unwrap().unwrap().1);
@@ -761,9 +807,187 @@ async fn overload_recovery_serializes_user_mutations_between_goal_read_and_resum
             .await
             .remove(&user["id"].as_u64().unwrap())
             .unwrap()
+            .sender
             .send(Ok(response.clone()))
             .unwrap();
         assert_eq!(user_mutation.await.unwrap().unwrap(), response);
+        client.restart().await;
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn overload_recovery_drains_user_resumed_turns_before_settling_changed_goal() {
+    use super::super::{
+        read_shared_turn_notifications, CodexAppServerClient, CodexAppServerProcess,
+        CodexNotificationHub,
+    };
+    use std::{
+        collections::{BTreeMap, HashMap},
+        process::Stdio,
+        sync::Arc,
+    };
+    use tokio::{
+        io::{AsyncBufReadExt, BufReader},
+        sync::Mutex,
+    };
+
+    for mode in ["completed", "in_flight", "paused", "cleared"] {
+        let directory = tempfile::tempdir().unwrap();
+        // Manually driven children must not join executor-wide shutdown or reload.
+        let client = CodexAppServerClient {
+            binary: format!("overload-drain-{mode}"),
+            home: Some(directory.path().to_path_buf()),
+            state: Arc::new(Mutex::new(
+                super::super::CodexAppServerSharedState::default(),
+            )),
+        };
+        client.mark_thread_active("root-thread").await;
+        let mut command = tokio::process::Command::new("sh");
+        command
+            .args(["-c", "cat"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true);
+        super::super::configure_codex_app_server_process_group(&mut command);
+        let mut child = command.spawn().unwrap();
+        let stdin = child.stdin.take().unwrap();
+        let mut requests = BufReader::new(child.stdout.take().unwrap()).lines();
+        let pending = Arc::new(Mutex::new(HashMap::new()));
+        {
+            let mut shared = client.state.lock().await;
+            shared.process_environment =
+                client.process_environment(&shared.runtime_proxy_env, &BTreeMap::new());
+            shared.process = Some(CodexAppServerProcess {
+                child: child.into(),
+                stdin: Arc::new(Mutex::new(stdin)),
+                pending: Arc::clone(&pending),
+                notifications: CodexNotificationHub::new(),
+                reader_task: tokio::spawn(async {}),
+            });
+        }
+        let (sender, mut receiver) = tokio::sync::broadcast::channel(32);
+        let stopped = blocked_goal(json!("failed-turn"));
+        sender.send(stopped.clone().into()).unwrap();
+        sender.send(overload_error().into()).unwrap();
+        sender.send(completed("failed").into()).unwrap();
+        let (notify_tx, mut notify_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (active_tx, mut active_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut options = shared_options(notify_tx, None);
+        options.active_turn_started = Some(Box::new(move |_, turn_id| {
+            active_tx.send(turn_id).unwrap();
+        }));
+        let mut state = state();
+        let read = read_shared_turn_notifications(
+            &client,
+            &mut receiver,
+            "root-thread",
+            &mut state,
+            30,
+            tokio::time::Instant::now() + Duration::from_secs(30),
+            options,
+        );
+        let resumed = matches!(mode, "completed" | "in_flight");
+        let mut snapshot = stopped["params"]["goal"].clone();
+        snapshot["status"] = json!(if resumed { "complete" } else { "paused" });
+        if mode == "cleared" {
+            snapshot = Value::Null;
+        }
+        let terminal = json!({"method":"turn/completed", "params":{
+            "threadId":"root-thread", "turn":{"id":"continuation", "status":"completed"}
+        }});
+        let drive =
+            async {
+                let request: Value =
+                    serde_json::from_str(&requests.next_line().await.unwrap().unwrap()).unwrap();
+                assert_eq!(request["method"], "thread/goal/get");
+                if resumed {
+                    let mut active = stopped.clone();
+                    active["params"]["turnId"] = Value::Null;
+                    active["params"]["goal"]["status"] = json!("active");
+                    sender.send(active.into()).unwrap();
+                    for id in ["recovered", "continuation"] {
+                        sender
+                            .send(
+                                json!({"method":"turn/started", "params":{
+                                    "threadId":"root-thread", "turn":{"id":id}
+                                }})
+                                .into(),
+                            )
+                            .unwrap();
+                        sender
+                            .send(
+                                json!({"method":"item/agentMessage/delta", "params":{
+                                    "threadId":"root-thread", "turnId":id, "delta":id
+                                }})
+                                .into(),
+                            )
+                            .unwrap();
+                        if id == "recovered" {
+                            sender.send(json!({"method":"turn/completed", "params":{
+                            "threadId":"root-thread", "turn":{"id":id, "status":"completed"}
+                        }}).into()).unwrap();
+                        }
+                    }
+                    if mode == "completed" {
+                        sender.send(json!({"method":"thread/goal/updated", "params":{
+                        "threadId":"root-thread", "turnId":"continuation", "goal":snapshot
+                    }}).into()).unwrap();
+                        sender.send(terminal.clone().into()).unwrap();
+                    }
+                }
+                pending
+                    .lock()
+                    .await
+                    .remove(&request["id"].as_u64().unwrap())
+                    .unwrap()
+                    .sender
+                    .send(Ok(json!({"goal":snapshot})))
+                    .unwrap();
+                let mut forwarded = Vec::new();
+                while let Some(message) = notify_rx.recv().await {
+                    if mode == "in_flight"
+                        && message["method"] == "thread/goal/updated"
+                        && message["params"]["goal"]["status"] == "complete"
+                    {
+                        sender.send(terminal.clone().into()).unwrap();
+                    }
+                    if message["method"] == "turn/completed" {
+                        forwarded
+                            .push(message["params"]["turn"]["id"].as_str().unwrap().to_owned());
+                    }
+                }
+                forwarded
+            };
+        let (result, forwarded) =
+            tokio::time::timeout(Duration::from_secs(10), async { tokio::join!(read, drive) })
+                .await
+                .unwrap();
+        if resumed {
+            assert_eq!(
+                result.unwrap(),
+                ExecutionOutcome::Completed {
+                    content: "continuation".to_owned()
+                }
+            );
+            assert_eq!(forwarded, ["recovered", "continuation"]);
+            assert_eq!(active_rx.try_recv().unwrap(), "recovered");
+            assert_eq!(active_rx.try_recv().unwrap(), "continuation");
+            assert!(active_rx.try_recv().is_err());
+        } else {
+            assert!(matches!(
+                result.unwrap(),
+                ExecutionOutcome::Cancelled { .. }
+            ));
+            assert!(forwarded.is_empty());
+            assert!(active_rx.try_recv().is_err());
+        }
+        assert_eq!(
+            state.goal_status_snapshot(),
+            (true, snapshot["status"].as_str().map(str::to_owned))
+        );
+        assert!(pending.lock().await.is_empty());
         client.restart().await;
     }
 }

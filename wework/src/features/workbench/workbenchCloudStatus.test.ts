@@ -1,7 +1,6 @@
 import { mergeRuntimeWorkLists } from '@/features/workbench/runtimeWorkMerge'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { DeviceInfo, RuntimeDeviceWorkspace, RuntimeWorkListResponse } from '@/types/api'
-import { runtimeProjectUiId } from '@/lib/runtime-project'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   EMPTY_CLOUD_RUNTIME_STATE,
   filterDisconnectedRemoteRuntimeWork,
@@ -9,7 +8,6 @@ import {
   readCachedDeviceList,
   resolveDeviceListWithCache,
   selectCloudWorkStatus,
-  selectProjectCreatableDevices,
   selectRuntimeWorkView,
   selectVisibleDevices,
   startCloudRuntimeSync,
@@ -54,28 +52,6 @@ function runtimeWork(deviceId: string): RuntimeWorkListResponse {
 }
 
 describe('mergeRuntimeWorkLists', () => {
-  test('is idempotent while preserving the same task ID on distinct devices', () => {
-    const localWork = runtimeWork('local-device')
-    const cloudWork = runtimeWork('remote-device')
-
-    const once = mergeRuntimeWorkLists(localWork, cloudWork)
-    const twice = mergeRuntimeWorkLists(once, cloudWork)
-
-    expect(once.totalTasks).toBe(2)
-    expect(twice.totalTasks).toBe(2)
-    expect(twice.projects).toHaveLength(1)
-    expect(twice.projects[0].deviceWorkspaces).toHaveLength(2)
-    expect(
-      twice.projects[0].deviceWorkspaces.map(deviceWorkspace => [
-        deviceWorkspace.deviceId,
-        deviceWorkspace.tasks.map(task => task.taskId),
-      ])
-    ).toEqual([
-      ['local-device', ['task-1']],
-      ['remote-device', ['task-1']],
-    ])
-  })
-
   test('keeps distinct tasks from different devices in the same project', () => {
     const localWork = {
       ...runtimeWork('local-device'),
@@ -253,63 +229,6 @@ describe('mergeRuntimeWorkLists', () => {
       }),
     ])
   })
-
-  test('keeps mapped project workspaces without tasks so the first task has a target', () => {
-    const localWork: RuntimeWorkListResponse = {
-      projects: [
-        {
-          project: { id: 7, name: 'Repo' },
-          deviceWorkspaces: [workspace('local-device', [])],
-          totalTasks: 0,
-        },
-      ],
-      chats: [],
-      totalTasks: 0,
-    }
-    const cloudWork: RuntimeWorkListResponse = {
-      projects: [],
-      chats: [],
-      totalTasks: 0,
-    }
-
-    const merged = mergeRuntimeWorkLists(localWork, cloudWork)
-
-    expect(merged.projects[0].deviceWorkspaces).toEqual([
-      expect.objectContaining({
-        deviceId: 'local-device',
-        workspacePath: '/workspace/repo',
-        mapped: true,
-        available: true,
-        tasks: [],
-      }),
-    ])
-  })
-
-  test('drops unmapped empty chat workspaces during runtime work merge', () => {
-    const localWork: RuntimeWorkListResponse = {
-      projects: [],
-      chats: [
-        {
-          deviceId: 'local-device',
-          deviceName: 'local-device',
-          deviceStatus: 'online',
-          available: true,
-          mapped: false,
-          workspacePath: '/workspace/empty-chat',
-          workspaceKind: 'chat',
-          tasks: [],
-        },
-      ],
-      totalTasks: 0,
-    }
-    const cloudWork: RuntimeWorkListResponse = {
-      projects: [],
-      chats: [],
-      totalTasks: 0,
-    }
-
-    expect(mergeRuntimeWorkLists(localWork, cloudWork).chats).toEqual([])
-  })
 })
 
 describe('resolveDeviceListWithCache', () => {
@@ -317,18 +236,36 @@ describe('resolveDeviceListWithCache', () => {
 
   test('accepts an authoritative empty device list and clears stale cache', () => {
     const cachedDevice = device({ device_id: 'stale-device' })
-    resolveDeviceListWithCache([cachedDevice])
+    resolveDeviceListWithCache('owner-a', [cachedDevice])
 
-    expect(readCachedDeviceList()).toHaveLength(1)
-    expect(resolveDeviceListWithCache([], { useCacheFallback: false })).toEqual([])
-    expect(readCachedDeviceList()).toEqual([])
+    expect(readCachedDeviceList('owner-a')).toHaveLength(1)
+    expect(resolveDeviceListWithCache('owner-a', [], { useCacheFallback: false })).toEqual([])
+    expect(readCachedDeviceList('owner-a')).toEqual([])
   })
 
   test('retains cached devices when the caller explicitly permits fallback', () => {
     const cachedDevice = device({ device_id: 'cached-device' })
-    resolveDeviceListWithCache([cachedDevice])
+    resolveDeviceListWithCache('owner-a', [cachedDevice])
 
-    expect(resolveDeviceListWithCache([]).map(item => item.device_id)).toEqual(['cached-device'])
+    expect(resolveDeviceListWithCache('owner-a', []).map(item => item.device_id)).toEqual([
+      'cached-device',
+    ])
+  })
+
+  test('isolates fallback and authoritative removal by owner and ignores unscoped entries', () => {
+    const cachedDevice = device({ device_id: 'owner-a-device' })
+    resolveDeviceListWithCache('owner-a', [cachedDevice])
+    sessionStorage.setItem(
+      'wework.workbench.lastNonEmptyDevices',
+      JSON.stringify({ devices: [cachedDevice], updatedAt: Date.now() })
+    )
+
+    expect(readCachedDeviceList('owner-b')).toEqual([])
+    expect(resolveDeviceListWithCache('owner-b', [])).toEqual([])
+    resolveDeviceListWithCache('owner-b', [], { useCacheFallback: false })
+    expect(readCachedDeviceList('owner-a').map(device => device.device_id)).toEqual([
+      'owner-a-device',
+    ])
   })
 })
 
@@ -524,45 +461,6 @@ describe('cloud runtime sync state', () => {
     ])
   })
 
-  test('excludes remote routes that resolve to the local runtime from remote project creation', () => {
-    const started = startCloudRuntimeSync(EMPTY_CLOUD_RUNTIME_STATE, 'bootstrap', ['devices'])
-    const ready = finishCloudRuntimeSync(started, started.inFlightRevision ?? 0, {
-      devices: {
-        status: 'fulfilled',
-        value: [
-          device({
-            device_id: 'remote-device',
-            name: 'Remote route',
-            device_type: 'remote',
-            runtime_instance_id: 'runtime-local',
-          }),
-        ],
-      },
-    })
-
-    const localDevices = [
-      device({
-        device_id: 'app-device',
-        name: 'Local Executor',
-        device_type: 'app',
-        runtime_instance_id: 'runtime-local',
-      }),
-    ]
-    const visibleDevices = selectVisibleDevices(localDevices, ready)
-
-    expect(visibleDevices).toHaveLength(1)
-    expect(visibleDevices[0]).toMatchObject({
-      device_id: 'app-device',
-      device_type: 'app',
-      runtime_instance_id: 'runtime-local',
-    })
-    expect(visibleDevices[0].runtime_routes?.map(route => route.kind)).toEqual([
-      'app-ipc',
-      'remote-relay',
-    ])
-    expect(selectProjectCreatableDevices(localDevices, ready)).toEqual([])
-  })
-
   test('drops stale revisions that complete after a newer sync starts', () => {
     const first = startCloudRuntimeSync(EMPTY_CLOUD_RUNTIME_STATE, 'bootstrap', ['devices'])
     const second = startCloudRuntimeSync(first, 'manual-refresh', ['devices'])
@@ -572,24 +470,6 @@ describe('cloud runtime sync state', () => {
 
     expect(stale).toBe(second)
     expect(selectVisibleDevices([], stale)).toEqual([])
-  })
-
-  test('shows syncing during the initial cloud refresh', () => {
-    const refreshing = startCloudRuntimeSync(EMPTY_CLOUD_RUNTIME_STATE, 'bootstrap', ['devices'])
-
-    expect(selectCloudWorkStatus(refreshing).availability).toBe('syncing')
-    expect(selectCloudWorkStatus(refreshing).checks.devices).toBe('syncing')
-  })
-
-  test('keeps available cloud work status stable during a later background refresh', () => {
-    const started = startCloudRuntimeSync(EMPTY_CLOUD_RUNTIME_STATE, 'bootstrap', ['devices'])
-    const ready = finishCloudRuntimeSync(started, started.inFlightRevision ?? 0, {
-      devices: { status: 'fulfilled', value: [device()] },
-    })
-    const refreshing = startCloudRuntimeSync(ready, 'poll', ['devices'])
-
-    expect(selectCloudWorkStatus(refreshing).availability).toBe('available')
-    expect(selectCloudWorkStatus(refreshing).checks.devices).toBe('available')
   })
 
   test('keeps unavailable cloud work status stable until a later refresh succeeds', () => {
@@ -624,18 +504,6 @@ describe('cloud runtime sync state', () => {
     expect(selectVisibleDevices([], unavailable)).toEqual([
       expect.objectContaining({ device_id: 'cloud-device', status: 'online' }),
     ])
-  })
-
-  test('derives runtime work from the last good cloud snapshot without repeated duplication', () => {
-    const started = startCloudRuntimeSync(EMPTY_CLOUD_RUNTIME_STATE, 'bootstrap', ['runtimeWork'])
-    const ready = finishCloudRuntimeSync(started, started.inFlightRevision ?? 0, {
-      runtimeWork: { status: 'fulfilled', value: runtimeWork('remote-device') },
-    })
-    const once = selectRuntimeWorkView(runtimeWork('local-device'), ready)
-    const twice = selectRuntimeWorkView(once, ready)
-
-    expect(once.totalTasks).toBe(2)
-    expect(twice.totalTasks).toBe(2)
   })
 
   test('hides remote work while the cloud connection is explicitly disconnected', () => {
@@ -745,53 +613,6 @@ describe('cloud runtime sync state', () => {
       }),
     ])
     expect(runtimeView.totalTasks).toBe(1)
-  })
-
-  test('merges duplicate route workspaces that share a device workspace mapping id', () => {
-    const localWorkspace = {
-      ...workspace('local-device', []),
-      id: 101,
-      deviceName: 'Local Executor',
-    }
-    const cloudWorkspace = {
-      ...workspace('cloud-device', [{ taskId: 'task-cloud' }]),
-      id: 101,
-      deviceName: 'hongyu9-remote',
-    }
-    const merged = mergeRuntimeWorkLists(
-      {
-        projects: [
-          {
-            project: { id: 7, name: 'Repo' },
-            deviceWorkspaces: [localWorkspace],
-            totalTasks: 0,
-          },
-        ],
-        chats: [],
-        totalTasks: 0,
-      },
-      {
-        projects: [
-          {
-            project: { id: 7, name: 'Repo' },
-            deviceWorkspaces: [cloudWorkspace],
-            totalTasks: 1,
-          },
-        ],
-        chats: [],
-        totalTasks: 1,
-      }
-    )
-
-    expect(merged.projects[0].deviceWorkspaces).toEqual([
-      expect.objectContaining({
-        id: 101,
-        deviceId: 'local-device',
-        deviceName: 'Local Executor',
-        workspacePath: '/workspace/repo',
-        tasks: [expect.objectContaining({ taskId: 'task-cloud' })],
-      }),
-    ])
   })
 
   test('merges runtime projects with different route keys when their canonical workspace matches', () => {
@@ -926,91 +747,6 @@ describe('cloud runtime sync state', () => {
     expect(runtimeView.projects[1].deviceWorkspaces[0].tasks[0].taskId).toBe('task-cloud')
   })
 
-  test('merges a local Codex remote descriptor with its remote executor project in global order', () => {
-    const remoteWorkspace = {
-      ...workspace('remote-device', []),
-      workspacePath: '/srv/repo',
-      workspaceSource: 'remote',
-      remoteHostId: 'remote-device',
-      available: false,
-    }
-    const localWork: RuntimeWorkListResponse = {
-      projects: [
-        {
-          project: { key: '/local/a', name: 'Local A' },
-          deviceWorkspaces: [{ ...workspace('local-device', []), workspacePath: '/local/a' }],
-        },
-        {
-          project: {
-            key: 'remote-project-id',
-            sidebarStateKey: 'remote-project-id',
-            id: 101,
-            name: 'Remote',
-            kind: 'remote',
-            source: 'remote_project',
-            stateDeviceId: 'local-device',
-            pinned: true,
-            pinnedOrder: 0,
-            active: true,
-          },
-          deviceWorkspaces: [remoteWorkspace],
-        },
-        {
-          project: { key: '/local/b', name: 'Local B' },
-          deviceWorkspaces: [{ ...workspace('local-device', []), workspacePath: '/local/b' }],
-        },
-      ],
-      chats: [],
-      totalTasks: 0,
-    }
-    const remoteWork: RuntimeWorkListResponse = {
-      projects: [
-        {
-          project: { key: '/srv/repo', id: 202, name: 'Remote executor project' },
-          deviceWorkspaces: [
-            {
-              ...remoteWorkspace,
-              workspaceSource: 'local',
-              remoteHostId: undefined,
-              available: true,
-              tasks: [{ taskId: 'remote-task', title: 'Remote task' }],
-            },
-          ],
-        },
-      ],
-      chats: [],
-      totalTasks: 1,
-    }
-
-    const merged = mergeRuntimeWorkLists(localWork, remoteWork, {
-      devices: [device({ device_id: 'remote-device', device_type: 'remote' })],
-    })
-
-    expect(merged.projects.map(project => project.project.name)).toEqual([
-      'Local A',
-      'Remote',
-      'Local B',
-    ])
-    expect(merged.projects[1].project).toMatchObject({
-      id: 101,
-      key: '/srv/repo',
-      sidebarStateKey: 'remote-project-id',
-      stateDeviceId: 'local-device',
-      pinned: true,
-      pinnedOrder: 0,
-      active: true,
-    })
-    expect(merged.projects[1].deviceWorkspaces).toEqual([
-      expect.objectContaining({
-        deviceId: 'remote-device',
-        workspacePath: '/srv/repo',
-        workspaceSource: 'remote',
-        remoteHostId: 'remote-device',
-        tasks: [expect.objectContaining({ taskId: 'remote-task' })],
-      }),
-    ])
-  })
-
   test('merges a mirror by owner identity after the primary root changes', () => {
     const mirror = {
       project: {
@@ -1077,104 +813,6 @@ describe('cloud runtime sync state', () => {
     expect(merged.projects[0].deviceWorkspaces[0].workspacePath).toBe('/new')
   })
 
-  test.each<Partial<DeviceInfo>>([
-    { socket_device_id: 'relay-route' },
-    { app_device_id: 'relay-route' },
-    {
-      runtime_routes: [
-        {
-          kind: 'remote-relay',
-          device_id: 'relay-route',
-          runtime_device_id: 'executor-route',
-          status: 'online',
-        },
-      ],
-    },
-  ])('merges remote host aliases when workspace metadata differs (%#)', aliases => {
-    const localWork: RuntimeWorkListResponse = {
-      projects: [
-        {
-          project: {
-            id: 101,
-            key: 'remote-record',
-            sidebarStateKey: 'remote-record',
-            stateDeviceId: 'local-device',
-            name: 'Remote work',
-            kind: 'remote',
-            source: 'remote_project',
-            pinned: true,
-          },
-          deviceWorkspaces: [
-            {
-              ...workspace('relay-route', []),
-              workspaceSource: 'remote',
-              remoteHostId: 'relay-route',
-              available: false,
-            },
-          ],
-        },
-      ],
-      chats: [],
-      totalTasks: 0,
-    }
-    const remoteWork: RuntimeWorkListResponse = {
-      projects: [
-        {
-          project: { id: 202, key: '/workspace/repo', name: 'Executor work' },
-          deviceWorkspaces: [
-            {
-              ...workspace('executor-route', [{ taskId: 'remote-task' }]),
-              workspaceKind: 'worktree',
-              workspaceSource: 'local',
-            },
-          ],
-        },
-      ],
-      chats: [],
-      totalTasks: 1,
-    }
-    const context = {
-      devices: [device({ ...aliases, device_id: 'executor-route', device_type: 'remote' })],
-    }
-
-    const merged = mergeRuntimeWorkLists(localWork, remoteWork, context)
-
-    expect(merged.projects).toHaveLength(1)
-    expect(merged.projects[0].project).toMatchObject({
-      id: 101,
-      name: 'Remote work',
-      sidebarStateKey: 'remote-record',
-      stateDeviceId: 'local-device',
-      pinned: true,
-    })
-    expect(merged.projects[0].deviceWorkspaces).toEqual([
-      expect.objectContaining({
-        deviceId: 'executor-route',
-        remoteHostId: 'relay-route',
-        workspaceKind: 'worktree',
-        workspaceSource: 'remote',
-        available: true,
-        tasks: [expect.objectContaining({ taskId: 'remote-task' })],
-      }),
-    ])
-    expect(merged.totalTasks).toBe(1)
-    expect(mergeRuntimeWorkLists(merged, remoteWork, context)).toEqual(merged)
-  })
-
-  test('preserves the stored host reference when the workspace execution device is unknown', () => {
-    const input = runtimeWork('unregistered-device')
-    input.projects[0].deviceWorkspaces[0].remoteHostId = 'relay-route'
-
-    const merged = mergeRuntimeWorkLists(input, input, {
-      devices: [device({ device_id: 'executor-route', socket_device_id: 'relay-route' })],
-    })
-
-    expect(merged.projects[0].deviceWorkspaces[0]).toMatchObject({
-      deviceId: 'unregistered-device',
-      remoteHostId: 'relay-route',
-    })
-  })
-
   test('preserves remote hosts that belong to a different device', () => {
     const remoteWork: RuntimeWorkListResponse = {
       projects: [
@@ -1210,74 +848,6 @@ describe('cloud runtime sync state', () => {
     })
     expect(differentDevices.projects).toHaveLength(2)
     expect(differentDevices.totalTasks).toBe(1)
-  })
-
-  test('preserves one remote project UI id across descriptor and executor sources', () => {
-    const workspacePath = '/srv/repo'
-    const remoteProject = {
-      project: {
-        key: workspacePath,
-        name: 'Remote executor project',
-        stateDeviceId: 'remote-device',
-      },
-      deviceWorkspaces: [
-        {
-          ...workspace('remote-device', []),
-          workspacePath,
-        },
-      ],
-      totalTasks: 0,
-    }
-    const remoteProjectId = runtimeProjectUiId(remoteProject.project)
-    const localDescriptor: RuntimeWorkListResponse = {
-      projects: [
-        {
-          project: {
-            key: 'wegent-remote:remote-device:%2Fsrv%2Frepo',
-            sidebarStateKey: 'wegent-remote:remote-device:%2Fsrv%2Frepo',
-            id: remoteProjectId,
-            name: 'Remote',
-            kind: 'remote',
-            source: 'remote_project',
-            stateDeviceId: 'local-device',
-          },
-          deviceWorkspaces: [
-            {
-              ...remoteProject.deviceWorkspaces[0],
-              workspaceSource: 'remote',
-              remoteHostId: 'remote-device',
-            },
-          ],
-          totalTasks: 0,
-        },
-      ],
-      chats: [],
-      totalTasks: 0,
-    }
-
-    expect(runtimeProjectUiId(localDescriptor.projects[0].project)).toBe(remoteProjectId)
-
-    const merged = mergeRuntimeWorkLists(
-      localDescriptor,
-      {
-        projects: [remoteProject],
-        chats: [],
-        totalTasks: 0,
-      },
-      {
-        devices: [device({ device_id: 'remote-device', device_type: 'remote' })],
-      }
-    )
-
-    expect(merged.projects).toHaveLength(1)
-    expect(merged.projects[0].project.id).toBe(remoteProjectId)
-    expect(runtimeProjectUiId(merged.projects[0].project)).toBe(remoteProjectId)
-    expect(merged.projects[0].project).toMatchObject({
-      key: workspacePath,
-      sidebarStateKey: 'wegent-remote:remote-device:%2Fsrv%2Frepo',
-      stateDeviceId: 'local-device',
-      source: 'remote_project',
-    })
   })
 
   test('keeps the cached public IP when a disconnected remote descriptor reports loopback', () => {

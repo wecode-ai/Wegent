@@ -55,7 +55,18 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
       const boardTab = await control.command('getAttribute', '[role="tab"][aria-selected="true"]', {
         value: 'data-testid',
       })
-      const source = JSON.parse(await control.command('snapshot', 'body'))
+      await control.command('openWeworkScheme', 'body', { value: 'wework://apps/wework' })
+      await control.command('waitFor', `${selector(taskTab)}[aria-selected="true"]`, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', selector(boardTab))
+      const source = await waitFor(
+        control,
+        async () => JSON.parse(await control.command('snapshot', 'body')),
+        value => Boolean(new URL(value.location).searchParams.get('projectId')),
+        'The source project route did not settle',
+        uiTimeoutMs
+      )
       const boardLocation = source.location
       assert.ok(
         new URL(boardLocation).searchParams.get('projectId'),
@@ -79,7 +90,13 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
         await control.command('waitFor', `${ACTIVE} [data-testid="cloud-project-header-title"]`, {
           text: projectName,
         })
-        const current = JSON.parse(await control.command('snapshot', 'body'))
+        const current = await waitFor(
+          control,
+          async () => JSON.parse(await control.command('snapshot', 'body')),
+          value => value.location === boardLocation,
+          'The source project route did not restore',
+          uiTimeoutMs
+        )
         assert.equal(
           current.location,
           boardLocation,

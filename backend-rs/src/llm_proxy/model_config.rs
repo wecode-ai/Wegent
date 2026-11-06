@@ -43,7 +43,7 @@ pub(crate) struct ModelConfig {
 
 /// The shared wire protocol a Model CRD maps to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Protocol {
+pub(crate) enum Protocol {
     OpenAiResponses,
     OpenAiChatCompletions,
     AnthropicMessages,
@@ -414,7 +414,7 @@ fn encode_wegent_header_value(value: &str) -> String {
 }
 
 /// `resolve_llm_proxy_protocol`.
-pub(super) fn resolve_llm_proxy_protocol(
+pub(crate) fn resolve_llm_proxy_protocol(
     model_name: &str,
     config: &ModelConfig,
 ) -> Result<Protocol, FastApiError> {
@@ -577,12 +577,17 @@ async fn user_groups(state: &AppState, user: &UserRow) -> Result<Vec<String>, Fa
         erp: state.erp.as_ref(),
         redis: state.redis.as_ref(),
     };
-    crate::skills::skills_unified::get_user_groups(&state.mysql, &erp, user.id)
-        .await
-        .map_err(|error| {
-            tracing::error!(%error, "LLM proxy group membership resolution failed");
-            FastApiError::unhandled()
-        })
+    crate::skills::skills_unified::get_user_groups(
+        &state.mysql,
+        &erp,
+        &state.entity_resolvers,
+        user.id,
+    )
+    .await
+    .map_err(|error| {
+        tracing::error!(%error, "LLM proxy group membership resolution failed");
+        FastApiError::unhandled()
+    })
 }
 
 /// `str(env.get("api_key") or "")`: an absent or `null` key renders empty.

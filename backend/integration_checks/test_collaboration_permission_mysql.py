@@ -4,29 +4,131 @@ import os
 import uuid
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from threading import Barrier
 from typing import Any
 
 import pytest
 import sqlalchemy as sa
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.db.base import Base
-from app.models.delivery import CloudProject, ProjectChatAgent
+from app.models.delivery import (
+    CloudProject,
+    LoopItem,
+    LoopItemActiveAssignment,
+    LoopItemComment,
+    ProjectChatAgent,
+)
 from app.models.kind import Kind
 from app.models.resource_member import ResourceMember
 from app.models.user import User
 from app.schemas.base_role import BaseRole
 from app.schemas.cloud_project import CloudProjectCreate
+from app.schemas.delivery import LoopItemCreate
 from app.services.cloud_projects.responses import list_project_responses
 from app.services.cloud_projects.service import cloud_project_service
 from app.services.collaboration_permissions import collaboration_permission_service
+from app.services.issue_assignments import issue_assignment_service
+from app.services.loop_items.provider_router import loop_item_provider_router
 from app.services.project_chat.service import project_chat_service
 from app.services.workspaces.responses import list_workspace_responses
 from app.services.workspaces.storage import (
     ensure_resource_grant,
     workspace_kind_payload,
 )
+from tests.utils.collaboration import authorize_project
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("version", [None, 1])
+@pytest.mark.parametrize("change", ["revoke_grant", "restrict_issue"])
+async def test_transcript_continuation_observes_committed_permission_changes(
+    mysql_url: str, monkeypatch: pytest.MonkeyPatch, version: int | None, change: str
+) -> None:
+    """A separate writer must invalidate the next chunk under REPEATABLE READ."""
+    from app.schemas.runtime_work import RuntimeTranscriptRequest
+    from app.services import runtime_work_service
+    from app.services.project_chat.session_access import resolve_project_transcript
+    from tests.services.test_project_comment_execution import create_scenario
+    from tests.services.test_runtime_transcript_transport import (
+        packed_transcript_chunks,
+    )
+
+    engine = sa.create_engine(mysql_url, isolation_level="REPEATABLE READ")
+    Base.metadata.create_all(engine)
+
+    @contextmanager
+    def read_session() -> Iterator[Session]:
+        with Session(engine, autoflush=False) as db:
+            yield db
+
+    monkeypatch.setattr(
+        runtime_work_service, "get_db_session", read_session, raising=False
+    )
+    try:
+        with Session(engine, expire_on_commit=False) as setup:
+            owner = User(user_name="transcript-owner", password_hash="unused")
+            member = User(user_name="transcript-reader", password_hash="unused")
+            setup.add_all([owner, member])
+            setup.commit()
+            scenario = create_scenario(setup, member, owner, monkeypatch)
+            scenario.issue.created_by_user_id = owner.id
+            setup.commit()
+            request = RuntimeTranscriptRequest(
+                deviceId="admin-cloud",
+                taskId="original-session",
+                projectSession={
+                    "projectId": str(scenario.project.id),
+                    "issueId": scenario.issue.id,
+                },
+                transcriptProtocolVersion=version,
+            )
+            caller_id, grant_id, issue_id = (
+                member.id,
+                scenario.grant.id,
+                scenario.issue.id,
+            )
+
+        _, packets = packed_transcript_chunks()
+        with Session(engine, expire_on_commit=False) as caller:
+            assert caller.connection().get_isolation_level() == "REPEATABLE READ"
+            resolve_project_transcript(caller, caller_id, request)
+            initial_transaction = caller.get_transaction()
+            assert initial_transaction is not None
+
+            async def revoke_after_first_packet(**_values: Any) -> dict[str, Any]:
+                if scenario.rpc.await_count > 1:
+                    return packets[scenario.rpc.await_count - 1]
+                with Session(engine) as writer:
+                    if change == "revoke_grant":
+                        writer.delete(writer.get(ResourceMember, grant_id))
+                    else:
+                        issue = writer.get(LoopItem, issue_id)
+                        issue.metadata_json = {
+                            **(issue.metadata_json or {}),
+                            "security_level": "related",
+                        }
+                    writer.commit()
+                with Session(engine) as observer:
+                    with pytest.raises(HTTPException) as denied:
+                        resolve_project_transcript(observer, caller_id, request)
+                    assert denied.value.status_code == 404
+                assert caller.get_transaction() is initial_transaction
+                resolve_project_transcript(caller, caller_id, request)
+                return packets[0]
+
+            scenario.rpc.side_effect = revoke_after_first_packet
+            with pytest.raises(HTTPException) as denied:
+                await runtime_work_service.get_runtime_transcript(
+                    db=caller, user_id=caller_id, address=request
+                )
+            assert denied.value.status_code == 404
+            assert scenario.rpc.await_count == 1
+            assert caller.get_transaction() is initial_transaction
+    finally:
+        engine.dispose()
 
 
 @pytest.fixture
@@ -44,6 +146,247 @@ def mysql_url() -> Iterator[str]:
                 db.exec_driver_sql(f"DROP DATABASE `{database}`")
     finally:
         admin.dispose()
+
+
+def test_concurrent_issue_creation_refreshes_preloaded_project_sequence(
+    mysql_url: str,
+) -> None:
+    engine = sa.create_engine(mysql_url, isolation_level="REPEATABLE READ")
+    try:
+        Base.metadata.create_all(engine)
+        with Session(engine) as db:
+            db.add(User(id=1, user_name="project-owner", password_hash="unused"))
+            db.add(
+                Kind(
+                    id=11,
+                    kind="CollaborationWorkspace",
+                    name="space-11",
+                    namespace="default",
+                    user_id=1,
+                    is_active=True,
+                    json=workspace_kind_payload(
+                        name="space-11",
+                        description="",
+                        namespace="default",
+                        public_id=str(uuid.uuid4()),
+                        is_default=False,
+                    ),
+                )
+            )
+            db.commit()
+            project = cloud_project_service.create(
+                db, 1, CloudProjectCreate(name="Concurrent Issues", workspace_id="11")
+            )
+            project_id, project_key = project.id, project.project_key
+
+        ready = Barrier(2, timeout=10)
+
+        def create_issue(index: int) -> str:
+            with Session(engine, autoflush=False) as db:
+                project = cloud_project_service.get(db, project_id, 1)
+                user = db.get(User, 1)
+                assert project.next_item_number == 1
+                ready.wait()
+                created = loop_item_provider_router.create(
+                    db, project, user, LoopItemCreate(title=f"Issue {index}")
+                )
+                return created.internal_item.id
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(create_issue, index) for index in range(2)]
+            item_ids = [future.result(timeout=30) for future in futures]
+        with Session(engine) as db:
+            assert set(item_ids) == {f"{project_key}-1", f"{project_key}-2"}
+            assert db.get(CloudProject, project_id).next_item_number == 3
+            assert (
+                db.query(LoopItem).filter_by(cloud_project_id=project_id).count() == 2
+            )
+    finally:
+        engine.dispose()
+
+
+def test_independent_issues_initialize_assignments_without_gap_locks(
+    mysql_url: str,
+) -> None:
+    engine = sa.create_engine(mysql_url, isolation_level="REPEATABLE READ")
+    try:
+        Base.metadata.create_all(engine)
+        with Session(engine) as db:
+            db.add(User(id=1, user_name="project-owner", password_hash="unused"))
+            db.add(
+                Kind(
+                    id=11,
+                    kind="CollaborationWorkspace",
+                    name="space-11",
+                    namespace="default",
+                    user_id=1,
+                    is_active=True,
+                    json=workspace_kind_payload(
+                        name="space-11",
+                        description="",
+                        namespace="default",
+                        public_id=str(uuid.uuid4()),
+                        is_default=False,
+                    ),
+                )
+            )
+            db.commit()
+            project_ids = [
+                cloud_project_service.create(
+                    db,
+                    1,
+                    CloudProjectCreate(name=f"Independent {index}", workspace_id="11"),
+                ).id
+                for index in range(2)
+            ]
+
+        inserting = Barrier(2, timeout=10)
+
+        def synchronize(
+            _db: sa.Connection,
+            _cursor: Any,
+            statement: str,
+            _params: Any,
+            context: Any,
+            _many: bool,
+        ) -> None:
+            if not statement.startswith("INSERT INTO loop_items"):
+                return
+            values = context.compiled_parameters[0]
+            if values.get("resource_type") == "comment":
+                # Both real transactions reach their first assignment insert.
+                inserting.wait()
+
+        def create_issue(project_id: str) -> str:
+            with Session(engine, autoflush=False) as db:
+                project = cloud_project_service.get(db, project_id, 1)
+                user = db.get(User, 1)
+                created = loop_item_provider_router.create(
+                    db, project, user, LoopItemCreate(title="Independent Issue")
+                )
+                return created.internal_item.id
+
+        sa.event.listen(engine, "before_cursor_execute", synchronize)
+        try:
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                futures = [pool.submit(create_issue, key) for key in project_ids]
+                issue_ids = [future.result(timeout=30) for future in futures]
+        finally:
+            sa.event.remove(engine, "before_cursor_execute", synchronize)
+
+        with Session(engine) as db:
+            for issue_id in issue_ids:
+                event = db.query(LoopItemComment).filter_by(loop_item_id=issue_id).one()
+                assert event.metadata_json["action"] == "assign"
+                assert event.metadata_json["target_type"] == "human"
+                assert event.metadata_json["target_id"] == "1"
+                rows = (
+                    db.query(LoopItemActiveAssignment)
+                    .filter_by(parent_id=issue_id)
+                    .all()
+                )
+                assert len(rows) == 2
+                assert {row.loop_item_id for row in rows if row.loop_item_id} == {
+                    event.id
+                }
+                assert db.get(LoopItem, issue_id).assignee_user_id == 1
+    finally:
+        engine.dispose()
+
+
+def test_existing_issue_assignments_refresh_prelock_repeatable_read_snapshot(
+    mysql_url: str,
+) -> None:
+    engine = sa.create_engine(mysql_url, isolation_level="REPEATABLE READ")
+    try:
+        Base.metadata.create_all(engine)
+        with Session(engine) as db:
+            db.add_all(
+                User(id=key, user_name=f"member-{key}", password_hash="unused")
+                for key in (1, 2, 3)
+            )
+            project = CloudProject(
+                id="1",
+                public_id=str(uuid.uuid4()),
+                project_key="ASSIGN",
+                name="Assignment history",
+                created_by_user_id=1,
+            )
+            db.add(project)
+            db.flush()
+            db.add(
+                LoopItem(
+                    id="ASSIGN-1",
+                    cloud_project_id=project.id,
+                    title="Concurrent assignment",
+                    created_by_user_id=1,
+                    assignee_user_id=1,
+                )
+            )
+            db.flush()
+            issue_assignment_service.record(
+                db,
+                project_id=project.id,
+                issue_id="ASSIGN-1",
+                member_type="human",
+                member_id="1",
+                assigned_by_user_id=1,
+                workflow_step=None,
+                notify=False,
+                trigger="default",
+                initial_assignment=True,
+            )
+            db.commit()
+
+        snapshot_ready = Barrier(2, timeout=10)
+
+        def reassign(member_id: int) -> None:
+            with Session(engine, autoflush=False) as db:
+                assert (
+                    db.query(LoopItemComment).filter_by(loop_item_id="ASSIGN-1").count()
+                    == 1
+                )
+                snapshot_ready.wait()
+                issue_assignment_service.record(
+                    db,
+                    project_id="1",
+                    issue_id="ASSIGN-1",
+                    member_type="human",
+                    member_id=str(member_id),
+                    assigned_by_user_id=1,
+                    workflow_step=None,
+                    notify=False,
+                    trigger="manual",
+                )
+                db.commit()
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(reassign, key) for key in (2, 3)]
+            for future in futures:
+                future.result(timeout=30)
+        with Session(engine) as db:
+            active = issue_assignment_service.active_for_issue(db, "ASSIGN-1")
+            assert len(active) == 1
+            assert active[0].member_id in {"2", "3"}
+            comments = (
+                db.query(LoopItemComment).filter_by(loop_item_id="ASSIGN-1").all()
+            )
+            retired = [
+                row.metadata_json["assignment_event_id"]
+                for row in comments
+                if row.metadata_json["action"] == "unassign"
+            ]
+            assert len(comments) == 5
+            assert len(retired) == len(set(retired)) == 2
+            rows = (
+                db.query(LoopItemActiveAssignment).filter_by(parent_id="ASSIGN-1").all()
+            )
+            assert len(rows) == 2
+            assert {row.loop_item_id for row in rows if row.loop_item_id} == {
+                active[0].id
+            }
+    finally:
+        engine.dispose()
 
 
 def test_independent_project_creation_does_not_lock_absent_parent_grants(
@@ -124,6 +467,81 @@ def test_independent_project_creation_does_not_lock_absent_parent_grants(
                 pool.submit(create_project, workspace_id) for workspace_id in (11, 12)
             ]
             assert len({future.result(timeout=20) for future in futures}) == 2
+    finally:
+        sa.event.remove(engine, "before_cursor_execute", synchronize)
+        engine.dispose()
+
+
+def test_initial_assignments_in_independent_projects_do_not_lock_empty_ranges(
+    mysql_url: str,
+) -> None:
+    engine = sa.create_engine(mysql_url, isolation_level="REPEATABLE READ")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        owner = User(id=1, user_name="assignment-owner", password_hash="unused")
+        db.add(owner)
+        db.flush()
+        project_ids = []
+        for index in range(2):
+            project = CloudProject(
+                public_id=str(uuid.uuid4()),
+                project_key=f"ASSIGN{index}",
+                name=f"Assignment {index}",
+                created_by_user_id=1,
+                metadata_json={},
+            )
+            authorize_project(db, project)
+            project_ids.append(project.id)
+        db.commit()
+
+    ready = Barrier(2, timeout=10)
+
+    def synchronize(_db, _cursor, statement, _params, context, _many) -> None:
+        if not statement.startswith("INSERT INTO loop_items"):
+            return
+        values = context.compiled_parameters[0] if context.compiled_parameters else {}
+        if values.get("resource_type") == "comment":
+            ready.wait()
+
+    def create_issue(project_id: str) -> str:
+        with Session(engine, autoflush=False) as db:
+            project = cloud_project_service.get(db, project_id, 1)
+            user = db.get(User, 1)
+            result = loop_item_provider_router.create(
+                db, project, user, LoopItemCreate(title="Concurrent first assignment")
+            )
+            return result.internal_item.id
+
+    # Independent Issues must both reach their first assignment insert without
+    # waiting for a range lock held by the other transaction.
+    sa.event.listen(engine, "before_cursor_execute", synchronize)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [
+                pool.submit(create_issue, project_id) for project_id in project_ids
+            ]
+            errors = [future.exception(timeout=30) for future in futures]
+            assert not any(errors), f"Concurrent first assignments failed: {errors!r}"
+            issue_ids = [future.result(timeout=30) for future in futures]
+        with Session(engine) as db:
+            comments = (
+                db.query(LoopItemComment)
+                .filter(LoopItemComment.loop_item_id.in_(issue_ids))
+                .all()
+            )
+            assert len(comments) == 2
+            assert all(
+                comment.metadata_json["target_id"] == "1" for comment in comments
+            )
+            rows = (
+                db.query(LoopItemActiveAssignment)
+                .filter(LoopItemActiveAssignment.parent_id.in_(issue_ids))
+                .all()
+            )
+            assert len(rows) == 4
+            assert {row.loop_item_id for row in rows if row.loop_item_id} == {
+                comment.id for comment in comments
+            }
     finally:
         sa.event.remove(engine, "before_cursor_execute", synchronize)
         engine.dispose()

@@ -1070,7 +1070,14 @@ impl RecordingTransport {
             }
         })
         .await
-        .unwrap()
+        .unwrap_or_else(|error| {
+            let observed = self
+                .emits()
+                .into_iter()
+                .map(|emit| emit.event)
+                .collect::<Vec<_>>();
+            panic!("Timed out waiting for {event}: {error:?}; observed events: {observed:?}")
+        })
     }
 
     async fn wait_for_emit_count(&self, event: &str, count: usize) -> Vec<RecordedCall> {
@@ -1240,7 +1247,17 @@ impl RuntimeWorkHandler for QueueRuntimeWorkHandler {
     ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
         Box::pin(async move {
             if data.get("method").and_then(Value::as_str) == Some("runtime.capacity.get") {
-                Ok(json!({"limit": 2, "active": 0, "queued": 0}))
+                Ok(json!({
+                    "limit": 4,
+                    "active": 2,
+                    "active_task_ids": ["personal", "stand-in"],
+                    "queued": 5,
+                    "categories": {
+                        "personal": {"limit": 1, "active": 1, "active_task_ids": ["personal"], "queued": 5},
+                        "standIn": {"limit": 1, "active": 1, "active_task_ids": ["stand-in"], "queued": 0},
+                        "agent": {"limit": 2, "active": 0, "active_task_ids": [], "queued": 0}
+                    }
+                }))
             } else if data.get("method").and_then(Value::as_str) == Some("runtime.runner.catalog") {
                 Ok(json!({"runtimes": ["codex"], "models": []}))
             } else {

@@ -321,6 +321,7 @@ pub struct SkillSyncSpec {
     pub namespace: String,
     pub is_public: bool,
     pub content_hash: Option<String>,
+    pub bind_shells: Vec<String>,
 }
 
 impl SkillSyncSpec {
@@ -353,6 +354,14 @@ impl SkillSyncSpec {
             namespace,
             is_public,
             content_hash,
+            bind_shells: value
+                .get("bind_shells")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect(),
         })
     }
 
@@ -1401,9 +1410,18 @@ where
                     .map(|spec| spec.key.clone())
                     .collect::<BTreeSet<_>>();
                 if !plugins_only {
-                    self.remove_stale_managed_skills(&desired_skills, &mut manifest)?;
+                    self.remove_stale_managed_skills(
+                        &desired_skills,
+                        &mut manifest,
+                        &mut activation,
+                    )?;
                 }
-                self.remove_stale_managed_plugins(&desired_plugins, &mut manifest, plugins_only)?;
+                self.remove_stale_managed_plugins(
+                    &desired_plugins,
+                    &mut manifest,
+                    plugins_only,
+                    &mut activation,
+                )?;
             }
         }
 
@@ -1439,6 +1457,10 @@ where
                 ("changed", changes.changed.to_string()),
                 ("requires_restart", changes.requires_restart.to_string()),
                 ("detection_ms", changes.detection_ms.to_string()),
+                ("inspected_plugins", changes.inspected_plugins.to_string()),
+                ("hashed_files", changes.hashed_files.to_string()),
+                ("hashed_bytes", changes.hashed_bytes.to_string()),
+                ("reused_hashes", changes.reused_hashes.to_string()),
                 ("changed_plugins", changes.plugins.join(",")),
                 ("changed_skills", changes.skills.join(",")),
             ],
@@ -1521,6 +1543,7 @@ where
                 "namespace": spec.namespace,
                 "is_public": spec.is_public,
                 "content_hash": spec.content_hash,
+                "bind_shells": spec.bind_shells,
                 "store_path": store_path.display().to_string(),
                 "runtime": {
                     "claude_link": runtime_link.display().to_string(),
@@ -1700,6 +1723,7 @@ where
         &self,
         desired: &BTreeSet<String>,
         manifest: &mut Value,
+        activation: &mut activation_revision::ActivationRevision<'_>,
     ) -> Result<(), CapabilitySyncError> {
         let stale = object_map(manifest.get("skills"))
             .unwrap_or_default()
@@ -1710,6 +1734,7 @@ where
             })
             .collect::<Vec<_>>();
         for (name, skill) in stale {
+            activation.observe_skill(&name)?;
             remove_runtime_link_from_value(skill.get("runtime"), "claude_link")?;
             remove_runtime_link_from_value(skill.get("runtime"), "codex_link")?;
             remove_managed_runtime_path(&self.store.skills_dir.join(&name))?;
@@ -1724,6 +1749,7 @@ where
         desired: &BTreeSet<String>,
         manifest: &mut Value,
         cloud_only: bool,
+        activation: &mut activation_revision::ActivationRevision<'_>,
     ) -> Result<(), CapabilitySyncError> {
         let stale = object_map(manifest.get("plugins"))
             .unwrap_or_default()
@@ -1748,7 +1774,7 @@ where
             return Ok(());
         }
 
-        self.remove_managed_plugins(stale, desired, manifest)
+        self.remove_managed_plugins(stale, desired, manifest, activation)
     }
 
     fn remove_managed_plugins(
@@ -1756,7 +1782,11 @@ where
         stale: Vec<(String, Value)>,
         desired: &BTreeSet<String>,
         manifest: &mut Value,
+        activation: &mut activation_revision::ActivationRevision<'_>,
     ) -> Result<(), CapabilitySyncError> {
+        for (key, plugin) in &stale {
+            activation.observe_plugin(&PluginSyncSpec::from_manifest_entry(key, plugin))?;
+        }
         let _personal_marketplace_lock = if stale.iter().any(|(key, plugin)| {
             PluginSyncSpec::from_manifest_entry(key, plugin).marketplace
                 == PERSONAL_SHARED_PLUGIN_MARKETPLACE
@@ -1874,6 +1904,9 @@ where
                 if self.store.shared_packages {
                     // Retained native caches remain ours after the active install is removed.
                     shared_packages::remember_plugin_runtime_owner(manifest, &key, &plugin);
+                    runtime_recovery::legacy_sources::remember_legacy_plugin_source(
+                        manifest, &key, &plugin,
+                    );
                 }
                 ensure_object_field(manifest, "plugins").remove(&key);
             }

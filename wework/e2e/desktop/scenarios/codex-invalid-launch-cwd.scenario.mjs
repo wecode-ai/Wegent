@@ -1,7 +1,9 @@
+import { fetchLocalRuntimeJson } from '../modules/runtime-request.mjs'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
+import { verifyModelCatalogRecovery } from '../modules/model-catalog-recovery.mjs'
 
 import { isReplyPredictionRequest } from '../modules/response-protocol.mjs'
 import {
@@ -11,7 +13,6 @@ import {
 import {
   WORKBENCH_READY_TIMEOUT_MS,
   createSingleRootLocalProject,
-  fetchJson,
   selectE2EModel,
   waitForLogPattern,
 } from '../modules/shared.mjs'
@@ -256,6 +257,10 @@ async function restartExecutorAfterRemovingCwd(
   launchWorkingDirectory,
   timeoutMs
 ) {
+  // Complete bootstrap before the intentional process exit interrupts the runtime.
+  await control.command('ensureLocalModelCatalogReady', 'body', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
   const originalPid = await currentExecutorPid(control)
   assert.ok(originalPid, 'The initial executor process was not running')
   const logOffset = (await readFile(executorLogPath, 'utf8').catch(() => '')).length
@@ -335,6 +340,7 @@ export function createDesktopScenario({
     },
 
     async verify(control) {
+      await verifyModelCatalogRecovery(control, { resultDir, uiTimeoutMs })
       await captureConfigState('before-executor-restart')
       if (process.platform !== 'win32') {
         await restartExecutorAfterRemovingCwd(
@@ -357,7 +363,7 @@ export function createDesktopScenario({
       await selectE2EModel(control, BUILTIN_MODEL_ID, BUILTIN_MODEL_LABEL, '', 'openai')
       await captureConfigState('before-send')
       const origin = await control.command('getLocationOrigin', 'body')
-      const response = await fetchJson(`${origin}/wework/executor/v1/rpc`, {
+      const response = await fetchLocalRuntimeJson(control, `${origin}/wework/executor/v1/rpc`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

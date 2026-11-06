@@ -230,16 +230,23 @@ export async function selectAgentEnvironment(
   await control.command('waitFor', `${trigger}[data-value=${JSON.stringify(value)}]`, { timeoutMs })
 }
 
-export async function selectCollaborationProjectView(control, contentSelector, view) {
+export async function selectCollaborationProjectView(
+  control,
+  contentSelector,
+  view,
+  timeoutMs = DEFAULT_STEP_TIMEOUT_MS
+) {
   const compact = `${contentSelector} [data-testid="collaboration-project-view-select"]`
+  const tabId = view === 'milestones' ? 'collaboration-milestones-tab' : `collaboration-tab-${view}`
+  const tab = `${contentSelector} [data-testid="${tabId}"]`
+  await control.command('waitFor', `${compact}, ${tab}`, {
+    visible: true,
+    timeoutMs,
+  })
   if (Number(await control.command('getElementCount', compact)) > 0) {
     await control.command('select', compact, { value: view })
   } else {
-    await control.command(
-      'clickWhenEnabled',
-      `${contentSelector} [data-testid="collaboration-tab-${view}"]`,
-      { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
-    )
+    await control.command('clickWhenEnabled', tab, { timeoutMs })
   }
 }
 
@@ -381,11 +388,7 @@ export async function configureFirstProjectExecutionEnvironment(
   timeoutMs,
   deviceId = null
 ) {
-  await control.command('waitFor', `${contentSelector} [data-testid="collaboration-tab-manage"]`, {
-    visible: true,
-    timeoutMs,
-  })
-  await control.command('click', `${contentSelector} [data-testid="collaboration-tab-manage"]`)
+  await selectCollaborationProjectView(control, contentSelector, 'manage', timeoutMs)
   await control.command(
     'click',
     `${contentSelector} [data-testid="collaboration-project-settings-environments"]`
@@ -554,12 +557,10 @@ export async function createLocalCollaborationProject(control, contentSelector, 
   await control.command(
     'waitFor',
     `${contentSelector} [data-testid="cloud-project-header-title"]`,
-    { text: projectName, visible: true, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+    // The project identity remains in the DOM when compact navigation hides its title.
+    { text: projectName, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
   )
-  await control.command('waitFor', `${contentSelector} [data-testid="collaboration-tab-board"]`, {
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
+  await selectCollaborationProjectView(control, contentSelector, 'board')
 }
 
 export async function completeLocalCollaborationFolderImport(control, projectName) {
@@ -637,9 +638,9 @@ async function waitForControlValue(
   message,
   timeoutMs = DEFAULT_STEP_TIMEOUT_MS
 ) {
-  const startedAt = Date.now()
   // A click can resolve before React mounts the control being polled.
   await control.command('waitFor', selector, { timeoutMs })
+  const startedAt = Date.now()
   let lastValue = ''
   while (Date.now() - startedAt < timeoutMs) {
     lastValue = await control.command('getValue', selector)
@@ -1179,10 +1180,7 @@ async function verifyWorkspaceIssueCreation(control) {
   )
   await control.command(
     'clickWhenEnabled',
-    `${boardContentSelector} [data-testid="cloud-todo-save"]`,
-    {
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
+    `${boardContentSelector} [data-testid="cloud-todo-save"]`
   )
   await control.command('waitFor', `${boardContentSelector} [data-testid="cloud-todo-save"]`, {
     visible: false,
@@ -1543,13 +1541,7 @@ async function enrichTrackedDefaultIssueTitle(control, taskTabTestId, title) {
   })
   await control.command('click', titleSelector)
   await control.command('fill', titleSelector, { value: title })
-  await control.command(
-    'clickWhenEnabled',
-    `${activeBoardContentSelector} [data-testid="cloud-todo-save"]`,
-    {
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
+  await control.command('press', titleSelector, { key: 'Enter' })
   await control.command(
     'waitFor',
     `${activeBoardContentSelector} [data-testid="cloud-todo-save"]`,
@@ -1581,6 +1573,8 @@ async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   const activityComposer = `${issuePanel} [data-testid="cloud-task-activity-composer"]`
+  await control.command('waitFor', activityComposer)
+  await control.command('scrollIntoView', activityComposer)
   await control.command('waitFor', activityComposer, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -1831,6 +1825,12 @@ async function verifyExistingTaskBoardAssociation(
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command('click', '[data-testid="work-item-change-board"]')
+  await control.command('waitFor', '[data-testid="work-item-context-menu"]', {
+    text: targetProjectName,
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('click', '[data-testid="work-item-open-board-menu"]')
   const movedBoardContentSelector = await requireActiveCollaborationTab(
     control,
@@ -1841,7 +1841,6 @@ async function verifyExistingTaskBoardAssociation(
     `${movedBoardContentSelector} [data-testid="cloud-project-header-title"]`,
     {
       text: targetProjectName,
-      visible: true,
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
@@ -1851,6 +1850,20 @@ async function verifyExistingTaskBoardAssociation(
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command(
+    'waitFor',
+    `${movedBoardContentSelector} [data-testid="collaboration-issue-detail"]`,
+    {
+      text: 'WEWORK_DESKTOP_E2E_TASK',
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  assert.equal(
+    Number(await control.command('getElementCount', '[data-testid="work-item-context-menu"]')),
+    0,
+    'Opening the linked Issue board must unmount the project-space picker'
+  )
   if (captureScreenshots) {
     await captureVerificationScreenshot(
       control,
@@ -2396,12 +2409,12 @@ async function verifyWorkspaceTabIsolation(control, restartDesktopApp) {
   assert.ok(fourthTaskTestId, 'The fourth task tab identity was not observable')
   const fourthTaskId = fourthTaskTestId.slice('workspace-tab-'.length)
   const fourthTaskContent = `[data-testid="workspace-tab-content-${fourthTaskId}"]`
-  await control.command('waitFor', `${fourthTaskContent} [data-testid="automation-button"]`, {
+  await control.command('waitFor', `${fourthTaskContent} [data-testid="plugins-button"]`, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('click', `${fourthTaskContent} [data-testid="automation-button"]`)
-  await control.command('waitFor', '[data-testid="create-automation-button"]', {
+  await control.command('click', `${fourthTaskContent} [data-testid="plugins-button"]`)
+  await control.command('waitFor', '[data-testid="plugins-workspace"]', {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })

@@ -1,17 +1,21 @@
-import { ZipArchive } from 'archiver'
 import { createHash } from 'node:crypto'
-import { createReadStream, createWriteStream } from 'node:fs'
+import { createReadStream } from 'node:fs'
 import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import * as tar from 'tar'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { SmartAppManager, type SmartAppRuntimeHost } from './smart-app-manager.js'
+import type { SmartAppRuntimeHost } from './smart-app-manager.js'
 import * as workbenchDshRuntime from '../runtime/workbench-dsh-runtime.js'
 import { WorkbenchRuntimeManager } from '../runtime/workbench-runtime.js'
 import type { WorkbenchAppManifest } from '../runtime/workbench-dsh-runtime.js'
-import type { SmartAppVerificationReport } from './smart-app-verification-types.js'
+import {
+  createManager,
+  createSmartAppArchive,
+  createSmartAppReleaseArchive,
+  validManifest,
+  verificationReport,
+} from './smart-app-manager.test-helpers.js'
 
 // The manager reaches the cloud through Chromium's network stack; unit tests exercise the HTTP
 // protocol against loopback fixtures with Node's implementation instead.
@@ -616,6 +620,93 @@ describe('SmartAppManager', () => {
     }
   })
 
+  test('rejects an additional model route outside loopback', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-extra-model-route-'))
+    roots.push(root)
+    const archivePath = await createSmartAppArchive(root, validManifest())
+    const manager = createManager(root)
+    const preview = await manager.preview(archivePath)
+    const installation = await manager.install({
+      archivePath,
+      expectedSha256: preview.sha256,
+      modelKey: 'default-model',
+    })
+
+    await expect(
+      manager.start({
+        installationId: installation.id,
+        additionalModels: [
+          {
+            modelKey: 'extra-model',
+            displayName: 'Extra model',
+            baseUrl: 'http://attacker.example.com/v1/harness-router/route-token',
+          },
+        ],
+      })
+    ).rejects.toThrow('Wework model router base URL')
+
+    await expect(
+      manager.start({
+        installationId: installation.id,
+        additionalModels: [
+          {
+            modelKey: 'extra-model',
+            displayName: 'Extra model',
+            baseUrl: 'http://127.0.0.1:9000/v1/harness-router/route-token',
+          },
+        ],
+      })
+    ).rejects.toThrow('Wework model router requires a default model route')
+  })
+
+  test('normalizes control characters out of an accepted additional model URL', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-normalized-model-route-'))
+    roots.push(root)
+    const runtimeHost: SmartAppRuntimeHost = {
+      open: vi.fn().mockResolvedValue({ url: 'http://127.0.0.1:4173/' }),
+      close: vi.fn().mockResolvedValue(undefined),
+      runningTabIds: () => new Set(),
+    }
+    const manager = createManager(root, undefined, {}, runtimeHost)
+    const archivePath = await createSmartAppArchive(root, validManifest())
+    const preview = await manager.preview(archivePath)
+    const installation = await manager.install({ archivePath, expectedSha256: preview.sha256 })
+    const prepare = vi.spyOn(workbenchDshRuntime, 'prepareWorkbenchDshLaunch').mockResolvedValue({
+      command: process.execPath,
+      entry: 'fixture',
+      args: [],
+      cwd: root,
+      dshHome: root,
+      environment: {},
+      profile: 'web',
+      url: 'http://127.0.0.1:4173/',
+      version: '0.1.0-rc.8',
+      sourceFingerprint: 'fixture',
+    })
+    const rawUrl = 'http://127.0.0.1:9000/v1/harness-router/abcdefgh\nij'
+    try {
+      await manager.start({
+        installationId: installation.id,
+        modelBaseUrl: 'http://127.0.0.1:9000/v1/harness-router/default-token',
+        additionalModels: [{ modelKey: 'extra-model', displayName: 'Extra', baseUrl: rawUrl }],
+      })
+
+      expect(prepare).toHaveBeenCalledWith(
+        expect.objectContaining({
+          additionalModels: [
+            {
+              modelKey: 'extra-model',
+              displayName: 'Extra',
+              baseUrl: new URL(rawUrl).href,
+            },
+          ],
+        })
+      )
+    } finally {
+      prepare.mockRestore()
+    }
+  })
+
   test('rejects an unsupported decision router protocol version', async () => {
     const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-decision-version-'))
     roots.push(root)
@@ -676,6 +767,7 @@ describe('SmartAppManager', () => {
     roots.push(root)
     const manager = createManager(root)
     manager.storeProxyToken('app-1', 'proxy-token')
+    manager.storeAdditionalProxyTokens('app-1', ['second-token'])
     manager.storeContextToken('app-1', 'context-token')
     manager.storeDecisionToken('app-1', 'decision-token')
 
@@ -683,6 +775,8 @@ describe('SmartAppManager', () => {
     expect(manager.takeDecisionToken('app-1')).toBeNull()
     // Taking the decision route must not consume the generic model routes.
     expect(manager.takeProxyToken('app-1')).toBe('proxy-token')
+    expect(manager.takeAdditionalProxyTokens('app-1')).toEqual(['second-token'])
+    expect(manager.takeAdditionalProxyTokens('app-1')).toEqual([])
     expect(manager.takeContextToken('app-1')).toBe('context-token')
   })
 
@@ -697,12 +791,14 @@ describe('SmartAppManager', () => {
       expectedSha256: preview.sha256,
     })
     manager.storeProxyToken(installation.id, 'proxy-token')
+    manager.storeAdditionalProxyTokens(installation.id, ['second-token'])
     manager.storeContextToken(installation.id, 'context-token')
     manager.storeDecisionToken(installation.id, 'decision-token')
 
     await manager.delete(installation.id, false)
 
     expect(manager.takeProxyToken(installation.id)).toBeNull()
+    expect(manager.takeAdditionalProxyTokens(installation.id)).toEqual([])
     expect(manager.takeContextToken(installation.id)).toBeNull()
     expect(manager.takeDecisionToken(installation.id)).toBeNull()
   })
@@ -827,141 +923,3 @@ describe('SmartAppManager', () => {
     await expect(stat(archivePath)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 })
-
-function createManager(
-  root: string,
-  verificationService?: {
-    verify(path: string): Promise<SmartAppVerificationReport>
-    inspect(path: string): Promise<SmartAppVerificationReport | null>
-    pack(
-      path: string,
-      output: string
-    ): Promise<{
-      archivePath: string
-      sha256: string
-      sizeBytes: number
-      manifest: WorkbenchAppManifest
-      report: SmartAppVerificationReport
-    }>
-  },
-  environment: NodeJS.ProcessEnv = {},
-  runtimeHost: SmartAppRuntimeHost = {
-    open: vi.fn(),
-    close: vi.fn(),
-    runningTabIds: () => new Set(),
-  }
-): SmartAppManager {
-  return new SmartAppManager({
-    dataDirectory: join(root, 'data'),
-    documentsDirectory: () => join(root, 'Documents'),
-    downloadsDirectory: () => join(root, 'downloads'),
-    logDirectory: join(root, 'logs'),
-    runtimeRoot: join(root, 'runtime'),
-    environment,
-    runtimeHost: () => runtimeHost,
-    verificationService,
-  })
-}
-
-function verificationReport(): SmartAppVerificationReport {
-  return {
-    schemaVersion: 1,
-    status: 'passed',
-    projectRoot: '/project',
-    inputFingerprint: 'input',
-    deliverableFingerprint: 'deliverable',
-    startedAt: '2026-09-04T00:00:00.000Z',
-    finishedAt: '2026-09-04T00:00:01.000Z',
-    stages: [],
-    issues: [],
-  }
-}
-
-function validManifest(): WorkbenchAppManifest {
-  return {
-    name: 'fixture-app',
-    displayName: 'Fixture App',
-    version: '1.0.0',
-    type: 'deepseek-harness-plugin-bundle',
-    description: 'Smart app fixture',
-    packages: [
-      {
-        name: 'fixture-plugin',
-        role: 'profile-bundle',
-        path: 'app',
-      },
-    ],
-    entry: {
-      installPackage: 'app',
-      profile: 'fixture',
-    },
-    requirements: {
-      dsh: '0.1.0-rc.8',
-      node: '>=24',
-    },
-  }
-}
-
-async function createSmartAppArchive(
-  root: string,
-  manifest: WorkbenchAppManifest
-): Promise<string> {
-  const source = join(root, `source-${Math.random().toString(16).slice(2)}`)
-  await mkdir(join(source, 'app'), { recursive: true })
-  await writeFile(join(source, 'plugin-manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`)
-  await writeFile(
-    join(source, 'app', 'package.json'),
-    `${JSON.stringify({ name: 'fixture-plugin', version: '1.0.0' })}\n`
-  )
-  const archivePath = `${source}.zip`
-  await new Promise<void>((resolvePromise, reject) => {
-    const output = createWriteStream(archivePath)
-    const archive = new ZipArchive({ zlib: { level: 9 } })
-    output.once('close', resolvePromise)
-    output.once('error', reject)
-    archive.once('error', reject)
-    archive.pipe(output)
-    archive.directory(source, false)
-    void archive.finalize()
-  })
-  return archivePath
-}
-
-async function createSmartAppReleaseArchive(
-  root: string,
-  manifest: WorkbenchAppManifest,
-  omittedPackageName?: string
-): Promise<string> {
-  const source = join(root, `release-${Math.random().toString(16).slice(2)}`)
-  await mkdir(source)
-  await writeFile(join(source, 'plugin-manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`)
-  for (const descriptor of manifest.packages ?? []) {
-    if (descriptor.name === omittedPackageName) continue
-    const packageRoot = join(root, `npm-${descriptor.name.replaceAll('/', '-')}`)
-    await mkdir(join(packageRoot, 'package'), { recursive: true })
-    await writeFile(
-      join(packageRoot, 'package', 'package.json'),
-      `${JSON.stringify({ name: descriptor.name, version: '1.0.0' })}\n`
-    )
-    await tar.c(
-      {
-        cwd: packageRoot,
-        file: join(source, `${descriptor.name.replaceAll('/', '-')}.tgz`),
-        gzip: true,
-      },
-      ['package']
-    )
-  }
-  const archivePath = `${source}.zip`
-  await new Promise<void>((resolvePromise, reject) => {
-    const output = createWriteStream(archivePath)
-    const archive = new ZipArchive({ zlib: { level: 9 } })
-    output.once('close', resolvePromise)
-    output.once('error', reject)
-    archive.once('error', reject)
-    archive.pipe(output)
-    archive.directory(source, 'fixture-release')
-    void archive.finalize()
-  })
-  return archivePath
-}

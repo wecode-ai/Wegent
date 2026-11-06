@@ -8,6 +8,16 @@ export type WeworkDestination =
       commentId?: string
     }
   | { kind: 'task'; deviceId: string; taskId: string }
+  | { kind: 'interaction'; deviceId: string; taskId: string; requestKey: string }
+  | { kind: 'app'; appId: string }
+  | { kind: 'smart-app'; smartAppId: number }
+
+export function weworkInteractionScheme(
+  address: { deviceId: string; taskId: string },
+  requestKey: string
+): string {
+  return `wework://interactions/${encodeURIComponent(address.deviceId)}/${encodeURIComponent(address.taskId)}/${encodeURIComponent(requestKey)}`
+}
 
 export function weworkTaskScheme(address: { deviceId: string; taskId: string }): string {
   return `wework://tasks/${encodeURIComponent(address.deviceId)}/${encodeURIComponent(address.taskId)}`
@@ -22,10 +32,21 @@ export function weworkIssueScheme(
   return `wework://boards/${storePrefix}${encodeURIComponent(projectId)}/issues/${encodeURIComponent(itemId)}`
 }
 
-function segment(value: string): string | null {
+export function weworkAppScheme(appId: string): string {
+  return `wework://apps/${encodeURIComponent(appId)}`
+}
+
+export function weworkSmartAppScheme(smartAppId: number): string {
+  if (!Number.isSafeInteger(smartAppId) || smartAppId <= 0) {
+    throw new Error('Smart app id must be a positive safe integer')
+  }
+  return `wework://smart-apps/${smartAppId}`
+}
+
+function segment(value: string, limit = 128): string | null {
   const decoded = decodeURIComponent(value)
   return decoded &&
-    decoded.length <= 128 &&
+    decoded.length <= limit &&
     !Array.from(decoded).some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)
     ? decoded
     : null
@@ -34,6 +55,7 @@ function segment(value: string): string | null {
 export function parseWeworkScheme(input: string): WeworkDestination | null {
   try {
     if (
+      !input.startsWith('wework://') ||
       input !== input.trim() ||
       input.includes('?') ||
       input.includes('#') ||
@@ -53,6 +75,14 @@ export function parseWeworkScheme(input: string): WeworkDestination | null {
       return null
     if (url.hostname === 'boards' && ['', '/'].includes(url.pathname)) return { kind: 'boards' }
     const parts = url.pathname.split('/').slice(1)
+    if (url.hostname === 'interactions' && parts.length === 3) {
+      const deviceId = segment(parts[0])
+      const taskId = segment(parts[1])
+      const requestKey = segment(parts[2], 2048)
+      return deviceId && taskId && requestKey
+        ? { kind: 'interaction', deviceId, taskId, requestKey }
+        : null
+    }
     const localBoard = url.hostname === 'boards' && parts[0] === 'local'
     if (localBoard) parts.shift()
     const store = localBoard ? { projectStore: 'local' as const } : {}
@@ -76,6 +106,16 @@ export function parseWeworkScheme(input: string): WeworkDestination | null {
       const taskId = segment(parts[1])
       return deviceId && taskId ? { kind: 'task', deviceId, taskId } : null
     }
+    if (url.hostname === 'apps' && parts.length === 1) {
+      const appId = segment(parts[0])
+      return appId ? { kind: 'app', appId } : null
+    }
+    if (url.hostname === 'smart-apps' && parts.length === 1) {
+      const smartAppSegment = segment(parts[0])
+      if (!smartAppSegment || !/^[1-9]\d{0,15}$/.test(smartAppSegment)) return null
+      const smartAppId = Number(smartAppSegment)
+      return Number.isSafeInteger(smartAppId) ? { kind: 'smart-app', smartAppId } : null
+    }
     return null
   } catch {
     return null
@@ -87,8 +127,20 @@ export function weworkDestinationRoute(
   focusRequest?: string
 ): string {
   if (destination.kind === 'boards') return '/todo'
+  if (destination.kind === 'interaction') {
+    return `/pending-interactions?${new URLSearchParams({ interaction: JSON.stringify([destination.deviceId, destination.taskId, destination.requestKey]) })}`
+  }
   if (destination.kind === 'task') {
     return `/runtime-tasks?${new URLSearchParams({ deviceId: destination.deviceId, taskId: destination.taskId })}`
+  }
+  if (destination.kind === 'smart-app') {
+    return `/sites?${new URLSearchParams({
+      app_type: 'smart_app',
+      smartAppId: String(destination.smartAppId),
+    })}`
+  }
+  if (destination.kind === 'app') {
+    return `/app/${encodeURIComponent(destination.appId)}`
   }
   const params = new URLSearchParams({
     projectStore: destination.projectStore ?? 'backend',

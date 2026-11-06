@@ -88,6 +88,7 @@ export interface HarnessAppSavedExport extends HarnessAppExport {
 export interface SmartAppStartOptions {
   installationId: string
   modelBaseUrl?: string | null
+  additionalModels?: Array<{ modelKey: string; displayName: string; baseUrl: string }>
   contextBaseUrl?: string | null
   contextToken?: string | null
   decisionBaseUrl?: string | null
@@ -236,6 +237,9 @@ export const harnessAppsApi = {
         invokeDesktopHost<HarnessAppInstallation>('smartApps.start', {
           installationId: options.installationId,
           modelBaseUrl: options.modelBaseUrl ?? null,
+          ...(options.additionalModels?.length
+            ? { additionalModels: options.additionalModels }
+            : {}),
           contextBaseUrl: options.contextBaseUrl ?? null,
           contextToken: options.contextToken ?? null,
           decisionBaseUrl: options.decisionBaseUrl ?? null,

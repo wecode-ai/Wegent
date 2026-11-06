@@ -4,6 +4,7 @@ import { once } from 'node:events'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { requestExecutor } from './executor-rpc.mjs'
+import { rejectModelWebSocketUpgrade } from './reject-model-upgrade.mjs'
 
 const MODEL = 'gpt-5.5'
 const ACCOUNT = 'stand-in-config-e2e'
@@ -72,12 +73,10 @@ export function createSubscriptionConfigRegression() {
       )
     },
     attachServer(server) {
-      server.on('upgrade', (request, socket) => {
-        if (!request.url?.startsWith('/backend-api/codex/responses')) return
+      server.on('upgrade', (_request, socket) => {
+        // Registering an upgrade listener transfers ownership of every upgraded socket.
         // A model service may require HTTP; Codex handles 426 through its native fallback.
-        socket.end(
-          'HTTP/1.1 426 Upgrade Required\r\nContent-Length: 0\r\nConnection: close\r\n\r\n'
-        )
+        rejectModelWebSocketUpgrade(server, socket)
       })
     },
     acceptsModelRequest(request, url, body) {
@@ -88,7 +87,7 @@ export function createSubscriptionConfigRegression() {
       modelRequests += 1
       return true
     },
-    async verify(control, projectId, workspacePath, uiTimeoutMs, modelResponseTimeoutMs) {
+    async verify(control, projectId, workspacePath, uiTimeoutMs, modelResponseTimeoutMs, userId) {
       const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
       for (const initiatedBy of ['user', 'stand_in', null]) {
         const label = initiatedBy ?? 'direct'
@@ -99,8 +98,9 @@ export function createSubscriptionConfigRegression() {
         const origin = initiatedBy
           ? {
               type: 'issue_dispatch',
+              dispatchRole: 'executor',
               initiatedBy,
-              userId: 9001,
+              userId,
               projectStore: 'local',
               cloudProjectId: projectId,
               loopItemId: issue.id,
@@ -125,7 +125,7 @@ export function createSubscriptionConfigRegression() {
           executionRequest: {
             task_id: taskId,
             subtask_id: `${taskId}-initial`,
-            user_id: 9001,
+            user_id: userId,
             prompt: taskId,
             new_session: true,
             bot: [{ shell_type: 'Codex', name: 'Subscription configuration regression' }],

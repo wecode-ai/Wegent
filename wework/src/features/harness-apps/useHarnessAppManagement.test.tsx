@@ -1,7 +1,9 @@
-import { act, renderHook, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { HarnessAppInstallation } from '@/api/local/harnessApps'
 import type { UnifiedModel } from '@/types/api'
+import { act, renderHook } from '@testing-library/react'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { clearHarnessAppLaunch, useHarnessAppLaunchState } from './harnessAppLaunchState'
+import { runHarnessAppRuntimeOperation } from './harnessAppRuntimeOperations'
 import { useHarnessAppManagement } from './useHarnessAppManagement'
 
 const mocks = vi.hoisted(() => ({
@@ -15,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   takeContextToken: vi.fn(),
   takeDecisionToken: vi.fn(),
   takeProxyToken: vi.fn(),
+  takeAdditionalProxyTokens: vi.fn(),
   unregisterDecision: vi.fn(),
   unregister: vi.fn(),
   unregisterContext: vi.fn(),
@@ -34,6 +37,7 @@ vi.mock('./harnessAppTabs', async importOriginal => {
     takeHarnessAppContextToken: mocks.takeContextToken,
     takeHarnessAppDecisionToken: mocks.takeDecisionToken,
     takeHarnessAppProxyToken: mocks.takeProxyToken,
+    takeHarnessAppAdditionalProxyTokens: mocks.takeAdditionalProxyTokens,
     unregisterHarnessAppTab: mocks.unregister,
   }
 })
@@ -118,6 +122,7 @@ describe('useHarnessAppManagement', () => {
     mocks.takeContextToken.mockReset().mockResolvedValue(null)
     mocks.takeDecisionToken.mockReset().mockResolvedValue(null)
     mocks.takeProxyToken.mockReset().mockResolvedValue(null)
+    mocks.takeAdditionalProxyTokens.mockReset().mockResolvedValue([])
     mocks.unregisterDecision.mockReset().mockResolvedValue(undefined)
     mocks.unregister.mockReset()
     mocks.unregisterContext.mockReset()
@@ -136,10 +141,40 @@ describe('useHarnessAppManagement', () => {
     )
   }
 
-  test('registers running apps after the management surface loads', async () => {
+  test('does not publish a running host snapshot during token handoff or queued close', async () => {
+    let release: () => void = () => {}
+    const handoff = runHarnessAppRuntimeOperation(
+      running.id,
+      () =>
+        new Promise<void>(resolve => {
+          release = resolve
+        })
+    )
+    const close = runHarnessAppRuntimeOperation(running.id, async () => undefined)
+    await Promise.resolve()
+    const view = renderManagement([running])
+    try {
+      expect(mocks.register).not.toHaveBeenCalled()
+      act(() => view.result.current.open(running))
+      expect(mocks.openTab).toHaveBeenCalledWith(workspaceTabs, running)
+      expect(mocks.register).not.toHaveBeenCalled()
+      const launch = renderHook(() => useHarnessAppLaunchState(running.id))
+      expect(launch.result.current?.status).toBe('starting')
+      act(() => launch.result.current!.retry())
+      expect(mocks.register).not.toHaveBeenCalled()
+      expect(mocks.openTab).toHaveBeenCalledTimes(2)
+      launch.unmount()
+    } finally {
+      view.unmount()
+      await act(async () => {
+        release()
+        await handoff
+        await close
+        clearHarnessAppLaunch(running.id)
+      })
+    }
     renderManagement([running])
-
-    await waitFor(() => expect(mocks.register).toHaveBeenCalledWith(running))
+    expect(mocks.register).toHaveBeenCalledWith(running)
   })
 
   test('opens an installed app through the shared workspace-tab launcher', () => {
@@ -151,9 +186,66 @@ describe('useHarnessAppManagement', () => {
     expect(onError).toHaveBeenCalledWith(null)
   })
 
+  test('discards a stale running registration before starting a stopped app again', async () => {
+    const tabs = await vi.importActual<typeof import('./harnessAppTabs')>('./harnessAppTabs')
+    // A retained management surface can publish its old running snapshot when
+    // reconnected, before its refresh reports that the previous runtime stopped.
+    mocks.register.mockImplementation(tabs.registerHarnessAppTab)
+    mocks.unregister.mockImplementation(tabs.unregisterHarnessAppTab)
+    const view = renderHook(
+      ({ installations }) =>
+        useHarnessAppManagement({ installations, onBusyChange, onError, onRefresh }),
+      { initialProps: { installations: [running] } }
+    )
+    try {
+      expect(tabs.resolveRunningHarnessApp(`harness-${installed.id}`)?.url).toBe(running.webUrl)
+      view.rerender({ installations: [installed] })
+
+      act(() => view.result.current.start(installed))
+
+      expect(mocks.openTab).toHaveBeenCalledWith(workspaceTabs, installed)
+      expect(tabs.resolveRunningHarnessApp(`harness-${installed.id}`)).toBeNull()
+      expect(mocks.unregister.mock.invocationCallOrder[0]!).toBeLessThan(
+        mocks.openTab.mock.invocationCallOrder[0]!
+      )
+    } finally {
+      view.unmount()
+      tabs.unregisterHarnessAppTab(installed.id)
+    }
+  })
+
+  test('does not revoke an active launch from a stale installed management snapshot', async () => {
+    const tabs = await vi.importActual<typeof import('./harnessAppTabs')>('./harnessAppTabs')
+    tabs.registerHarnessAppTab(running)
+    mocks.unregister.mockImplementation(tabs.unregisterHarnessAppTab)
+    let release: () => void = () => {}
+    const handoff = runHarnessAppRuntimeOperation(
+      installed.id,
+      () =>
+        new Promise<void>(resolve => {
+          release = resolve
+        })
+    )
+    await Promise.resolve()
+    const { result, unmount } = renderManagement()
+    try {
+      act(() => result.current.start(installed))
+
+      expect(tabs.resolveRunningHarnessApp(`harness-${installed.id}`)?.url).toBe(running.webUrl)
+      expect(mocks.unregister).not.toHaveBeenCalled()
+      expect(mocks.openTab).toHaveBeenCalledWith(workspaceTabs, installed)
+    } finally {
+      unmount()
+      release()
+      await handoff
+      tabs.unregisterHarnessAppTab(installed.id)
+    }
+  })
+
   test('stops the runtime, clears registrations, and closes its workspace tab', async () => {
     workspaceTabs.tabs = [{ id: 'app-tab', contentRoute: '/app/harness-smart-app-1' }]
     mocks.takeProxyToken.mockResolvedValue('proxy-token')
+    mocks.takeAdditionalProxyTokens.mockResolvedValue(['second-token'])
     const { result } = renderManagement([running])
 
     await act(async () => {
@@ -164,30 +256,8 @@ describe('useHarnessAppManagement', () => {
     expect(mocks.unregister).toHaveBeenCalledWith(running.id)
     expect(mocks.closeTab).toHaveBeenCalledWith('app-tab')
     expect(mocks.unregisterProxy).toHaveBeenCalledWith('proxy-token')
+    expect(mocks.unregisterProxy).toHaveBeenCalledWith('second-token')
     expect(onRefresh).toHaveBeenCalled()
-  })
-
-  test('changes the bound model while the app is stopped', async () => {
-    const { result } = renderManagement()
-
-    await act(async () => {
-      await result.current.changeModel(installed, 'next-model')
-    })
-
-    expect(mocks.api.update).toHaveBeenCalledWith(installed.id, { modelKey: 'next-model' })
-    expect(onRefresh).toHaveBeenCalled()
-  })
-
-  test('releases the decision route when the app stops', async () => {
-    mocks.takeDecisionToken.mockResolvedValue('decision-token')
-    const { result } = renderManagement([running])
-
-    await act(async () => {
-      expect(await result.current.stop(running)).toBe(true)
-    })
-
-    expect(mocks.takeDecisionToken).toHaveBeenCalledWith(running.id)
-    expect(mocks.unregisterDecision).toHaveBeenCalledWith('decision-token')
   })
 
   test('still releases the other routes when one unregister fails', async () => {

@@ -13,6 +13,9 @@ mod claude_code;
 mod claude_options;
 mod codex;
 #[cfg(test)]
+pub(crate) use codex::turn_context_for_test;
+mod completed_file_changes;
+#[cfg(test)]
 pub(crate) use codex::LaunchEnvironment as CodexLaunchEnvironment;
 mod codex_log_db;
 mod dify;
@@ -21,7 +24,7 @@ pub(crate) mod git_auth;
 pub(crate) mod git_workspace;
 mod image_validator;
 mod instance_home;
-pub(crate) use instance_home::{claude_session_transcript, validate_session};
+pub(crate) use instance_home::{agent_homes, claude_session_transcript, validate_session};
 pub mod interactive_mcp;
 mod pnpm_worktree;
 pub(crate) mod runtime_capabilities;
@@ -48,11 +51,12 @@ use claude_code::{
 pub use claude_options::{extract_claude_options, ClaudeOptions};
 pub(crate) use codex::{
     bind_codex_thread_model_route, codex_notification_requires_user_input,
-    codex_runtime_approval_policy, configured_inference_model_provider, executor_home,
-    mcp_server_elicitation_request_user_input_params, reload_skill_configuration, replace_config,
-    select_wework_codex_user_instructions, task_identity_thread_config, wework_codex_home,
-    CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE, CODEX_READ_ONLY_PERMISSION_PROFILE,
-    CODEX_WORKSPACE_PERMISSION_PROFILE,
+    codex_runtime_approval_policy, completed_native_codex_turn,
+    configured_inference_model_provider, executor_home,
+    mcp_server_elicitation_request_user_input_params, prepare_codex_runtime_notification,
+    reload_skill_configuration, replace_config, select_wework_codex_user_instructions,
+    wework_codex_home, CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE,
+    CODEX_READ_ONLY_PERMISSION_PROFILE, CODEX_WORKSPACE_PERMISSION_PROFILE,
 };
 pub use codex::{
     run_codex_app_server_turn, run_codex_app_server_turn_with_cancel, CodexActiveTurnCallback,
@@ -60,11 +64,14 @@ pub use codex::{
     CodexAppServerTurn, CodexAppServerTurnOptions, CodexCancellationState, CodexIdleMutationError,
     CodexNotification, CodexNotificationSender, CodexRequestUserInputReceiver,
     CodexResponseValueOrigin, CodexThreadStartedCallback, CodexTurnInterrupter,
-    CODEX_APP_SERVER_EXECUTOR_SHUTDOWN, CODEX_APP_SERVER_TURN_CANCELLED,
+    CODEX_APP_SERVER_ACTIVE_GOAL_INTERRUPTED, CODEX_APP_SERVER_EXECUTOR_SHUTDOWN,
+    CODEX_APP_SERVER_TURN_CANCELLED,
 };
 pub use dify::{build_dify_config, saved_dify_task_id, DifyEngine};
 pub use image_validator::ImageValidatorEngine;
-pub(crate) use instance_home::{task_skills_directory, task_skills_directory_at};
+pub(crate) use instance_home::{
+    task_skills_directory, task_skills_directory_at, TaskSkillsDirectory,
+};
 
 pub(crate) fn has_isolated_native_home(request: &ExecutionRequest) -> bool {
     instance_home::request_home(request).is_some()
@@ -366,8 +373,8 @@ impl AgentEngine for AgentProcessEngine {
             } else {
                 None
             };
-            let _home_lease = if agent_kind == AgentKind::ClaudeCode {
-                match instance_home::acquire(&request) {
+            let mut execution_home = if agent_kind == AgentKind::ClaudeCode {
+                match instance_home::acquire_claude(&request).await {
                     Ok(lease) => lease,
                     Err(message) => {
                         let mut fields = task_fields(&request.task_id, &request.subtask_id);
@@ -445,6 +452,14 @@ impl AgentEngine for AgentProcessEngine {
                             }
                             log_executor_event("command planned", &command_fields);
                             if request.resolved_agent_kind() == AgentKind::ClaudeCode {
+                                if let Some(home) = &mut execution_home {
+                                    spec = match home.configure(spec) {
+                                        Ok(spec) => spec,
+                                        Err(message) => {
+                                            return ExecutionOutcome::Failed { message }
+                                        }
+                                    };
+                                }
                                 spec = match runtime_capabilities::prepare_claude_runtime(
                                     &request, spec,
                                 )
@@ -482,6 +497,11 @@ impl AgentEngine for AgentProcessEngine {
                                     }
                                 };
                                 run_pre_execute_hook(&request, &spec).await;
+                                if let Some(home) = &mut execution_home {
+                                    if let Err(message) = home.activate() {
+                                        return ExecutionOutcome::Failed { message };
+                                    }
+                                }
                             }
                             drop(capability_lease);
                             stream_process_engine_for(&agent_kind, spec)
@@ -528,8 +548,8 @@ impl AgentEngine for AgentProcessEngine {
             } else {
                 None
             };
-            let _home_lease = if agent_kind == AgentKind::ClaudeCode {
-                match instance_home::acquire(&request) {
+            let mut execution_home = if agent_kind == AgentKind::ClaudeCode {
+                match instance_home::acquire_claude(&request).await {
                     Ok(lease) => lease,
                     Err(message) => {
                         let mut fields = task_fields(&request.task_id, &request.subtask_id);
@@ -607,6 +627,14 @@ impl AgentEngine for AgentProcessEngine {
                             }
                             log_executor_event("command planned", &command_fields);
                             if request.resolved_agent_kind() == AgentKind::ClaudeCode {
+                                if let Some(home) = &mut execution_home {
+                                    spec = match home.configure(spec) {
+                                        Ok(spec) => spec,
+                                        Err(message) => {
+                                            return ExecutionOutcome::Failed { message }
+                                        }
+                                    };
+                                }
                                 spec = match runtime_capabilities::prepare_claude_runtime(
                                     &request, spec,
                                 )
@@ -644,11 +672,22 @@ impl AgentEngine for AgentProcessEngine {
                                     }
                                 };
                                 run_pre_execute_hook(&request, &spec).await;
+                                if let Some(home) = &mut execution_home {
+                                    if let Err(message) = home.activate() {
+                                        return ExecutionOutcome::Failed { message };
+                                    }
+                                }
                             }
                             drop(capability_lease);
-                            stream_process_engine_for(&agent_kind, spec)
-                                .run_with_events(request, sink, builder)
-                                .await
+                            let workspace = spec.current_dir().map(PathBuf::from);
+                            let engine = stream_process_engine_for(&agent_kind, spec);
+                            completed_file_changes::capture_completed_file_changes(
+                                &request,
+                                workspace,
+                                &builder,
+                                || engine.run_with_events(request.clone(), sink, builder.clone()),
+                            )
+                            .await
                         }
                         Err(message) => {
                             let mut failed_fields = fields;

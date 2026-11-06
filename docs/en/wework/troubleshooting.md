@@ -4,6 +4,10 @@ sidebar_position: 10
 
 # Troubleshooting
 
+## Conversation export remains on packaging
+
+In the desktop log directory, inspect `dsh-core-runtime.log` for `[wework-conversation-export]` and the export task ID. Finalization logs report the start, completion, or failure of document sync, asset sync, packaging, and destination replacement, including stage duration and asset count. They omit file paths and contents. A stage with only a start event identifies the file operation to investigate; the packaging message alone does not establish that the export has failed.
+
 ## Page errors or a blank screen
 
 When a frontend component fails to render, Wework displays “Something went wrong in Wework”.

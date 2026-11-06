@@ -28,12 +28,17 @@ pub(crate) async fn conclude_code_wiki_run<M: Mysql, R: Redis>(
     let Some(row) = running else {
         return;
     };
-    // `finish_run` resolves the knowledge base and the generation owner, then
-    // finalizes the generation; that path is driven by the code-wiki runner and
-    // no callback recording exercises it.
-    tracing::debug!(
-        generation_id = row.get::<i64>("wiki_generations_id").ok().flatten(),
-        task_id = event.task_id,
-        "running wiki generation concluded"
-    );
+    let Some(id) = row.get::<i64>("wiki_generations_id").ok().flatten() else {
+        return;
+    };
+    if let Err(error) = crate::background_jobs::subscription::code_wiki::generation::fail(
+        ctx.mysql,
+        id,
+        "task_ended_without_report",
+        event.error.unwrap_or(""),
+    )
+    .await
+    {
+        tracing::error!(%error, task_id=event.task_id, "Code Wiki run conclusion failed");
+    }
 }

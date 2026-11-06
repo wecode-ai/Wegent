@@ -32,7 +32,7 @@ from app.services.mcp_provider_registry import (
 from app.services.skill_service import SkillValidator
 from shared.models import ExecutionRequest
 
-SKILLS_DIR = Path(__file__).parents[2] / "init_data" / "skills"
+SKILLS_DIR = Path(__file__).parents[2].parent / "backend-rs" / "init_data" / "skills"
 
 
 @pytest.fixture(

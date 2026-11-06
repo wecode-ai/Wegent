@@ -502,22 +502,61 @@ async fn schedule_indexing(
         return Ok(());
     }
 
-    // The source dispatches the Celery task here
-    // (`index_document_task.delay(...)`, published on the `wegent_online`
-    // queue). The broker publish is not migrated: see the work item's
-    // capability-gap report. The generation has already advanced, so a later
-    // dispatch re-uses this generation.
-    tracing::warn!(
-        document_id = document.knowledge_documents_id,
-        attachment_id = document.knowledge_documents_attachment_id,
-        knowledge_base_id = knowledge_base.kinds_id,
-        index_generation = decision.generation.unwrap_or_default(),
-        index_owner_user_id,
-        user_name = %user_name,
-        retriever_name,
-        embedding_model_name,
-        "knowledge index dispatch is not migrated: no re-index task was enqueued"
-    );
+    let payload = serde_json::json!({
+        "knowledge_base_id":knowledge_base.kinds_id.to_string(),
+        "attachment_id":document.knowledge_documents_attachment_id,
+        "document_id":document.knowledge_documents_id,
+        "index_generation":decision.generation.unwrap_or_default(),
+        "retriever_name":retriever_name,
+        "retriever_namespace":retrieval.get("retriever_namespace").and_then(Value::as_str).unwrap_or("default"),
+        "embedding_model_name":embedding_model_name,
+        "embedding_model_namespace":embedding.get("model_namespace").and_then(Value::as_str).unwrap_or("default"),
+        "user_id":index_owner_user_id,"user_name":user_name,"caller_user_id":user_id,
+        "trigger_summary":true,
+    });
+    let name = crate::background_jobs::knowledge::index::NAME;
+    let task_id = crate::wework_auth_tokens::uuid4_hex()
+        .map_err(|_| internal_failure("task id generation failed"))?;
+    let dispatch: Result<(), ApiFailure> = async {
+        if state.background_jobs.is_enabled(name) {
+            state
+                .background_jobs
+                .submit(name, &payload, None, Some(task_id))
+                .await
+                .map_err(internal_failure)?;
+        } else {
+            let redis = state
+                .redis
+                .as_ref()
+                .ok_or_else(|| internal_failure("knowledge task broker is unavailable"))?;
+            state
+                .celery
+                .dispatch(
+                    redis,
+                    &crate::celery_broker::CeleryTask {
+                        task_name: name,
+                        queue: "wegent_online",
+                        task_id: &task_id,
+                        kwargs: payload.as_object().expect("index payload is an object"),
+                        expires_at: None,
+                    },
+                )
+                .await
+                .map_err(internal_failure)?;
+        }
+        Ok(())
+    }
+    .await;
+    if let Err(error) = dispatch {
+        crate::background_jobs::knowledge::index::dispatch_failed(
+            state,
+            document.knowledge_documents_id,
+            decision.generation.unwrap_or_default(),
+        )
+        .await
+        .map_err(internal_failure)?;
+        return Err(error);
+    }
     Ok(())
 }
 

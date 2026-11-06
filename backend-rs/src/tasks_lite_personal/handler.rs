@@ -21,8 +21,9 @@
 //!    `kinds` `(name, namespace, user_id) IN` probe), and
 //!    `userReader.get_by_id` direct SQL lookup;
 //! 4. the cursor response `{"items", "next_cursor", "has_more"}` with the
-//!    next cursor base64-encoded from the last returned task's
-//!    `(created_at, id)`.
+//!    cursor retaining the last returned task's `(created_at, id)` payload.
+//!    Only its ID determines pagination. The store limits history to the
+//!    owner's 10,000 newest personal-task IDs.
 use std::sync::Arc;
 
 use base64::Engine as _;
@@ -41,6 +42,7 @@ use super::lite_repository::{
     list_personal_task_candidates_after,
 };
 use crate::state::AppState;
+use crate::task_store::PERSONAL_TASK_HISTORY_LIMIT;
 
 /// Source `PERSONAL_TASK_CANDIDATE_EXTRA_LIMIT`-driven cursor batch size:
 /// `max(limit + 1, 100)`.
@@ -144,8 +146,8 @@ fn validation_error(field: &str, message: &str) -> crate::http_compat::FastApiEr
     ]))
 }
 
-/// Cursor payload (`_encode_personal_task_cursor` /
-/// `_decode_personal_task_cursor`).
+/// Preserve the opaque cursor format across rolling releases. The timestamp
+/// remains in the payload, while only the ID determines the SQL page boundary.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct CursorPayload {
     created_at: String,
@@ -154,7 +156,6 @@ struct CursorPayload {
 
 fn encode_cursor(created_at: &NaiveDateTime, task_id: i64) -> String {
     let payload = CursorPayload {
-        // Python's `isoformat()` omits the microsecond part when it is zero.
         created_at: if created_at.and_utc().timestamp_subsec_micros() == 0 {
             created_at.format("%Y-%m-%dT%H:%M:%S").to_string()
         } else {
@@ -170,9 +171,7 @@ fn encode_cursor(created_at: &NaiveDateTime, task_id: i64) -> String {
 }
 
 #[allow(clippy::result_large_err)]
-fn decode_cursor(
-    cursor: &str,
-) -> Result<Option<(NaiveDateTime, i64)>, crate::http_compat::FastApiError> {
+fn decode_cursor(cursor: &str) -> Result<Option<i64>, crate::http_compat::FastApiError> {
     if cursor.is_empty() {
         return Ok(None);
     }
@@ -189,9 +188,12 @@ fn decode_cursor(
         .decode(format!("{cursor}{padding}"))
         .map_err(|_| invalid())?;
     let payload: CursorPayload = serde_json::from_slice(&decoded).map_err(|_| invalid())?;
-    let created_at = NaiveDateTime::parse_from_str(&payload.created_at, "%Y-%m-%dT%H:%M:%S%.f")
+    if payload.id <= 0 {
+        return Err(invalid());
+    }
+    NaiveDateTime::parse_from_str(&payload.created_at, "%Y-%m-%dT%H:%M:%S%.f")
         .map_err(|_| invalid())?;
-    Ok(Some((created_at, payload.id)))
+    Ok(Some(payload.id))
 }
 
 /// GET /api/tasks/lite/personal: the personal tasks-lite free function,
@@ -262,12 +264,11 @@ async fn personal_tasks_cursor(
     state: &Arc<AppState>,
     user_id: i32,
     limit: i64,
-    cursor: Option<(NaiveDateTime, i64)>,
+    cursor: Option<i64>,
     types: &[String],
     client_origin: &str,
 ) -> Result<PersonalTasksResponse, brz_mysql::MysqlError> {
-    let mut cursor_created_at = cursor.map(|(created_at, _)| created_at);
-    let mut cursor_id = cursor.map(|(_, id)| id);
+    let mut cursor_id = cursor;
     let mut matched: Vec<TaskCandidateRow> = Vec::new();
     let size = batch_size(limit);
 
@@ -276,7 +277,7 @@ async fn personal_tasks_cursor(
             &*state.task_store,
             i64::from(user_id),
             size,
-            cursor_created_at.zip(cursor_id),
+            cursor_id,
             Some(client_origin),
         )
         .await?;
@@ -284,12 +285,10 @@ async fn personal_tasks_cursor(
             break;
         }
         let scanned = candidates.len() as i64;
-        // Advance the keyset cursor with `candidates[-1]` (the smallest
-        // `created_at, id` of the scanned window) before filtering.
-        let last_candidate = candidates.last().expect("checked non-empty").clone_dyn();
+        // Advance past every scanned candidate, including filtered-out tasks.
+        let last_candidate_id = candidates.last().expect("checked non-empty").id;
         matched.extend(filter_personal_tasks(candidates, types));
-        cursor_created_at = Some(last_candidate.0);
-        cursor_id = Some(last_candidate.1);
+        cursor_id = Some(last_candidate_id);
         // The source loop is `while len(matched) <= limit`: stop scanning as
         // soon as one more page of matches exists, even on a full batch.
         if matched.len() > limit as usize {
@@ -327,14 +326,15 @@ async fn personal_tasks_paged(
     client_origin: &str,
 ) -> Result<PersonalTasksResponse, brz_mysql::MysqlError> {
     const EXTRA_LIMIT: i64 = 50;
-    let skip = (page - 1) * limit;
+    let skip = (page - 1).saturating_mul(limit);
     let query_limit = limit + EXTRA_LIMIT;
     // Offset pagination reads `skip + query_limit` candidates and slices in
     // the application, mirroring `list_personal_task_ids`.
     let candidates = list_personal_task_candidates_after(
         &*state.task_store,
         i64::from(user_id),
-        skip + query_limit,
+        skip.saturating_add(query_limit)
+            .min(PERSONAL_TASK_HISTORY_LIMIT),
         None,
         Some(client_origin),
     )
@@ -426,44 +426,54 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cursor_round_trips_the_source_payload() {
+    fn cursor_keeps_its_wire_format_and_uses_only_the_id_as_the_boundary() {
         let created_at =
             NaiveDateTime::parse_from_str("2026-04-15 14:44:58", "%Y-%m-%d %H:%M:%S").unwrap();
-        let encoded = encode_cursor(&created_at, 1852289);
+        for id in [1, 1_852_289, 42_000_000_000_001] {
+            assert_eq!(
+                decode_cursor(&encode_cursor(&created_at, id)).unwrap(),
+                Some(id)
+            );
+        }
         assert_eq!(
-            encoded,
+            encode_cursor(&created_at, 1_852_289),
             "eyJjcmVhdGVkX2F0IjoiMjAyNi0wNC0xNVQxNDo0NDo1OCIsImlkIjoxODUyMjg5fQ"
         );
-        let decoded = decode_cursor(&encoded).unwrap().unwrap();
-        assert_eq!(decoded, (created_at, 1852289));
+        assert_eq!(decode_cursor("").unwrap(), None);
     }
 
     #[test]
     fn invalid_cursor_is_rejected() {
-        let response = decode_cursor("not-a-cursor").unwrap_err();
-        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        for raw in [
+            "not-a-cursor",
+            r#"{}"#,
+            r#"{"created_at":"2026-01-01T00:00:00","id":0}"#,
+            r#"{"created_at":"2026-01-01T00:00:00","id":-1}"#,
+            r#"{"created_at":"2026-01-01T00:00:00","id":"42"}"#,
+            r#"{"created_at":"invalid","id":42}"#,
+        ] {
+            let cursor = if raw == "not-a-cursor" {
+                raw.to_string()
+            } else {
+                base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw)
+            };
+            let response = decode_cursor(&cursor).unwrap_err();
+            assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        }
     }
 
     #[test]
-    fn unpadded_cursor_gains_its_source_padding() {
-        // Source `"=" * (-len(cursor) % 4)`: a cursor whose length is 3 mod 4
-        // must gain exactly one `=`, and one without fractional seconds must
-        // parse. Both payloads below are unpadded base64url.
+    fn existing_cursors_use_their_id_for_the_new_ordering() {
+        // Previously issued opaque cursors carry both fields. Reading the ID
+        // keeps an open list usable across deployment without sorting by time.
         let no_fraction = "eyJjcmVhdGVkX2F0IjoiMjAyNi0wMS0wMlQwMzowNDowNSIsImlkIjo0Mn0";
         assert_eq!(no_fraction.len() % 4, 3);
         let decoded = decode_cursor(no_fraction).unwrap().unwrap();
-        assert_eq!(decoded.1, 42);
-        assert_eq!(
-            decoded.0,
-            NaiveDateTime::parse_from_str("2026-01-02T03:04:05", "%Y-%m-%dT%H:%M:%S").unwrap()
-        );
+        assert_eq!(decoded, 42);
 
         let wide_id = "eyJjcmVhdGVkX2F0IjoiMjAyNi0wMS0wMlQwMzowNDowNSIsImlkIjo0MjAwMDAwMDAwMDAwMX0";
         assert_eq!(wide_id.len() % 4, 3);
-        assert_eq!(
-            decode_cursor(wide_id).unwrap().unwrap().1,
-            42_000_000_000_001
-        );
+        assert_eq!(decode_cursor(wide_id).unwrap().unwrap(), 42_000_000_000_001);
     }
 
     #[test]

@@ -40,8 +40,7 @@ fn assistant_subtasks_statement_matches_the_source_shape() {
          subtasks_0030.updated_at AS subtasks_0030_updated_at, subtasks_0030.completed_at AS subtasks_0030_completed_at, \
          subtasks_0030.sender_type AS subtasks_0030_sender_type, subtasks_0030.sender_user_id AS subtasks_0030_sender_user_id, \
          subtasks_0030.reply_to_subtask_id AS subtasks_0030_reply_to_subtask_id \nFROM subtasks_0030 \n\
-         WHERE subtasks_0030.task_id = ? AND subtasks_0030.`role` = 'ASSISTANT' \n\
-         ORDER BY subtasks_0030.message_id ASC"
+         WHERE subtasks_0030.task_id = ? AND subtasks_0030.`role` = 'ASSISTANT'"
     );
 }
 
@@ -59,14 +58,32 @@ fn subtask_running_update_writes_the_status_only_flush() {
 #[test]
 fn subtask_terminal_update_follows_the_mapper_column_order() {
     assert_eq!(
-        update_subtask_terminal(tables(), true, true),
+        update_subtask_terminal(tables(), true, true, true),
         "UPDATE subtasks_0030 SET executor_namespace=?, executor_name=?, status=?, result=?, \
          error_message=?, updated_at=?, completed_at=? WHERE subtasks_0030.id = ?"
     );
     assert_eq!(
-        update_subtask_terminal(tables(), false, false),
+        update_subtask_terminal(tables(), true, false, false),
         "UPDATE subtasks_0030 SET status=?, result=?, updated_at=?, completed_at=? \
          WHERE subtasks_0030.id = ?"
+    );
+}
+
+#[test]
+fn a_terminal_error_without_a_result_omits_the_result_column() {
+    // `_update_subtask_sync` assigns `fields["result"]` only when the caller
+    // passed one (`db.py:136`); the build-failure persistence passes the
+    // collected result, which is absent for a fresh subtask, so the recorded
+    // UPDATE carries the four columns below.
+    assert_eq!(
+        update_subtask_terminal(tables(), false, true, false),
+        "UPDATE subtasks_0030 SET status=?, error_message=?, updated_at=?, completed_at=? \
+         WHERE subtasks_0030.id = ?"
+    );
+    assert_eq!(
+        update_subtask_terminal(tables(), false, true, true),
+        "UPDATE subtasks_0030 SET executor_namespace=?, executor_name=?, status=?, \
+         error_message=?, updated_at=?, completed_at=? WHERE subtasks_0030.id = ?"
     );
 }
 

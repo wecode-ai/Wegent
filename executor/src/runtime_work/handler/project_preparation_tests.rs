@@ -20,6 +20,7 @@ fn turn_with_setup(id: &str, command: &str) -> SpawnTurnRequest {
     )
     .unwrap();
     SpawnTurnRequest {
+        task_kind: None,
         local_task_id: id.into(),
         runtime: "codex".into(),
         request,
@@ -107,6 +108,17 @@ fn project_preparation_failure_keeps_snapshot_and_retry_succeeds() {
             "ready"
         );
         assert!(handler.local_task_link("retry").unwrap().runtime_handle["executionRequest"][DEFERRED_ENVIRONMENT].is_null());
+        // Preparing the request precedes completion of the detached provider turn.
+        let _settled = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let settled = handler.turn_queue_operation.lock().await;
+                if handler.turn_scheduler.lock().unwrap().active_task_ids.is_empty() {
+                    break settled;
+                }
+                drop(settled);
+                sleep(Duration::from_millis(10)).await;
+            }
+        }).await.unwrap();
         fs::remove_dir_all(root).unwrap();
     });
 }
@@ -152,6 +164,57 @@ fn project_preparation_clones_before_creating_independent_worktrees() {
 }
 
 #[test]
+fn deferred_worktree_rebases_project_roots_using_path_identity() {
+    let _lock = crate::test_env::lock();
+    let temp = tempfile::tempdir().unwrap();
+    let _env = ScalarEnv::set("WORKSPACE_ROOT", temp.path().to_str().unwrap());
+    let repo = temp.path().join("source");
+    let dependency = temp.path().join("dependency");
+    initialize_test_repository(&repo);
+    fs::create_dir(&dependency).unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let (handler, root) = isolated_runtime_work_handler("worktree-permission-roots");
+        handler
+            .worktrees
+            .update_settings(WorktreeSettingsPatch {
+                worktree_root: Some(temp.path().join("worktrees").display().to_string()),
+                ..Default::default()
+            })
+            .unwrap();
+        let plan = handler
+            .worktrees
+            .plan(&repo, "permission-roots", None)
+            .unwrap();
+        let source = plan.source_path.display().to_string();
+        let alias = if cfg!(windows) {
+            let plain = crate::path_compat::strip_windows_verbatim_prefix(Path::new(&source));
+            format!("{}\\", plain.display().to_string().replace('/', "\\"))
+        } else {
+            format!("{source}/")
+        };
+        let mut turn = turn_with_setup("permission-roots", "");
+        turn.request.extra.remove(DEFERRED_ENVIRONMENT);
+        turn.request
+            .extra
+            .insert("deferred_worktree_source_path".into(), json!(source));
+        turn.request.runtime_workspace_roots = vec![alias, dependency.display().to_string()];
+        handler.prepare_deferred_worktree(&mut turn).await.unwrap();
+        assert_eq!(
+            turn.request.runtime_workspace_roots,
+            vec![
+                turn.request.cwd().unwrap().to_owned(),
+                dependency.display().to_string()
+            ]
+        );
+        fs::remove_dir_all(root).unwrap();
+    });
+}
+
+#[test]
 fn project_preparation_accepts_without_blocking_and_can_be_cancelled() {
     let _lock = crate::test_env::lock();
     let temp = tempfile::tempdir().unwrap();
@@ -180,10 +243,21 @@ fn project_preparation_accepts_without_blocking_and_can_be_cancelled() {
         assert!(handler.is_busy_local_task("cancel-preparation"));
         assert!(handler.cancel_preparing_worktree_turn("cancel-preparation"));
         assert!(handler.wait_for_worktree_preparation_to_finish("cancel-preparation").await);
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while handler.local_task_link("cancel-preparation").unwrap().status != "cancelled" {
+                sleep(Duration::from_millis(10)).await;
+            }
+        }).await.unwrap();
+        // Cancellation is projected before the queue writer finishes settlement.
+        let _settled =
+            tokio::time::timeout(Duration::from_secs(5), handler.turn_queue_operation.lock())
+                .await
+                .unwrap();
         let link = handler.local_task_link("cancel-preparation").unwrap();
         assert_eq!(link.status, "cancelled");
         assert!(link.thread_id.is_none());
         assert!(!handler.is_busy_local_task("cancel-preparation"));
+        assert!(handler.turn_scheduler.lock().unwrap().active_task_ids.is_empty());
         fs::remove_dir_all(root).unwrap();
     });
 }
@@ -234,7 +308,18 @@ fn project_preparation_runs_for_restored_and_force_started_turns() {
             })
             .await
             .unwrap();
+            // Failure is projected before the queue writer finishes settlement.
+            let _settled =
+                tokio::time::timeout(Duration::from_secs(5), handler.turn_queue_operation.lock())
+                    .await
+                    .unwrap();
             let link = handler.local_task_link("pending").unwrap();
+            assert!(handler
+                .turn_scheduler
+                .lock()
+                .unwrap()
+                .active_task_ids
+                .is_empty());
             assert_eq!(
                 fs::read_to_string(path.join("attempted")).unwrap(),
                 "attempted"

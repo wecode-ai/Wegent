@@ -161,6 +161,7 @@ export interface ChatInputProps {
     options?: ChatSubmitOptions
   ) => void | boolean | Promise<void | boolean>
   disabled: boolean
+  showPluginPicker?: boolean
   pluginPickerIconOnly?: boolean
   submitDisabled?: boolean
   requireText?: boolean
@@ -318,6 +319,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
     onCompositionEnd,
     onSubmit,
     disabled,
+    showPluginPicker = true,
     pluginPickerIconOnly = false,
     submitDisabled = false,
     requireText = false,
@@ -694,6 +696,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
             composerScopeKey={controls.scopeKey}
             ref={composerRef}
             {...composerProps}
+            showPluginPicker={showPluginPicker}
             pluginPickerIconOnly={pluginPickerIconOnly}
             models={controls.models}
             selectedModel={controls.selectedModel}

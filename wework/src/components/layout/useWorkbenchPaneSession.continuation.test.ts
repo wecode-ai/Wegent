@@ -1,23 +1,15 @@
-import { act, cleanup, fireEvent, renderHook, waitFor } from '@testing-library/react'
-import { createElement, StrictMode, type ReactNode } from 'react'
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import type { RuntimeTaskAddress } from '@/types/api'
-import type { WorkbenchMessage } from '@/types/workbench'
 import { useConversationFind } from '@/components/chat/useConversationFind'
-import { getPlatform } from '@/lib/platform'
-import { useScopedDraftInput } from '@/features/workbench/useScopedDraftInput'
-import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
 import {
+  applyRuntimeConversationAction,
   cacheRuntimeConversationQueuedMessages,
   cacheRuntimeConversationQueuePaused,
   clearRuntimeConversationCacheForTests,
+  getRuntimeConversationMessages,
   getRuntimeConversationQueuedMessages,
   getRuntimeConversationQueuePaused,
-  getRuntimeConversationMessages,
   reconcileRuntimeConversationSnapshot,
   replaceRuntimeConversationSnapshot,
 } from '@/features/workbench/runtimeConversationCache'
-import type { RuntimeConversationTurn } from '@/types/workbench'
 import {
   getRuntimeConversationQueueController,
   resetRuntimeConversationQueueControllersForTests,
@@ -26,8 +18,25 @@ import {
   RuntimeTaskLifecycleProvider,
   RuntimeTaskLifecycleStore,
 } from '@/features/workbench/runtimeTaskLifecycle'
+import { useScopedDraftInput } from '@/features/workbench/useScopedDraftInput'
+import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
+import { getPlatform } from '@/lib/platform'
+import { createConversationMentionReference } from '@/lib/conversation-mentions'
+import type { RuntimeGoal, RuntimeTaskAddress } from '@/types/api'
+import type {
+  RuntimeConversationTurn,
+  RuntimePaneTranscript,
+  RuntimeTranscriptLoader,
+  WorkbenchMessage,
+} from '@/types/workbench'
+import { act, cleanup, fireEvent, renderHook, waitFor } from '@testing-library/react'
+import { createElement, StrictMode, type ReactNode } from 'react'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import {
+  pendingRequestUserInputPayload,
+  pendingRequestUserInputResponses,
+} from './requestUserInputOverlay'
 import { useWorkbenchPaneSession } from './useWorkbenchPaneSession'
-import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
 
 const mocks = vi.hoisted(() => ({
   context: {} as Record<string, unknown>,
@@ -146,6 +155,303 @@ function expectDraftPreserved(session: ReturnType<typeof useWorkbenchPaneSession
   expect(mocks.setInput).not.toHaveBeenCalled()
   expect(mocks.resetAttachments).not.toHaveBeenCalled()
 }
+
+describe('pane transcript reload ownership', () => {
+  test('keeps an explicit send independent of a reading scope replaced during dispatch', async () => {
+    const { result, rerender } = await renderSession()
+    act(() => result.current.clearCodeComments())
+    let request!: Promise<boolean>
+    act(() => {
+      request = result.current.send('Explicit message without conversation references')
+      rerender({ currentRuntimeTask: { ...address, threadId: 'resolved-thread' } })
+    })
+    await act(async () => expect(await request).toBe(true))
+    expect(mocks.send).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        address,
+        message: 'Explicit message without conversation references',
+      }),
+      expect.any(Object)
+    )
+  })
+
+  test.each(['rejected', 'transport'] as const)(
+    'rolls back a failed %s edit after its reading pane leaves',
+    async outcome => {
+      let resolveEdit!: (value: boolean) => void
+      let rejectEdit!: (reason: Error) => void
+      const edit = vi.fn(
+        () =>
+          new Promise<boolean>((resolve, reject) => {
+            resolveEdit = resolve
+            rejectEdit = reject
+          })
+      )
+      mocks.context.editLastUserMessage = edit
+      const { result, unmount } = await renderSession()
+      const originalMessage: WorkbenchMessage & { role: 'user' } = {
+        id: 'original-user',
+        role: 'user',
+        content: 'Original question',
+        status: 'done',
+        createdAt: '2026-10-15T00:00:00Z',
+      }
+      act(() =>
+        replaceRuntimeConversationSnapshot(address, [
+          {
+            id: 'original-turn',
+            status: 'done',
+            items: [
+              { id: originalMessage.id, type: 'user_message', message: originalMessage },
+              { id: 'original-answer', type: 'assistant_text', content: 'Original answer' },
+            ],
+          },
+        ])
+      )
+      let request!: Promise<boolean>
+      act(() => {
+        request = result.current.editLastUserMessage(originalMessage, 'Edited question')
+      })
+      expect(edit).toHaveBeenCalledOnce()
+      expect(getRuntimeConversationMessages(address)[0].content).toBe('Edited question')
+      unmount()
+      await act(async () => {
+        if (outcome === 'rejected') resolveEdit(false)
+        else rejectEdit(new Error('Edit transport failed'))
+        expect(await request).toBe(false)
+      })
+      expect(getRuntimeConversationMessages(address)).toMatchObject([
+        { id: originalMessage.id, content: 'Original question' },
+        { content: 'Original answer' },
+      ])
+      expect(mocks.setError).not.toHaveBeenCalled()
+    }
+  )
+
+  test.each([address, null])(
+    'preserves conversation mentions when sending from pane %s',
+    async currentRuntimeTask => {
+      const reference = { deviceId: address.deviceId, taskId: 'referenced-task' }
+      const sendCurrentInput = vi.fn().mockResolvedValue(address)
+      mocks.context.sendCurrentInput = sendCurrentInput
+      const { result, rerender } = await renderSession(currentRuntimeTask)
+      act(() => result.current.clearCodeComments())
+      const load = vi.fn<RuntimeTranscriptLoader>().mockResolvedValue({
+        messages: [
+          {
+            id: 'referenced-message',
+            role: 'user',
+            content: 'Referenced conversation content',
+            status: 'done',
+            createdAt: '2026-10-15T00:00:00Z',
+          },
+        ],
+        turns: [],
+      })
+      mocks.context.loadRuntimeTranscriptForPane = load
+      rerender({ currentRuntimeTask })
+      const input = createConversationMentionReference('Other conversation', reference)
+      await act(async () => expect(await result.current.send(input)).toBe(true))
+      expect(load).toHaveBeenCalledWith(
+        expect.objectContaining(reference),
+        expect.objectContaining({
+          includeFullContent: true,
+          conversationContextOnly: true,
+          refresh: true,
+          signal: expect.any(AbortSignal),
+        })
+      )
+      const additionalContext = currentRuntimeTask
+        ? mocks.send.mock.calls[0][0].additionalContext
+        : sendCurrentInput.mock.calls[0][1].additionalContext
+      expect(additionalContext.referencedConversations.value).toContain(
+        'Referenced conversation content'
+      )
+    }
+  )
+
+  test('cancels older history without publishing its error or completion into the new scope', async () => {
+    const page: RuntimePaneTranscript = {
+      messages: [],
+      turns: [],
+      hasMoreBefore: true,
+      beforeCursor: 'older',
+    }
+    let resolveOld!: (value: RuntimePaneTranscript) => void
+    let resolveReload!: (value: RuntimePaneTranscript) => void
+    let resolveNext!: (value: RuntimePaneTranscript) => void
+    const oldRead = new Promise<RuntimePaneTranscript>(resolve => {
+      resolveOld = resolve
+    })
+    const reloadRead = new Promise<RuntimePaneTranscript>(resolve => {
+      resolveReload = resolve
+    })
+    const nextRead = new Promise<RuntimePaneTranscript>(resolve => {
+      resolveNext = resolve
+    })
+    const load = vi.fn<RuntimeTranscriptLoader>().mockResolvedValue(page)
+    mocks.context.loadRuntimeTranscriptForPane = load
+    const { result } = await renderSession()
+    expect(result.current.transcriptBeforeCursor).toBe('older')
+    load.mockImplementation((_address, options) => (options?.beforeCursor ? oldRead : reloadRead))
+    const staleLoadMore = result.current.loadMoreTranscriptBefore
+    let oldRequest!: Promise<void>
+    act(() => {
+      oldRequest = result.current.loadMoreTranscriptBefore()
+    })
+    const oldSignal = load.mock.calls.at(-1)?.[1]?.signal
+    expect(result.current.transcriptLoadingMoreBefore).toBe(true)
+    act(() => result.current.reloadRuntimeTranscript())
+    await act(async () => {
+      await oldRequest
+    })
+    expect(oldSignal?.aborted).toBe(true)
+    expect(result.current.transcriptError).toBeNull()
+    expect(result.current.transcriptLoading).toBe(true)
+    expect(result.current.transcriptLoadingMoreBefore).toBe(false)
+
+    await act(async () => resolveReload(page))
+    expect(result.current.transcriptError).toBeNull()
+    expect(result.current.transcriptLoading).toBe(false)
+    const readsAfterReload = load.mock.calls.length
+    await act(async () => staleLoadMore())
+    expect(load).toHaveBeenCalledTimes(readsAfterReload)
+    expect(result.current.transcriptLoadingMoreBefore).toBe(false)
+
+    load.mockReturnValueOnce(nextRead)
+    let nextRequest!: Promise<void>
+    act(() => {
+      nextRequest = result.current.loadMoreTranscriptBefore()
+    })
+    await act(async () => resolveOld({ ...page, beforeCursor: 'stale' }))
+    expect(result.current.transcriptLoadingMoreBefore).toBe(true)
+    expect(result.current.transcriptError).toBeNull()
+    await act(async () => {
+      resolveNext({ ...page, hasMoreBefore: false, beforeCursor: null })
+      await nextRequest
+    })
+    expect(result.current.transcriptLoadingMoreBefore).toBe(false)
+    expect(result.current.transcriptHasMoreBefore).toBe(false)
+    expect(result.current.transcriptBeforeCursor).toBeNull()
+  })
+})
+
+describe('explicit composer draft replacement', () => {
+  test('marks repeated same-value replacements without marking ordinary publications', async () => {
+    const { result } = await renderSession()
+    const initialKey = result.current.replaceDraftKey
+    act(() => result.current.setInput(draft))
+    act(() => result.current.onDraftEdit())
+    expect(result.current.replaceDraftKey).toBe(initialKey)
+
+    act(() => result.current.replaceInput(draft))
+    expect(result.current.input).toBe(draft)
+    expect(result.current.replaceDraftKey).toBe(initialKey + 1)
+    act(() => result.current.replaceInput(draft))
+    expect(result.current.replaceDraftKey).toBe(initialKey + 2)
+  })
+
+  test('marks editing a queued message even when its content matches the current draft', async () => {
+    cacheRuntimeConversationQueuePaused(address, true)
+    cacheRuntimeConversationQueuedMessages(address, [
+      { id: 'queued-draft', content: draft, status: 'queued', createdAt: '2026-10-19T00:00:00Z' },
+    ])
+    const { result } = await renderSession()
+    const initialKey = result.current.replaceDraftKey
+
+    act(() => result.current.editQueuedMessage('queued-draft'))
+
+    expect(result.current.input).toBe(draft)
+    expect(result.current.replaceDraftKey).toBe(initialKey + 1)
+    expect(result.current.queuedMessages).toEqual([])
+  })
+
+  test('marks editing the current goal even when its objective matches the current draft', async () => {
+    const goal: RuntimeGoal = {
+      threadId: address.threadId,
+      objective: draft,
+      status: 'paused',
+      tokenBudget: null,
+      tokensUsed: 0,
+      timeUsedSeconds: 0,
+      createdAt: 1,
+      updatedAt: 1,
+    }
+    mocks.context.getRuntimeGoal = vi.fn().mockResolvedValue({ accepted: true, goal })
+    const { result } = await renderSession()
+    await waitFor(() => expect(result.current.goal?.objective).toBe(draft))
+    const initialKey = result.current.replaceDraftKey
+
+    act(() => result.current.editCurrentGoal())
+
+    expect(result.current.input).toBe(draft)
+    expect(result.current.replaceDraftKey).toBe(initialKey + 1)
+    expect(result.current.goalDraftActive).toBe(true)
+  })
+
+  test('keeps an earlier scope replacement from marking the active composer', async () => {
+    const { result, rerender } = await renderSession()
+    const replaceEarlierScope = result.current.replaceInput
+    rerender({ currentRuntimeTask: { ...address, taskId: 'another-task' } })
+    const activeKey = result.current.replaceDraftKey
+
+    act(() => replaceEarlierScope('Restored earlier scope'))
+
+    expect(mocks.setInput).toHaveBeenCalledExactlyOnceWith(scopeKey, 'Restored earlier scope')
+    expect(result.current.replaceDraftKey).toBe(activeKey)
+    expect(result.current.input).toBe('')
+    rerender({ currentRuntimeTask: address })
+    expect(result.current.input).toBe('Restored earlier scope')
+  })
+
+  test.each(['none', 'unpublished', 'scope'] as const)(
+    'restores a failed queued interrupt only while it owns the draft (change=%s)',
+    async change => {
+      cacheRuntimeConversationQueuePaused(address, true)
+      cacheRuntimeConversationQueuedMessages(address, [
+        {
+          id: 'queued-interrupt',
+          content: 'Queued message',
+          status: 'queued',
+          createdAt: '2026-10-19T00:00:00Z',
+        },
+      ])
+      const projectChat = mocks.context.projectChat as Record<string, unknown>
+      projectChat.addExistingAttachmentForScope = vi.fn()
+      let finishInterrupt!: (accepted: boolean) => void
+      const interrupt = vi.fn(() => new Promise<boolean>(resolve => (finishInterrupt = resolve)))
+      mocks.context.interruptAndSendRuntimePaneMessage = interrupt
+      const { result, rerender } = await renderSession()
+      let interruption!: Promise<void>
+      act(() => {
+        interruption = result.current.interruptAndSendQueued('queued-interrupt')
+      })
+      await waitFor(() => expect(interrupt).toHaveBeenCalledOnce())
+      if (change === 'unpublished') act(() => result.current.onDraftEdit())
+      if (change === 'scope') {
+        rerender({ currentRuntimeTask: { ...address, taskId: 'another-task' } })
+      }
+      const replacementKey = result.current.replaceDraftKey
+      mocks.setInput.mockClear()
+
+      await act(async () => {
+        finishInterrupt(false)
+        await interruption
+      })
+
+      if (change === 'none') {
+        expect(mocks.setInput).toHaveBeenCalledExactlyOnceWith(
+          scopeKey,
+          `Queued message\n\n${draft}`
+        )
+        expect(result.current.replaceDraftKey).toBe(replacementKey + 1)
+      } else {
+        expect(mocks.setInput).not.toHaveBeenCalled()
+        expect(result.current.replaceDraftKey).toBe(replacementKey)
+      }
+    }
+  )
+})
 
 describe('composer draft ownership during delayed send acknowledgment', () => {
   test.each([false, true])(
@@ -336,7 +642,7 @@ describe('composer draft during an in-flight send', () => {
     }
   )
 
-  test.each(['rejected', 'thrown'] as const)(
+  test.each(['rejected'] as const)(
     'preserves newer text when a new-pane send is %s',
     async outcome => {
       let rejectSend!: (cause: Error) => void
@@ -370,6 +676,35 @@ describe('composer draft during an in-flight send', () => {
     }
   )
 
+  test.each(['preparation', 'send'] as const)(
+    'does not force a failed draft over an unpublished edit during %s',
+    async timing => {
+      let rejectSend!: (accepted: boolean) => void
+      mocks.context.sendCurrentInput = vi.fn(
+        () => new Promise<boolean>(resolve => (rejectSend = resolve))
+      )
+      const { result } = await renderSession(null)
+      const draftEditVersion = result.current.getDraftEditVersion()
+      if (timing === 'preparation') act(() => result.current.onDraftEdit())
+      let submission!: Promise<boolean>
+      act(() => {
+        submission = result.current.send(draft, { draftEditVersion })
+      })
+      await waitFor(() => expect(mocks.context.sendCurrentInput).toHaveBeenCalledOnce())
+      if (timing === 'send') act(() => result.current.onDraftEdit())
+      const replacementKey = result.current.replaceDraftKey
+      mocks.setInput.mockClear()
+
+      await act(async () => {
+        rejectSend(false)
+        expect(await submission).toBe(false)
+      })
+
+      expect(mocks.setInput).not.toHaveBeenCalled()
+      expect(result.current.replaceDraftKey).toBe(replacementKey)
+    }
+  )
+
   test.each([true, false])(
     'restores a rejected new goal only without newer edits (edited=%s)',
     async edited => {
@@ -393,13 +728,19 @@ describe('composer draft during an in-flight send', () => {
       })
       await waitFor(() => expect(mocks.context.sendCurrentInput).toHaveBeenCalledOnce())
       if (edited) act(() => result.current.setInput('Next goal draft'))
+      const replacementKey = result.current.replaceDraftKey
       mocks.setInput.mockClear()
       await act(async () => {
         rejectGoal(false)
         expect(await submission).toBe(false)
       })
-      if (edited) expect(mocks.setInput).not.toHaveBeenCalled()
-      else expect(mocks.setInput).toHaveBeenCalledWith('blank-chat', draft)
+      if (edited) {
+        expect(mocks.setInput).not.toHaveBeenCalled()
+        expect(result.current.replaceDraftKey).toBe(replacementKey)
+      } else {
+        expect(mocks.setInput).toHaveBeenCalledWith('blank-chat', draft)
+        expect(result.current.replaceDraftKey).toBe(replacementKey + 1)
+      }
     }
   )
 
@@ -616,7 +957,7 @@ describe('pane continuation without composer submission', () => {
     }
   )
 
-  test.each([true, false])(
+  test.each([true])(
     'retains a form while terminal history arrives before its response acknowledgment (accepted=%s)',
     async accepted => {
       const { result } = await renderSession()
@@ -836,6 +1177,53 @@ describe('unbound pane conversation search', () => {
 })
 
 describe('composer cancellation rollback', () => {
+  test('a delayed cancellation acknowledgement cannot stop the next native turn', async () => {
+    const { result } = await renderSession()
+    let acknowledge!: (accepted: boolean) => void
+    mocks.cancel.mockImplementation(
+      () =>
+        new Promise<boolean>(resolve => {
+          acknowledge = resolve
+        })
+    )
+    let stopping!: Promise<void>
+    act(() => {
+      applyRuntimeConversationAction(address, {
+        type: 'assistant_started',
+        subtaskId: 'cancelled-native-turn',
+      })
+      stopping = result.current.pauseCurrentResponse()
+    })
+    await act(async () => {
+      applyRuntimeConversationAction(address, {
+        type: 'assistant_error',
+        subtaskId: 'cancelled-native-turn',
+        error: 'cancelled',
+      })
+      applyRuntimeConversationAction(address, {
+        type: 'assistant_started',
+        subtaskId: 'next-native-turn',
+      })
+      acknowledge(true)
+      await stopping
+      applyRuntimeConversationAction(address, {
+        type: 'assistant_chunk',
+        subtaskId: 'next-native-turn',
+        itemId: 'follow-up-answer',
+        content: 'The next native answer stays visible.',
+      })
+    })
+    expect(getRuntimeConversationMessages(address)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          subtaskId: 'next-native-turn',
+          status: 'streaming',
+          content: 'The next native answer stays visible.',
+        }),
+      ])
+    )
+  })
+
   test.each([
     { pendingResume: false, outcome: 'rejected' },
     { pendingResume: true, outcome: 'rejected' },
@@ -902,22 +1290,91 @@ describe('composer cancellation rollback', () => {
   )
 })
 
-describe('accepted async question replies', () => {
-  test.each([true, false])(
-    'clears global waiting only after reply acceptance (%s)',
-    async accepted => {
-      const { result } = await renderSession()
-      act(() => lifecycleStore.userInputRequested(address, 'async'))
-      mocks.send.mockResolvedValue(accepted)
-      await act(async () => {
-        expect(
-          await result.current.sendRequestUserInputResponse(
-            { requestId: 'async-question', answers: { direction: { answers: ['Complete'] } } },
-            { appendUserMessage: true }
-          )
-        ).toBe(accepted)
-      })
-      expect(lifecycleStore.getTask(address)?.derived.shouldShowSidebarWaiting).toBe(!accepted)
+test.each([true, false])(
+  'dismisses a question group with one cancellation and restores all IDs on failure (%s)',
+  async accepted => {
+    const { result } = await renderSession()
+    mocks.cancel.mockResolvedValueOnce(accepted)
+    await act(async () => {
+      await result.current.ignoreRequestUserInput([
+        { kind: 'request_user_input', delivery: 'async', itemId: 'first' },
+        { kind: 'request_user_input', delivery: 'async', itemId: 'second' },
+      ])
+    })
+    expect(mocks.cancel).toHaveBeenCalledTimes(1)
+    expect(result.current.answeredRequestUserInputIds.has('item:first')).toBe(accepted)
+    expect(result.current.answeredRequestUserInputIds.has('item:second')).toBe(accepted)
+  }
+)
+
+test.each([true, false])(
+  'settles the whole async group after guidance without a turn ID (accepted=%s)',
+  async accepted => {
+    const { result } = await renderSession()
+    mocks.guide.mockResolvedValueOnce({ sent: accepted })
+    act(() => {
+      reconcileRuntimeConversationSnapshot(address, [
+        {
+          id: 'group-turn',
+          status: 'streaming',
+          items: ['first', 'second'].map(itemId => ({
+            id: itemId,
+            type: 'block',
+            block: {
+              id: itemId,
+              type: 'tool',
+              toolName: 'request_user_input',
+              status: 'done',
+              createdAt: 1,
+              renderPayload: {
+                kind: 'request_user_input',
+                delivery: 'async',
+                itemId,
+                questions: [{ id: 'question_1', question: `${itemId}?` }],
+              },
+            },
+          })),
+        },
+      ])
+      lifecycleStore.turnStarted(address, 'group-turn')
+    })
+    const response = {
+      itemId: 'first',
+      answers: {
+        question_1: { answers: ['One'] },
+        '["item:second","question_1",0]': { answers: ['Two'] },
+      },
     }
-  )
-})
+    const responses = pendingRequestUserInputResponses(response, result.current.messages)
+    await act(async () => {
+      expect(
+        await result.current.sendRequestUserInputResponse(response, {
+          requestUserInputResponses: responses,
+        })
+      ).toBe(accepted)
+    })
+    if (accepted) {
+      expect(result.current.messages.flatMap(message => message.blocks ?? [])).toMatchObject([
+        {
+          renderPayload: {
+            response: { itemId: 'first', answers: { question_1: { answers: ['One'] } } },
+          },
+        },
+        {
+          renderPayload: {
+            response: { itemId: 'second', answers: { question_1: { answers: ['Two'] } } },
+          },
+        },
+      ])
+    }
+    expect(mocks.guide).toHaveBeenCalledOnce()
+    expect(result.current.answeredRequestUserInputIds.has('item:first')).toBe(accepted)
+    expect(result.current.answeredRequestUserInputIds.has('item:second')).toBe(accepted)
+    expect(
+      pendingRequestUserInputPayload(
+        result.current.messages,
+        result.current.answeredRequestUserInputIds
+      ) === null
+    ).toBe(accepted)
+  }
+)

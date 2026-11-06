@@ -10,6 +10,18 @@ const execFileAsync = promisify(execFile)
 // Use the same PowerShell runtime as the Windows E2E workflow.
 const WINDOWS_PROCESS_QUERY_TIMEOUT_MS = 30_000
 
+/**
+ * Every signal the desktop E2E harness delivers to an application process or
+ * process group is logged with a self-contained timestamp. Chromium crash
+ * lines in app.log use runner-local time, so these records allow attributing
+ * each "Network service crashed" line to harness teardown or leaving it as an
+ * unexplained event that needs further investigation.
+ */
+export function logDesktopE2eSignal(detail) {
+  // The timestamp is spread last so a caller payload can never override it.
+  console.log(`[desktop-e2e-signal] ${JSON.stringify({ ...detail, at: new Date().toISOString() })}`)
+}
+
 function linuxProcessStateFromStat(stat) {
   const commandEnd = stat.lastIndexOf(')')
   if (commandEnd === -1) return null
@@ -27,28 +39,54 @@ export function processIsAliveFromLinuxStat(stat) {
   return !DEAD_LINUX_PROCESS_STATES.has(state)
 }
 
-function withTimeout(promise, timeoutMs, message) {
+async function waitForProcessExit(child, timeoutMs) {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve()
+  let wake
   let timeout
-  const timeoutPromise = new Promise((_, reject) => {
-    timeout = setTimeout(() => reject(new Error(message)), timeoutMs)
-  })
-  return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timeout))
+  const onExit = () => wake?.()
+  child.once('exit', onExit)
+  const startedAt = Date.now()
+  try {
+    while (child.exitCode === null && child.signalCode === null) {
+      // Windows PID probes can disappear before the native exit callback releases resources.
+      if (process.platform !== 'win32' && Number.isInteger(child.pid) && !processIsAlive(child.pid))
+        return
+      if (Date.now() - startedAt >= timeoutMs) {
+        throw new Error(
+          `Timed out waiting for process ${child.pid ?? 'unknown'} to exit: ${JSON.stringify(processExitDiagnostics(child))}`
+        )
+      }
+      await new Promise(resolvePromise => {
+        wake = resolvePromise
+        timeout = setTimeout(resolvePromise, PROCESS_GROUP_POLL_INTERVAL_MS)
+      })
+      clearTimeout(timeout)
+    }
+  } finally {
+    clearTimeout(timeout)
+    child.off('exit', onExit)
+  }
 }
 
-function waitForProcessExit(child, timeoutMs) {
-  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve()
-  return withTimeout(
-    new Promise(resolvePromise => {
-      const onExit = () => resolvePromise()
-      child.once('exit', onExit)
-      if (child.exitCode !== null || child.signalCode !== null) {
-        child.off('exit', onExit)
-        resolvePromise()
-      }
-    }),
-    timeoutMs,
-    `Timed out waiting for process ${child.pid ?? 'unknown'} to exit`
-  )
+function processExitDiagnostics(child) {
+  const diagnostics = { pid: child.pid, exitCode: child.exitCode, signalCode: child.signalCode }
+  if (process.platform !== 'linux' || !Number.isInteger(child.pid)) return diagnostics
+  try {
+    const stat = readFileSync(`/proc/${child.pid}/stat`, 'utf8')
+    const fields = stat
+      .slice(stat.lastIndexOf(')') + 1)
+      .trim()
+      .split(/\s+/)
+    diagnostics.linux = {
+      state: fields[0],
+      parentProcessId: fields[1],
+      processGroupId: fields[2],
+      sessionId: fields[3],
+    }
+  } catch (error) {
+    diagnostics.linux = { readError: error.code ?? String(error) }
+  }
+  return diagnostics
 }
 
 export function processGroupHasLiveMembersFromLinuxStats(stats, processGroupId) {
@@ -204,10 +242,12 @@ async function waitForProcessGroupExit(processGroupId, timeoutMs) {
 
 export async function stopProcess(child) {
   if (!child || child.exitCode !== null || child.signalCode !== null) return
+  logDesktopE2eSignal({ action: 'stop-process', pid: child.pid, signal: 'SIGTERM' })
   child.kill('SIGTERM')
   try {
     await waitForProcessExit(child, PROCESS_STOP_TIMEOUT_MS)
   } catch {
+    logDesktopE2eSignal({ action: 'stop-process', pid: child.pid, signal: 'SIGKILL' })
     child.kill('SIGKILL')
     await waitForProcessExit(child, PROCESS_STOP_TIMEOUT_MS)
   }
@@ -232,7 +272,6 @@ export async function stopProcessGroup(child) {
     } catch {
       signalProcessGroup(processGroupId, 'SIGKILL')
       await waitForProcessExit(child, PROCESS_STOP_TIMEOUT_MS)
-      return
     }
   }
   if (await waitForProcessGroupExit(processGroupId, PROCESS_GROUP_GRACE_PERIOD_MS)) return
@@ -244,6 +283,98 @@ export async function stopProcessGroup(child) {
 
 export function windowsTaskkillArguments(processId) {
   return ['/PID', String(processId), '/T', '/F']
+}
+
+function ownedCrashTargets(child, snapshot) {
+  if (
+    !Number.isSafeInteger(child?.pid) ||
+    snapshot?.applicationPid !== child.pid ||
+    snapshot.platform !== process.platform ||
+    !Number.isFinite(snapshot.capturedAt) ||
+    snapshot.capturedAt > Date.now() ||
+    Date.now() - snapshot.capturedAt > PROCESS_STOP_TIMEOUT_MS ||
+    !Array.isArray(snapshot.degraded) ||
+    snapshot.degraded.length > 0 ||
+    !Array.isArray(snapshot.processes)
+  ) {
+    throw new Error('An application crash requires its complete owned process snapshot')
+  }
+  const parents = new Map()
+  for (const record of snapshot.processes) {
+    if (
+      !Number.isSafeInteger(record.pid) ||
+      record.pid <= 0 ||
+      parents.has(record.pid) ||
+      !Number.isFinite(record.startedAt) ||
+      record.startedAt <= 0 ||
+      record.startedAt > Date.now()
+    ) {
+      throw new Error(
+        'The owned crash snapshot requires unique process identities and creation times'
+      )
+    }
+    parents.set(record.pid, record.parentPid)
+  }
+  if (!parents.has(child.pid)) throw new Error('The crash snapshot is missing its application')
+  for (const pid of parents.keys()) {
+    const visited = new Set()
+    let current = pid
+    while (current !== child.pid) {
+      if (!parents.has(current) || visited.has(current)) {
+        throw new Error(`Crash target ${pid} is outside the isolated application tree`)
+      }
+      visited.add(current)
+      current = parents.get(current)
+    }
+  }
+  return [child.pid, ...[...parents.keys()].filter(pid => pid !== child.pid)]
+}
+
+export async function crashOwnedProcessTree(child, snapshot) {
+  const targets = ownedCrashTargets(child, snapshot)
+  if (process.platform === 'win32') {
+    await stopWindowsProcessTree(child)
+  } else {
+    const frozen = []
+    try {
+      // Freeze every owned process before closing any pipe can settle native turns.
+      for (const pid of targets) {
+        try {
+          process.kill(pid, 'SIGSTOP')
+          frozen.push(pid)
+        } catch (error) {
+          if (error?.code !== 'ESRCH') throw error
+        }
+      }
+      logDesktopE2eSignal({ action: 'crash-freeze', signal: 'SIGSTOP', pids: frozen })
+      for (const pid of frozen.toReversed()) {
+        try {
+          process.kill(pid, 'SIGKILL')
+        } catch (error) {
+          if (error?.code !== 'ESRCH') throw error
+        }
+      }
+      logDesktopE2eSignal({ action: 'crash-kill', signal: 'SIGKILL', pids: frozen })
+    } catch (error) {
+      // Leave a diagnosable live application if the crash injection is rejected.
+      logDesktopE2eSignal({ action: 'crash-resume', signal: 'SIGCONT', pids: frozen })
+      for (const pid of frozen) {
+        try {
+          process.kill(pid, 'SIGCONT')
+        } catch (resumeError) {
+          if (resumeError?.code !== 'ESRCH') throw resumeError
+        }
+      }
+      throw error
+    }
+  }
+  const startedAt = Date.now()
+  while (targets.some(processIsAlive)) {
+    if (Date.now() - startedAt >= PROCESS_STOP_TIMEOUT_MS) {
+      throw new Error('The isolated application process tree survived its injected crash')
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, PROCESS_GROUP_POLL_INTERVAL_MS))
+  }
 }
 
 async function stopWindowsProcessTree(child) {
@@ -275,7 +406,14 @@ async function stopWindowsProcessTree(child) {
 function signalProcessGroup(processGroupId, signal) {
   try {
     process.kill(-processGroupId, signal)
+    logDesktopE2eSignal({
+      action: 'signal-group',
+      processGroupId,
+      signal,
+      result: 'delivered',
+    })
   } catch (error) {
     if (error?.code !== 'ESRCH') throw error
+    logDesktopE2eSignal({ action: 'signal-group', processGroupId, signal, result: 'absent' })
   }
 }

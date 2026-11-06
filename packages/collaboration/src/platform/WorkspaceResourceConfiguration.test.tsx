@@ -15,9 +15,9 @@ import type {
   CollaborationWorkspace,
   CollaborationWorkspaceMember,
 } from "../types";
+import { WorkspaceMembersConfiguration } from './WorkspaceMembersConfiguration'
 import {
   WorkspaceCollaborationGroupsConfiguration,
-  WorkspaceMembersConfiguration,
   type WorkspaceResourceCommands,
 } from "./WorkspaceResourceConfiguration";
 
@@ -211,6 +211,38 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
         members: [
           { kind: "human", id: "7", name: "Alice", responsibility: "" },
         ],
+      }),
+    );
+  });
+
+  it("keeps the first selected agent as leader when current-user selection is disabled", async () => {
+    commands.createCollaborationGroup = vi.fn(async () => group);
+    await act(async () =>
+      root.render(
+        <WorkspaceCollaborationGroupsConfiguration
+          groups={[]}
+          members={[humanMember]}
+          agents={[codexAgent]}
+          locale="zh-CN"
+          currentUserId={humanMember.user_id}
+          includeCurrentUserByDefault={false}
+          commands={commands}
+          canManage
+          initialCreateOpen
+        />,
+      ),
+    );
+    expect(byTestId("collaboration-group-leader-human-7")).toBeNull();
+    await click(byTestId("collaboration-group-create-add-members"));
+    expect(byTestId("collaboration-group-create-member-human-7")).not.toBeNull();
+    expect(container.textContent).toContain("我");
+    await click(byTestId("collaboration-group-create-member-agent-1"));
+    await change(byTestId<HTMLInputElement>("collaboration-group-name"), "Agent team");
+    await click(byTestId("collaboration-group-create"));
+    expect(commands.createCollaborationGroup).toHaveBeenCalledWith(
+      expect.objectContaining({
+        leader: { kind: "agent", id: "1", name: "Codex", responsibility: "" },
+        members: [{ kind: "agent", id: "1", name: "Codex", responsibility: "" }],
       }),
     );
   });

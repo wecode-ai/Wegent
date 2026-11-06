@@ -11,6 +11,7 @@ export * from "./IssueDetailDraft";
 export * from "./IssueHistoryLists";
 export * from "./attachmentMarkdown";
 export * from "./createSharedIssueDetailPort";
+export { persistIssueDetailFields } from "./persistIssueDetailFields";
 export * from "./dateTime";
 
 export * from "./IssueConversationDrawers";

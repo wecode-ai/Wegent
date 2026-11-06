@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { appendFile, copyFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -20,11 +20,10 @@ export async function verifyStartupRecovery({ appBinary, resultDir, electronRoot
   const scriptPath = join(root, 'verify.cjs')
   await writeFile(
     scriptPath,
-    `(${runRecoveryVerification.toString()})().catch(async error => {
-    const fs = require('node:fs/promises');
-    const path = require('node:path');
+    `${publishStartupRecoveryEvidence.toString()}
+  (${runRecoveryVerification.toString()})().catch(async error => {
     const input = JSON.parse(process.argv[2]);
-    await fs.writeFile(path.join(input.root, 'evidence.json'), JSON.stringify({ error: error.stack }));
+    await publishStartupRecoveryEvidence(input.root, { error: error.stack });
     require('electron').app.exit(1);
   });`
   )
@@ -32,42 +31,107 @@ export async function verifyStartupRecovery({ appBinary, resultDir, electronRoot
   const environment = { ...process.env }
   delete environment.ELECTRON_RUN_AS_NODE
   const args = [scriptPath, JSON.stringify(input), 'runtime', ...resolveElectronLaunchArguments()]
-  await promisify(execFile)(require('electron'), args, {
-    env: environment,
-    timeout: 60_000,
-    maxBuffer: 1024 * 1024,
-  })
-  const deadline = Date.now() + 60_000
-  while (Date.now() < deadline) {
-    let evidence
-    try {
-      evidence = JSON.parse(await readFile(join(root, 'evidence.json'), 'utf8'))
-    } catch (error) {
-      if (error.code !== 'ENOENT') throw error
-    }
-    if (evidence) {
-      assert.equal(evidence.error, undefined, evidence.error)
-      assert.equal(evidence.runtimeResetPreservesUserState, true)
-      assert.equal(evidence.userResetPreservesTasksAndSessions, true)
-      assert.equal(evidence.realRelaunches, 2)
-      assert.equal(evidence.failedCleanupRetried, true)
-      await writeFile(
-        join(resultDir, 'startup-reset-evidence.json'),
-        `${JSON.stringify(evidence, null, 2)}\n`
-      )
-      for (const name of [
-        'runtime-confirmation.png',
-        'user-confirmation.png',
-        'cleanup-failure.png',
-        'recovery.log',
-      ]) {
-        await copyFile(join(root, name), join(resultDir, `startup-reset-${name}`))
+  try {
+    await promisify(execFile)(require('electron'), args, {
+      env: environment,
+      timeout: 60_000,
+      maxBuffer: 1024 * 1024,
+    })
+    const deadline = Date.now() + 60_000
+    while (Date.now() < deadline) {
+      let evidence
+      try {
+        const contents = await readFile(join(root, 'evidence.json'), 'utf8')
+        await appendFile(
+          join(resultDir, 'startup-reset-handoff.jsonl'),
+          `${JSON.stringify({
+            timestamp: Date.now(),
+            pid: process.pid,
+            event: 'read',
+            bytes: Buffer.byteLength(contents),
+          })}\n`,
+          { mode: 0o600 }
+        )
+        evidence = JSON.parse(contents)
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error
       }
-      return evidence
+      if (evidence) {
+        assert.equal(evidence.error, undefined, evidence.error)
+        assert.equal(evidence.runtimeResetPreservesUserState, true)
+        assert.equal(evidence.userResetPreservesTasksAndSessions, true)
+        assert.equal(evidence.realRelaunches, 2)
+        assert.equal(evidence.failedCleanupRetried, true)
+        await writeFile(
+          join(resultDir, 'startup-reset-evidence.json'),
+          `${JSON.stringify(evidence, null, 2)}\n`
+        )
+        for (const name of [
+          'runtime-confirmation.png',
+          'user-confirmation.png',
+          'cleanup-failure.png',
+          'recovery.log',
+        ]) {
+          await copyFile(join(root, name), join(resultDir, `startup-reset-${name}`))
+        }
+        return evidence
+      }
+      await delay(100)
     }
-    await delay(100)
+    assert.fail('Startup recovery did not finish its real Electron relaunches within 60 seconds')
+  } catch (error) {
+    await retainStartupRecoveryDiagnostics(root, resultDir)
+    throw error
   }
-  assert.fail('Startup recovery did not finish its real Electron relaunches within 60 seconds')
+}
+
+async function retainStartupRecoveryDiagnostics(root, resultDir) {
+  for (const name of [
+    'evidence.json',
+    'runtime-confirmation.png',
+    'user-confirmation.png',
+    'cleanup-failure.png',
+    'recovery.log',
+  ]) {
+    try {
+      await copyFile(join(root, name), join(resultDir, `startup-reset-${name}`))
+    } catch (error) {
+      if (error.code !== 'ENOENT') {
+        console.warn(`Could not retain startup recovery diagnostic ${name}: ${error.code}`)
+      }
+    }
+  }
+}
+
+// Serialized into the child script so success and error evidence share one
+// publication boundary across the real Electron relaunches.
+async function publishStartupRecoveryEvidence(root, evidence) {
+  const fs = require('node:fs/promises')
+  const path = require('node:path')
+  const target = path.join(root, 'evidence.json')
+  const temporary = `${target}.${process.pid}.tmp`
+  const contents = JSON.stringify(evidence)
+  const record = event =>
+    fs.appendFile(
+      path.join(path.dirname(root), 'startup-reset-handoff.jsonl'),
+      `${JSON.stringify({
+        timestamp: Date.now(),
+        pid: process.pid,
+        phase: process.argv[3],
+        event,
+        bytes: Buffer.byteLength(contents),
+      })}\n`,
+      { mode: 0o600 }
+    )
+  try {
+    await record('write-started')
+    await fs.writeFile(temporary, contents, { mode: 0o600 })
+    await record('write-completed')
+    await fs.rename(temporary, target)
+    await record('published')
+  } finally {
+    await fs.rm(temporary, { force: true })
+  }
 }
 
 async function runRecoveryVerification() {
@@ -196,15 +260,12 @@ async function runRecoveryVerification() {
     const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'))
     assert.deepEqual(manifest.plugins, {})
     assert.deepEqual(manifest.skills, { skill: {} })
-    await fs.writeFile(
-      path.join(root, 'evidence.json'),
-      JSON.stringify({
-        runtimeResetPreservesUserState: true,
-        userResetPreservesTasksAndSessions: true,
-        realRelaunches: 2,
-        failedCleanupRetried: true,
-      })
-    )
+    await publishStartupRecoveryEvidence(root, {
+      runtimeResetPreservesUserState: true,
+      userResetPreservesTasksAndSessions: true,
+      realRelaunches: 2,
+      failedCleanupRetried: true,
+    })
     app.exit(0)
     return
   }

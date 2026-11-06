@@ -38,6 +38,9 @@ from app.services.adapters.executor_kinds import executor_kinds_service
 from app.services.execution import get_executor_runtime_client
 from app.services.subscription.execution import background_execution_manager
 from app.services.subscription.helpers import validate_subscription_for_read
+from app.services.subscription.notification_directives import (
+    strip_notification_directives,
+)
 from app.services.subscription.notification_dispatcher import (
     subscription_notification_dispatcher,
 )
@@ -99,6 +102,11 @@ class SubscriptionTaskCompletionHandler:
 
                 # Extract result summary from event
                 result_summary = self._extract_result_summary(event)
+                stored_result_summary = (
+                    strip_notification_directives(result_summary)
+                    if result_summary
+                    else result_summary
+                )
 
                 # Check if this is a silent exit BEFORE mapping status
                 is_silent_exit = self._is_silent_exit(event)
@@ -121,7 +129,7 @@ class SubscriptionTaskCompletionHandler:
                     db,
                     execution_id=execution.id,
                     status=status,
-                    result_summary=result_summary,
+                    result_summary=stored_result_summary,
                     error_message=event.error,
                     skip_notifications=True,  # We'll handle notifications separately
                 )
@@ -138,7 +146,7 @@ class SubscriptionTaskCompletionHandler:
                             db,
                             inbox_message_id=execution.inbox_message_id,
                             status=event.status,
-                            result_summary=result_summary,
+                            result_summary=stored_result_summary,
                             error_message=event.error,
                             task_id=event.task_id,
                         )

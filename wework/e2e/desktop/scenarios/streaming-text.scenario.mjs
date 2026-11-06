@@ -1,6 +1,10 @@
 import { createConversationSwitchingChecks } from '../modules/streaming-conversation-switching.mjs'
+import { createComposerLayoutChecks } from '../modules/streaming-text-composer-layout.mjs'
+import { createConversationScrollbarChecks } from '../modules/streaming-text-scrollbar.mjs'
+import { createRichTaskSwitchChecks } from '../modules/streaming-text-rich-task-switch.mjs'
 import { createFileCitationChecks } from '../modules/streaming-file-citations.mjs'
 import { handleEmptyReplyPrediction } from '../modules/response-protocol.mjs'
+import { requestExecutor } from '../modules/executor-rpc.mjs'
 import {
   createMarkdownLinkChecks,
   MARKDOWN_LINKS_PROMPT,
@@ -96,9 +100,12 @@ import { createStreamingContentChecks } from '../modules/streaming-text-content.
 import { createStreamingToolChecks } from '../modules/streaming-text-tools.mjs'
 import { createStreamingScrollChecks } from '../modules/streaming-text-scroll.mjs'
 import { createStreamingTranscriptIdentityChecks } from '../modules/streaming-transcript-identity.mjs'
+import { createInteractiveVisualizationChecks } from '../modules/streaming-interactive-visualization.mjs'
+import { createVisualizationScrollChecks } from '../modules/streaming-visualization-scroll.mjs'
 
 export function createDesktopScenario({
   checkpoint,
+  codexSqliteHome,
   captureScreenshot,
   resultDir,
   standalone,
@@ -111,6 +118,14 @@ export function createDesktopScenario({
   const fileCitations = createFileCitationChecks({ workspacePath, uiTimeoutMs })
   const transcriptIdentity = createStreamingTranscriptIdentityChecks({ uiTimeoutMs })
   const conversationSwitching = createConversationSwitchingChecks({ uiTimeoutMs })
+  const conversationScrollbar = createConversationScrollbarChecks({ resultDir, uiTimeoutMs })
+  const richTaskSwitch = createRichTaskSwitchChecks({ resultDir, uiTimeoutMs, codexSqliteHome })
+  const composerLayout = createComposerLayoutChecks({ workspacePath, resultDir, uiTimeoutMs })
+  const interactiveVisualization = createInteractiveVisualizationChecks({
+    workspacePath,
+    uiTimeoutMs,
+  })
+  const visualizationScroll = createVisualizationScrollChecks({ workspacePath, uiTimeoutMs })
   const capture = (control, name) => captureScreenshot(control, name, ACTIVE_WORKBENCH_SELECTOR)
   const captureSubagent = (control, name) => captureScreenshot(control, name, 'body')
   const subagentToolRenderTimeoutMs =
@@ -275,6 +290,12 @@ export function createDesktopScenario({
       'http_headers = { Authorization = "Bearer wework-e2e-test-key", "x-openai-actor-authorization" = "wework-desktop-e2e" }\n',
     appEnvironment: {
       WEWORK_E2E_SEED_LOCAL_MODELS: 'false',
+      ...(checkpoint === 'streaming-conversation-switching'
+        ? {
+            WEWORK_E2E_RENDERER_CPU_PROFILE_DIRECTORY: resultDir,
+            WEWORK_E2E_RENDERER_CPU_PROFILE_LIMIT: '3',
+          }
+        : {}),
     },
 
     async prepareApp({ appEnvironment, codexHome }) {
@@ -330,7 +351,12 @@ export function createDesktopScenario({
       const responseId = `wework-streaming-text-${Date.now()}`
       if (await transcriptIdentity.handleModelRequest(body, response, responseId)) return true
       if (await conversationSwitching.handleModelRequest(body, response, responseId)) return true
+      if (await conversationScrollbar.handleModelRequest(body, response, responseId)) return true
+      if (await composerLayout.handleModelRequest(body, response, responseId)) return true
+      if (await richTaskSwitch.handleModelRequest(body, response, responseId)) return true
       if (await fileCitations.handleModelRequest(body, response, responseId)) return true
+      if (await interactiveVisualization.handleModelRequest(body, response, responseId)) return true
+      if (await visualizationScroll.handleModelRequest(body, response, responseId)) return true
       const latestInput = latestModelInputText(body)
       if (latestInput.includes(MARKDOWN_LINKS_PROMPT)) {
         recordScenarioRequest('markdown_original_links', body)
@@ -848,6 +874,18 @@ export function createDesktopScenario({
 
     async verify(control) {
       active = true
+      await control.command('setLocalStorageItem', 'body', {
+        value: JSON.stringify({ key: 'wework:debug-runtime-chat-stream', value: '1' }),
+      })
+      await control.command('setLocalStorageItem', 'body', {
+        value: JSON.stringify({ key: 'wework:debug-runtime', value: '1' }),
+      })
+      await requestExecutor(
+        control,
+        'runtime.codex.stream_debug.set',
+        { enabled: true },
+        uiTimeoutMs
+      )
       if (standalone) {
         await createLocalProject(control, workspacePath, uiTimeoutMs)
       } else {
@@ -880,6 +918,8 @@ export function createDesktopScenario({
           'streaming-content',
           async control => {
             await verifyContent(control)
+            await interactiveVisualization.verify(control)
+            await visualizationScroll.verify(control)
             await transcriptIdentity.verify(control)
           },
         ],
@@ -894,7 +934,15 @@ export function createDesktopScenario({
         ['streaming-timers', verifyTimers],
         ['streaming-scroll', verifyScroll],
         ['streaming-message-order', verifyStoppedTurnOrder],
-        ['streaming-conversation-switching', conversationSwitching.verify],
+        [
+          'streaming-conversation-switching',
+          async control => {
+            await composerLayout.verify(control)
+            await conversationSwitching.verify(control)
+            await conversationScrollbar.verify(control)
+            await richTaskSwitch.verify(control)
+          },
+        ],
         ['streaming-subagents', verifySubagentStreamingPanel],
       ])
       const selectedCheckpoint = checkpoint?.startsWith('streaming-')

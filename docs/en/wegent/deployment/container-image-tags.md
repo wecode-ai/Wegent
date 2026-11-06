@@ -36,6 +36,14 @@ ghcr.io/wecode-ai/wegent-standalone
 
 The workflow first pushes commit-scoped `main-<short-sha>` multi-arch tags and verifies that the standalone image can start. Only after verification passes does it promote the same image set to the mutable `main` and `edge` tags.
 
+## Maintaining Release Builds
+
+Release builds pin the triggering revision: manual runs use the workflow commit, while merged version-bump PRs use their merge commit. Every build, the embedded Wework source identity, and the final version tag use that same revision so updates to `main` during a build cannot mislabel the artifacts.
+
+Release and snapshot workflows share `.github/actions/setup-rust-cache` for the pinned executor Rust toolchain and caches. Package binaries from the exported `CARGO_TARGET_DIR`; macOS x64 binaries reside in its `x86_64-apple-darwin/release` subdirectory.
+
+The frontend image builder and both frontend and Wework builders in the standalone image must include `shared/data` for the shared collaboration component's built-in templates. After changing build inputs, run `bash scripts/test-publish-image-release-policy.sh` to check local actions, binary packaging paths, and template availability in each stage. CI also runs this check.
+
 ## Examples
 
 Use the latest stable release:

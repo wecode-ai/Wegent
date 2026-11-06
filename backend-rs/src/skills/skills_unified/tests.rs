@@ -166,6 +166,134 @@ fn availability_reflects_default_bindings() {
     );
 }
 
+#[tokio::test]
+async fn catalog_keeps_same_named_personal_and_group_skills() {
+    let personal = kind_row(11, 7, "same-name", "default", json!({"spec": {}}));
+    let group = kind_row(12, 7, "same-name", "engineering", json!({"spec": {}}));
+    let shared = HashSet::from([12]);
+    let empty = HashSet::new();
+    let items = catalog::assemble(
+        vec![personal, group],
+        catalog::CatalogSelection {
+            bound_ids: &empty,
+            shared_ids: &shared,
+            default_ids: &empty,
+            skip: 0,
+            limit: 100,
+        },
+        |sql| async move {
+            assert!(sql.contains("kinds.user_id = 0"));
+            // Public names remain shadowed, without collapsing namespaces.
+            Ok(vec![kind_row(
+                90,
+                0,
+                "same-name",
+                "default",
+                json!({"spec": {}}),
+            )])
+        },
+    )
+    .await
+    .unwrap();
+    let items = crate::json_contract_tests::serialized(items).unwrap();
+    assert_eq!(items.as_array().unwrap().len(), 2);
+    assert_eq!(items[0]["id"], json!(11));
+    assert_eq!(items[1]["id"], json!(12));
+    assert_eq!(items[0]["namespace"], json!("default"));
+    assert_eq!(items[1]["namespace"], json!("engineering"));
+    assert_eq!(items[0]["is_group_shared"], json!(false));
+    assert_eq!(items[1]["is_group_shared"], json!(true));
+}
+
+#[tokio::test]
+async fn catalog_supplements_bound_only_skills_once_and_removes_unlinked_skills() {
+    for installed in [true, false] {
+        let bound = if installed {
+            HashSet::from([11, 21])
+        } else {
+            HashSet::from([11])
+        };
+        let shared = if installed {
+            HashSet::from([21])
+        } else {
+            HashSet::new()
+        };
+        let defaults = HashSet::from([11]);
+        let mut queries = Vec::new();
+        let items = catalog::assemble(
+            vec![kind_row(11, 7, "personal", "default", json!({"spec": {}}))],
+            catalog::CatalogSelection {
+                bound_ids: &bound,
+                shared_ids: &shared,
+                default_ids: &defaults,
+                skip: 0,
+                limit: 100,
+            },
+            |sql| {
+                queries.push(sql.clone());
+                std::future::ready(Ok(if sql.contains("kinds.id IN") {
+                    assert!(installed);
+                    assert!(sql.contains("kinds.id IN (21)"));
+                    // Duplicate bindings must not duplicate the catalog entry.
+                    (0..2)
+                        .map(|_| kind_row(21, 8, "installed", "other-team", json!({"spec": {}})))
+                        .collect()
+                } else {
+                    assert!(sql.contains("kinds.user_id = 0"));
+                    vec![kind_row(91, 0, "public", "default", json!({"spec": {}}))]
+                }))
+            },
+        )
+        .await
+        .unwrap();
+        let items = crate::json_contract_tests::serialized(items).unwrap();
+        let ids: Vec<_> = items
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["id"].as_i64().unwrap())
+            .collect();
+        assert_eq!(
+            ids,
+            if installed {
+                vec![11, 21, 91]
+            } else {
+                vec![11, 91]
+            }
+        );
+        assert_eq!(queries.len(), if installed { 2 } else { 1 });
+        assert_eq!(items[0]["is_group_shared"], json!(false));
+        assert_eq!(items[0]["availability"]["in_my_default"], json!(true));
+        if installed {
+            assert_eq!(items[1]["namespace"], json!("other-team"));
+            assert_eq!(items[1]["is_group_shared"], json!(true));
+            assert_eq!(items[1]["availability"]["in_my_default"], json!(false));
+        }
+        assert_eq!(
+            items.as_array().unwrap().last().unwrap()["is_public"],
+            json!(true)
+        );
+    }
+}
+
+#[test]
+fn hidden_and_published_skill_metadata_survives_catalog_rendering() {
+    let kind = kind_row(
+        11,
+        7,
+        "published",
+        "default",
+        json!({"spec": {
+            "visible": false, "displayName": "Hidden public skill",
+            "capability": {"publishStatus": "published"}
+        }}),
+    );
+    let item = user_skill_item(&kind, true, &HashSet::new());
+    assert_eq!(item["visible"], json!(false));
+    assert_eq!(item["displayName"], json!("Hidden public skill"));
+    assert_eq!(item["publication_status"], json!("published"));
+}
+
 #[test]
 fn highest_role_prefers_most_privileged() {
     let roles = vec!["Reporter".to_string(), "Maintainer".to_string()];
@@ -270,4 +398,124 @@ fn numeric_versions_render_as_strings() {
     let kind = kind_row(4, 7, "demo", "default", json!({"spec": {}}));
     let item = user_skill_item(&kind, false, &HashSet::new());
     assert_eq!(item.get("version"), Some(&json!(null)));
+}
+
+/// The inline-name statement must carry the exact UTF-8 scalar values: the
+/// recorded `namespace.name = '微博运营部'` lookup cannot match a byte-to-char
+/// mojibake rendering.
+#[test]
+fn quote_literal_preserves_unicode_scalars() {
+    assert_eq!(super::quote_literal("微博运营部"), "'微博运营部'");
+    assert_eq!(super::quote_literal("默认组-α😀"), "'默认组-α😀'");
+}
+
+/// Every MySQL string escape stays an escape while Unicode survives.
+#[test]
+fn quote_literal_escapes_mysql_specials_and_keeps_unicode() {
+    let raw = "q'w\\e\0r\ns\rt\u{1a}u微博";
+    let expected = "'q\\'w\\\\e\\0r\\ns\\rt\\Zu微博'";
+    assert_eq!(super::quote_literal(raw), expected);
+}
+
+/// `namespace_id_by_name`: the pooled read renders the Unicode literal.
+#[tokio::test]
+async fn namespace_id_by_name_inlines_the_utf8_literal() {
+    use crate::sql_test_support::KindQueryCapture;
+    let mysql = KindQueryCapture::default();
+    let row = super::group_members::namespace_id_by_name(&mysql, "微博运营部")
+        .await
+        .unwrap();
+    assert!(row.is_none());
+    let queries = mysql.queries();
+    assert_eq!(queries.len(), 1);
+    assert!(
+        queries[0].sql.contains("namespace.name = '微博运营部'"),
+        "{}",
+        queries[0].sql
+    );
+    assert!(!queries[0].sql.contains("å"), "{}", queries[0].sql);
+
+    let raw = "q'w\\e\0r\ns\rt\u{1a}u微博";
+    let mysql = KindQueryCapture::default();
+    super::group_members::namespace_id_by_name(&mysql, raw)
+        .await
+        .unwrap();
+    let queries = mysql.queries();
+    assert!(
+        queries[0]
+            .sql
+            .contains("namespace.name = 'q\\'w\\\\e\\0r\\ns\\rt\\Zu微博'"),
+        "{}",
+        queries[0].sql
+    );
+}
+
+/// `namespace_id_by_name_on`: the request-handle read renders the same
+/// Unicode literal and escapes.
+#[tokio::test]
+async fn namespace_id_by_name_on_inlines_the_utf8_literal() {
+    use crate::request_sql::{RequestSql, RouteKey, StatementArgs};
+
+    #[derive(Default)]
+    struct Recorded {
+        calls: std::sync::Mutex<Vec<(RouteKey, String)>>,
+    }
+
+    #[async_trait::async_trait]
+    impl RequestSql for Recorded {
+        async fn execute_statement(
+            &mut self,
+            _: RouteKey,
+            _: &str,
+            _: StatementArgs,
+        ) -> brz_mysql::MysqlResult<brz_mysql::MysqlExecution> {
+            panic!("unexpected write in a namespace read")
+        }
+
+        async fn fetch_optional_row(
+            &mut self,
+            route: RouteKey,
+            sql: &str,
+            _: StatementArgs,
+        ) -> brz_mysql::MysqlResult<Option<brz_mysql::MysqlRow>> {
+            self.calls.lock().unwrap().push((route, sql.to_string()));
+            Ok(None)
+        }
+
+        async fn fetch_all_rows(
+            &mut self,
+            _: RouteKey,
+            _: &str,
+            _: StatementArgs,
+        ) -> brz_mysql::MysqlResult<Vec<brz_mysql::MysqlRow>> {
+            panic!("unexpected fetch_all in a namespace read")
+        }
+    }
+
+    let mut sql = Recorded::default();
+    super::group_members::namespace_id_by_name_on(&mut sql, "微博运营部")
+        .await
+        .unwrap();
+    let calls = sql.calls.lock().unwrap().clone();
+    assert_eq!(calls.len(), 1);
+    assert!(
+        calls[0].1.contains("namespace.name = '微博运营部'"),
+        "{}",
+        calls[0].1
+    );
+    assert!(!calls[0].1.contains("å"), "{}", calls[0].1);
+
+    let mut sql = Recorded::default();
+    let raw = "q'w\\e\0r\ns\rt\u{1a}u微博";
+    super::group_members::namespace_id_by_name_on(&mut sql, raw)
+        .await
+        .unwrap();
+    let calls = sql.calls.lock().unwrap().clone();
+    assert!(
+        calls[0]
+            .1
+            .contains("namespace.name = 'q\\'w\\\\e\\0r\\ns\\rt\\Zu微博'"),
+        "{}",
+        calls[0].1
+    );
 }

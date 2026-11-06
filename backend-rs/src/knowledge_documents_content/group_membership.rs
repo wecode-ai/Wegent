@@ -12,49 +12,9 @@
 use brz_mysql::{Mysql, MysqlResult};
 
 use super::access::{
-    DeptBindingRow, ENTITY_RESOLUTION_PURPOSE, EntityIdRow, EntityRoleRow, IdRow, MEMBER_COLUMNS,
-    MemberRow, NAMESPACE_COLUMNS, NamespaceRow, highest_role, namespaces_by_ids, quote_literal,
-    resolve_entity_roles,
+    EntityRoleRow, MEMBER_COLUMNS, MemberRow, NAMESPACE_COLUMNS, NamespaceRow, highest_role,
+    quote_literal, resolve_entity_roles,
 };
-
-/// `entity_ids = list(set(eid for _, eid in ns_with_entity))`
-/// (`app/services/share/namespace_entity_resolver.py`): the two-column
-/// binding scan is deduplicated, so a department bound to several
-/// namespaces reaches the membership check, and the ERP `department_ids`
-/// request body (which Replay compares as a multiset), once. The order is
-/// normalized for determinism; the source set order is `PYTHONHASHSEED`
-/// random and the dependency rule compares the array as a multiset.
-fn deduplicated_department_ids(mut department_ids: Vec<String>) -> Vec<String> {
-    department_ids.sort();
-    department_ids.dedup();
-    department_ids
-}
-
-/// `list_resources_by_entity_match` (step 2b's namespace read):
-/// `resource_type = 'Namespace'` with the pass's own `entity_type` and the
-/// matched entity ids — distinct, unlike the grant query's plain projection.
-fn resources_by_entity_match_sql(entity_type_sql: &str, quoted_ids: &str) -> String {
-    format!(
-        "SELECT DISTINCT resource_members.resource_id AS resource_members_resource_id \n\
-         FROM resource_members \n\
-         WHERE resource_members.resource_type = 'Namespace' \
-         AND resource_members.entity_type = {entity_type_sql} \
-         AND resource_members.entity_id IN ({quoted_ids}) \
-         AND resource_members.status = 'approved'"
-    )
-}
-
-/// `iter_user_groups_with_roles` step 2's entity-member batch for one
-/// external entity type: integer namespace ids, then the entity type.
-fn entity_members_sql(entity_type_sql: &str, ns_id_list: &str) -> String {
-    format!(
-        "SELECT {MEMBER_COLUMNS} \nFROM resource_members \n\
-         WHERE resource_members.resource_type = 'Namespace' \
-         AND resource_members.resource_id IN ({ns_id_list}) \
-         AND resource_members.entity_type = {entity_type_sql} \
-         AND resource_members.status = 'approved'"
-    )
-}
 
 /// `is_restricted_analyst(db, user_id, group_name)` ->
 /// `get_restricted_analyst_groups` ->
@@ -86,7 +46,15 @@ pub(super) struct GroupMembership {
 
 /// `iter_user_groups_with_roles(db, user_id)`: direct user memberships of
 /// active namespaces plus entity-derived memberships through the
-/// registered resolvers (`namespace` then `external entity`).
+/// registered resolvers (`namespace` then each external entity type).
+///
+/// The Source keeps this resolution in one shared helper
+/// (`group_member_helper.py:520-640`): per entity type it reads every approved
+/// `Namespace` member row, calls `match_entity_bindings`, and keeps the
+/// matched rows in memory. It never runs
+/// `NamespaceEntityResolver.get_resource_ids_by_entity`'s namespace-grant
+/// read (`resource_type IN ('Namespace')` with `entity_type='namespace'`), so
+/// the shared `permissions` helper implements the whole batch.
 async fn user_group_memberships<M, R>(
     mysql: &M,
     redis: Option<&R>,
@@ -97,225 +65,15 @@ where
     M: Mysql,
     R: brz_redis::Redis,
 {
-    // Step 1: direct user memberships of active namespaces.
-    let direct: Vec<MemberRow> = mysql
-        .fetch_all(
-            &format!(
-                "SELECT {MEMBER_COLUMNS} \nFROM resource_members \n\
-                 WHERE resource_members.resource_type = 'Namespace' \
-                 AND resource_members.entity_type = 'user' \
-                 AND resource_members.entity_id = '{}' \
-                 AND resource_members.status = 'approved'",
-                user_id
-            ),
-            (),
-        )
-        .await?;
-    let namespace_ids: Vec<i64> = direct
-        .iter()
-        .map(|member| member.resource_members_resource_id)
-        .collect();
-    let namespaces = namespaces_by_ids(mysql, &namespace_ids).await?;
-    let mut role_map: std::collections::HashMap<String, Vec<String>> =
-        std::collections::HashMap::new();
-    for member in &direct {
-        if let Some(name) = namespaces
-            .iter()
-            .find(|row| row.namespace_id == member.resource_members_resource_id)
-        {
-            role_map
-                .entry(name.namespace_name.clone())
-                .or_default()
-                .push(member.resource_members_role.clone());
-        }
-    }
-
-    // Step 2a: `NamespaceEntityResolver.get_resource_ids_by_entity` —
-    // direct namespace resource ids, external entity bindings, resolver
-    // matched departments, then the namespace-entity grant query.
-    let direct_ns_ids: Vec<IdRow> = mysql
-        .fetch_all(
-            &format!(
-                "SELECT resource_members.resource_id AS resource_members_resource_id \n\
-                 FROM resource_members \n\
-                 WHERE resource_members.resource_type = 'Namespace' \
-                 AND resource_members.entity_type = 'user' \
-                 AND resource_members.entity_id = '{}' \
-                 AND resource_members.status = 'approved'",
-                user_id
-            ),
-            (),
-        )
-        .await?;
-    let mut entity_ns_ids: Vec<i64> = Vec::new();
-    for entity_type in resolvers.external_types() {
-        let entity_type_sql = quote_literal(entity_type);
-        // `db.query(ResourceMember.resource_id, ResourceMember.entity_id)`
-        // for `external entity` bindings — a two-column result set.
-        let org_bindings: Vec<DeptBindingRow> = mysql
-            .fetch_all(
-                &format!(
-                    "SELECT resource_members.resource_id AS resource_members_resource_id, \
-             resource_members.entity_id AS resource_members_entity_id \nFROM resource_members \n\
-             WHERE resource_members.resource_type = 'Namespace' \
-             AND resource_members.entity_type = {entity_type_sql} \
-             AND resource_members.status = 'approved'"
-                ),
-                (),
-            )
-            .await?;
-        if !org_bindings.is_empty() {
-            let department_ids = deduplicated_department_ids(
-                org_bindings
-                    .iter()
-                    .map(|row| row.resource_members_entity_id.clone())
-                    .collect(),
-            );
-            let matched = resolvers
-                .match_bindings(
-                    redis,
-                    user_id,
-                    entity_type,
-                    &department_ids,
-                    ENTITY_RESOLUTION_PURPOSE,
-                )
-                .await?;
-            if !matched.is_empty() {
-                let matched_set: std::collections::HashSet<&str> =
-                    matched.iter().map(String::as_str).collect();
-                entity_ns_ids.extend(
-                    org_bindings
-                        .iter()
-                        .filter(|row| matched_set.contains(row.resource_members_entity_id.as_str()))
-                        .map(|row| row.resource_members_resource_id),
-                );
-            }
-        }
-    }
-    let mut all_ns_ids: Vec<i64> = direct_ns_ids
-        .iter()
-        .map(|row| row.resource_members_resource_id)
-        .collect();
-    all_ns_ids.extend(entity_ns_ids.iter().copied());
-    all_ns_ids.sort_unstable();
-    all_ns_ids.dedup();
-    if !all_ns_ids.is_empty() {
-        let quoted = all_ns_ids
-            .iter()
-            .map(|id| format!("'{id}'"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let _grants: Vec<IdRow> = mysql
-            .fetch_all(
-                &format!(
-                    "SELECT resource_members.resource_id AS resource_members_resource_id \n\
-                     FROM resource_members \n\
-                     WHERE resource_members.resource_type IN ('Namespace') \
-                     AND resource_members.entity_type = 'namespace' \
-                     AND resource_members.entity_id IN ({quoted}) \
-                     AND resource_members.status = 'approved'"
-                ),
-                (),
-            )
-            .await?;
-    }
-
-    // Step 2b: each registered external resolver's own
-    // `get_resource_ids_by_entity` pass (`ErpEntityResolver` in the source),
-    // run inside the per-entity-type loop of `iter_user_groups_with_roles`:
-    // distinct entities, the membership check, then the bound namespaces and
-    // their entity-member roles.
-    for entity_type in resolvers.external_types() {
-        let entity_type_sql = quote_literal(entity_type);
-        let distinct_departments: Vec<EntityIdRow> = mysql
-            .fetch_all(
-                &format!(
-                    "SELECT DISTINCT resource_members.entity_id AS resource_members_entity_id \n\
-             FROM resource_members \n\
-             WHERE resource_members.resource_type = 'Namespace' \
-             AND resource_members.entity_type = {entity_type_sql} \
-             AND resource_members.entity_id IS NOT NULL \
-             AND resource_members.status = 'approved'"
-                ),
-                (),
-            )
-            .await?;
-        if distinct_departments.is_empty() {
-            continue;
-        }
-        let department_ids: Vec<String> = distinct_departments
-            .into_iter()
-            .map(|row| row.resource_members_entity_id)
-            .collect();
-        let matched = resolvers
-            .match_bindings(
-                redis,
-                user_id,
-                entity_type,
-                &department_ids,
-                ENTITY_RESOLUTION_PURPOSE,
-            )
-            .await?;
-        if matched.is_empty() {
-            continue;
-        }
-        // `list_resources_by_entity_match(db, resource_type='Namespace',
-        // entity_type, matched)`: the DISTINCT read of the Namespace
-        // resources bound to the matched entities. Unlike the step-2a grant
-        // query this is a plain `resource_type = 'Namespace'` predicate with
-        // the pass's own entity type, not the `IN`-list `'namespace'` form.
-        let quoted = matched
-            .iter()
-            .map(|id| quote_literal(id))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let ns_ids: Vec<i64> = mysql
-            .fetch_all(
-                &resources_by_entity_match_sql(&entity_type_sql, &quoted),
-                (),
-            )
-            .await?
-            .into_iter()
-            .map(|row: IdRow| row.resource_members_resource_id)
-            .collect();
-        if ns_ids.is_empty() {
-            continue;
-        }
-        // The entity-member batch of `iter_user_groups_with_roles` step 2 for
-        // this entity type: integer namespace ids and the pass's entity type.
-        let ns_id_list = ns_ids
-            .iter()
-            .map(|id| id.to_string())
-            .collect::<Vec<_>>()
-            .join(", ");
-        let members: Vec<MemberRow> = mysql
-            .fetch_all(&entity_members_sql(&entity_type_sql, &ns_id_list), ())
-            .await?;
-        let member_namespace_ids: Vec<i64> = members
-            .iter()
-            .map(|member| member.resource_members_resource_id)
-            .collect();
-        let entity_namespaces = namespaces_by_ids(mysql, &member_namespace_ids).await?;
-        for member in &members {
-            if let Some(name) = entity_namespaces
-                .iter()
-                .find(|row| row.namespace_id == member.resource_members_resource_id)
-            {
-                role_map
-                    .entry(name.namespace_name.clone())
-                    .or_default()
-                    .push(member.resource_members_role.clone());
-            }
-        }
-    }
-
-    let mut memberships = Vec::with_capacity(role_map.len());
-    for (group_name, roles) in role_map {
-        if let Some(role) = highest_role(&roles) {
-            memberships.push(GroupMembership { group_name, role });
-        }
-    }
-    Ok(memberships)
+    let entries =
+        crate::permissions::iter_user_groups_with_roles(mysql, resolvers, redis, user_id).await?;
+    Ok(entries
+        .into_iter()
+        .map(|entry| GroupMembership {
+            group_name: entry.group_name,
+            role: entry.role,
+        })
+        .collect())
 }
 
 /// `get_effective_roles_in_groups`: direct/entity roles plus parent-group
@@ -514,64 +272,4 @@ where
             (),
         )
         .await
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The two-column binding scan feeds the ERP `department_ids` array and
-    /// the membership cache map, which both collapse duplicates; passing the
-    /// raw rows instead would send a duplicated department to the ERP request
-    /// body, whose Replay comparison is a multiset and would then not match
-    /// the recorded request.
-    #[test]
-    fn department_bindings_are_deduplicated_like_the_source_set() {
-        assert_eq!(
-            deduplicated_department_ids(vec![
-                "Z02342".to_string(),
-                "100153".to_string(),
-                "Z02342".to_string(),
-                String::new(),
-                "100153".to_string(),
-            ]),
-            vec![String::new(), "100153".to_string(), "Z02342".to_string()]
-        );
-        assert!(deduplicated_department_ids(Vec::new()).is_empty());
-    }
-
-    /// The recorded `08ef05e7` case pins the step-2b pair: after the ERP
-    /// membership check matched `100153`, the source issued
-    ///
-    /// 1. `list_resources_by_entity_match` — a DISTINCT read with a plain
-    ///    `resource_type = 'Namespace'` predicate and the pass's own
-    ///    `entity_type` (`org_department`), then
-    /// 2. the entity-member batch — the full member projection with integer
-    ///    namespace ids and the same `entity_type`.
-    ///
-    /// The previous implementation collapsed both into the step-2a
-    /// `'namespace'`-entity grant forms (`resource_type IN ('Namespace')`
-    /// with `entity_type = 'namespace'`), which no recorded case matched.
-    #[test]
-    fn step_2b_uses_the_entity_match_and_member_batch_forms() {
-        let dept = quote_literal("org_department");
-        let ids = quote_literal("100153");
-        let resolved = resources_by_entity_match_sql(&dept, &ids);
-        assert!(resolved.contains("SELECT DISTINCT resource_members.resource_id"));
-        assert!(resolved.contains("resource_members.resource_type = 'Namespace'"));
-        assert!(resolved.contains("entity_type = 'org_department'"));
-        assert!(resolved.contains("entity_id IN ('100153')"));
-        assert!(!resolved.contains("entity_type = 'namespace'"));
-        assert!(!resolved.contains("resource_type IN ('Namespace')"));
-
-        let members = entity_members_sql(&dept, "632");
-        assert!(
-            members.contains("SELECT {MEMBER_COLUMNS}")
-                || members.contains("resource_members.id AS resource_members_id")
-        );
-        assert!(members.contains("resource_members.resource_type = 'Namespace'"));
-        assert!(members.contains("resource_members.resource_id IN (632)"));
-        assert!(members.contains("entity_type = 'org_department'"));
-        assert!(!members.contains("entity_type = 'namespace'"));
-    }
 }

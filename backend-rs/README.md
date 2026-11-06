@@ -62,6 +62,13 @@ under the same prefix remain with Python.
 
 ## Observability foundation
 
+MySQL migration and default-data initialization run from the Rust executable
+before HTTP and background consumers start. The hybrid launcher then starts
+Python with initialization owned by Rust. Historical Alembic revision IDs and
+`alembic_version` remain compatible; migration execution uses embedded SQL and
+native Rust data transformations. See the [database migration guide](../docs/en/wegent/developer-guide/rust-database-migrations.md)
+for commands, configuration and verification.
+
 The Rust binary initializes `brz-logs`, writing its `info.log`, `warn.log`, and
 `error.log` files to a `rust` subdirectory of the Backend `LOG_DIR` supplied by
 the repository launcher. The hybrid launcher nests it under `logs/backend/rust`
@@ -115,6 +122,19 @@ Metric updates use cached Copy handles, clocks and atomics without label
 allocation or registry lookup, including the first update. Timing slots remain
 64 bytes and scalar slots 8 bytes. Protocol encoding and buffering may still
 allocate independently of metric recording.
+
+## Background jobs
+
+Rust 后台任务复用 `SCHEDULED_TASKS_ENABLED`（本进程调度）和 `EMBEDDED_CELERY_ENABLED`（本进程原生 worker），默认均为 `true`。`WEGENT_RS_JOB_ALLOWLIST` 默认空，只限制 Rust 执行范围，因此默认不运行任务。Python 保留全部 Celery 行为，不转投任务，Rust 不消费 Celery 队列；部署时避免同一执行族并行调度。通用调度框架与 Redis provider 独立发布，业务适配留在 Wegent；配置与验证步骤见[中文指南](docs/zh/background-jobs.md)。
+
+Rust background jobs reuse `SCHEDULED_TASKS_ENABLED` for this process's scheduler
+and `EMBEDDED_CELERY_ENABLED` for its native worker, both defaulting to `true`.
+`WEGENT_RS_JOB_ALLOWLIST` defaults to empty and limits only Rust execution, so
+Rust runs no jobs by default. Python retains all Celery behavior without task
+forwarding, and Rust does not consume Celery queues. Avoid scheduling the same
+family concurrently in both processes. The scheduling core and Redis provider
+are separate packages; Wegent owns its business adapters. See the
+[English guide](docs/en/background-jobs.md) for configuration and verification.
 
 ## Library boundary
 

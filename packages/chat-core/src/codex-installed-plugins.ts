@@ -18,7 +18,7 @@ import {
   isWegentCloudMarketplaceId as isWegentCloudMarketplace,
 } from './plugin-marketplace-identity'
 export function normalizeMarketplaceSource(source: string): string {
-  const normalized = source.trim().replace(/\\\\/g, '/')
+  const normalized = source.trim().replace(/\\/g, '/')
   return normalized.replace(/(?:\/\.agents\/plugins)?\/marketplace\.json$/i, '')
 }
 
@@ -103,6 +103,8 @@ export function sourcePayload(
     pluginName: plugin.name,
     pluginId: plugin.id,
     remotePluginId: plugin.remotePluginId ?? null,
+    // Codex discovery retains account-owned entries after device cleanup.
+    ...(isWegentCloudMarketplace(marketplace.name) ? { managedByWegent: true } : {}),
   }
 }
 

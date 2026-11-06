@@ -99,7 +99,7 @@ export default function TeamSelectorButton({
   )
 
   const handleSelectTeam = (team: Team) => {
-    const targetPage = getTeamTargetPage(team, 'all')
+    const targetPage = getTeamTargetPage(team, currentMode)
     const currentPage = getCurrentTargetPageByMode(currentMode)
     if (targetPage !== currentPage) {
       const targetParams = new URLSearchParams({ teamId: String(team.id) })

@@ -15,6 +15,7 @@ import { createConnection } from 'node:net'
 import type { Socket } from 'node:net'
 import { isAbsolute, join, resolve } from 'node:path'
 import { RuntimeSupervisor } from './runtime-supervisor.js'
+import { recordReleaseDiagnostic } from './release-diagnostics.js'
 
 export interface ManagedExecutorRuntimeOptions {
   command: string
@@ -53,14 +54,18 @@ export class ManagedExecutorRuntime {
       name: 'wegent-executor',
       log: { path: managedExecutorLogPath(options) },
       probe: async (_child, signal) => {
+        recordReleaseDiagnostic('executor-probe', { phase: 'authentication-start' }, true)
         await waitForEndpointAuthentication(this.endpoint, this.token, signal)
+        recordReleaseDiagnostic('executor-probe', { phase: 'authentication-finish' }, true)
         this.ownerSocket?.destroy()
-        this.ownerSocket = await connectEventStream(
+        recordReleaseDiagnostic('executor-probe', { phase: 'owner-start' }, true)
+        this.ownerSocket = await connectExecutorSocket(
           this.endpoint,
           this.ownerToken,
           this.options.onEvent ?? (() => undefined),
           signal
         )
+        recordReleaseDiagnostic('executor-probe', { phase: 'owner-finish' }, true)
       },
     })
     this.process.on('exit', () => {
@@ -217,6 +222,7 @@ export function prepareManagedExecutorEnvironment(
     ...options.environment,
     CODEX_HOME: codexHome,
     WEGENT_CODEX_HOME: codexHome,
+    WEGENT_NATIVE_CODEX_HOME: nativeCodexHome ?? undefined,
     WEGENT_EXECUTOR_HOME: executorHome,
     WEGENT_PLUGIN_RUNTIME_TARGET: 'codex',
     WEGENT_EXECUTOR_DISABLE_FILE_LOG: 'true',
@@ -244,7 +250,7 @@ function resolveNativeCodexHome(
   if (environment.VITE_WEWORK_E2E === 'true') {
     return environment.WEWORK_E2E_NATIVE_CODEX_HOME?.trim() || null
   }
-  const configured = environment.CODEX_HOME?.trim()
+  const configured = environment.WEGENT_NATIVE_CODEX_HOME?.trim() || environment.CODEX_HOME?.trim()
   if (configured && resolve(configured) !== resolve(managedCodexHome)) return configured
   const home = environment.HOME?.trim() || homedir()
   return join(home, '.codex')
@@ -341,14 +347,16 @@ function samePath(left: string, right: string): boolean {
   return resolve(left) === resolve(right)
 }
 
-function connectEventStream(
+function connectExecutorSocket(
   endpoint: string,
   token: string,
   onEvent: (event: string, payload: Record<string, unknown>) => void,
   signal: AbortSignal
 ): Promise<Socket> {
   return new Promise((resolve, reject) => {
+    recordReleaseDiagnostic('executor-socket', { phase: 'create-start' }, true)
     const socket = createConnection(endpoint)
+    recordReleaseDiagnostic('executor-socket', { phase: 'create-finish' }, true)
     let authenticated = false
     let settled = false
     let buffer = ''
@@ -364,6 +372,7 @@ function connectEventStream(
     }
     socket.setEncoding('utf8')
     socket.once('connect', () => {
+      recordReleaseDiagnostic('executor-socket', { phase: 'authenticate-write-start' }, true)
       socket.write(
         `${JSON.stringify({
           type: 'authenticate',
@@ -371,9 +380,14 @@ function connectEventStream(
           token,
         })}\n`
       )
+      recordReleaseDiagnostic('executor-socket', { phase: 'authenticate-write-finish' }, true)
     })
     socket.on('data', chunk => {
       buffer += chunk
+      if (!authenticated && !buffer.includes('\n') && Buffer.byteLength(buffer) > 4096) {
+        socket.destroy(new Error('Executor authentication response is too large'))
+        return
+      }
       for (;;) {
         const newline = buffer.indexOf('\n')
         if (newline < 0) break
@@ -393,7 +407,7 @@ function connectEventStream(
               message.ok !== true ||
               message.protocol_version !== 1
             ) {
-              throw new Error('Executor rejected event stream authentication')
+              throw new Error('Executor rejected connection authentication')
             }
             authenticated = true
             settled = true
@@ -423,7 +437,7 @@ function connectEventStream(
     socket.once('close', () => {
       if (!settled) {
         cleanup()
-        reject(new Error('Executor event stream closed before authentication'))
+        reject(new Error('Executor connection closed before authentication'))
       }
     })
   })
@@ -446,7 +460,8 @@ export async function waitForEndpointAuthentication(
   let lastError: unknown
   while (!signal.aborted) {
     try {
-      await authenticate(endpoint, token, signal)
+      const socket = await connectExecutorSocket(endpoint, token, () => undefined, signal)
+      socket.end()
       return
     } catch (error) {
       if (signal.aborted) break
@@ -456,63 +471,6 @@ export async function waitForEndpointAuthentication(
   }
   throw new Error('Executor local endpoint did not become ready', {
     cause: signal.reason ?? lastError,
-  })
-}
-
-function authenticate(endpoint: string, token: string, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const socket = createConnection(endpoint)
-    let buffer = ''
-    const onAbort = () => {
-      socket.destroy()
-      reject(signal.reason)
-    }
-    const cleanup = () => signal.removeEventListener('abort', onAbort)
-    signal.addEventListener('abort', onAbort, { once: true })
-    socket.setEncoding('utf8')
-    socket.once('connect', () => {
-      socket.write(
-        `${JSON.stringify({
-          type: 'authenticate',
-          protocol_version: 1,
-          token,
-        })}\n`
-      )
-    })
-    socket.on('data', chunk => {
-      buffer += chunk
-      const newline = buffer.indexOf('\n')
-      if (newline < 0) {
-        if (Buffer.byteLength(buffer) > 4096) {
-          socket.destroy(new Error('Executor authentication response is too large'))
-        }
-        return
-      }
-      try {
-        const message = JSON.parse(buffer.slice(0, newline)) as {
-          type?: unknown
-          ok?: unknown
-          protocol_version?: unknown
-        }
-        if (
-          message.type !== 'authenticated' ||
-          message.ok !== true ||
-          message.protocol_version !== 1
-        ) {
-          throw new Error('Executor rejected local endpoint authentication')
-        }
-        cleanup()
-        socket.end()
-        resolve()
-      } catch (error) {
-        socket.destroy(error instanceof Error ? error : new Error(String(error)))
-      }
-    })
-    socket.once('error', error => {
-      cleanup()
-      reject(error)
-    })
-    socket.once('close', () => cleanup())
   })
 }
 

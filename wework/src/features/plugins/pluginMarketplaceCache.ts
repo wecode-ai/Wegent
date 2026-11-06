@@ -12,6 +12,13 @@ import { compressToUTF16, decompressFromUTF16 } from 'lz-string'
 import { applyInstalledPluginsToMarketplaceItems } from '@/api/local/codexPlugins'
 import { isOpenAiOfficialRemoteMarketplaceId } from './marketplaceIdentity'
 import { reconcileCodexInstallations } from '@/api/local/codexPluginInstallation'
+import {
+  inventoryIdentity,
+  indexLocalPluginSources,
+  localPluginSourceItems,
+  type LocalInstalledSources,
+  type LocalInstalledSourceStatus,
+} from './pluginInventorySources'
 
 export interface PluginMarketplaceCacheSnapshot {
   /** Confirmed mutations invalidate reads started before this revision. */
@@ -20,6 +27,9 @@ export interface PluginMarketplaceCacheSnapshot {
   marketplaceItems: PluginMarketplaceItem[]
   /** Full domain records; presentation fields are derived by each consumer. */
   installedPlugins: InstalledPlugin[]
+  /** Source membership references the canonical records instead of duplicating them. */
+  localInstalledSources?: LocalInstalledSources
+  localInstalledSourceStatus?: LocalInstalledSourceStatus
   /** A complete installed-only refresh succeeded, including an empty inventory. */
   installedPluginsFetchedAt?: number
   /** Only a successful remote catalog read updates this timestamp, including empty results. */
@@ -65,6 +75,32 @@ interface PersistedMarketplaceCacheStore {
 }
 
 let snapshot: PluginMarketplaceCacheSnapshot | null = null
+let scopeRevision = 0
+let inventoryMutationVersion = 0
+let accountEpoch = 0
+
+/** Logout invalidates directory metadata without coupling it to plugin mutations. */
+export function getPluginMarketplaceAccountEpoch(): number {
+  return accountEpoch
+}
+
+/** Session fence shared by native inventory readers; presentation refreshes do not advance it. */
+export function getPluginInventoryMutationVersion(): number {
+  return inventoryMutationVersion
+}
+
+function adoptSnapshot(next: PluginMarketplaceCacheSnapshot | null): void {
+  if (!next || snapshot?.cacheKey !== next.cacheKey || snapshot?.deviceId !== next.deviceId)
+    scopeRevision += 1
+  snapshot = next
+}
+
+/** A settings mutation belongs to the inventory scope, including across page navigation. */
+export function capturePluginMarketplaceScope(cacheKey: string, deviceId: string) {
+  const revision = scopeRevision
+  return () =>
+    revision === scopeRevision && snapshot?.cacheKey === cacheKey && snapshot.deviceId === deviceId
+}
 type MarketplaceCacheListener = (next: PluginMarketplaceCacheSnapshot | null) => void
 const listeners = new Set<MarketplaceCacheListener>()
 const PERSIST_DEBOUNCE_MS = 300
@@ -282,6 +318,8 @@ function snapshotPersistSignature(next: PluginMarketplaceCacheSnapshot): string 
     next.marketplaces.map(entry => `${entry.key}:${entry.id}:${entry.path ?? ''}`).join(','),
     JSON.stringify(next.marketplaceItems),
     JSON.stringify(next.installedPlugins),
+    JSON.stringify(next.localInstalledSources ?? {}),
+    JSON.stringify(next.localInstalledSourceStatus ?? {}),
     String(Boolean(next.installedPluginsFetchedAt)),
     String(next.openAiCatalogFetchedAt ?? ''),
     JSON.stringify(next.apps ?? []),
@@ -390,7 +428,7 @@ export function getPluginMarketplaceCache(cacheKey: string): PluginMarketplaceCa
 
   const exact = readPersistedSnapshot(cacheKey)
   if (exact) {
-    snapshot = exact
+    adoptSnapshot(exact)
     return snapshot
   }
 
@@ -402,7 +440,10 @@ export function getPluginInventoryDiagnostics() {
   return {
     deviceId: snapshot?.deviceId ?? null,
     mutationRevision: snapshot?.mutationRevision ?? 0,
+    localInstalledSources: snapshot?.localInstalledSources ?? {},
+    localInstalledSourceStatus: snapshot?.localInstalledSourceStatus ?? {},
     installedPlugins: (snapshot?.installedPlugins ?? []).map(plugin => ({
+      inventoryId: inventoryIdentity(plugin),
       pluginKey: plugin.spec.source.pluginKey,
       enabled: plugin.spec.enabled,
       componentStates: plugin.spec.componentStates ?? {},
@@ -415,6 +456,7 @@ export function setPluginMarketplaceCache(
   next: PluginMarketplaceCacheSnapshot,
   options?: { persistImmediately?: boolean; mutation?: boolean; remoteCatalog?: boolean }
 ): void {
+  if (options?.mutation) inventoryMutationVersion += 1
   // Catalog refreshes do not own app authorization. Preserve that source only
   // within the same account and device; explicit empty arrays clear it.
   const previous = getPluginMarketplaceCache(next.cacheKey)
@@ -455,6 +497,18 @@ export function setPluginMarketplaceCache(
   }
   next = {
     ...next,
+    localInstalledSources:
+      next.localInstalledSources ??
+      (sameDevice && previous?.localInstalledSources
+        ? indexLocalPluginSources(
+            next.installedPlugins,
+            localPluginSourceItems(previous),
+            next.deviceId
+          )
+        : undefined),
+    localInstalledSourceStatus:
+      next.localInstalledSourceStatus ??
+      (sameDevice ? previous?.localInstalledSourceStatus : undefined),
     mutationRevision: (previous?.mutationRevision ?? 0) + (options?.mutation ? 1 : 0),
     apps: next.apps ?? (sameDevice ? previous?.apps : undefined) ?? [],
     connectorApps: next.connectorApps ?? (sameDevice ? previous?.connectorApps : undefined) ?? [],
@@ -470,7 +524,16 @@ export function setPluginMarketplaceCache(
     connectorAppsFetchedAt:
       next.connectorAppsFetchedAt ?? (sameDevice ? previous?.connectorAppsFetchedAt : undefined),
   }
-  snapshot = { ...next, logosStripped: false }
+  if (next.localInstalledSources) {
+    const present = new Set(next.installedPlugins.map(inventoryIdentity))
+    next.localInstalledSources = Object.fromEntries(
+      Object.entries(next.localInstalledSources).map(([source, ids]) => [
+        source,
+        Array.isArray(ids) ? ids.filter(id => typeof id === 'string' && present.has(id)) : [],
+      ])
+    )
+  }
+  adoptSnapshot({ ...next, logosStripped: false })
   if (options?.persistImmediately) {
     clearPersistTimer()
     pendingPersist = null
@@ -530,10 +593,12 @@ export function removePluginMarketplaceInstallation(
     const labelId =
       labels && typeof labels === 'object' ? (labels as Record<string, unknown>).id : null
     const payload = item.spec.sourcePayload
-    const itemIds = normalizedInventoryIdentities([
+    const itemInstalledIds = normalizedInventoryIdentities([
       labelId as string | number | null,
-      item.spec.pluginId,
       payload?.cloudInstalledPluginId as string | number | null,
+    ])
+    const itemCatalogIds = normalizedInventoryIdentities([
+      item.spec.pluginId,
       payload?.cloudPluginId as string | number | null,
       payload?.remotePluginId as string | number | null,
     ])
@@ -551,25 +616,21 @@ export function removePluginMarketplaceInstallation(
         (typeof item.metadata.namespace === 'string' ? item.metadata.namespace : null)
     )
     const keyMatches =
-      intersects(itemKeys, pluginKeys) && (!marketplaceId || itemMarketplaceId === marketplaceId)
-    return !intersects(itemIds, installedIds) && !keyMatches
+      itemCatalogIds.size === 0 &&
+      intersects(itemKeys, pluginKeys) &&
+      (!marketplaceId || itemMarketplaceId === marketplaceId)
+    return (
+      !intersects(itemInstalledIds, installedIds) &&
+      !intersects(itemCatalogIds, marketplaceItemIds) &&
+      !keyMatches
+    )
   })
   const marketplaceItems = current.marketplaceItems.map(item => {
-    const itemIds = normalizedInventoryIdentities([
-      item.id,
-      item.installedPluginId,
-      item.remotePluginId,
-    ])
-    const itemKeys = normalizedInventoryIdentities([item.name, item.displayName])
-    const itemMarketplaceId = normalizedMarketplaceIdentity(
-      typeof item.manifest?.marketplaceId === 'string' ? item.manifest.marketplaceId : null
-    )
-    const keyMatches =
-      intersects(itemKeys, pluginKeys) && (!marketplaceId || itemMarketplaceId === marketplaceId)
+    const itemInstalledIds = normalizedInventoryIdentities([item.installedPluginId])
+    const itemCatalogIds = normalizedInventoryIdentities([item.id, item.remotePluginId])
     if (
-      !intersects(itemIds, installedIds) &&
-      !intersects(itemIds, marketplaceItemIds) &&
-      !keyMatches
+      !intersects(itemInstalledIds, installedIds) &&
+      !intersects(itemCatalogIds, marketplaceItemIds)
     ) {
       return item
     }
@@ -595,10 +656,12 @@ export function removePluginMarketplaceInstallation(
 }
 
 export function clearPluginMarketplaceCache(): void {
+  accountEpoch += 1
+  inventoryMutationVersion += 1
   clearPersistTimer()
   pendingPersist = null
   lastPersistedSignature = ''
-  snapshot = null
+  adoptSnapshot(null)
   forgotLegacyCache = false
   if (typeof window !== 'undefined') {
     try {
@@ -621,8 +684,9 @@ export function subscribePluginMarketplaceCache(listener: MarketplaceCacheListen
 
 /** Test helper: drop memory without clearing durable storage. */
 export function resetPluginMarketplaceCacheMemory(): void {
+  inventoryMutationVersion += 1
   flushPluginMarketplaceCachePersist()
-  snapshot = null
+  adoptSnapshot(null)
 }
 
 function pluginComponentsSignature(components: PluginMarketplaceItem['components']): string {
@@ -659,6 +723,7 @@ export function marketplaceItemsSignature(items: PluginMarketplaceItem[]): strin
         typeof item.manifest?.disabledReason === 'string' ? item.manifest.disabledReason : '',
         typeof item.manifest?.installPolicy === 'string' ? item.manifest.installPolicy : '',
         item.localPersonalSource?.marketplacePath ?? '',
+        item.sharedVersion ?? '',
         item.localPersonalSource?.pluginName ?? '',
         pluginComponentsSignature(item.components),
       ].join(':')
@@ -679,9 +744,11 @@ export function installedPluginsSignature(items: InstalledPluginItem[]): string 
         item.sourceLabel,
         item.distribution,
         item.raw.spec.installState,
+        item.raw.spec.updatePolicy,
         JSON.stringify(item.raw.spec.interface),
         JSON.stringify(item.raw.spec.componentStates),
         item.raw.spec.sourcePayload?.localPresent,
+        JSON.stringify(item.raw.status.devices),
         pluginComponentsSignature(item.raw.spec.components),
       ].join(':')
     )

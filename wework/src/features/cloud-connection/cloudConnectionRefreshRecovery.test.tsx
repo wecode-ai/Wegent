@@ -19,7 +19,9 @@ const httpMocks = vi.hoisted(() => ({
 }))
 
 const credentialMocks = vi.hoisted(() => ({
-  getDevicePublicKey: vi.fn(),
+  prepareAuthorization: vi.fn(),
+  commitAuthorization: vi.fn(),
+  discardAuthorization: vi.fn(),
   claimAuthorization: vi.fn(),
   refreshAccessToken: vi.fn(),
   clear: vi.fn(),
@@ -42,7 +44,9 @@ vi.mock('@/desktop/cloudCredentials', async importOriginal => {
   const actual = await importOriginal<typeof import('@/desktop/cloudCredentials')>()
   return {
     ...actual,
-    getDesktopDevicePublicKey: credentialMocks.getDevicePublicKey,
+    prepareDesktopCloudAuthorization: credentialMocks.prepareAuthorization,
+    commitDesktopCloudAuthorization: credentialMocks.commitAuthorization,
+    discardDesktopCloudAuthorization: credentialMocks.discardAuthorization,
     claimDesktopCloudAuthorization: credentialMocks.claimAuthorization,
     refreshDesktopCloudAccessToken: credentialMocks.refreshAccessToken,
     clearDesktopCloudCredentials: credentialMocks.clear,
@@ -109,12 +113,12 @@ describe('cloud connection refresh recovery', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     localStorage.clear()
-    credentialMocks.getDevicePublicKey.mockResolvedValue({
-      kty: 'EC',
-      crv: 'P-256',
-      x: 'x',
-      y: 'y',
+    credentialMocks.prepareAuthorization.mockResolvedValue({
+      authorizationId: 'authorization-id',
+      publicKey: { kty: 'EC', crv: 'P-256', x: 'x', y: 'y' },
     })
+    credentialMocks.commitAuthorization.mockResolvedValue(undefined)
+    credentialMocks.discardAuthorization.mockResolvedValue(undefined)
     credentialMocks.refreshAccessToken.mockImplementation(() =>
       Promise.resolve(refreshedToken(3600))
     )

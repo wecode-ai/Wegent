@@ -2,13 +2,16 @@ import { Button } from '@/components/ui/button'
 import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from 'react'
 import { AppBridge, type McpUiDisplayMode } from '@modelcontextprotocol/ext-apps/app-bridge'
 import { AlertCircle, Maximize2, Minimize2, RefreshCw, X } from 'lucide-react'
+import { dequal } from 'dequal'
 import type {
   McpAppDescriptor,
+  McpAppDiscovery,
   McpAppRequest,
   McpAppResult,
   McpAppResource,
   RuntimeMcpAppsApi,
 } from '@/api/mcpApps'
+import { getDesktopWindowLabel } from '@/lib/runtime-environment'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import type { ToolBlock } from '@wegent/chat-core/runtime-conversation'
 import type { RuntimeTaskAddress } from '@/types/api'
@@ -30,13 +33,17 @@ interface AppDocument {
   release: () => Promise<void>
 }
 
+type SessionAppDescriptor = McpAppDescriptor & { sessionId: string }
+
 async function createAppDocument(
   html: string,
-  metadata: Record<string, unknown>
+  metadata: Record<string, unknown>,
+  sessionId: string
 ): Promise<AppDocument> {
   const document = await invokeDesktopHost<{ id: string; url: string }>('mcpApps.createDocument', {
     html,
     metadata,
+    sessionId,
   })
   let released: Promise<void> | undefined
   return {
@@ -63,11 +70,12 @@ export function McpAppHost({
   address: RuntimeTaskAddress
   api: RuntimeMcpAppsApi
   onMessage?: (text: string) => Promise<void>
-  onContext?: (context: Record<string, unknown>) => Promise<void>
+  onContext?: (context: Record<string, unknown>, sessionId: string) => Promise<void>
   onDisplayModeChange?: (mode: McpUiDisplayMode, dismiss: () => void) => void
 }) {
   const { t } = useTranslation('common')
-  const [descriptor, setDescriptor] = useState<McpAppDescriptor | null>()
+  const [descriptor, setDescriptor] = useState<SessionAppDescriptor>()
+  const [app, setApp] = useState<McpAppDiscovery>()
   const [failure, setFailure] = useState<string>()
   const [attempt, setAttempt] = useState(0)
   const [closed, setClosed] = useState(false)
@@ -81,12 +89,22 @@ export function McpAppHost({
   const bridge = useRef<AppBridge>(null)
   const teardownSent = useRef(false)
   const initialized = useRef(false)
-  const sentResult = useRef<unknown>(undefined)
+  const sentResult = useRef<McpAppResult>(undefined)
   const sentInput = useRef(false)
   const latest = useEffectEvent(() => ({ block, onMessage, onContext, mode }))
-  const requestApp = useEffectEvent((data: Partial<McpAppRequest>) =>
-    api.requestMcpApp({ ...data, address, callId: block.id })
+  const retainSession = useEffectEvent((sessionId: string) =>
+    invokeDesktopHost('mcpApps.retainSession', {
+      address,
+      callId: block.id,
+      sessionId,
+      windowLabel: getDesktopWindowLabel(),
+      target: api.getMcpAppSessionTarget?.(address),
+    })
   )
+  const requestApp = useEffectEvent(async (data: Partial<McpAppRequest>) => {
+    if (data.sessionId) await retainSession(data.sessionId)
+    return api.requestMcpApp({ ...data, address, callId: block.id })
+  })
   const hasMessage = onMessage !== undefined
   const hasContext = onContext !== undefined
   const closeApp = useCallback(async () => {
@@ -133,32 +151,62 @@ export function McpAppHost({
     const epoch = discoveryEpoch.current
     const status = block.status
     discoveryPending.current = true
-    void requestApp({})
+    void requestApp({ method: 'discover' })
       .then(value => {
         if (epoch !== discoveryEpoch.current) return
         if (value) discovered.current = true
-        setDescriptor(value as McpAppDescriptor | null)
-        // A call can finish while discovery is pending; inspect the completed result once.
-        if (!value && status !== latest().block.status) setAttempt(value => value + 1)
+        setApp((value as McpAppDiscovery | null) ?? undefined)
       })
       .catch(error => {
         if (epoch === discoveryEpoch.current) {
-          console.debug(
-            '[Wework] MCP App discovery failed',
-            JSON.stringify({
-              callId: block.id,
-              requestedStatus: status,
-              currentStatus: latest().block.status,
-            })
+          console.warn(
+            '[Wework] Executor transport diagnostic ' +
+              JSON.stringify({
+                stage: 'mcp_app_discovery_failed',
+                callId: block.id,
+                taskId: address.taskId,
+                errorType: error instanceof Error ? error.name : typeof error,
+                code: record(error).code,
+                requestedStatus: status,
+                currentStatus: latest().block.status,
+              })
           )
-          discovered.current = true
-          setFailure(String(error.message ?? error))
+          // An unavailable discovery transport does not establish that an app exists.
         }
       })
       .finally(() => {
-        if (epoch === discoveryEpoch.current) discoveryPending.current = false
+        if (epoch !== discoveryEpoch.current) return
+        discoveryPending.current = false
+        // Schedule after clearing pending so the next effect cannot lose this transition.
+        if (!discovered.current && status !== latest().block.status) setAttempt(value => value + 1)
       })
   }, [address.deviceId, address.taskId, block.id, block.status, block.toolOutput, attempt])
+
+  useEffect(() => {
+    if (!app || closed) return
+    let active = true
+    let settled = false
+    const sessionId = crypto.randomUUID()
+    const release = () =>
+      void invokeDesktopHost('mcpApps.releaseSession', { sessionId }).catch(error => {
+        console.info('[Wework] MCP App session release failed', { name: error.name })
+      })
+    void requestApp({ method: 'initialize', sessionId })
+      .then(value => {
+        if (active) setDescriptor({ ...(value as McpAppDescriptor), sessionId })
+      })
+      .catch(error => {
+        if (active) setFailure(String(error.message ?? error))
+      })
+      .finally(() => {
+        settled = true
+        if (!active) release()
+      })
+    return () => {
+      active = false
+      if (settled) release()
+    }
+  }, [app, closed])
 
   useEffect(() => {
     if (!descriptor || closed) return
@@ -182,7 +230,8 @@ export function McpAppHost({
       if (!initialMode) throw new Error(t('mcp_apps.unsupported_display_mode'))
       created = await createAppDocument(
         content.mimeType === 'text/html+skybridge' ? legacyWidgetDocument(html) : html,
-        metadata
+        metadata,
+        descriptor.sessionId
       )
       if (!active) {
         await created.release()
@@ -194,23 +243,12 @@ export function McpAppHost({
     void load().catch(error => {
       if (active) setFailure(String(error.message ?? error))
     })
-    const heartbeat = window.setInterval(() => {
-      if (created)
-        void Promise.all([
-          requestApp({ method: 'ping' }),
-          invokeDesktopHost('mcpApps.renewDocument', { id: created.id }),
-        ]).catch(error => {
-          if (active) setFailure(String(error.message ?? error))
-        })
-    }, 30000)
     return () => {
       active = false
-      window.clearInterval(heartbeat)
       if (created)
         void created.release().catch(error => {
           console.info('[Wework] MCP App document release failed', { name: error.name })
         })
-      void requestApp({ method: 'release' }).catch(() => {})
     }
   }, [descriptor, closed, t])
 
@@ -226,22 +264,23 @@ export function McpAppHost({
       await app.sendToolInput({ arguments: block.toolInput ?? descriptor?.arguments ?? {} })
     }
     const output = block.toolOutput ?? descriptor?.result
-    if (sentResult.current === output) return
     const result = record(output)
+    let payload: McpAppResult | undefined
     if (Array.isArray(result.content)) {
-      await app.sendToolResult({
+      payload = {
         ...result,
         content: result.content,
         isError: block.status === 'error' || result.isError === true,
-      } as McpAppResult)
-      sentResult.current = output
+      } as McpAppResult
     } else if (block.status === 'error') {
-      await app.sendToolResult({
+      payload = {
         content: [{ type: 'text', text: typeof output === 'string' ? output : 'Tool call failed' }],
         isError: true,
-      })
-      sentResult.current = output
+      }
     }
+    if (!payload || dequal(sentResult.current, payload)) return
+    await app.sendToolResult(payload)
+    sentResult.current = payload
   })
 
   useEffect(() => {
@@ -267,7 +306,7 @@ export function McpAppHost({
     teardownSent.current = false
     const request = <T,>(method: string, params?: Record<string, unknown>) => {
       if (!active) throw new Error('MCP App has been closed')
-      return requestApp({ method, params }) as Promise<T>
+      return requestApp({ method, params, sessionId: descriptor.sessionId }) as Promise<T>
     }
     app.oncalltool = params => request<McpAppResult>('tools/call', params)
     app.onreadresource = params => request<McpAppResource>('resources/read', params)
@@ -325,9 +364,10 @@ export function McpAppHost({
       return {}
     }
     app.onupdatemodelcontext = async params => {
+      if (descriptor) await retainSession(descriptor.sessionId)
       const update = latest().onContext
       if (!update) throw new Error('Model context updates are unavailable')
-      await update(params)
+      await update(params, descriptor.sessionId)
       return {}
     }
     app.onsizechange = ({ height }) => {
@@ -347,12 +387,16 @@ export function McpAppHost({
     app.onerror = error => {
       if (active) setFailure(error.message)
     }
+    const element = frame.current
     void app
-      .connect(appDocumentTransport(frame.current.contentWindow, appDocumentOrigin(document.url)))
+      .connect(appDocumentTransport(element.contentWindow!, appDocumentOrigin(document.url)))
+      .then(() => {
+        // Listen before loading a document that can initialize immediately.
+        if (active && element.src !== document.url) element.src = document.url
+      })
       .catch(error => {
         if (active) setFailure(error.message)
       })
-    const element = frame.current
     const updateContext = () =>
       app.setHostContext(appHostContext(element, latest().mode, descriptor, block.id))
     const resize = new ResizeObserver(updateContext)
@@ -388,10 +432,9 @@ export function McpAppHost({
       bridge.current.setHostContext(appHostContext(frame.current, mode, descriptor, block.id))
   }, [mode, descriptor, block.id])
 
-  if (descriptor === null && !failure) return null
-  if (descriptor === undefined && !failure) return null
+  if (!app) return null
   const availableModes = appDisplayModes(descriptor)
-  const title = descriptor?.tool?.title ?? descriptor?.server ?? t('mcp_apps.title')
+  const title = app.tool?.title ?? app.server ?? t('mcp_apps.title')
   const metadata = record(descriptor?.resource.contents[0]?._meta)
   const prefersBorder =
     (record(metadata.ui).prefersBorder ?? metadata['openai/widgetPrefersBorder']) !== false
@@ -411,7 +454,7 @@ export function McpAppHost({
               : `my-2 overflow-hidden bg-background text-text-primary ${prefersBorder ? 'rounded-lg shadow-sm outline-1 -outline-offset-1 outline-border' : ''}`
       }
     >
-      {(mode !== 'fullscreen' || closed || panelDismissed || failure) && (
+      {(mode !== 'fullscreen' || closed || panelDismissed || failure || !document) && (
         <div
           className={
             discoveryFailed
@@ -445,6 +488,7 @@ export function McpAppHost({
               aria-label={t('mcp_apps.retry')}
               onClick={() => {
                 discovered.current = false
+                setApp(undefined)
                 setDescriptor(undefined)
                 setFailure(undefined)
                 setDocument(undefined)
@@ -466,6 +510,7 @@ export function McpAppHost({
               onClick={() => {
                 if (closed) {
                   discovered.current = false
+                  setApp(undefined)
                   setDescriptor(undefined)
                   setFailure(undefined)
                   setAttempt(value => value + 1)
@@ -522,7 +567,7 @@ export function McpAppHost({
           referrerPolicy="no-referrer"
           className="w-full min-w-0 flex-1 border-0"
           style={{ height: mode === 'fullscreen' ? undefined : height }}
-          src={document?.url ?? 'about:blank'}
+          src="about:blank"
         />
       )}
     </section>

@@ -252,8 +252,8 @@ jest.mock('@/features/tasks/components/AttachmentButton', () => ({
 
 jest.mock('@/features/tasks/components/input/SendButton', () => ({
   __esModule: true,
-  default: () => (
-    <button type="button" data-testid="send-button">
+  default: ({ disabled }: { disabled?: boolean }) => (
+    <button type="button" data-testid="send-button" disabled={disabled}>
       Send
     </button>
   ),
@@ -359,6 +359,15 @@ const buildProps = (): MobileChatInputControlsProps => ({
 })
 
 describe('MobileChatInputControls layout', () => {
+  it('keeps sending disabled until the selected agent is resolved', () => {
+    const props = buildProps()
+    const view = render(<MobileChatInputControls {...props} selectedTeam={null} />)
+    expect(screen.getByTestId('send-button')).toBeDisabled()
+
+    view.rerender(<MobileChatInputControls {...props} />)
+    expect(screen.getByTestId('send-button')).toBeEnabled()
+  })
+
   it('mounts the model loader before an agent is resolved', () => {
     render(<MobileChatInputControls {...buildProps()} selectedTeam={null} />)
     expect(screen.getByTestId('mobile-model-selector')).toHaveAttribute('data-disabled', 'true')

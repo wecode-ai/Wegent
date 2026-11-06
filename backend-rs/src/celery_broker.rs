@@ -64,6 +64,8 @@ pub(crate) struct CeleryTask<'a> {
     pub(crate) task_id: &'a str,
     /// `delay(**payload)` keyword arguments, in request-payload order.
     pub(crate) kwargs: &'a Map<String, Value>,
+    /// Compatibility publisher deadline for consumers outside the Rust runtime.
+    pub(crate) expires_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// Process-lifetime Celery publisher.
@@ -174,7 +176,12 @@ impl CeleryBroker {
         headers.insert("id".to_owned(), Value::from(task.task_id));
         headers.insert("shadow".to_owned(), Value::Null);
         headers.insert("eta".to_owned(), Value::Null);
-        headers.insert("expires".to_owned(), Value::Null);
+        headers.insert(
+            "expires".to_owned(),
+            task.expires_at
+                .map(|at| Value::from(at.to_rfc3339()))
+                .unwrap_or(Value::Null),
+        );
         headers.insert("group".to_owned(), Value::Null);
         headers.insert("group_index".to_owned(), Value::Null);
         headers.insert("retries".to_owned(), Value::from(0));
@@ -397,6 +404,7 @@ mod tests {
             queue: "wegent_online",
             task_id: "11111111-1111-4111-8111-111111111111",
             kwargs,
+            expires_at: None,
         }
     }
 

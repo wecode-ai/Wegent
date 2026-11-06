@@ -6,6 +6,8 @@
 //! source SQLAlchemy renderings token for token: full labeled
 //! `{table}_{column}` projections and the direct public tables selected by
 //! the open-source readers.
+use crate::request_sql::{RequestSql, RouteKey, fetch_all_as, fetch_optional_as};
+use crate::sql_support::StatementArg;
 use crate::task_store::TaskStore;
 use brz_json::OpaqueJson;
 use brz_mysql::{FromMysqlRow, Mysql, MysqlResult};
@@ -118,22 +120,42 @@ pub async fn team_by_shared_ids<M>(
 where
     M: Mysql,
 {
+    mysql
+        .fetch_optional(team_by_shared_ids_statement(ids, namespace, name), ())
+        .await
+}
+
+/// [`team_by_shared_ids`] on the caller's request SQL handle (the source
+/// issues this read on its request session).
+pub async fn team_by_shared_ids_on(
+    sql: &mut dyn RequestSql,
+    ids: &[i64],
+    namespace: &str,
+    name: &str,
+) -> MysqlResult<Option<KindRow>> {
+    fetch_optional_as(
+        sql,
+        RouteKey::None,
+        &team_by_shared_ids_statement(ids, namespace, name),
+        Vec::new(),
+    )
+    .await
+}
+
+/// The shared-id Team read's statement; `ids` keeps the cached list's order
+/// and the namespace/name literals are escaped like the source's rendering.
+fn team_by_shared_ids_statement(ids: &[i64], namespace: &str, name: &str) -> String {
     let list = ids
         .iter()
         .map(|id| id.to_string())
         .collect::<Vec<String>>()
         .join(", ");
-    mysql
-        .fetch_optional(
-            &format!(
-                "SELECT {KIND_COLUMNS} \nFROM kinds \nWHERE kinds.id IN ({list}) \
-             AND kinds.kind = 'Team' AND kinds.namespace = '{namespace}' \
-             AND kinds.name = '{escaped}' AND kinds.is_active = true \n LIMIT 1",
-                escaped = escape_sql_string(name)
-            ),
-            (),
-        )
-        .await
+    format!(
+        "SELECT {KIND_COLUMNS} \nFROM kinds \nWHERE kinds.id IN ({list}) \
+         AND kinds.kind = 'Team' AND kinds.namespace = '{namespace}' \
+         AND kinds.name = '{escaped}' AND kinds.is_active = true \n LIMIT 1",
+        escaped = escape_sql_string(name)
+    )
 }
 
 /// `sharedTeamReader.get_shared_team_ids`: approved Team memberships for a
@@ -143,25 +165,40 @@ pub async fn shared_team_ids<M>(mysql: &M, user_id: i64) -> MysqlResult<Vec<i64>
 where
     M: Mysql,
 {
-    #[derive(FromMysqlRow)]
-    struct ResourceIdRow {
-        resource_members_resource_id: i64,
-    }
     let rows: Vec<ResourceIdRow> = mysql
-        .fetch_all(
-            "SELECT resource_members.resource_id AS resource_members_resource_id \
-             \nFROM resource_members \
-             \nWHERE resource_members.resource_type IN ('Team', 'TEAM') \
-             AND resource_members.entity_type = 'user' \
-             AND resource_members.entity_id = ? \
-             AND resource_members.status IN ('approved', 'APPROVED')",
-            (user_id.to_string(),),
-        )
+        .fetch_all(shared_team_ids_statement(), (user_id.to_string(),))
         .await?;
-    Ok(rows
-        .into_iter()
-        .map(|row| row.resource_members_resource_id)
-        .collect())
+    Ok(rows.into_iter().map(|row| row.resource_id).collect())
+}
+
+/// [`shared_team_ids`] on the caller's request SQL handle.
+pub async fn shared_team_ids_on(sql: &mut dyn RequestSql, user_id: i64) -> MysqlResult<Vec<i64>> {
+    let rows: Vec<ResourceIdRow> = fetch_all_as(
+        sql,
+        RouteKey::None,
+        shared_team_ids_statement(),
+        vec![StatementArg::Str(user_id.to_string())],
+    )
+    .await?;
+    Ok(rows.into_iter().map(|row| row.resource_id).collect())
+}
+
+/// One `resource_members.resource_id` row.
+#[derive(FromMysqlRow)]
+struct ResourceIdRow {
+    #[mysql(rename = "resource_members_resource_id")]
+    resource_id: i64,
+}
+
+/// `sharedTeamReader.get_shared_team_ids`'s statement; the entity id is bound
+/// as the string the source renders.
+fn shared_team_ids_statement() -> &'static str {
+    "SELECT resource_members.resource_id AS resource_members_resource_id \
+     \nFROM resource_members \
+     \nWHERE resource_members.resource_type IN ('Team', 'TEAM') \
+     AND resource_members.entity_type = 'user' \
+     AND resource_members.entity_id = ? \
+     AND resource_members.status IN ('approved', 'APPROVED')"
 }
 
 /// `KindReader.get_public`: `user_id = 0`; the deployed reader drops the
@@ -203,16 +240,45 @@ where
 {
     mysql
         .fetch_all(
-            &format!(
-                "SELECT {KIND_COLUMNS} \nFROM kinds \nWHERE (kinds.user_id NOT IN (0, ?)) \
-             AND kinds.kind = 'Team' AND kinds.namespace = '{namespace}' \
-             AND kinds.name = '{escaped}' AND kinds.is_active = true \
-             ORDER BY kinds.updated_at DESC, kinds.id DESC",
-                escaped = escape_sql_string(name)
-            ),
+            shared_team_candidates_statement(namespace, name),
             (user_id,),
         )
         .await
+}
+
+/// [`shared_team_candidates`] on the caller's request SQL handle.
+pub async fn shared_team_candidates_on(
+    sql: &mut dyn RequestSql,
+    user_id: i64,
+    namespace: &str,
+    name: &str,
+) -> MysqlResult<Vec<KindRow>> {
+    fetch_all_as(
+        sql,
+        RouteKey::None,
+        &shared_team_candidates_statement(namespace, name),
+        vec![StatementArg::Int(user_id)],
+    )
+    .await
+}
+
+/// The share-permission candidate statement; the namespace/name literals are
+/// escaped like the source's rendering.
+fn shared_team_candidates_statement(namespace: &str, name: &str) -> String {
+    format!(
+        "SELECT {KIND_COLUMNS} \nFROM kinds \nWHERE (kinds.user_id NOT IN (0, ?)) \
+         AND kinds.kind = 'Team' AND kinds.namespace = '{namespace}' \
+         AND kinds.name = '{escaped}' AND kinds.is_active = true \
+         ORDER BY kinds.updated_at DESC, kinds.id DESC",
+        escaped = escape_sql_string(name)
+    )
+}
+
+/// One `resource_members.role` row.
+#[derive(FromMysqlRow)]
+struct MemberRoleRow {
+    #[mysql(rename = "resource_members_role")]
+    role: Option<String>,
 }
 
 /// `UnifiedShareService.check_permission`'s member query
@@ -227,27 +293,58 @@ pub async fn team_share_member_row<M>(
 where
     M: Mysql,
 {
-    #[derive(FromMysqlRow)]
-    struct RoleRow {
-        resource_members_role: Option<String>,
-    }
-    let row: Option<RoleRow> = mysql
+    let row: Option<MemberRoleRow> = mysql
         .fetch_optional(
-            &format!(
-                "SELECT {} \nFROM resource_members \n\
-                 WHERE resource_members.resource_type IN ('Team') \
-                 AND resource_members.resource_id = ? \
-                 AND resource_members.entity_type = 'user' \
-                 AND resource_members.entity_id = ? \
-                 AND resource_members.status IN ('approved', 'APPROVED') \
-                 ORDER BY CASE WHEN (resource_members.resource_type = 'Team') THEN 1 ELSE 0 END DESC, \
-                 resource_members.updated_at DESC \n LIMIT 1",
-                crate::teams::teams_repository::MEMBER_COLUMNS
-            ),
+            &team_share_member_row_statement(),
             (team_id, user_id.to_string()),
         )
         .await?;
-    Ok(row.and_then(|row| row.resource_members_role))
+    Ok(row.and_then(|row| row.role))
+}
+
+/// [`team_share_member_row`] on the caller's request SQL handle.
+pub async fn team_share_member_row_on(
+    sql: &mut dyn RequestSql,
+    team_id: i64,
+    user_id: i64,
+) -> MysqlResult<Option<String>> {
+    let row: Option<MemberRoleRow> = fetch_optional_as(
+        sql,
+        RouteKey::None,
+        &team_share_member_row_statement(),
+        vec![
+            StatementArg::Int(team_id),
+            StatementArg::Str(user_id.to_string()),
+        ],
+    )
+    .await?;
+    Ok(row.and_then(|row| row.role))
+}
+
+/// The share-permission member statement (full `ResourceMember` projection).
+fn team_share_member_row_statement() -> String {
+    format!(
+        "SELECT {} \nFROM resource_members \n\
+         WHERE resource_members.resource_type IN ('Team') \
+         AND resource_members.resource_id = ? \
+         AND resource_members.entity_type = 'user' \
+         AND resource_members.entity_id = ? \
+         AND resource_members.status IN ('approved', 'APPROVED') \
+         ORDER BY CASE WHEN (resource_members.resource_type = 'Team') THEN 1 ELSE 0 END DESC, \
+         resource_members.updated_at DESC \n LIMIT 1",
+        crate::teams::teams_repository::MEMBER_COLUMNS
+    )
+}
+
+/// One non-user Team binding row.
+#[derive(FromMysqlRow)]
+struct TeamEntityRow {
+    #[mysql(rename = "resource_members_entity_type")]
+    entity_type: String,
+    #[mysql(rename = "resource_members_entity_id")]
+    entity_id: String,
+    #[mysql(rename = "resource_members_role")]
+    role: Option<String>,
 }
 
 /// `UnifiedShareService.check_entity_permission`'s entity query: the
@@ -259,36 +356,44 @@ pub async fn team_share_entity_rows<M>(
 where
     M: Mysql,
 {
-    #[derive(FromMysqlRow)]
-    struct EntityRow {
-        resource_members_entity_type: String,
-        resource_members_entity_id: String,
-        resource_members_role: Option<String>,
-    }
-    let rows: Vec<EntityRow> = mysql
-        .fetch_all(
-            "SELECT resource_members.entity_type AS resource_members_entity_type, \
-             resource_members.entity_id AS resource_members_entity_id, \
-             resource_members.`role` AS resource_members_role \nFROM resource_members \n\
-             WHERE resource_members.resource_type IN ('Team') \
-             AND resource_members.resource_id = ? \
-             AND resource_members.entity_type != 'user' \
-             AND resource_members.entity_type != '' \
-             AND resource_members.entity_id IS NOT NULL \
-             AND resource_members.status IN ('approved', 'APPROVED')",
-            (team_id,),
-        )
+    let rows: Vec<TeamEntityRow> = mysql
+        .fetch_all(team_share_entity_rows_statement(), (team_id,))
         .await?;
     Ok(rows
         .into_iter()
-        .map(|row| {
-            (
-                row.resource_members_entity_type,
-                row.resource_members_entity_id,
-                row.resource_members_role,
-            )
-        })
+        .map(|row| (row.entity_type, row.entity_id, row.role))
         .collect())
+}
+
+/// [`team_share_entity_rows`] on the caller's request SQL handle.
+pub async fn team_share_entity_rows_on(
+    sql: &mut dyn RequestSql,
+    team_id: i64,
+) -> MysqlResult<Vec<(String, String, Option<String>)>> {
+    let rows: Vec<TeamEntityRow> = fetch_all_as(
+        sql,
+        RouteKey::None,
+        team_share_entity_rows_statement(),
+        vec![StatementArg::Int(team_id)],
+    )
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| (row.entity_type, row.entity_id, row.role))
+        .collect())
+}
+
+/// The approved non-user Team binding statement.
+fn team_share_entity_rows_statement() -> &'static str {
+    "SELECT resource_members.entity_type AS resource_members_entity_type, \
+     resource_members.entity_id AS resource_members_entity_id, \
+     resource_members.`role` AS resource_members_role \nFROM resource_members \n\
+     WHERE resource_members.resource_type IN ('Team') \
+     AND resource_members.resource_id = ? \
+     AND resource_members.entity_type != 'user' \
+     AND resource_members.entity_type != '' \
+     AND resource_members.entity_id IS NOT NULL \
+     AND resource_members.status IN ('approved', 'APPROVED')"
 }
 
 /// `TeamShareService._get_active_team`: the active Team row by id
@@ -299,14 +404,30 @@ where
     M: Mysql,
 {
     mysql
-        .fetch_optional(
-            &format!(
-                "SELECT {KIND_COLUMNS} \nFROM kinds \nWHERE kinds.id = ? \
-                 AND kinds.kind = 'Team' AND kinds.is_active IS true \n LIMIT 1"
-            ),
-            (team_id,),
-        )
+        .fetch_optional(team_share_active_team_statement(), (team_id,))
         .await
+}
+
+/// [`team_share_active_team`] on the caller's request SQL handle.
+pub async fn team_share_active_team_on(
+    sql: &mut dyn RequestSql,
+    team_id: i64,
+) -> MysqlResult<Option<KindRow>> {
+    fetch_optional_as(
+        sql,
+        RouteKey::None,
+        &team_share_active_team_statement(),
+        vec![StatementArg::Int(team_id)],
+    )
+    .await
+}
+
+/// The active Team-by-id statement.
+fn team_share_active_team_statement() -> String {
+    format!(
+        "SELECT {KIND_COLUMNS} \nFROM kinds \nWHERE kinds.id = ? \
+         AND kinds.kind = 'Team' AND kinds.is_active IS true \n LIMIT 1"
+    )
 }
 
 /// `skill_binding_service.list_user_default_bindings`: the user's active
@@ -392,15 +513,31 @@ where
     M: Mysql,
 {
     mysql
-        .fetch_optional(
-            &format!(
-                "SELECT {NAMESPACE_COLUMNS} \nFROM namespace \nWHERE namespace.name = '{escaped}' \
-             AND namespace.is_active = true \n LIMIT 1",
-                escaped = escape_sql_string(name)
-            ),
-            (),
-        )
+        .fetch_optional(&namespace_by_name_statement(name), ())
         .await
+}
+
+/// [`namespace_by_name`] on the caller's request SQL handle.
+pub async fn namespace_by_name_on(
+    sql: &mut dyn RequestSql,
+    name: &str,
+) -> MysqlResult<Option<NamespaceRow>> {
+    fetch_optional_as(
+        sql,
+        RouteKey::None,
+        &namespace_by_name_statement(name),
+        Vec::new(),
+    )
+    .await
+}
+
+/// The `GroupReader.get_by_name` statement, with the name inlined.
+pub fn namespace_by_name_statement(name: &str) -> String {
+    format!(
+        "SELECT {NAMESPACE_COLUMNS} \nFROM namespace \nWHERE namespace.name = '{escaped}' \
+         AND namespace.is_active = true \n LIMIT 1",
+        escaped = escape_sql_string(name)
+    )
 }
 
 /// `skill_binding_service._get_active_skill`: an active Skill by id.

@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { existsSync, readFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { resolve } from 'node:path'
@@ -55,7 +57,13 @@ describe('bundled plugin resources', () => {
     for (const manifest of bundledPluginExampleManifests) {
       expect(existsSync(resolve(resourcesDirectory, manifest))).toBe(true)
     }
-    expect(packageScript).toContain("join(electronRoot, 'resources', 'bundled-plugins')")
+    const componentLayout = readFileSync(
+      resolve(process.cwd(), 'electron/scripts/bundled-component-layout.cjs'),
+      'utf8'
+    )
+    expect(componentLayout).toContain("'bundled-plugins'")
+    expect(packageScript).toContain('...bundledComponentLayout.directories.map')
+    expect(packageScript).toContain("join(electronRoot, 'resources', `${name}.tar.gz`)")
   })
 
   test('packages a runnable MCP server in the plugin example', () => {
@@ -333,7 +341,14 @@ describe('bundled plugin resources', () => {
       expect(workflow).not.toMatch(/^\s+CSC_KEY_PASSWORD:/m)
       expect(workflow).toContain('generate-desktop-update-manifests.mjs')
       expect(workflow).toContain('plan-desktop-release.mjs')
-      expect(workflow).toContain('group: ${{ github.workflow }}')
+      const concurrencyGroup = workflow.match(/^ {2}group: (.+)$/m)?.[1].trim()
+      expect(concurrencyGroup).toContain(
+        "inputs.verification_run_id != '' || (inputs.verification_checkpoint == 'app-update-refresh' && inputs.verification_source_run_id != '' && !inputs.publish_release)"
+      )
+      expect(concurrencyGroup).toContain(
+        'github.ref, inputs.verification_run_id || inputs.verification_source_run_id)'
+      )
+      expect(concurrencyGroup).toMatch(/\|\| github\.workflow \}\}$/)
       expect(workflow).not.toContain('group: ${{ github.workflow }}-${{ github.ref }}')
       expect(workflow).not.toContain('prepare-rolling-desktop-installers.mjs')
       expect(workflow).toContain('CURRENT_SOURCE_REF')
@@ -402,7 +417,7 @@ describe('bundled plugin resources', () => {
       'utf8'
     )
 
-    expect(workflow).toMatch(/name: macOS arm64\s+runner: macos-14\s+platform: macos\s+arch: arm64/)
+    expect(workflow).toMatch(/name: macOS arm64\s+runner: macos-15\s+platform: macos\s+arch: arm64/)
     expect(workflow).toMatch(
       /name: macOS x64\s+runner: macos-15-intel\s+platform: macos\s+arch: x64/
     )
@@ -421,8 +436,14 @@ describe('bundled plugin resources', () => {
     expect(workflow).toContain('wework/test-results/desktop-e2e/')
     expect(workflow).toContain('WEWORK_ELECTRON_DEPENDENCIES_READY: "true"')
     expect(workflow).toContain('WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"')
-    expect(workflow).toContain(
-      '--parallel-segments release-package-startup,component-update,app-update-full'
+    expect(workflow).toContain('--parallel-segments release-package-startup,component-update')
+    expect(workflow).toContain('node wework/scripts/verify-release-upgrades.mjs')
+    const upgradeVerifier = readFileSync(
+      resolve(process.cwd(), 'scripts/verify-release-upgrades.mjs'),
+      'utf8'
+    )
+    expect(upgradeVerifier).toContain(
+      'diagnosticCheckpoint || upgradeVerificationCheckpoint(platform)'
     )
     expect(workflow).toContain('windows-latest')
     expect(workflow).toContain('ubuntu-latest')

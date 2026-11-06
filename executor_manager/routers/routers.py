@@ -1543,6 +1543,61 @@ async def task_heartbeat(task_id: str, http_request: Request):
     return {"status": "ok", "task_id": task_id}
 
 
+@api_router.get("/tasks/{task_id}/heartbeat")
+async def get_task_heartbeat_status(task_id: str):
+    """Report whether an executor heartbeat is currently registered.
+
+    Used by the backend stalled-task sweep to distinguish a live-but-silent
+    executor from one that vanished. Returns ``alive=false`` only when no
+    heartbeat key exists for either task or sandbox heartbeats.
+    """
+    from executor_manager.services.heartbeat_manager import (
+        HeartbeatType,
+        get_heartbeat_manager,
+    )
+
+    heartbeat_mgr = get_heartbeat_manager()
+    for heartbeat_type in (HeartbeatType.TASK, HeartbeatType.SANDBOX):
+        last_heartbeat = await heartbeat_mgr.get_last_heartbeat(task_id, heartbeat_type)
+        if last_heartbeat is not None:
+            return {
+                "task_id": task_id,
+                "alive": True,
+                "heartbeat_type": heartbeat_type.value,
+                "last_heartbeat_at": last_heartbeat,
+            }
+    return {
+        "task_id": task_id,
+        "alive": False,
+        "heartbeat_type": None,
+        "last_heartbeat_at": None,
+    }
+
+
+@api_router.get("/tasks/{task_id}/dispatch-state")
+async def get_task_dispatch_state(task_id: str):
+    """Report whether the task still has a pending queue record.
+
+    The backend uses this to avoid failing a RUNNING subtask that is merely
+    waiting behind queue backpressure and has no executor yet. ``pending=null``
+    means the state is unknown and callers must not treat it as "not queued".
+    """
+    from executor_manager.common.redis_factory import RedisClientFactory
+    from executor_manager.services.task_queue_service import PENDING_KEY_TEMPLATE
+
+    try:
+        client = RedisClientFactory.get_sync_client()
+        if client is None:
+            return {"task_id": task_id, "pending": None}
+        pending = bool(client.exists(PENDING_KEY_TEMPLATE.format(task_id=task_id)))
+        return {"task_id": task_id, "pending": pending}
+    except Exception as exc:
+        logger.warning(
+            "[TaskAPI] Failed to read dispatch state for task %s: %s", task_id, exc
+        )
+        return {"task_id": task_id, "pending": None}
+
+
 # =============================================================================
 # Workspace Archive/Restore APIs
 # =============================================================================

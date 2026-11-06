@@ -14,6 +14,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -25,6 +26,7 @@ from app.api.endpoints.openapi_responses import (
     _model_category_from_kind,
     _resolve_requested_model,
     _task_to_response_object,
+    create_response,
 )
 from app.core.security import get_password_hash
 from app.models.api_key import KEY_TYPE_PERSONAL, APIKey
@@ -35,6 +37,24 @@ from app.models.share_link import ResourceType
 from app.models.subtask import SenderType, Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
+
+
+@pytest.fixture
+def test_client(test_client: TestClient, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    """Expose the Python reference handler only inside compatibility tests."""
+    app = test_client.app
+    monkeypatch.setattr(app.router, "routes", list(app.router.routes))
+    app.add_api_route("/api/v1/responses", create_response, methods=["POST"])
+    return test_client
+
+
+def test_create_response_is_owned_by_rust(test_app) -> None:
+    assert not any(
+        isinstance(route, APIRoute)
+        and route.path == "/api/v1/responses"
+        and "POST" in route.methods
+        for route in test_app.routes
+    )
 
 
 @pytest.mark.asyncio

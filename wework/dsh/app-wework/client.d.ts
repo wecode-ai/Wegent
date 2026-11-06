@@ -45,10 +45,13 @@ export type WeworkCommandHandler = (
   invocation: WeworkCommandInvocation
 ) => unknown | Promise<unknown>
 
+// Function titles resolve when the host renders the menu, so localized labels follow language changes.
+export type WeworkMenuTitle = string | (() => string)
+
 export interface WeworkMenuContribution {
   readonly id: string
   readonly command: string
-  readonly title?: string
+  readonly title?: WeworkMenuTitle
   readonly icon?: string
   readonly group?: string
   readonly order?: number

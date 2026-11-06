@@ -63,7 +63,7 @@ pub fn resolve_value_from_source(sources: &Map<String, Value>, source_spec: &str
 }
 
 /// Python `str(value)` for the scalars the placeholders carry.
-fn python_str(value: &Value) -> String {
+pub(super) fn python_str(value: &Value) -> String {
     match value {
         Value::Null => String::new(),
         Value::Bool(flag) => if *flag { "True" } else { "False" }.to_string(),
@@ -72,6 +72,109 @@ fn python_str(value: &Value) -> String {
         // Arrays/objects would render as a Python repr; not modeled.
         Value::Array(_) | Value::Object(_) => String::new(),
     }
+}
+
+/// `_process_model_config_placeholders`: the documented reachable half. The
+/// `api_key` `${...}` is left for the credential resolver; the `default_headers`
+/// `${{...}}` sources are substituted, the empty `wegent-agent-*` headers
+/// dropped, and the non-ASCII identity values base64-encoded.
+pub(super) fn process_model_config_placeholders(
+    model_config: &mut Map<String, Value>,
+    user_id: i64,
+    user_name: &str,
+    agent_config: &Value,
+    task_id: i64,
+    team: &super::resolution::KindRow,
+) {
+    let user_info = serde_json::json!({"id": user_id, "name": user_name, "user_name": user_name});
+    let task_data = serde_json::json!({
+        "task_id": task_id,
+        "team_name": team.name,
+        "team_namespace": team.namespace,
+        "user": user_info,
+        "team": {"name": team.name, "namespace": team.namespace},
+    });
+    let mut sources: Map<String, Value> = Map::new();
+    sources.insert("agent_config".into(), agent_config.clone());
+    sources.insert("model_config".into(), Value::Object(model_config.clone()));
+    sources.insert("task_data".into(), task_data);
+    sources.insert("user".into(), user_info);
+    sources.insert(
+        "env".into(),
+        model_config
+            .get("default_headers")
+            .cloned()
+            .unwrap_or(Value::Object(Map::new())),
+    );
+
+    if let Some(api_key) = model_config.get("api_key").and_then(Value::as_str)
+        && api_key.contains("${")
+    {
+        let replaced = replace_placeholders_with_sources(api_key, &sources);
+        if !replaced.is_empty() {
+            model_config.insert("api_key".into(), Value::String(replaced));
+        }
+    }
+
+    let Some(headers) = model_config
+        .get("default_headers")
+        .and_then(Value::as_object)
+    else {
+        return;
+    };
+    let mut processed = Map::new();
+    for (key, value) in headers {
+        match value {
+            Value::String(text) if text.contains("${") => {
+                processed.insert(
+                    key.clone(),
+                    Value::String(replace_placeholders_with_sources(text, &sources)),
+                );
+            }
+            other => {
+                processed.insert(key.clone(), other.clone());
+            }
+        }
+    }
+    model_config.insert(
+        "default_headers".into(),
+        strip_and_encode_wegent_headers(processed),
+    );
+}
+
+/// `strip_empty_wegent_headers` + `encode_wegent_header_values`.
+pub(super) fn strip_and_encode_wegent_headers(headers: Map<String, Value>) -> Value {
+    const MARKER: &str = "wegent-agent-";
+    let mut result = Map::new();
+    for (key, value) in headers {
+        let identity = key.to_lowercase().contains(MARKER);
+        if identity {
+            let empty = match &value {
+                Value::Null => true,
+                Value::String(text) => text.trim().is_empty(),
+                _ => false,
+            };
+            if empty {
+                continue;
+            }
+        }
+        let value = match (&value, identity) {
+            (Value::String(text), true) => Value::String(encode_wegent_header_value(text)),
+            _ => value,
+        };
+        result.insert(key, value);
+    }
+    Value::Object(result)
+}
+
+/// `_encode_wegent_header_value`: `b64:`-prefix non-ASCII values.
+fn encode_wegent_header_value(value: &str) -> String {
+    if value.is_ascii() {
+        return value.to_string();
+    }
+    use base64::Engine;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(value.as_bytes());
+    format!("b64:{encoded}")
 }
 
 /// `_extract_model_config`'s failure: `modelConfig` has no usable `env`.
@@ -96,10 +199,10 @@ impl std::error::Error for ModelConfigError {}
 /// Produces the recorded keys in order (`api_key`, `base_url`, `model_id`,
 /// `model`, `default_headers`, `api_format`, `protocol`, `context_window`,
 /// `max_output_tokens`, `modelType`, `videoConfig`, `think_config`,
-/// `temperature`, plus the conditional `modelCapabilities`). The caller appends
-/// `model_name` / `model_namespace` (`get_model_config_for_bot`) and resolves
-/// the `api_key` placeholder through the deployment adapter and the placeholder
-/// engine.
+/// `temperature`, plus the conditional `supports_developer_role` and
+/// `modelCapabilities`). The caller appends `model_name` / `model_namespace`
+/// (`get_model_config_for_bot`) and resolves the `api_key` placeholder through
+/// the deployment adapter and the placeholder engine.
 ///
 /// Not modeled: `decrypt_api_key`, `codex_catalog_model_id`, and
 /// `imageConfig`; no recorded create case reaches them.
@@ -225,6 +328,15 @@ pub fn extract_model_config(model_spec: &Value) -> Result<Map<String, Value>, Mo
         "temperature".into(),
         env.get("temperature").cloned().unwrap_or(Value::Null),
     );
+    // `supports_developer_role` (`model_resolver.py:1210,1238-1240`): emitted
+    // only when the env value is not `None`; `false` is a legitimate value, so
+    // this must not use a truthiness check.
+    if let Some(supports) = env
+        .get("supports_developer_role")
+        .filter(|value| !value.is_null())
+    {
+        result.insert("supports_developer_role".into(), supports.clone());
+    }
     if let Some(capabilities) = model_spec
         .get("modelCapabilities")
         .filter(|value| is_non_empty_object(value))
@@ -468,6 +580,44 @@ mod tests {
             config["modelCapabilities"],
             json!({"supportsImage": true, "supportsVideo": true})
         );
+    }
+
+    /// `supports_developer_role` is emitted whenever the env value is present
+    /// and not JSON `null` (`model_resolver.py:1210,1238-1240`); `false` is a
+    /// legitimate capability value, not an absent one.
+    #[test]
+    fn extract_model_config_keeps_an_explicit_false_supports_developer_role() {
+        let spec = json!({
+            "modelConfig": {
+                "env": {
+                    "model": "claude",
+                    "api_key": "sk-x",
+                    "supports_developer_role": false,
+                },
+            },
+        });
+        let config = extract_model_config(&spec).expect("config");
+        assert_eq!(config.get("supports_developer_role"), Some(&json!(false)));
+        assert_eq!(config["supports_developer_role"], json!(false));
+
+        // A true value keeps its boolean type too.
+        let enabled = json!({
+            "modelConfig": {"env": {"model": "claude", "supports_developer_role": true}},
+        });
+        assert_eq!(
+            extract_model_config(&enabled).expect("config")["supports_developer_role"],
+            json!(true)
+        );
+
+        // An absent key, or a JSON null, must not add the field at all.
+        for env in [
+            json!({"model": "claude"}),
+            json!({"model": "claude", "supports_developer_role": null}),
+        ] {
+            let config =
+                extract_model_config(&json!({"modelConfig": {"env": env}})).expect("config");
+            assert!(!config.contains_key("supports_developer_role"));
+        }
     }
 
     #[test]

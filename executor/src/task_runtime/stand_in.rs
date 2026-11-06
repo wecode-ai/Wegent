@@ -102,6 +102,10 @@ impl LocalTaskStore {
         if value["agentId"].is_string() {
             value["agentProject"] = project;
         }
+        super::personal_stand_in::stamp_stand_in_connections(
+            &mut value,
+            before.unwrap_or(&Value::Null),
+        );
         validate_role(&value, &device)?;
         value["version"] = json!(version + 1);
         value["userId"] = json!(user_id);
@@ -120,6 +124,12 @@ impl LocalTaskStore {
         personal["executionDeviceId"] = json!(device);
         personal["userId"] = json!(user_id);
         personal["version"] = json!(personal["version"].as_i64().unwrap_or(0) + 1);
+        super::stand_in_processing::update_processing_configuration(
+            &connection,
+            user_id,
+            &previous_personal,
+            &personal,
+        )?;
         write_personal(&connection, &personal)?;
         super::stand_in_telemetry::configuration_changes(
             &connection,

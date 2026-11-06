@@ -11,11 +11,16 @@ from app.models.kind import Kind
 from app.schemas.device import DeviceCapabilitySyncResponse
 from app.schemas.installed_plugin import InstalledPlugin
 from app.services.device.capability_sync_service import (
+    DESIRED_STATE_SYNC_ATTEMPTS,
     DeviceCapabilityResolutionError,
     DeviceCapabilitySyncError,
     device_capability_sync_service,
 )
 from app.services.device.plugin_change_sync import schedule_other_devices
+from app.services.device.plugin_sync_protocol import (
+    lock_plugin_sync_state,
+    plugin_snapshot_watermark,
+)
 from app.services.device.runtime_route import resolve_runtime_route_identity
 from app.services.device_service import device_service
 from app.services.plugin_device_identity import (
@@ -299,9 +304,95 @@ async def sync_installed_plugin_on_device(
     installed_id: int,
     previous: DeviceCapabilitySyncResponse | None = None,
 ) -> DeviceCapabilitySyncResponse | None:
-    """Send current plugin state even when its package is already installed."""
+    """Finish the requesting device's sync with a persisted, current ACK."""
     if not device_id:
         return previous
+    result = previous
+    for attempt in range(1, DESIRED_STATE_SYNC_ATTEMPTS + 1):
+        result = await _sync_installed_plugin_once(
+            db,
+            user_id=user_id,
+            device_id=device_id,
+            installed_id=installed_id,
+            previous=previous,
+        )
+        if result is None or not result.success:
+            return result
+        try:
+            superseded = await run_plugin_operation(
+                _plugin_ack_needs_reconciliation,
+                user_id=user_id,
+                device_id=device_id,
+                installed_id=installed_id,
+                response=result,
+            )
+        except PluginWriteError as exc:
+            return deferred_plugin_sync(
+                exc,
+                user_id=user_id,
+                device_id=device_id,
+                stage="plugin_ack",
+                previous=result,
+            )
+        if not superseded:
+            return result
+        logger.info(
+            "Plugin ACK superseded before persistence; synchronizing current state: "
+            "user_id=%s device_id=%s installed_id=%s attempt=%s",
+            user_id,
+            device_id,
+            installed_id,
+            attempt,
+        )
+        previous = result
+    return deferred_plugin_sync(
+        PluginWriteError("plugin_write_conflict"),
+        user_id=user_id,
+        device_id=device_id,
+        stage="plugin_ack",
+        previous=result,
+    )
+
+
+def _plugin_ack_needs_reconciliation(
+    db: Session,
+    *,
+    user_id: int,
+    device_id: str,
+    installed_id: int,
+    response: DeviceCapabilitySyncResponse,
+) -> bool:
+    """A newer sent intent fences old ACKs even for an identical package."""
+    if not _needs_device_install(
+        db,
+        user_id=user_id,
+        device_id=device_id,
+        installed_id=installed_id,
+        manual_retry=False,
+    ):
+        return False
+    canonical_id = plugin_device_id(db, user_id, device_id)
+    for result in response.results:
+        snapshot = result.desired_plugin_snapshot
+        if (
+            snapshot is None
+            or plugin_device_id(db, user_id, result.device_id) != canonical_id
+        ):
+            continue
+        state = lock_plugin_sync_state(db, user_id)
+        generation = snapshot["plugin_sync"]["generation"]
+        return generation < plugin_snapshot_watermark(state, canonical_id, installed_id)
+    return False
+
+
+async def _sync_installed_plugin_once(
+    db: Session,
+    *,
+    user_id: int,
+    device_id: str,
+    installed_id: int,
+    previous: DeviceCapabilitySyncResponse | None,
+) -> DeviceCapabilitySyncResponse | None:
     try:
         merge_sync = (
             await device_capability_sync_service.sync_installed_plugin_to_device_result(
@@ -327,7 +418,15 @@ async def sync_installed_plugin_on_device(
             device_id,
             installed_id,
         )
-        return previous
+        if previous is None:
+            return None
+        return deferred_plugin_sync(
+            PluginWriteError("plugin_device_sync_failed"),
+            user_id=user_id,
+            device_id=device_id,
+            previous=previous,
+            stage="snapshot",
+        )
     finally:
         db.close()
     return await record_sync_response(

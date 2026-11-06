@@ -10,12 +10,14 @@
 //! the deployment's cached reader contract: `kind:v2:idx:*` index keys
 //! resolve to resource ids, `kind:v2:data:{kind}:{id}` holds the JSON
 //! document, and `__NULL__` is a cached negative index.
-use brz_mysql::{FromMysqlRow, Mysql, MysqlArgs, MysqlResult};
+use brz_mysql::{FromMysqlRow, Mysql, MysqlResult, MysqlRow};
 use brz_redis::{Redis, RedisBytes};
 use serde_json::Value;
 
 use super::error::ApiError;
 use crate::json_compat::{python_json_string, python_json_value};
+use crate::request_sql::{RequestSql, RouteKey, StatementArgs};
+use crate::sql_support::StatementArg;
 
 /// One `kinds` row. The projection mirrors the source SQLAlchemy `kinds`
 /// column list (labeled `kinds_<column>`) so the prepared statement matches
@@ -55,6 +57,35 @@ pub(crate) struct KindRecord {
 pub(crate) struct KindStore<'a, M: Mysql, R: Redis> {
     pub(crate) mysql: &'a M,
     pub(crate) redis: Option<&'a R>,
+}
+
+/// The SQL handle behind a cached-reader miss.
+///
+/// The pool entry keeps the non-request callers on their own connection. The
+/// request entry runs the identical statement on the caller's request
+/// transaction, so a miss joins the transaction the source issued its reads
+/// on instead of taking a second pooled connection. Both entries return raw
+/// rows; the cache decision and the statement text stay in one place.
+pub(crate) enum KindSql<'a, M: Mysql> {
+    Pool(&'a M),
+    Request(&'a mut dyn RequestSql),
+}
+
+impl<M: Mysql> KindSql<'_, M> {
+    /// One optional row on this handle.
+    async fn fetch_optional(
+        &mut self,
+        statement: String,
+        arguments: StatementArgs,
+    ) -> MysqlResult<Option<MysqlRow>> {
+        match self {
+            Self::Pool(mysql) => Mysql::fetch_optional(*mysql, statement, arguments).await,
+            Self::Request(sql) => {
+                sql.fetch_optional_row(RouteKey::None, &statement, arguments)
+                    .await
+            }
+        }
+    }
 }
 
 /// `PUBLIC_FALLBACK_KINDS` from source `app.services.readers.kinds`: kinds
@@ -158,35 +189,41 @@ pub(crate) async fn set_cached_index<R: Redis>(redis: &R, idx_key: &str, resourc
 }
 
 impl<'a, M: Mysql, R: Redis> KindStore<'a, M, R> {
-    /// `kindReader.get_public`: `user_id = 0` in namespace `default`.
-    pub(crate) async fn get_public(
+    /// The pool handle the non-request callers read on.
+    fn pool_sql(&self) -> KindSql<'_, M> {
+        KindSql::Pool(self.mysql)
+    }
+
+    /// `kindReader.get_public`: `user_id = 0` in namespace `default`. The
+    /// index lookup is shared by the pool and request entries.
+    async fn get_public_with(
         &self,
+        sql: &mut KindSql<'_, M>,
         kind: &str,
         namespace: &str,
         name: &str,
     ) -> Result<Option<KindRecord>, ApiError> {
         let idx_key = format!("kind:v2:idx:public:{kind}:{namespace}:{name}");
-        let index = self.cached_by_index(&idx_key, kind).await;
-        self.resolve_by_index(&idx_key, kind, namespace, name, index, IndexScope::Public)
+        self.resolve_by_index(sql, &idx_key, kind, namespace, name, IndexScope::Public)
             .await
     }
 
     /// `kindReader.get_personal`: owned by `user_id` in namespace `default`.
-    pub(crate) async fn get_personal(
+    async fn get_personal_with(
         &self,
+        sql: &mut KindSql<'_, M>,
         user_id: i64,
         kind: &str,
         namespace: &str,
         name: &str,
     ) -> Result<Option<KindRecord>, ApiError> {
         let idx_key = format!("kind:v2:idx:personal:{kind}:{user_id}:{namespace}:{name}");
-        let index = self.cached_by_index(&idx_key, kind).await;
         self.resolve_by_index(
+            sql,
             &idx_key,
             kind,
             namespace,
             name,
-            index,
             IndexScope::Personal(user_id),
         )
         .await
@@ -204,17 +241,47 @@ impl<'a, M: Mysql, R: Redis> KindStore<'a, M, R> {
         namespace: &str,
         name: &str,
     ) -> Result<Option<KindRecord>, ApiError> {
+        let mut sql = self.pool_sql();
+        self.get_by_name_and_namespace_with(&mut sql, user_id, kind, namespace, name)
+            .await
+    }
+
+    /// [`get_by_name_and_namespace`](Self::get_by_name_and_namespace) on the
+    /// caller's request handle.
+    pub(crate) async fn get_by_name_and_namespace_on(
+        &self,
+        sql: &mut dyn RequestSql,
+        user_id: i64,
+        kind: &str,
+        namespace: &str,
+        name: &str,
+    ) -> Result<Option<KindRecord>, ApiError> {
+        let mut sql = KindSql::Request(sql);
+        self.get_by_name_and_namespace_with(&mut sql, user_id, kind, namespace, name)
+            .await
+    }
+
+    async fn get_by_name_and_namespace_with(
+        &self,
+        sql: &mut KindSql<'_, M>,
+        user_id: i64,
+        kind: &str,
+        namespace: &str,
+        name: &str,
+    ) -> Result<Option<KindRecord>, ApiError> {
         if namespace != "default" {
             // Group resource: `get_group`.
-            return self.get_group(kind, namespace, name).await;
+            return self.get_group_with(sql, kind, namespace, name).await;
         }
         if user_id != 0
-            && let Some(personal) = self.get_personal(user_id, kind, namespace, name).await?
+            && let Some(personal) = self
+                .get_personal_with(sql, user_id, kind, namespace, name)
+                .await?
         {
             return Ok(Some(personal));
         }
         if public_fallback_kind(kind) {
-            return self.get_public(kind, namespace, name).await;
+            return self.get_public_with(sql, kind, namespace, name).await;
         }
         Ok(None)
     }
@@ -226,9 +293,19 @@ impl<'a, M: Mysql, R: Redis> KindStore<'a, M, R> {
         namespace: &str,
         name: &str,
     ) -> Result<Option<KindRecord>, ApiError> {
+        let mut sql = self.pool_sql();
+        self.get_group_with(&mut sql, kind, namespace, name).await
+    }
+
+    async fn get_group_with(
+        &self,
+        sql: &mut KindSql<'_, M>,
+        kind: &str,
+        namespace: &str,
+        name: &str,
+    ) -> Result<Option<KindRecord>, ApiError> {
         let idx_key = format!("kind:v2:idx:group:{kind}:{namespace}:{name}");
-        let index = self.cached_by_index(&idx_key, kind).await;
-        self.resolve_by_index(&idx_key, kind, namespace, name, index, IndexScope::Group)
+        self.resolve_by_index(sql, &idx_key, kind, namespace, name, IndexScope::Group)
             .await
     }
 
@@ -247,12 +324,44 @@ impl<'a, M: Mysql, R: Redis> KindStore<'a, M, R> {
         namespace: &str,
         name: &str,
     ) -> MysqlResult<Option<KindRecord>> {
+        let mut sql = self.pool_sql();
+        self.get_personal_team_with(&mut sql, user_id, namespace, name)
+            .await
+    }
+
+    /// [`get_personal_team`](Self::get_personal_team) on the caller's request
+    /// handle.
+    pub(crate) async fn get_personal_team_on(
+        &self,
+        sql: &mut dyn RequestSql,
+        user_id: i64,
+        namespace: &str,
+        name: &str,
+    ) -> MysqlResult<Option<KindRecord>> {
+        let mut sql = KindSql::Request(sql);
+        self.get_personal_team_with(&mut sql, user_id, namespace, name)
+            .await
+    }
+
+    async fn get_personal_team_with(
+        &self,
+        sql: &mut KindSql<'_, M>,
+        user_id: i64,
+        namespace: &str,
+        name: &str,
+    ) -> MysqlResult<Option<KindRecord>> {
         let idx_key = format!("kind:v2:idx:personal:Team:{user_id}:{namespace}:{name}");
         self.cached_team_by_index(
+            sql,
             &idx_key,
             "kinds.user_id = ? AND kinds.kind = ? AND kinds.namespace = ? \
              AND kinds.name = ? AND kinds.is_active = true",
-            (user_id, "Team", namespace, name),
+            vec![
+                StatementArg::Int(user_id),
+                StatementArg::Str("Team".to_owned()),
+                StatementArg::Str(namespace.to_owned()),
+                StatementArg::Str(name.to_owned()),
+            ],
         )
         .await
     }
@@ -264,12 +373,39 @@ impl<'a, M: Mysql, R: Redis> KindStore<'a, M, R> {
         namespace: &str,
         name: &str,
     ) -> MysqlResult<Option<KindRecord>> {
+        let mut sql = self.pool_sql();
+        self.get_public_team_with(&mut sql, namespace, name).await
+    }
+
+    /// [`get_public_team`](Self::get_public_team) on the caller's request
+    /// handle.
+    pub(crate) async fn get_public_team_on(
+        &self,
+        sql: &mut dyn RequestSql,
+        namespace: &str,
+        name: &str,
+    ) -> MysqlResult<Option<KindRecord>> {
+        let mut sql = KindSql::Request(sql);
+        self.get_public_team_with(&mut sql, namespace, name).await
+    }
+
+    async fn get_public_team_with(
+        &self,
+        sql: &mut KindSql<'_, M>,
+        namespace: &str,
+        name: &str,
+    ) -> MysqlResult<Option<KindRecord>> {
         let idx_key = format!("kind:v2:idx:public:Team:{namespace}:{name}");
         self.cached_team_by_index(
+            sql,
             &idx_key,
             "kinds.user_id = 0 AND kinds.kind = ? AND kinds.namespace = ? \
              AND kinds.name = ? AND kinds.is_active = true",
-            ("Team", namespace, name),
+            vec![
+                StatementArg::Str("Team".to_owned()),
+                StatementArg::Str(namespace.to_owned()),
+                StatementArg::Str(name.to_owned()),
+            ],
         )
         .await
     }
@@ -282,12 +418,39 @@ impl<'a, M: Mysql, R: Redis> KindStore<'a, M, R> {
         namespace: &str,
         name: &str,
     ) -> MysqlResult<Option<KindRecord>> {
+        let mut sql = self.pool_sql();
+        self.get_group_team_with(&mut sql, namespace, name).await
+    }
+
+    /// [`get_group_team`](Self::get_group_team) on the caller's request
+    /// handle: a cache miss runs its `kinds` read on `sql`.
+    pub(crate) async fn get_group_team_on(
+        &self,
+        sql: &mut dyn RequestSql,
+        namespace: &str,
+        name: &str,
+    ) -> MysqlResult<Option<KindRecord>> {
+        let mut sql = KindSql::Request(sql);
+        self.get_group_team_with(&mut sql, namespace, name).await
+    }
+
+    async fn get_group_team_with(
+        &self,
+        sql: &mut KindSql<'_, M>,
+        namespace: &str,
+        name: &str,
+    ) -> MysqlResult<Option<KindRecord>> {
         let idx_key = format!("kind:v2:idx:group:Team:{namespace}:{name}");
         self.cached_team_by_index(
+            sql,
             &idx_key,
             "kinds.kind = ? AND kinds.namespace = ? \
              AND kinds.name = ? AND kinds.is_active = true",
-            ("Team", namespace, name),
+            vec![
+                StatementArg::Str("Team".to_owned()),
+                StatementArg::Str(namespace.to_owned()),
+                StatementArg::Str(name.to_owned()),
+            ],
         )
         .await
     }
@@ -297,16 +460,17 @@ impl<'a, M: Mysql, R: Redis> KindStore<'a, M, R> {
     /// and writes the id (or the negative marker) and the row back.
     async fn cached_team_by_index(
         &self,
+        sql: &mut KindSql<'_, M>,
         idx_key: &str,
         predicate: &str,
-        arguments: impl MysqlArgs,
+        arguments: StatementArgs,
     ) -> MysqlResult<Option<KindRecord>> {
         match self.cached_by_index(idx_key, "Team").await {
             IndexLookup::Hit(record) => return Ok(Some(record)),
             IndexLookup::Negative => return Ok(None),
             IndexLookup::Miss => {}
         }
-        let record = self.query_kinds(predicate, arguments).await?;
+        let record = self.query_kinds(sql, predicate, arguments).await?;
         match &record {
             Some(found) => {
                 self.set_data("Team", found).await;
@@ -323,14 +487,14 @@ impl<'a, M: Mysql, R: Redis> KindStore<'a, M, R> {
     /// `__NULL__` marker when the row is absent).
     async fn resolve_by_index(
         &self,
+        sql: &mut KindSql<'_, M>,
         idx_key: &str,
         kind: &str,
         namespace: &str,
         name: &str,
-        index: IndexLookup,
         scope: IndexScope,
     ) -> Result<Option<KindRecord>, ApiError> {
-        match index {
+        match self.cached_by_index(idx_key, kind).await {
             IndexLookup::Hit(record) => return Ok(Some(record)),
             IndexLookup::Negative => return Ok(None),
             IndexLookup::Miss => {}
@@ -338,25 +502,41 @@ impl<'a, M: Mysql, R: Redis> KindStore<'a, M, R> {
         let record = match scope {
             IndexScope::Public => {
                 self.fetch_where(
+                    sql,
                     "kinds.user_id = 0 AND kinds.kind = ? AND kinds.namespace = ? \
                      AND kinds.name = ? AND kinds.is_active = true",
-                    (kind, namespace, name),
+                    vec![
+                        StatementArg::Str(kind.to_owned()),
+                        StatementArg::Str(namespace.to_owned()),
+                        StatementArg::Str(name.to_owned()),
+                    ],
                 )
                 .await?
             }
             IndexScope::Personal(user_id) => {
                 self.fetch_where(
+                    sql,
                     "kinds.user_id = ? AND kinds.kind = ? AND kinds.namespace = ? \
                      AND kinds.name = ? AND kinds.is_active = true",
-                    (user_id, kind, namespace, name),
+                    vec![
+                        StatementArg::Int(user_id),
+                        StatementArg::Str(kind.to_owned()),
+                        StatementArg::Str(namespace.to_owned()),
+                        StatementArg::Str(name.to_owned()),
+                    ],
                 )
                 .await?
             }
             IndexScope::Group => {
                 self.fetch_where(
+                    sql,
                     "kinds.kind = ? AND kinds.namespace = ? AND kinds.name = ? \
                      AND kinds.is_active = true",
-                    (kind, namespace, name),
+                    vec![
+                        StatementArg::Str(kind.to_owned()),
+                        StatementArg::Str(namespace.to_owned()),
+                        StatementArg::Str(name.to_owned()),
+                    ],
                 )
                 .await?
             }
@@ -401,10 +581,16 @@ impl<'a, M: Mysql, R: Redis> KindStore<'a, M, R> {
         namespace: &str,
         name: &str,
     ) -> Result<Option<KindRecord>, ApiError> {
+        let mut sql = self.pool_sql();
         self.fetch_where(
+            &mut sql,
             "kinds.user_id = ? AND kinds.kind = 'Team' AND kinds.namespace = ? \
              AND kinds.name = ? AND kinds.is_active = true",
-            (owner_user_id, namespace, name),
+            vec![
+                StatementArg::Int(owner_user_id),
+                StatementArg::Str(namespace.to_owned()),
+                StatementArg::Str(name.to_owned()),
+            ],
         )
         .await
     }
@@ -478,8 +664,12 @@ impl<'a, M: Mysql, R: Redis> KindStore<'a, M, R> {
         }
         let record = self
             .fetch_where(
+                &mut self.pool_sql(),
                 "kinds.id = ? AND kinds.kind = ? AND kinds.is_active = true",
-                (resource_id, kind),
+                vec![
+                    StatementArg::Int(resource_id),
+                    StatementArg::Str(kind.to_owned()),
+                ],
             )
             .await?;
         if let Some(found) = &record {
@@ -490,10 +680,11 @@ impl<'a, M: Mysql, R: Redis> KindStore<'a, M, R> {
 
     async fn fetch_where(
         &self,
+        sql: &mut KindSql<'_, M>,
         predicate: &str,
-        arguments: impl MysqlArgs,
+        arguments: StatementArgs,
     ) -> Result<Option<KindRecord>, ApiError> {
-        self.query_kinds(predicate, arguments)
+        self.query_kinds(sql, predicate, arguments)
             .await
             .map_err(kind_query_failed)
     }
@@ -503,12 +694,13 @@ impl<'a, M: Mysql, R: Redis> KindStore<'a, M, R> {
     /// (`KindCacheStore`) reuse the same projection and predicate form.
     async fn query_kinds(
         &self,
+        sql: &mut KindSql<'_, M>,
         predicate: &str,
-        arguments: impl MysqlArgs,
+        arguments: StatementArgs,
     ) -> MysqlResult<Option<KindRecord>> {
-        self.mysql
+        let row = sql
             .fetch_optional(
-                &format!(
+                format!(
                     "SELECT kinds.id AS kinds_id, kinds.user_id AS kinds_user_id, \
                      kinds.kind AS kinds_kind, kinds.name AS kinds_name, \
                      kinds.namespace AS kinds_namespace, kinds.json AS kinds_json, \
@@ -520,7 +712,8 @@ impl<'a, M: Mysql, R: Redis> KindStore<'a, M, R> {
                 ),
                 arguments,
             )
-            .await
+            .await?;
+        row.map(KindRecord::from_mysql_row).transpose()
     }
 
     /// Index read returning the decoded id, a cached negative (`__NULL__`),

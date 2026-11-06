@@ -20,6 +20,7 @@ import {
   openProjectAgentCreator,
   selectCloudAgentModel,
   selectCollaborationDomain,
+  selectCollaborationProjectView,
   waitForTestIdByText,
 } from '../modules/workspace-flows.mjs'
 
@@ -219,9 +220,7 @@ async function createWorkspaceAndProject(control, request, uiTimeoutMs) {
     uiTimeoutMs
   )
   assert.equal(project.task_provider, 'local', '端上创建的项目没有使用本地看板数据源')
-  await control.command('waitFor', scoped('[data-testid="collaboration-tab-manage"]'), {
-    timeoutMs: uiTimeoutMs,
-  })
+  await selectCollaborationProjectView(control, CONTENT, 'manage', uiTimeoutMs)
   return { project }
 }
 
@@ -320,7 +319,7 @@ async function createGroup(control, request, projectId, ownerId, uiTimeoutMs) {
 }
 
 async function createAndAssignIssue(control, request, projectId, uiTimeoutMs) {
-  await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+  await selectCollaborationProjectView(control, CONTENT, 'board')
   await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-issue-create"]'))
   await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), { value: ISSUE })
   await control.command('fill', scoped('[data-testid="cloud-todo-detail-description"]'), {
@@ -335,7 +334,11 @@ async function createAndAssignIssue(control, request, projectId, uiTimeoutMs) {
     '端上创建根 Issue 未持久化',
     uiTimeoutMs
   )
-  await control.command('click', scoped('[data-testid="cloud-todo-detail-assignee"]'))
+  await control.command('waitFor', scoped('[data-testid="collaboration-issue-detail"]'), {
+    text: ISSUE,
+    timeoutMs: uiTimeoutMs,
+  })
+  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-detail-assignee"]'))
   const groupOption = await waitForTestIdByText(
     control,
     'body',
@@ -344,14 +347,11 @@ async function createAndAssignIssue(control, request, projectId, uiTimeoutMs) {
     uiTimeoutMs
   )
   await control.command('click', `[data-testid="${groupOption}"]`)
-  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
-    timeoutMs: uiTimeoutMs,
-  })
   return issue
 }
 
 async function authorizeRemoteEnvironment(control, remoteDevice, timeoutMs) {
-  await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
+  await selectCollaborationProjectView(control, CONTENT, 'manage')
   await control.command(
     'click',
     scoped('[data-testid="collaboration-project-settings-environments"]')
@@ -629,7 +629,7 @@ export function createDesktopScenario({
       assert.ok(remoteDevice?.id, 'The real remote Docker Executor device is unavailable')
       await authorizeRemoteEnvironment(control, remoteDevice, modelResponseTimeoutMs)
 
-      await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
+      await selectCollaborationProjectView(control, CONTENT, 'manage')
 
       await control.command(
         'click',

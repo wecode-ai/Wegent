@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { readFile, readdir, stat, rm, writeFile, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
@@ -9,12 +10,25 @@ import {
 
 export const INSTALLATION_ID = 'dsh-e2e-smoke'
 export const IMPORTED_INSTALLATION_ID = 'dsh-e2e-smoke-imported'
+export const LEGACY_INSTALLATION_ID = 'dsh-e2e-legacy'
 export const CREATED_INSTALLATION_ID = 'dsh-e2e-created'
 export const APP_ROUTE = `/app/harness-${INSTALLATION_ID}`
 export const MODEL_LABEL = 'Desktop E2E Chat'
 export const RECIPIENT_NAME = 'smart-app-e2e-recipient'
 export const STRANGER_NAME = 'smart-app-e2e-stranger'
 export const USER_PASSWORD = 'smart-app-e2e-password'
+export const SMART_APP_ICON_DATA_URL =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
+export const SMART_APP_ALT_ICON_DATA_URL =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII='
+export const SMART_APP_SCREENSHOT_DATA_URL =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+export const SMART_APP_ALT_SCREENSHOT_DATA_URL =
+  'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPDs0NDT/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q=='
+// Exercise large-entry EOF/backpressure in the real packaged Electron host.
+export const ZIP_BACKPRESSURE_CONTENT = Array.from({ length: 4096 }, (_, index) =>
+  createHash('sha256').update(String(index)).digest('hex').repeat(4)
+).join('\n')
 
 export async function requestJson(baseUrl, token, pathname, options = {}) {
   const response = await fetch(`${baseUrl}${pathname}`, {
@@ -129,11 +143,19 @@ export async function createHarnessPackage(
   resultDir,
   installationId,
   dshVersion,
-  { archiveName = installationId, version = '0.1.0' } = {}
+  {
+    archiveName = installationId,
+    version = '0.1.0',
+    cordisPatch = '- id: ui-model-selection\n  config:\n    provider: fixture\n    model: fixture\n',
+    deliveryFiles = {},
+  } = {}
 ) {
   const packagePath = join(resultDir, `${archiveName}.zip`)
   const root = `harness-e2e-plugin-${installationId}`
   await createZipFixture(packagePath, {
+    ...Object.fromEntries(
+      Object.entries(deliveryFiles).map(([name, bytes]) => [`${root}/${name}`, bytes])
+    ),
     [`${root}/PLUGIN.md`]: '# Harness desktop E2E\n',
     [`${root}/INSTALL.zh-CN.md`]: '# 安装\n',
     [`${root}/plugin-manifest.json`]: JSON.stringify(
@@ -173,8 +195,8 @@ export async function createHarnessPackage(
       2
     ),
     [`${root}/packages/bundle/smoke-app/lib/index.js`]: 'export default {}\n',
-    [`${root}/packages/bundle/smoke-app/cordis.patch.yml`]:
-      '- id: ui-model-selection\n  config:\n    provider: fixture\n    model: fixture\n',
+    [`${root}/packages/bundle/smoke-app/lib/zip-backpressure.txt`]: ZIP_BACKPRESSURE_CONTENT,
+    [`${root}/packages/bundle/smoke-app/cordis.patch.yml`]: cordisPatch,
   })
   return packagePath
 }

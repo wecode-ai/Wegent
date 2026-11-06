@@ -14,6 +14,40 @@ use brz_mysql::MysqlRow;
 // Leave ample headroom below MySQL's 65,535 prepared-statement parameters.
 const SUBTASK_IDS_PER_BATCH: usize = 1_000;
 
+/// Preserve MySQL's ascending message order without sorting large JSON there.
+/// SQL NULL sorts before a message id; equal ids keep their returned order.
+pub fn order_assistant_subtasks(rows: Vec<MysqlRow>) -> brz_mysql::MysqlResult<Vec<MysqlRow>> {
+    let index = crate::task_store_statements::subtask_column_index("message_id")
+        .expect("the subtask projection contains message_id");
+    order_subtask_rows(rows, |row| row.get_at::<Option<i64>>(index))
+}
+
+/// Restore the task-detail ordering, including SQL NULLs before non-NULL keys.
+pub fn order_subtasks_by_message(rows: Vec<MysqlRow>) -> brz_mysql::MysqlResult<Vec<MysqlRow>> {
+    let message = crate::task_store_statements::subtask_column_index("message_id")
+        .expect("the subtask projection contains message_id");
+    let created = crate::task_store_statements::subtask_column_index("created_at")
+        .expect("the subtask projection contains created_at");
+    order_subtask_rows(rows, |row| {
+        Ok((
+            row.get_at::<Option<i64>>(message)?,
+            row.get_at::<Option<chrono::NaiveDateTime>>(created)?,
+        ))
+    })
+}
+
+fn order_subtask_rows<K: Ord>(
+    rows: Vec<MysqlRow>,
+    mut key: impl FnMut(&MysqlRow) -> brz_mysql::MysqlResult<K>,
+) -> brz_mysql::MysqlResult<Vec<MysqlRow>> {
+    let mut keyed = rows
+        .into_iter()
+        .map(|row| Ok((key(&row)?, row)))
+        .collect::<brz_mysql::MysqlResult<Vec<_>>>()?;
+    keyed.sort_by(|(left, _), (right, _)| left.cmp(right));
+    Ok(keyed.into_iter().map(|(_, row)| row).collect())
+}
+
 /// Read the complete owner-filtered conversation without sorting large JSON
 /// columns. All reads use the same handle, including any deployment route.
 pub async fn ordered_subtasks_for_user<M: brz_mysql::Mysql>(
@@ -188,42 +222,6 @@ pub struct OwnedTaskPage {
     pub ids: Vec<i64>,
 }
 
-/// `task_store.list_personal_task_candidates` for the single-table store: the
-/// keyset-paged candidate rows for one owner, read from the `tasks` table.
-pub async fn personal_task_candidates<M: brz_mysql::Mysql>(
-    mysql: &M,
-    user_id: i64,
-    limit: i64,
-    cursor: Option<(chrono::NaiveDateTime, i64)>,
-    client_origin: Option<&str>,
-) -> brz_mysql::MysqlResult<Vec<MysqlRow>> {
-    use crate::task_store_statements::{
-        StatementArg, TASKS_TABLE, personal_task_candidates_statement,
-    };
-    // Argument order follows the predicate order: `user_id`, the optional
-    // origin, the optional keyset (`created_at` twice, then `id`), `limit`.
-    let mut args: Vec<StatementArg> = vec![StatementArg::Int(user_id)];
-    if let Some(origin) = client_origin {
-        args.push(StatementArg::Str(origin.to_string()));
-    }
-    if let Some((created_at, id)) = cursor {
-        args.push(StatementArg::DateTime(created_at));
-        args.push(StatementArg::DateTime(created_at));
-        args.push(StatementArg::Int(id));
-    }
-    args.push(StatementArg::Int(limit));
-    mysql
-        .fetch_all(
-            personal_task_candidates_statement(
-                TASKS_TABLE,
-                client_origin.is_some(),
-                cursor.is_some(),
-            ),
-            args,
-        )
-        .await
-}
-
 /// `task_store.list_owned_task_ids`: the distinct count plus one page of the
 /// owner's task ids.
 pub async fn owned_task_id_page<M: brz_mysql::Mysql>(
@@ -375,7 +373,8 @@ pub async fn ordered_subtasks_by_task<M: brz_mysql::Mysql>(
             crate::task_store_statements::subtasks_by_message_ordered_statement(table),
             (task_id,),
         )
-        .await?;
+        .await
+        .and_then(order_subtasks_by_message)?;
     Ok(SubtaskListing {
         rows,
         contexts: None,
@@ -385,3 +384,23 @@ pub async fn ordered_subtasks_by_task<M: brz_mysql::Mysql>(
 #[cfg(test)]
 #[path = "task_store_listing_tests.rs"]
 mod tests;
+
+/// [`ordered_subtasks_by_task`] on the caller's request transaction.
+pub async fn ordered_subtasks_by_task_on(
+    sql: &mut dyn crate::request_sql::RequestSql,
+    table: &str,
+    task_id: i64,
+) -> brz_mysql::MysqlResult<SubtaskListing> {
+    let rows = sql
+        .fetch_all_rows(
+            crate::request_sql::RouteKey::Task(task_id as u64),
+            &crate::task_store_statements::subtasks_by_message_ordered_statement(table),
+            vec![crate::task_store_statements::StatementArg::Int(task_id)],
+        )
+        .await
+        .and_then(order_subtasks_by_message)?;
+    Ok(SubtaskListing {
+        rows,
+        contexts: None,
+    })
+}

@@ -16,7 +16,7 @@ use serde_json::{Map, Value, json};
 
 use super::event::ExecutionEvent;
 use super::session;
-use super::socketio::{publish_emit, publish_emit_in_room};
+use super::socketio::{publish_chat_start, publish_emit, publish_emit_in_room};
 
 const TASK_STREAMING_ACTIVITY_TOUCH_INTERVAL: Duration = Duration::from_secs(1);
 
@@ -39,6 +39,13 @@ enum StreamContentType {
     Thinking,
 }
 
+struct BufferedStreamContent {
+    content_type: StreamContentType,
+    content: String,
+    block_id: Option<String>,
+    block_offset: Option<u64>,
+}
+
 /// The wrapper that persists stream state before forwarding to Socket.IO.
 ///
 /// The emitter owns its Redis handle so a response-body stream can retain it
@@ -47,7 +54,7 @@ pub(crate) struct StatusUpdatingEmitter<R: Redis> {
     redis: R,
     task_id: i64,
     subtask_id: i64,
-    buffer: Vec<(StreamContentType, String)>,
+    buffer: Vec<BufferedStreamContent>,
     first_buffered_at: Option<Instant>,
     last_activity_touch: Option<Instant>,
 }
@@ -64,7 +71,15 @@ impl<R: Redis> StatusUpdatingEmitter<R> {
         }
     }
 
-    fn buffer_content(&mut self, content_type: StreamContentType, content: &str) {
+    /// Batch matching content types and provider IDs without crossing an explicit
+    /// Unicode code-point offset gap or merging overlapping callback replays.
+    fn buffer_content(
+        &mut self,
+        content_type: StreamContentType,
+        content: &str,
+        block_id: Option<&str>,
+        block_offset: Option<u64>,
+    ) {
         if content.is_empty() {
             return;
         }
@@ -72,10 +87,23 @@ impl<R: Redis> StatusUpdatingEmitter<R> {
             self.first_buffered_at = Some(Instant::now());
         }
         match self.buffer.last_mut() {
-            Some((last_type, buffered)) if *last_type == content_type => {
-                buffered.push_str(content);
+            Some(last)
+                if last.content_type == content_type
+                    && last.block_id.as_deref() == block_id
+                    && block_offset.is_none_or(|offset| {
+                        last.block_offset.and_then(|previous| {
+                            previous.checked_add(last.content.chars().count() as u64)
+                        }) == Some(offset)
+                    }) =>
+            {
+                last.content.push_str(content);
             }
-            _ => self.buffer.push((content_type, content.to_string())),
+            _ => self.buffer.push(BufferedStreamContent {
+                content_type,
+                content: content.to_string(),
+                block_id: block_id.map(str::to_string),
+                block_offset,
+            }),
         }
     }
 
@@ -104,19 +132,33 @@ impl<R: Redis> StatusUpdatingEmitter<R> {
         self.flush_stream_storage().await;
     }
 
+    /// Persist buffered items in arrival order, retaining each identified text
+    /// block's starting offset so Redis can discard only its replayed prefix.
     async fn flush_stream_storage(&mut self) {
         self.first_buffered_at = None;
         let pending = std::mem::take(&mut self.buffer);
         if pending.is_empty() {
             return;
         }
-        for (content_type, content) in pending {
-            let result = match content_type {
-                StreamContentType::Text => {
-                    session::add_text_content(&self.redis, self.subtask_id, &content).await
-                }
+        for item in pending {
+            let result = match item.content_type {
+                StreamContentType::Text => match item.block_id.as_deref() {
+                    Some(block_id) => {
+                        session::add_identified_text_content(
+                            &self.redis,
+                            self.subtask_id,
+                            &item.content,
+                            block_id,
+                            item.block_offset,
+                        )
+                        .await
+                    }
+                    None => {
+                        session::add_text_content(&self.redis, self.subtask_id, &item.content).await
+                    }
+                },
                 StreamContentType::Thinking => {
-                    session::add_thinking_content(&self.redis, self.subtask_id, &content).await
+                    session::add_thinking_content(&self.redis, self.subtask_id, &item.content).await
                 }
             };
             if let Err(error) = result {
@@ -166,6 +208,8 @@ impl<R: Redis> StatusUpdatingEmitter<R> {
         self.persist(event).await
     }
 
+    /// Buffer body deltas with their optional provider identity, then flush them
+    /// before collecting a boundary event's completed block snapshot.
     async fn persist(&mut self, event: &mut ExecutionEvent) -> RedisResult<()> {
         match event.event_type.as_str() {
             "start" => {
@@ -178,9 +222,18 @@ impl<R: Redis> StatusUpdatingEmitter<R> {
                 )
                 .await?;
             }
-            "chunk" => self.buffer_content(StreamContentType::Text, &event.content),
+            "chunk" => self.buffer_content(
+                StreamContentType::Text,
+                &event.content,
+                event
+                    .data
+                    .get("block_id")
+                    .and_then(Value::as_str)
+                    .filter(|id| !id.is_empty()),
+                event.data.get("block_offset").and_then(Value::as_u64),
+            ),
             "thinking" => {
-                self.buffer_content(StreamContentType::Thinking, &event.content);
+                self.buffer_content(StreamContentType::Thinking, &event.content, None, None);
             }
             kind if STREAM_BOUNDARY_EVENT_TYPES.contains(&kind) => {
                 self.flush_stream_storage().await;
@@ -276,7 +329,7 @@ impl<R: Redis> StatusUpdatingEmitter<R> {
                         Some(if failed { "error" } else { "done" }),
                         event.tool_output.as_ref(),
                         event.tool_input.as_ref(),
-                        None,
+                        event.data.get("render_payload"),
                         tool_protocol,
                         server_label,
                     )
@@ -335,14 +388,15 @@ impl<R: Redis> StatusUpdatingEmitter<R> {
                     .and_then(Value::as_str)
                     .unwrap_or("Chat");
                 let bot_name = event.data.get("bot_name").cloned().unwrap_or(Value::Null);
-                let payload = json!({
-                    "task_id": event.task_id,
-                    "subtask_id": event.subtask_id,
-                    "bot_name": bot_name,
-                    "shell_type": shell_type,
-                    "message_id": event.message_id,
-                });
-                publish_emit(&self.redis, "chat:start", event.task_id, payload).await?;
+                publish_chat_start(
+                    &self.redis,
+                    event.task_id,
+                    event.subtask_id,
+                    bot_name,
+                    shell_type,
+                    event.message_id,
+                )
+                .await?;
             }
             "chunk" => {
                 let payload = chunk_payload(
@@ -430,6 +484,9 @@ impl<R: Redis> StatusUpdatingEmitter<R> {
                 if let Some(tool_input) = event.tool_input.as_ref() {
                     updates.insert("tool_input".into(), tool_input.clone());
                 }
+                if let Some(render_payload) = event.data.get("render_payload") {
+                    updates.insert("render_payload".into(), render_payload.clone());
+                }
                 updates.insert("status".into(), Value::String(status.into()));
                 let payload = block_update_payload(
                     event,
@@ -507,12 +564,26 @@ fn is_terminal(event_type: &str) -> bool {
 }
 
 /// `WebSocketResultEmitter.emit`'s terminal branch
-/// (`app/services/execution/emitters/websocket.py:157-169`): the `chat:done`
-/// result frame for `task:{task_id}`, then the `task:status` frame for the
-/// owner's `user:{user_id}` room.
+/// (`app/services/execution/emitters/websocket.py:157-191`): the event's own
+/// frame, then the `task:status` frame for the owner's `user:{user_id}` room.
 ///
 /// The caller runs this after the completion subsystem has collected the final
-/// result, so `result` is the payload the wrapped emitter forwards.
+/// result, so `result` is the payload the wrapped emitter forwards for DONE.
+pub(crate) async fn emit_terminal_frames<R: Redis>(
+    redis: &R,
+    event: &ExecutionEvent,
+    user_id: Option<i64>,
+    result: &Value,
+) -> RedisResult<()> {
+    match event.event_type.as_str() {
+        "error" => emit_error_frames(redis, event, user_id).await,
+        "cancelled" => emit_cancelled_frames(redis, event, user_id).await,
+        _ => emit_done_frames(redis, event, user_id, result, None).await,
+    }
+}
+
+/// `WebSocketResultEmitter.emit`'s DONE branch: the `chat:done` result frame
+/// for `task:{task_id}`, then the `task:status` frame.
 pub(crate) async fn emit_done_frames<R: Redis>(
     redis: &R,
     event: &ExecutionEvent,
@@ -540,10 +611,89 @@ pub(crate) async fn emit_done_frames<R: Redis>(
         "cancelled" => "CANCELLED",
         _ => "COMPLETED",
     });
-    // `_emit_task_status` returns early when the task has no owner.
+    emit_task_status_frame(redis, event, user_id, status).await
+}
+
+/// `emit_chat_error` (`webpage_websocket_chat_emitter.py:189-225`): the
+/// `chat:error` frame for `task:{task_id}`, then `task:status FAILED`.
+async fn emit_error_frames<R: Redis>(
+    redis: &R,
+    event: &ExecutionEvent,
+    user_id: Option<i64>,
+) -> RedisResult<()> {
+    publish_emit(redis, "chat:error", event.task_id, error_payload(event)).await?;
+    emit_task_status_frame(redis, event, user_id, "FAILED").await
+}
+
+/// `emit_chat_cancelled` (`webpage_websocket_chat_emitter.py:227-248`): the
+/// `chat:cancelled` frame for `task:{task_id}`, then `task:status CANCELLED`.
+async fn emit_cancelled_frames<R: Redis>(
+    redis: &R,
+    event: &ExecutionEvent,
+    user_id: Option<i64>,
+) -> RedisResult<()> {
+    publish_emit(
+        redis,
+        "chat:cancelled",
+        event.task_id,
+        cancelled_payload(event),
+    )
+    .await?;
+    emit_task_status_frame(redis, event, user_id, "CANCELLED").await
+}
+
+/// `_emit_task_status`'s `task:status` frame; it returns early without a task
+/// owner.
+async fn emit_task_status_frame<R: Redis>(
+    redis: &R,
+    event: &ExecutionEvent,
+    user_id: Option<i64>,
+    status: &str,
+) -> RedisResult<()> {
     let Some(user_id) = user_id else {
         return Ok(());
     };
+    publish_emit_in_room(
+        redis,
+        "task:status",
+        &format!("user:{user_id}"),
+        task_status_payload(event, status),
+    )
+    .await
+    .map(|_| ())
+}
+
+/// `emit_chat_error`'s payload (`webpage_websocket_chat_emitter.py:207-215`):
+/// a fixed key order with the optional `type`/`message_id` omitted when unset.
+fn error_payload(event: &ExecutionEvent) -> Value {
+    let error = event
+        .error
+        .as_deref()
+        .filter(|text| !text.is_empty())
+        .unwrap_or("Unknown error");
+    let mut payload = Map::new();
+    payload.insert("subtask_id".into(), json!(event.subtask_id));
+    payload.insert("error".into(), Value::String(error.to_string()));
+    payload.insert("task_id".into(), json!(event.task_id));
+    if let Some(error_type) = event.error_code.as_deref() {
+        payload.insert("type".into(), Value::String(error_type.to_string()));
+    }
+    if let Some(message_id) = event.message_id {
+        payload.insert("message_id".into(), json!(message_id));
+    }
+    Value::Object(payload)
+}
+
+/// `emit_chat_cancelled`'s payload (`webpage_websocket_chat_emitter.py:240-244`).
+fn cancelled_payload(event: &ExecutionEvent) -> Value {
+    let mut payload = Map::new();
+    payload.insert("task_id".into(), json!(event.task_id));
+    payload.insert("subtask_id".into(), json!(event.subtask_id));
+    Value::Object(payload)
+}
+
+/// `emit_task_status`'s payload (`webpage_websocket_chat_emitter.py:575-585`).
+fn task_status_payload(event: &ExecutionEvent, status: &str) -> Value {
     let mut payload = Map::new();
     payload.insert("task_id".into(), json!(event.task_id));
     payload.insert("status".into(), Value::String(status.to_string()));
@@ -557,14 +707,7 @@ pub(crate) async fn emit_done_frames<R: Redis>(
                 .to_string(),
         ),
     );
-    publish_emit_in_room(
-        redis,
-        "task:status",
-        &format!("user:{user_id}"),
-        Value::Object(payload),
-    )
-    .await
-    .map(|_| ())
+    Value::Object(payload)
 }
 
 /// `app/utils/client_payload_sanitizer.py sanitize_client_payload`: drop the

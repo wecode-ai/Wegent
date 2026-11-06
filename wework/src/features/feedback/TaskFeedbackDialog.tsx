@@ -78,7 +78,7 @@ interface FeedbackSubmitResult {
   duplicate: boolean
 }
 
-interface FeedbackApi {
+export interface FeedbackApi {
   submit(input: {
     stagingId: string
     title: string

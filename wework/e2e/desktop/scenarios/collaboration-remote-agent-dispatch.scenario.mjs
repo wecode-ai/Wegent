@@ -4,6 +4,7 @@ import { createDispatchIssueBoundaryRegression } from '../modules/dispatch-issue
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { verifyExecutionActivityOrder } from '../modules/issue-execution-activity-order.mjs'
 import { readProjectChatMessages } from '../modules/project-chat-snapshot.mjs'
+import { verifyUnconfiguredAssignment } from '../modules/unconfigured-issue-archive.mjs'
 import {
   createSharedWorkspaceAgent,
   assertCreatedWorkspaceIssueAgent,
@@ -36,6 +37,8 @@ import {
 import {
   configureFirstProjectExecutionEnvironment,
   selectCollaborationDomain,
+  selectCollaborationProjectView,
+  waitForControlValue,
 } from '../modules/workspace-flows.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -118,55 +121,6 @@ async function waitForPromise(promise, message, timeoutMs) {
   }
 }
 
-async function verifyUnconfiguredAssignment(
-  control,
-  request,
-  projectId,
-  timeoutMs,
-  captureScreenshot
-) {
-  const agent = await request(`/api/v1/cloud-projects/${projectId}/chat-agents`, {
-    method: 'POST',
-    body: JSON.stringify({
-      name: `缺少配置的执行者-${process.pid}`,
-      capability_mode: 'manual',
-      visibility: 'public',
-    }),
-  })
-  const issue = await createAndAssignCloudIssue(control, request, {
-    contentSelector: CONTENT,
-    projectId,
-    title: UNCONFIGURED_ISSUE,
-    description: `${MARKER}。由单个智能体在远程 Executor 上完成并提交待确认。`,
-    assigneeTarget: `agent:${agent.id}`,
-    timeoutMs,
-  })
-  await waitForValue(
-    () => request(`/api/v1/loop-items/${issue.id}`),
-    item => item.status === 'in_progress' && item.execution_state === 'waiting_runtime',
-    'An assigned robot without configuration did not expose its blocked Run',
-    timeoutMs
-  )
-  await control.command('waitFor', scoped('[data-testid="cloud-todo-detail-status"]'), {
-    value: 'in_progress',
-    timeoutMs,
-  })
-  await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
-  await control.command(
-    'waitFor',
-    scoped(
-      `[data-testid="cloud-todo-column-in_progress"] [data-testid="collaboration-issue-${issue.id}"]`
-    ),
-    { visible: true, timeoutMs }
-  )
-  await control.command(
-    'waitFor',
-    scoped(`[data-testid="cloud-todo-card-needs-execution-config-${issue.id}"]`),
-    { text: '待配置', visible: true, timeoutMs }
-  )
-  await captureScreenshot(control, 'remote-agent-dispatch-00-waiting-configuration.png', CONTENT)
-}
-
 async function createAutoTaggedIssue(control, request, projectId, agent, timeoutMs) {
   const rule = await request(`/api/v1/cloud-projects/${projectId}/automations`, {
     method: 'POST',
@@ -196,15 +150,22 @@ async function createAutoTaggedIssue(control, request, projectId, agent, timeout
     'The auto-tagged Issue was not persisted',
     timeoutMs
   )
-  await control.command('click', scoped('[data-testid="cloud-todo-more-properties"]'))
+  // Persistence can be visible before the create dialog becomes the saved Issue.
+  await waitForControlValue(
+    control,
+    scoped('[data-testid="cloud-todo-detail-title"]'),
+    title,
+    'The newly created Issue detail was not opened',
+    timeoutMs
+  )
+  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-more-properties"]'), {
+    timeoutMs,
+  })
   await control.command('fill', '[data-testid="cloud-todo-detail-tag-input"]', { value: 'auto' })
   await control.command('press', '[data-testid="cloud-todo-detail-tag-input"]', { key: 'Enter' })
   await control.command('pointerClick', scoped('[data-testid="cloud-todo-detail-title"]'))
   await control.command('waitFor', '[data-testid="cloud-todo-more-properties-popover"]', {
     visible: false,
-    timeoutMs,
-  })
-  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
     timeoutMs,
   })
   return { issue, rule }
@@ -377,7 +338,7 @@ async function verifyConfiguredExecutionEnvironment(
   timeoutMs,
   captureScreenshot
 ) {
-  await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
+  await selectCollaborationProjectView(control, CONTENT, 'manage')
   await control.command(
     'click',
     scoped('[data-testid="collaboration-project-settings-environments"]')
@@ -528,35 +489,39 @@ async function verifyAutomaticProcessingControls(
   await control.command('waitFor', ruleSelector, { visible: true, timeoutMs })
   await captureScreenshot(control, 'remote-automatic-processing-01-created.png', CONTENT)
   const enabledSelector = scoped(`[data-testid="automatic-processing-enabled-${rule.id}"]`)
-  await control.command('click', enabledSelector)
+  await control.command('clickWhenEnabled', enabledSelector, { timeoutMs })
   await waitForValue(
     () => request(`/api/v1/cloud-projects/${projectId}/automations`),
     rules => rules.find(candidate => candidate.id === rule.id && candidate.enabled === false),
     'The automatic processing rule did not pause',
     timeoutMs
   )
-  await control.command('waitFor', enabledSelector, {
-    attribute: 'aria-checked',
-    value: 'false',
+  await control.command('waitFor', `${enabledSelector}[aria-checked="false"]`, {
+    enabled: true,
     timeoutMs,
   })
-  await control.command('click', enabledSelector)
+  await control.command('clickWhenEnabled', enabledSelector, { timeoutMs })
   await waitForValue(
     () => request(`/api/v1/cloud-projects/${projectId}/automations`),
     rules => rules.find(candidate => candidate.id === rule.id && candidate.enabled === true),
     'The automatic processing rule did not resume',
     timeoutMs
   )
-  await control.command('waitFor', enabledSelector, {
-    attribute: 'aria-checked',
-    value: 'true',
+  await control.command('waitFor', `${enabledSelector}[aria-checked="true"]`, {
+    enabled: true,
     timeoutMs,
   })
   await control.command('click', scoped(`[data-testid="automatic-processing-edit-${rule.id}"]`))
   await control.command('waitFor', form, { visible: true, timeoutMs })
-  await control.command('click', scoped('[data-testid="automatic-processing-cancel"]'))
+  await control.command('clickWhenEnabled', scoped('[data-testid="automatic-processing-cancel"]'), {
+    timeoutMs,
+  })
   await control.command('waitFor', form, { visible: false, timeoutMs })
-  await control.command('click', scoped(`[data-testid="automatic-processing-delete-${rule.id}"]`))
+  await control.command(
+    'clickWhenEnabled',
+    scoped(`[data-testid="automatic-processing-delete-${rule.id}"]`),
+    { timeoutMs }
+  )
   await waitForValue(
     () => request(`/api/v1/cloud-projects/${projectId}/automations`),
     rules => !rules.some(candidate => candidate.id === rule.id),
@@ -754,13 +719,16 @@ export function createDesktopScenario({
         projectName: PROJECT,
         timeoutMs: uiTimeoutMs,
       })
-      await verifyUnconfiguredAssignment(
-        control,
-        request,
-        project.id,
-        modelResponseTimeoutMs,
-        captureScreenshot
-      )
+      await verifyUnconfiguredAssignment(control, request, {
+        projectId: project.id,
+        contentSelector: CONTENT,
+        title: UNCONFIGURED_ISSUE,
+        description: `${MARKER}。由单个智能体在远程 Executor 上完成并提交待确认。`,
+        cloud: { backendUrl, authToken },
+        modelRequests: () => modelRequests,
+        timeoutMs: modelResponseTimeoutMs,
+        captureScreenshot,
+      })
       await configureFirstProjectExecutionEnvironment(
         control,
         CONTENT,
@@ -938,6 +906,17 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       assert.equal(modelRequests, 2, 'The auto tag did not invoke the agent model exactly once')
+      const autoMessages = await readProjectChatMessages(
+        { backendUrl, authToken, projectId: project.id },
+        issue.id,
+        uiTimeoutMs
+      )
+      const autoResponse = autoMessages.find(message => message.content === COMPLETION)
+      assert.match(
+        autoResponse?.metadata.runtime_event_sequence ?? '',
+        /^[1-9]\d+$/,
+        'The persisted final response must preserve its exact Runtime event sequence'
+      )
       await captureScreenshot(control, 'remote-agent-dispatch-03-auto-tag-in-review.png', CONTENT)
       await request(`/api/v1/cloud-projects/${project.id}/automations/${tagged.rule.id}`, {
         method: 'DELETE',

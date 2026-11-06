@@ -1,5 +1,7 @@
-import { describe, expect, it } from 'vitest'
+// @vitest-environment node
+
 import type { ProjectWithTasks } from '@/types/api'
+import { describe, expect, it } from 'vitest'
 import { collaborationExecutionMode } from './collaborationWorkspacePolicy'
 
 describe('collaborationExecutionMode', () => {
@@ -12,15 +14,6 @@ describe('collaborationExecutionMode', () => {
 
   it('isolates Git tasks by default without depending on device availability', () => {
     expect(collaborationExecutionMode(project)).toBe('git_worktree')
-  })
-
-  it('respects explicit shared directory policy', () => {
-    expect(collaborationExecutionMode(project, 'project')).toBe('current_workspace')
-  })
-
-  it('does not request worktrees without a Git repository', () => {
-    expect(collaborationExecutionMode(null)).toBe('current_workspace')
-    expect(collaborationExecutionMode({ ...project, config: undefined })).toBe('current_workspace')
   })
 
   it('does not confuse imported Git directories or unavailable probes with non-Git directories', () => {

@@ -12,6 +12,62 @@ import {
 import { temporaryDirectory } from './test-helpers.js'
 
 describe('workbench DSH runtime', () => {
+  test('uses the current host bridge rather than a stale runtime copy', async () => {
+    const fixture = await workbenchFixture('workbench-current-host-')
+    const options = workbenchOptions(fixture)
+    const currentPlugins = join(fixture.root.path, 'current-plugins')
+    const currentHost = join(currentPlugins, 'wework-electron-host')
+    await mkdir(currentHost, { recursive: true })
+    const launch = await prepareWorkbenchDshLaunch({
+      ...options,
+      environment: { ...options.environment, WEWORK_CORE_PLUGIN_ROOT: currentPlugins },
+    })
+    expect(options.run.mock.calls.some(([, args]) => args.includes(`file:${currentHost}`))).toBe(
+      true
+    )
+    expect(
+      options.run.mock.calls.some(([, args]) =>
+        args.includes(`file:${join(fixture.runtimeRoot, 'plugins', 'wework-electron-host')}`)
+      )
+    ).toBe(false)
+    expect(launch.environment.WEWORK_DSH_BROWSER_AUTH).toBe('1')
+    await fixture.root.remove()
+  })
+
+  test('refuses a privileged host bridge on a Runtime without native browser authentication', async () => {
+    const fixture = await workbenchFixture('workbench-legacy-host-')
+    const options = workbenchOptions(fixture)
+    await writeFile(
+      join(fixture.runtimeRoot, 'runtime.json'),
+      JSON.stringify({
+        dshVersion: '0.1.0-rc.8',
+        role: 'workbench',
+        sourceFingerprint: 'a'.repeat(64),
+      })
+    )
+    options.manifest.requirements.dsh = '0.1.0-rc.8'
+    await writeFile(
+      join(fixture.runtimeRoot, 'node_modules', '@deepseek-ai', 'dsh', 'package.json'),
+      JSON.stringify({ version: '0.1.0-rc.8' })
+    )
+    await expect(
+      prepareWorkbenchDshLaunch({ ...options, includeElectronHostBridge: true })
+    ).rejects.toThrow('trusted Electron host bridge requires DSH')
+    expect(options.run).not.toHaveBeenCalled()
+    const launch = await prepareWorkbenchDshLaunch(options)
+    expect(launch.version).toBe('0.1.0-rc.8')
+    expect(launch.environment.WEWORK_DSH_BROWSER_AUTH).toBe('legacy')
+    expect(launch.args).toContain('--require')
+    expect(launch.args).toContain(join(launch.environment.DSH_HOME!, 'browser-auth.cjs'))
+    expect(
+      options.run.mock.calls.some(([, args]) =>
+        args.some(
+          arg => arg.includes('wework-electron-host') || arg.includes('wework-browser-auth')
+        )
+      )
+    ).toBe(false)
+    await fixture.root.remove()
+  })
   test('selects client modules for both current and legacy app requirements', () => {
     expect(workbenchClientRendererPackage('0.2.0-rc.2')).toBe('@deepseek-ai/dsh-client-ui-renderer')
     expect(workbenchClientRendererPackage('>=0.1.0-rc.8')).toBe(
@@ -19,6 +75,46 @@ describe('workbench DSH runtime', () => {
     )
     expect(workbenchClientRendererPackage('0.1.0-rc.8')).toBe('@deepseek-ai/dsh-client-runtime')
   })
+
+  test.each(
+    ['0.1.0-rc.8', WORKBENCH_DSH_VERSION].flatMap(version =>
+      [undefined, '0', '1'].map(inherited => ({ version, inherited }))
+    )
+  )(
+    'owns browser authentication for $version with inherited flag $inherited',
+    async ({ version, inherited }) => {
+      const fixture = await workbenchFixture('workbench-browser-auth-', version)
+      const options = workbenchOptions(fixture)
+      options.manifest.requirements.dsh = version
+      const environment = {
+        ...options.environment,
+        WEWORK_DSH_BROWSER_AUTH: inherited,
+        WEWORK_DSH_BROWSER_AUTH_FD: '99',
+      }
+      try {
+        const launch = await prepareWorkbenchDshLaunch({
+          ...options,
+          environment,
+          includeElectronHostBridge: version === WORKBENCH_DSH_VERSION,
+        })
+        const authenticates = version === WORKBENCH_DSH_VERSION
+        expect(launch.environment.WEWORK_DSH_BROWSER_AUTH).toBe(authenticates ? '1' : 'legacy')
+        expect(launch.environment.WEWORK_DSH_BROWSER_AUTH_FD).toBeUndefined()
+        expect(
+          options.run.mock.calls.filter(([, args]) =>
+            args.includes(`file:${join(fixture.runtimeRoot, 'plugins', 'wework-browser-auth')}`)
+          )
+        ).toHaveLength(authenticates ? 1 : 0)
+        for (const [, , { env }] of options.run.mock.calls) {
+          expect(env.WEWORK_DSH_BROWSER_AUTH_FD).toBeUndefined()
+        }
+        expect(environment.WEWORK_DSH_BROWSER_AUTH).toBe(inherited)
+        expect(environment.WEWORK_DSH_BROWSER_AUTH_FD).toBe('99')
+      } finally {
+        await fixture.root.remove()
+      }
+    }
+  )
 
   test('replaces an empty YAML patch list when injecting the selected model', () => {
     expect(injectModelProviderPatch('[]\n')).toBe(
@@ -58,6 +154,52 @@ describe('workbench DSH runtime', () => {
     expect(() =>
       injectModelProviderPatch('- id: agent-default-model\n  config:\n    provider: fixture\n')
     ).toThrow('Smart app exposes an incomplete provider/model pair')
+  })
+
+  test.each(['- id: [unterminated\n', 'plugins: []\n'])(
+    'rejects an invalid model patch before injecting routes: %s',
+    source => {
+      expect(() => injectModelProviderPatch(source)).toThrow('Smart app model patch')
+    }
+  )
+
+  test('rejects invalid model YAML before installing or launching DSH', async () => {
+    const fixture = await workbenchFixture('workbench-invalid-model-patch-')
+    const options = workbenchOptions(fixture)
+    await writeFile(
+      join(options.packagePath, 'profile-bundle', 'cordis.patch.yml'),
+      '- id: [unterminated\n'
+    )
+    try {
+      await expect(
+        prepareWorkbenchDshLaunch({
+          ...options,
+          modelBaseUrl: 'http://127.0.0.1:9000/v1/harness-router/default-token',
+          additionalModels: [
+            {
+              modelKey: 'extra',
+              displayName: 'Extra',
+              baseUrl: 'http://127.0.0.1:9000/v1/harness-router/extra-token',
+            },
+          ],
+        })
+      ).rejects.toThrow('Smart app model patch')
+      expect(options.run).not.toHaveBeenCalled()
+      const settings = await readFile(
+        join(
+          options.dataDirectory,
+          'harness-apps',
+          'instances',
+          options.installationId,
+          'settings.yaml'
+        ),
+        'utf8'
+      )
+      expect(settings).toContain('/v1/harness-router/default-token')
+      expect(settings).toContain('/v1/harness-router/extra-token')
+    } finally {
+      await fixture.root.remove()
+    }
   })
 
   test('makes the managed Node executable available to pnpm subprocesses', async () => {
@@ -388,9 +530,9 @@ describe('workbench DSH runtime', () => {
   })
 
   test('injects the local decision route and overrides hostile pre-set values', async () => {
-    const fixture = await decisionRouteFixture('workbench-dsh-decision-route-')
+    const fixture = await workbenchFixture('workbench-dsh-decision-route-')
     const launch = await prepareWorkbenchDshLaunch({
-      ...decisionRouteOptions(fixture),
+      ...workbenchOptions(fixture),
       environment: {
         WEWORK_DECISION_ROUTER_BASE_URL: 'http://attacker.example.com/v1/decision-router/hijacked',
         WEWORK_DECISION_ROUTER_KEY: 'attacker-key',
@@ -414,9 +556,9 @@ describe('workbench DSH runtime', () => {
   })
 
   test('keeps the decision route out of settings.yaml and the model provider', async () => {
-    const fixture = await decisionRouteFixture('workbench-dsh-decision-settings-')
+    const fixture = await workbenchFixture('workbench-dsh-decision-settings-')
     const launch = await prepareWorkbenchDshLaunch({
-      ...decisionRouteOptions(fixture),
+      ...workbenchOptions(fixture),
       modelBaseUrl: 'http://127.0.0.1:9000',
       decisionBaseUrl: 'http://127.0.0.1:9300/v1/decision-router/route-token',
       decisionProtocolVersion: 1,
@@ -429,9 +571,31 @@ describe('workbench DSH runtime', () => {
     await fixture.root.remove()
   })
 
+  test('adds separate model providers while preserving the selected model', async () => {
+    const fixture = await workbenchFixture('workbench-dsh-multi-model-')
+    const launch = await prepareWorkbenchDshLaunch({
+      ...workbenchOptions(fixture),
+      modelBaseUrl: 'http://127.0.0.1:9000/v1/harness-router/default-token',
+      additionalModels: [
+        {
+          modelKey: 'wework:public:default::fast',
+          displayName: 'Fast model',
+          baseUrl: 'http://127.0.0.1:9000/v1/harness-router/fast-token',
+        },
+      ],
+    })
+
+    const settings = await readFile(join(launch.dshHome, 'settings.yaml'), 'utf8')
+    expect(settings).toContain('baseURL: http://127.0.0.1:9000/v1/harness-router/default-token')
+    expect(settings).toContain('baseURL: http://127.0.0.1:9000/v1/harness-router/fast-token')
+    expect(settings).toContain('name: "Fast model"')
+    expect(settings.match(/- id: wework-selected/g)).toHaveLength(2)
+    await fixture.root.remove()
+  })
+
   test('leaves the decision route out of the environment when none is registered', async () => {
-    const fixture = await decisionRouteFixture('workbench-dsh-no-decision-route-')
-    const launch = await prepareWorkbenchDshLaunch(decisionRouteOptions(fixture))
+    const fixture = await workbenchFixture('workbench-dsh-no-decision-route-')
+    const launch = await prepareWorkbenchDshLaunch(workbenchOptions(fixture))
 
     expect(launch.environment.WEWORK_DECISION_ROUTER_BASE_URL).toBeUndefined()
     expect(launch.environment.WEWORK_DECISION_ROUTER_KEY).toBeUndefined()
@@ -440,12 +604,15 @@ describe('workbench DSH runtime', () => {
   })
 })
 
-interface DecisionRouteFixture {
+interface WorkbenchFixture {
   root: { path: string; remove: () => Promise<void> }
   runtimeRoot: string
 }
 
-async function decisionRouteFixture(prefix: string): Promise<DecisionRouteFixture> {
+async function workbenchFixture(
+  prefix: string,
+  version = WORKBENCH_DSH_VERSION
+): Promise<WorkbenchFixture> {
   const root = await temporaryDirectory(prefix)
   const runtimeRoot = join(root.path, 'runtime')
   const packageRoot = join(runtimeRoot, 'node_modules', '@deepseek-ai', 'dsh')
@@ -459,15 +626,12 @@ async function decisionRouteFixture(prefix: string): Promise<DecisionRouteFixtur
   await writeFile(
     join(runtimeRoot, 'runtime.json'),
     JSON.stringify({
-      dshVersion: WORKBENCH_DSH_VERSION,
+      dshVersion: version,
       role: 'workbench',
       sourceFingerprint: 'a'.repeat(64),
     })
   )
-  await writeFile(
-    join(packageRoot, 'package.json'),
-    JSON.stringify({ version: WORKBENCH_DSH_VERSION })
-  )
+  await writeFile(join(packageRoot, 'package.json'), JSON.stringify({ version }))
   await writeFile(join(packageRoot, 'lib', 'bin.js'), '')
   await writeFile(pnpmEntry, '')
   await writeFile(join(appRoot, 'package.json'), JSON.stringify({ name: 'profile-bundle' }))
@@ -475,7 +639,7 @@ async function decisionRouteFixture(prefix: string): Promise<DecisionRouteFixtur
   return { root, runtimeRoot }
 }
 
-function decisionRouteOptions(fixture: DecisionRouteFixture) {
+function workbenchOptions(fixture: WorkbenchFixture) {
   return {
     runtimeRoot: fixture.runtimeRoot,
     dataDirectory: join(fixture.root.path, 'data'),

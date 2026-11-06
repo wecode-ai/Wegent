@@ -37,7 +37,7 @@ fn feature_flags(memory_enabled: bool) -> FeatureFlags {
 /// `MemoryManager` builds its client exactly when the setting is enabled, so
 /// `settings.MEMORY_ENABLED and self._client is not None` always equals the
 /// setting for a process whose configuration does not change.
-fn memory_enabled() -> bool {
+pub(crate) fn memory_enabled() -> bool {
     env_or_dotenv("MEMORY_ENABLED")
         .as_deref()
         .is_some_and(parse_bool)

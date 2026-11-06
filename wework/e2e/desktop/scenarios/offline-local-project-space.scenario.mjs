@@ -9,6 +9,7 @@ import {
   configureFirstProjectExecutionEnvironment,
   openProjectAgentCreator,
   selectProjectRunnerModel,
+  selectCollaborationProjectView,
 } from '../modules/workspace-flows.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -247,7 +248,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         ACTIVE_WORKBENCH_SELECTOR,
         uiTimeoutMs
       )
-      await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+      await selectCollaborationProjectView(control, ACTIVE_WORKBENCH_SELECTOR, 'board')
       await control.command(
         'clickWhenEnabled',
         scoped('[data-testid="collaboration-issue-create"]')
@@ -283,7 +284,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       })
       assertLocalIsolation()
 
-      await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
+      await selectCollaborationProjectView(control, ACTIVE_WORKBENCH_SELECTOR, 'manage')
       await control.command('waitFor', scoped('[data-testid="project-settings-shell"]'), {
         timeoutMs: uiTimeoutMs,
       })
@@ -365,7 +366,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         ACTIVE_WORKBENCH_SELECTOR
       )
       assertLocalIsolation()
-      await control.command('click', scoped('[data-testid="collaboration-tab-files"]'))
+      await selectCollaborationProjectView(control, ACTIVE_WORKBENCH_SELECTOR, 'files')
       await control.command('waitFor', scoped('[data-testid="cloud-files-view"]'), {
         timeoutMs: uiTimeoutMs,
       })

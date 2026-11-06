@@ -96,13 +96,26 @@ An explicit Anthropic Messages configuration is never overridden. Operators must
 
 When a task runs on a cloud or remote device, the model selector also shows local models configured on the current desktop. On first use or after a configuration change, Wework asks for confirmation, synchronizes the custom Codex model catalog to the target Executor, restarts its Codex app-server while the device is idle, verifies that the model was loaded, and only then sends the task. Built-in Codex models and cloud Model CRDs continue to work directly with either local or cloud execution.
 
-Generic cloud models can reuse the Wework GPT 5.6 compatibility catalog as a capability baseline while cloud model metadata overrides the context window. Compatibility entries must not impose a fixed `max_context_window` on the cloud model; the field remains unset so the runtime uses the cloud-provided window configuration. Official Codex GPT 5.6 catalog entries retain their explicit maximum window.
+Generic cloud models use the `wework-gpt-6.1-sol` shared compatibility catalog through the same catalog and cloud-model flow previously used by `wework-gpt-5.6-sol`, without requiring an official account. The shared profile preserves the previous protocol capabilities without forcing reasoning levels or enabling official-only code mode or Responses Lite. Cloud model metadata can override the context window; `max_context_window` stays unset so the compatibility profile does not cap it. Official Codex models retain their own capabilities and window limits.
 
 ### Model Rate-Limit Retries
 
 When the upstream has not started a response stream and the model service returns HTTP `429 Too Many Requests`, the executor Codex compatibility proxy automatically resends the same model request. It retries at most five times, waiting 1, 5, 10, 30, and 60 seconds between attempts.
 
 If the upstream returns a standard `Retry-After` header, the proxy uses that delay instead, capped at 60 seconds for one wait. Non-429 responses do not activate this policy. After the retry budget is exhausted, the proxy returns the final 429 status and error body to Codex. A stream that has already started is never replayed by this mechanism, preventing duplicate generation or tool execution.
+
+### Retry Status
+
+When Codex or the model proxy reports a retry event, the conversation immediately
+shows “Retrying automatically…” in its processing header instead of showing only
+thinking status. Rate-limit waits retain their dedicated “Model rate limited.
+Waiting to retry…” message. Output recovery or task completion clears the retry
+status. Sustained interruptions still show detailed reconnecting guidance, with
+a proxy settings action for ChatGPT models.
+
+This status depends on runtime events. Request-level retries that Codex does not
+report, including its hidden first WebSocket retry, cannot yet be identified by
+the UI.
 
 ### Codex Direct-Provider Overload Recovery
 
@@ -115,10 +128,12 @@ seconds.
 Recovery submits an empty native `turn/start` input against the saved history. It
 does not replay the original task, attachments, user-message identity, or already
 merged additional context. Completed tool results remain in history. The task
-stays running and exposes reconnecting status during recovery; cancellation stops
-the wait immediately, and exhausted recovery returns the final failure. Quota,
-authentication, context-window, and subagent errors, as well as errors already
-being retried by Codex, do not trigger this policy.
+stays running and exposes reconnecting status during recovery. Before the retry
+request starts, the executor emits a recovery event so open views clear that
+turn's terminal error state instead of showing a stale failure card. Cancellation
+stops the wait immediately, and exhausted recovery returns the final failure.
+Quota, authentication, context-window, and subagent errors, as well as errors
+already being retried by Codex, do not trigger this policy.
 
 The executor persists the IDs of failed turns that entered recovery. Native and
 cached transcript reads clear only those turns' terminal error state while

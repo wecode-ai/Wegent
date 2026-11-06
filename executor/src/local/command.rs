@@ -22,6 +22,39 @@ const MAX_TIMEOUT_SECONDS: f64 = 600.0;
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 const MAX_OUTPUT_BYTES: usize = 5 * 1024 * 1024;
 
+pub(crate) const GIT_CURRENT_BRANCH_ARGV: &[&str] =
+    &["git", "symbolic-ref", "--quiet", "--short", "HEAD"];
+pub(crate) const GIT_BRANCH_LIST_ARGV: &[&str] = &[
+    "git",
+    "for-each-ref",
+    "--format=%(refname:short)",
+    "refs/heads/",
+];
+
+fn prepare_git_branch_query(request: &mut CommandRequest) -> bool {
+    let (legacy, portable): (&[&str], &[&str]) = match request.command_key.as_deref() {
+        Some("git_branch") => (
+            &["git", "branch", "--show-current"],
+            GIT_CURRENT_BRANCH_ARGV,
+        ),
+        Some("git_branch_list") => (
+            &["git", "branch", "--format=%(refname:short)"],
+            GIT_BRANCH_LIST_ARGV,
+        ),
+        _ => return false,
+    };
+    // Backend-forwarded built-ins and local IPC use the same portable query.
+    // Preserve explicitly configured commands instead of overriding their argv.
+    if request.argv == legacy
+        || (request.argv.is_empty()
+            && (request.command == legacy.join(" ") || request.command == portable.join(" ")))
+    {
+        request.argv = portable.iter().map(|arg| (*arg).to_owned()).collect();
+        request.command = portable.join(" ");
+    }
+    request.command_key.as_deref() == Some("git_branch") && request.argv == portable
+}
+
 pub trait DeviceCommandHandler: Send + Sync {
     fn handle_execute_command<'a>(
         &'a self,
@@ -159,8 +192,10 @@ impl DeviceCommandHandler for CommandHandler {
 }
 
 impl CommandHandler {
-    pub async fn execute(&self, request: CommandRequest) -> CommandResult {
+    pub async fn execute(&self, mut request: CommandRequest) -> CommandResult {
         let started_at = Instant::now();
+        log_directory_command_phase(&request, "execute_enter", started_at);
+        let current_branch_query = prepare_git_branch_query(&mut request);
         if request.command_key.as_deref() == Some("project_workspace_root") {
             return CommandResult::ok(
                 crate::workspace_paths::projects_root()
@@ -191,9 +226,15 @@ impl CommandHandler {
             return result;
         }
 
+        if let Some(result) = execute_directory_command(&request).await {
+            return result;
+        }
+
+        log_directory_command_phase(&request, "prepare_environment", started_at);
         let mut command = process_command(&request);
         command.env_clear();
         command.envs(build_env(&request.env));
+        log_directory_command_phase(&request, "environment_ready", started_at);
         if let Some(cwd) = request.cwd.as_deref() {
             command.current_dir(cwd);
         }
@@ -208,6 +249,7 @@ impl CommandHandler {
                 return CommandResult::error(error.to_string(), elapsed_seconds(started_at), false);
             }
         };
+        log_directory_command_phase(&request, "spawned", started_at);
 
         let timeout = Duration::from_secs_f64(request.timeout_seconds.max(0.001));
         let output = match time::timeout(timeout, child.wait_with_output()).await {
@@ -226,15 +268,27 @@ impl CommandHandler {
                 );
             }
         };
+        log_directory_command_phase(&request, "exited", started_at);
 
         let (stdout, stdout_truncated) =
             decode_and_truncate(&output.stdout, request.max_output_bytes);
         let (stderr, stderr_truncated) =
             decode_and_truncate(&output.stderr, request.max_output_bytes);
-        let exit_code = output.status.code();
+        let mut exit_code = output.status.code();
+        // symbolic-ref exits 1 for detached HEAD; branch --show-current returns
+        // successful empty output. Other failures retain their original status.
+        if current_branch_query
+            && exit_code == Some(1)
+            && !stdout_truncated
+            && !stderr_truncated
+            && stdout.is_empty()
+            && stderr.is_empty()
+        {
+            exit_code = Some(0);
+        }
 
         CommandResult {
-            success: output.status.success(),
+            success: exit_code == Some(0),
             exit_code,
             stdout: Value::String(stdout),
             stderr,
@@ -245,6 +299,74 @@ impl CommandHandler {
             error: None,
         }
     }
+}
+
+fn log_directory_command_phase(request: &CommandRequest, phase: &str, started_at: Instant) {
+    let Some(command_key @ ("home_dir" | "ls_dirs")) = request.command_key.as_deref() else {
+        return;
+    };
+    crate::logging::log_executor_event(
+        "device directory command phase",
+        &[
+            ("command_key", command_key.to_owned()),
+            ("phase", phase.to_owned()),
+            ("elapsed_ms", started_at.elapsed().as_millis().to_string()),
+        ],
+    );
+}
+
+async fn execute_directory_command(request: &CommandRequest) -> Option<CommandResult> {
+    let expected: &[&str] = match request.command_key.as_deref() {
+        Some("home_dir") => &["printenv", "HOME"],
+        Some("ls_dirs") => &["ls", "-a", "-p"],
+        _ => return None,
+    };
+    // Explicit custom command definitions retain their command execution path.
+    if request.command != expected.join(" ")
+        || (!request.argv.is_empty() && request.argv != expected)
+    {
+        return None;
+    }
+    let started_at = Instant::now();
+    let output = if request.command_key.as_deref() == Some("home_dir") {
+        match build_env(&request.env).get("HOME") {
+            Some(home) => Ok(format!("{home}\n")),
+            None => Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "HOME is not configured",
+            )),
+        }
+    } else {
+        directory_command_output(request.cwd.as_deref().unwrap_or(".")).await
+    };
+    let mut result = match output {
+        Ok(output) => {
+            let (text, truncated) =
+                decode_and_truncate(output.as_bytes(), request.max_output_bytes);
+            let mut result = CommandResult::ok(text);
+            result.stdout_truncated = truncated;
+            result
+        }
+        Err(error) => CommandResult::error(error.to_string(), 0.0, false),
+    };
+    result.duration = elapsed_seconds(started_at);
+    log_directory_command_phase(request, "native_completed", started_at);
+    Some(result)
+}
+
+async fn directory_command_output(path: &str) -> std::io::Result<String> {
+    let mut entries = tokio::fs::read_dir(path).await?;
+    let mut names = vec!["./".to_owned(), "../".to_owned()];
+    while let Some(entry) = entries.next_entry().await? {
+        let mut name = entry.file_name().to_string_lossy().into_owned();
+        // Like `ls -p`, symbolic links are not treated as directories.
+        if entry.file_type().await?.is_dir() {
+            name.push('/');
+        }
+        names.push(name);
+    }
+    names.sort();
+    Ok(format!("{}\n", names.join("\n")))
 }
 
 pub(crate) fn configured_home_dir() -> Option<std::path::PathBuf> {
