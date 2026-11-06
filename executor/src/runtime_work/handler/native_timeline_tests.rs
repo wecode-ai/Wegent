@@ -220,6 +220,36 @@ async fn native_timeline_only_restores_user_presentations_on_their_own_page() {
 }
 
 #[tokio::test]
+async fn protocol_two_rejects_a_provider_page_that_ignores_the_requested_item_limit() {
+    let (handler, root) = native_handler("native-oversized-provider-page");
+    handler.store.update_task("task-1", |link| {
+        link.runtime_handle["lastTurnId"] = json!("current");
+    });
+    let entries = (0..101)
+        .map(|position| json!({"type":"realtime","position":position}))
+        .collect::<Vec<_>>();
+    fs::write(
+        root.join("thread_timeline_list.json"),
+        json!({"data":entries,"nextCursor":null}).to_string(),
+    )
+    .unwrap();
+    let response = handler
+        .handle_runtime_rpc(json!({"method":"runtime.tasks.transcript","payload":{
+            "taskId":"task-1","transcriptProtocolVersion":2
+        }}))
+        .await;
+    handler
+        .codex_app_server
+        .request("test/stop", json!({}))
+        .await
+        .unwrap();
+    let error = response.unwrap_err();
+    assert_eq!(error.code, "codex_error");
+    assert!(error.message.contains("item budget"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn native_timeline_restores_only_runtime_commands_outside_durable_history() {
     let (mut handler, root) = native_handler("native-runtime-commands");
     handler.store.update_task("task-1", |link| {
@@ -253,6 +283,133 @@ async fn native_timeline_restores_only_runtime_commands_outside_durable_history(
     );
     assert_eq!(runtime[0]["items"][1]["id"], "current-text");
     assert_eq!(runtime[0]["items"][1]["content"], "Current");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn bounded_native_history_never_copies_unrelated_cached_bodies() {
+    use base64::Engine;
+    let (handler, root) = native_handler("bounded-native-cache-snapshot");
+    let large = "unrelated historical tool output".repeat(200_000);
+    handler.store.update_task("task-1", |link| {
+        link.runtime_handle["lastTurnId"] = json!("current");
+        link.runtime_handle["origin"] = json!({"type":"test-origin"});
+        link.runtime_handle["messages"] = json!([{"content":large}]);
+        set_transcript_snapshot_messages(&mut link.runtime_handle, "thread-1", vec![json!({
+            "id":"snapshot","turnId":"current","content":large
+        })], None, None);
+        append_runtime_handle_user_message_presentation(&mut link.runtime_handle, json!({
+            "clientUserMessageId":"client-user","turnId":"current","ensureVisible":true,
+            "content":"Original prompt","createdAt":1780000000000_i64
+        }));
+        append_runtime_handle_user_message_presentation(&mut link.runtime_handle, json!({
+            "clientUserMessageId":"other-user","turnId":"unrelated","content":large
+        }));
+        append_runtime_handle_user_message_presentation(&mut link.runtime_handle, json!({
+            "clientUserMessageId":"not-accepted","content":"Optimistic send without a native turn"
+        }));
+        append_completed_transcript_messages(&mut link.runtime_handle, "thread-1", vec![json!({
+            "id":"cached-current","turnId":"current","role":"assistant","status":"done",
+            "content":large,"blocks":[{"tool_output":large}],"runtimeItems":[
+                {"id":"unrelated-output","type":"assistant_text","content":large},
+                {"id":"running-command","type":"block","block":{
+                    "id":"running-command","type":"tool","status":"pending","tool_name":"bash",
+                    "tool_output":"live output","render_payload":{"kind":"command_execution","status":"inProgress"}
+                }},
+                {"id":"approval","type":"block","block":{
+                    "id":"approval","type":"tool","status":"done","tool_name":"auto_approval_review",
+                    "tool_output":"Approved read"
+                }},
+                {"id":"current-text","type":"assistant_text","content":large}
+            ]
+        })]);
+    });
+    let reads = handler.store.full_task_read_count();
+    let (metadata, bounded) = handler.transcript_read_link("task-1", true);
+    assert!(bounded);
+    let metadata = metadata.unwrap();
+    assert!(metadata.runtime_handle.get("messages").is_none());
+    assert!(metadata
+        .runtime_handle
+        .get("completedTranscriptMessages")
+        .is_none());
+    assert!(metadata
+        .runtime_handle
+        .get("transcriptSnapshotMessages")
+        .is_none());
+    assert!(metadata
+        .runtime_handle
+        .get("userMessagePresentations")
+        .is_none());
+    let page = handler.native_transcript_page_link("task-1", &json!({"turns":[
+                {"id":"current","ownsUserPresentation":true,"items":[{"id":"current-text","type":"agentMessage","text":"Current"}]}
+    ]}), &super::super::super::transcript_work::Cancellation::new()).unwrap().unwrap();
+    let encoded_page = serde_json::to_string(&page.runtime_handle).unwrap();
+    assert!(encoded_page.len() < 10_000);
+    assert!(!encoded_page.contains("unrelated historical tool output"));
+    assert_eq!(
+        page.runtime_handle["userMessagePresentations"][0]["content"],
+        "Original prompt"
+    );
+    assert_eq!(
+        page.runtime_handle["completedTranscriptMessages"][0]["runtimeItems"][2],
+        json!({"id":"current-text"})
+    );
+    let result = handler
+        .transcript(json!({
+        "taskId":"task-1","transcriptProtocolVersion":2,
+        "reconcileClientUserMessageIds":["client-user","other-user","not-accepted"]
+        }))
+        .await;
+    handler
+        .codex_app_server
+        .request("test/stop", json!({}))
+        .await
+        .unwrap();
+    let response = result.unwrap();
+    assert_eq!(handler.store.full_task_read_count(), reads);
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(response["transfer"]["payload"].as_str().unwrap())
+        .unwrap();
+    let packed: Value =
+        serde_json::from_reader(flate2::read::GzDecoder::new(bytes.as_slice())).unwrap();
+    assert!(!packed
+        .to_string()
+        .contains("unrelated historical tool output"));
+    let transcript = &packed["transcript"];
+    assert_eq!(
+        transcript["acceptedClientUserMessageIds"],
+        json!(["client-user", "other-user"])
+    );
+    assert_eq!(
+        handler.accepted_reconciliation_ids(
+            "task-1",
+            &json!({"threadId":"another-thread"}),
+            &["client-user".to_owned()]
+        ),
+        None
+    );
+    assert_eq!(transcript["origin"]["type"], "test-origin");
+    assert!(transcript["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|message| { message["role"] == "user" && message["content"] == "Original prompt" }));
+    let overlays = transcript["runtimeTurns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|turn| turn["items"].as_array().into_iter().flatten())
+        .collect::<Vec<_>>();
+    assert!(overlays.iter().any(
+        |item| item["id"] == "running-command" && item["block"]["tool_output"] == "live output"
+    ));
+    assert!(overlays
+        .iter()
+        .any(|item| item["id"] == "approval" && item["block"]["tool_output"] == "Approved read"));
+    assert!(overlays
+        .iter()
+        .any(|item| item["id"] == "current-text" && item["content"] == "Current"));
     fs::remove_dir_all(root).unwrap();
 }
 

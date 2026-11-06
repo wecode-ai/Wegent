@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
 
@@ -9,7 +11,7 @@ test('Stand-in confirmation waits for navigation to mount before opening the own
   const mounted = barrier()
   const reachedOwner = new Error('Owner page is ready')
   const calls: Array<{ action: string; selector: string }> = []
-  let preferencesReady = false
+  let preferencesApplied = false
   const scenario = createDesktopScenario({ workspacePath: '/fixture' })
   const verification = scenario
     .verify({
@@ -21,12 +23,13 @@ test('Stand-in confirmation waits for navigation to mount before opening the own
         }
         if (action === 'setAppPreferences') {
           assert.equal(selector, 'body')
-          assert.equal(options?.value, JSON.stringify({ experimentalFeaturesEnabled: true }))
-          preferencesReady = true
+          assert.ok(options?.value)
+          assert.deepEqual(JSON.parse(options.value), { experimentalFeaturesEnabled: true })
+          preferencesApplied = true
           return
         }
         if (selector === '[data-testid="personal-stand-in-button"]') {
-          assert.equal(preferencesReady, true)
+          assert.equal(preferencesApplied, true, 'Navigation requires the live preference setup')
           if (action === 'click') throw new Error('Stand-in navigation is still mounting')
           assert.equal(action, 'clickWhenEnabled')
           waiting.release()

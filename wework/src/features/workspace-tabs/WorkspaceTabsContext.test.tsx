@@ -566,35 +566,38 @@ describe('WorkspaceTabsProvider routing', () => {
     expect(screen.getByTestId('tab-ids')).toHaveTextContent('fixed-task')
   })
 
-  test('renames the persisted default board tab without changing named project tabs', () => {
-    localStorage.setItem(
-      'wework.workspaceTabs.v3:context-test',
-      JSON.stringify({
-        activeTabId: 'board-default',
-        tabs: [
-          {
-            id: 'board-default',
-            kind: 'board',
-            title: '工作项',
-            contentRoute: '/todo?projectId=default-work-items',
-          },
-          {
-            id: 'board-project',
-            kind: 'board',
-            title: '产品规划',
-            contentRoute: '/todo?projectId=project-1',
-          },
-        ],
-      })
-    )
-    window.history.replaceState({}, '', '/todo?workspaceTab=board-default')
+  test.each(['工作项', '协作 (Beta)', 'Collaboration (Beta)'])(
+    'renames the persisted default board tab (%s) without changing named project tabs',
+    title => {
+      localStorage.setItem(
+        'wework.workspaceTabs.v3:context-test',
+        JSON.stringify({
+          activeTabId: 'board-default',
+          tabs: [
+            {
+              id: 'board-default',
+              kind: 'board',
+              title,
+              contentRoute: '/todo?projectId=default-work-items',
+            },
+            {
+              id: 'board-project',
+              kind: 'board',
+              title: '产品规划',
+              contentRoute: '/todo?projectId=project-1',
+            },
+          ],
+        })
+      )
+      window.history.replaceState({}, '', '/todo?workspaceTab=board-default')
 
-    render(<RoutingHarness />)
+      render(<RoutingHarness />)
 
-    expect(screen.getByTestId('active-tab-title')).toHaveTextContent('协作')
-    expect(screen.getByTestId('active-tab-route')).toHaveTextContent('/todo')
-    expect(screen.getByTestId('tab-count')).toHaveTextContent('2')
-  })
+      expect(screen.getByTestId('active-tab-title')).toHaveTextContent('协作')
+      expect(screen.getByTestId('active-tab-route')).toHaveTextContent('/todo')
+      expect(screen.getByTestId('tab-count')).toHaveTextContent('2')
+    }
+  )
 
   test('the explicit new-tab action still opens a separate tab', () => {
     render(<RoutingHarness />)
@@ -699,6 +702,41 @@ describe('WorkspaceTabsProvider routing', () => {
     expect(params.get('workspaceTab')).toBe('auxiliary-apps')
     expect(params.get('workspaceTabTitle')).toBe('应用')
     window.removeEventListener('popstate', onPopState)
+  })
+
+  test('retains late project navigation in its owning tab without changing the active task', () => {
+    window.history.replaceState({}, '', '/todo?workspaceTab=fixed-board')
+    let context: WorkspaceTabsContextValue | undefined
+    render(
+      <RoutingHarness
+        onContextValue={value => {
+          context = value
+        }}
+      />
+    )
+    const board = context!.activeTab
+    const finishProjectLookup = context!.updateTab
+    act(() => {
+      context!.openTab('task')
+    })
+    const taskId = context!.activeTabId
+    const taskUrl = window.location.href
+    const projectRoute = '/todo?projectStore=local&projectId=late-project'
+
+    act(() => finishProjectLookup(board.id, { title: 'Late project', contentRoute: projectRoute }))
+
+    expect(context!.activeTabId).toBe(taskId)
+    expect(window.location.href).toBe(taskUrl)
+    expect(context!.tabs.find(tab => tab.id === board.id)?.contentRoute).toBe(projectRoute)
+    act(() => context!.selectTab(board.id))
+    expect(new URLSearchParams(window.location.search).get('projectId')).toBe('late-project')
+    act(() => context!.closeTab(board.id))
+    const remainingIds = context!.tabs.map(tab => tab.id)
+    expect(remainingIds).not.toContain(board.id)
+    const remainingUrl = window.location.href
+    act(() => finishProjectLookup(board.id, { contentRoute: '/todo?projectId=closed-project' }))
+    expect(context!.tabs.map(tab => tab.id)).toEqual(remainingIds)
+    expect(window.location.href).toBe(remainingUrl)
   })
 
   test('does not restore a stale route when route labels change after active-tab navigation', () => {

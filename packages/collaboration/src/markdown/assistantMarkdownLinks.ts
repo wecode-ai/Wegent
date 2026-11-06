@@ -1,66 +1,69 @@
-const isWindowsDriveAbsolutePath = (path: string) =>
-  /^[a-zA-Z]:[\\/]/.test(path);
+const isWindowsDriveAbsolutePath = (path: string) => /^[a-zA-Z]:[\\/]/.test(path)
 
-const ATTACHMENT_DOWNLOAD_PATH_PATTERN =
-  /\/(?:api\/)?attachments\/(\d+)\/download(?:[?#].*)?$/;
+const ATTACHMENT_DOWNLOAD_PATH_PATTERN = /\/(?:api\/)?attachments\/(\d+)\/download(?:[?#].*)?$/
 
 export type MarkdownLinkTarget =
-  | { kind: "external" }
-  | { kind: "internal"; path: string }
-  | { kind: "none" }
+  | { kind: 'external' }
+  | { kind: 'internal'; path: string }
+  | { kind: 'none' }
   | {
-      kind: "file";
-      path: string;
-      lineStart?: number;
-      lineEnd?: number;
-      isDirectory?: boolean;
-    };
+      kind: 'file'
+      path: string
+      lineStart?: number
+      lineEnd?: number
+      isDirectory?: boolean
+    }
 
 export interface ExtractedMarkdownLink {
-  href: string;
-  title: string;
+  href: string
+  title: string
 }
 
-const HTML_FILE_PATTERN = /\.(?:html?|xhtml)$/i;
-const MARKDOWN_ESCAPED_PUNCTUATION_PATTERN = /\\([!-/:-@[-`{-~])/g;
+const HTML_FILE_PATTERN = /\.(?:html?|xhtml)$/i
+const MARKDOWN_ESCAPED_PUNCTUATION_PATTERN = /\\([!-/:-@[-`{-~])/g
 // Protected Markdown links may be encoded again by intermediate URL normalizers.
-const MAX_MARKDOWN_FILE_PATH_DECODE_PASSES = 16;
+const MAX_MARKDOWN_FILE_PATH_DECODE_PASSES = 16
+
+function normalizeMarkdownDrivePath(path: string): string {
+  // Markdown destinations may use a URL-style slash before a Windows drive.
+  return /^\/[a-zA-Z]:[\\/]/.test(path) ? path.slice(1) : path
+}
 
 export function decodeMarkdownFilePath(path: string): string {
-  let decodedPath = path;
+  let decodedPath = path
   for (let pass = 0; pass < MAX_MARKDOWN_FILE_PATH_DECODE_PASSES; pass += 1) {
     try {
-      const nextPath = decodeURIComponent(decodedPath);
-      if (nextPath === decodedPath) return decodedPath;
-      decodedPath = nextPath;
+      const nextPath = decodeURIComponent(decodedPath)
+      if (nextPath === decodedPath) return decodedPath
+      decodedPath = nextPath
     } catch {
-      return decodedPath;
+      return decodedPath
     }
   }
-  return decodedPath;
+  return decodedPath
 }
 
 export function extractMarkdownLinks(content: string): ExtractedMarkdownLink[] {
-  const links: ExtractedMarkdownLink[] = [];
-  let cursor = 0;
+  const links: ExtractedMarkdownLink[] = []
+  let cursor = 0
 
   while (cursor < content.length) {
-    const labelStart = content.indexOf("[", cursor);
-    if (labelStart < 0) break;
-    const labelEnd = content.indexOf("](", labelStart + 1);
-    if (labelEnd < 0) break;
+    const labelStart = content.indexOf('[', cursor)
+    if (labelStart < 0) break
+    const labelEnd = content.indexOf('](', labelStart + 1)
+    if (labelEnd < 0) break
 
-    const destination = parseMarkdownLinkDestination(content, labelEnd + 2);
+    const destination = parseMarkdownLinkDestination(content, labelEnd + 2)
     if (destination) {
-      const title = content.slice(labelStart + 1, labelEnd).trim();
-      if (title) links.push({ href: destination.href, title });
-      cursor = destination.end;
-      continue;
+      const title = content.slice(labelStart + 1, labelEnd).trim()
+      if (title) links.push({ href: destination.href, title })
+      cursor = destination.end
+      continue
     }
-    cursor = labelStart + 1;
+    cursor = labelStart + 1
   }
 
-  return links;
+  return links
 }
 
 // Assistant responses frequently reference repository files with relative or
@@ -68,9 +71,27 @@ export function extractMarkdownLinks(content: string): ExtractedMarkdownLink[] {
 // navigate the SPA to a broken `http://localhost/...` URL, so file links are
 // routed to the caller instead.
 const MARKDOWN_LINK_PROTOCOLS = new Set([
-  'http', 'https', 'irc', 'ircs', 'mailto', 'xmpp', 'tel', 'file', 'folder',
-  'skill', 'plugin', 'app', 'cloud', 'wegent', 'wework', 'wework-conversation',
-  'wework-issue', 'wework-member', 'wework-agent', 'wework-group', 'wegent-sites-project',
+  'http',
+  'https',
+  'irc',
+  'ircs',
+  'mailto',
+  'xmpp',
+  'tel',
+  'file',
+  'folder',
+  'skill',
+  'plugin',
+  'app',
+  'cloud',
+  'wegent',
+  'wework',
+  'wework-conversation',
+  'wework-issue',
+  'wework-member',
+  'wework-agent',
+  'wework-group',
+  'wegent-sites-project',
 ])
 const UNSAFE_LINK_PROTOCOL = /^(?:javascript|data|vbscript):/i
 const URL_CONTROL_CHARACTERS = /[\u0000-\u0020\u007f]/g
@@ -87,209 +108,194 @@ export function transformMarkdownUrl(url: string, key: string): string | undefin
 }
 
 export function classifyMarkdownLink(href?: string): MarkdownLinkTarget {
-  const trimmedHref = href?.trim();
+  const trimmedHref = href?.trim()
   const value =
-    trimmedHref?.startsWith("<") && trimmedHref.endsWith(">")
+    trimmedHref?.startsWith('<') && trimmedHref.endsWith('>')
       ? trimmedHref.slice(1, -1).trim()
-      : trimmedHref;
-  if (!value) return { kind: "none" };
+      : trimmedHref
+  if (!value) return { kind: 'none' }
   const environmentSettings = value.match(
-    /^\/projects\/([^/?#]+)\/settings\/environment-variables(?:[?#].*)?$/,
-  );
+    /^\/projects\/([^/?#]+)\/settings\/environment-variables(?:[?#].*)?$/
+  )
   if (environmentSettings) {
     const params = new URLSearchParams({
-      app_type: "web",
-      view: "environment-variables",
+      app_type: 'web',
+      view: 'environment-variables',
       project_id: decodeMarkdownFilePath(environmentSettings[1]),
-    });
-    return { kind: "internal", path: `/sites?${params.toString()}` };
+    })
+    return { kind: 'internal', path: `/sites?${params.toString()}` }
   }
-  if (/^(https?|mailto|tel):/i.test(value)) return { kind: "external" };
-  if (value.startsWith("#")) return { kind: "none" };
-  if (value.startsWith("folder://")) {
+  if (/^(https?|mailto|tel):/i.test(value)) return { kind: 'external' }
+  if (value.startsWith('#')) return { kind: 'none' }
+  if (value.startsWith('folder://')) {
     try {
       return {
-        kind: "file",
-        path: decodeMarkdownFilePath(value.slice("folder://".length)),
+        kind: 'file',
+        path: normalizeMarkdownDrivePath(decodeMarkdownFilePath(value.slice('folder://'.length))),
         isDirectory: true,
-      };
+      }
     } catch {
-      return { kind: "none" };
+      return { kind: 'none' }
     }
   }
-  if (value.startsWith("file://")) {
+  if (value.startsWith('file://')) {
     return {
-      kind: "file",
+      kind: 'file',
       ...splitMarkdownFileLineSuffix(localPathFromMarkdownImageSrc(value)),
-    };
+    }
   }
-  if (
-    /^[a-z][a-z0-9+.-]*:/i.test(value) &&
-    !isWindowsDriveAbsolutePath(value)
-  ) {
-    return { kind: "external" };
+  if (/^[a-z][a-z0-9+.-]*:/i.test(value) && !isWindowsDriveAbsolutePath(value)) {
+    return { kind: 'external' }
   }
   return {
-    kind: "file",
-    ...splitMarkdownFileLineSuffix(decodeMarkdownFilePath(value)),
-  };
+    kind: 'file',
+    ...splitMarkdownFileLineSuffix(normalizeMarkdownDrivePath(decodeMarkdownFilePath(value))),
+  }
 }
 
 export function isHtmlFilePath(path: string): boolean {
-  return HTML_FILE_PATTERN.test(path.split(/[?#]/, 1)[0]);
+  return HTML_FILE_PATTERN.test(path.split(/[?#]/, 1)[0])
 }
 
-export function localHtmlBrowserUrl(
-  path: string,
-  desktop = false,
-): string | null {
-  if (!isHtmlFilePath(path)) return null;
-  return desktop ? desktopFileUrl(path) : null;
+export function localHtmlBrowserUrl(path: string, desktop = false): string | null {
+  if (!isHtmlFilePath(path)) return null
+  return desktop ? desktopFileUrl(path) : null
 }
 
 export function desktopFileUrl(path: string): string {
-  const normalized = path.replace(/\\/g, "/");
+  const normalized = path.replace(/\\/g, '/')
   const encoded = normalized
-    .split("/")
-    .map((segment) => encodeURIComponent(segment).replace(/%3A/gi, ":"))
-    .join("/");
-  return `file://${encoded.startsWith("/") ? "" : "/"}${encoded}`;
+    .split('/')
+    .map(segment => encodeURIComponent(segment).replace(/%3A/gi, ':'))
+    .join('/')
+  return `file://${encoded.startsWith('/') ? '' : '/'}${encoded}`
 }
 
 export function splitMarkdownFileLineSuffix(path: string): {
-  path: string;
-  lineStart?: number;
-  lineEnd?: number;
+  path: string
+  lineStart?: number
+  lineEnd?: number
 } {
-  const match = path.match(/^(.*?):(\d+)(?:-(\d+))?$/);
-  if (!match) return { path };
+  const match = path.match(/^(.*?):(\d+)(?:-(\d+))?$/)
+  if (!match) return { path }
 
-  const basePath = match[1];
-  if (!basePath || /^[a-zA-Z]$/.test(basePath)) return { path };
+  const basePath = match[1]
+  if (!basePath || /^[a-zA-Z]$/.test(basePath)) return { path }
 
-  const lineStart = Number(match[2]);
-  const lineEnd = match[3] ? Number(match[3]) : undefined;
+  const lineStart = Number(match[2])
+  const lineEnd = match[3] ? Number(match[3]) : undefined
   return {
     path: basePath,
     lineStart: Number.isFinite(lineStart) ? lineStart : undefined,
     lineEnd: lineEnd && Number.isFinite(lineEnd) ? lineEnd : undefined,
-  };
+  }
 }
 
-export function resolveDirectMarkdownImageSrc(
-  src: string,
-  desktop = false,
-): string | null {
-  const localPath = localMarkdownImagePath(src);
-  if (!localPath) return src;
+export function resolveDirectMarkdownImageSrc(src: string, desktop = false): string | null {
+  const localPath = localMarkdownImagePath(src)
+  if (!localPath) return src
 
-  return desktop ? desktopFileUrl(localPath) : null;
+  return desktop ? desktopFileUrl(localPath) : null
 }
 
 export function localMarkdownImagePath(src: string): string | null {
   if (src.startsWith('file://')) return localPathFromMarkdownImageSrc(src)
-  const decodedPath = decodeMarkdownFilePath(src)
+  const decodedPath = normalizeMarkdownDrivePath(decodeMarkdownFilePath(src))
   return isLocalImagePath(decodedPath) ? decodedPath : null
 }
 
 export function localPathFromMarkdownImageSrc(src: string): string {
-  if (!src.startsWith("file://")) return src;
+  if (!src.startsWith('file://')) return src
 
   try {
-    const pathname = decodeURIComponent(new URL(src).pathname);
-    return pathname.match(/^\/[a-zA-Z]:\//) ? pathname.slice(1) : pathname;
+    const pathname = decodeURIComponent(new URL(src).pathname)
+    return normalizeMarkdownDrivePath(pathname)
   } catch {
-    return src;
+    return src
   }
 }
 
 export function getAuthenticatedAttachmentId(src: string): number | null {
   try {
-    const url = new URL(src);
-    const match = url.pathname.match(ATTACHMENT_DOWNLOAD_PATH_PATTERN);
-    return match ? Number(match[1]) : null;
+    const url = new URL(src)
+    const match = url.pathname.match(ATTACHMENT_DOWNLOAD_PATH_PATTERN)
+    return match ? Number(match[1]) : null
   } catch {
-    const match = src.match(ATTACHMENT_DOWNLOAD_PATH_PATTERN);
-    return match ? Number(match[1]) : null;
+    const match = src.match(ATTACHMENT_DOWNLOAD_PATH_PATTERN)
+    return match ? Number(match[1]) : null
   }
 }
 
 export function isAuthenticatedAttachmentImageSrc(src: string): boolean {
-  return getAuthenticatedAttachmentId(src) !== null;
+  return getAuthenticatedAttachmentId(src) !== null
 }
 
 function isLocalImagePath(src: string): boolean {
-  if (src.startsWith("file://")) return true;
-  if (isWindowsDriveAbsolutePath(src)) return true;
+  if (src.startsWith('file://')) return true
+  if (isWindowsDriveAbsolutePath(src)) return true
 
-  return src.startsWith("/") && !isAuthenticatedAttachmentImageSrc(src);
+  return src.startsWith('/') && !isAuthenticatedAttachmentImageSrc(src)
 }
 
 function parseMarkdownLinkDestination(
   content: string,
-  start: number,
+  start: number
 ): { href: string; end: number } | null {
-  if (content[start] === "<") {
-    const destinationEnd = content.indexOf(">", start + 1);
-    if (destinationEnd < 0) return null;
-    const href = decodeMarkdownDestinationEscapes(
-      content.slice(start + 1, destinationEnd).trim(),
-    );
-    const linkEnd = markdownLinkEnd(content, destinationEnd + 1);
-    return href && linkEnd !== null ? { href, end: linkEnd } : null;
+  if (content[start] === '<') {
+    const destinationEnd = content.indexOf('>', start + 1)
+    if (destinationEnd < 0) return null
+    const href = decodeMarkdownDestinationEscapes(content.slice(start + 1, destinationEnd).trim())
+    const linkEnd = markdownLinkEnd(content, destinationEnd + 1)
+    return href && linkEnd !== null ? { href, end: linkEnd } : null
   }
 
-  let cursor = start;
-  let depth = 0;
-  let escaped = false;
+  let cursor = start
+  let depth = 0
+  let escaped = false
   while (cursor < content.length) {
-    const character = content[cursor];
+    const character = content[cursor]
     if (escaped) {
-      escaped = false;
-      cursor += 1;
-      continue;
+      escaped = false
+      cursor += 1
+      continue
     }
-    if (character === "\\") {
-      escaped = true;
-      cursor += 1;
-      continue;
+    if (character === '\\') {
+      escaped = true
+      cursor += 1
+      continue
     }
-    if (character === "(") {
-      depth += 1;
-    } else if (character === ")") {
-      if (depth === 0) break;
-      depth -= 1;
+    if (character === '(') {
+      depth += 1
+    } else if (character === ')') {
+      if (depth === 0) break
+      depth -= 1
     } else if (/\s/.test(character) && depth === 0) {
-      break;
+      break
     }
-    cursor += 1;
+    cursor += 1
   }
 
-  const href = decodeMarkdownDestinationEscapes(
-    content.slice(start, cursor).trim(),
-  );
-  const linkEnd = markdownLinkEnd(content, cursor);
-  return href && depth === 0 && linkEnd !== null
-    ? { href, end: linkEnd }
-    : null;
+  const href = decodeMarkdownDestinationEscapes(content.slice(start, cursor).trim())
+  const linkEnd = markdownLinkEnd(content, cursor)
+  return href && depth === 0 && linkEnd !== null ? { href, end: linkEnd } : null
 }
 
 function decodeMarkdownDestinationEscapes(destination: string): string {
-  return destination.replace(MARKDOWN_ESCAPED_PUNCTUATION_PATTERN, "$1");
+  return destination.replace(MARKDOWN_ESCAPED_PUNCTUATION_PATTERN, '$1')
 }
 
 function markdownLinkEnd(content: string, start: number): number | null {
-  let cursor = start;
-  while (/\s/.test(content[cursor] ?? "")) cursor += 1;
+  let cursor = start
+  while (/\s/.test(content[cursor] ?? '')) cursor += 1
 
-  const quote = content[cursor];
+  const quote = content[cursor]
   if (quote === '"' || quote === "'") {
-    cursor += 1;
-    while (cursor < content.length && content[cursor] !== quote) cursor += 1;
-    if (content[cursor] !== quote) return null;
-    cursor += 1;
-    while (/\s/.test(content[cursor] ?? "")) cursor += 1;
+    cursor += 1
+    while (cursor < content.length && content[cursor] !== quote) cursor += 1
+    if (content[cursor] !== quote) return null
+    cursor += 1
+    while (/\s/.test(content[cursor] ?? '')) cursor += 1
   }
 
-  return content[cursor] === ")" ? cursor + 1 : null;
+  return content[cursor] === ')' ? cursor + 1 : null
 }

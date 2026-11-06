@@ -5,6 +5,7 @@ import { dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { WebContents } from 'electron'
 import { captureWebContentsDataUrl } from './web-contents-capture.js'
+import type { VerificationDevtools } from './verification-devtools.js'
 
 const MAX_BODY_BYTES = 1024 * 1024
 const DEFAULT_TIMEOUT_MS = 10_000
@@ -44,6 +45,7 @@ export interface WeworkDesktopControlBridgeOptions {
   registryDirectory: string
   window: () => DesktopWindow | null
   smartApps?: () => SmartAppControlService | null
+  devtools?: VerificationDevtools
 }
 
 export interface SmartAppControlService {
@@ -114,6 +116,7 @@ export class WeworkDesktopControlBridge {
   }
 
   async stop(): Promise<void> {
+    this.options.devtools?.close()
     const server = this.server
     const runtimePath = this.runtimePath
     this.server = null
@@ -142,6 +145,14 @@ export class WeworkDesktopControlBridge {
       if (request.method === 'POST' && request.url === '/smart-app') {
         const input = await readJsonBody(request)
         writeResponse(response, 200, { ok: true, data: await this.dispatchSmartApp(input) })
+        return
+      }
+      if (request.method === 'POST' && request.url === '/devtools' && this.options.devtools) {
+        const input = await readJsonBody(request)
+        writeResponse(response, 200, {
+          ok: true,
+          data: await this.options.devtools.dispatch(input),
+        })
         return
       }
       if (request.method !== 'POST' || request.url !== '/desktop') {

@@ -178,6 +178,12 @@ class LoopNode(Base):
     )
 
 
+class ProjectMilestone(LoopNode):
+    """Project delivery milestone stored as a unified node."""
+
+    __mapper_args__ = {"polymorphic_identity": "milestone"}
+
+
 class LoopItemActiveAssignment(LoopNode):
     """Current-assignment index nodes; parent is the Issue, loop item is the event."""
 
@@ -273,6 +279,10 @@ class LoopItem(LoopNode):
             if isinstance(values, list)
             else []
         )
+
+    @property
+    def milestone_id(self) -> str | None:
+        return (self.metadata_json or {}).get("milestone_id")
 
     @property
     def tags(self) -> list[str]:

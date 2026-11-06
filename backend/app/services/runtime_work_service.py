@@ -4063,6 +4063,7 @@ def _runtime_transcript_payload(
     for name, alias in (
         ("refresh", "refresh"),
         ("navigation_only", "navigationOnly"),
+        ("reconcile_client_user_message_ids", "reconcileClientUserMessageIds"),
         ("transcript_protocol_version", "transcriptProtocolVersion"),
     ):
         value = getattr(request, name, None)

@@ -4771,6 +4771,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Investigate load".to_owned(),
                     description: String::new(),
                     status: "in_progress".to_owned(),
@@ -4953,6 +4954,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Fix OAuth callback".to_owned(),
                     description: "Login fails after redirect".to_owned(),
                     status: "in_progress".to_owned(),
@@ -4970,6 +4972,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Write deployment guide".to_owned(),
                     description: String::new(),
                     status: "pending".to_owned(),
@@ -5033,6 +5036,7 @@ mod tests {
                 .create_task(
                     project_id,
                     TaskCreate {
+                        milestone_id: None,
                         title: title.to_owned(),
                         description: String::new(),
                         status: "inbox".to_owned(),
@@ -5079,6 +5083,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    milestone_id: None,
                     title: "Inspect attachment".to_owned(),
                     description: String::new(),
                     status: "pending".to_owned(),

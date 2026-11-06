@@ -83,6 +83,14 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
       }
       if (event.event === 'executor.event_lagged') {
         const payload = runtimeEventLaggedPayload(event.payload)
+        if (import.meta.env.VITE_WEWORK_E2E === 'true') {
+          console.debug('[Wework] Runtime lag recovery dispatch', {
+            sequence: event.sequence,
+            subscriptionId,
+            validPayload: payload !== null,
+            hasRecoveryHandler: Boolean(subscription.handlers.onRuntimeEventLagged),
+          })
+        }
         if (payload) subscription.handlers.onRuntimeEventLagged?.(payload)
         continue
       }

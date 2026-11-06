@@ -18,6 +18,8 @@ const mocks = vi.hoisted(() => ({
   catalog: vi.fn(),
   uninstall: vi.fn(),
   store: vi.fn(),
+  personal: vi.fn(),
+  config: vi.fn(),
   registered: vi.fn(),
 }))
 
@@ -38,6 +40,9 @@ vi.mock('@/desktop/localExecutor', () => ({
   getInitializedBundledPluginMarketplace: () => null,
   withBundledPluginUpdatesPaused: (_name: string, mutation: () => Promise<unknown>) => mutation(),
   requestLocalExecutor: async (method: string, params?: { method?: string }) => {
+    if (method === 'executor.plugins.links.list') return []
+    if (method === 'executor.plugins.personal.list') return mocks.personal()
+    if (method === 'executor.codex_home.config.read') return mocks.config()
     if (method === 'executor.plugins.store.list') return mocks.store()
     if (method === 'runtime.codex.plugin.uninstall_local') return { localCommitted: true }
     if (method === 'codex.app_server_request' && params?.method === 'plugin/installed')
@@ -82,6 +87,12 @@ beforeEach(() => {
   mocks.catalog.mockReset().mockResolvedValue(empty)
   mocks.uninstall.mockReset().mockResolvedValue({})
   mocks.store.mockReset().mockResolvedValue({ storePath: '/store', plugins: [] })
+  mocks.personal.mockReset().mockResolvedValue({
+    marketplaceId: 'wework-personal',
+    marketplacePath: '/personal',
+    plugins: [],
+  })
+  mocks.config.mockReset().mockResolvedValue({ enabledPluginKeys: [] })
   mocks.registered.mockReset().mockResolvedValue(undefined)
 })
 afterEach(() => clearPluginMarketplaceCache())
@@ -198,6 +209,9 @@ describe('installed inventory identity and revision', () => {
       results.every(result => result.items.map(item => item.metadata.name).join() === 'old')
     ).toBe(true)
     expect(mocks.installed).toHaveBeenCalledOnce()
+    // Strict readers share one disk scan; catalog enrichment has its own link policy.
+    expect(mocks.personal).toHaveBeenCalledTimes(2)
+    expect(mocks.config).toHaveBeenCalledTimes(2)
   })
 
   test('follow-up catalog loading reuses only the current revision of live membership', async () => {

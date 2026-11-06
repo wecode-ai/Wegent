@@ -1040,6 +1040,8 @@ export function DesktopWorkbenchLayout({
       devices={state.devices}
       cloudWorkStatus={cloudWorkStatus}
       runtimeWork={state.runtimeWork}
+      runtimeWorkLoad={state.runtimeWorkLoad}
+      onRetryRuntimeWork={refreshWorkLists}
       gitCloneOperations={gitCloneOperations}
       currentRuntimeTask={activeLocalHarnessSessionId ? null : state.currentRuntimeTask}
       splitGroupMemberships={splitGroups.memberships}
@@ -1254,15 +1256,10 @@ export function DesktopWorkbenchLayout({
                     })
                   }}
                   onActiveProjectChange={project => {
-                    if (
-                      !workspaceTabs ||
-                      ownedWorkspaceTab?.kind !== 'board' ||
-                      workspaceTabs.activeTabId !== ownedWorkspaceTab.id ||
-                      !project
-                    ) {
+                    if (!workspaceTabs || ownedWorkspaceTab?.kind !== 'board' || !project) {
                       return
                     }
-                    workspaceTabs.updateActiveTab({
+                    workspaceTabs.updateTab(ownedWorkspaceTab.id, {
                       title: project.name,
                       contentRoute: projectSpaceContentRoute(projectSpaceRef(project)),
                     })
@@ -1436,21 +1433,17 @@ export function DesktopWorkbenchLayout({
                     })
                   }}
                   onActiveProjectChange={project => {
-                    if (
-                      !workspaceTabs ||
-                      ownedWorkspaceTab?.kind !== 'board' ||
-                      workspaceTabs.activeTabId !== ownedWorkspaceTab.id
-                    ) {
+                    if (!workspaceTabs || ownedWorkspaceTab?.kind !== 'board') {
                       return
                     }
                     if (!project) {
-                      workspaceTabs.updateActiveTab({
-                        title: t('workbench.workspace_tab_board', '协作 (Beta)'),
+                      workspaceTabs.updateTab(ownedWorkspaceTab.id, {
+                        title: t('workbench.workspace_tab_board', '协作'),
                         contentRoute: '/todo',
                       })
                       return
                     }
-                    workspaceTabs.updateActiveTab({
+                    workspaceTabs.updateTab(ownedWorkspaceTab.id, {
                       title: project.name,
                       contentRoute: projectSpaceContentRoute(projectSpaceRef(project)),
                     })

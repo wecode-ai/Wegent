@@ -1962,10 +1962,10 @@ describe('CloudTodoWorkspace', () => {
     await screen.findByTestId('cloud-todo-card-WEG-1')
     await openIssueFromBoard()
     subscribe.mockRejectedValueOnce(new Error('offline'))
-    await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
+    await userEvent.click(screen.getByTestId('cloud-todo-personal-task-start'))
     expect(await screen.findByTestId('transient-notice')).toHaveTextContent('offline')
     expect(screen.queryByTestId('ai-chat-modal')).not.toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
+    await userEvent.click(screen.getByTestId('cloud-todo-personal-task-start'))
     expect(await screen.findByTestId('ai-chat-modal')).toBeInTheDocument()
     expect(screen.queryByTestId('transient-notice')).not.toBeInTheDocument()
   })
@@ -1991,14 +1991,14 @@ describe('CloudTodoWorkspace', () => {
 
     await screen.findByTestId('cloud-todo-card-WEG-1')
     await openIssueFromBoard()
-    await user.click(screen.getByTestId('cloud-todo-create-task'))
+    await user.click(screen.getByTestId('cloud-todo-personal-task-start'))
     await user.click(screen.getByTestId('mock-create-runtime-task'))
     await waitFor(() => expect(workbenchServices.deliveryApi!.bindTask).toHaveBeenCalledTimes(1))
 
     await user.click(screen.getByTestId('ai-chat-modal-close'))
     expect(screen.queryByTestId('ai-chat-modal')).not.toBeInTheDocument()
     await openIssueFromBoard()
-    await user.click(screen.getByTestId('cloud-todo-create-task'))
+    await user.click(screen.getByTestId('cloud-todo-personal-task-start'))
     expect(screen.getByTestId('cloud-todo-panel-stack')).toHaveAttribute(
       'data-conversation-open',
       'true'
@@ -2040,7 +2040,7 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     await screen.findByTestId('cloud-todo-card-WEG-1')
     await openIssueFromBoard()
-    await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
+    await userEvent.click(screen.getByTestId('cloud-todo-personal-task-start'))
     await userEvent.click(screen.getByTestId('mock-create-runtime-task-with-model'))
 
     await waitFor(() =>
@@ -2118,7 +2118,7 @@ describe('CloudTodoWorkspace', () => {
     expect(tasks).toHaveTextContent('开发修改')
     expect(tasks).toHaveTextContent('测试修改')
 
-    await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
+    await userEvent.click(screen.getByTestId('cloud-todo-personal-task-start'))
 
     expect(screen.getByTestId('cloud-todo-detail')).toBeInTheDocument()
     expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute('data-task-id', item.id)
@@ -2143,7 +2143,7 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     await screen.findByTestId('cloud-todo-card-WEG-1')
     await openIssueFromBoard()
-    await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
+    await userEvent.click(screen.getByTestId('cloud-todo-personal-task-start'))
 
     expect(await screen.findByTestId('cloud-todo-detail')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-panel-stack')).toHaveAttribute(
@@ -2221,7 +2221,7 @@ describe('CloudTodoWorkspace', () => {
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
-    await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
+    await userEvent.click(screen.getByTestId('cloud-todo-personal-task-start'))
 
     expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute(
       'data-initial-local-project-id',
@@ -2575,13 +2575,11 @@ describe('CloudTodoWorkspace', () => {
     await openIssueFromBoard()
     await userEvent.click(screen.getByTestId('cloud-todo-detail-parent'))
     await userEvent.click(await screen.findByTestId('cloud-todo-detail-parent-option-WEG-2'))
-    await userEvent.click(screen.getByTestId('cloud-todo-save'))
 
     await waitFor(() =>
       expect(workbenchServices.deliveryApi?.updateLoopItem).toHaveBeenCalledWith('WEG-1', {
         version: 1,
         parent_id: 'WEG-2',
-        tags: [],
       })
     )
   })
@@ -3481,13 +3479,12 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click(screen.getByTestId('cloud-todo-detail-title'))
     await userEvent.clear(screen.getByTestId('cloud-todo-detail-title'))
     await userEvent.type(screen.getByTestId('cloud-todo-detail-title'), 'Updated TODO')
-    await userEvent.click(screen.getByTestId('cloud-todo-save'))
+    await userEvent.keyboard('{Enter}')
 
     await waitFor(() =>
       expect(workbenchServices.deliveryApi?.updateLoopItem).toHaveBeenCalledWith('WEG-1', {
         version: 1,
         title: 'Updated TODO',
-        tags: [],
       })
     )
     expect((await screen.findAllByText('Updated TODO')).length).toBeGreaterThan(0)

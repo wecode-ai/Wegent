@@ -33,6 +33,7 @@ import { getProviderModelConfigs } from '@/features/model-settings/providerModel
 import { saveLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 import { saveLocalUserPreferences } from '@/api/local/localSession'
 import { desktopControlExtension } from '@extensions/desktop-control'
+import { composeDesktopInput } from './input-composition'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import { parseDesktopControlKey } from './desktop-control-keyboard'
 import { decodeDesktopControlImage } from './desktop-control-image'
@@ -3339,6 +3340,15 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
       await fillDesktopControlElement(element, command.value ?? '')
       return element.textContent?.trim() ?? ''
+    }
+    case 'composeInput': {
+      const element = findDesktopControlElements(command.selector)[0]
+      if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+      const values: unknown = JSON.parse(command.value ?? '[]')
+      if (!Array.isArray(values) || !values.every(value => typeof value === 'string')) {
+        throw new Error('composeInput values must be an array of strings')
+      }
+      return JSON.stringify(await composeDesktopInput(element, values, waitForDesktopControlTick))
     }
     case 'finishAnimations': {
       let finishedCount = 0

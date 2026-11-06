@@ -121,6 +121,7 @@ impl RestoreStartupGate {
 }
 
 mod active_text;
+mod active_transcript;
 mod archives;
 mod assignment_receipts;
 mod async_questions;
@@ -137,7 +138,9 @@ mod concurrency;
 mod connections;
 mod context_compaction;
 mod control;
+mod control_metadata;
 mod creation;
+mod execution_control;
 mod fork_transfer;
 mod hooks;
 pub(super) mod lifecycle;
@@ -153,6 +156,7 @@ mod project_coordinator;
 mod project_preparation;
 mod project_router;
 mod queries;
+mod queries_projection;
 mod robot_queue_rpc;
 mod runner_catalog;
 mod runner_cloud_models;
@@ -183,6 +187,7 @@ mod tasks;
 mod text_generation;
 mod transcript_diagnostics;
 mod transcript_overlays;
+mod transcript_read_link;
 mod transcript_search;
 mod transcript_sync;
 mod turns;
@@ -229,10 +234,7 @@ use super::{
         transcript_snapshot_pagination, user_message_presentations, visit_transcript_blocks_mut,
     },
     store::{runtime_work_dir, RuntimeWorkStore},
-    transcript::{
-        full_transcript_messages, normalized_user_request_content, notification_item,
-        project_transcript, transcript_messages,
-    },
+    transcript::{normalized_user_request_content, notification_item, transcript_messages},
     transcript_page::transcript_page,
     util::{
         apply_runtime_payload_metadata, bool_field, cloud_project_id, execution_request, id_field,
@@ -511,6 +513,8 @@ fn hook_rpc_error(error: String) -> AppIpcError {
 
 #[derive(Clone)]
 pub struct RuntimeWorkRpcHandler {
+    #[cfg(test)]
+    transcript_test_workers: Option<Arc<tokio::sync::Semaphore>>,
     device_id: String,
     codex_app_server: CodexAppServerClient,
     claude_process_engine: AgentProcessEngine,
@@ -863,6 +867,8 @@ impl RuntimeWorkRpcHandler {
             );
         }
         let handler = Self {
+            #[cfg(test)]
+            transcript_test_workers: None,
             device_id,
             connectors: ConnectorRuntime::new(codex_app_server.clone()),
             codex_app_server,
