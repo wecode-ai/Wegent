@@ -4,9 +4,18 @@ import { join, resolve } from 'node:path'
 
 const APPEARANCE_KEY = 'wework.appearance'
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
-const COLORS = {
-  light: { background: 'rgb(255, 255, 255)', text: 'rgb(26, 26, 26)' },
-  dark: { background: 'rgb(24, 24, 24)', text: 'rgb(255, 255, 255)' },
+// The Wework defaults are owned by packages/collaboration/src/theme/presets.ts.
+// Core DSH owns body styles; inspect the Wework tokens and their actual consumers.
+const WEWORK_PALETTE = {
+  light: { background: '255 255 255', text: '26 26 26' },
+  dark: { background: '24 24 24', text: '255 255 255' },
+}
+const ACTIVE_WORKBENCH = '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
+const BACKGROUND_SELECTOR = `${ACTIVE_WORKBENCH} main`
+const TEXT_SELECTOR = `${ACTIVE_WORKBENCH} [data-testid="chat-message-input"][contenteditable="true"]`
+
+function rgb(triplet) {
+  return `rgb(${triplet.split(' ').join(', ')})`
 }
 
 function record(value) {
@@ -77,21 +86,40 @@ export async function captureStartupThemeEvidence({
     'The main document does not belong to the completed native startup'
   )
   const rendered = {
+    owner: 'wework',
     theme: await control.command('getAttribute', 'html', { value: 'data-theme' }),
     appearanceMode: await control.command('getAttribute', 'html', {
       value: 'data-appearance-mode',
     }),
     colorScheme: await control.command('getComputedStyleValue', 'html', { value: 'color-scheme' }),
-    background: await control.command('getComputedStyleValue', 'body', {
+    selectors: { palette: 'html', background: BACKGROUND_SELECTOR, text: TEXT_SELECTOR },
+    palette: {
+      background: await control.command('getComputedStyleValue', 'html', {
+        value: '--color-bg-base',
+      }),
+      text: await control.command('getComputedStyleValue', 'html', {
+        value: '--color-text-primary',
+      }),
+    },
+    background: await control.command('getComputedStyleValue', BACKGROUND_SELECTOR, {
       value: 'background-color',
     }),
-    text: await control.command('getComputedStyleValue', 'body', { value: 'color' }),
+    text: await control.command('getComputedStyleValue', TEXT_SELECTOR, { value: 'color' }),
+    hostDocument: {
+      owner: 'core-dsh',
+      background: await control.command('getComputedStyleValue', 'body', {
+        value: 'background-color',
+      }),
+      text: await control.command('getComputedStyleValue', 'body', { value: 'color' }),
+    },
   }
   assert.equal(rendered.theme, mode)
   assert.equal(rendered.appearanceMode, mode)
   assert.equal(rendered.colorScheme, mode)
-  assert.equal(rendered.background, COLORS[mode].background)
-  assert.equal(rendered.text, COLORS[mode].text)
+  assert.equal(rendered.palette.background, WEWORK_PALETTE[mode].background)
+  assert.equal(rendered.palette.text, WEWORK_PALETTE[mode].text)
+  assert.equal(rendered.background, rgb(WEWORK_PALETTE[mode].background))
+  assert.equal(rendered.text, rgb(WEWORK_PALETTE[mode].text))
   const nativeWindow = JSON.parse(await control.command('getNativeWindowState', 'body'))
   assert.equal(nativeWindow.visible, true)
   assert.equal(nativeWindow.minimized, false)

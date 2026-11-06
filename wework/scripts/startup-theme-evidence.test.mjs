@@ -55,10 +55,30 @@ function captureFixture(mode, options = {}) {
         return JSON.stringify({ timeOrigin: options.timeOrigins?.[timeOriginReads++] ?? 1500 })
       if (action === 'getAttribute') return options.renderedMode ?? mode
       if (action === 'getComputedStyleValue') {
+        if (selector === 'body') {
+          return params.value === 'color' ? 'rgb(15, 17, 21)' : 'rgb(255, 255, 255)'
+        }
         if (params.value === 'color-scheme') return mode
-        if (params.value === 'background-color')
+        if (params.value === '--color-bg-base') {
+          assert.equal(selector, 'html')
+          return options.backgroundToken ?? (mode === 'dark' ? '24 24 24' : '255 255 255')
+        }
+        if (params.value === '--color-text-primary') {
+          assert.equal(selector, 'html')
+          return options.textToken ?? (mode === 'dark' ? '255 255 255' : '26 26 26')
+        }
+        if (params.value === 'background-color') {
+          assert.equal(
+            selector,
+            '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"] main'
+          )
           return options.background ?? (mode === 'dark' ? 'rgb(24, 24, 24)' : 'rgb(255, 255, 255)')
-        return mode === 'dark' ? 'rgb(255, 255, 255)' : 'rgb(26, 26, 26)'
+        }
+        assert.equal(
+          selector,
+          '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"] [data-testid="chat-message-input"][contenteditable="true"]'
+        )
+        return options.text ?? (mode === 'dark' ? 'rgb(255, 255, 255)' : 'rgb(26, 26, 26)')
       }
       if (action === 'getNativeWindowState')
         return JSON.stringify({ visible: true, minimized: false })
@@ -97,6 +117,16 @@ for (const mode of ['light', 'dark']) {
     assert.equal(evidence.targetTheme, mode)
     assert.equal(evidence.stageAppearance, 'fixed-dark')
     assert.equal(evidence.source, 'native-electron-capturePage')
+    assert.equal(evidence.rendered.owner, 'wework')
+    assert.deepEqual(evidence.rendered.palette, {
+      background: mode === 'dark' ? '24 24 24' : '255 255 255',
+      text: mode === 'dark' ? '255 255 255' : '26 26 26',
+    })
+    assert.deepEqual(evidence.rendered.hostDocument, {
+      owner: 'core-dsh',
+      background: 'rgb(255, 255, 255)',
+      text: 'rgb(15, 17, 21)',
+    })
     assert.equal(evidence.completion.progressNow, 100)
     assert.equal(fixture.calls.filter(action => action === 'capture').length, 1)
     assert.deepEqual(await readFile(join(resultDir, evidence.captures.main)), PNG)
@@ -144,7 +174,13 @@ test('rejects a stale main document instead of accepting the target theme alone'
   assert.ok(!fixture.calls.includes('capture'))
 })
 
-for (const incorrect of [{ renderedMode: 'light' }, { background: 'rgb(255, 255, 255)' }]) {
+for (const incorrect of [
+  { renderedMode: 'light' },
+  { background: 'rgb(255, 255, 255)' },
+  { text: 'rgb(15, 17, 21)' },
+  { backgroundToken: '255 255 255' },
+  { textToken: '26 26 26' },
+]) {
   test(`rejects a dark target with inconsistent actual renderer ${Object.keys(incorrect)[0]}`, async t => {
     const { resultDir } = await directory(t)
     const fixture = captureFixture('dark', incorrect)
