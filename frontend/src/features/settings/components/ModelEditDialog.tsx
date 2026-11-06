@@ -2094,7 +2094,11 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                         <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                       </Button>
                     </PopoverTrigger>
-                    <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                    <PopoverContent
+                      className="w-[--radix-popover-trigger-width] p-0"
+                      align="start"
+                      aria-label={t('common:models.model_id')}
+                    >
                       <div className="p-2 border-b">
                         <Input
                           placeholder={t('common:models.search_model_id', '搜索模型...')}
@@ -2110,10 +2114,12 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                           </div>
                         ) : (
                           filteredModelOptions.map(option => (
-                            <div
+                            <button
                               key={option.value}
+                              type="button"
+                              data-testid={`model-id-option-${option.value}`}
                               className={cn(
-                                'relative flex cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground',
+                                'relative flex min-h-11 w-full cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-left text-sm outline-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary md:min-h-0',
                                 modelId === option.value && 'bg-accent'
                               )}
                               onClick={() => {
@@ -2129,7 +2135,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                                 )}
                               />
                               {option.label}
-                            </div>
+                            </button>
                           ))
                         )}
                       </div>

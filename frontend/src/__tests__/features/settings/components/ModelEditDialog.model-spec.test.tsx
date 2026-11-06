@@ -93,7 +93,8 @@ describe('ModelEditDialog model spec modes', () => {
   it('supports keyboard focus and scrolling model options while keeping the dialog locked', async () => {
     const user = userEvent.setup()
     const onClose = jest.fn()
-    render(<ModelEditDialog open onClose={onClose} toast={jest.fn()} />)
+    const onSave = jest.fn().mockResolvedValue(true)
+    render(<ModelEditDialog open onClose={onClose} toast={jest.fn()} onSave={onSave} />)
     const dialog = screen.getByRole('dialog', { name: 'common:models.create_title' })
     const modelIdSelect = within(dialog).getByTestId('model-id-select')
     for (let step = 0; step < 20 && document.activeElement !== modelIdSelect; step += 1) {
@@ -101,8 +102,9 @@ describe('ModelEditDialog model spec modes', () => {
     }
     expect(modelIdSelect).toHaveFocus()
     await user.keyboard('{Enter}')
-    const modelOption = await screen.findByText('gpt-4o (Recommended)', { exact: true })
-    const search = screen.getByPlaceholderText('common:models.search_model_id')
+    const picker = await screen.findByRole('dialog', { name: 'common:models.model_id' })
+    const modelOption = within(picker).getByRole('button', { name: 'gpt-4o (Recommended)' })
+    const search = within(picker).getByPlaceholderText('common:models.search_model_id')
     expect(search).toHaveFocus()
     const viewport = modelOption.parentElement!
 
@@ -135,8 +137,8 @@ describe('ModelEditDialog model spec modes', () => {
     fireEvent(dialog, outsideWheel)
     expect(outsideWheel.defaultPrevented).toBe(true)
 
-    await user.keyboard('gpt')
-    expect(search).toHaveValue('gpt')
+    await user.keyboard('gpt-4o')
+    expect(search).toHaveValue('gpt-4o')
     expect(search).toHaveFocus()
     await user.keyboard('{Escape}')
     await waitFor(() => expect(modelIdSelect).toHaveFocus())
@@ -144,10 +146,43 @@ describe('ModelEditDialog model spec modes', () => {
 
     await user.keyboard(' ')
     expect(await screen.findByPlaceholderText('common:models.search_model_id')).toHaveFocus()
-    await user.keyboard('{Escape}')
+    const presetOption = screen.getByRole('button', { name: 'gpt-4o (Recommended)' })
+    await user.tab()
+    expect(presetOption).toHaveFocus()
+    await user.keyboard('{Enter}')
     await waitFor(() => expect(modelIdSelect).toHaveFocus())
+    expect(modelIdSelect).toHaveTextContent('gpt-4o (Recommended)')
     expect(modelIdSelect).toHaveAttribute('aria-expanded', 'false')
+
+    await user.keyboard(' ')
+    const customSearch = await screen.findByPlaceholderText('common:models.search_model_id')
+    expect(customSearch).toHaveFocus()
+    expect(customSearch).toHaveValue('')
+    await user.keyboard('Custom')
+    const customOption = screen.getByRole('button', { name: 'Custom...' })
+    await user.tab()
+    expect(customOption).toHaveFocus()
+    await user.keyboard(' ')
+    await waitFor(() => expect(modelIdSelect).toHaveFocus())
+    expect(modelIdSelect).toHaveTextContent('Custom...')
+    expect(modelIdSelect).toHaveAttribute('aria-expanded', 'false')
+    const customModelId = within(dialog).getByPlaceholderText(
+      'common:models.custom_model_id_placeholder'
+    )
+    await user.tab()
+    expect(customModelId).toHaveFocus()
+    await user.keyboard('keyboard-custom-model')
+    expect(customModelId).toHaveValue('keyboard-custom-model')
     expect(onClose).not.toHaveBeenCalled()
+
+    await user.type(within(dialog).getByTestId('model-id-name-input'), 'keyboard-model')
+    await user.type(within(dialog).getByLabelText(/common:models.api_key/), 'test-api-key')
+    await user.click(within(dialog).getByRole('button', { name: 'common:actions.save' }))
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1))
+    expect(onSave.mock.calls[0][1]).toMatchObject({
+      metadata: { name: 'keyboard-model' },
+      spec: { modelConfig: { env: { model_id: 'keyboard-custom-model' } } },
+    })
   })
 
   it('creates a model with a vision sidecar using options outside the scrolling dialog', async () => {
