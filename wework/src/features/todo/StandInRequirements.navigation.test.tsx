@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { act, render, screen } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
 import { newStandInRole } from '@/api/personalStandIn'
@@ -12,6 +12,7 @@ import '@/i18n'
 import { StandInRequirements } from './StandInRequirements'
 
 it('opens the marketplace separately without replacing the requirements draft', async () => {
+  const user = userEvent.setup()
   const openTab = vi.fn()
   function Fixture() {
     const [role, setRole] = useState(newStandInRole('device', 'reviewer'))
@@ -28,12 +29,10 @@ it('opens the marketplace separately without replacing the requirements draft', 
     )
   }
   render(<Fixture />)
-  const editor = screen.getByTestId('stand-in-prompt') as HTMLElement & { value: string }
-  act(() => {
-    editor.value = 'Keep these requirements /'
-    editor.focus()
-  })
-  await userEvent.click(await screen.findByTestId('slash-command-option-plugin-marketplace'))
+  const editor = screen.getByTestId('stand-in-prompt')
+  await user.click(editor)
+  await user.paste('Keep these requirements /')
+  await user.click(await screen.findByTestId('slash-command-option-plugin-marketplace'))
   expect(openTab).toHaveBeenCalledWith('auxiliary', { contentRoute: '/plugins' })
   expect(screen.getByTestId('stand-in-prompt')).toBe(editor)
   expect(editor.textContent).toContain('Keep these requirements')

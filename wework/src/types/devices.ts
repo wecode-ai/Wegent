@@ -7,6 +7,7 @@ export interface DeviceInfo {
   name: string
   status: 'online' | 'offline' | 'busy'
   is_default: boolean
+  last_seen_at?: string | null
   device_type: 'local' | 'app' | 'cloud' | 'remote'
   bind_shell: 'claudecode' | 'openclaw'
   capabilities?: string[] | null

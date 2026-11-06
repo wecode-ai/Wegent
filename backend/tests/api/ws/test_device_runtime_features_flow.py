@@ -129,7 +129,7 @@ def _patch_namespace(
         yield None
 
     monkeypatch.setattr(
-        device_namespace, "app_identity_lock", _passthrough_identity_lock
+        device_namespace, "device_identity_lock", _passthrough_identity_lock
     )
     monkeypatch.setattr(namespace, "get_session", AsyncMock(return_value=session))
     monkeypatch.setattr(namespace, "save_session", AsyncMock())

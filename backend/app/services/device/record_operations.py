@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Record-scoped device removal and app registration locking."""
+"""Record-scoped removal and shared device registration locking."""
 
 import asyncio
 import json
@@ -16,15 +16,15 @@ from app.core.cache import cache_manager
 from app.models.kind import Kind
 from app.services.device.identity import (
     DeviceIdentityConflictError,
+    device_connection_route_id,
     lock_device_owner,
-    record_route_id,
 )
 from app.stores.tasks import subtask_store
 from shared.telemetry.decorators import trace_async
 
 
 @asynccontextmanager
-async def app_identity_lock(user_id: int) -> AsyncIterator[Redis]:
+async def device_identity_lock(user_id: int) -> AsyncIterator[Redis]:
     """Cover the database-to-online transition so deletion cannot race it."""
     client = await cache_manager._get_client()
     try:
@@ -38,8 +38,10 @@ async def app_identity_lock(user_id: int) -> AsyncIterator[Redis]:
 
 
 @trace_async("device.record.delete", tracer_name="backend.device")
-async def delete_device_record(db: Session, user_id: int, record_id: int) -> bool:
-    async with app_identity_lock(user_id) as client:
+async def delete_device_record(
+    db: Session, user_id: int, record_id: int, *, offline_only: bool = False
+) -> bool:
+    async with device_identity_lock(user_id) as client:
         lock_device_owner(db, user_id)
         device = (
             db.query(Kind)
@@ -56,7 +58,7 @@ async def delete_device_record(db: Session, user_id: int, record_id: int) -> boo
         if device is None:
             db.rollback()
             return False
-        if device.json.get("spec", {}).get("deviceType") != "cloud":
+        if offline_only or device.json.get("spec", {}).get("deviceType") != "cloud":
             await _require_offline_and_idle(db, client, user_id, device)
         device.is_active = False
         db.commit()
@@ -71,7 +73,7 @@ async def _require_offline_and_idle(
     # Read strictly: a cache failure is not evidence that deletion is safe.
     raw = await client.mget(
         [
-            f"device:online:{user_id}:{record_route_id(device)}",
+            f"device:online:{user_id}:{device_connection_route_id(device)}",
             f"device:online:{user_id}:{device.name}",
         ]
     )
@@ -80,7 +82,10 @@ async def _require_offline_and_idle(
     running = subtask_store.has_active_by_executor_names(
         db,
         user_id=user_id,
-        executor_names=[f"device-{record_route_id(device)}", f"device-{device.name}"],
+        executor_names=[
+            f"device-{device_connection_route_id(device)}",
+            f"device-{device.name}",
+        ],
     )
     if (
         online

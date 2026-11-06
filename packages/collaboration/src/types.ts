@@ -278,7 +278,10 @@ export interface CollaborationExecutionEnvironment {
   device_id?: number;
   device_key?: string;
   app_device_id?: string;
+  runtime_instance_id?: string;
   is_current_device?: boolean;
+  last_seen_at?: string | null;
+  workspace_ids?: string[];
   name: string;
   kind: "local_device" | "cloud_host";
   coding_tools: string[];

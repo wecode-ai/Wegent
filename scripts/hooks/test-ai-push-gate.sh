@@ -349,7 +349,7 @@ if grep -qE '^pnpm --filter wework lint$' "$CALL_LOG"; then
     exit 1
 fi
 
-if ! grep -qE '^pnpm --filter wework exec vitest run --pool=threads --maxWorkers 2 src/features/workbench/WorkbenchProvider.test.tsx src/features/workbench/runtimeModelSelection.test.ts$' "$CALL_LOG"; then
+if ! grep -qE '^pnpm --filter wework exec vitest run --pool=threads --maxWorkers 2 --testTimeout 15000 src/features/workbench/WorkbenchProvider.test.tsx src/features/workbench/runtimeModelSelection.test.ts$' "$CALL_LOG"; then
     echo "Expected renderer source changes to run changed and sibling test files."
     echo "Calls:"
     cat "$CALL_LOG"
@@ -590,7 +590,7 @@ bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$WEWORK_MIXED_TEST_OU
 refs/heads/topic $MIXED_LOCAL_SHA refs/heads/topic $MIXED_BASE_SHA
 EOF
 
-if ! grep -qE '^pnpm --filter wework exec vitest run --pool=threads --maxWorkers 2 src/api/changeRequests.test.ts$' "$CALL_LOG"; then
+if ! grep -qE '^pnpm --filter wework exec vitest run --pool=threads --maxWorkers 2 --testTimeout 15000 src/api/changeRequests.test.ts$' "$CALL_LOG"; then
     echo "Expected merge-like Wework changes to run only the related renderer test."
     echo "Calls:"
     cat "$CALL_LOG"

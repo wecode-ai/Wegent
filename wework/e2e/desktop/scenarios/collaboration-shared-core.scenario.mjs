@@ -1,5 +1,6 @@
 import { verifyCommentAssignmentTargets } from '../modules/comment-assignment-targets.mjs'
 import assert from 'node:assert/strict'
+import { verifyCollaborationDeviceCleanup } from '../modules/collaboration-device-cleanup.mjs'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { createBoardReplyModelRegression } from '../modules/board-reply-model.mjs'
@@ -357,6 +358,13 @@ export function createDesktopScenario({
           /尚未添加设备|当前没有云端设备/,
           'A cached device catalog rendered a false empty state'
         )
+        await verifyCollaborationDeviceCleanup({
+          cloud: cloudEnvironment,
+          control,
+          scoped,
+          timeoutMs: uiTimeoutMs,
+          capture: name => capture(control, name),
+        })
         await control.command('click', scoped('[data-testid="collaboration-primary-home"]'))
 
         const workspaceName = `${WORKSPACE_NAME}-${process.pid}`
