@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
@@ -207,6 +207,20 @@ async function waitForNoBrowserError(control, stableMs, message) {
     }
     await new Promise(resolve => setTimeout(resolve, 100))
   }
+}
+
+async function waitForBrowserError(control, timeoutMs, message) {
+  const startedAt = Date.now()
+  let lastText = ''
+  while (Date.now() - startedAt < timeoutMs) {
+    const count = await control.command('getElementCount', BROWSER_ERROR_SELECTOR)
+    if (count !== '0') {
+      lastText = await control.command('getText', BROWSER_ERROR_SELECTOR)
+      if (/无法在系统应用中打开|Unable to open with the system app/.test(lastText)) return
+    }
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  assert.fail(`${message}; last error=${lastText}`)
 }
 
 async function listLinuxProcesses(commandName) {
@@ -632,9 +646,7 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
       // --- Local file and directory external open ---
       const localRoot = await mkdtemp(join(executorHome, 'browser-toolbar-local-'))
       const localDirectory = join(localRoot, 'directory')
-      const localTextFile = join(localRoot, 'readme.txt')
       await mkdir(localDirectory, { recursive: true })
-      await writeFile(localTextFile, 'local file fixture', 'utf8')
 
       const loadLocalUrl = async value => {
         await control.command('submit', BROWSER_INPUT_SELECTOR, { value })
@@ -674,21 +686,29 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
         )
         await stopLinuxProcess(externalProcess)
 
-        const textFileUrl = pathToFileURL(localTextFile).href
-        await loadLocalUrl(textFileUrl)
-        const fileProcessesBefore = await captureLinuxProcesses('mousepad')
+        const invalidFileUrl = 'file://wework-e2e-invalid-host/missing.txt'
+        await loadLocalUrl(invalidFileUrl)
+        await control.command('click', BROWSER_OPEN_EXTERNAL_BUTTON_SELECTOR)
+        await waitForBrowserError(
+          control,
+          uiTimeoutMs,
+          'An invalid local file URL did not surface the external-open error'
+        )
+
+        await loadLocalUrl(directoryUrl)
+        const recoveryProcessesBefore = await captureLinuxProcesses('pcmanfm')
         await control.command('click', BROWSER_OPEN_EXTERNAL_BUTTON_SELECTOR)
         await waitForNoBrowserError(
           control,
           1_000,
-          'Opening a local file externally surfaced an error'
+          'The external-open error did not clear after a successful retry'
         )
         externalProcess = await waitForLinuxProcess(
-          'mousepad',
-          localTextFile,
+          'pcmanfm',
+          localDirectory,
           uiTimeoutMs,
-          'The local file was not opened by the Linux text editor',
-          fileProcessesBefore
+          'The recovered external-open action did not launch the Linux file manager',
+          recoveryProcessesBefore
         )
         await stopLinuxProcess(externalProcess)
       } finally {
