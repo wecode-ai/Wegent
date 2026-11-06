@@ -2,6 +2,37 @@ use super::*;
 
 const MANIFEST_KEY: &str = "wework.host-policy.z-manifest";
 
+#[test]
+fn runtime_policy_publication_supports_long_agent_homes() {
+    let home = tempfile::tempdir().unwrap();
+    let root = home
+        .path()
+        .join("long-cloud-executor-home-".repeat(4))
+        .join("long-agent-namespace-".repeat(4));
+    let launch = CodexLaunchConfig {
+        runtime_policy_root: Some(root.clone()),
+        ..Default::default()
+    };
+    let request = ExecutionRequest {
+        system_prompt: "Keep the complete current runtime policy".into(),
+        ..Default::default()
+    };
+
+    effective_instructions::publish(&request, &launch).unwrap();
+    let directory = std::fs::read_dir(&root).unwrap().next().unwrap().unwrap();
+    let path = directory.path().join("SKILL.md");
+    assert!(path.as_os_str().len() > 260);
+    let content = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        content.contains(&effective_instructions::native_instructions(
+            &request, &launch
+        ))
+    );
+    effective_instructions::publish(&request, &launch).unwrap();
+    assert_eq!(std::fs::read_to_string(path).unwrap(), content);
+    assert_eq!(std::fs::read_dir(root).unwrap().count(), 1);
+}
+
 fn policy_turn_params(request: &ExecutionRequest, launch: &CodexLaunchConfig) -> Value {
     turn_start_params(
         "thread",

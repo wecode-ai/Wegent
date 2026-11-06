@@ -42,8 +42,15 @@ pub fn write_atomic_file(path: &Path, bytes: &[u8]) -> Result<(), AtomicWriteErr
         stage: WriteStage::CreateTemporary,
         source: io::Error::new(io::ErrorKind::InvalidInput, "path has no parent"),
     })?;
+    // Windows native tempfile APIs require the verbatim path from canonicalize.
+    let parent = fs::canonicalize(parent).map_err(failure(WriteStage::CreateTemporary))?;
+    let name = path.file_name().ok_or_else(|| AtomicWriteError {
+        stage: WriteStage::CreateTemporary,
+        source: io::Error::new(io::ErrorKind::InvalidInput, "path has no file name"),
+    })?;
+    let destination = parent.join(name);
     let mut temporary =
-        tempfile::NamedTempFile::new_in(parent).map_err(failure(WriteStage::CreateTemporary))?;
+        tempfile::NamedTempFile::new_in(&parent).map_err(failure(WriteStage::CreateTemporary))?;
     temporary
         .write_all(bytes)
         .map_err(failure(WriteStage::Write))?;
@@ -55,16 +62,37 @@ pub fn write_atomic_file(path: &Path, bytes: &[u8]) -> Result<(), AtomicWriteErr
         fs::set_permissions(temporary.path(), metadata.permissions())
             .map_err(failure(WriteStage::PreservePermissions))?;
     }
-    temporary.persist(path).map_err(|error| AtomicWriteError {
-        stage: WriteStage::Publish,
-        source: error.error,
-    })?;
+    temporary
+        .persist(destination)
+        .map_err(|error| AtomicWriteError {
+            stage: WriteStage::Publish,
+            source: error.error,
+        })?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replacement_supports_paths_beyond_windows_max_path() {
+        let directory = tempfile::tempdir().unwrap();
+        let parent = directory
+            .path()
+            .join("long-policy-home-".repeat(5))
+            .join("long-agent-namespace-".repeat(5))
+            .join("a".repeat(64));
+        fs::create_dir_all(&parent).unwrap();
+        let path = parent.join("SKILL.md");
+        assert!(path.as_os_str().len() > 260);
+        fs::write(&path, b"before").unwrap();
+
+        write_atomic_file(&path, b"after").unwrap();
+
+        assert_eq!(fs::read(&path).unwrap(), b"after");
+        assert_eq!(fs::read_dir(parent).unwrap().count(), 1);
+    }
 
     #[cfg(unix)]
     #[test]
