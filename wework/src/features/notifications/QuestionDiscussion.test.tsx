@@ -9,6 +9,7 @@ import {
   questionDiscussionDrafts,
   questionDiscussionKey,
   QuestionDiscussionStoreContext,
+  useQuestionDiscussion,
   type QuestionDiscussionStore,
 } from './questionDiscussion'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
@@ -102,10 +103,15 @@ const cancel = vi.fn()
 let latestStore: QuestionDiscussionStore
 function StoreProbe() {
   const store = useContext(QuestionDiscussionStoreContext)!
+  const discussion = useQuestionDiscussion()
   useEffect(() => {
     latestStore = store
   }, [store])
-  return null
+  return (
+    <button data-testid="open-another-panel" onClick={() => discussion?.close()}>
+      Open another panel
+    </button>
+  )
 }
 function setup(count = 1, input = payload) {
   return render(
@@ -215,6 +221,22 @@ test('closing and reopening preserves the edited prompt without sending or cance
     )
   )
   expect(cancel).not.toHaveBeenCalled()
+})
+
+test('opening another panel preserves discussion input without restoring focus to the old opener', () => {
+  setup()
+  showSidebar()
+  const draft = within(dialog()).getByTestId('discussion-test-draft')
+  fireEvent.change(draft, { target: { value: '继续讨论接收范围。' } })
+  const navigate = screen.getByTestId('open-another-panel')
+  navigate.focus()
+  fireEvent.click(navigate)
+  expect(screen.queryByRole('region')).not.toBeInTheDocument()
+  expect(navigate).toHaveFocus()
+  showSidebar()
+  expect(within(dialog()).getByTestId('discussion-test-draft')).toBe(draft)
+  expect(draft).toHaveValue('继续讨论接收范围。')
+  expect(mock.create).not.toHaveBeenCalled()
 })
 
 test('shares edited unsent prompts between the task and pending-work entry points', () => {

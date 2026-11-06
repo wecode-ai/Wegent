@@ -73,9 +73,13 @@ export function QuestionDiscussionScope({ children }: { children: ReactNode }) {
     },
     [store]
   )
+  const close = useCallback(() => {
+    opener.current = null
+    setSelected(null)
+  }, [])
   const value = useMemo(
-    () => (store ? { open, isOpen: Boolean(selected) } : null),
-    [store, open, selected]
+    () => (store ? { open, close, isOpen: Boolean(selected) } : null),
+    [store, open, close, selected]
   )
   return (
     <QuestionDiscussionContext.Provider value={value}>

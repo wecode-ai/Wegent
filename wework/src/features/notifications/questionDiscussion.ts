@@ -115,6 +115,7 @@ export interface QuestionDiscussionStore {
 export const QuestionDiscussionStoreContext = createContext<QuestionDiscussionStore | null>(null)
 export const QuestionDiscussionContext = createContext<{
   open(source: RuntimeTaskAddress, payload: RequestUserInputPayload): void
+  close(): void
   isOpen?: boolean
 } | null>(null)
 

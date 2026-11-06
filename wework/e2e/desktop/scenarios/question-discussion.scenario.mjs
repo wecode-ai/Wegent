@@ -164,6 +164,23 @@ export function createDesktopScenario({
       await captureScreenshot(control, 'question-discussion-02a-unsent-prompt.png', 'body')
       const editedPrompt = `${QUESTION} 请先讨论项目成员方案。`
       await control.command('fill', sideComposer, { value: editedPrompt })
+      await control.command('press', 'body', {
+        key: process.platform === 'win32' ? 'Control+Shift+b' : 'Meta+Shift+b',
+      })
+      await control.command('waitFor', DIALOG, { visible: false })
+      await control.command('waitFor', '[data-testid="workspace-browser-url-input"]', {
+        visible: true,
+      })
+      await captureScreenshot(control, 'question-discussion-02a2-browser-shortcut.png', 'body')
+      assert.equal(discussionCalls, 0, 'Switching panels must not send the prepared prompt')
+      await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
+      await control.command('click', `${CARD} [data-testid="request-user-input-discuss"]`)
+      await control.command('waitFor', sideComposer, {
+        text: '请先讨论项目成员方案。',
+        visible: true,
+      })
+      assert.equal(await control.command('getValue', sideComposer), editedPrompt)
+      await captureScreenshot(control, 'question-discussion-02a3-restored-draft.png', 'body')
       await control.command('click', `${DIALOG} [data-testid="question-discussion-close"]`)
       await control.command('click', '[data-testid="workspace-tab-add"]')
       await control.command('click', '[data-testid="workspace-tab-add-pending-interactions"]')

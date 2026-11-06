@@ -1726,6 +1726,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [rightPanelExpanded, setRightPanelExpanded] = useState(
     () => initialWorkspaceState?.rightPanelExpanded ?? false
   )
+  const questionDiscussion = useQuestionDiscussion()
+  const closeQuestionDiscussion = questionDiscussion?.close
+  const displayedRightPanelOpen = rightPanelOpen && !questionDiscussion?.isOpen
+  const displayedRightPanelExpanded = rightPanelExpanded && !questionDiscussion?.isOpen
   const [rightPanelView, setRightPanelView] = useState<RightWorkspacePanelView>(() => {
     const restoredView = initialWorkspaceState?.rightPanelView ?? 'launcher'
     return normalizeRightWorkspacePanelView(
@@ -1938,7 +1942,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       !paneActive ||
       !paneVisible ||
       !workbenchVisible ||
-      !rightPanelOpen ||
+      !displayedRightPanelOpen ||
       !isRightWorkspaceBrowserTab(rightPanelView)
     ) {
       return
@@ -1951,7 +1955,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     browserStates,
     paneActive,
     paneVisible,
-    rightPanelOpen,
+    displayedRightPanelOpen,
     rightPanelView,
     syncActiveEmbeddedBrowserLabel,
     workbenchVisible,
@@ -2073,9 +2077,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     setRightPanelExpanded(false)
     setRightPanelOpen(false)
   }
-  const questionDiscussion = useQuestionDiscussion()
-  const displayedRightPanelOpen = rightPanelOpen && !questionDiscussion?.isOpen
-  const displayedRightPanelExpanded = rightPanelExpanded && !questionDiscussion?.isOpen
   const compactRightPanelOpen =
     rightPanelView === 'subagents' || isRightWorkspaceExtensionTab(rightPanelView)
   const {
@@ -2829,6 +2830,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           onError: target === 'right' ? setAdditionalHarnessError : setCentralHarnessError,
         })
         if (session && target === 'right') {
+          closeQuestionDiscussion?.()
           const tab = `harness:${session.sessionId}` as RightWorkspaceHarnessTab
           setRightPanelOpen(true)
           setRightPanelTabs(current => (current.includes(tab) ? current : [...current, tab]))
@@ -2849,6 +2851,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [
       activeLocalHarnessSession,
       canPrepareHarnessWorktree,
+      closeQuestionDiscussion,
       centralHarnessCwd,
       centralHarnessStarting,
       currentProject,
@@ -3313,11 +3316,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   )
   const openRightPanelTab = useCallback(
     (tab: RightWorkspacePanelTab) => {
+      closeQuestionDiscussion?.()
       setRightPanelOpen(true)
       setRightPanelTabs(current => (current.includes(tab) ? current : [...current, tab]))
       setRightPanelView(tab)
     },
-    [setRightPanelOpen, setRightPanelTabs, setRightPanelView]
+    [closeQuestionDiscussion, setRightPanelOpen, setRightPanelTabs, setRightPanelView]
   )
   const backgroundTerminals = useMemo(
     () => conversationTerminals(paneMessages, currentRuntimeTask?.taskId ?? paneKey),
@@ -3466,6 +3470,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       targetTab?: RightWorkspaceBrowserTab,
       overrides: Partial<RightWorkspaceBrowserState> = {}
     ) => {
+      closeQuestionDiscussion?.()
       const tab = targetTab ?? allocateBrowserTab()
       logBrowserOpenDiagnostic('openBrowserTab', {
         tab,
@@ -3520,6 +3525,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     },
     [
       allocateBrowserTab,
+      closeQuestionDiscussion,
       createBrowserTabState,
       defaultEmbeddedBrowserLabel,
       syncActiveEmbeddedBrowserLabel,
@@ -3878,6 +3884,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   ])
   const selectRightPanelTab = useCallback(
     (tab: RightWorkspacePanelTab) => {
+      closeQuestionDiscussion?.()
       setRightPanelOpen(true)
       setRightPanelView(tab)
       if (isRightWorkspaceBrowserTab(tab)) {
@@ -3885,7 +3892,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         if (activeBrowserLabel) syncActiveEmbeddedBrowserLabel(activeBrowserLabel)
       }
     },
-    [setRightPanelOpen, setRightPanelView, syncActiveEmbeddedBrowserLabel]
+    [closeQuestionDiscussion, setRightPanelOpen, setRightPanelView, syncActiveEmbeddedBrowserLabel]
   )
   const openTemporaryChatTab = useCallback(
     (initialInput?: string) => {
@@ -4192,7 +4199,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const extensionStateListenersRef = useRef(new Set<() => void>())
   useEffect(() => {
     for (const listener of [...extensionStateListenersRef.current]) listener()
-  }, [rightPanelExtensionTabs, rightPanelOpen, rightPanelView])
+  }, [rightPanelExtensionTabs, displayedRightPanelOpen, rightPanelView])
   useEffect(
     () =>
       attachRightWorkspaceSidebarController({
@@ -4227,7 +4234,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         snapshot: (): WeworkWorkspaceSidebarSnapshot => ({
           sessionId: rightWorkspaceExtensionScope.sessionId,
           state: {
-            panelOpen: rightPanelOpen,
+            panelOpen: displayedRightPanelOpen,
             tabs: Object.values(rightPanelExtensionTabsRef.current)
               .filter((state): state is RightWorkspaceExtensionTabState => Boolean(state))
               .map(state => state.tab),
@@ -4246,7 +4253,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       openRightWorkspaceExtensionTab,
       paneActive,
       paneVisible,
-      rightPanelOpen,
+      displayedRightPanelOpen,
       rightPanelView,
       rightWorkspaceExtensionScope,
       workbenchVisible,
@@ -4739,7 +4746,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     ]
   )
   const fileChangesDiffPreviewDisabledSubtaskId =
-    rightPanelOpen &&
+    displayedRightPanelOpen &&
     rightPanelView === 'review' &&
     reviewState.reviewMode === 'previous-turn' &&
     reviewState.sourceSubtaskId &&
