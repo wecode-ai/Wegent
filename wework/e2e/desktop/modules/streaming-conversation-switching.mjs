@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { createDevtoolsClient, writeDiagnosticFile } from '../../../scripts/ai-verify-devtools.mjs'
 import { reloadMainWindow, waitForWorkbenchDebugState } from './workspace-flows.mjs'
 import { requestExecutor } from './executor-rpc.mjs'
+import { withTimeout } from './shared.mjs'
 import {
   ACTIVE_WORKBENCH_SELECTOR,
   ASSISTANT_CONTENT_SELECTOR,
@@ -123,6 +124,10 @@ async function startSwitchingCpuProfile(directory, timeoutMs) {
 
 export function createConversationSwitchingChecks({ uiTimeoutMs, resultDir }) {
   const longResponseTimeoutMs = Math.max(uiTimeoutMs, LONG_RESPONSE_TIMEOUT_MS)
+  let resolveInitialResponse
+  const initialResponse = new Promise(resolve => {
+    resolveInitialResponse = resolve
+  })
   let releaseTail
   let releaseDone
   const tail = new Promise(resolve => {
@@ -171,6 +176,7 @@ export function createConversationSwitchingChecks({ uiTimeoutMs, resultDir }) {
         writeElapsedMs: Date.now() - startedAt,
         backpressured: !writable,
       })
+      resolveInitialResponse()
       await tail
       console.info('[conversation-switching] background tail released', {
         elapsedMs: Date.now() - startedAt,
@@ -196,6 +202,13 @@ export function createConversationSwitchingChecks({ uiTimeoutMs, resultDir }) {
         await control.command('startRuntimeStreamDiagnostics', 'body')
         stopCpuProfile = await startSwitchingCpuProfile(resultDir, uiTimeoutMs)
         await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+        // Model startup has its own budget; the UI must ingest all 520 items
+        // and render the prefix within the ordinary step timeout after emission.
+        await withTimeout(
+          initialResponse,
+          longResponseTimeoutMs,
+          'The long conversation model did not emit its initial response'
+        )
         await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, { text: PREFIX })
         await stopCpuProfile()
         stage = 'native-history'
