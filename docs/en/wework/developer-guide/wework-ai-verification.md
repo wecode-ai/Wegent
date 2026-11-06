@@ -22,7 +22,7 @@ The plugin account late-response E2E uses a unique `Server-Timing` diagnostic ma
 
 When full task data is selected, the feedback bundle's `context/task.json` includes `modelSelection`: `configured` is the configuration supplied to the model selector, `effective` is the configuration after default resolution, and `selected` is the current composer model. Missing snapshots remain `null`. Snapshots contain only model identity, resource ownership and a diagnostic fingerprint; arbitrary model options and authentication configuration are excluded.
 
-The `workbench.selection_restored`, `workbench.selection_changed` and `workbench.selection_seeded` events in `logs/app/model-loading.log` correlate scopes and models through numeric fingerprints. Fingerprints are diagnostic identifiers. The executor's `runtime task model selection updated` event records an in-memory assignment, while task-read logs record the owning task's current model identity. Assignment does not prove that a disk write succeeded.
+The `workbench.selection_restored`, `workbench.selection_changed` and `workbench.selection_seeded` events in `logs/app/model-loading.log` correlate scopes and models through numeric fingerprints. Fingerprints are diagnostic identifiers. The executor's `runtime task model selection updated` event records an in-memory assignment. The `runtime task get resolved link` and `runtime task transcript resolved link` events record the owning task's current model identity on reads. Assignment does not prove that a disk write succeeded.
 
 `configured` is not the raw on-disk task record. Existing conversations receive configuration from the task summary or runtime handle; new conversations can receive project configuration or user preferences.
 

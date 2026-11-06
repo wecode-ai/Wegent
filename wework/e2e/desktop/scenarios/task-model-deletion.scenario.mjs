@@ -1,5 +1,9 @@
 import { fetchLocalRuntimeJson } from '../modules/runtime-request.mjs'
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { until } from '../modules/plugin-regression-fixture.mjs'
 import {
   ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_WORKBENCH_SELECTOR,
@@ -23,7 +27,7 @@ const MARKER = 'WEWORK_TASK_MODEL_DELETION'
 const SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="model-selector-button"]`
 const SEND = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`
 
-export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs }) {
+export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs, resultDir }) {
   let cloud
   let deletedModelId
   let replyCount = 0
@@ -176,6 +180,32 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
     }
   }
 
+  /** Check that actual task and transcript reads log the owning task's saved model identity. */
+  async function assertTaskReadModelDiagnostics(control, identity, expectedModelName) {
+    const address = { taskId: identity.taskId }
+    const saved = await requestExecutor(control, 'runtime.tasks.get', { address })
+    const selection = saved.task.runtimeHandle.modelSelection
+    assert.equal(selection.modelName, expectedModelName)
+    await requestExecutor(control, 'runtime.tasks.transcript', { address })
+    const events = ['runtime task get resolved link', 'runtime task transcript resolved link']
+    await until(
+      () => readFile(join(resultDir, 'executor.log'), 'utf8'),
+      log =>
+        events.every(event =>
+          log
+            .split('\n')
+            .some(
+              line =>
+                line.includes(event) &&
+                line.includes(`local_task_id=${identity.taskId} `) &&
+                line.includes(`model_selection_name=${expectedModelName} `) &&
+                line.includes(`model_selection_type=${selection.modelType}`)
+            )
+        ),
+      'Task reads did not log the saved model identity'
+    )
+  }
+
   return {
     requiresCloudEnvironment: true,
     async prepareCloud(environment) {
@@ -238,6 +268,7 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
         const taskSelector = `[data-testid="${row}"]`
         const identity = await conversationIdentity(control)
         await assertFeedbackModelSnapshot(control, identity, `local-model:${localModelId}`)
+        await assertTaskReadModelDiagnostics(control, identity, `local-model:${localModelId}`)
 
         // Delete the local configuration through the actual settings UI and reopen the task.
         await control.command('navigate', 'body', { value: '/settings/personal/models' })

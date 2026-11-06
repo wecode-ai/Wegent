@@ -5,6 +5,7 @@
 use super::*;
 
 impl RuntimeWorkRpcHandler {
+    /// Read task identity and model configuration without starting a provider or returning profiles.
     pub(super) fn get_task(&self, payload: &Value) -> Result<Value, AppIpcError> {
         let task_id = runtime_task_id(payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
@@ -19,6 +20,7 @@ impl RuntimeWorkRpcHandler {
                 "error": "Task not found on the owning Runtime",
             }));
         };
+        log_runtime_archive_link("runtime task get resolved link", &link, false);
         if link.status == "archived" {
             return Ok(json!({
                 "success": false,
@@ -382,6 +384,7 @@ impl RuntimeWorkRpcHandler {
         .await
     }
 
+    /// Record the resolved task's model identity before reading cached or native transcript content.
     pub(super) async fn read_transcript(&self, payload: Value) -> Result<Value, AppIpcError> {
         let started_at = Instant::now();
         let local_task_id = runtime_task_id(&payload)
@@ -438,6 +441,9 @@ impl RuntimeWorkRpcHandler {
                 .is_some_and(super::transcript_search::is_cached_search_cursor);
         let (local_link, bounded_native_page) =
             self.transcript_read_link(&local_task_id, bounded_native);
+        if let Some(link) = local_link.as_ref() {
+            log_runtime_archive_link("runtime task transcript resolved link", link, false);
+        }
         let codex_client = match local_link.as_ref() {
             Some(link) => self
                 .codex_app_server
