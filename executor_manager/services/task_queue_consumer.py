@@ -31,6 +31,25 @@ from shared.models.openai_converter import get_metadata_field
 
 logger = setup_logger(__name__)
 
+# Failures that retrying the same payload cannot resolve. Retrying them only
+# delays the terminal callback and can mask the original cause with a second,
+# unrelated error: a quota rejection leaves a phantom executor name on the
+# payload, and the next attempt reports "Executor is deleted" instead.
+NON_RETRYABLE_ERROR_MARKERS = (
+    "User has reached the task limit",
+    "Executor is deleted. Please create a new session.",
+    "Default 'docker' executor not found",
+    "Invalid JSON in EXECUTOR_CONFIG",
+    "Error loading executors from environment",
+)
+
+
+def is_non_retryable_error(error_msg: Optional[str]) -> bool:
+    """Return True when retrying the same task payload cannot succeed."""
+    if not error_msg:
+        return False
+    return any(marker in error_msg for marker in NON_RETRYABLE_ERROR_MARKERS)
+
 
 class TaskQueueConsumer:
     """Consumer that processes tasks from Redis queue with backpressure.
@@ -242,6 +261,18 @@ class TaskQueueConsumer:
         task_id = get_metadata_field(task, "task_id")
         subtask_id = get_metadata_field(task, "subtask_id")
 
+        if is_non_retryable_error(error_msg):
+            logger.error(
+                f"[TaskQueueConsumer] Task {task_id}/{subtask_id} failed with "
+                f"non-retryable error: {error_msg}"
+            )
+            self._report_terminal_failure(
+                task_id=task_id,
+                subtask_id=subtask_id,
+                error_message=error_msg,
+            )
+            return
+
         # Try to requeue
         should_retry, retry_count = self.queue_service.requeue_task(task)
 
@@ -256,7 +287,20 @@ class TaskQueueConsumer:
             f"[TaskQueueConsumer] Task {task_id}/{subtask_id} failed after "
             f"{retry_count} retries: {error_msg}"
         )
+        self._report_terminal_failure(
+            task_id=task_id,
+            subtask_id=subtask_id,
+            error_message=f"Task failed after {retry_count} retries: {error_msg}",
+        )
 
+    def _report_terminal_failure(
+        self,
+        *,
+        task_id: Any,
+        subtask_id: Any,
+        error_message: str,
+    ) -> None:
+        """Send the terminal FAILED callback for a task that cannot run."""
         if not (task_id and subtask_id):
             # Nothing to report to the backend; do not keep the stale record.
             self.queue_service.clear_pending(task_id)
@@ -269,7 +313,6 @@ class TaskQueueConsumer:
 
         try:
             callback_client = get_callback_client()
-            error_message = f"Task failed after {retry_count} retries: {error_msg}"
 
             # Run async callback in sync context
             loop = asyncio.new_event_loop()

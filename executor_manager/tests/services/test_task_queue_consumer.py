@@ -6,7 +6,10 @@
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from executor_manager.services.task_queue_consumer import TaskQueueConsumer
+from executor_manager.services.task_queue_consumer import (
+    TaskQueueConsumer,
+    is_non_retryable_error,
+)
 
 TASK_ID = 10000000000001
 SUBTASK_ID = 10000000000002
@@ -32,7 +35,7 @@ def test_failed_result_with_executor_name_is_requeued():
         TASK_ID: {
             "status": "failed",
             "executor_name": "wegent-task-example-000000000000000",
-            "error_msg": "Executor is deleted. Please create a new session.",
+            "error_msg": "initial dispatch failed",
         }
     }
     consumer.queue_service = MagicMock()
@@ -81,7 +84,7 @@ def test_exhausted_retries_report_failure_to_backend():
         TASK_ID: {
             "status": "failed",
             "executor_name": "wegent-task-example-000000000000000",
-            "error_msg": "Executor is deleted. Please create a new session.",
+            "error_msg": "initial dispatch failed",
         }
     }
     consumer.queue_service = MagicMock()
@@ -99,6 +102,9 @@ def test_exhausted_retries_report_failure_to_backend():
     callback_client.send_error.assert_awaited_once()
     assert callback_client.send_error.await_args.kwargs["task_id"] == TASK_ID
     assert callback_client.send_error.await_args.kwargs["subtask_id"] == SUBTASK_ID
+    assert callback_client.send_error.await_args.kwargs["error_message"] == (
+        "Task failed after 4 retries: initial dispatch failed"
+    )
     consumer.queue_service.clear_pending.assert_called_once_with(TASK_ID)
 
 
@@ -110,7 +116,7 @@ def test_failed_failure_callback_keeps_pending_record():
         TASK_ID: {
             "status": "failed",
             "executor_name": "wegent-task-example-000000000000000",
-            "error_msg": "Executor is deleted. Please create a new session.",
+            "error_msg": "initial dispatch failed",
         }
     }
     consumer.queue_service = MagicMock()
@@ -127,3 +133,78 @@ def test_failed_failure_callback_keeps_pending_record():
 
     callback_client.send_error.assert_awaited_once()
     consumer.queue_service.clear_pending.assert_not_called()
+
+
+def test_task_limit_error_is_not_requeued():
+    """A quota rejection cannot be fixed by retrying the same payload."""
+    consumer = _build_consumer()
+    consumer.task_processor = MagicMock()
+    consumer.task_processor.process_tasks.return_value = {
+        TASK_ID: {
+            "status": "failed",
+            "error_msg": (
+                "User has reached the task limit. Please delete history tasks."
+            ),
+        }
+    }
+    consumer.queue_service = MagicMock()
+
+    with patch(
+        "executor_manager.clients.callback_client.get_callback_client"
+    ) as get_client:
+        callback_client = MagicMock()
+        callback_client.send_error = AsyncMock(return_value=True)
+        get_client.return_value = callback_client
+
+        consumer._process_task_with_retry(_task())
+
+    consumer.queue_service.requeue_task.assert_not_called()
+    callback_client.send_error.assert_awaited_once()
+    assert callback_client.send_error.await_args.kwargs["error_message"] == (
+        "User has reached the task limit. Please delete history tasks."
+    )
+    consumer.queue_service.clear_pending.assert_called_once_with(TASK_ID)
+
+
+def test_deleted_executor_error_is_not_requeued():
+    """A missing executor reference is terminal for the queued payload."""
+    consumer = _build_consumer()
+    consumer.task_processor = MagicMock()
+    consumer.task_processor.process_tasks.return_value = {
+        TASK_ID: {
+            "status": "failed",
+            "executor_name": "wegent-task-example-000000000000000",
+            "error_msg": "Executor is deleted. Please create a new session.",
+        }
+    }
+    consumer.queue_service = MagicMock()
+
+    with patch(
+        "executor_manager.clients.callback_client.get_callback_client"
+    ) as get_client:
+        callback_client = MagicMock()
+        callback_client.send_error = AsyncMock(return_value=True)
+        get_client.return_value = callback_client
+
+        consumer._process_task_with_retry(_task())
+
+    consumer.queue_service.requeue_task.assert_not_called()
+    callback_client.send_error.assert_awaited_once()
+    assert callback_client.send_error.await_args.kwargs["error_message"] == (
+        "Executor is deleted. Please create a new session."
+    )
+    consumer.queue_service.clear_pending.assert_called_once_with(TASK_ID)
+
+
+def test_non_retryable_error_classification():
+    """Known terminal errors are classified without coupling to every caller."""
+    assert is_non_retryable_error(
+        "User has reached the task limit. Please delete history tasks."
+    )
+    assert is_non_retryable_error("Executor is deleted. Please create a new session.")
+    assert is_non_retryable_error("Default 'docker' executor not found")
+    assert is_non_retryable_error("Invalid JSON in EXECUTOR_CONFIG: bad value")
+    assert is_non_retryable_error("Error loading executors from environment: x")
+    assert not is_non_retryable_error("connection reset by peer")
+    assert not is_non_retryable_error("")
+    assert not is_non_retryable_error(None)
