@@ -6,8 +6,10 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { createSourceStoryModel } from './stand-in-source-story-model.mjs'
+import { readStoryTaskEvidence } from './stand-in-private-story-evidence.mjs'
 import {
   STORY_CHAT,
+  STORY_PRIMARY,
   STORY_USER,
   assertStoryPrimaryOutcome,
   openStoryPrimary,
@@ -209,8 +211,15 @@ export function createDingTalkReplyStory(options) {
         )
         const firstTask = await rpc('runtime.tasks.get', { taskId: firstWork.taskId })
         assert.equal(firstTask.task.status, 'done')
+        const firstEvidence = await readStoryTaskEvidence(options.executorHome, firstWork.taskId)
+        assert.equal(firstEvidence.completion.status, 'done')
+        assert.equal(firstEvidence.completion.turnId, firstEvidence.lastTurnId)
+        assert.deepEqual(firstEvidence.completion.generation.reportTo, {
+          userId: STORY_USER,
+          taskId: STORY_PRIMARY,
+        })
         assert.ok(
-          firstTask.task.runtimeHandle.standInResultReceipt,
+          firstEvidence.receipt,
           'The one-time reply outcome must have a durable primary-delivery receipt'
         )
         const afterOnce = await rpc('runtime.stand_in.personal.get', { userId: STORY_USER })
@@ -285,8 +294,18 @@ export function createDingTalkReplyStory(options) {
           'done',
           'A confirmed continuous grant must not wait for another user decision'
         )
+        const automaticEvidence = await readStoryTaskEvidence(
+          options.executorHome,
+          automaticWork.taskId
+        )
+        assert.equal(automaticEvidence.completion.status, 'done')
+        assert.equal(automaticEvidence.completion.turnId, automaticEvidence.lastTurnId)
+        assert.deepEqual(automaticEvidence.completion.generation.reportTo, {
+          userId: STORY_USER,
+          taskId: STORY_PRIMARY,
+        })
         assert.ok(
-          automaticTask.task.runtimeHandle.standInResultReceipt,
+          automaticEvidence.receipt,
           'Automatic reply must return through the native result outbox'
         )
         assert.deepEqual(

@@ -3,8 +3,10 @@ import { DatabaseSync } from 'node:sqlite'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createSourceStoryModel } from './stand-in-source-story-model.mjs'
+import { readStoryTaskEvidence } from './stand-in-private-story-evidence.mjs'
 import {
   STORY_CHAT,
+  STORY_PRIMARY,
   STORY_USER,
   assertStoryPrimaryOutcome,
   restoreSourceStory,
@@ -106,8 +108,15 @@ export function createProjectVersionStory(options, providerId) {
         )
         const first = await rpc('runtime.tasks.get', { taskId: model.taskId })
         assert.equal(first.task.status, 'done')
-        const firstReceipt = first.task.runtimeHandle.standInResultReceipt
+        const firstEvidence = await readStoryTaskEvidence(options.executorHome, model.taskId)
+        const firstReceipt = firstEvidence.receipt
         assert.ok(firstReceipt, 'The first primary result needs a native durable outbox receipt')
+        assert.equal(firstEvidence.completion.status, 'done')
+        assert.equal(firstEvidence.completion.turnId, firstEvidence.lastTurnId)
+        assert.deepEqual(firstEvidence.completion.generation.reportTo, {
+          userId: STORY_USER,
+          taskId: STORY_PRIMARY,
+        })
         const firstThread = first.task.runtimeHandle.threadId
         model.phase = 2
         await publish(2)
@@ -123,7 +132,17 @@ export function createProjectVersionStory(options, providerId) {
           firstThread,
           'New source versions must continue the original conversation'
         )
-        assert.notEqual(second.task.runtimeHandle.standInResultReceipt, firstReceipt)
+        const secondEvidence = await readStoryTaskEvidence(options.executorHome, model.taskId)
+        assert.ok(secondEvidence.receipt)
+        assert.notEqual(secondEvidence.receipt, firstReceipt)
+        assert.equal(second.task.status, 'done')
+        assert.equal(secondEvidence.completion.status, 'done')
+        assert.equal(secondEvidence.completion.turnId, secondEvidence.lastTurnId)
+        assert.notEqual(secondEvidence.completion.turnId, firstEvidence.completion.turnId)
+        assert.deepEqual(secondEvidence.completion.generation.reportTo, {
+          userId: STORY_USER,
+          taskId: STORY_PRIMARY,
+        })
         const works = await rpc('runtime.stand_in.work.list', { userId: STORY_USER })
         assert.equal(works.items.filter(work => work.roleId === ROLE).length, 1)
         assert.ok(model.continuations.some(item => item.taskId === model.taskId))
