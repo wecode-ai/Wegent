@@ -24,6 +24,7 @@ const isLineEnding = (code: Code) => code !== null && code < -2
 function mathConstruct(open: number, close: number, flow = false): Construct {
   const dollar = open === 36
   const tokenize: Tokenizer = function (effects, ok, nok) {
+    const context = this
     let previous: Code = null
     const marker = () => effects.enter('assistantMathMarker')
     const closing: Construct = {
@@ -45,6 +46,9 @@ function mathConstruct(open: number, close: number, flow = false): Construct {
     return start
 
     function start(code: Code): State | undefined {
+      // A dollar immediately after a link-label opener is a composer mention
+      // prefix, not inline math. Otherwise adjacent @ references swallow links.
+      if (dollar && context.previous === 91) return nok(code)
       effects.enter('assistantMath')
       marker()
       effects.consume(code)

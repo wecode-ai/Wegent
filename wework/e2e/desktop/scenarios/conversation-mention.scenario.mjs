@@ -15,6 +15,8 @@ const COMPOSER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-messa
 const SOURCE_PROMPT = 'WEWORK_CONVERSATION_REFERENCE_SOURCE: remember the launch code ORBIT-42.'
 const SOURCE_COMPLETION = 'SOURCE_CONVERSATION_COMPLETE: the launch code is ORBIT-42.'
 const TARGET_COMPLETION = 'REFERENCED_CONVERSATION_CONTEXT_RECEIVED'
+const ISSUE_REFERENCE =
+  '[$#113 Issue reference](wework-issue://2753648597973755964/WEWORK2D8526-113)'
 const LARGE_SOURCE_PROMPT =
   'WEWORK_CONVERSATION_REFERENCE_LARGE_SOURCE: preserve only this visible conversation.'
 const LARGE_SOURCE_COMPLETION = 'LARGE_SOURCE_CONVERSATION_COMPLETE'
@@ -73,12 +75,12 @@ async function waitForConversationOption(control, timeoutMs) {
   throw new Error('The referenced conversation did not appear in the @ menu')
 }
 
-async function selectConversationOption(control, query, timeoutMs) {
+async function selectConversationOption(control, query, timeoutMs, prefix = '') {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
     await control.command('fill', COMPOSER_SELECTOR, { value: '' })
     await control.command('fill', COMPOSER_SELECTOR, {
-      value: query,
+      value: `${prefix}${query}`,
     })
     const optionTestId = await waitForConversationOption(control, timeoutMs)
     try {
@@ -166,6 +168,10 @@ export function createDesktopScenario({
 
     async verify(control) {
       active = true
+      await control.command('waitFor', ACTIVE_WORKBENCH_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await control.command('waitFor', '[data-testid="new-chat-button"]', {
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
       const initialTaskRows = new Set(
@@ -180,7 +186,7 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       assert.ok(sourceRequest, 'The source conversation was not sent through the real runtime')
-      const sourceTaskRow = await waitForNewTaskRow(control, initialTaskRows, uiTimeoutMs)
+      await waitForNewTaskRow(control, initialTaskRows, uiTimeoutMs)
 
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
@@ -199,7 +205,12 @@ export function createDesktopScenario({
         'The @ menu selected an unrelated conversation'
       )
       await capture(control, 'conversation-mention-01-menu.png')
-      await selectConversationOption(control, '@WEWORK_CONVERSATION_REFERENCE_SOURCE', uiTimeoutMs)
+      await selectConversationOption(
+        control,
+        '@WEWORK_CONVERSATION_REFERENCE_SOURCE',
+        uiTimeoutMs,
+        `${ISSUE_REFERENCE} `
+      )
       await control.command('waitFor', '[data-testid^="conversation-chip-"]', {
         timeoutMs: uiTimeoutMs,
       })
@@ -231,11 +242,55 @@ export function createDesktopScenario({
       )
       await capture(control, 'conversation-mention-03-sent.png')
 
-      await control.command('click', `[data-testid="${sourceTaskRow}"]`)
+      const targetTaskTabTestId = await control.command(
+        'getAttribute',
+        '[data-tab-kind="task"][aria-selected="true"]',
+        { value: 'data-testid' }
+      )
+      assert.ok(
+        targetTaskTabTestId === 'workspace-tab-select-fixed-task' ||
+          targetTaskTabTestId?.startsWith('workspace-tab-select-task-'),
+        `The target task tab was not active before issue reference navigation: ${targetTaskTabTestId}`
+      )
+      await control.command('waitFor', '[data-testid^="sent-issue-token-"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', '[data-testid^="sent-issue-token-"]')
+      await control.command(
+        'waitFor',
+        '[data-testid^="workspace-tab-select-board-"][aria-selected="true"]',
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      const issueBoardTabTestId = await control.command(
+        'getAttribute',
+        '[data-testid^="workspace-tab-select-board-"][aria-selected="true"]',
+        { value: 'data-testid' }
+      )
+      assert.ok(
+        issueBoardTabTestId?.startsWith('workspace-tab-select-board-'),
+        'The issue reference did not open a project-space board tab'
+      )
+      await captureScreenshot(control, 'conversation-mention-04-issue-reference.png', 'body')
+      const issueBoardTabId = issueBoardTabTestId.slice('workspace-tab-select-'.length)
+      await control.command('click', `[data-testid="${targetTaskTabTestId}"]`)
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: TARGET_COMPLETION,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', `[data-testid="workspace-tab-close-${issueBoardTabId}"]`)
+      await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+
+      await control.command('waitFor', '[data-testid^="sent-conversation-token-"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', '[data-testid^="sent-conversation-token-"]')
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: SOURCE_COMPLETION,
         timeoutMs: uiTimeoutMs,
       })
+      await capture(control, 'conversation-mention-05-chip-navigation.png')
       await control.command('click', `[data-testid="${targetTaskRow}"]`)
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: TARGET_COMPLETION,
@@ -256,7 +311,24 @@ export function createDesktopScenario({
         !restoredSnapshot.text.includes('{"role":"assistant"'),
         'Switching back rendered referenced-conversation JSON as user-visible text'
       )
-      await capture(control, 'conversation-mention-04-restored.png')
+      await capture(control, 'conversation-mention-06-restored.png')
+
+      await selectConversationOption(control, '@WEWORK_CONVERSATION_REFERENCE_SOURCE', uiTimeoutMs)
+      await control.command('waitFor', '[data-testid^="conversation-chip-"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', '[data-testid^="conversation-chip-"]')
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: SOURCE_COMPLETION,
+        timeoutMs: uiTimeoutMs,
+      })
+      await capture(control, 'conversation-mention-07-composer-chip-navigation.png')
+      await control.command('click', `[data-testid="${targetTaskRow}"]`)
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: TARGET_COMPLETION,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('fill', COMPOSER_SELECTOR, { value: '' })
 
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })

@@ -5,6 +5,7 @@ import { describe, expect, test, vi } from 'vitest'
 import {
   appendConversationMentionContext,
   createConversationMentionReference,
+  parseConversationMentionHref,
   parseConversationMentions,
 } from './conversation-mentions'
 
@@ -30,6 +31,17 @@ describe('conversation mentions', () => {
         reference,
       },
     ])
+  })
+
+  test('parses a conversation mention href into a runtime task address', () => {
+    const reference = createConversationMentionReference('Source chat', SOURCE_ADDRESS)
+    const href = reference.slice(reference.indexOf('](') + 2, -1)
+
+    expect(parseConversationMentionHref(href)).toEqual({
+      ...SOURCE_ADDRESS,
+      runtimeHandle: null,
+    })
+    expect(parseConversationMentionHref('https://example.com')).toBeNull()
   })
 
   test('keeps runtime metadata parentheses inside the atomic reference', () => {

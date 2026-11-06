@@ -117,6 +117,7 @@ export interface ComposerProseMirrorEditorProps {
   onOpenMentionFile?: (path: string) => void;
   onOpenMentionPlugin?: (reference: PluginReference) => void;
   onActivateMention?: (reference: string) => boolean;
+  onOpenMentionReference?: (href: string, label: string) => void;
   onEditComposerLink?: (
     payload: ComposerLinkPayload,
     anchor?: HTMLElement,
@@ -163,6 +164,7 @@ export const ComposerProseMirrorEditor = forwardRef<
   });
 
   const canActivateMention = Boolean(props.onActivateMention);
+  const canOpenMentionReference = Boolean(props.onOpenMentionReference);
   const createMentionView = useCallback<NodeViewConstructor>(
     (node, view, getPos) =>
       new ComposerMentionNodeView(
@@ -177,8 +179,12 @@ export const ComposerProseMirrorEditor = forwardRef<
           ? (reference) =>
               callbacksRef.current.onActivateMention?.(reference) ?? false
           : undefined,
+        canOpenMentionReference
+          ? (href, label) =>
+              callbacksRef.current.onOpenMentionReference?.(href, label)
+          : undefined,
       ),
-    [canActivateMention],
+    [canActivateMention, canOpenMentionReference],
   );
 
   useLayoutEffect(() => {

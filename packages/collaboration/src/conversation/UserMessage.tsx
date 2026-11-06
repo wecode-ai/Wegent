@@ -66,6 +66,8 @@ export interface UserMessageServices {
   transfers?: ComposerTransferServices
   resolveMentionIconUrl?: (href: string) => string | null
   onOpenPlugin?: (reference: PluginReference) => void
+  onOpenConversation?: (href: string) => void
+  onOpenIssue?: (href: string, label: string) => void
   openLocalAttachment?: (path: string, onOpenFile?: (path: string) => void) => Promise<void>
   getCommentPreviewRightBoundary?: () => number
 }
@@ -701,6 +703,9 @@ function renderUserContent(
           : []
         const knownSkill = matchingSkills.length === 1 ? matchingSkills[0] : undefined
         const canOpenSkill = Boolean(knownSkill && onOpenLocalSkillFile)
+        const canOpenConversation =
+          mentionKind === 'conversation' && Boolean(services.onOpenConversation)
+        const canOpenIssue = mentionKind === 'issue' && Boolean(services.onOpenIssue)
         const cloudKind = mentionKind === 'cloud' ? cloudReferenceKind(href) : undefined
         const brandIconUrl =
           mentionKind === 'plugin' || mentionKind === 'app'
@@ -719,7 +724,9 @@ function renderUserContent(
         const canOpen = Boolean(
           canOpenSkill ||
           (pathReference && onOpenWorkspaceFile) ||
-          (parsePluginUri(href) && services.onOpenPlugin)
+          (parsePluginUri(href) && services.onOpenPlugin) ||
+          canOpenConversation ||
+          canOpenIssue
         )
         return (
           <a
@@ -743,6 +750,8 @@ function renderUserContent(
               }
               const pluginReference = parsePluginUri(href)
               if (pluginReference) services.onOpenPlugin?.(pluginReference)
+              if (canOpenConversation) services.onOpenConversation?.(href)
+              if (canOpenIssue) services.onOpenIssue?.(href, mentionName)
             }}
           >
             {isIssueReference ? (

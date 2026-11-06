@@ -119,6 +119,24 @@ describe('WorkItemComposerGuide', () => {
     }
   )
 
+  test('opens the Issue details from the summary title', async () => {
+    const item = {
+      id: 'WORK-1',
+      title: '完成默认工作项流程',
+      status: 'in_review',
+      assignee_name: '张三',
+      assignee_agent_name: null,
+      ai_state: null,
+    } as CloudLoopItem
+    const user = userEvent.setup()
+    const onOpen = vi.fn()
+    render(<WorkItemComposerGuide item={item} onOpen={onOpen} />)
+
+    await user.click(screen.getByTestId('work-item-guide-open-summary'))
+
+    expect(onOpen).toHaveBeenCalledOnce()
+  })
+
   test('filters by space and search together and recovers from an empty result', async () => {
     const user = userEvent.setup()
     const onRemoveProject = vi.fn()

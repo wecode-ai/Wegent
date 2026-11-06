@@ -13,6 +13,7 @@ import {
   type ComposerMentionPayload,
   type ComposerMentionIconResolver,
 } from "./composerMentions";
+import { parseComposerReference } from "./composerReference";
 
 export class ComposerMentionNodeView implements NodeView {
   readonly dom: HTMLElement;
@@ -22,6 +23,7 @@ export class ComposerMentionNodeView implements NodeView {
   private readonly onOpenFile?: (path: string) => void;
   private readonly onOpenPlugin?: (reference: PluginReference) => void;
   private readonly onActivateMention?: (reference: string) => boolean;
+  private readonly onOpenReference?: (href: string, label: string) => void;
 
   constructor(
     node: ProseMirrorNode,
@@ -31,6 +33,7 @@ export class ComposerMentionNodeView implements NodeView {
     onOpenPlugin?: (reference: PluginReference) => void,
     resolveIcon?: ComposerMentionIconResolver,
     onActivateMention?: (reference: string) => boolean,
+    onOpenReference?: (href: string, label: string) => void,
   ) {
     this.node = node;
     this.view = view;
@@ -38,11 +41,23 @@ export class ComposerMentionNodeView implements NodeView {
     this.onOpenFile = onOpenFile;
     this.onOpenPlugin = onOpenPlugin;
     this.onActivateMention = onActivateMention;
+    this.onOpenReference = onOpenReference;
     this.dom = createComposerMentionElement(
       node.attrs as ComposerMentionPayload,
       resolveIcon,
     );
-    if (this.isAssignableMention() && onActivateMention) {
+    if (this.hasOpenableReference()) {
+      this.dom.setAttribute("role", "link");
+      this.dom.setAttribute("tabindex", "0");
+      this.dom.setAttribute("aria-disabled", "false");
+      this.dom.setAttribute("data-composer-reference-navigation", "true");
+      if (this.conversationHref()) {
+        this.dom.setAttribute("data-composer-conversation-reference", "true");
+      }
+      if (this.issueHref()) {
+        this.dom.setAttribute("data-composer-issue-reference", "true");
+      }
+    } else if (this.isAssignableMention() && onActivateMention) {
       this.dom.setAttribute("role", "button");
       this.dom.setAttribute("tabindex", "0");
     }
@@ -81,6 +96,7 @@ export class ComposerMentionNodeView implements NodeView {
     event.preventDefault();
     event.stopPropagation();
     if (this.openFileMention()) return;
+    if (this.hasOpenableReference()) return;
     if (this.pluginReference() && this.onOpenPlugin) return;
     if (this.isAssignableMention() && this.onActivateMention) return;
 
@@ -100,7 +116,12 @@ export class ComposerMentionNodeView implements NodeView {
   };
 
   private readonly handleClick = (event: MouseEvent): void => {
-    if (!this.activateMention() && !this.openPluginMention()) return;
+    if (
+      !this.openReferenceMention() &&
+      !this.activateMention() &&
+      !this.openPluginMention()
+    )
+      return;
 
     event.preventDefault();
     event.stopPropagation();
@@ -108,7 +129,12 @@ export class ComposerMentionNodeView implements NodeView {
 
   private readonly handleKeyDown = (event: KeyboardEvent): void => {
     if (event.key !== "Enter" && event.key !== " ") return;
-    if (!this.activateMention() && !this.openPluginMention()) return;
+    if (
+      !this.openReferenceMention() &&
+      !this.activateMention() &&
+      !this.openPluginMention()
+    )
+      return;
 
     event.preventDefault();
     event.stopPropagation();
@@ -128,6 +154,38 @@ export class ComposerMentionNodeView implements NodeView {
 
   private pluginReference(): PluginReference | null {
     return parsePluginMentionReference(String(this.node.attrs.reference ?? ""));
+  }
+
+  private referenceHref(): string | null {
+    return (
+      parseComposerReference(String(this.node.attrs.reference ?? ""))?.href ??
+      null
+    );
+  }
+
+  private conversationHref(): string | null {
+    const href = this.referenceHref();
+    return href?.startsWith("wework-conversation://") ? href : null;
+  }
+
+  private issueHref(): string | null {
+    const href = this.referenceHref();
+    return href?.startsWith("wework-issue://") ? href : null;
+  }
+
+  private openableReferenceHref(): string | null {
+    return this.conversationHref() ?? this.issueHref();
+  }
+
+  private hasOpenableReference(): boolean {
+    return Boolean(this.openableReferenceHref() && this.onOpenReference);
+  }
+
+  private openReferenceMention(): boolean {
+    const href = this.openableReferenceHref();
+    if (!href || !this.onOpenReference) return false;
+    this.onOpenReference(href, String(this.node.attrs.label ?? ""));
+    return true;
   }
 
   private isAssignableMention(): boolean {

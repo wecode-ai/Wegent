@@ -10,12 +10,16 @@ import {
 import { resolveComposerMentionBrandIconUrl } from './composer/composerMentions'
 import { openLocalFileInWorkspaceApp } from '@/lib/local-terminal'
 import { buildPluginDetailRoute } from '@/features/plugins/pluginNavigation'
-import { navigateTo } from '@/lib/navigation'
+import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
 import { WorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { useComposerCatalogBinding } from './composer/ComposerCatalogContext'
 import type { LocalDeviceSkill } from '@/types/api'
 import { LOCAL_WORKBENCH_DEVICE_ALIAS, resolveLocalWorkbenchDeviceId } from '@/lib/workbench-device'
 import { resolveHomeRelativeWorkspacePath } from '@/lib/workspace-paths'
+import { parseConversationMentionHref } from '@/lib/conversation-mentions'
+import { parseIssueMentionHref } from '@/lib/issue-mentions'
+import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
+import { openIssueReference } from '@/features/todo/openIssueReference'
 
 async function openLocalAttachmentPath(
   path: string,
@@ -40,6 +44,7 @@ export function useDesktopUserMessageServices(
   const images = useAttachmentImageServices()
   const electron = isElectronRuntime()
   const pane = useContext(WorkbenchPaneContext)
+  const workspaceTabs = useOptionalWorkspaceTabs()
   const catalog = useComposerCatalogBinding()
   const listSkills = catalog.listSkills ?? pane?.projectChat.listLocalSkills
   const getHomeDirectory = pane?.getDeviceHomeDirectory
@@ -111,6 +116,7 @@ export function useDesktopUserMessageServices(
       : null
   const localSkills = current?.skills
   const localSkillHomeDirectory = current?.homeDirectory
+  const openRuntimeTask = pane?.openRuntimeTask
   return useMemo(
     () => ({
       localSkills,
@@ -120,10 +126,41 @@ export function useDesktopUserMessageServices(
       transfers: desktopComposerTransferServices,
       resolveMentionIconUrl: resolveComposerMentionBrandIconUrl,
       onOpenPlugin: reference => navigateTo(buildPluginDetailRoute(reference)),
+      onOpenConversation: href => {
+        const address = parseConversationMentionHref(href)
+        if (!address) return
+        if (openRuntimeTask) {
+          void openRuntimeTask(address)
+          return
+        }
+        navigateTo(buildRuntimeTaskRoute(address))
+      },
+      onOpenIssue: (href, label) => {
+        const issue = parseIssueMentionHref(href)
+        if (!issue) return
+        const activeRoute =
+          workspaceTabs?.activeTab.contentRoute ??
+          `${window.location.pathname}${window.location.search}`
+        openIssueReference({
+          issue,
+          label,
+          activeRoute,
+          workspaceTabs,
+          navigate: navigateTo,
+        })
+      },
       openLocalAttachment: (path, onOpenFile) =>
         openLocalAttachmentPath(path, onOpenFile, workspacePath),
       getCommentPreviewRightBoundary: getCodeCommentPreviewRightBoundary,
     }),
-    [images, electron, localSkills, localSkillHomeDirectory, workspacePath]
+    [
+      images,
+      electron,
+      localSkills,
+      localSkillHomeDirectory,
+      openRuntimeTask,
+      workspacePath,
+      workspaceTabs,
+    ]
   )
 }

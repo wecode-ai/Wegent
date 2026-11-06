@@ -52,6 +52,10 @@ export function parseConversationMentions(value: string): ConversationMention[] 
   return mentions
 }
 
+export function parseConversationMentionHref(href: string): RuntimeTaskAddress | null {
+  return parseConversationAddress(href.trim())
+}
+
 export function buildConversationMentionCandidates(
   runtimeWork: RuntimeWorkListResponse | null | undefined,
   currentRuntimeTask?: RuntimeTaskAddress | null
