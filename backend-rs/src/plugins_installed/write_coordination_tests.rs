@@ -60,6 +60,7 @@ fn database_failures_match_the_python_unhandled_exception_contract() {
 #[derive(Default)]
 struct LeaseRedis {
     owners: Mutex<HashMap<String, String>>,
+    replica_owners: Option<HashMap<String, String>>,
     commands: Mutex<Vec<Vec<String>>>,
     fail: bool,
     stall: bool,
@@ -98,10 +99,17 @@ impl LeaseRedis {
                     Value::Nil
                 }
             },
-            "GET" => match owners.get(&args[1]) {
-                Some(value) => Value::BulkString(value.clone().into_bytes().into()),
-                None => Value::Nil,
-            },
+            "GET" => {
+                let readable_owners = if command.is_readonly() {
+                    self.replica_owners.as_ref().unwrap_or(&owners)
+                } else {
+                    &owners
+                };
+                match readable_owners.get(&args[1]) {
+                    Some(value) => Value::BulkString(value.clone().into_bytes().into()),
+                    None => Value::Nil,
+                }
+            }
             "SCRIPT" => {
                 if self.script_load_fails {
                     return Err(brz_redis::RedisError::new(
@@ -174,6 +182,7 @@ impl Redis for LeaseRedis {
         T: FromRedisBulk + Send,
     {
         let mut command = cmd("GET");
+        command.mark_readonly();
         command.arg_encoded(key)?;
         let raw: Option<brz_redis::RedisBytes> = self.run(command)?;
         raw.map(T::from_redis_bulk).transpose()
@@ -407,14 +416,48 @@ async fn acquisition_deadline_prevents_another_set_after_the_last_wait() {
 }
 
 #[tokio::test]
+async fn primary_lease_remains_valid_when_the_replica_is_behind() {
+    let key = "wegent:plugin-write:23";
+    for replica_owner in [None, Some("previous-owner")] {
+        let redis = LeaseRedis {
+            replica_owners: Some(
+                replica_owner
+                    .map(|owner| (key.to_string(), owner.to_string()))
+                    .into_iter()
+                    .collect(),
+            ),
+            ..LeaseRedis::default()
+        };
+        let lease = PluginWriteLease::acquire(Some(&redis), 23).await.unwrap();
+
+        assert_eq!(
+            redis.get::<_, String>(key).await.unwrap().as_deref(),
+            replica_owner
+        );
+        lease.verify_owned().await.unwrap();
+        lease.release().await;
+    }
+}
+
+#[tokio::test]
 async fn stale_owner_cannot_validate_or_release_the_successor_lease() {
-    let redis = LeaseRedis::default();
-    let lease = PluginWriteLease::acquire(Some(&redis), 23).await.unwrap();
+    let key = "wegent:plugin-write:23";
+    let redis = LeaseRedis {
+        replica_owners: Some(HashMap::from([(key.into(), "previous-owner".into())])),
+        ..LeaseRedis::default()
+    };
+    let lease = PluginWriteLease::acquire_token(&redis, 23, "previous-owner".into(), ACQUIRE_WAIT)
+        .await
+        .unwrap();
     redis
         .owners
         .lock()
         .unwrap()
         .insert(lease.key.clone(), "successor".into());
+    assert_eq!(
+        redis.get::<_, String>(key).await.unwrap().as_deref(),
+        Some("previous-owner")
+    );
     let error = lease.verify_owned().await.unwrap_err();
     assert_eq!(
         http_error(error).detail_message(),
@@ -422,7 +465,7 @@ async fn stale_owner_cannot_validate_or_release_the_successor_lease() {
     );
     lease.release().await;
     assert_eq!(
-        redis.owners.lock().unwrap().get("wegent:plugin-write:23"),
+        redis.owners.lock().unwrap().get(key),
         Some(&"successor".to_string())
     );
 }

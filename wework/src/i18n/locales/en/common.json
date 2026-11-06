@@ -104,7 +104,6 @@
   "workbench": {
     "dismiss_attachment_error": "Dismiss attachment error",
     "reply_prediction_generating": "Generating a suggestion…",
-    "reply_prediction_failed": "Could not generate a reply suggestion. Check the current model’s connection and authentication settings.",
     "reply_prediction_accept": "Accept suggestion",
     "reply_prediction_title": "Reply suggestions",
     "reply_prediction_enable": "Predict the next reply",
@@ -860,7 +859,6 @@
     "remove_project": "Remove",
     "no_chats": "No chats",
     "runtime_work_loading": "Loading tasks…",
-    "runtime_work_refreshing": "Refreshing tasks…",
     "runtime_work_load_failed": "Couldn't load tasks. Try again.",
     "runtime_work_refresh_failed": "Couldn't refresh tasks. Showing the last result.",
     "no_device_workspaces": "No workspaces",

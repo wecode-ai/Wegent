@@ -8,7 +8,7 @@ import {
   desktopComposerTransferServices,
 } from './composer/desktopComposerServices'
 import { resolveComposerMentionBrandIconUrl } from './composer/composerMentions'
-import { openLocalFileInWorkspaceApp } from '@/lib/local-terminal'
+import { useAttachmentPreview } from './useAttachmentPreview'
 import { buildPluginDetailRoute } from '@/features/plugins/pluginNavigation'
 import { navigateTo } from '@/lib/navigation'
 import { WorkbenchPaneContext } from '@/features/workbench/useWorkbench'
@@ -18,28 +18,10 @@ import { LOCAL_WORKBENCH_DEVICE_ALIAS, resolveLocalWorkbenchDeviceId } from '@/l
 import { resolveHomeRelativeWorkspacePath } from '@/lib/workspace-paths'
 import { useReferenceNavigation } from './useReferenceNavigation'
 
-async function openLocalAttachmentPath(
-  path: string,
-  onOpenFile?: (path: string) => void,
-  workspacePath?: string
-): Promise<void> {
-  try {
-    await openLocalFileInWorkspaceApp(path, workspacePath)
-  } catch (error) {
-    if (onOpenFile) {
-      onOpenFile(path)
-      return
-    }
-    console.error('Failed to open local attachment:', error)
-  }
-}
-
 /** Builds the desktop services used to render and activate user-message references. */
-export function useDesktopUserMessageServices(
-  hasSkillReferences = false,
-  workspacePath?: string
-): UserMessageServices {
+export function useDesktopUserMessageServices(hasSkillReferences = false): UserMessageServices {
   const images = useAttachmentImageServices()
+  const openAttachment = useAttachmentPreview()
   const electron = isElectronRuntime()
   const pane = useContext(WorkbenchPaneContext)
   const { openConversation, openIssue } = useReferenceNavigation()
@@ -125,8 +107,7 @@ export function useDesktopUserMessageServices(
       onOpenPlugin: reference => navigateTo(buildPluginDetailRoute(reference)),
       onOpenConversation: openConversation,
       onOpenIssue: openIssue,
-      openLocalAttachment: (path, onOpenFile) =>
-        openLocalAttachmentPath(path, onOpenFile, workspacePath),
+      openAttachment: openAttachment ?? undefined,
       getCommentPreviewRightBoundary: getCodeCommentPreviewRightBoundary,
     }),
     [
@@ -134,9 +115,9 @@ export function useDesktopUserMessageServices(
       electron,
       localSkills,
       localSkillHomeDirectory,
+      openAttachment,
       openConversation,
       openIssue,
-      workspacePath,
     ]
   )
 }

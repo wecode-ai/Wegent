@@ -296,6 +296,7 @@ import {
   verifyRuntimeTaskOrderAndUnreadVisibility,
   verifyRunningFollowUpFork,
 } from './task-state-flows.mjs'
+import { verifyRuntimeWorkSilentRefresh } from './runtime-work-silent-refresh.mjs'
 
 import {
   verifyAttachmentComposerClearsOnSubmit,
@@ -3491,6 +3492,10 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         'The request-user-input task did not expose its runtime task ID'
       )
       const requestInputTaskRowTestId = `runtime-local-task-row-${requestInputTaskId}`
+      await verifyRuntimeWorkSilentRefresh(
+        control,
+        requestInputDebugSnapshot.workbench.currentRuntimeTask
+      )
       await control.command('waitFor', `[data-testid="${requestInputTaskRowTestId}"]`, {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
