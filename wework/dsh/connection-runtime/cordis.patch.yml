@@ -2,6 +2,6 @@
     - id: wework-connection-runtime
       name: '@wegent/dsh-connection-runtime'
       inject:
-        - webServer
+        - weworkConnections
         - weworkSecureStorage
         - weworkPluginRuntime

@@ -9,6 +9,7 @@ import { createCodexProtocolGate } from '../modules/codex-protocol-gate.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import {
   createCatalogContextVerification,
+  saveCatalogAndWaitForRestart,
   waitForCatalogRestart,
 } from './codex-catalog-context.mjs'
 
@@ -92,12 +93,7 @@ export function createDesktopScenario(options) {
         value: '300001',
       })
       const executorLogPath = join(options.resultDir, 'executor.log')
-      const saveLogOffset = (await readFile(executorLogPath, 'utf8')).length
-      await control.command('clickWhenEnabled', '[data-testid="codex-catalog-editor-save"]')
-      await waitForCatalogRestart(control, executorLogPath, saveLogOffset)
-      await control.command('waitFor', '[data-testid="codex-catalog-editor-dialog"]', {
-        visible: false,
-      })
+      await saveCatalogAndWaitForRestart(control, executorLogPath)
       await control.command('waitFor', ROW, { text: '已自定义' })
       const persisted = JSON.parse(await readFile(overridePath, 'utf8'))
       assert.deepEqual(persisted, [

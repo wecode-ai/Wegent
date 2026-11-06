@@ -65,24 +65,6 @@ import {
 } from './workspace-flows.mjs'
 import { createZipFixture } from './zip-fixtures.mjs'
 
-async function waitForProxyTrafficToSettle(
-  proxy,
-  quietMs = 1_500,
-  timeoutMs = 15_000
-) {
-  const startedAt = Date.now()
-  let lastCount = proxy.requestEvents.length
-  let lastChangeAt = startedAt
-  while (Date.now() - startedAt < timeoutMs) {
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
-    if (proxy.requestEvents.length !== lastCount) {
-      lastCount = proxy.requestEvents.length
-      lastChangeAt = Date.now()
-    }
-    if (Date.now() - lastChangeAt >= quietMs) return
-  }
-}
-
 async function createDirectRemoteMcpPluginZip(root) {
   const archivePath = join(root, 'direct-remote-mcp-plugin.zip')
   await createZipFixture(archivePath, {
@@ -1119,11 +1101,9 @@ async function verifyMarketplacePluginLifecycle({
   try {
     const setupStartedAt = Date.now()
     await control.command('setLocalProxyUrl', 'body', { value: blockingNetworkProxy.url })
-    // Proxy changes restart Codex. Finish that setup before measuring local operations.
-    await control.command('reconcileLocalPluginCatalog', 'body')
-    const reconciledAt = Date.now()
-    // Restarting Codex for the proxy change can refresh marketplaces after reconcile.
-    await waitForProxyTrafficToSettle(blockingNetworkProxy)
+    // Updating the proxy awaits the old Codex process exit. Keep these disk-only
+    // operations independent of a new app-server and its background catalog sync.
+    const proxyConfiguredAt = Date.now()
     blockingNetworkProxy.block()
     const blockedRequestCount = blockingNetworkProxy.requests.length
     const blockedConnectionCount = blockingNetworkProxy.connections.length
@@ -1189,7 +1169,7 @@ async function verifyMarketplacePluginLifecycle({
     )
     const networkEvidence = {
       setupStartedAt,
-      reconciledAt,
+      proxyConfiguredAt,
       blockedRequestCount,
       blockedConnectionCount,
       importStartedAt,
