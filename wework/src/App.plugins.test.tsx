@@ -461,7 +461,6 @@ const workbenchValue: WorkbenchContextValue = {
   unsubscribeRuntimeTaskNotifications: vi.fn(),
   refreshWorkLists: vi.fn(),
   refreshDevices: vi.fn(),
-  getRemoteDeviceStartupCommand: vi.fn(),
   upgradeDevice: vi.fn(),
   createProject: vi.fn(),
   createGitWorkspaceProject: vi.fn(),

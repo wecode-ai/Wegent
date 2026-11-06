@@ -119,7 +119,7 @@ async fn git_output_async(
 #[cfg(all(test, unix))]
 mod capture_tests {
     use super::*;
-    use std::{fs, os::unix::fs::PermissionsExt, process::Command};
+    use std::{fs, process::Command};
 
     async fn wait_for_child_pid(path: &Path) -> i32 {
         let started = std::time::Instant::now();
@@ -151,9 +151,9 @@ mod capture_tests {
             .status()
             .unwrap()
             .success());
-        let git = root.path().join("git");
-        fs::write(&git, "#!/bin/sh\nprintf '%s\\n' \"$$\" > \"$CAPTURE_TEST_PID\"\nexec /bin/cat \"$CAPTURE_TEST_FIFO\"\n").unwrap();
-        fs::set_permissions(&git, fs::Permissions::from_mode(0o700)).unwrap();
+        // Parallel forks can retain a newly written executable's writer until exec.
+        let git =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/git-capture-blocked.sh");
         let pid_path = root.path().join("pid");
         let environment = BTreeMap::from([
             (

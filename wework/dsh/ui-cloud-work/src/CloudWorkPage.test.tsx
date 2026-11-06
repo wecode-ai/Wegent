@@ -101,7 +101,6 @@ const workbenchMock = vi.hoisted(() => ({
     archiveChatConversations: vi.fn(),
     selectStandaloneDevice: vi.fn(),
     openStandaloneWorkspace: vi.fn(),
-    getRemoteDeviceStartupCommand: vi.fn(),
     refreshDevices: vi.fn().mockResolvedValue(undefined),
     createProject: vi.fn(),
     createGitWorkspaceProject: vi.fn(),
