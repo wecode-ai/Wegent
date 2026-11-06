@@ -3,6 +3,35 @@
 
 use super::*;
 
+impl CodexAppServerClient {
+    // Nested transcript reads must not inline the complete admission state machine.
+    pub(super) fn request_with_thread_admission<'a>(
+        &'a self,
+        method: &'a str,
+        params: Value,
+        launch_config: Option<&'a CodexLaunchConfig>,
+    ) -> BoxFuture<'a, Result<Value, String>> {
+        Box::pin(async move {
+            let timeout_seconds = codex_rpc_timeout_seconds();
+            with_thread_resume_barrier(method, &params, timeout_seconds, || async {
+                let (request_id, handle, response_rx) = self
+                    .prepare_request_with_process(true, launch_config, method, &params)
+                    .await?;
+                Self::send_request_and_wait(
+                    method,
+                    params.clone(),
+                    timeout_seconds,
+                    request_id,
+                    handle,
+                    response_rx,
+                )
+                .await
+            })
+            .await
+        })
+    }
+}
+
 /// Native emits thread/closed before removing its pending-unload entry.
 /// Only its explicit pre-execution rejection permits resubmitting a resume.
 pub(super) async fn with_thread_resume_barrier<F, Fut>(
@@ -53,6 +82,32 @@ where
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn request_entry_futures_leave_room_for_nested_native_reads() {
+        fn future_size<F: Future>(_: impl FnOnce() -> F) -> usize {
+            std::mem::size_of::<F>()
+        }
+        let client = CodexAppServerClient::new("unused-admission-size-binary");
+        let launch = CodexLaunchConfig::default();
+        for (entry, bytes) in [
+            (
+                "request",
+                future_size(|| client.request_once("thread/read", json!({}))),
+            ),
+            (
+                "launch request",
+                future_size(|| {
+                    client.request_for_launch_config_once("thread/resume", json!({}), &launch)
+                }),
+            ),
+        ] {
+            assert!(
+                bytes < 16 * 1024,
+                "{entry} future uses {bytes} inline bytes"
+            );
+        }
+    }
 
     #[tokio::test(start_paused = true)]
     async fn an_unfinished_native_unload_keeps_the_original_rpc_deadline() {

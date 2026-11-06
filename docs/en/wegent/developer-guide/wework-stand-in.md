@@ -46,7 +46,7 @@ After automatic continuation is accepted, the native encrypted queue and stable 
 
 When MCP batch authority changes, Executor waits for the active execution to finish, releases the old subscription and confirms Native `thread/closed` before resuming the same conversation and recording its new authority. Unload, resume and configuration registration share the thread lifecycle lock so concurrent resumes cannot mix batches. The host owns idle retention; Native unload delay is zero to avoid a second stale MCP pool after subscription release. Batch validation remains mandatory. Unconfirmed unload stops recovery and exposes the original execution entry.
 
-Native `thread/closed` can precede removal of its internal closing flag. If `thread/resume` explicitly rejects that same thread as still closing, Executor waits for admission within the original RPC deadline and preserves its exact permission and MCP parameters. Only this definitive rejection before execution permits resubmission; model failures, permission errors, errors for other threads and `turn/start` are never replayed.
+Native `thread/closed` can precede removal of its internal closing flag. If `thread/resume` explicitly rejects that same thread as still closing, Executor waits for admission within the original RPC deadline and preserves its exact permission and MCP parameters. Only this definitive rejection before execution permits resubmission; model failures, permission errors, errors for other threads and `turn/start` are never replayed. Admission state lives on the heap so nested conversation reads do not exhaust execution-thread stacks.
 
 ## Scheduled work
 

@@ -476,30 +476,6 @@ impl CodexAppServerClient {
             .await
     }
 
-    async fn request_with_thread_admission(
-        &self,
-        method: &str,
-        params: Value,
-        launch_config: Option<&CodexLaunchConfig>,
-    ) -> Result<Value, String> {
-        let timeout_seconds = codex_rpc_timeout_seconds();
-        thread_resume::with_thread_resume_barrier(method, &params, timeout_seconds, || async {
-            let (request_id, handle, response_rx) = self
-                .prepare_request_with_process(true, launch_config, method, &params)
-                .await?;
-            Self::send_request_and_wait(
-                method,
-                params.clone(),
-                timeout_seconds,
-                request_id,
-                handle,
-                response_rx,
-            )
-            .await
-        })
-        .await
-    }
-
     /// Restarts the shared app-server without the managed ChatGPT auth when a
     /// cloud-config refresh failure blocks a request.
     ///
