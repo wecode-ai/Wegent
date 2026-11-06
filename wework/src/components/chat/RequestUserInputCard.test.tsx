@@ -487,6 +487,7 @@ test.each([
   'wrong-title',
   'wrong-tool',
   'missing-tool',
+  'missing-tool-with-display-call',
   'unprojected-metadata',
   'missing-title',
   'ordinary-question',
@@ -512,7 +513,11 @@ test.each([
         ? undefined
         : 'mcp_tool_call',
       toolName:
-        variant === 'wrong-tool' ? 'send_email' : variant === 'missing-tool' ? undefined : 'reply',
+        variant === 'wrong-tool'
+          ? 'send_email'
+          : variant.startsWith('missing-tool')
+            ? undefined
+            : 'reply',
       toolTitle:
         variant === 'wrong-title'
           ? 'reply'
@@ -550,10 +555,39 @@ test.each([
         },
       ],
     }
-    render(<RequestUserInputCard payload={payload} messages={[]} onSubmit={onSubmit} />)
+    const messages =
+      variant === 'missing-tool-with-display-call'
+        ? ([
+            {
+              id: 'display-turn',
+              role: 'assistant',
+              content: '',
+              blocks: [
+                {
+                  id: 'display-reply-call',
+                  type: 'tool',
+                  toolName: 'wework_stand_in.reply',
+                  toolInput: { messageId: 'opaque-source-event-id', text },
+                  status: 'pending',
+                },
+                {
+                  id: 'display-approval',
+                  type: 'tool',
+                  toolName: 'request_user_input',
+                  renderPayload: payload,
+                },
+              ],
+            },
+          ] as WorkbenchMessage[])
+        : []
+    render(<RequestUserInputCard payload={payload} messages={messages} onSubmit={onSubmit} />)
     if (variant !== 'exact') {
       expect(screen.queryByText(/Full native reply first paragraph/)).not.toBeInTheDocument()
       expect(onSubmit).not.toHaveBeenCalled()
+      if (variant.startsWith('missing-tool')) {
+        expect(screen.getByText('Allow the tool reply?')).toBeVisible()
+        expect(screen.queryByText(/回复到这项工作中选定的原消息/)).not.toBeInTheDocument()
+      }
       return
     }
     const preview = screen.getByTestId('request-user-input-question-__mcp_approval')
