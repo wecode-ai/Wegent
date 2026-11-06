@@ -543,6 +543,7 @@ test("complete build reuse preserves the CI job inventory and separates read-onl
     "build-frontend-e2e",
     "prepare-platform-e2e-image",
     "build-backend-rs-e2e-runtime",
+    "verify-backend-delivery-image",
     "build-executor-e2e-runtime",
     "e2e-tests",
     "executor-e2e-tests",

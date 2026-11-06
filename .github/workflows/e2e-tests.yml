@@ -172,10 +172,10 @@ jobs:
   build-backend-rs-e2e-runtime:
     name: Build Backend Rust E2E Runtime
     needs: changes
-    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (needs.changes.outputs.platform_e2e == 'true' || needs.changes.outputs.wework_desktop_e2e == 'true' || needs.changes.outputs.backend_delivery_image == 'true'))
+    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (needs.changes.outputs.platform_e2e == 'true' || needs.changes.outputs.wework_desktop_e2e == 'true'))
     # Match the Noble containers consuming these dynamically linked binaries.
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 25
     permissions:
       contents: read
       packages: write
@@ -306,14 +306,28 @@ jobs:
           retention-days: 1
           compression-level: 0
 
-      # Build the delivery Dockerfile once, not once per browser shard. Its
-      # CentOS layers cannot be replaced with the Noble E2E runtime above.
+  verify-backend-delivery-image:
+    name: Verify Backend Delivery Image
+    needs: changes
+    if: needs.changes.outputs.backend_delivery_image == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      # The real CentOS delivery image has its own budget and does not delay
+      # the Noble runtime artifacts consumed by desktop and browser jobs.
       - name: Set up Backend delivery Buildx
-        if: needs.changes.outputs.backend_delivery_image == 'true'
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
 
       - name: Build Backend delivery image
-        if: needs.changes.outputs.backend_delivery_image == 'true'
         uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25
         with:
           context: .
@@ -326,7 +340,6 @@ jobs:
           cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/wegent-backend:buildcache-amd64
 
       - name: Verify Backend delivery image
-        if: needs.changes.outputs.backend_delivery_image == 'true'
         env:
           REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
@@ -335,7 +348,7 @@ jobs:
             --evidence .ci-artifacts/backend-delivery
 
       - name: Upload Backend delivery evidence
-        if: always() && needs.changes.outputs.backend_delivery_image == 'true'
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: backend-delivery-evidence
@@ -2104,6 +2117,7 @@ jobs:
       - build-frontend-e2e
       - build-executor-e2e-runtime
       - build-backend-rs-e2e-runtime
+      - verify-backend-delivery-image
       - e2e-tests
       - executor-e2e-tests
     if: always() && !cancelled() && (github.event_name != 'pull_request' || github.event.action != 'labeled' || github.event.label.name == 'ci:all')
@@ -2117,7 +2131,9 @@ jobs:
           FRONTEND_BUILD_RESULT: ${{ needs.build-frontend-e2e.result }}
           EXECUTOR_BUILD_RESULT: ${{ needs.build-executor-e2e-runtime.result }}
           RUN_DELIVERY: ${{ needs.changes.outputs.backend_delivery_image == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
+          RUN_BACKEND_RUNTIME: ${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (needs.changes.outputs.platform_e2e == 'true' || needs.changes.outputs.wework_desktop_e2e == 'true')) }}
           BACKEND_BUILD_RESULT: ${{ needs.build-backend-rs-e2e-runtime.result }}
+          DELIVERY_BUILD_RESULT: ${{ needs.verify-backend-delivery-image.result }}
           PLATFORM_E2E_RESULT: ${{ needs.e2e-tests.result }}
           EXECUTOR_E2E_RESULT: ${{ needs.executor-e2e-tests.result }}
         run: |
@@ -2136,7 +2152,11 @@ jobs:
           }
 
           if [[ "$RUN_DELIVERY" == "true" ]]; then
-            assert_success "$BACKEND_BUILD_RESULT" "Backend delivery image build and verification"
+            assert_success "$DELIVERY_BUILD_RESULT" "Backend delivery image build and verification"
+          fi
+
+          if [[ "$RUN_BACKEND_RUNTIME" == "true" ]]; then
+            assert_success "$BACKEND_BUILD_RESULT" "Backend Rust E2E runtime"
           fi
 
           if [[ "$RUN_E2E" != "true" ]]; then

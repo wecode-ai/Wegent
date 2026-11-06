@@ -176,12 +176,15 @@ Inject configuration through Compose's environment: real `.env` files and local
 Cargo `target` directories are excluded from the image build context.
 
 PRs changing backend image inputs also build the delivery
-`docker/backend/Dockerfile` once in the existing CI build job. The same image is
+`docker/backend/Dockerfile` once in the independent `Verify Backend Delivery Image`
+CI job. The same image is
 checked against real MySQL and Redis services for initialization, Rust routes,
 Python forwarding, restart, and process shutdown. Frontend-only changes do not
 select this check; scheduled runs, full manual runs, and `ci:all` do. Build layers
-use the GitHub Actions cache. Browser shards do not repeat the build, and the
-image is not published.
+read the published GHCR cache without writing it. Browser shards do not repeat
+the build, and the image is not published. Delivery verification and runtime
+artifact production have separate time budgets; CI requires both jobs to succeed
+when selected.
 
 CI uploads logs and the source revision/image ID as `backend-delivery-evidence`.
 This check covers Linux amd64; complete images for other architectures still

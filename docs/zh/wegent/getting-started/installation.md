@@ -171,11 +171,12 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml --profile rag u
 
 运行配置通过 Compose 环境变量注入，真实 `.env` 和本机 Cargo `target` 不会打进镜像。
 
-涉及后端镜像输入的 PR 会在现有 CI 构建任务中额外构建一次正式的
+涉及后端镜像输入的 PR 会在独立的 `Verify Backend Delivery Image` CI 任务中构建一次正式的
 `docker/backend/Dockerfile`，并复用该镜像检查真实 MySQL／Redis 初始化、
 Rust 接口、Python 代理、重启和进程退出。前端独立改动不会触发此项；定时任务、
-手动全量运行及 `ci:all` 会执行完整检查。构建层使用 GitHub Actions 缓存，
-不在浏览器各分片重复构建，也不发布镜像。
+手动全量运行及 `ci:all` 会执行完整检查。构建层只读取 GHCR 发布缓存，
+不在浏览器各分片重复构建，也不发布镜像。交付镜像验收与运行时产物生产独立计时，
+两者被选中时都必须通过 CI 校验。
 
 验收日志和源提交／镜像 ID 记录保存在 CI 的 `backend-delivery-evidence` 产物中。
 这项检查覆盖 Linux amd64；其他架构的完整镜像仍需单独验证。新增脚本的本地单元

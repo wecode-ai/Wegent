@@ -129,7 +129,7 @@ test("probes fail if route selection no longer covers both real implementations"
   );
 });
 
-test("the existing backend job builds and verifies one real delivery image and the summary gates it", () => {
+test("independent runtime and delivery jobs retain their deadlines and required summary gates", () => {
   const workflow = JSON.parse(
     execFileSync(
       "ruby",
@@ -147,10 +147,25 @@ test("the existing backend job builds and verifies one real delivery image and t
   const selection = jobs.changes.steps.find((step) => step.id === "delivery");
   assert.match(selection.run, /git diff --name-only --no-renames/);
   const backend = jobs["build-backend-rs-e2e-runtime"];
-  const builds = backend.steps.filter(
-    (step) => step.name === "Build Backend delivery image",
+  const delivery = jobs["verify-backend-delivery-image"];
+  assert.ok(delivery, "Delivery verification needs its own job");
+  assert.equal(backend["timeout-minutes"], 25);
+  assert.equal(delivery["timeout-minutes"], 60);
+  assert.equal(delivery.needs, "changes");
+  assert.match(delivery.if, /backend_delivery_image/);
+  assert.ok(!backend.if.includes("backend_delivery_image"));
+  assert.ok(
+    Object.values(delivery.permissions).every((value) => value === "read"),
   );
+  assert.ok(
+    !backend.steps.some((step) => step.name.includes("Backend delivery")),
+    "Runtime production must not include delivery work",
+  );
+  const builds = Object.values(jobs)
+    .flatMap((job) => job.steps ?? [])
+    .filter((step) => step.name === "Build Backend delivery image");
   assert.equal(builds.length, 1);
+  assert.ok(delivery.steps.includes(builds[0]));
   assert.equal(builds[0].with.file, "docker/backend/Dockerfile");
   assert.equal(builds[0].with.load, true);
   assert.equal(builds[0].with.push, false);
@@ -159,20 +174,45 @@ test("the existing backend job builds and verifies one real delivery image and t
     "type=registry,ref=ghcr.io/${{ github.repository_owner }}/wegent-backend:buildcache-amd64",
   );
   assert.equal(builds[0].with["cache-to"], undefined);
-  assert.match(builds[0].if, /backend_delivery_image/);
-  const verify = backend.steps.find(
+  const verify = delivery.steps.find(
     (step) => step.name === "Verify Backend delivery image",
   );
   assert.match(verify.run, /verify-backend-delivery-image\.mjs/);
   assert.match(verify.run, /--revision/);
+  const evidence = delivery.steps.find(
+    (step) => step.name === "Upload Backend delivery evidence",
+  );
+  assert.equal(evidence.if, "always()");
+  assert.equal(evidence.with.name, "backend-delivery-evidence");
   const summary = jobs["platform-e2e-summary"];
   assert.ok(summary.needs.includes("build-backend-rs-e2e-runtime"));
-  assert.match(summary.steps[0].run, /assert_success "\$BACKEND_BUILD_RESULT"/);
-  for (const [selected, result, expected] of [
-    ["true", "failure", 1],
-    ["true", "skipped", 1],
-    ["true", "success", 0],
-    ["false", "skipped", 0],
+  assert.ok(summary.needs.includes("verify-backend-delivery-image"));
+  const check = summary.steps[0];
+  assert.equal(
+    check.env.BACKEND_BUILD_RESULT,
+    "${{ needs.build-backend-rs-e2e-runtime.result }}",
+  );
+  assert.equal(
+    check.env.DELIVERY_BUILD_RESULT,
+    "${{ needs.verify-backend-delivery-image.result }}",
+  );
+  for (const [
+    runtimeSelected,
+    deliverySelected,
+    runtimeResult,
+    deliveryResult,
+    expected,
+  ] of [
+    ["false", "false", "skipped", "skipped", 0],
+    ["true", "false", "success", "skipped", 0],
+    ["false", "true", "skipped", "success", 0],
+    ["true", "true", "success", "success", 0],
+    ...["failure", "skipped", "cancelled"].flatMap((result) => [
+      ["true", "false", result, "skipped", 1],
+      ["true", "true", result, "success", 1],
+      ["false", "true", "skipped", result, 1],
+      ["true", "true", "success", result, 1],
+    ]),
   ]) {
     const run = spawnSync("bash", ["-e", "-c", summary.steps[0].run], {
       encoding: "utf8",
@@ -180,8 +220,10 @@ test("the existing backend job builds and verifies one real delivery image and t
         ...process.env,
         CHANGES_RESULT: "success",
         RUN_E2E: "false",
-        RUN_DELIVERY: selected,
-        BACKEND_BUILD_RESULT: result,
+        RUN_BACKEND_RUNTIME: runtimeSelected,
+        RUN_DELIVERY: deliverySelected,
+        BACKEND_BUILD_RESULT: runtimeResult,
+        DELIVERY_BUILD_RESULT: deliveryResult,
       },
     });
     assert.equal(run.status, expected, run.stdout + run.stderr);
