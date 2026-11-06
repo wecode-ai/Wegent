@@ -203,7 +203,7 @@ pub(super) async fn context(state: &AppState, rule: &Node, run: &Node) -> Result
     {
         subject = profile.user_id;
     }
-    let mut context = json!({"rule_id":rule.id,"run_id":run.id,"trigger":run.metadata.0["trigger"].as_str().unwrap_or(&run.source),"scheduled_for":run.metadata.0["scheduled_for"],"event":run.metadata.0.get("event").filter(|v|v.is_object()).cloned().unwrap_or(json!({})),"runtime_source":source,"runtime_profile_id":profile,"runtime_subject_user_id":subject});
+    let mut context = json!({"rule_id":rule.id,"rule_name":rule.title,"run_id":run.id,"trigger":run.metadata.0["trigger"].as_str().unwrap_or(&run.source),"scheduled_for":run.metadata.0["scheduled_for"],"event":run.metadata.0.get("event").filter(|v|v.is_object()).cloned().unwrap_or(json!({})),"runtime_source":source,"runtime_profile_id":profile,"runtime_subject_user_id":subject});
     if workflow.as_object().is_some_and(|value| !value.is_empty()) {
         for (to, camel, snake) in [
             ("agent_id", "agentId", "agent_id"),

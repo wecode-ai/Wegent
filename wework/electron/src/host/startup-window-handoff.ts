@@ -155,7 +155,10 @@ function createGeometryTracer(
   }
 }
 
-function maximizedAtBounds(main: MainWindow, bounds: Rectangle): boolean {
+function maximizedAtBounds(main: MainWindow, bounds?: Rectangle): boolean {
+  // The OS owns the initial maximized frame; display workArea is not a window rectangle.
+  // Exact bounds are required only when matching another already maximized window.
+  if (!bounds) return main.isMaximized()
   const actual = main.getBounds()
   return (
     main.isMaximized() &&
@@ -166,7 +169,7 @@ function maximizedAtBounds(main: MainWindow, bounds: Rectangle): boolean {
   )
 }
 
-export async function maximizeStartupWindow(main: MainWindow, bounds: Rectangle): Promise<void> {
+export async function maximizeStartupWindow(main: MainWindow, bounds?: Rectangle): Promise<void> {
   if (main.isDestroyed()) throw new Error('The startup destination closed before maximizing')
   await new Promise<void>((resolve, reject) => {
     const cleanup = () => {
@@ -202,7 +205,11 @@ export async function maximizeStartupWindow(main: MainWindow, bounds: Rectangle)
       if (changed()) return
       cleanup()
       reject(
-        new Error('The startup destination did not maximize to the splash bounds within 5000ms')
+        new Error(
+          `The startup destination did not maximize${bounds ? ' to the splash bounds' : ''} within 5000ms; ` +
+            `maximized=${main.isMaximized()}, actual=${JSON.stringify(main.getBounds())}, ` +
+            `expected=${JSON.stringify(bounds ?? null)}`
+        )
       )
     }, 5000)
     main.on('maximize', changed)

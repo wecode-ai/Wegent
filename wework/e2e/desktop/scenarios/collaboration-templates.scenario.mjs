@@ -333,6 +333,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await wait(control, 'collaboration-template-preview', '发布交付')
       await capture(control, '02-preview')
       await openTemplateProject(control)
+      await control.command(
+        'waitFor',
+        testId('collaboration-project-create-confirm') + ':enabled',
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
       assert.equal(
         Number(
           await control.command(

@@ -11,6 +11,58 @@ use crate::runtime_work::{
 use crate::runtime_work::lifecycle::*;
 
 impl RuntimeWorkRpcHandler {
+    pub(super) fn native_task_holds_capacity(&self, task_id: &str) -> bool {
+        self.store
+            .read_task(task_id, |link| {
+                link.runtime == "codex"
+                    && native_execution_state(link).is_some_and(|state| {
+                        state.process_generation.is_some()
+                            && state.phase != NativeExecutionPhase::Idle
+                            && !state.awaits_admission()
+                    })
+            })
+            .unwrap_or(false)
+    }
+
+    pub(super) fn release_settled_native_capacity(
+        &self,
+        task_id: &str,
+        state: &NativeExecutionState,
+    ) {
+        if state.phase != NativeExecutionPhase::Idle || self.is_active_local_task(task_id) {
+            return;
+        }
+        if !self
+            .turn_scheduler
+            .lock()
+            .expect("turn scheduler poisoned")
+            .active_task_ids
+            .contains_key(task_id)
+        {
+            return;
+        }
+        let handler = self.clone();
+        let task_id = task_id.to_owned();
+        let revision = state.revision.clone();
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                let operation = handler.turn_queue_operation.clone().lock_owned().await;
+                // Recheck after admission: a newer local or native turn may now
+                // own this task, so an older completion must not free its slot.
+                let still_settled = handler.store.read_task(&task_id, |link| {
+                    native_execution_state(link).is_some_and(|state| {
+                        state.phase == NativeExecutionPhase::Idle && state.revision == revision
+                    })
+                }) == Some(true);
+                if still_settled && !handler.is_active_local_task(&task_id) {
+                    handler
+                        .finish_scheduled_turn_locked(&task_id, operation)
+                        .await;
+                }
+            });
+        }
+    }
+
     pub(super) fn bind_native_turn_start(
         &self,
         task_id: &str,
@@ -467,6 +519,7 @@ impl RuntimeWorkRpcHandler {
         let Some(state) = native_execution_state(&link) else {
             return;
         };
+        self.release_settled_native_capacity(task_id, &state);
         self.project_runtime_link_status_now(&link);
         let turn_id = state.latest_turn_id.clone();
         let event_request = self.request_for_codex_event(task_id, request, turn_id.as_deref());
