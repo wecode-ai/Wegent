@@ -86,6 +86,27 @@ describe('MCP App discovery', () => {
     expect(requestMcpApp).toHaveBeenCalledTimes(2)
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
+
+  it('shows discovery failures as a borderless activity row with retry and close, not an empty app card', async () => {
+    const requestMcpApp = vi
+      .fn()
+      .mockRejectedValue(new Error('Source MCP server is no longer available'))
+    await act(async () =>
+      render(<McpAppHost block={running} address={address} api={{ requestMcpApp }} />)
+    )
+
+    const host = screen.getByTestId('mcp-app')
+    expect(host).toHaveClass('font-normal', 'text-text-muted')
+    expect(host).not.toHaveClass('shadow-sm', 'outline-1', 'rounded-lg')
+    expect(screen.getByRole('alert')).toHaveTextContent('Source MCP server is no longer available')
+    expect(screen.getByTestId('mcp-app-retry')).toBeEnabled()
+    expect(screen.queryByTestId('mcp-app-expand')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('mcp-app-frame')).not.toBeInTheDocument()
+    await act(async () => fireEvent.click(screen.getByTestId('mcp-app-close')))
+    expect(screen.queryByTestId('mcp-app')).not.toBeInTheDocument()
+    expect(requestMcpApp).toHaveBeenCalledTimes(1)
+    expect(native.invoke).not.toHaveBeenCalled()
+  })
 })
 
 describe('MCP App close completion', () => {
@@ -200,6 +221,7 @@ describe('MCP App close completion', () => {
       )
     )
     expect(screen.getByTestId('mcp-app-frame')).toHaveAttribute('data-ready', 'true')
+    expect(screen.getByTestId('mcp-app')).toHaveClass('shadow-sm', 'outline-1')
     await act(async () => fireEvent.click(screen.getByTestId('mcp-app-close')))
     expect(finishRelease).toBeTypeOf('function')
     expect(screen.getByTestId('mcp-app-frame')).toBeInTheDocument()

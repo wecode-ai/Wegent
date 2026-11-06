@@ -55,6 +55,9 @@ describe('ToolBlockItem', () => {
     )
 
     expect(screen.getByText('3.3s')).toBeInTheDocument()
+    const row = screen.getByTestId('tool-block-duration').parentElement!
+    expect(row).toHaveClass('text-text-muted')
+    expect(row.parentElement).toHaveClass('font-normal')
   })
 
   test('removes the activity shimmer when a tool reaches a terminal status', () => {

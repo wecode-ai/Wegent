@@ -255,15 +255,28 @@ describe('ChatInput', () => {
     const form = screen.getByTestId('project-chat-composer-form')
     const input = screen.getByTestId('chat-message-input')
 
-    expect(form).toHaveClass('min-h-[76px]', 'pb-1.5', 'pt-2', 'bg-background')
+    expect(form).toHaveClass(
+      'min-h-[76px]',
+      'rounded-[20px]',
+      'px-3',
+      'pb-2',
+      'pt-2',
+      'bg-background',
+      'shadow-sm',
+      'font-normal'
+    )
     expect(form).not.toHaveClass('bg-surface')
     expect(form).toHaveAttribute('data-short-collapse', 'true')
     expect(form).toHaveAttribute('data-short-expanded', 'false')
-    expect(screen.getByTestId('project-chat-composer')).toHaveClass(
-      'shadow-[0_0_0_0.5px_rgba(13,13,13,0.12),0_3px_7.5px_rgba(0,0,0,0.04),0_0_20px_rgba(0,0,0,0.05)]'
-    )
+    expect(screen.getByTestId('project-chat-composer')).not.toHaveClass('shadow-sm')
     expect(input).toHaveAttribute('rows', '2')
-    expect(input).toHaveClass('min-h-12', 'pt-1', 'placeholder:text-text-muted/55')
+    expect(input).toHaveClass(
+      'min-h-12',
+      'pt-1',
+      'text-chat',
+      'font-normal',
+      'placeholder:text-text-muted/55'
+    )
     expect(input.closest('[data-composer-scroll-container]')).toBeInTheDocument()
     fireEvent.click(input)
     expect(form).toHaveAttribute('data-short-expanded', 'true')
@@ -4236,7 +4249,7 @@ describe('ChatInput', () => {
     expect(onClearGoal).toHaveBeenCalledTimes(1)
   })
 
-  test('places work-item context and goal in one rail above the composer', () => {
+  test('integrates work-item context and goal into the composer without a separate card', () => {
     const goal: RuntimeGoal = {
       threadId: 'thread-1',
       objective: '完成工作项验收',
@@ -4269,7 +4282,12 @@ describe('ChatInput', () => {
         .getByTestId('goal-status-bar')
         .compareDocumentPosition(screen.getByTestId('work-item-context-summary'))
     ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
-    expect(rail.compareDocumentPosition(composer)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(composer).toContainElement(rail)
+    expect(rail).not.toHaveClass('border', 'bg-muted/45', 'divide-x')
+    expect(composer).not.toHaveAttribute('data-short-collapse', 'true')
+    expect(rail.compareDocumentPosition(screen.getByTestId('chat-message-input'))).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
   })
 
   test('renders a newly created active goal with a zero-second timer', () => {

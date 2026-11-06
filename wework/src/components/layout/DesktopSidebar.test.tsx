@@ -2055,6 +2055,8 @@ describe('DesktopSidebar', () => {
   test('matches Codex sidebar text emphasis levels', () => {
     renderSidebar({ onToggleSidebar: vi.fn() }, { status: 'disconnected', isConnected: false })
 
+    expect(screen.getByTestId('desktop-sidebar')).toHaveClass('font-normal')
+    expect(screen.getByText('Wework')).toHaveClass('font-medium')
     const newTaskButton = screen.getByTestId('new-chat-button')
     const searchButton = screen.getByTestId('runtime-search-button')
     const collapseSidebarButton = screen.getByTestId('collapse-sidebar-button')
@@ -6191,7 +6193,7 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('project-local-tasks-empty-7')).toHaveTextContent('暂无会话')
   })
 
-  test('shows managed worktree tasks directly under the source project with device marker', async () => {
+  test('keeps managed worktree details in the hover card instead of repeating them in rows', async () => {
     const onOpenRuntimeTask = vi.fn()
 
     renderSidebar({
@@ -6238,8 +6240,11 @@ describe('DesktopSidebar', () => {
       'Codex'
     )
     expect(
-      screen.getByTestId('runtime-local-task-worktree-icon-codex-worktree')
-    ).toBeInTheDocument()
+      screen.queryByTestId('runtime-local-task-worktree-icon-codex-worktree')
+    ).not.toBeInTheDocument()
+    expect(screen.getByTestId('runtime-local-task-row-codex-worktree')).toHaveAccessibleName(
+      'Fix worktree sidebar · Git worktree'
+    )
     expect(
       screen.queryByTestId('runtime-local-task-device-marker-codex-worktree')
     ).not.toBeInTheDocument()
@@ -6254,6 +6259,16 @@ describe('DesktopSidebar', () => {
       workspacePath: '/workspace/worktrees/42/Wegent',
       taskId: 'codex-worktree',
     })
+
+    await userEvent.hover(screen.getByTestId('runtime-local-task-row-codex-worktree'))
+    await waitFor(() =>
+      expect(
+        screen.getByTestId('runtime-local-task-worktree-icon-codex-worktree')
+      ).toBeInTheDocument()
+    )
+    expect(screen.getByTestId('runtime-local-task-hover-content-codex-worktree')).toHaveTextContent(
+      'Git worktree'
+    )
   })
 
   test('limits project runtime tasks to five newest rows', async () => {
@@ -6390,13 +6405,21 @@ describe('DesktopSidebar', () => {
 
     expect(screen.getAllByTestId(/^runtime-local-task-row-/)).toHaveLength(15)
     expect(screen.getByTestId('project-runtime-tasks-expand-7')).toHaveTextContent('展开显示')
+    expect(screen.getByTestId('project-runtime-tasks-collapse-7')).toHaveTextContent('折叠显示')
+
+    await userEvent.click(screen.getByTestId('project-runtime-tasks-collapse-7'))
+
+    expect(screen.getAllByTestId(/^runtime-local-task-row-/)).toHaveLength(5)
     expect(screen.queryByTestId('project-runtime-tasks-collapse-7')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('project-runtime-tasks-expand-7'))
+    expect(screen.getAllByTestId(/^runtime-local-task-row-/)).toHaveLength(15)
 
     await userEvent.click(screen.getByTestId('project-runtime-tasks-expand-7'))
 
     expect(screen.getAllByTestId(/^runtime-local-task-row-/)).toHaveLength(25)
     expect(screen.getByTestId('project-runtime-tasks-expand-7')).toBeInTheDocument()
-    expect(screen.queryByTestId('project-runtime-tasks-collapse-7')).not.toBeInTheDocument()
+    expect(screen.getByTestId('project-runtime-tasks-collapse-7')).toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('project-runtime-tasks-expand-7'))
 
@@ -6411,7 +6434,7 @@ describe('DesktopSidebar', () => {
     expect(screen.queryByTestId('project-runtime-tasks-collapse-7')).not.toBeInTheDocument()
   })
 
-  test('shows one project runtime task action after the task list grows past the current limit', async () => {
+  test('keeps collapse available after an expanded project task list grows', async () => {
     const runtimeWorkWithTaskCount = (count: number) => ({
       projects: [
         {
@@ -6466,6 +6489,12 @@ describe('DesktopSidebar', () => {
 
     expect(screen.getAllByTestId(/^runtime-local-task-row-/)).toHaveLength(6)
     expect(screen.getByTestId('project-runtime-tasks-expand-7')).toHaveTextContent('展开显示')
+    expect(screen.getByTestId('project-runtime-tasks-collapse-7')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('project-runtime-tasks-collapse-7'))
+
+    expect(screen.getAllByTestId(/^runtime-local-task-row-/)).toHaveLength(5)
+    expect(screen.getByTestId('project-runtime-tasks-expand-7')).toBeInTheDocument()
     expect(screen.queryByTestId('project-runtime-tasks-collapse-7')).not.toBeInTheDocument()
   })
 

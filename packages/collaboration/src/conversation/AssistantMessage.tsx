@@ -385,7 +385,7 @@ export function AssistantMessage({
     );
 
   return (
-    <div className="min-w-0 max-w-full text-chat text-text-primary">
+    <div className="min-w-0 max-w-full text-chat font-normal text-text-primary">
       <div
         className="w-full max-w-full"
         data-testid="message-hover-region"
@@ -410,7 +410,7 @@ export function AssistantMessage({
           !isCancelled &&
           !usesFinalProcessingShell ? (
             <div
-              className="mb-3 w-full border-b border-border pb-2 text-sm text-text-muted"
+              className="mb-3 w-full pb-2 text-sm text-text-muted"
               data-testid="live-processing-timeline"
             >
               {processingDurationLabel}
@@ -418,7 +418,7 @@ export function AssistantMessage({
           ) : null}
           {usesFinalProcessingShell ? (
             <div
-              className="mb-3 min-w-0 w-full border-b border-border pb-2"
+              className="mb-3 min-w-0 w-full pb-2"
               data-testid="final-processing-timeline"
             >
               <button

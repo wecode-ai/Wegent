@@ -119,26 +119,11 @@ export function ComposerToolbar(props: ComposerToolbarProps) {
         renderFeatureMenus={compact => (
           <>
             {!voiceActive && <DshMenuActions disabled={disabled} location="composer.toolbar" />}
-            <div className="contents" data-testid="composer-extension-actions">
-              <DshContributionSlotSurface
-                key={props.composerScopeKey}
-                entryId={voiceActive ? 'voice-input' : undefined}
-                attachedClassName="contents"
-                props={{
-                  compact,
-                  onActiveChange: onVoiceActiveChange,
-                  disabled,
-                  workspaceTarget,
-                  captureInsertion: props.captureInsertion,
-                  sessionId: props.composerScopeKey,
-                }}
-                slot={WEWORK_DSH_SLOTS.composerAction}
-              />
-            </div>
             {showExecutionTools && !voiceActive ? (
               <>
                 <QuickPhraseMenu
                   disabled={disabled}
+                  compact={compact}
                   projectPhrases={projectPhrases}
                   onSelect={onQuickPhraseSelect}
                 />
@@ -151,6 +136,24 @@ export function ComposerToolbar(props: ComposerToolbarProps) {
               </>
             ) : null}
           </>
+        )}
+        renderTrailingActions={compact => (
+          <div className="contents" data-testid="composer-extension-actions">
+            <DshContributionSlotSurface
+              key={props.composerScopeKey}
+              entryId={voiceActive ? 'voice-input' : undefined}
+              attachedClassName="contents"
+              props={{
+                compact,
+                onActiveChange: onVoiceActiveChange,
+                disabled,
+                workspaceTarget,
+                captureInsertion: props.captureInsertion,
+                sessionId: props.composerScopeKey,
+              }}
+              slot={WEWORK_DSH_SLOTS.composerAction}
+            />
+          </div>
         )}
       />
     </>

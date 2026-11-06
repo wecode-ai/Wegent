@@ -68,6 +68,7 @@ describe('MessageList processing duration', () => {
     render(<MessageList messages={projectRuntimeConversationTurns([turn])} turns={[turn]} />)
 
     expect(screen.getByTestId('final-processing-toggle')).toHaveTextContent('用时 12分钟 23秒')
+    expect(screen.getByTestId('final-processing-timeline')).not.toHaveClass('border-b')
   })
 
   test('labels the processing toggle when a completed turn has no timing data', () => {

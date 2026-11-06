@@ -101,6 +101,21 @@ describe('ComposerToolbar', () => {
       onSubmit: vi.fn(),
     }
     const { rerender } = render(<ComposerToolbar {...props} />)
+    const toolbar = screen.getByTestId('composer-toolbar')
+    const actions = toolbar.querySelector('[data-composer-toolbar-group="actions"]')!
+    expect(toolbar).toHaveClass('font-normal', 'min-h-7')
+    expect(actions).toContainElement(screen.getByTestId('test-voice-input'))
+    expect(
+      screen
+        .getByTestId('model-selector-button')
+        .compareDocumentPosition(screen.getByTestId('test-voice-input'))
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(
+      screen
+        .getByTestId('test-voice-input')
+        .compareDocumentPosition(screen.getByTestId('send-message-button'))
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(screen.getByTestId('send-message-button')).toHaveClass('h-7', 'w-7')
     const expectOtherActionsVisible = (visible: boolean) => {
       for (const id of [
         'add-context-button',
