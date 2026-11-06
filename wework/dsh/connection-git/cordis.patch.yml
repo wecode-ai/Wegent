@@ -1,0 +1,5 @@
+- insert:
+    - id: wework-connection-git
+      name: '@wegent/dsh-connection-git'
+      inject:
+        - weworkConnections

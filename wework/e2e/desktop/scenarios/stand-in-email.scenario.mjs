@@ -4,12 +4,15 @@ import { dirname, join } from 'node:path'
 import { prepareHarnessRuntimeRoots } from '../modules/desktop-build-flows.mjs'
 import { startRealMailServer } from '../modules/real-mail-server.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { until } from '../modules/plugin-regression-fixture.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
 import { openConnectionTypePicker } from '../modules/stand-in-flows.mjs'
+import { createDailyBriefStory } from '../modules/stand-in-daily-brief-story.mjs'
 import {
   assistantMessage,
   createSse,
+  delegatedTaskResultEvents,
   isReplyPredictionRequest,
   mcpToolRequestEvents,
   readRequestBody,
@@ -26,6 +29,7 @@ const CARD = '[data-testid="request-user-input-card"]'
 export function createDesktopScenario({
   resultDir,
   workspacePath,
+  executorHome,
   captureScreenshot,
   uiTimeoutMs,
   modelResponseTimeoutMs,
@@ -36,6 +40,12 @@ export function createDesktopScenario({
   let coordinatorRound = 0
   let originalSettings
   let messageId
+  const dailyStory = createDailyBriefStory({
+    executorHome,
+    captureScreenshot,
+    uiTimeoutMs,
+    modelResponseTimeoutMs,
+  })
   const rpc = (control, method, params) => requestExecutor(control, method, params, uiTimeoutMs)
   const backend = async (control, method, params = {}) =>
     JSON.parse(
@@ -77,10 +87,18 @@ export function createDesktopScenario({
       )
     },
     async handleHttp(req, response, url) {
+      if (await dailyStory.handleHttp(req, response, url)) return true
       if (req.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
       const body = await readRequestBody(req)
       if (isReplyPredictionRequest(body)) return false
+      const resultEvents = delegatedTaskResultEvents(body)
+      if (resultEvents) {
+        const id = `email-result-${Date.now()}`
+        response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
+        response.end(createSse([responseCreated(id), ...resultEvents, responseCompleted(id)]))
+        return true
+      }
       const input = JSON.stringify(body.input ?? [])
       if (input.includes('Review this silent intake batch')) {
         const readId = `email-intake-${coordinatorRound}`
@@ -264,6 +282,10 @@ export function createDesktopScenario({
       assert.equal(saved.primary.connections[0].profile, accountId)
       assert.ok(!JSON.stringify(saved).includes(mail.config.password))
       mail.pauseImap()
+      await control.command('waitFor', '[data-testid="stand-in-status-open"]', {
+        timeoutMs: modelResponseTimeoutMs,
+      })
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-status-open"]')
       await control.command('waitFor', '[role="alert"]', {
         text: '将自动重试',
         timeoutMs: modelResponseTimeoutMs,
@@ -271,13 +293,21 @@ export function createDesktopScenario({
       const interrupted = await rpc(control, 'runtime.stand_in.work.list', { userId: USER })
       assert.equal(interrupted.sourceErrors[0].error.code, 'email_transport_failed')
       await captureScreenshot(control, '03a-incoming-connection-will-retry.png')
+      await control.command('click', '[data-testid="stand-in-status-dialog-close"]')
       mail.resumeImap()
       await mail.deliver(
         '邮箱接入验证',
         `${MARKER}\n请拟定邮件回复，发送前让我确认。`,
         '<new-email@example.com>'
       )
-      await control.command('waitFor', '[data-testid^="stand-in-attention-"]', {
+      // The transport's real 30-second retry backoff precedes model processing.
+      await until(
+        () => rpc(control, 'runtime.stand_in.work.list', { userId: USER }),
+        state => state.sourceErrors.length === 0,
+        'Restored IMAP transport must complete its scheduled retry before processing new mail',
+        30000 + modelResponseTimeoutMs
+      )
+      await control.command('waitFor', '[data-testid="stand-in-work-attention-count"]', {
         timeoutMs: modelResponseTimeoutMs,
       })
       const works = await rpc(control, 'runtime.stand_in.work.list', { userId: USER })
@@ -289,8 +319,16 @@ export function createDesktopScenario({
       )
       assert.equal(works.items.length, 1, 'Historical mail must not create work')
       const work = works.items[0]
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-role-chat"]')
+      await control.command(
+        'clickWhenEnabled',
+        `[data-testid="stand-in-activity-task-${work.taskId}"]`
+      )
+      await control.command('waitFor', '[data-testid="stand-in-work-open-pending"]')
       await captureScreenshot(control, '04a-mail-work-needs-confirmation.png')
-      await control.command('click', `[data-testid="stand-in-attention-${work.taskId}"]`)
+      await control.command('click', '[data-testid="stand-in-work-open-pending"]')
+      await control.command('waitFor', '[data-testid="interaction-open-original"]')
+      await control.command('click', '[data-testid="interaction-open-original"]')
       await control.command('waitFor', CARD, { timeoutMs: modelResponseTimeoutMs })
       const preview = await control.command('getText', CARD, { visible: true })
       await writeFile(join(resultDir, 'native-approval-preview.txt'), preview)
@@ -368,7 +406,6 @@ export function createDesktopScenario({
         'personal-stand-in-button',
         'stand-in-settings-open',
         'stand-in-primary-connections-open',
-        'stand-in-add-connection',
         `stand-in-add-${PROVIDER}-connection`,
       ])
         await control.command('clickWhenEnabled', `[data-testid="${target}"]`)
@@ -436,6 +473,12 @@ export function createDesktopScenario({
         edited.connections[0].boundary,
         reused.connections[0].boundary,
         'Ordinary project edits with a default role ID must preserve the pending-mail boundary'
+      )
+      await dailyStory.verify(
+        control,
+        (method, params) => rpc(control, method, params),
+        mail,
+        model
       )
     },
     async cleanup() {

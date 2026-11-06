@@ -50,6 +50,7 @@ import {
   type AssistantFileCitation,
 } from './assistantAnnotations'
 import { AssistantFollowup } from './AssistantFollowup'
+import { preprocessCjkEmphasis } from './preprocessCjkEmphasis'
 
 const ASSISTANT_MARKDOWN_LINK_CLASS = [
   'inline-flex min-w-0 max-w-full items-center gap-1 rounded-md px-0.5 align-baseline',
@@ -147,10 +148,12 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
   // independent blocks; a marker may span more than one Markdown paragraph.
   const displayContent = useMemo(
     () =>
-      normalizeMathDelimiters(
-        variant === 'user'
-          ? bufferedContent
-          : stripUnsupportedContentReferenceCitations(bufferedContent)
+      preprocessCjkEmphasis(
+        normalizeMathDelimiters(
+          variant === 'user'
+            ? bufferedContent
+            : stripUnsupportedContentReferenceCitations(bufferedContent)
+        )
       ),
     [bufferedContent, variant]
   )

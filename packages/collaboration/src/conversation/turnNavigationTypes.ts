@@ -3,7 +3,10 @@ import type { WorkbenchMessage } from '@wegent/chat-core'
 import type { RuntimeTurnNavigationItem } from '@wegent/chat-core/runtime'
 import type { CollaborationTranslate } from '../i18n'
 
-export type NavigationMessage = Pick<WorkbenchMessage, 'id' | 'role' | 'content' | 'blocks'> & {
+export type NavigationMessage = Pick<
+  WorkbenchMessage,
+  'id' | 'role' | 'content' | 'blocks' | 'source'
+> & {
   turnId?: string | null
   runtimeGuidance?: boolean | null
   runtimeMessageIndex?: number | null

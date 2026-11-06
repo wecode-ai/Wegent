@@ -371,10 +371,22 @@ maybe_run_full_python_tests() {
     local test_cmd="$2"
     local log_file="$3"
     local failed_check_name="$4"
+    local worker_count="${5:-}"
 
     if ! should_run_full_tests; then
         echo -e "   ${YELLOW}↪ Pytest: SKIPPED in pre-push (set AI_PUSH_FULL_TESTS=1 to run full suite)${NC}"
         return 0
+    fi
+
+    if [ -n "$worker_count" ]; then
+        if [[ ! "$worker_count" =~ ^[0-9]+$ ]]; then
+            echo 'Invalid BACKEND_PRE_PUSH_TEST_WORKERS: expected a non-negative integer' > "$log_file"
+            CHECK_FAILED=1
+            FAILED_CHECKS+=("$failed_check_name")
+            FAILED_LOGS+=("$log_file")
+            return 1
+        fi
+        test_cmd="$test_cmd -n $worker_count"
     fi
 
     echo -e "   Running pytest..."
@@ -824,7 +836,8 @@ if [ "$BACKEND_COUNT" -gt 0 ] 2>/dev/null; then
             "Backend" \
             "pytest tests/ --tb=short -q" \
             "$TEMP_DIR/backend_pytest.log" \
-            "Backend Pytest"
+            "Backend Pytest" \
+            "${BACKEND_PRE_PUSH_TEST_WORKERS:-}"
         
         # Python syntax check
         # Python syntax check
@@ -887,7 +900,8 @@ if [ "$BACKEND_COUNT" -gt 0 ] 2>/dev/null; then
             "Backend" \
             "uv run pytest tests/ --tb=short -q" \
             "$TEMP_DIR/backend_pytest.log" \
-            "Backend Pytest"
+            "Backend Pytest" \
+            "${BACKEND_PRE_PUSH_TEST_WORKERS:-}"
         # Python syntax check (output to temp file)
         echo -e "   Running Python syntax check..."
         SYNTAX_ERROR=0

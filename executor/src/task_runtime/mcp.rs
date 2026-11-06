@@ -34,7 +34,9 @@ use super::{
 };
 
 mod comments;
+pub(crate) mod connection_context;
 mod context;
+pub(crate) mod git_connections;
 mod parent_issue;
 mod stand_in;
 pub(crate) mod stand_in_tasks;
@@ -129,6 +131,7 @@ pub(crate) struct SpaceMcpRequestContext {
     cloud_collaboration_dispatcher: Option<CloudCollaborationRoundDispatcher>,
     event_sender: Option<tokio::sync::broadcast::Sender<Value>>,
     stand_in: Option<stand_in::StandInMcpIdentity>,
+    control: Option<crate::workbench_control::ControlContext>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -137,6 +140,7 @@ pub(crate) enum WeworkMcpSurface {
     ProjectSpace,
     Notifications,
     StandIn,
+    Control,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -148,12 +152,26 @@ pub(crate) struct SpaceMcpClientConfig {
 
 impl SpaceMcpRequestContext {
     pub(super) fn shares_unbound_authority(&self, other: &Self) -> bool {
-        self.surface != WeworkMcpSurface::StandIn
-            && self.surface == other.surface
+        matches!(
+            self.surface,
+            WeworkMcpSurface::ProjectSpace | WeworkMcpSurface::Notifications
+        ) && self.surface == other.surface
             && self.grant.is_none()
             && other.grant.is_none()
             && self.backend_url == other.backend_url
             && self.auth_token == other.auth_token
+    }
+
+    pub(super) fn shares_control_conversation(&self, other: &Self) -> bool {
+        let (Some(current), Some(next)) = (&self.control, &other.control) else {
+            return false;
+        };
+        current.device_id == next.device_id
+            && current.task_id == next.task_id
+            && current.request.backend_url == next.request.backend_url
+            && current.request.auth_token == next.request.auth_token
+            && current.request.runtime_auth_token == next.request.runtime_auth_token
+            && current.request.extra.get("origin") == next.request.extra.get("origin")
     }
 
     pub(crate) fn new(
@@ -169,6 +187,7 @@ impl SpaceMcpRequestContext {
             cloud_collaboration_dispatcher: None,
             event_sender: None,
             stand_in: None,
+            control: None,
         }
     }
 
@@ -181,6 +200,7 @@ impl SpaceMcpRequestContext {
             cloud_collaboration_dispatcher: None,
             event_sender: None,
             stand_in: None,
+            control: None,
         }
     }
 
@@ -190,6 +210,14 @@ impl SpaceMcpRequestContext {
             non_empty_env("WEWORK_SPACE_BACKEND_URL"),
             non_empty_env("WEWORK_SPACE_AUTH_TOKEN"),
         )
+    }
+
+    pub(crate) fn control(context: crate::workbench_control::ControlContext) -> Self {
+        Self {
+            surface: WeworkMcpSurface::Control,
+            control: Some(context),
+            ..Self::default()
+        }
     }
 
     fn grant(&self) -> Option<&SpaceContextGrant> {
@@ -205,6 +233,7 @@ impl SpaceMcpRequestContext {
             WeworkMcpSurface::ProjectSpace => SPACE_MCP_SERVER_NAME,
             WeworkMcpSurface::Notifications => NOTIFICATIONS_MCP_SERVER_NAME,
             WeworkMcpSurface::StandIn => STAND_IN_MCP_SERVER_NAME,
+            WeworkMcpSurface::Control => crate::workbench_control::SERVER_NAME,
         }
     }
 
@@ -221,6 +250,11 @@ impl SpaceMcpRequestContext {
     ) {
         self.event_sender = sender;
     }
+}
+
+pub(crate) fn has_bound_issue_context(request: &ExecutionRequest) -> Result<bool, String> {
+    space_context_grant(request)
+        .map(|grant| grant.is_some_and(|grant| grant.space_id.is_some() && grant.item_id.is_some()))
 }
 
 pub(crate) fn space_mcp_client_config(
@@ -299,6 +333,30 @@ pub(crate) fn notifications_mcp_client_config(
 
 pub fn is_space_mcp_command() -> bool {
     env::args().nth(1).as_deref() == Some("space-mcp-server")
+}
+
+pub(crate) fn control_mcp_client_config(
+    request: &ExecutionRequest,
+) -> Result<Option<SpaceMcpClientConfig>, String> {
+    let Some(context) = crate::workbench_control::ControlContext::from_request(request) else {
+        return Ok(None);
+    };
+    if !crate::workbench_control::available(&context) {
+        return Ok(None);
+    }
+    let registered = super::mcp_http::register_control_mcp_context(context)?;
+    let base_url = registered.endpoint.url.trim_end_matches("/mcp");
+    Ok(Some(SpaceMcpClientConfig {
+        url: format!("{base_url}/control/mcp"),
+        headers: BTreeMap::from([
+            (
+                "Authorization".to_owned(),
+                format!("Bearer {}", registered.endpoint.token),
+            ),
+            ("X-Wework-Mcp-Context".to_owned(), registered.context_handle),
+        ]),
+        auto_approve: true,
+    }))
 }
 
 pub async fn run() -> Result<(), String> {
@@ -413,6 +471,16 @@ pub(crate) async fn handle_request_with_context(
                 tools.len(),
                 names,
             ));
+            if context
+                .stand_in
+                .as_ref()
+                .is_some_and(|identity| identity.coordinator_batch.is_some())
+            {
+                write_space_mcp_log(&format!(
+                    "[wework-space-mcp] stage=coordinator_tool_contracts contracts={}",
+                    stand_in::tool_contract_diagnostics(&tools),
+                ));
+            }
             result_response(id, json!({"tools": tools}))
         }),
         "tools/call" => {
@@ -430,6 +498,12 @@ pub(crate) async fn handle_request_with_context(
                 "[wework-space-mcp] stage=tool_call tool={} argument_keys={}",
                 name, argument_keys,
             ));
+            if let Some(control) = context.control.as_ref() {
+                return Some(result_response(
+                    id,
+                    crate::workbench_control::call(control, name, arguments).await,
+                ));
+            }
             Some(result_response(
                 id,
                 call_tool_with_context(runtime, name, arguments, context).await,
@@ -3386,6 +3460,9 @@ fn tools() -> Vec<Value> {
 fn visible_tools(runtime: &TaskRuntime, context: &SpaceMcpRequestContext) -> Vec<Value> {
     if context.surface == WeworkMcpSurface::StandIn {
         return stand_in::tools(context);
+    }
+    if context.surface == WeworkMcpSurface::Control {
+        return crate::workbench_control::tools();
     }
     if context.surface == WeworkMcpSurface::Notifications {
         return tools()

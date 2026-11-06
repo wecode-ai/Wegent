@@ -97,6 +97,7 @@ const mocks = vi.hoisted(() => {
 
   const localServices = {
     standInApi: {
+      taskCommands: { get: vi.fn(), resolve: vi.fn() },
       projectCoordination: vi.fn(),
       projectProcessing: vi.fn(),
       readTask: vi.fn().mockResolvedValue({ success: true }),
@@ -190,6 +191,7 @@ const mocks = vi.hoisted(() => {
   }
   const cloudServices = {
     standInApi: {
+      taskCommands: { get: vi.fn(), resolve: vi.fn() },
       projectCoordination: vi.fn(),
       projectProcessing: vi.fn(),
       readTask: vi.fn().mockResolvedValue({ success: true }),
@@ -523,6 +525,8 @@ describe('stand-in save routing', () => {
         api.saveMemory.mockClear()
         api.deleteMemory.mockClear()
         api.organizeWork.mockClear()
+        api.taskCommands.get.mockClear()
+        api.taskCommands.resolve.mockClear()
       }
       const settings = {
         userId: 7,
@@ -586,6 +590,28 @@ describe('stand-in save routing', () => {
         'target'
       )
       expect(other.organizeWork).not.toHaveBeenCalled()
+      const command = { userId: 7, taskId: 'original-task', commandId: 'original-command' }
+      const receipt = { state: 'recovery_required', native: [4, 'thread', 'turn'] }
+      selected.taskCommands.get.mockResolvedValueOnce(receipt)
+      expect(await services.standInApi!.taskCommands.get(deviceId, command)).toBe(receipt)
+      expect(selected.taskCommands.get).toHaveBeenCalledExactlyOnceWith(deviceId, command)
+      expect(other.taskCommands.get).not.toHaveBeenCalled()
+      const resolution = {
+        ...command,
+        expectedFingerprint: 'reviewed-fingerprint',
+        expectedNative: [4, 'thread', 'turn'] as [number, string, string],
+        decision: 'abandon' as const,
+        requestId: 'stable-resolution-id',
+      }
+      const denied = Object.assign(new Error('The command changed'), {
+        code: 'command_resolution_conflict',
+      })
+      selected.taskCommands.resolve.mockRejectedValueOnce(denied)
+      await expect(services.standInApi!.taskCommands.resolve(deviceId, resolution)).rejects.toBe(
+        denied
+      )
+      expect(selected.taskCommands.resolve).toHaveBeenCalledExactlyOnceWith(deviceId, resolution)
+      expect(other.taskCommands.resolve).not.toHaveBeenCalled()
     }
   )
 })
@@ -1429,6 +1455,22 @@ describe('createHybridWorkbenchServices', () => {
     })
 
     expect(onChatChunk.mock.calls.map(([payload]) => payload.content)).toEqual(['local', 'cloud'])
+  })
+
+  it('refreshes the catalog after the local executor creates a conversation on another device', () => {
+    const services = createServices()
+    const onRuntimeWorkChanged = vi.fn()
+    services.chatStream.subscribe({ onRuntimeWorkChanged })
+
+    const localHandlers = mocks.localChatStreamSubscribe.mock.calls.at(-1)?.[0]
+    const cloudHandlers = mocks.cloudRuntimeChatStreamSubscribe.mock.calls.at(-1)?.[0]
+    const remoteCreation = { deviceId: 'cloud-device', taskId: 'created-remote-task' }
+
+    localHandlers?.onRuntimeWorkChanged?.(remoteCreation)
+    expect(onRuntimeWorkChanged).toHaveBeenCalledExactlyOnceWith(remoteCreation)
+
+    cloudHandlers?.onRuntimeWorkChanged?.({ deviceId: 'local-device', taskId: 'local-task' })
+    expect(onRuntimeWorkChanged).toHaveBeenCalledTimes(1)
   })
 
   it('routes project assignment notifications by project storage', () => {
