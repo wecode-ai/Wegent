@@ -60,7 +60,9 @@ export function createDesktopScenario(options) {
   async function send(control, next) {
     phase = next
     callId = null
-    await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: `${PREFIX}:${next}` })
+    await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
+      value: next === 'plain' ? 'hi' : `${PREFIX}:${next}`,
+    })
     await control.command('clickWhenEnabled', ACTIVE_SEND_BUTTON_SELECTOR)
     await control.command('waitFor', '[data-testid="message-assistant"]', {
       text: `${PREFIX}:${next}:done`,
@@ -120,6 +122,10 @@ export function createDesktopScenario(options) {
         return true
       }
       if (phase === 'plain') {
+        await writeFile(
+          join(options.resultDir, 'initial-model-request.json'),
+          JSON.stringify(body, null, 2)
+        )
         assert.equal(developer.split(BEFORE).length - 1, 1, 'Initial rules were duplicated')
         assert.ok(developer.includes('wework-runtime'))
         assert.ok(
