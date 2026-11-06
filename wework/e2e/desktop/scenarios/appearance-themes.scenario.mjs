@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { reloadMainWindow } from '../modules/workspace-flows.mjs'
 import { selectWorkbenchTheme } from '../modules/appearance-theme.mjs'
+import { waitForClosedStartupSplash } from '../modules/native-window-state.mjs'
 
 // Independent acceptance inventory: ChatGPT 26.1029.70936 (24905), 29 names / 44 variants.
 // Keep this fixture independent of the application catalogue so omissions fail CI.
@@ -92,6 +93,7 @@ export function createDesktopScenario({
   const evidence = { reference: 'ChatGPT 26.1029.70936 (24905)', variants: [], surfaces: [] }
   return {
     async verify(control) {
+      await waitForClosedStartupSplash(control)
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('navigate', 'body', { value: '/settings/appearance' })
       await control.command('waitFor', '[data-testid="appearance-settings-page"]', {
@@ -160,6 +162,7 @@ export function createDesktopScenario({
       await assertTokyoNight(control)
       assert.ok(restartDesktopApp, 'The appearance checkpoint requires a real Electron restart')
       await restartDesktopApp()
+      await waitForClosedStartupSplash(control)
       await assertTokyoNight(control)
 
       // Exercise each actual desktop settings contribution, including plugin-injected pages.

@@ -314,6 +314,71 @@ describe('selectMcpToolRequest', () => {
     expect(response.events.some(event => event.item?.call_id === 'read-board-item')).toBe(false)
   })
 
+  test('uses the qualified Responses bridge name when deferred search is absent', () => {
+    const request = {
+      tools: [
+        functionTool('wework_stand_in__continue_task'),
+        functionTool('another_server__continue_task'),
+      ],
+    }
+    const response = mcpToolRequestEvents(request, {
+      toolName: 'continue_task',
+      argumentsValue: { taskId: 'original-work', message: 'Resume the work' },
+      directToolName: 'mcp__wework_stand_in__continue_task',
+      searchCallId: 'resume-search',
+      toolCallId: 'resume-work',
+    })
+    const completedCall = response.events.find(event => event.type === 'response.output_item.done')
+
+    expect(response.mode).toBe('direct')
+    expect(completedCall?.item).toMatchObject({
+      type: 'function_call',
+      call_id: 'resume-work',
+      name: 'wework_stand_in__continue_task',
+      arguments: JSON.stringify({ taskId: 'original-work', message: 'Resume the work' }),
+    })
+    expect(response.events.some(event => event.item?.call_id === 'resume-search')).toBe(false)
+  })
+
+  test('rejects a converted tool from a different namespace', () => {
+    const request = { tools: [functionTool('another_server__continue_task')] }
+
+    expect(() =>
+      selectMcpToolRequest(request, 'continue_task', {}, 'mcp__wework_stand_in__continue_task')
+    ).toThrow('Real Codex did not advertise exactly one deferred tool search')
+  })
+
+  test('rejects ambiguous native and converted names for the same MCP tool', () => {
+    const request = {
+      tools: [
+        functionTool('mcp__wework_stand_in__continue_task'),
+        functionTool('wework_stand_in__continue_task'),
+      ],
+    }
+
+    expect(() =>
+      selectMcpToolRequest(request, 'continue_task', {}, 'mcp__wework_stand_in__continue_task')
+    ).toThrow('Ambiguous MCP tool mcp__wework_stand_in__continue_task')
+  })
+
+  test('still searches when the converted MCP tool and deferred search are both advertised', () => {
+    const request = {
+      tools: [
+        functionTool('search_deferred_tools'),
+        functionTool('wework_stand_in__continue_task'),
+      ],
+    }
+
+    expect(
+      selectMcpToolRequest(request, 'continue_task', {}, 'mcp__wework_stand_in__continue_task')
+    ).toEqual({
+      mode: 'search',
+      name: 'search_deferred_tools',
+      native: false,
+      arguments: { query: 'wework_stand_in continue_task', limit: 8 },
+    })
+  })
+
   test('still rejects a Codex request without exactly one deferred search', () => {
     const request = { tools: [functionTool('load_skill')] }
 
