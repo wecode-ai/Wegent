@@ -154,6 +154,11 @@ test("the existing backend job builds and verifies one real delivery image and t
   assert.equal(builds[0].with.file, "docker/backend/Dockerfile");
   assert.equal(builds[0].with.load, true);
   assert.equal(builds[0].with.push, false);
+  assert.equal(
+    builds[0].with["cache-from"],
+    "type=registry,ref=ghcr.io/${{ github.repository_owner }}/wegent-backend:buildcache-amd64",
+  );
+  assert.equal(builds[0].with["cache-to"], undefined);
   assert.match(builds[0].if, /backend_delivery_image/);
   const verify = backend.steps.find(
     (step) => step.name === "Verify Backend delivery image",

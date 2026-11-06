@@ -323,8 +323,7 @@ jobs:
           push: false
           tags: wegent-backend-delivery:${{ github.event.pull_request.head.sha || github.sha }}
           labels: org.opencontainers.image.revision=${{ github.event.pull_request.head.sha || github.sha }}
-          cache-from: type=gha,scope=backend-delivery-amd64
-          cache-to: type=gha,scope=backend-delivery-amd64,mode=max
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/wegent-backend:buildcache-amd64
 
       - name: Verify Backend delivery image
         if: needs.changes.outputs.backend_delivery_image == 'true'
