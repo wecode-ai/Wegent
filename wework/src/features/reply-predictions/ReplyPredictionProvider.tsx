@@ -140,15 +140,6 @@ export function ReplyPredictionProvider({
         }
       >
         {children}
-        {!blocked && !busy && enabled && scope && service?.hasError(scope) && (
-          <p
-            role="status"
-            className="mt-1 text-xs text-text-secondary"
-            data-testid="reply-prediction-error"
-          >
-            {t('workbench.reply_prediction_failed')}
-          </p>
-        )}
       </ComposerPredictionPendingContext.Provider>
     </ComposerPredictionContext.Provider>
   )
