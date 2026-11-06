@@ -829,3 +829,13 @@ it('keeps first-use setup open when the existing settings save fails and allows 
   await screen.findByTestId('identity-conversation')
   expect(completeOnboarding).toHaveBeenCalledOnce()
 })
+
+it('keeps profile recovery and creation reachable when the selected device and onboarding are offline', async () => {
+  const { props } = fixture()
+  vi.mocked(props.services.standInApi!.personalGet).mockRejectedValue(new Error('Executor offline'))
+  vi.mocked(props.services.standInApi!.onboarding).mockRejectedValue(new Error('Executor offline'))
+  render(<StandInOverviewPage {...props} initialDeviceId="offline-cloud" />)
+  await screen.findByTestId('stand-in-overview-retry')
+  expect(screen.queryByTestId('stand-in-onboarding')).not.toBeInTheDocument()
+  expect(screen.getByTestId('stand-in-create-role')).toBeEnabled()
+})
