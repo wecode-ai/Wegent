@@ -151,6 +151,7 @@ import {
   withAcknowledgedMarketplaceDeviceState,
   withOptimisticDevicePending,
 } from '@/features/plugins/pluginDeviceAutoSync'
+import { logPluginRefreshPhase } from '@/features/plugins/pluginRefreshDiagnostics'
 import {
   marketplaceItemCanRetryPluginUpdate,
   marketplaceItemHasPausedPluginAutoUpdate,
@@ -1740,7 +1741,7 @@ export function PluginsWorkspace({
 
     let finishDeviceSync: (() => void) | undefined
     const deviceLease = currentDeviceId
-      ? acquirePluginDeviceSync(currentDeviceId)
+      ? acquirePluginDeviceSync(currentDeviceId, undefined, 'policy')
       : Promise.resolve(() => {})
     void deviceLease
       .then(finish => {
@@ -3386,6 +3387,18 @@ export function PluginsWorkspace({
     }
     const hasCachedCatalog = Boolean(cached?.marketplaceItems.length)
     const isExplicitRefresh = marketplaceRefreshTick > lastMarketplaceRefreshTickRef.current
+    const catalogStartedAt = Date.now()
+    if (isExplicitRefresh)
+      logPluginRefreshPhase('catalog-start', { request: marketplaceRefreshTick })
+    const trackCatalogRead = <T,>(phase: string, read: Promise<T>): Promise<T> =>
+      read.finally(() => {
+        if (isExplicitRefresh)
+          logPluginRefreshPhase(phase, {
+            request: marketplaceRefreshTick,
+            elapsedMs: Date.now() - catalogStartedAt,
+            current: isCurrent,
+          })
+      })
     if (isExplicitRefresh) {
       lastMarketplaceRefreshTickRef.current = marketplaceRefreshTick
     }
@@ -4091,12 +4104,18 @@ export function PluginsWorkspace({
       .catch(reportReadFailure)
 
     const settledCatalog = Promise.allSettled([
-      localPromise,
-      cloudPromise,
-      installedPromise,
-      personalDiskPromise,
-      membershipPromise,
+      trackCatalogRead('catalog-local-settled', localPromise),
+      trackCatalogRead('catalog-cloud-settled', cloudPromise),
+      trackCatalogRead('catalog-installed-settled', installedPromise),
+      trackCatalogRead('catalog-personal-settled', personalDiskPromise),
+      trackCatalogRead('catalog-membership-settled', membershipPromise),
     ]).then(([localResult, cloudResult, installedResult, diskResult, membershipResult]) => {
+      if (isExplicitRefresh)
+        logPluginRefreshPhase('catalog-settled', {
+          request: marketplaceRefreshTick,
+          elapsedMs: Date.now() - catalogStartedAt,
+          current: isCurrent,
+        })
       if (!isCurrent) return
       catalogSettled = true
       // Prefer a background-refreshed local snapshot over the settle promise value.
@@ -4273,7 +4292,7 @@ export function PluginsWorkspace({
     const attemptKey = `${marketplaceCacheKeyValue}:${currentDeviceId}:${releaseKey}`
     if (autoUpdateAttemptKeysRef.current.has(attemptKey)) return
 
-    const finishDeviceSync = beginPluginDeviceSync(currentDeviceId)
+    const finishDeviceSync = beginPluginDeviceSync(currentDeviceId, 'auto-update')
     if (!finishDeviceSync) return
     setDeviceAutoSyncSettled(false)
     autoUpdateAttemptKeysRef.current.add(attemptKey)
@@ -4470,7 +4489,7 @@ export function PluginsWorkspace({
     }
 
     if (reports.length > 0 && !hasAttemptedPluginDeviceStatusReport(deviceId, reports)) {
-      const finishDeviceSync = beginPluginDeviceSync(deviceId)
+      const finishDeviceSync = beginPluginDeviceSync(deviceId, 'status-report')
       if (!finishDeviceSync) return
       void pluginApi
         .reportInstalledPluginsOnDevice(deviceId, reports)
@@ -4529,7 +4548,7 @@ export function PluginsWorkspace({
     }
     if (hasAttemptedPluginDeviceAutoSync(currentDeviceId)) return
 
-    const finishDeviceSync = beginPluginDeviceSync(currentDeviceId)
+    const finishDeviceSync = beginPluginDeviceSync(currentDeviceId, 'auto-sync')
     if (!finishDeviceSync) return
 
     setDeviceAutoSyncSettled(false)
