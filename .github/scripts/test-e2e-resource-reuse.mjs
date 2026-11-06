@@ -13,6 +13,125 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
 import { runtimeArtifact } from "./runtime-artifact.mjs";
+import { containerIPv4, runnerLoopbackHosts } from "./e2e-runner-network.mjs";
+
+test("isolated browsers route localhost to real runner services without retaining a loopback alias", () => {
+  const hosts = [
+    "127.0.0.1 localhost # IPv4 loopback",
+    "::1 localhost ip6-localhost ip6-loopback",
+    "172.17.0.1 wegent-e2e-runner",
+    "172.17.0.2 browser-container",
+    "# localhost in a comment is unchanged",
+    "",
+  ].join("\n");
+  const mapped = runnerLoopbackHosts(hosts, "172.17.0.1");
+  assert.equal(
+    mapped,
+    [
+      "# IPv4 loopback",
+      "::1\tip6-localhost\tip6-loopback",
+      "172.17.0.1 wegent-e2e-runner",
+      "172.17.0.2 browser-container",
+      "# localhost in a comment is unchanged",
+      "172.17.0.1\tlocalhost",
+      "",
+    ].join("\n"),
+  );
+  assert.equal(runnerLoopbackHosts(mapped, "172.17.0.1"), mapped);
+});
+
+test("invalid runner addresses fail before configuring browser routing", () => {
+  for (const gateway of [
+    "",
+    "localhost",
+    "127.0.0.1:8000",
+    "::1",
+    "1.2.3.4, MAP * 1.2.3.4",
+  ]) {
+    assert.throws(
+      () => runnerLoopbackHosts("127.0.0.1 localhost\n", gateway),
+      /IPv4 address/,
+    );
+  }
+});
+
+test("fixture servers advertise the container address reachable from runner processes", () => {
+  const interfaces = {
+    lo: [
+      { address: "127.0.0.1", family: "IPv4", internal: true },
+      { address: "::1", family: "IPv6", internal: true },
+    ],
+    eth0: [
+      { address: "fe80::1", family: "IPv6", internal: false },
+      { address: "172.17.0.2", family: "IPv4", internal: false },
+    ],
+  };
+  assert.equal(containerIPv4(interfaces), "172.17.0.2");
+  assert.throws(
+    () => containerIPv4({ lo: interfaces.lo }),
+    /no non-loopback IPv4 address/,
+  );
+  const wrapper = readFileSync(
+    ".github/scripts/run-isolated-e2e-browser.sh",
+    "utf8",
+  );
+  assert.match(wrapper, /E2E_TEST_CONTAINER_ADDRESS="\$container_address"/);
+  const fixture = readFileSync(
+    "frontend/e2e/utils/device-git-http-fixture.ts",
+    "utf8",
+  );
+  assert.match(fixture, /process\.env\.E2E_TEST_CONTAINER_ADDRESS/);
+  const artifactFixture = readFileSync(
+    "frontend/e2e/utils/artifact-device-fixture.ts",
+    "utf8",
+  );
+  assert.ok(
+    artifactFixture.indexOf("process.env.E2E_CLAUDE_MODEL_SERVER_URL") <
+      artifactFixture.indexOf("process.env.E2E_LOCAL_CLAUDE_MODEL_SERVER_URL"),
+    "container-hosted artifact devices must prefer the runner-reachable model URL",
+  );
+});
+
+test("executor browser containers isolate network changes while retaining the existing jobs and workers", () => {
+  const parsed = spawnSync(
+    "ruby",
+    [
+      "-ryaml",
+      "-rjson",
+      "-e",
+      "puts JSON.generate(YAML.load_file(ARGV[0])['jobs']['executor-e2e-tests'])",
+      ".github/workflows/e2e-tests.yml",
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(parsed.status, 0, parsed.stderr);
+  const job = JSON.parse(parsed.stdout);
+  for (const name of [
+    "Run Executor E2E tests",
+    "Run stalled Chat SSE regression",
+  ]) {
+    const run = job.steps.find((step) => step.name === name).run;
+    assert.match(run, /--network bridge\s/);
+    assert.match(run, /--add-host wegent-e2e-runner:host-gateway\s/);
+    assert.match(
+      run,
+      /--entrypoint "\$container_workspace\/\.github\/scripts\/run-isolated-e2e-browser\.sh"/,
+    );
+    assert.doesNotMatch(run, /--network host|--workers|--retries/);
+  }
+  const wrapper = readFileSync(
+    ".github/scripts/run-isolated-e2e-browser.sh",
+    "utf8",
+  );
+  assert.match(wrapper, /export E2E_BROWSER_HOST_GATEWAY=/);
+  assert.match(wrapper, /exec "\$@"/);
+  const config = readFileSync("frontend/playwright.config.ts", "utf8");
+  assert.match(
+    config,
+    /--host-resolver-rules=MAP localhost \$\{process.env.E2E_BROWSER_HOST_GATEWAY\}/,
+  );
+  assert.match(config, /name: 'executor-chromium',[\s\S]*?workers: 2/);
+});
 
 const runner = resolve(".github/scripts/run-attachment-replica-e2e.sh");
 const knowledgeRunner = resolve(
