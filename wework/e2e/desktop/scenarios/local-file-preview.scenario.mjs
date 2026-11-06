@@ -134,7 +134,6 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
       const readmeSelector = await findTreeItem(control, 'README.md', uiTimeoutMs)
       await control.command('click', readmeSelector)
       await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
-        target: '[data-testid="workspace-file-editor"]',
         text: 'Desktop E2E workspace',
         timeoutMs: uiTimeoutMs,
       })
@@ -163,7 +162,6 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         timeoutMs: uiTimeoutMs,
       })
       await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
-        target: '[data-testid="workspace-file-editor"]',
         text: 'export const authenticated = true',
         timeoutMs: uiTimeoutMs,
       })
@@ -225,7 +223,6 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         'Writable text files exposed a manual save button instead of autosaving'
       )
       await control.command('fill', '[data-testid="workspace-file-editor-content"]', {
-        target: '[data-testid="workspace-file-editor"]',
         value: 'export const authenticated = false',
       })
       await waitForFileContent(
@@ -259,7 +256,6 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         uiTimeoutMs
       )
       await control.command('nativePress', '[data-testid="workspace-file-editor-content"]', {
-        target: '[data-testid="workspace-file-editor"]',
         key: `${primary}+T`,
       })
       await control.command('waitFor', BROWSER_URL_SELECTOR, { visible: true })
@@ -277,7 +273,6 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
       )
       await control.command('click', `${fileTabsSelector}[title$="auth.ts"]`)
       await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
-        target: '[data-testid="workspace-file-editor"]',
         text: 'export const authenticated = false',
       })
       await waitForMissing(control, '[data-testid="workspace-file-saving-status"]', uiTimeoutMs)
@@ -301,7 +296,6 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
       await clickTreeItem(control, 'breadcrumb-fixture', uiTimeoutMs, DIRECTORY_MENU_SELECTOR)
       await clickTreeItem(control, 'first.ts', uiTimeoutMs, DIRECTORY_MENU_SELECTOR)
       await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
-        target: '[data-testid="workspace-file-editor"]',
         text: 'export const first = 1',
         timeoutMs: uiTimeoutMs,
       })
@@ -331,7 +325,6 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
       await control.command('click', '[data-testid="workspace-file-name-button"]')
       await clickTreeItem(control, 'second.ts', uiTimeoutMs, SIBLINGS_MENU_SELECTOR)
       await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
-        target: '[data-testid="workspace-file-editor"]',
         text: 'export const second = 2',
         timeoutMs: uiTimeoutMs,
       })
@@ -343,7 +336,6 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
       await control.command('click', rootBreadcrumb)
       await clickTreeItem(control, 'auth.ts', uiTimeoutMs, DIRECTORY_MENU_SELECTOR)
       await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
-        target: '[data-testid="workspace-file-editor"]',
         text: 'export const authenticated = false',
         timeoutMs: uiTimeoutMs,
       })
@@ -354,7 +346,6 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
       )
       await control.command('click', `${fileTabsSelector}[title$="first.ts"]`)
       await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
-        target: '[data-testid="workspace-file-editor"]',
         text: 'export const first = 1',
         timeoutMs: uiTimeoutMs,
       })
@@ -366,7 +357,6 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
       )
       await control.command('click', `${fileTabsSelector}[title$="second.ts"]`)
       await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
-        target: '[data-testid="workspace-file-editor"]',
         text: 'export const second = 2',
         timeoutMs: uiTimeoutMs,
       })
