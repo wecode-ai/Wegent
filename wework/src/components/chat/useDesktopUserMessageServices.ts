@@ -8,7 +8,7 @@ import {
   desktopComposerTransferServices,
 } from './composer/desktopComposerServices'
 import { resolveComposerMentionBrandIconUrl } from './composer/composerMentions'
-import { openLocalFileInWorkspaceApp } from '@/lib/local-terminal'
+import { useAttachmentPreview } from './useAttachmentPreview'
 import { buildPluginDetailRoute } from '@/features/plugins/pluginNavigation'
 import { navigateTo } from '@/lib/navigation'
 import { WorkbenchPaneContext } from '@/features/workbench/useWorkbench'
@@ -17,27 +17,9 @@ import type { LocalDeviceSkill } from '@/types/api'
 import { LOCAL_WORKBENCH_DEVICE_ALIAS, resolveLocalWorkbenchDeviceId } from '@/lib/workbench-device'
 import { resolveHomeRelativeWorkspacePath } from '@/lib/workspace-paths'
 
-async function openLocalAttachmentPath(
-  path: string,
-  onOpenFile?: (path: string) => void,
-  workspacePath?: string
-): Promise<void> {
-  try {
-    await openLocalFileInWorkspaceApp(path, workspacePath)
-  } catch (error) {
-    if (onOpenFile) {
-      onOpenFile(path)
-      return
-    }
-    console.error('Failed to open local attachment:', error)
-  }
-}
-
-export function useDesktopUserMessageServices(
-  hasSkillReferences = false,
-  workspacePath?: string
-): UserMessageServices {
+export function useDesktopUserMessageServices(hasSkillReferences = false): UserMessageServices {
   const images = useAttachmentImageServices()
+  const openAttachment = useAttachmentPreview()
   const electron = isElectronRuntime()
   const pane = useContext(WorkbenchPaneContext)
   const catalog = useComposerCatalogBinding()
@@ -120,10 +102,9 @@ export function useDesktopUserMessageServices(
       transfers: desktopComposerTransferServices,
       resolveMentionIconUrl: resolveComposerMentionBrandIconUrl,
       onOpenPlugin: reference => navigateTo(buildPluginDetailRoute(reference)),
-      openLocalAttachment: (path, onOpenFile) =>
-        openLocalAttachmentPath(path, onOpenFile, workspacePath),
+      openAttachment: openAttachment ?? undefined,
       getCommentPreviewRightBoundary: getCodeCommentPreviewRightBoundary,
     }),
-    [images, electron, localSkills, localSkillHomeDirectory, workspacePath]
+    [images, electron, localSkills, localSkillHomeDirectory, openAttachment]
   )
 }

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { REMOTE_DOCKER_DEVICE_ID } from './shared.mjs'
+import { verifyCloudRegistrationDeletionRace } from './collaboration-device-registration-race.mjs'
 
 // Exercise the existing real runner and database; legacy rows are persisted fixtures.
 export async function verifyCollaborationDeviceCleanup({
@@ -180,6 +181,7 @@ export async function verifyCollaborationDeviceCleanup({
     Date.parse(offlineDocument.status.lastSeenAt) >= Date.parse(observedBeforeDisconnect),
     'The final real heartbeat was not persisted before the online cache was removed'
   )
+  await verifyCloudRegistrationDeletionRace(cloud, original.id, ownerId, offlineDocument)
   await control.command('click', scoped('[data-testid="collaboration-primary-home"]'))
   await control.command('click', scoped('[data-testid="collaboration-primary-devices"]'))
   await control.command(

@@ -71,10 +71,7 @@ export function useDeviceCatalog(
     const current = localItems.find((candidate) => {
       if (identity(candidate) !== identity(device)) return false
       if (candidate.runtime_instance_id && device.runtime_instance_id) {
-        return (
-          candidate.runtime_instance_id === device.runtime_instance_id &&
-          (siblingCount === 1 || device.status === 'online')
-        )
+        return candidate.runtime_instance_id === device.runtime_instance_id
       }
       return siblingCount === 1
     })
@@ -103,6 +100,7 @@ export function useDeviceCatalog(
       .filter((source) => source.error)
       .map(({ source, error, refresh }) => ({ source, error, retry: refresh })),
     refresh,
+    refreshCloud,
     remove(recordId: string) {
       const withoutRecord = (items: CollaborationExecutionEnvironment[]) =>
         items.filter((device) => device.id !== recordId)

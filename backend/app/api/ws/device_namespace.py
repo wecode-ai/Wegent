@@ -98,7 +98,7 @@ from app.services.device.presence import (
     PRESENCE_PERSIST_INTERVAL_SECONDS,
     persist_device_presence,
 )
-from app.services.device.record_operations import app_identity_lock
+from app.services.device.record_operations import device_identity_lock
 from app.services.device.terminal_metrics import record_terminal_event
 from app.services.device.terminal_protocol import (
     get_browser_socket_id,
@@ -1628,24 +1628,6 @@ class DeviceNamespace(socketio.AsyncNamespace):
 
     @trace_async("device.register", tracer_name="backend.device")
     async def on_device_register(self, sid: str, data: dict) -> dict:
-        if isinstance(data, dict) and data.get("device_type") == "app":
-            session = await self.get_session(sid)
-            if not session.get("user_id"):
-                return {"error": "Not authenticated"}
-            try:
-                async with app_identity_lock(session["user_id"]):
-                    return await self._register_device_session(sid, data)
-            except (RedisError, TimeoutError):
-                logger.warning(
-                    "[Device WS] App identity operation unavailable for user=%s",
-                    session["user_id"],
-                )
-                return {
-                    "error": "Device identity operation is temporarily unavailable; reconnect to retry"
-                }
-        return await self._register_device_session(sid, data)
-
-    async def _register_device_session(self, sid: str, data: dict) -> dict:
         """
         Handle device:register event.
 
@@ -1676,6 +1658,23 @@ class DeviceNamespace(socketio.AsyncNamespace):
         ):
             return {"error": "Runner credential is scoped to its registered device"}
 
+        try:
+            async with device_identity_lock(user_id):
+                return await self._register_device_online(sid, payload, session)
+        except (RedisError, TimeoutError):
+            logger.warning(
+                "[Device WS] Device identity operation unavailable for user=%s",
+                user_id,
+            )
+            return {
+                "error": "Device identity operation is temporarily unavailable; reconnect to retry"
+            }
+
+    async def _register_device_online(
+        self, sid: str, payload: DeviceRegisterPayload, session: dict
+    ) -> dict:
+        """Hold the identity lock across registration and online publication."""
+        user_id = session["user_id"]
         runtime_transfer_host = _normalize_runtime_transfer_host(
             payload.runtime_transfer_host or payload.client_ip
         )

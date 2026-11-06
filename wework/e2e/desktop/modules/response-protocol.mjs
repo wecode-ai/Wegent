@@ -723,13 +723,31 @@ function selectConvertedTool(request, toolName, argumentsValue) {
   return { name, arguments: argumentsValue }
 }
 
+function findMcpToolNamespace(tools, toolName, namespaceName) {
+  const matches = tools.filter(
+    tool =>
+      tool?.type === 'namespace' &&
+      (!namespaceName || [namespaceName, `mcp__${namespaceName}`].includes(tool.name)) &&
+      tool.tools?.some(candidate => candidate?.type === 'function' && candidate.name === toolName)
+  )
+  assert.ok(
+    new Set(matches.map(tool => tool.name)).size <= 1,
+    `Ambiguous MCP tool ${toolName}; specify its qualified name`
+  )
+  return matches[0]
+}
+
 function selectMcpToolRequest(request, toolName, argumentsValue, directToolName) {
   const tools = Array.isArray(request.tools) ? request.tools : []
   const names = tools.map(tool => tool?.name ?? tool?.function?.name).filter(Boolean)
-  const searchedNamespace = requestToolSearchResults(request).find(
-    tool =>
-      tool?.type === 'namespace' &&
-      tool.tools?.some(candidate => candidate?.type === 'function' && candidate.name === toolName)
+  const namespaceName = directToolName?.startsWith('mcp__')
+    ? directToolName.slice(5, -(toolName.length + 2))
+    : undefined
+  if (namespaceName) assert.ok(directToolName.endsWith(`__${toolName}`))
+  const searchedNamespace = findMcpToolNamespace(
+    requestToolSearchResults(request),
+    toolName,
+    namespaceName
   )
   if (searchedNamespace) {
     return {
@@ -743,26 +761,29 @@ function selectMcpToolRequest(request, toolName, argumentsValue, directToolName)
       (tool?.type === 'function' &&
         ['tool_search', 'search_deferred_tools'].includes(tool?.name ?? tool?.function?.name))
   )
-  const namespace = tools.find(
-    tool =>
-      tool?.type === 'namespace' &&
-      tool.tools?.some(candidate => candidate?.type === 'function' && candidate.name === toolName)
-  )
+  const namespace = findMcpToolNamespace(tools, toolName, namespaceName)
   if (!advertisesToolSearch && namespace) {
     return {
       mode: 'direct',
       ...selectMcpTool(request, namespace.name, toolName, argumentsValue),
     }
   }
-  if (!advertisesToolSearch && directToolName && names.includes(directToolName)) {
-    return {
-      mode: 'direct',
-      ...selectTool(request, directToolName, argumentsValue),
+  if (!advertisesToolSearch && directToolName) {
+    const qualifiedNames = namespaceName
+      ? [directToolName, `${namespaceName}__${toolName}`]
+      : [directToolName]
+    const advertisedNames = qualifiedNames.filter(name => names.includes(name))
+    assert.ok(advertisedNames.length <= 1, `Ambiguous direct MCP tool ${directToolName}`)
+    if (advertisedNames.length === 1) {
+      return {
+        mode: 'direct',
+        ...selectTool(request, advertisedNames[0], argumentsValue),
+      }
     }
   }
   return {
     mode: 'search',
-    ...selectToolSearch(request, toolName),
+    ...selectToolSearch(request, namespaceName ? `${namespaceName} ${toolName}` : toolName),
   }
 }
 

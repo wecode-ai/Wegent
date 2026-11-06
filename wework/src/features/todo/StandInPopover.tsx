@@ -1,3 +1,4 @@
+import { BetaBadge } from '@/components/common/BetaBadge'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
@@ -160,6 +161,7 @@ export function StandInPopover({
       >
         <StandInIcon enabled={enabled} />
         <span>{t('standIn.title')}</span>
+        <BetaBadge testId="stand-in-project-beta" />
         {enabled && (
           <span
             data-testid="stand-in-enabled"

@@ -2687,7 +2687,7 @@ function CollaborationPlatformAppContent({
                     await api.resources!.removeDevice!(device);
                     deviceCatalog.remove(device.id);
                   } catch (error) {
-                    await deviceCatalog.refresh();
+                    void deviceCatalog.refreshCloud();
                     throw error;
                   }
                 }

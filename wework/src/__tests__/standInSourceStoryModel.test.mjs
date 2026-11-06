@@ -14,7 +14,7 @@ const expected = phase => ({
 const output = (callId, value) => ({
   type: 'function_call_output',
   call_id: callId,
-  output: JSON.stringify([{ type: 'input_text', text: JSON.stringify(value) }]),
+  output: [{ type: 'input_text', text: JSON.stringify(value) }],
 })
 const tools = [
   'read_work',

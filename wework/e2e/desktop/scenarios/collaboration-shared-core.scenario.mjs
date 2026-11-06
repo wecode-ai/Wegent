@@ -474,11 +474,6 @@ export function createDesktopScenario({
           scoped('[data-testid="collaboration-project-create-advanced"]')
         )
         await control.command(
-          'waitFor',
-          scoped('[data-testid="collaboration-project-description-input"]'),
-          { visible: true, timeoutMs: uiTimeoutMs }
-        )
-        await control.command(
           'fill',
           scoped('[data-testid="collaboration-project-description-input"]'),
           { value: 'Created through Workspace → Project in the native Wework module.' }

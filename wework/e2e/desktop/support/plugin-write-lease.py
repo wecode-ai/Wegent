@@ -38,7 +38,7 @@ def main() -> None:
     key = f"wegent:plugin-write:{user_id}"
     client = Redis.from_url(url, socket_connect_timeout=1, socket_timeout=2)
     mode = os.environ.get("WEWORK_E2E_PLUGIN_FAULT", "lease")
-    if mode == "user-row":
+    if mode in {"user-row", "device-row"}:
         options = json.loads(os.environ["WEWORK_E2E_PLUGIN_MYSQL"])
         if options["host"] != "127.0.0.1" or not options["database"].startswith(
             "wework_e2e_"
@@ -47,11 +47,23 @@ def main() -> None:
         with pymysql.connect(**options, user="root", autocommit=False) as db:
             try:
                 with db.cursor() as cursor:
-                    cursor.execute(
-                        "SELECT id FROM users WHERE id = %s FOR UPDATE", (user_id,)
-                    )
+                    if mode == "device-row":
+                        record_id = int(os.environ["WEWORK_E2E_DEVICE_RECORD_ID"])
+                        if record_id <= 0:
+                            raise ValueError(
+                                "The fixture requires a positive record ID"
+                            )
+                        cursor.execute(
+                            "SELECT id FROM kinds WHERE id=%s AND user_id=%s "
+                            "AND namespace='default' AND kind='Device' FOR UPDATE",
+                            (record_id, user_id),
+                        )
+                    else:
+                        cursor.execute(
+                            "SELECT id FROM users WHERE id = %s FOR UPDATE", (user_id,)
+                        )
                     if cursor.fetchone() is None:
-                        raise ValueError("The fixture user does not exist")
+                        raise ValueError("The fixture row does not exist")
                 emit("ready")
                 if sys.stdin.read():
                     raise ValueError("The row lock accepts only stdin closure")

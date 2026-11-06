@@ -53,7 +53,7 @@ def isolated_cache(monkeypatch):
         ]
         yield client
 
-    monkeypatch.setattr(record_operations, "app_identity_lock", lock)
+    monkeypatch.setattr(record_operations, "device_identity_lock", lock)
     monkeypatch.setattr(
         record_operations.cache_manager,
         "get",
@@ -201,7 +201,7 @@ async def test_cache_failure_does_not_remove_device(test_db, records, monkeypatc
         client.mget.side_effect = ConnectionError("unavailable")
         yield client
 
-    monkeypatch.setattr(record_operations, "app_identity_lock", lock)
+    monkeypatch.setattr(record_operations, "device_identity_lock", lock)
     with pytest.raises(ConnectionError):
         await record_operations.delete_device_record(test_db, 7, records[0].id)
     test_db.rollback()

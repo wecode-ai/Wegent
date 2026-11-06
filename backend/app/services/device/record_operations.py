@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Record-scoped device removal and app registration locking."""
+"""Record-scoped removal and shared device registration locking."""
 
 import asyncio
 import json
@@ -24,7 +24,7 @@ from shared.telemetry.decorators import trace_async
 
 
 @asynccontextmanager
-async def app_identity_lock(user_id: int) -> AsyncIterator[Redis]:
+async def device_identity_lock(user_id: int) -> AsyncIterator[Redis]:
     """Cover the database-to-online transition so deletion cannot race it."""
     client = await cache_manager._get_client()
     try:
@@ -41,7 +41,7 @@ async def app_identity_lock(user_id: int) -> AsyncIterator[Redis]:
 async def delete_device_record(
     db: Session, user_id: int, record_id: int, *, offline_only: bool = False
 ) -> bool:
-    async with app_identity_lock(user_id) as client:
+    async with device_identity_lock(user_id) as client:
         lock_device_owner(db, user_id)
         device = (
             db.query(Kind)

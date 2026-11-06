@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ResourceCatalogPage } from "./ResourceCatalogPage";
 import { DeviceDeleteDialog } from "./DeviceDeleteDialog";
 import { deviceLastSeenLabel } from "./DeviceLastSeen";
+import { CollaborationPlatformApp } from "./CollaborationPlatformApp";
+import { canDeleteOfflineDevice } from "./resourceCatalogModel";
 import { platformMessages } from "./platformMessages";
 import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
 import type { CollaborationExecutionEnvironment } from "../types";
@@ -225,54 +227,144 @@ it("keeps a pending local catalog request alive when a cloud record is deleted",
   expect(container.textContent).toBe("current");
 });
 
-it("preserves separate registrations sharing an app identity and marks only the active runtime current", async () => {
-  const { useDeviceCatalog } = await import("./useDeviceCatalog");
-  const api = {
-    resources: {
-      devices: {
-        local: async () => [
-          {
-            ...device,
-            id: "local",
-            app_device_id: "desktop",
-            runtime_instance_id: "current-runtime",
-            status: "online",
-          },
-          {
-            ...device,
-            id: "local-alias",
-            app_device_id: "desktop",
-            runtime_instance_id: "current-runtime",
-            status: "online",
-          },
-        ],
-        cloud: async () => [
-          {
-            ...device,
-            app_device_id: "desktop",
-            runtime_instance_id: "old-runtime",
-          },
-          {
-            ...device,
-            id: "43",
-            device_id: 43,
-            app_device_id: "desktop",
-            runtime_instance_id: "current-runtime",
-            status: "online",
-          },
-        ],
+it.each(["online", "offline"] as const)(
+  "protects the exact current runtime among duplicate registrations while %s",
+  async (status) => {
+    const { useDeviceCatalog } = await import("./useDeviceCatalog");
+    const api = {
+      resources: {
+        devices: {
+          local: async () => [
+            {
+              ...device,
+              id: "local",
+              app_device_id: "desktop",
+              runtime_instance_id: "current-runtime",
+              status: "online",
+            },
+            {
+              ...device,
+              id: "local-alias",
+              app_device_id: "desktop",
+              runtime_instance_id: "current-runtime",
+              status: "online",
+            },
+          ],
+          cloud: async () => [
+            {
+              ...device,
+              app_device_id: "desktop",
+              runtime_instance_id: "old-runtime",
+            },
+            {
+              ...device,
+              id: "43",
+              device_id: 43,
+              app_device_id: "desktop",
+              runtime_instance_id: "current-runtime",
+              status,
+            },
+          ],
+        },
       },
-    },
-  } as SharedWorkspaceApi;
-  let items: CollaborationExecutionEnvironment[] = [];
-  function Harness() {
-    items = useDeviceCatalog(api, true).items;
-    return <span>{items.length}</span>;
-  }
-  await act(async () => root.render(<Harness />));
-  expect(items.map((item) => item.id).sort()).toEqual(["42", "43"]);
-  expect(items.find((item) => item.id === "42")?.is_current_device).not.toBe(
-    true,
+    } as SharedWorkspaceApi;
+    let items: CollaborationExecutionEnvironment[] = [];
+    function Harness() {
+      items = useDeviceCatalog(api, true).items;
+      return <span>{items.length}</span>;
+    }
+    await act(async () => root.render(<Harness />));
+    expect(items.map((item) => item.id).sort()).toEqual(["42", "43"]);
+    expect(items.find((item) => item.id === "42")?.is_current_device).not.toBe(
+      true,
+    );
+    expect(items.find((item) => item.id === "43")?.is_current_device).toBe(
+      true,
+    );
+    expect(
+      canDeleteOfflineDevice(items.find((item) => item.id === "43")!, 7),
+    ).toBe(false);
+  },
+);
+
+it("reports deletion conflicts immediately while both discovery sources have pending work and recovers independently", async () => {
+  let finishLocal!: (items: CollaborationExecutionEnvironment[]) => void;
+  let finishCloud!: (items: CollaborationExecutionEnvironment[]) => void;
+  const local = vi.fn(
+    () =>
+      new Promise<CollaborationExecutionEnvironment[]>((resolve) => {
+        finishLocal = resolve;
+      }),
   );
-  expect(items.find((item) => item.id === "43")?.is_current_device).toBe(true);
+  const cloudRecovery = new Promise<CollaborationExecutionEnvironment[]>(
+    (resolve) => {
+      finishCloud = resolve;
+    },
+  );
+  const cloud = vi
+    .fn()
+    .mockResolvedValueOnce([device])
+    .mockImplementation(() => cloudRecovery);
+  const removeDevice = vi.fn(async () => {
+    throw { status: 409 };
+  });
+  const api = {
+    projects: { list: async () => [] },
+    workspaces: { list: async () => [] },
+    resources: { devices: { local, cloud }, removeDevice },
+  } as unknown as SharedWorkspaceApi;
+  await act(async () =>
+    root.render(
+      <CollaborationPlatformApp
+        api={api}
+        locale="zh-CN"
+        host={{
+          accountScope: "device-conflict-pending-discovery",
+          currentUser: { id: 7, name: "Owner" },
+          cloudAccess: { authenticated: true, requestLogin: () => {} },
+          capabilities: { automation: false, dingtalkAitable: false },
+          location: {
+            rootView: "devices",
+            platformView: "spaces",
+            collaborationDomain: "cloud",
+            workspaceView: "home",
+            workspaceId: null,
+            projectId: null,
+            issueId: null,
+            projectView: "board",
+          },
+          navigate: () => {},
+        }}
+      />,
+    ),
+  );
+  await click("collaboration-devices-delete-42");
+  await click("collaboration-delete-device-confirm");
+  expect(removeDevice).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({ device_id: 42 }),
+  );
+  expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+    "设备已上线",
+  );
+  expect(
+    (
+      container.querySelector(
+        '[data-testid="collaboration-delete-device-confirm"]',
+      ) as HTMLButtonElement
+    ).disabled,
+  ).toBe(false);
+  expect(local).toHaveBeenCalledTimes(1);
+  expect(cloud).toHaveBeenCalledTimes(2);
+  await act(async () => finishCloud([{ ...device, status: "online" }]));
+  await click("collaboration-delete-device-cancel");
+  expect(
+    container.querySelector('[data-testid="collaboration-devices-delete-42"]'),
+  ).toBeNull();
+  expect(
+    container.querySelector('[data-testid="collaboration-devices-row-42"]'),
+  ).not.toBeNull();
+  await act(async () => finishLocal([]));
+  expect(
+    container.querySelector('[data-testid="collaboration-devices-delete-42"]'),
+  ).toBeNull();
 });
