@@ -4103,6 +4103,56 @@ export function PluginsWorkspace({
       })
       .catch(reportReadFailure)
 
+    // Only live installed inventories and device identity gate reconciliation.
+    // Marketplace presentation reads cannot authorize or change this operation.
+    void Promise.allSettled([installedPromise, membershipPromise]).then(
+      ([installedResult, membershipResult]) => {
+        if (!isCurrent) return
+        const resolvedDeviceId =
+          (membershipResult.status === 'fulfilled' && membershipResult.value.deviceId) ||
+          currentDeviceIdRef.current ||
+          deviceIdHint ||
+          ''
+        const manualRequest = manualReconciliationTickRef.current
+        if (manualRequest && manualRequest.tick <= marketplaceRefreshTick) {
+          manualReconciliationTickRef.current = null
+        }
+        // Manual reconciliation reads current inventory itself. A newer cache
+        // publication invalidates this snapshot, not the user's scoped request.
+        if (
+          manualRequest &&
+          manualRequest.tick <= marketplaceRefreshTick &&
+          manualRequest.accountKey === marketplaceCacheKeyValue &&
+          manualRequest.isCurrent() &&
+          (!manualRequest.deviceId ||
+            (manualRequest.deviceId === currentDeviceIdRef.current &&
+              manualRequest.deviceId === resolvedDeviceId))
+        ) {
+          if (
+            !installedReadFailed &&
+            installedResult.status === 'fulfilled' &&
+            membershipResult.status === 'fulfilled' &&
+            !membershipResult.value.partial
+          ) {
+            setReconciliationScope({
+              accountKey: manualRequest.accountKey,
+              deviceId: resolvedDeviceId,
+            })
+            setReconciliationRequest(previous => previous + 1)
+          } else {
+            setPluginOperationNotice({
+              id: 'plugin-reconciliation-incomplete',
+              kind: 'error',
+              message: t(
+                'workbench.plugins_reconciliation_incomplete',
+                '插件数据未完整加载，本次未执行状态修复，请重试刷新'
+              ),
+            })
+          }
+        }
+      }
+    )
+
     const settledCatalog = Promise.allSettled([
       trackCatalogRead('catalog-local-settled', localPromise),
       trackCatalogRead('catalog-cloud-settled', cloudPromise),
@@ -4125,53 +4175,14 @@ export function PluginsWorkspace({
         localStateForMerge ?? (localResult.status === 'fulfilled' ? localResult.value : null)
       const membershipDeviceId =
         membershipResult.status === 'fulfilled' ? membershipResult.value.deviceId || '' : ''
-      // Use the settled device identity before React publishes the membership update.
       const resolvedDeviceId =
         localState?.deviceId ||
         membershipDeviceId ||
         currentDeviceIdRef.current ||
         deviceIdHint ||
         ''
-      const manualRequest = manualReconciliationTickRef.current
-      if (manualRequest && manualRequest.tick <= marketplaceRefreshTick) {
-        manualReconciliationTickRef.current = null
-      }
       setMarketplaceLoadingMessage('')
       setIsMarketplaceRefreshing(false)
-      // Manual reconciliation reads current inventory itself. A newer cache
-      // publication invalidates this snapshot, not the user's scoped request.
-      if (
-        manualRequest &&
-        manualRequest.tick <= marketplaceRefreshTick &&
-        manualRequest.accountKey === marketplaceCacheKeyValue &&
-        manualRequest.isCurrent() &&
-        (!manualRequest.deviceId ||
-          (manualRequest.deviceId === currentDeviceIdRef.current &&
-            manualRequest.deviceId === resolvedDeviceId))
-      ) {
-        if (
-          cloudResult.status === 'fulfilled' &&
-          !installedReadFailed &&
-          installedResult.status === 'fulfilled' &&
-          membershipResult.status === 'fulfilled' &&
-          !membershipResult.value.partial
-        ) {
-          setReconciliationScope({
-            accountKey: manualRequest.accountKey,
-            deviceId: resolvedDeviceId,
-          })
-          setReconciliationRequest(previous => previous + 1)
-        } else {
-          setPluginOperationNotice({
-            id: 'plugin-reconciliation-incomplete',
-            kind: 'error',
-            message: t(
-              'workbench.plugins_reconciliation_incomplete',
-              '插件数据未完整加载，本次未执行状态修复，请重试刷新'
-            ),
-          })
-        }
-      }
       if (!inventoryReadIsCurrent()) return
       if (diskResult.status === 'fulfilled' && diskResult.value !== null) {
         diskPersonalItemsForMerge = diskResult.value
