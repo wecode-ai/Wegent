@@ -1,4 +1,5 @@
 import { readNativeModelFixtures, writeNativeModelFixtures } from './native-model-fixtures'
+import { collectConversationRenderingDiagnostics } from './conversation-rendering-diagnostics'
 import {
   getProviderConfigurationState,
   reloadProviderConfiguration,
@@ -3407,6 +3408,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       performance.setResourceTimingBufferSize(10_000)
       return JSON.stringify({
         ...getWorkbenchDebugSnapshot(),
+        conversationRendering: await collectConversationRenderingDiagnostics(capability =>
+          invokeDesktopHost(capability)
+        ),
         runtimeStream: getRuntimeStreamDiagnostics(),
         desktopControlTransport: getDesktopControlDiagnostics(),
         nativeTerminalKeys: getNativeTerminalDiagnostics(),
