@@ -3,13 +3,14 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 from fastapi import HTTPException
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.mcp_server.auth import TaskTokenInfo
 from app.mcp_server.tools import subscription_read as subscription_tools
@@ -32,6 +33,7 @@ TOKEN_INFO = TaskTokenInfo(
 
 
 def _subscription(**overrides):
+    """Build a complete subscription response object for serialization tests."""
     values = {
         "id": 42,
         "name": "sub-daily-report",
@@ -141,6 +143,33 @@ def test_list_subscriptions_uses_token_user_and_serializes_state(
         enabled=True,
         trigger_type=SubscriptionTriggerType.CRON,
     )
+    db.close.assert_called_once_with()
+
+
+def test_get_subscription_reports_service_http_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Return the tool error contract for non-404 service HTTP failures."""
+    db = MagicMock()
+    service = MagicMock(
+        side_effect=HTTPException(status_code=500, detail="backend unavailable")
+    )
+    monkeypatch.setattr(subscription_tools, "SessionLocal", MagicMock(return_value=db))
+    monkeypatch.setattr(
+        subscription_tools.subscription_service,
+        "get_subscription",
+        service,
+    )
+
+    result = json.loads(
+        subscription_tools.get_subscription(
+            token_info=TOKEN_INFO,
+            subscription_id=42,
+        )
+    )
+
+    assert result["success"] is False
+    assert "backend unavailable" in result["error"]
     db.close.assert_called_once_with()
 
 
@@ -303,3 +332,67 @@ def test_read_tools_return_real_subscription_state(
     assert disabled["subscription"]["enabled"] is False
     assert disabled["subscription"]["next_execution_time"] is None
     assert filtered["total"] == 0
+
+
+def test_list_subscriptions_filters_expired_state_after_disabling(
+    mcp_test_db: Session,
+) -> None:
+    """Apply enabled filters after expired subscriptions are auto-disabled."""
+    team = Kind(
+        user_id=TOKEN_INFO.user_id,
+        kind="Team",
+        name="subscription-expired-team",
+        namespace="default",
+        json={"spec": {}, "metadata": {"name": "subscription-expired-team"}},
+        is_active=True,
+    )
+    mcp_test_db.add(team)
+    mcp_test_db.commit()
+    mcp_test_db.refresh(team)
+
+    created = subscription_service.create_subscription(
+        mcp_test_db,
+        subscription_in=SubscriptionCreate(
+            name="subscription-expired-state",
+            namespace="default",
+            display_name="Expired state",
+            team_id=team.id,
+            trigger_type="cron",
+            trigger_config={
+                "expression": "0 9 * * *",
+                "timezone": "Asia/Shanghai",
+            },
+            prompt_template="Report expired state",
+        ),
+        user_id=TOKEN_INFO.user_id,
+    )
+    subscription = mcp_test_db.get(Kind, created.id)
+    assert subscription is not None
+    internal = subscription.json["_internal"]
+    internal["enabled"] = True
+    internal["expires_at"] = (
+        datetime.now(timezone.utc) - timedelta(days=1)
+    ).isoformat()
+    subscription.json["_internal"] = internal
+    flag_modified(subscription, "json")
+    mcp_test_db.commit()
+
+    enabled, enabled_total, _ = subscription_service.list_subscriptions(
+        mcp_test_db,
+        user_id=TOKEN_INFO.user_id,
+        skip=0,
+        limit=1,
+        enabled=True,
+    )
+    disabled, disabled_total, _ = subscription_service.list_subscriptions(
+        mcp_test_db,
+        user_id=TOKEN_INFO.user_id,
+        skip=0,
+        limit=1,
+        enabled=False,
+    )
+
+    assert enabled == []
+    assert enabled_total == 0
+    assert [item.id for item in disabled] == [created.id]
+    assert disabled_total == 1

@@ -45,6 +45,7 @@ class SubscriptionCallbackGateway(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
+        """Verify the real gateway services and capture their shared clients."""
         state = dict(
             line.split("=", 1)
             for line in Path(os.environ["WEGENT_HYBRID_STATE_FILE"])
@@ -174,6 +175,7 @@ class SubscriptionCallbackGateway(unittest.TestCase):
             )
 
     def _cleanup(self) -> None:
+        """Remove all rows owned by this test user."""
         with SessionLocal() as db:
             for model in (BackgroundExecution, Subtask, TaskResource, Kind):
                 db.query(model).filter(model.user_id == self.user_id).delete(
@@ -204,6 +206,7 @@ class SubscriptionCallbackGateway(unittest.TestCase):
             }
 
     def _callback(self, event_type: str, data: dict, expected: str) -> dict:
+        """Send a callback and wait for durable state and handler receipt."""
         before = self._snapshot()
         for field in ("execution_status", "task_status", "subtask_status"):
             self.assertEqual(before[field], "RUNNING", before)
@@ -235,6 +238,7 @@ class SubscriptionCallbackGateway(unittest.TestCase):
         return after
 
     def _assert_handler_receipt(self, expected: str) -> None:
+        """Wait for the migrated Rust handler to log this callback receipt."""
         # Breeze flushes asynchronously; require the migrated handler's receipt
         # for this exact callback as well as its durable database side effects.
         deadline = time.monotonic() + 5
@@ -290,6 +294,7 @@ class SubscriptionCallbackGateway(unittest.TestCase):
         user_id: int | None = None,
         user_name: str | None = None,
     ) -> dict:
+        """Call a real subscription MCP tool as the requested user."""
         token = create_task_token(
             task_id=self.task_id,
             subtask_id=self.subtask_id,
@@ -347,6 +352,7 @@ class SubscriptionCallbackGateway(unittest.TestCase):
             )
 
     def test_subscription_mcp_preview_and_confirmed_create(self) -> None:
+        """Cover subscription creation, reads, filtering, and isolation."""
         self._prepare_subscription_mcp()
         arguments = {
             "display_name": self.marker,
@@ -420,6 +426,11 @@ class SubscriptionCallbackGateway(unittest.TestCase):
         self.assertEqual(fetched["subscription"]["execution_count"], 0)
         self.assertIsNotNone(fetched["subscription"]["next_execution_time"])
 
+        with SessionLocal() as db:
+            db.get(Kind, self.fixture_subscription_id).updated_at = datetime(2021, 1, 1)
+            db.get(Kind, subscription_id).updated_at = datetime(2020, 1, 1)
+            db.commit()
+
         listed = self._subscription_tool("list_subscriptions", {})
         self.assertTrue(listed["success"], listed)
         self.assertEqual(listed["total"], 2)
@@ -445,6 +456,13 @@ class SubscriptionCallbackGateway(unittest.TestCase):
         self.assertTrue(page["success"], page)
         self.assertEqual(page["total"], 2)
         self.assertEqual(page["returned"], 1)
+        self.assertEqual(page["items"][0]["id"], subscription_id)
+        first_page = self._subscription_tool(
+            "list_subscriptions", {"offset": 0, "limit": 1}
+        )
+        self.assertTrue(first_page["success"], first_page)
+        self.assertEqual(first_page["returned"], 1)
+        self.assertEqual(first_page["items"][0]["id"], self.fixture_subscription_id)
 
         with SessionLocal() as db:
             owner_subscription = db.get(Kind, self.fixture_subscription_id)
@@ -473,8 +491,9 @@ class SubscriptionCallbackGateway(unittest.TestCase):
         )
 
         with SessionLocal() as db:
+            other_user_name = f"{self.marker[:44]}-other"
             other_user = User(
-                user_name=f"{self.marker[:37]}-other",
+                user_name=other_user_name,
                 password_hash=get_password_hash(secrets.token_urlsafe(24)),
                 role="user",
                 auth_source="password",
@@ -489,7 +508,7 @@ class SubscriptionCallbackGateway(unittest.TestCase):
             "get_subscription",
             {"subscription_id": subscription_id},
             user_id=other_user_id,
-            user_name=f"{self.marker[:37]}-other",
+            user_name=other_user_name,
         )
         self.assertFalse(other_get["success"], other_get)
         self.assertIn("not found", other_get["error"])
@@ -497,7 +516,7 @@ class SubscriptionCallbackGateway(unittest.TestCase):
             "list_subscriptions",
             {},
             user_id=other_user_id,
-            user_name=f"{self.marker[:37]}-other",
+            user_name=other_user_name,
         )
         self.assertTrue(other_list["success"], other_list)
         self.assertEqual(other_list["total"], 0)

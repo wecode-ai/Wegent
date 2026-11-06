@@ -187,7 +187,17 @@ def get_subscription(
                 },
                 ensure_ascii=False,
             )
-        raise
+        logger.error(
+            f"[MCP:Subscription] Failed to get subscription: {e.detail}",
+            exc_info=True,
+        )
+        return json.dumps(
+            {
+                "success": False,
+                "error": f"Failed to get subscription: {e.detail}",
+            },
+            ensure_ascii=False,
+        )
     except Exception as e:
         logger.error(
             f"[MCP:Subscription] Failed to get subscription: {e}", exc_info=True
