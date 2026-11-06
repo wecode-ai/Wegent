@@ -36,6 +36,8 @@ Run the real desktop task-flow E2E:
 pnpm --filter wework e2e:desktop
 ```
 
+The `stand-in-email` checkpoint uses an isolated GreenMail IMAP/SMTP service and requires Java 11 or newer; CI uses Java 21. Ensure that `java` and `keytool` on `PATH` come from a supported JDK before running it.
+
 Run only the Codex cloud-config recovery regression:
 
 ```bash

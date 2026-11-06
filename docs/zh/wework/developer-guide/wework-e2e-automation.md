@@ -30,6 +30,8 @@ pnpm --filter wework e2e
 pnpm --filter wework e2e:desktop
 ```
 
+邮件检查点 `stand-in-email` 使用隔离的 GreenMail IMAP/SMTP 服务，需要 Java 11 或更高版本；CI 使用 Java 21。运行前确认 `PATH` 中的 `java` 和 `keytool` 来自符合要求的 JDK。
+
 仅运行 Codex cloud-config 故障恢复回归：
 
 ```bash
