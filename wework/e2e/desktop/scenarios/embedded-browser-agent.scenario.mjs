@@ -693,10 +693,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs, wo
       await control.command('press', '[data-testid="chat-message-input"][contenteditable="true"]', {
         key: 'Enter',
       })
-      await control.command('waitFor', '[data-testid="message-assistant"]', {
-        text: EMBEDDED_BROWSER_SETUP_COMPLETION_TEXT,
-        timeoutMs: uiTimeoutMs,
-      })
+      // Observe task creation and browser opening before waiting for the final model message.
       const taskId = await waitForRuntimeTaskId(control, uiTimeoutMs)
       const browserLabel = await readBrowserPanelLabel(
         control,
@@ -708,6 +705,10 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs, wo
         `workspace-browser-${taskId.replace(/[^a-zA-Z0-9_-]/g, '-')}`,
         'The fresh local task did not expose its task-scoped embedded browser label'
       )
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: EMBEDDED_BROWSER_SETUP_COMPLETION_TEXT,
+        timeoutMs: uiTimeoutMs,
+      })
       const bridgeIdentity = await waitForBridgeIdentity(executorHome, uiTimeoutMs)
       const originalBridgeRuntime = await readFile(bridgeIdentity.runtimePath, 'utf8')
       const stopForeignBridge = await startForeignBridgeRuntime(bridgeIdentity.runtimePath)
