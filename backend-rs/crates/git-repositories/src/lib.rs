@@ -19,7 +19,10 @@ pub struct GitState {
     pub repository_tokens: Arc<dyn repository_tokens::RepositoryTokenResolver>,
 }
 
-brz_http_server::registry!(dependencies(state: Arc<GitState>), auth = auth::AppAuthenticator);
+brz_http_server::registry!(
+    dependencies(state: Arc<GitState>),
+    auth = auth::AppAuthenticator
+);
 
 /// Compose Git routes without creating another client, cache, or refresh worker.
 pub fn routes(

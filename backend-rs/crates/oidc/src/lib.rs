@@ -18,7 +18,10 @@ use wegent_identity::user_reader;
 use wegent_network_policy::http_trust;
 use wegent_python_compat::json_compat;
 
-brz_http_server::registry!(dependencies(state: Arc<state::AppState>), auth = auth::AppAuthenticator);
+brz_http_server::registry!(
+    dependencies(state: Arc<state::AppState>),
+    auth = auth::AppAuthenticator
+);
 
 /// Register authentication routes with the retained database and session services.
 pub fn routes(

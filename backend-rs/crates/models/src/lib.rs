@@ -17,7 +17,11 @@ pub use models_unified::*;
 pub type ModelsState =
     std::sync::Arc<state::AppState<brz_mysql::MysqlService, brz_redis::RedisService>>;
 
-brz_http_server::registry!(group = models_unified, dependencies(mu: ModelsState), auth = wegent_identity::auth::AppAuthenticator);
+brz_http_server::registry!(
+    group = models_unified,
+    dependencies(mu: ModelsState),
+    auth = wegent_identity::auth::AppAuthenticator
+);
 
 /// Bind catalogue routes to the deployment's retained clients and entity resolvers.
 pub fn routes(

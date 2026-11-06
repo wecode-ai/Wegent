@@ -23,8 +23,16 @@ pub type StatusState =
 pub type TreeState =
     Arc<remote_workspace_tree::Deps<brz_mysql::MysqlService, brz_redis::RedisService>>;
 
-brz_http_server::registry!(group = remote_workspace_status, dependencies(rws: StatusState), auth = auth::AppAuthenticator);
-brz_http_server::registry!(group = remote_workspace_tree, dependencies(rwt: TreeState), auth = auth::AppAuthenticator);
+brz_http_server::registry!(
+    group = remote_workspace_status,
+    dependencies(rws: StatusState),
+    auth = auth::AppAuthenticator
+);
+brz_http_server::registry!(
+    group = remote_workspace_tree,
+    dependencies(rwt: TreeState),
+    auth = auth::AppAuthenticator
+);
 
 /// Bind both workspace route groups to this deployment's retained services.
 pub fn routes(

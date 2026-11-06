@@ -12,7 +12,10 @@ pub use wegent_backend_config as config;
 pub use wegent_http_compat as http_compat;
 pub use wegent_identity::auth;
 
-brz_http_server::registry!(dependencies(sites: std::sync::Arc<sites::SitesClient>), auth = auth::AppAuthenticator);
+brz_http_server::registry!(
+    dependencies(sites: std::sync::Arc<sites::SitesClient>),
+    auth = auth::AppAuthenticator
+);
 
 /// Register all Sites routes against this deployment's retained upstream client.
 pub fn routes(

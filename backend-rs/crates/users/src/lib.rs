@@ -27,7 +27,10 @@ pub mod users_runtime_configs;
 pub mod users_search;
 pub mod users_welcome_config;
 
-brz_http_server::registry!(dependencies(state: Arc<state::AppState>), auth = auth::AppAuthenticator);
+brz_http_server::registry!(
+    dependencies(state: Arc<state::AppState>),
+    auth = auth::AppAuthenticator
+);
 
 /// Register account routes with this deployment's existing user and Git services.
 pub fn routes(

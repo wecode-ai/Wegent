@@ -23,7 +23,10 @@ pub mod skills_unified;
 pub mod state;
 pub mod task_skills;
 
-brz_http_server::registry!(dependencies(state: Arc<state::AppState>), auth = auth::AppAuthenticator);
+brz_http_server::registry!(
+    dependencies(state: Arc<state::AppState>),
+    auth = auth::AppAuthenticator
+);
 
 /// Register capability routes with the deployment's retained services.
 pub fn routes(

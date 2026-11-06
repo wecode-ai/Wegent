@@ -13,7 +13,10 @@ pub mod wework_auth_refresh;
 use wegent_http_compat::fallback as http_fallback;
 use wegent_identity::{jwt_compat, wework_auth_tokens};
 
-brz_http_server::registry!(dependencies(state: Arc<state::AppState>), auth = auth::AppAuthenticator);
+brz_http_server::registry!(
+    dependencies(state: Arc<state::AppState>),
+    auth = auth::AppAuthenticator
+);
 
 /// Register authentication routes with the retained database and session services.
 pub fn routes(
