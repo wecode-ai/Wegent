@@ -427,18 +427,8 @@ jobs:
         run: |
           apt-get update
           apt-get install -y --no-install-recommends file xdg-utils pcmanfm
-          cat > /usr/share/applications/wework-e2e-failing-text.desktop <<'EOF'
-          [Desktop Entry]
-          Type=Application
-          Name=Wegent E2E failing text handler
-          Exec=/bin/false %f
-          Terminal=false
-          MimeType=text/plain;
-          EOF
           XDG_CONFIG_HOME=/etc/xdg xdg-mime default pcmanfm.desktop inode/directory
-          XDG_CONFIG_HOME=/etc/xdg xdg-mime default wework-e2e-failing-text.desktop text/plain
           test "$(XDG_CONFIG_HOME=/tmp/wework-e2e-unconfigured xdg-mime query default inode/directory)" = pcmanfm.desktop
-          test "$(XDG_CONFIG_HOME=/tmp/wework-e2e-unconfigured xdg-mime query default text/plain)" = wework-e2e-failing-text.desktop
           test "$(xdg-mime query filetype /tmp)" = inode/directory
 
       - name: Install Electron for native startup and schema verification

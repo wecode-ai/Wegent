@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { clipboard, type WebContents } from 'electron'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -493,9 +494,18 @@ describe('Process explorer capabilities', () => {
 
 describe('Local file URL capabilities', () => {
   const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!
+  let directory: string
+  let filePath: string
 
-  afterEach(() => {
+  beforeEach(async () => {
+    directory = await mkdtemp(join(tmpdir(), 'wework-local-file-url-'))
+    filePath = join(directory, 'readme with space.md')
+    await writeFile(filePath, 'Local file fixture')
+  })
+
+  afterEach(async () => {
     Object.defineProperty(process, 'platform', originalPlatform)
+    await rm(directory, { recursive: true, force: true })
   })
 
   test('opens a file URL through the system file handler', async () => {
@@ -503,7 +513,6 @@ describe('Local file URL capabilities', () => {
     electronMocks.shellOpenPath.mockClear()
     electronMocks.shellOpenExternal.mockClear()
     const { router } = createIsolatedClipboardRouter()
-    const filePath = join(tmpdir(), 'readme with space.md')
     const url = pathToFileURL(filePath).href
 
     await expect(
@@ -519,7 +528,7 @@ describe('Local file URL capabilities', () => {
     electronMocks.shellOpenPath.mockClear()
     electronMocks.shellOpenExternal.mockClear()
     const { router } = createIsolatedClipboardRouter()
-    const url = pathToFileURL(join(tmpdir(), 'readme with space.md')).href
+    const url = pathToFileURL(filePath).href
 
     await expect(
       router.invoke(WEWORK_APP_PRINCIPAL, 'shell.openLocalFileUrl', { url })
@@ -537,9 +546,30 @@ describe('Local file URL capabilities', () => {
 
     await expect(
       router.invoke(WEWORK_APP_PRINCIPAL, 'shell.openLocalFileUrl', {
-        url: pathToFileURL(join(tmpdir(), 'readme with space.md')).href,
+        url: pathToFileURL(filePath).href,
       })
     ).rejects.toThrow('no handler')
+    expect(electronMocks.shellOpenPath).not.toHaveBeenCalled()
+  })
+
+  test('rejects a deleted Linux target and opens it after recreation', async () => {
+    Object.defineProperty(process, 'platform', { value: 'linux' })
+    electronMocks.shellOpenExternal.mockClear()
+    electronMocks.shellOpenPath.mockClear()
+    const { router } = createIsolatedClipboardRouter()
+    const url = pathToFileURL(filePath).href
+    await rm(filePath)
+
+    await expect(
+      router.invoke(WEWORK_APP_PRINCIPAL, 'shell.openLocalFileUrl', { url })
+    ).rejects.toThrow('ENOENT')
+    expect(electronMocks.shellOpenExternal).not.toHaveBeenCalled()
+
+    await writeFile(filePath, 'Restored local file fixture')
+    await expect(
+      router.invoke(WEWORK_APP_PRINCIPAL, 'shell.openLocalFileUrl', { url })
+    ).resolves.toBeUndefined()
+    expect(electronMocks.shellOpenExternal).toHaveBeenCalledExactlyOnceWith(url)
     expect(electronMocks.shellOpenPath).not.toHaveBeenCalled()
   })
 

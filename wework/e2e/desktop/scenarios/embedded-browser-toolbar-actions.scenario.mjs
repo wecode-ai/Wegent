@@ -690,9 +690,16 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
 
         const textFileUrl = pathToFileURL(localTextFile).href
         await loadLocalUrl(textFileUrl)
-        if (process.platform === 'darwin') {
-          await rm(localTextFile)
-        }
+        await waitForPageNumber(
+          bridgeIdentity,
+          `location.href === ${JSON.stringify(textFileUrl)} && document.body?.textContent.includes('local file fixture') ? 1 : 0`,
+          1,
+          0,
+          uiTimeoutMs,
+          'The real local file page did not render before removing its backing file'
+        )
+        // Remove a loaded file so the real host/OS open fails without invalid navigation.
+        await rm(localTextFile)
         await control.command('click', BROWSER_OPEN_EXTERNAL_BUTTON_SELECTOR)
         await waitForBrowserError(
           control,

@@ -1197,6 +1197,8 @@ export function createElectronCapabilityRouter(
     }
     if (process.platform === 'linux') {
       // Electron 43's Linux openPath never settles (electron/electron#53738).
+      // openExternal only reports launcher startup, so reject missing targets first.
+      await stat(path)
       await shell.openExternal(url.toString())
       return
     }
