@@ -134,6 +134,15 @@ requests run outside write transactions; result writes validate current business
 state. Savepoint rollback restores expected versions without releasing the root
 lock.
 
+Rust automatic update batches run the existing bounded operation in an owned
+Tokio task that inherits the request tracing context. An HTTP disconnect or
+desktop restart does not cancel the transaction and release sequence. The
+operation retains its existing time budget and releases its token-checked lease
+after commit or rollback, so subsequent authentication and device reconciliation
+do not wait for an abandoned lease's TTL. The cancellation regression verifies
+that the lease remains held before completion, is released afterward, and can
+be acquired by the next operation.
+
 For transactions referring to the same policy row, CAS protects commit order:
 once a successor commits, an older revision cannot overwrite it. A worker paused
 after checking Redis ownership can still resume and win CAS before its successor
