@@ -28,7 +28,7 @@ test.each([
     const selecting = selectCollaborationProjectView({ command }, '#content', view, 1234)
     expect(command).toHaveBeenCalledWith(
       'waitFor',
-      `#content [data-testid="${tabId}"], #content [data-testid="collaboration-project-view-select"]`,
+      `#content [data-testid="collaboration-project-view-select"], #content [data-testid="${tabId}"]`,
       { visible: true, timeoutMs: 1234 }
     )
     expect(command).not.toHaveBeenCalledWith('getElementCount', expect.anything())
@@ -51,7 +51,7 @@ test.each([true, false])(
     const command = vi.fn(
       async (action: string, selector: string, options?: { value?: string }) => {
         if (action === 'getElementCount') return compact ? '1' : '0'
-        if (selector.endsWith('[data-testid="collaboration-tab-manage"]')) {
+        if (selector === `${content} [data-testid="collaboration-tab-manage"]`) {
           if (compact) throw new Error('Separate project tabs are absent in compact layouts')
           if (action === 'click' || action === 'clickWhenEnabled') selected = true
         }

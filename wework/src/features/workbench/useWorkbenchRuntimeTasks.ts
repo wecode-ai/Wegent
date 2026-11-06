@@ -375,7 +375,6 @@ export function useWorkbenchRuntimeTasks({
       ]
       if (archivedAddresses.length > 0) {
         archivedAddresses.forEach(archiveRuntimeConversation)
-        archivedAddresses.forEach(address => lifecycleStore.remove(address))
         archivedAddresses.forEach(address => logRuntimeQueueStage(address, 'queue-archive-evicted'))
         markRuntimeTasksArchived(archivedAddresses)
         const worktreeCleanupSucceeded = await removeArchivedWorktrees(
@@ -405,7 +404,6 @@ export function useWorkbenchRuntimeTasks({
       clearCurrentRuntimeTaskIfArchived,
       dispatch,
       executorClient,
-      lifecycleStore,
       markRuntimeTasksArchived,
       refreshWorkLists,
       removeArchivedWorktrees,

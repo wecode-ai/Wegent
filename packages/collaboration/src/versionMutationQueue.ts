@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-export interface ProjectVersionMutationQueue<Project> {
+export interface VersionMutationQueue<Project> {
   enqueue(
     mutation: (version: number) => Promise<Project>,
     readVersion: (project: Project) => number,
@@ -10,9 +10,9 @@ export interface ProjectVersionMutationQueue<Project> {
   synchronize(version: number): void;
 }
 
-export function createProjectVersionMutationQueue<Project>(
+export function createVersionMutationQueue<Project>(
   initialVersion: number,
-): ProjectVersionMutationQueue<Project> {
+): VersionMutationQueue<Project> {
   let version = initialVersion;
   let tail = Promise.resolve();
 

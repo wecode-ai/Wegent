@@ -6,8 +6,8 @@ import {
   openDirectProjectCreation,
   openProjectAgentCreator,
   selectCollaborationDomain,
-  waitForTestIdByText,
   selectCollaborationProjectView,
+  waitForTestIdByText,
 } from '../modules/workspace-flows.mjs'
 import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
 import { verifyWorkspaceAgentDisplayNames } from '../modules/workspace-agent-setup.mjs'

@@ -443,7 +443,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         })
         await control.command(
           'waitFor',
-          `${scoped('[data-testid="collaboration-tab-board"][aria-current="page"]')}, ${scoped('[data-testid="collaboration-project-view-select"] option[value="board"]:checked')}`
+          `${scoped('[data-testid="collaboration-tab-board"][aria-current="page"]')}, ${scoped('[data-testid="collaboration-project-view-select"]:has(option[value="board"]:checked)')}`
         )
         assert.equal(
           Number(
@@ -453,7 +453,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
             )
           ),
           0,
-          'Self-demotion must also remove management from the compact view picker'
+          'Self-demotion must remove management from compact navigation too'
         )
         await assertViewerDenials()
         await captureScreenshot(control, 'project-member-overrides-self-demoted.png', CONTENT)

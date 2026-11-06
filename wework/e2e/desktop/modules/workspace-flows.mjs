@@ -236,10 +236,13 @@ export async function selectCollaborationProjectView(
   view,
   timeoutMs = DEFAULT_STEP_TIMEOUT_MS
 ) {
+  const compact = `${contentSelector} [data-testid="collaboration-project-view-select"]`
   const tabId = view === 'milestones' ? 'collaboration-milestones-tab' : `collaboration-tab-${view}`
   const tab = `${contentSelector} [data-testid="${tabId}"]`
-  const compact = `${contentSelector} [data-testid="collaboration-project-view-select"]`
-  await control.command('waitFor', `${tab}, ${compact}`, { visible: true, timeoutMs })
+  await control.command('waitFor', `${compact}, ${tab}`, {
+    visible: true,
+    timeoutMs,
+  })
   if (Number(await control.command('getElementCount', compact)) > 0) {
     await control.command('select', compact, { value: view })
   } else {
@@ -385,11 +388,7 @@ export async function configureFirstProjectExecutionEnvironment(
   timeoutMs,
   deviceId = null
 ) {
-  await control.command('waitFor', `${contentSelector} [data-testid="cloud-project-header"]`, {
-    visible: true,
-    timeoutMs,
-  })
-  await selectCollaborationProjectView(control, contentSelector, 'manage')
+  await selectCollaborationProjectView(control, contentSelector, 'manage', timeoutMs)
   await control.command(
     'click',
     `${contentSelector} [data-testid="collaboration-project-settings-environments"]`
@@ -558,6 +557,7 @@ export async function createLocalCollaborationProject(control, contentSelector, 
   await control.command(
     'waitFor',
     `${contentSelector} [data-testid="cloud-project-header-title"]`,
+    // The project identity remains in the DOM when compact navigation hides its title.
     { text: projectName, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
   )
   await selectCollaborationProjectView(control, contentSelector, 'board')
@@ -1184,10 +1184,7 @@ async function verifyWorkspaceIssueCreation(control) {
   )
   await control.command(
     'clickWhenEnabled',
-    `${boardContentSelector} [data-testid="cloud-todo-save"]`,
-    {
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
+    `${boardContentSelector} [data-testid="cloud-todo-save"]`
   )
   await control.command('waitFor', `${boardContentSelector} [data-testid="cloud-todo-save"]`, {
     visible: false,
@@ -1548,13 +1545,7 @@ async function enrichTrackedDefaultIssueTitle(control, taskTabTestId, title) {
   })
   await control.command('click', titleSelector)
   await control.command('fill', titleSelector, { value: title })
-  await control.command(
-    'clickWhenEnabled',
-    `${activeBoardContentSelector} [data-testid="cloud-todo-save"]`,
-    {
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
+  await control.command('press', titleSelector, { key: 'Enter' })
   await control.command(
     'waitFor',
     `${activeBoardContentSelector} [data-testid="cloud-todo-save"]`,

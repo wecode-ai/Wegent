@@ -20,8 +20,8 @@ import {
   openProjectAgentCreator,
   selectCloudAgentModel,
   selectCollaborationDomain,
-  waitForTestIdByText,
   selectCollaborationProjectView,
+  waitForTestIdByText,
 } from '../modules/workspace-flows.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -347,9 +347,6 @@ async function createAndAssignIssue(control, request, projectId, uiTimeoutMs) {
     uiTimeoutMs
   )
   await control.command('click', `[data-testid="${groupOption}"]`)
-  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
-    timeoutMs: uiTimeoutMs,
-  })
   return issue
 }
 

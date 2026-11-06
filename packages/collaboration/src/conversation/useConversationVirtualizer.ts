@@ -5,23 +5,14 @@ import {
   type Virtualizer,
   type VirtualizerOptions,
 } from '@tanstack/react-virtual'
-import { useEffect, useLayoutEffect, useState, type RefObject } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import {
   CONVERSATION_SCROLL_WRITE_SOURCE,
+  observeConversationScrollWrites,
   recordConversationScrollWrite,
 } from './conversationScrollWrite'
 
 export type ConversationVirtualizer = Virtualizer<HTMLDivElement, HTMLElement>
-
-const offsetReaders = new WeakMap<
-  ConversationVirtualizer,
-  (offset: number, scrolling: boolean) => void
->()
-
-export function syncConversationVirtualizerOffset(instance: ConversationVirtualizer) {
-  const viewport = instance.scrollElement
-  if (viewport) offsetReaders.get(instance)?.(viewport.scrollTop, instance.isScrolling)
-}
 
 interface Options extends Omit<
   VirtualizerOptions<HTMLDivElement, HTMLElement>,
@@ -50,6 +41,7 @@ export function useConversationVirtualizer({
   ...options
 }: Options) {
   const [prefix, setPrefix] = useState(0)
+  const readOffsetRef = useRef<((offset: number, scrolling: boolean) => void) | null>(null)
   const [viewportReady, setViewportReady] = useState(
     () => (scrollElementRef?.current?.clientHeight ?? 0) > 0
   )
@@ -63,10 +55,15 @@ export function useConversationVirtualizer({
     paddingEnd: (options.paddingEnd ?? 0) + scrollTailHeight,
     getScrollElement: () => scrollElementRef?.current ?? null,
     observeElementOffset: (instance, callback) => {
-      offsetReaders.set(instance, callback)
+      readOffsetRef.current = callback
       const dispose = observeElementOffset(instance, callback)
+      const element = instance.scrollElement
+      const stopObservingWrites = element
+        ? observeConversationScrollWrites(element, offset => callback(offset, false))
+        : undefined
       return () => {
-        if (offsetReaders.get(instance) === callback) offsetReaders.delete(instance)
+        readOffsetRef.current = null
+        stopObservingWrites?.()
         dispose?.()
       }
     },
@@ -102,7 +99,7 @@ export function useConversationVirtualizer({
         after === before &&
         Math.abs(after - offset - (settings.adjustments ?? 0)) > 1
       )
-        offsetReaders.get(instance)?.(after, false)
+        readOffsetRef.current?.(after, false)
       onScrollAdjustment?.(after - before)
     },
   })

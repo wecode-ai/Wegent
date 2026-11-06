@@ -12,37 +12,37 @@ export async function verifyWindowsComponentPublication({ resources, environment
   await writeFile(
     holder,
     `
-param([string]$Path, [int]$ReleaseAfterMs = 0, [switch]$Directory)
+param([string]$Path, [int]$ReleaseAfterMs = 0)
 $ErrorActionPreference = 'Stop'
-if ($Directory) {
+$prefix = '{0}{0}?{0}' -f [char]92
+$nativePath = if ($Path.StartsWith($prefix)) { $Path } else { $prefix + $Path }
+if ([System.IO.Directory]::Exists($nativePath)) {
   Add-Type -TypeDefinition @'
-using System.ComponentModel;
+using System;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
-
-public static class DirectoryLock {
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
-    private static extern SafeFileHandle CreateFileW(string path, uint access, uint share,
-        System.IntPtr security, uint disposition, uint flags, System.IntPtr template);
-
-    public static SafeFileHandle Open(string path) {
-        const uint ListDirectory = 1, ShareReadWrite = 3, OpenExisting = 3;
-        const uint BackupSemantics = 0x02000000;
-        var handle = CreateFileW(path, ListDirectory, ShareReadWrite,
-            System.IntPtr.Zero, OpenExisting, BackupSemantics, System.IntPtr.Zero);
-        if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
-        return handle;
-    }
+public static class NativeDirectoryHolder {
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+  public static extern SafeFileHandle CreateFile(string path, uint access,
+    uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
 }
 '@
-  $handle = [DirectoryLock]::Open($Path)
+  # Lock the directory being renamed; a child file handle does not fence its parent.
+  $handle = [NativeDirectoryHolder]::CreateFile(
+    $nativePath, [uint32]2147483648, 3, [IntPtr]::Zero, 3, 0x02000000, [IntPtr]::Zero
+  )
+  if ($handle.IsInvalid) {
+    throw [System.ComponentModel.Win32Exception]::new(
+      [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+    )
+  }
 } else {
-  $handle = [System.IO.File]::Open($Path, 'Open', 'Read', 'ReadWrite')
+  $handle = [System.IO.File]::Open($nativePath, 'Open', 'Read', 'ReadWrite')
 }
 try {
   [Console]::Out.WriteLine('held')
   [Console]::Out.Flush()
-  if ([Console]::In.ReadLine() -ne 'release') { throw 'Native holder lost its release channel' }
+  [Console]::In.ReadLine() | Out-Null
   if ($ReleaseAfterMs -gt 0) { [System.Threading.Thread]::Sleep($ReleaseAfterMs) }
 } finally { $handle.Dispose() }
 `
@@ -61,59 +61,63 @@ import { basename, dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 const input = JSON.parse(process.argv[2])
 app.setPath('userData', join(input.root, 'electron'))
+const originalSymlink = fs.symlink
 const compositionRoot = join(input.root, 'data', 'managed-components', 'composed', 'wework-core-plugins')
 const runtimeRoot = join(input.root, 'runtimes')
-const originalSymlink = fs.symlink
 let child
 let closed
 let occupiedPublications = 0
-async function holdPath(path, { releaseAfterMs = 0, directory = false } = {}) {
+async function holdFile(file, releaseAfterMs = 0) {
   child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-File', input.holder,
-    '-Path', path, '-ReleaseAfterMs', String(releaseAfterMs), ...(directory ? ['-Directory'] : [])],
+    '-Path', file, '-ReleaseAfterMs', String(releaseAfterMs)],
     { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
   let stderr = ''
-  child.stderr.on('data', data => { stderr += data.toString() })
+  child.stderr.on('data', data => { stderr = (stderr + data.toString()).slice(-8000) })
   closed = new Promise((accept, reject) => {
     child.once('error', reject)
     child.once('close', code => code === 0 ? accept(code) :
-      reject(new Error('Native holder failed: ' + stderr.trim())))
+      reject(new Error('Native holder failed (' + code + '): ' + stderr)))
   })
-  let timer
-  const ready = new Promise((accept, reject) => {
+  // Publication workers can fail before anyone awaits the eventual close receipt.
+  closed.catch(() => {})
+  await new Promise((accept, reject) => {
     let output = ''
-    timer = setTimeout(() => reject(new Error('Native holder did not start')), 10000)
+    const timer = setTimeout(() => reject(new Error('Native file holder did not start')), 10000)
+    child.once('error', error => { clearTimeout(timer); reject(error) })
+    child.once('close', code => {
+      clearTimeout(timer)
+      reject(new Error('Native holder exited before release (' + code + '): ' + stderr))
+    })
     child.stdout.on('data', data => {
       output += data.toString()
       if (!output.includes(String.fromCharCode(10))) return
+      clearTimeout(timer)
       output.trim() === 'held' ? accept() : reject(new Error('Invalid native holder acknowledgement'))
     })
   })
-  await Promise.race([ready, closed.then(() => {
-    throw new Error('Native holder exited before acquiring its handle')
-  })]).finally(() => clearTimeout(timer))
 }
 fs.symlink = async (source, target, type) => {
   const parent = dirname(target)
-  const file = parent === compositionRoot ? join('wework-app', 'client.js') :
-    parent === runtimeRoot ? 'runtime.json' : null
-  if (!file || !basename(source).startsWith('.content-'))
-    return originalSymlink(source, target, type)
-
-  // The rename targets the directory. An open descendant alone did not
-  // prevent the rename on the Windows runner.
-  await holdPath(source, { directory: true })
-  try {
+  // Archive extraction also publishes immutable trees in parallel. This checkpoint
+  // occupies the composed plugin tree and the requested runtime, not those inputs.
+  if (basename(source).startsWith('.content-') &&
+      (parent === compositionRoot || parent === runtimeRoot)) {
+    const file = parent === compositionRoot
+      ? join('wework-app', 'client.js') : 'runtime.json'
+    assert.equal((await fs.stat(join(source, file))).isFile(), true)
+    await holdFile(source)
     await assert.rejects(fs.rename(source, source + '.blocked'), error =>
       ['EPERM', 'EACCES', 'EBUSY'].includes(error.code))
     await originalSymlink(source, target, type)
     assert.equal(await fs.readFile(join(target, file), 'utf8'),
       await fs.readFile(join(source, file), 'utf8'))
     occupiedPublications++
-  } finally {
-    child.stdin.end('release' + String.fromCharCode(10))
+    child.stdin.end()
     assert.equal(await closed, 0)
     child = null
+    return
   }
+  return originalSymlink(source, target, type)
 }
 syncBuiltinESMExports()
 try {
@@ -125,10 +129,10 @@ try {
   const paths = await new ComponentUpdateManager(options).prepareStartup()
   assert.equal(occupiedPublications, 1)
   assert.equal((await fs.lstat(paths.weworkCorePlugins)).isSymbolicLink(), true)
-  const entries = await fs.readdir(compositionRoot)
+  const entries = await fs.readdir(join(input.root, 'data', 'managed-components', 'composed', 'wework-core-plugins'))
   const restart = await new ComponentUpdateManager(options).prepareStartup()
   assert.equal(restart.weworkCorePlugins, paths.weworkCorePlugins)
-  assert.deepEqual(await fs.readdir(compositionRoot), entries)
+  assert.deepEqual(await fs.readdir(join(input.root, 'data', 'managed-components', 'composed', 'wework-core-plugins')), entries)
   const { materializeBundledRuntimes } = await import(pathToFileURL(join(input.resources,
     'app.asar/dist/runtime/bundled-runtime-materializer.js')).href)
   await materializeBundledRuntimes(join(input.resources, 'harness-runtime'), runtimeRoot, ['core'])
@@ -141,7 +145,7 @@ try {
   const pending = journal + '.tmp'
   await fs.writeFile(journal, 'pending')
   await fs.writeFile(pending, 'completed')
-  await holdPath(journal, { releaseAfterMs: 250 })
+  await holdFile(journal, 250)
   assert.throws(() => fsSync.renameSync(pending, journal), error =>
     ['EPERM', 'EACCES', 'EBUSY'].includes(error.code))
   child.stdin.end('release' + String.fromCharCode(10))

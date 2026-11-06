@@ -203,9 +203,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
 
       await click(`cloud-todo-card-${fixture.front.id}`)
       await control.command('select', test('cloud-todo-detail-status'), { value: 'completed' })
-      await wait('cloud-todo-save', '')
-      await capture('06b-completion-draft')
-      await click('cloud-todo-save')
+      await capture('06b-completion-selected')
       await waitForBoardValue(
         async () => (await get(fixture.front.id)).status,
         'completed',

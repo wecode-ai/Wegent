@@ -43,11 +43,13 @@ mod codex_mcp;
 #[path = "runtime_capabilities/execution_snapshot.rs"]
 mod execution_snapshot;
 mod home_skills;
+mod json_file;
 mod skill_archive;
 pub use codex::prepare_codex_runtime;
 pub(crate) use codex::prepare_codex_runtime_locked;
 pub(super) use execution_snapshot::publish_agent_skills;
 use home_skills::HomeSkillsStage;
+pub(super) use json_file::write_json_file;
 pub(crate) mod mcp_environment;
 #[cfg(test)]
 use crate::services::workbench::archive_hash;
@@ -1363,23 +1365,7 @@ fn write_skill_manifest(
     skills_dir: &Path,
     manifest: &BTreeMap<String, InstalledSkillRecord>,
 ) -> Result<(), String> {
-    let path = skill_manifest_path(skills_dir);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
-    }
-    let content = serde_json::to_string_pretty(manifest)
-        .map_err(|error| format!("failed to serialize skill manifest: {error}"))?;
-    use std::io::Write;
-    let mut staging = tempfile::NamedTempFile::new_in(skills_dir)
-        .map_err(|error| format!("failed to stage skill manifest: {error}"))?;
-    staging
-        .write_all(content.as_bytes())
-        .map_err(|error| format!("failed to write skill manifest: {error}"))?;
-    staging
-        .persist(&path)
-        .map_err(|error| format!("failed to publish {}: {error}", path.display()))?;
-    Ok(())
+    write_json_file(&skill_manifest_path(skills_dir), manifest)
 }
 
 #[cfg(test)]
@@ -2502,40 +2488,6 @@ fn api_url(backend_url: &str, path: &str) -> Result<String, String> {
         .join(path.trim_start_matches('/'))
         .map(Into::into)
         .map_err(|_| "invalid backend API path".to_owned())
-}
-
-pub(super) fn write_json_file(path: &Path, value: &Value) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
-    }
-    let content = serde_json::to_string_pretty(value)
-        .map_err(|error| format!("failed to serialize JSON: {error}"))?;
-    let parent = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    // tempfile calls Win32 directly, which requires a verbatim path beyond MAX_PATH.
-    #[cfg(windows)]
-    let canonical_parent = fs::canonicalize(parent)
-        .map_err(|error| format!("failed to resolve {}: {error}", parent.display()))?;
-    #[cfg(windows)]
-    let path = canonical_parent.join(path.file_name().ok_or("JSON file has no name")?);
-    #[cfg(windows)]
-    let path = path.as_path();
-    #[cfg(windows)]
-    let parent = canonical_parent.as_path();
-    let mut file = tempfile::NamedTempFile::new_in(parent)
-        .map_err(|error| format!("failed to stage JSON: {error}"))?;
-    use std::io::Write;
-    file.write_all(content.as_bytes())
-        .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
-    file.as_file()
-        .sync_all()
-        .map_err(|error| error.to_string())?;
-    file.persist(path)
-        .map_err(|error| format!("failed to publish JSON {}: {}", path.display(), error.error))?;
-    Ok(())
 }
 
 fn primary_bot(request: &ExecutionRequest) -> Option<&Value> {

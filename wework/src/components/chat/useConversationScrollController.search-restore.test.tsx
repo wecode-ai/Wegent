@@ -3,6 +3,7 @@ import { afterEach, expect, test, vi } from 'vitest'
 import { useConversationScrollController } from '../../../../packages/collaboration/src/conversation/useConversationScrollController'
 import { getConversationScrollSnapshot } from '@/features/workbench/runtimeConversationCache'
 import { useConversationVirtualizer } from '@wegent/collaboration/conversation/useConversationVirtualizer'
+import { scrollToContentPosition } from '@wegent/collaboration/conversation/conversationViewportScroll'
 
 afterEach(() => {
   document.body.replaceChildren()
@@ -55,8 +56,8 @@ test('reads the completed search position before a row resize can compensate a s
   })
   expect(hook.result.current.virtualizer.scrollOffset).toBe(2500)
   act(() => {
-    // A native programmatic scroll is visible before its asynchronous event.
-    viewport.scrollTop = 87
+    // Search uses the shared writer before its asynchronous native scroll event.
+    scrollToContentPosition(viewport, 87, 'auto')
     hook.result.current.controller.handleTurnNavigationScrollTargetChange(null)
   })
   act(() => hook.result.current.virtualizer.resizeItem(1, 24))

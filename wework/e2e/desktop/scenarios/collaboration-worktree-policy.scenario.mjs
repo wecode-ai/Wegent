@@ -158,7 +158,6 @@ async function runAgent(control, agentId, label, timeoutMs) {
     scoped('[data-testid="cloud-todo-detail-assignee"]'),
     agentId
   )
-  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'))
   await control.command('waitFor', scoped('[data-testid="cloud-task-activity-list"]'), {
     text: `${MARKER}_DONE`,
     timeoutMs,

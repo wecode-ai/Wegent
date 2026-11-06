@@ -16,8 +16,8 @@ import {
   configureFirstProjectExecutionEnvironment,
   openProjectAgentCreator,
   selectProjectRunnerModel,
-  waitForTestIdByText,
   selectCollaborationProjectView,
+  waitForTestIdByText,
 } from '../modules/workspace-flows.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -286,9 +286,6 @@ async function createIssueAndAssignGroup(control, timeoutMs, title = ISSUE) {
     timeoutMs
   )
   await control.command('click', `[data-testid="${groupOption}"]`)
-  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
-    timeoutMs,
-  })
   await control.command('waitFor', scoped('[data-testid="cloud-todo-state-assignee"]'), {
     text: GROUP,
     timeoutMs,

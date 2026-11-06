@@ -1256,15 +1256,10 @@ export function DesktopWorkbenchLayout({
                     })
                   }}
                   onActiveProjectChange={project => {
-                    if (
-                      !workspaceTabs ||
-                      ownedWorkspaceTab?.kind !== 'board' ||
-                      workspaceTabs.activeTabId !== ownedWorkspaceTab.id ||
-                      !project
-                    ) {
+                    if (!workspaceTabs || ownedWorkspaceTab?.kind !== 'board' || !project) {
                       return
                     }
-                    workspaceTabs.updateActiveTab({
+                    workspaceTabs.updateTab(ownedWorkspaceTab.id, {
                       title: project.name,
                       contentRoute: projectSpaceContentRoute(projectSpaceRef(project)),
                     })
@@ -1438,21 +1433,17 @@ export function DesktopWorkbenchLayout({
                     })
                   }}
                   onActiveProjectChange={project => {
-                    if (
-                      !workspaceTabs ||
-                      ownedWorkspaceTab?.kind !== 'board' ||
-                      workspaceTabs.activeTabId !== ownedWorkspaceTab.id
-                    ) {
+                    if (!workspaceTabs || ownedWorkspaceTab?.kind !== 'board') {
                       return
                     }
                     if (!project) {
-                      workspaceTabs.updateActiveTab({
+                      workspaceTabs.updateTab(ownedWorkspaceTab.id, {
                         title: t('workbench.workspace_tab_board', '协作'),
                         contentRoute: '/todo',
                       })
                       return
                     }
-                    workspaceTabs.updateActiveTab({
+                    workspaceTabs.updateTab(ownedWorkspaceTab.id, {
                       title: project.name,
                       contentRoute: projectSpaceContentRoute(projectSpaceRef(project)),
                     })

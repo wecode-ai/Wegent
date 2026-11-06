@@ -12,7 +12,7 @@ export * from "./ProjectExecutionEnvironments";
 export * from "./ProjectCollaborationGroups";
 export * from "./ProjectAutomaticProcessing";
 export * from "./memberSearch";
-export * from "./projectMutationQueue";
+export * from "../versionMutationQueue";
 export * from "./BoardLayoutEditor";
 export * from "./createSharedWorkspaceProjectManageApi";
 export * from "./types";

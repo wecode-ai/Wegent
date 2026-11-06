@@ -37,8 +37,8 @@ import {
 import {
   configureFirstProjectExecutionEnvironment,
   selectCollaborationDomain,
-  waitForControlValue,
   selectCollaborationProjectView,
+  waitForControlValue,
 } from '../modules/workspace-flows.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -166,9 +166,6 @@ async function createAutoTaggedIssue(control, request, projectId, agent, timeout
   await control.command('pointerClick', scoped('[data-testid="cloud-todo-detail-title"]'))
   await control.command('waitFor', '[data-testid="cloud-todo-more-properties-popover"]', {
     visible: false,
-    timeoutMs,
-  })
-  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
     timeoutMs,
   })
   return { issue, rule }
