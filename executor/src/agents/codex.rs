@@ -164,6 +164,7 @@ mod startup;
 use child::CodexAppServerChild;
 #[path = "codex/thread_action.rs"]
 mod thread_action;
+mod thread_resume;
 
 use debug_stdout::CodexStdout;
 use diagnostics::{json_scalar_field, json_string_field};
@@ -437,19 +438,8 @@ impl CodexAppServerClient {
     }
 
     async fn request_once(&self, method: &str, params: Value) -> Result<Value, String> {
-        let timeout_seconds = codex_rpc_timeout_seconds();
-        let (request_id, handle, response_rx) = self
-            .prepare_request_with_process(true, None, method, &params)
-            .await?;
-        Self::send_request_and_wait(
-            method,
-            params,
-            timeout_seconds,
-            request_id,
-            handle,
-            response_rx,
-        )
-        .await
+        self.request_with_thread_admission(method, params, None)
+            .await
     }
 
     pub(crate) async fn mutate_thread_goal(
@@ -482,18 +472,31 @@ impl CodexAppServerClient {
         params: Value,
         launch_config: &CodexLaunchConfig,
     ) -> Result<Value, String> {
+        self.request_with_thread_admission(method, params, Some(launch_config))
+            .await
+    }
+
+    async fn request_with_thread_admission(
+        &self,
+        method: &str,
+        params: Value,
+        launch_config: Option<&CodexLaunchConfig>,
+    ) -> Result<Value, String> {
         let timeout_seconds = codex_rpc_timeout_seconds();
-        let (request_id, handle, response_rx) = self
-            .prepare_request_with_process(true, Some(launch_config), method, &params)
-            .await?;
-        Self::send_request_and_wait(
-            method,
-            params,
-            timeout_seconds,
-            request_id,
-            handle,
-            response_rx,
-        )
+        thread_resume::with_thread_resume_barrier(method, &params, timeout_seconds, || async {
+            let (request_id, handle, response_rx) = self
+                .prepare_request_with_process(true, launch_config, method, &params)
+                .await?;
+            Self::send_request_and_wait(
+                method,
+                params.clone(),
+                timeout_seconds,
+                request_id,
+                handle,
+                response_rx,
+            )
+            .await
+        })
         .await
     }
 
