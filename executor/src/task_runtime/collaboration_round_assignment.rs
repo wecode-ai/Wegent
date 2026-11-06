@@ -107,6 +107,15 @@ pub(super) fn apply_round_assignee(
             item_id,
         ],
     )?;
+    assignment_receipts::sync_assignment_receipt(
+        connection,
+        current
+            .cloud_project_id
+            .as_deref()
+            .ok_or(TaskRuntimeError::TaskNotFound)?,
+        item_id,
+        &metadata,
+    )?;
     Ok(())
 }
 
