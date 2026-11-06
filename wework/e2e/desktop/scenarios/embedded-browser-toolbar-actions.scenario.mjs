@@ -202,7 +202,7 @@ async function waitForExternalBrowserUrl(expectedUrl, timeoutMs) {
     '-l',
     'JavaScript',
     '-e',
-    "ObjC.import('AppKit'); const url = $.NSURL.URLWithString('https://example.com'); const app = $.NSWorkspace.sharedWorkspace.URLForApplicationToOpen(url); ObjC.unwrap($.NSBundle.bundleWithURL(app).bundleIdentifier)",
+    "ObjC.import('AppKit'); const url = $.NSURL.URLWithString('https://example.com'); const app = $.NSWorkspace.sharedWorkspace.URLForApplicationToOpenURL(url); ObjC.unwrap($.NSBundle.bundleWithURL(app).bundleIdentifier)",
   ])
   const browserBundleId = browserBundleIdOutput.trim()
   const urlQuery =
