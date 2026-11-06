@@ -696,15 +696,15 @@ export function ModelSelector({
 
   function selectExplicitModel(model: UnifiedModel | null) {
     if (!model) return handleSelectModel(null);
-    const modelOptions =
+    const baseOptions =
       selectedModel &&
       inferModelFamily(model) === inferModelFamily(selectedModel)
-        ? normalizeModelOptions(model, selectedModelOptions)
+        ? selectedModelOptions
         : getDefaultModelOptions(model);
-    const options = {
-      ...modelOptions,
+    const options = normalizeModelOptions(model, {
+      ...baseOptions,
       [MODEL_SELECTION_OPTION]: "model",
-    };
+    });
     const applied = onSelectModelAndOptions
       ? onSelectModelAndOptions(model, options)
       : handleSelectModel(model);

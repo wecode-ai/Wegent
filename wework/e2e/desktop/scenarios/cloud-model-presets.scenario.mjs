@@ -65,6 +65,49 @@ async function assertCompactLayout(control) {
   }
 }
 
+async function verifyRecommendedToFixed(control, target) {
+  const selector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="model-selector-button"]`
+  const fixedOption = `[data-testid="model-option-${target.name}"]`
+  await control.command('click', selector)
+  await control.command('waitFor', recommended, { visible: true })
+  await control.command('click', recommended)
+  await control.command('click', '[data-testid="model-power-setting-preset-astra-ultra"]')
+  await control.command('waitFor', '[data-testid="model-simple-header"]', { text: 'Ultra' })
+  await control.command('click', '[data-testid="model-advanced-toggle"]')
+  await control.command('waitFor', fixedOption, { visible: true })
+  await control.command('click', fixedOption)
+  await control.command('waitFor', selector, { text: target.label })
+  const label = (await control.command('getText', selector)).trim()
+  assert.ok(
+    label.includes('高'),
+    `Fixed ${target.name} must normalize Ultra to its Catalog-supported High level`
+  )
+  assert.ok(
+    !label.includes('Ultra'),
+    `Fixed ${target.name} must not retain the recommended preset Ultra level`
+  )
+  await control.command('press', 'body', { key: 'Escape' })
+
+  await reloadMainWindow(
+    control,
+    `The fixed ${target.name} Catalog reasoning selection did not survive reload`
+  )
+  await control.command('waitFor', selector, { text: target.label })
+  const persistedLabel = (await control.command('getText', selector)).trim()
+  assert.ok(
+    persistedLabel.includes('高') && !persistedLabel.includes('Ultra'),
+    `Persisted ${target.name} must keep the normalized High level`
+  )
+  await control.command('click', selector)
+  await ensureModelOptionVisible(control, `model-option-${target.name}`, selector, null)
+  assert.equal(
+    await control.command('getAttribute', fixedOption, { value: 'aria-checked' }),
+    'true',
+    `Persisted ${target.name} must remain a fixed-model selection`
+  )
+  await control.command('press', 'body', { key: 'Escape' })
+}
+
 export function createDesktopScenario({ captureScreenshot }) {
   let cloudEnvironment
   const createdIds = []
@@ -276,6 +319,10 @@ export function createDesktopScenario({ captureScreenshot }) {
         await control.command('click', `${cloudSource} > [data-model-preset="quality"]`)
         await control.command('press', 'body', { key: 'Escape' })
         await control.command('waitFor', selector, { text: models[3].label })
+
+        for (const target of [models[3], models[2]]) {
+          await verifyRecommendedToFixed(control, target)
+        }
 
         // Exercise longer English copy and the dark palette in a constrained desktop window.
         await control.command('navigate', 'body', { value: '/settings/general' })
