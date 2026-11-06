@@ -4,408 +4,306 @@
   const CENTER_X = 600
   const CENTER_Y = 340
   const FORMATION_DURATION_MS = 5600
-  const STRAND_DENSITY = 1.5
+  const STRAND_DENSITY = 2.5
   const PLAYBACK_SPEED = 1
   const BREATHING_SCALE = 1.018
   const GLOW_MARGIN = 16
   const FOOTER_GAP = 8
-  const STREAM_COUNT = Math.round(32 + STRAND_DENSITY * 16)
-  const TAU = Math.PI * 2
-
-  const clamp = value => Math.max(0, Math.min(1, value))
-  const mix = (start, end, amount) => start + (end - start) * amount
-  const ease = value => 0.5 - 0.5 * Math.cos(Math.PI * clamp(value))
-  const noise = value => (((Math.sin(value * 127.1 + 311.7) * 43758.5453) % 1) + 1) % 1
-
-  function smooth(start, end, value) {
-    const amount = clamp((value - start) / (end - start))
-    return amount * amount * (3 - 2 * amount)
+  const clamp = n => Math.max(0, Math.min(1, n))
+  const mix = (a, b, t) => a + (b - a) * t
+  const ease = n => {
+    n = clamp(n)
+    return n * n * (3 - 2 * n)
   }
-
-  function createLogoPath() {
-    const path = new Path2D()
-    const contours = window.WEWORK_STARTUP_BRAND_CONTOURS
-    const coordinates = contours.flatMap(contour => contour.points)
-    const xs = coordinates.map(([x]) => x)
-    const ys = coordinates.map(([, y]) => y)
-    const originX = (Math.min(...xs) + Math.max(...xs)) / 2
-    const originY = (Math.min(...ys) + Math.max(...ys)) / 2
-    contours.forEach(contour => {
-      const points = contour.points.map(([x, y]) => ({
-        x: (x - originX) * 1.12,
-        y: (y - originY) * 1.12,
-      }))
-      const first = points[0]
-      path.moveTo(first.x, first.y)
-      points.slice(1).forEach(point => path.lineTo(point.x, point.y))
-      path.closePath()
-    })
-    return {
-      path,
-      halfWidth: ((Math.max(...xs) - Math.min(...xs)) / 2) * 1.12,
-      halfHeight: ((Math.max(...ys) - Math.min(...ys)) / 2) * 1.12,
-    }
+  const ramp = (a, b, t) => ease((t - a) / (b - a))
+  const noise = n => {
+    const v = Math.sin(n * 91.77 + 41.3) * 16387.31
+    return v - Math.floor(v)
   }
-
-  function createCanvas(width, height) {
-    const canvas = document.createElement('canvas')
-    canvas.width = width
-    canvas.height = height
-    return canvas
+  const isDark = () => document.documentElement.dataset.theme === 'dark'
+  const source = window.WEWORK_STARTUP_BRAND_CONTOURS
+  const all = source.flatMap(p => p.points)
+  const center = {
+    x: (Math.min(...all.map(p => p[0])) + Math.max(...all.map(p => p[0]))) / 2,
+    y: (Math.min(...all.map(p => p[1])) + Math.max(...all.map(p => p[1]))) / 2,
   }
-
-  function contextFor(canvas, options) {
-    const context = canvas.getContext('2d', options)
-    if (!context) throw new Error('The startup brand animation requires a 2D canvas')
-    return context
-  }
-
-  function createSilhouetteTest(logoPath) {
-    const mask = createCanvas(600, 600)
-    const context = contextFor(mask, { willReadFrequently: true })
-    context.translate(300, 300)
-    context.fill(logoPath)
-    const pixels = context.getImageData(0, 0, 600, 600).data
-    return (x, y) => {
-      const column = Math.round(x + 300)
-      const row = Math.round(y + 300)
-      return (
-        column >= 0 &&
-        column < 600 &&
-        row >= 0 &&
-        row < 600 &&
-        pixels[(row * 600 + column) * 4 + 3] > 180
-      )
-    }
-  }
-
-  function measurePath(points) {
-    const distances = [0]
-    for (let index = 1; index < points.length; index++) {
-      const previous = points[index - 1]
-      const point = points[index]
-      distances.push(distances[index - 1] + Math.hypot(point.x - previous.x, point.y - previous.y))
-    }
-    return { points, distances, length: distances[distances.length - 1] }
-  }
-
-  function pathPosition(path, fraction) {
-    const distance = clamp(fraction) * path.length
-    let low = 0
-    let high = path.points.length - 1
-    while (low + 1 < high) {
-      const middle = (low + high) >> 1
-      if (path.distances[middle] < distance) low = middle
-      else high = middle
-    }
-    const amount =
-      (distance - path.distances[low]) / (path.distances[high] - path.distances[low] || 1)
-    return {
-      x: mix(path.points[low].x, path.points[high].x, amount),
-      y: mix(path.points[low].y, path.points[high].y, amount),
-    }
-  }
-
-  function pathSection(path, start, end) {
-    const points = []
-    const count = Math.max(2, Math.ceil(((end - start) * path.length) / 4))
-    for (let index = 0; index <= count; index++) {
-      points.push(pathPosition(path, mix(start, end, index / count)))
-    }
-    return points
-  }
-
-  function collectFiberSegments(inside, family, row, fibers) {
-    let points = []
-    const keepSegment = () => {
-      if (points.length > 3) {
-        fibers.push({
-          points,
-          family,
-          birth: 1.2 + noise(fibers.length + 3) * 1.8,
-          grow: 0.65 + noise(fibers.length + 9) * 0.8,
-        })
+  const contours = source.map(c =>
+    c.points.map(([x, y]) => ({ x: (x - center.x) * 1.12, y: (y - center.y) * 1.12 }))
+  )
+  function roundedPath(points, target = new Path2D()) {
+    const corners = points.map((p, i) => {
+      const a = points[(i + points.length - 1) % points.length],
+        b = points[(i + 1) % points.length]
+      const l = Math.hypot(p.x - a.x, p.y - a.y) || 1,
+        r = Math.hypot(b.x - p.x, b.y - p.y) || 1,
+        k = Math.min(2.8, l / 2, r / 2)
+      return {
+        p,
+        a: { x: p.x - ((p.x - a.x) * k) / l, y: p.y - ((p.y - a.y) * k) / l },
+        b: { x: p.x + ((b.x - p.x) * k) / r, y: p.y + ((b.y - p.y) * k) / r },
       }
-      points = []
-    }
-    for (let x = -252; x <= 252; x += 2.5) {
-      const y =
-        -332 + row * 5.6 + x * (family ? -0.55 : 0.55) + Math.sin(x * 0.025 + row * 0.32) * 2.6
-      if (inside(x, y)) points.push({ x, y })
-      else keepSegment()
-    }
-    keepSegment()
-  }
-
-  function createFibers(logoPath) {
-    const inside = createSilhouetteTest(logoPath)
-    const fibers = []
-    for (let family = 0; family < 2; family++) {
-      for (let row = 0; row < 118; row++) {
-        collectFiberSegments(inside, family, row, fibers)
-      }
-    }
-    return fibers
-  }
-
-  function cubicPoint(start, controlA, controlB, end, amount) {
-    const inverse = 1 - amount
-    const startWeight = inverse * inverse * inverse
-    const firstWeight = 3 * inverse * inverse * amount
-    const secondWeight = 3 * inverse * amount * amount
-    const endWeight = amount * amount * amount
-    return {
-      x:
-        startWeight * start.x +
-        firstWeight * controlA.x +
-        secondWeight * controlB.x +
-        endWeight * end.x,
-      y:
-        startWeight * start.y +
-        firstWeight * controlA.y +
-        secondWeight * controlB.y +
-        endWeight * end.y,
-    }
-  }
-
-  function chooseFiber(fibers, direction, index) {
-    const alignment = point =>
-      (point.x * direction.x + point.y * direction.y) / (Math.hypot(point.x, point.y) || 1)
-    const candidates = fibers.filter(fiber => {
-      const first = fiber.points[0]
-      const last = fiber.points[fiber.points.length - 1]
-      return Math.max(alignment(first), alignment(last)) > 0.65
     })
-    return candidates[Math.floor(noise(index * 3 + 4) * candidates.length)]
-  }
-
-  function orientFiber(fiber, direction) {
-    const points = [...fiber.points]
-    const first = points[0]
-    const last = points[points.length - 1]
-    if (
-      first.x * direction.x + first.y * direction.y <
-      last.x * direction.x + last.y * direction.y
-    ) {
-      points.reverse()
+    target.moveTo(corners[0].a.x, corners[0].a.y)
+    for (const { p, a, b } of corners) {
+      target.lineTo(a.x, a.y)
+      target.quadraticCurveTo(p.x, p.y, b.x, b.y)
     }
-    return points
+    target.closePath()
+    return target
   }
-
-  function createIncomingRoute(points, direction, index) {
-    const tangent = { x: -direction.y, y: direction.x }
-    const target = points[0]
-    const radius = Math.min(
-      660 / Math.max(0.001, Math.abs(direction.x)),
-      410 / Math.max(0.001, Math.abs(direction.y))
-    )
-    const start = { x: direction.x * radius, y: direction.y * radius }
-    const curl = (index % 2 ? 1 : -1) * (80 + noise(index + 1) * 100)
-    const controlA = {
-      x: mix(start.x, target.x, 0.43) + tangent.x * curl,
-      y: mix(start.y, target.y, 0.43) + tangent.y * curl,
-    }
-    const next = points[1]
-    const along = Math.hypot(next.x - target.x, next.y - target.y)
-    const controlB = {
-      x: target.x - ((next.x - target.x) / along) * 88,
-      y: target.y - ((next.y - target.y) / along) * 88,
-    }
-    const route = []
-    for (let step = 0; step <= 80; step++) {
-      route.push(cubicPoint(start, controlA, controlB, target, step / 80))
-    }
-    return route
+  const mark = new Path2D()
+  contours.forEach(p => roundedPath(p, mark))
+  function measure(points, closed = false) {
+    const p = closed ? [...points, points[0]] : points
+    const d = [0]
+    for (let i = 1; i < p.length; i++)
+      d.push(d[i - 1] + Math.hypot(p[i].x - p[i - 1].x, p[i].y - p[i - 1].y))
+    return { p, d, length: d.at(-1) }
   }
-
-  function createStream(fibers, index) {
-    const group = index % 8
-    const angle = (group * TAU) / 8 + (noise(index + 10) - 0.5) * 0.32
-    const direction = { x: Math.cos(angle), y: Math.sin(angle) }
-    const fiber = chooseFiber(fibers, direction, index)
-    const points = orientFiber(fiber, direction)
-    const route = createIncomingRoute(points, direction, index)
-    const incomingLength = measurePath(route).length
-    route.push(...points.slice(1))
-    const path = measurePath(route)
-    const birth = 0.03 + Math.floor(index / 8) * 0.28 + (group % 2) * 0.1 + noise(index + 12) * 0.08
-    const travel = 1.95 + noise(index + 20) * 0.4
-    const arrivalFraction = incomingLength / path.length
-    const arrivalProgress = Math.acos(1 - 2 * arrivalFraction) / Math.PI
-    const arrival = birth + travel * arrivalProgress
-    const stream = {
-      path,
-      birth,
-      travel,
-      arrivalFraction,
-      arrival,
-      reversed: points[0] !== fiber.points[0],
+  function at(path, t) {
+    const dist = clamp(t) * path.length
+    let lo = 0,
+      hi = path.p.length - 1
+    while (lo + 1 < hi) {
+      const m = (lo + hi) >> 1
+      if (path.d[m] < dist) lo = m
+      else hi = m
     }
-    if (!fiber.owner || stream.arrival < fiber.owner.arrival) fiber.owner = stream
-    return stream
+    const n = (dist - path.d[lo]) / (path.d[hi] - path.d[lo] || 1)
+    return { x: mix(path.p[lo].x, path.p[hi].x, n), y: mix(path.p[lo].y, path.p[hi].y, n) }
   }
-
-  function prepareFiber(fiber, index) {
-    fiber.path = measurePath(fiber.points)
-    fiber.reversePath = measurePath([...fiber.points].reverse())
-    fiber.brightness = 0.3 + noise(index + 7) * 0.38
-    fiber.ink = new Path2D()
-    fiber.ink.moveTo(fiber.points[0].x, fiber.points[0].y)
-    fiber.points.slice(1).forEach(point => fiber.ink.lineTo(point.x, point.y))
-  }
-
-  function stroke(context, points, color, width) {
+  const sampled = contours.map((p, i) => {
+    const m = measure(p, true),
+      n = i === 0 ? 280 : i === 1 ? 90 : 64
+    return Array.from({ length: n }, (_, j) => at(m, j / n))
+  })
+  function stroke(ctx, points, color, width = 1) {
     if (points.length < 2) return
-    context.beginPath()
-    context.moveTo(points[0].x, points[0].y)
-    for (let index = 1; index < points.length; index++) {
-      context.lineTo(points[index].x, points[index].y)
+    ctx.beginPath()
+    ctx.moveTo(points[0].x, points[0].y)
+    points.slice(1).forEach(p => ctx.lineTo(p.x, p.y))
+    ctx.strokeStyle = color
+    ctx.lineWidth = width
+    ctx.stroke()
+  }
+  function section(path, a, b) {
+    const n = Math.max(2, Math.ceil(((b - a) * path.length) / 5))
+    return Array.from({ length: n + 1 }, (_, i) => at(path, mix(a, b, i / n)))
+  }
+  function cubic(a, b, c, d, t) {
+    const u = 1 - t
+    return {
+      x: u * u * u * a.x + 3 * u * u * t * b.x + 3 * u * t * t * c.x + t * t * t * d.x,
+      y: u * u * u * a.y + 3 * u * u * t * b.y + 3 * u * t * t * c.y + t * t * t * d.y,
     }
-    context.strokeStyle = color
-    context.lineWidth = width
-    context.stroke()
   }
 
-  function paintBackdrop(context, canvas, time, logo, viewport) {
-    const { width, height } = canvas
-    context.setTransform(1, 0, 0, 1, 0, 0)
-    context.clearRect(0, 0, width, height)
-    const glow = GLOW_MARGIN * viewport.pixelRatio
-    const belowCenter = viewport.footerTop - height / 2 - glow - FOOTER_GAP * viewport.pixelRatio
-    const fit = Math.max(
-      0,
-      Math.min(
-        width / WIDTH,
-        height / HEIGHT,
-        (width / 2 - glow) / (logo.halfWidth * BREATHING_SCALE),
-        (height / 2 - glow) / (logo.halfHeight * BREATHING_SCALE),
-        belowCenter / (logo.halfHeight * BREATHING_SCALE)
+  function blue(ctx) {
+    const dark = isDark(),
+      g = ctx.createLinearGradient(-220, -180, 220, 210)
+    g.addColorStop(0, dark ? '#74d5ff' : '#369fdf')
+    g.addColorStop(0.48, dark ? '#159aff' : '#157acb')
+    g.addColorStop(1, dark ? '#0873d9' : '#0860b4')
+    return g
+  }
+
+  function firstContactDistance(path) {
+    for (let i = 1; i < path.p.length; i++) {
+      const a = path.p[i - 1],
+        b = path.p[i]
+      const dx = b.x - a.x,
+        dy = b.y - a.y
+      let contact = Infinity
+      for (const contour of contours) {
+        for (let j = 0; j < contour.length; j++) {
+          const c = contour[j],
+            d = contour[(j + 1) % contour.length]
+          const ex = d.x - c.x,
+            ey = d.y - c.y
+          const determinant = dx * ey - dy * ex
+          if (Math.abs(determinant) < 1e-8) continue
+          const cx = c.x - a.x,
+            cy = c.y - a.y
+          const t = (cx * ey - cy * ex) / determinant
+          const u = (cx * dy - cy * dx) / determinant
+          if (t >= 0 && t <= 1 && u >= 0 && u <= 1) contact = Math.min(contact, t)
+        }
+      }
+      if (Number.isFinite(contact)) return path.d[i - 1] + contact * (path.d[i] - path.d[i - 1])
+    }
+    return path.length
+  }
+
+  const routes = Array.from({ length: Math.round(24 * STRAND_DENSITY) }, (_, i) => {
+    const shape = i % 9 < 6 ? 0 : i % 9 < 8 ? 1 : 2,
+      p = sampled[shape],
+      index = Math.floor(noise(i + 5) * p.length),
+      target = p[index],
+      angle = ((i % 8) * Math.PI) / 4 + (noise(i + 3) - 0.5) * 0.3
+    const a = { x: Math.cos(angle) * 790, y: Math.sin(angle) * 580 },
+      v = { x: -Math.sin(angle), y: Math.cos(angle) },
+      curl = (i % 2 ? 1 : -1) * (65 + noise(i) * 85)
+    const b = { x: mix(a.x, target.x, 0.5) + v.x * curl, y: mix(a.y, target.y, 0.45) + v.y * curl },
+      c = { x: target.x + Math.cos(angle) * 90, y: target.y + Math.sin(angle) * 90 }
+    const incoming = Array.from({ length: 64 }, (_, j) => cubic(a, b, c, target, j / 63))
+    const tail = Array.from(
+      { length: Math.floor(p.length * 0.32) },
+      (_, j) => p[(index + j) % p.length]
+    )
+    const path = measure([...incoming, ...tail])
+    return {
+      path,
+      arrival: firstContactDistance(measure(incoming)) / path.length,
+      birth: Math.floor(i / 8) * 0.17 + (i % 8) * 0.035,
+      travel: 2.25 + noise(i + 41) * 0.45,
+    }
+  })
+  const outlines = contours.map(p => measure(p, true))
+  const stars = Array.from({ length: Math.round(44 * STRAND_DENSITY) }, (_, i) => ({
+    x: (noise(i * 3 + 300) - 0.5) * 1320,
+    y: (noise(i * 3 + 301) - 0.5) * 820,
+    r: 0.35 + noise(i * 3 + 302) * 0.85,
+    alpha: 0.12 + noise(i + 700) * 0.22,
+  }))
+  function paintStars(ctx, t, dark) {
+    const fade = 1 - ramp(3.2, 5.2, t)
+    if (fade <= 0) return
+    stars.forEach(star => {
+      const drift = 1 - ramp(0, 4.8, t) * 0.11
+      ctx.beginPath()
+      ctx.arc(star.x * drift, star.y * drift, star.r, 0, Math.PI * 2)
+      ctx.fillStyle = `rgba(${dark ? '151,201,255' : '55,105,160'},${fade * star.alpha * (dark ? 1 : 0.55)})`
+      ctx.fill()
+    })
+  }
+  function paintComet(ctx, route, index, t, dark) {
+    const elapsed = t - route.birth
+    if (elapsed <= 0 || elapsed > route.travel + 0.55) return
+    const head = ease(elapsed / route.travel),
+      tail = Math.max(0, head - (0.25 + noise(index + 80) * 0.12))
+    const points = Array.from({ length: 33 }, (_, i) => at(route.path, mix(tail, head, i / 32)))
+    const first = points[0],
+      tip = points.at(-1),
+      fade = ramp(0, 0.22, elapsed) * (1 - ramp(route.travel, route.travel + 0.55, elapsed))
+    const rgb = dark ? '102,180,255' : '27,115,197',
+      hot = dark ? '230,249,255' : '106,200,245'
+    const gradient = ctx.createLinearGradient(first.x, first.y, tip.x + 0.001, tip.y + 0.001)
+    gradient.addColorStop(0, `rgba(${rgb},0)`)
+    gradient.addColorStop(0.5, `rgba(${rgb},${fade * 0.22})`)
+    gradient.addColorStop(0.86, `rgba(${rgb},${fade * 0.7})`)
+    gradient.addColorStop(1, `rgba(${hot},${fade * 0.95})`)
+    const size = index % 7 === 0 ? 2.8 : 1.75
+    for (let i = 1; i < points.length; i++)
+      stroke(
+        ctx,
+        [points[i - 1], points[i]],
+        gradient,
+        0.12 + size * Math.pow(i / (points.length - 1), 1.8)
       )
-    )
-    // Status and recovery controls take precedence when they cover the full-window center.
-    if (fit === 0) return false
-    context.setTransform(fit, 0, 0, fit, (width - WIDTH * fit) / 2, (height - HEIGHT * fit) / 2)
-    const aura = context.createRadialGradient(CENTER_X, CENTER_Y, 30, CENTER_X, 310, 400)
-    aura.addColorStop(0, `rgba(12, 59, 126, ${0.08 + 0.15 * smooth(1, 3, time)})`)
-    aura.addColorStop(1, 'rgba(5, 7, 13, 0)')
-    context.fillStyle = aura
-    context.fillRect(0, 0, WIDTH, HEIGHT)
-    return true
-  }
-
-  function paintMaterial(context, logoPath, time) {
-    const solid = smooth(3.25, 4.7, time)
-    context.save()
-    context.translate(CENTER_X, CENTER_Y)
-    const material = context.createLinearGradient(-220, -210, 220, 210)
-    material.addColorStop(0, '#74d5ff')
-    material.addColorStop(0.32, '#149aff')
-    material.addColorStop(0.72, '#0867d4')
-    material.addColorStop(1, '#43b9ff')
-    context.globalAlpha = solid
-    context.fillStyle = material
-    context.shadowBlur = 12
-    context.shadowColor = '#168eff'
-    context.fill(logoPath)
-    context.restore()
-  }
-
-  function paintFiber(context, fiber, time, settle) {
-    const owner = fiber.owner
-    const amount = owner
-      ? clamp(
-          (ease((time - owner.birth) / owner.travel) - owner.arrivalFraction) /
-            (1 - owner.arrivalFraction)
-        )
-      : ease((time - fiber.birth) / fiber.grow)
-    if (amount <= 0) return
-    const brightness = fiber.brightness * (1 - settle * 0.94)
-    const tint = fiber.family ? '118, 186, 255' : '212, 242, 255'
-    const color = `rgba(${tint}, ${brightness})`
-    const width = fiber.family ? 0.85 : 1
-    if (amount < 1) {
-      const path = owner?.reversed ? fiber.reversePath : fiber.path
-      stroke(context, pathSection(path, 0, amount), color, width)
-      return
+    const headFade =
+      fade *
+      (1 -
+        ramp(route.arrival - 48 / route.path.length, route.arrival - 14 / route.path.length, head))
+    if (headFade <= 0) return
+    const radius = size * (dark ? 4.2 : 3.2),
+      halo = ctx.createRadialGradient(tip.x, tip.y, 0, tip.x, tip.y, radius)
+    halo.addColorStop(0, `rgba(${hot},${headFade * 0.8})`)
+    halo.addColorStop(0.23, `rgba(${rgb},${headFade * (dark ? 0.45 : 0.18)})`)
+    halo.addColorStop(1, `rgba(${rgb},0)`)
+    ctx.beginPath()
+    ctx.arc(tip.x, tip.y, radius, 0, Math.PI * 2)
+    ctx.fillStyle = halo
+    ctx.fill()
+    ctx.beginPath()
+    ctx.arc(tip.x, tip.y, size * 0.88, 0, Math.PI * 2)
+    ctx.fillStyle = `rgba(${dark ? '237,252,255' : '32,129,211'},${headFade * 0.96})`
+    ctx.fill()
+    if (index % 7 === 0) {
+      ctx.beginPath()
+      ctx.arc(tip.x, tip.y, size * 0.38, 0, Math.PI * 2)
+      ctx.fillStyle = `rgba(255,255,255,${headFade})`
+      ctx.fill()
     }
-    context.strokeStyle = color
-    context.lineWidth = width
-    context.stroke(fiber.ink)
+  }
+  function drawLine(ctx, t) {
+    const fill = ramp(3.05, 4.9, t),
+      dark = isDark()
+    paintStars(ctx, t, dark)
+    ctx.globalAlpha = fill
+    ctx.fillStyle = blue(ctx)
+    ctx.shadowBlur = dark ? 10 : 0
+    ctx.shadowColor = '#168eff'
+    ctx.fill(mark)
+    ctx.shadowBlur = 0
+    ctx.globalAlpha = 1
+    if (t < 5.1) {
+      for (let i = 0; i < 3; i++) {
+        const p = ramp(1.05 + i * 0.23, 3.6 + i * 0.22, t),
+          m = outlines[i]
+        stroke(
+          ctx,
+          section(m, 0, p),
+          `rgba(${dark ? '113,191,255' : '26,101,176'},${0.72 * (1 - fill)})`,
+          1.05
+        )
+      }
+      ctx.save()
+      ctx.clip(mark)
+      ctx.globalAlpha = (1 - fill) * ramp(1.2, 2.8, t)
+      for (let i = -70; i < 70; i++) {
+        const yy = i * 7.2
+        stroke(
+          ctx,
+          [
+            { x: -320, y: yy - 115 },
+            { x: 320, y: yy + 115 },
+          ],
+          dark ? (i % 3 === 0 ? '#a8d9ff' : '#3886ca') : i % 3 === 0 ? '#438ec9' : '#9cbcd9',
+          i % 3 === 0 ? 0.8 : 0.45
+        )
+      }
+      ctx.restore()
+      routes.forEach((r, i) => paintComet(ctx, r, i, t, dark))
+    }
+    ctx.globalAlpha = 1
   }
 
-  function paintStream(context, stream, index, time) {
-    const elapsed = time - stream.birth
-    if (elapsed <= 0 || elapsed >= stream.travel + 0.4) return
-    const head = ease(elapsed / stream.travel)
-    const tail = mix(
-      Math.max(0, head - 0.62),
-      stream.arrivalFraction,
-      smooth(stream.arrival, stream.birth + stream.travel + 0.12, time)
-    )
-    if (tail >= head) return
-    const points = pathSection(stream.path, tail, head)
-    const start = points[0]
-    const end = points[points.length - 1]
-    const fade =
-      smooth(0, 0.24, elapsed) * (1 - smooth(stream.travel, stream.travel + 0.4, elapsed))
-    const gradient = context.createLinearGradient(start.x, start.y, end.x + 0.01, end.y + 0.01)
-    gradient.addColorStop(0, 'rgba(69, 138, 255, 0)')
-    gradient.addColorStop(0.28, `rgba(68, 150, 255, ${fade * 0.35})`)
-    gradient.addColorStop(0.72, `rgba(157, 213, 255, ${fade * 0.72})`)
-    gradient.addColorStop(1, `rgba(226, 248, 255, ${fade * 0.92})`)
-    stroke(context, points, gradient, index % 5 === 0 ? 1.8 : 1.15)
-  }
-
-  function paintFilaments(context, logoPath, fibers, streams, time) {
-    context.setTransform(1, 0, 0, 1, 0, 0)
-    context.clearRect(0, 0, WIDTH, HEIGHT)
-    context.save()
-    context.translate(CENTER_X, CENTER_Y)
-    context.lineCap = 'round'
-    context.lineJoin = 'round'
-    const woven = smooth(0.7, 2, time)
-    const settle = smooth(3.65, 4.9, time)
-    context.strokeStyle = `rgba(94, 180, 255, ${woven * (0.09 + 0.12 * (1 - settle))})`
-    context.lineWidth = 0.8
-    context.stroke(logoPath)
-    fibers.forEach(fiber => paintFiber(context, fiber, time, settle))
-    streams.forEach((stream, index) => paintStream(context, stream, index, time))
-    const ignition = Math.exp(-Math.pow((time - 3.65) / 0.4, 2))
-    const solid = smooth(3.25, 4.7, time)
-    context.strokeStyle = `rgba(209, 242, 255, ${ignition * 0.7 + solid * 0.18})`
-    context.lineWidth = 1.3 + ignition * 1.5
-    context.stroke(logoPath)
-    context.restore()
-  }
-
-  function compositeGlow(context, layer) {
-    context.save()
-    context.globalCompositeOperation = 'screen'
-    context.globalAlpha = 0.8
-    context.filter = 'blur(8px)'
-    context.drawImage(layer, 0, 0)
-    context.filter = 'blur(2px)'
-    context.drawImage(layer, 0, 0)
-    context.globalAlpha = 1
-    context.filter = 'none'
-    context.drawImage(layer, 0, 0)
-    context.restore()
-  }
-
+  const smooth = ramp
   function createRenderer(canvas, viewport) {
-    const context = contextFor(canvas)
-    const logo = createLogoPath()
-    const logoPath = logo.path
-    const fibers = createFibers(logoPath)
-    const streams = Array.from({ length: STREAM_COUNT }, (_, index) => createStream(fibers, index))
-    fibers.forEach(prepareFiber)
-    const filamentLayer = createCanvas(WIDTH, HEIGHT)
-    const ink = contextFor(filamentLayer)
+    const context = canvas.getContext('2d')
+    if (!context) throw new Error('The startup brand animation requires a 2D canvas')
+    const points = contours.flat()
+    const halfWidth = (Math.max(...points.map(p => p.x)) - Math.min(...points.map(p => p.x))) / 2
+    const halfHeight = (Math.max(...points.map(p => p.y)) - Math.min(...points.map(p => p.y))) / 2
     return time => {
-      if (!paintBackdrop(context, canvas, time, logo, viewport)) return
-      paintMaterial(context, logoPath, time)
-      paintFilaments(ink, logoPath, fibers, streams, time)
-      compositeGlow(context, filamentLayer)
+      const { width, height } = canvas
+      context.setTransform(1, 0, 0, 1, 0, 0)
+      context.clearRect(0, 0, width, height)
+      const glow = GLOW_MARGIN * viewport.pixelRatio
+      const belowCenter = viewport.footerTop - height / 2 - glow - FOOTER_GAP * viewport.pixelRatio
+      const scale = Math.max(
+        0,
+        Math.min(
+          width / WIDTH,
+          height / HEIGHT,
+          (width / 2 - glow) / (halfWidth * BREATHING_SCALE),
+          (height / 2 - glow) / (halfHeight * BREATHING_SCALE),
+          belowCenter / (halfHeight * BREATHING_SCALE)
+        )
+      )
+      if (scale === 0) return
+      context.setTransform(
+        scale,
+        0,
+        0,
+        scale,
+        (width - WIDTH * scale) / 2,
+        (height - HEIGHT * scale) / 2
+      )
+      context.translate(CENTER_X, CENTER_Y)
+      context.lineCap = 'round'
+      context.lineJoin = 'round'
+      drawLine(context, time)
     }
   }
 
