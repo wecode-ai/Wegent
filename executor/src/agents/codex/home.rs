@@ -12,11 +12,20 @@ use super::strip_wework_browser_instructions;
 
 pub(super) const CODEX_HOME_ENV: &str = "CODEX_HOME";
 pub(super) const WEGENT_CODEX_HOME_ENV: &str = "WEGENT_CODEX_HOME";
+pub(super) const WEGENT_NATIVE_CODEX_HOME_ENV: &str = "WEGENT_NATIVE_CODEX_HOME";
 pub(super) const WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV: &str = "WEWORK_CODEX_SUBSCRIPTION_ENABLED";
+
+#[path = "home_auth.rs"]
+mod auth;
+pub(super) use auth::acquire_shared_auth;
+
+#[cfg(test)]
+#[path = "home_auth_tests.rs"]
+mod auth_tests;
 
 /// Returns whether the local Codex subscription is opted in via the desktop
 /// preference threaded through the executor environment.
-fn codex_subscription_enabled() -> bool {
+pub(super) fn codex_subscription_enabled() -> bool {
     env::var_os(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV)
         .map(|value| value != "false")
         .unwrap_or(true)
@@ -31,14 +40,28 @@ pub(crate) fn wework_codex_home() -> PathBuf {
 }
 
 /// Creates and normalizes the isolated Codex home before app-server startup.
+#[cfg(test)]
 pub(super) fn prepare_wework_codex_home(codex_home: &Path) -> Result<(), String> {
+    prepare_wework_codex_home_with_auth(codex_home, codex_subscription_enabled())
+}
+
+/// Creates and normalizes the isolated Codex home with an explicit auth mode.
+///
+/// The shared app-server can outlive a transient ChatGPT cloud-config failure.
+/// When that happens the executor restarts the app-server in router-only mode,
+/// removing the managed ChatGPT auth link so WeWork and local models remain
+/// usable while the subscription account is offline.
+pub(super) fn prepare_wework_codex_home_with_auth(
+    codex_home: &Path,
+    auth_enabled: bool,
+) -> Result<(), String> {
     fs::create_dir_all(codex_home).map_err(|error| {
         format!(
             "failed to create Codex home {}: {error}",
             codex_home.display()
         )
     })?;
-    link_user_codex_auth(codex_home)?;
+    sync_user_codex_auth(codex_home, auth_enabled)?;
     normalize_wework_codex_config(codex_home)?;
     crate::local::plugin_creator::install(codex_home)
 }
@@ -224,44 +247,12 @@ fn sync_parent_directory(_parent: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-fn link_user_codex_auth(codex_home: &Path) -> Result<(), String> {
+fn sync_user_codex_auth(codex_home: &Path, auth_enabled: bool) -> Result<(), String> {
     let target = codex_home.join("auth.json");
     let native_source = user_codex_auth_path();
 
-    if !codex_subscription_enabled() {
-        if let Ok(metadata) = fs::symlink_metadata(&target) {
-            if metadata.file_type().is_symlink() {
-                let linked_source = fs::read_link(&target).ok().map(|path| {
-                    if path.is_absolute() {
-                        path
-                    } else {
-                        codex_home.join(path)
-                    }
-                });
-                let managed = has_managed_auth_marker(codex_home)
-                    || native_source
-                        .as_ref()
-                        .is_some_and(|source| linked_source.as_ref() == Some(source));
-                if managed {
-                    fs::remove_file(&target).map_err(|error| {
-                        format!(
-                            "failed to remove disabled Codex auth link {}: {error}",
-                            target.display()
-                        )
-                    })?;
-                    remove_managed_auth_marker(codex_home)?;
-                }
-            } else if has_managed_auth_marker(codex_home) {
-                fs::remove_file(&target).map_err(|error| {
-                    format!(
-                        "failed to remove disabled Codex auth copy {}: {error}",
-                        target.display()
-                    )
-                })?;
-                remove_managed_auth_marker(codex_home)?;
-            }
-        }
-        return Ok(());
+    if !auth_enabled {
+        return remove_managed_codex_auth(codex_home);
     }
 
     let Some(source) = native_source.filter(|path| path.is_file()) else {
@@ -307,9 +298,52 @@ fn link_user_codex_auth(codex_home: &Path) -> Result<(), String> {
     write_managed_auth_marker(codex_home)
 }
 
+/// Removes only the auth link/copy managed by Wework. A user-managed auth file
+/// is intentionally preserved.
+pub(super) fn remove_managed_codex_auth(codex_home: &Path) -> Result<(), String> {
+    let target = codex_home.join("auth.json");
+    let native_source = user_codex_auth_path();
+    let Ok(metadata) = fs::symlink_metadata(&target) else {
+        return remove_managed_auth_marker(codex_home);
+    };
+
+    if metadata.file_type().is_symlink() {
+        let linked_source = fs::read_link(&target).ok().map(|path| {
+            if path.is_absolute() {
+                path
+            } else {
+                codex_home.join(path)
+            }
+        });
+        let managed = has_managed_auth_marker(codex_home)
+            || native_source
+                .as_ref()
+                .is_some_and(|source| linked_source.as_ref() == Some(source));
+        if managed {
+            fs::remove_file(&target).map_err(|error| {
+                format!(
+                    "failed to remove disabled Codex auth link {}: {error}",
+                    target.display()
+                )
+            })?;
+            remove_managed_auth_marker(codex_home)?;
+        }
+    } else if has_managed_auth_marker(codex_home) {
+        fs::remove_file(&target).map_err(|error| {
+            format!(
+                "failed to remove disabled Codex auth copy {}: {error}",
+                target.display()
+            )
+        })?;
+        remove_managed_auth_marker(codex_home)?;
+    }
+    Ok(())
+}
+
 fn user_codex_auth_path() -> Option<PathBuf> {
-    env::var_os(CODEX_HOME_ENV)
+    env::var_os(WEGENT_NATIVE_CODEX_HOME_ENV)
         .filter(|value| !value.is_empty())
+        .or_else(|| env::var_os(CODEX_HOME_ENV).filter(|value| !value.is_empty()))
         .map(PathBuf::from)
         .map(|home| home.join("auth.json"))
         .or_else(|| dirs::home_dir().map(|home| home.join(".codex").join("auth.json")))
