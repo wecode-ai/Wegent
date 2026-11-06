@@ -545,6 +545,7 @@ impl RuntimeWorkRpcHandler {
         Ok(())
     }
 
+    /// Run one admitted assessment with the primary identity model and its existing batch receipt.
     pub(super) async fn execute_coordination_assessment(
         &self,
         store: &LocalTaskStore,

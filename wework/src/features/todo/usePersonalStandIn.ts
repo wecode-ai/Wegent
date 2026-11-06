@@ -4,6 +4,7 @@ import { dequal } from 'dequal'
 import type { PersonalStandInSettings, StandInRole } from '@/api/personalStandIn'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 
+/** Load and save account settings on the selected Executor while preserving dirty drafts and conflicts. */
 export function usePersonalStandIn(
   services: WorkbenchServices,
   userId: number,

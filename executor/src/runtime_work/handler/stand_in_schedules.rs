@@ -181,6 +181,7 @@ impl RuntimeWorkRpcHandler {
         self.create_automation(json!({"automation":{"id":id,"version":0,"name":required(args,"title")?,"prompt":required(args,"message")?,"schedule":schedule,"timezone":args["timezone"].as_str().unwrap_or("UTC"),"enabled":true,"conversationMode":"independent","notificationPolicy":"attention_only","taskRequest":request,"taskPayload":{"runtime":"codex"},"continuationPayload":null}})).await
     }
 
+    /// Revalidate the scheduled identity and prepare work from its current device-owned settings.
     pub(super) async fn prepare_stand_in_schedule(
         &self,
         automation: &Automation,
@@ -254,6 +255,7 @@ impl RuntimeWorkRpcHandler {
         Ok(prepared)
     }
 
+    /// Continue only owned, available Codex work without answering pending native interactions.
     async fn prepare_scheduled_continuation(
         &self,
         mut payload: Value,

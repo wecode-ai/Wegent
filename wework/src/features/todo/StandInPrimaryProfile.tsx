@@ -24,6 +24,7 @@ import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
 
+/** Edit the primary identity and its connections on the explicitly selected Executor. */
 export function StandInPrimaryProfile({
   settings,
   saving,

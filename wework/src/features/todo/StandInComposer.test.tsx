@@ -48,6 +48,7 @@ const work = {
   ],
 } as RuntimeWorkListResponse
 
+/** Render a stateful configuration editor so model and workspace changes exercise real draft updates. */
 function Fixture({
   save,
   initial,

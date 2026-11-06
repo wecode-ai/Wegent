@@ -113,6 +113,7 @@ export function roleIncludesProject(role: StandInRole, project: StandInProjectRe
   return role.collaboration.enabled && roleSelectsProject(role, project)
 }
 
+/** Check the saved project scope and exclusions independently of source enablement. */
 export function roleSelectsProject(role: StandInRole, project: StandInProjectRef): boolean {
   const matches = (value: StandInProjectRef) =>
     value.id === project.id && value.store === project.store
@@ -126,6 +127,7 @@ export function standInRoleName(role: StandInRole, index: number, fallback: stri
   return role.name?.trim() || `${fallback}${index ? ` ${index + 1}` : ''}`
 }
 
+/** Remove one project from the saved scope while retaining all other grants and switches. */
 export function disconnectStandInProject(
   role: StandInRole,
   project: StandInProjectRef

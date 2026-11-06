@@ -11,6 +11,7 @@ fn proposal_key(user: i64, role: Option<&str>) -> String {
 }
 
 impl LocalTaskStore {
+    /// Read a pending proposal with legacy settings normalized for owner review.
     pub fn stand_in_proposal(
         &self,
         user: i64,
@@ -41,6 +42,7 @@ impl LocalTaskStore {
         )
     }
 
+    /// Validate a scoped proposal and optional owner continuation without enabling its settings.
     pub fn propose_stand_in_settings_with_continuation(
         &self,
         user: i64,

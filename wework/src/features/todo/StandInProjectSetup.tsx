@@ -3,6 +3,7 @@ import { ArrowUpRight, ChevronDown } from 'lucide-react'
 import { roleIncludesProject, standInRoleName, type StandInRole } from '@/api/personalStandIn'
 import { useTranslation } from '@/hooks/useTranslation'
 
+/** Select a reusable stand-in for a project and summarize its instructions and intake state. */
 export function StandInProjectSetup({
   project,
   roles,

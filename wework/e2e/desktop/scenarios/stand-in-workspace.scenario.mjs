@@ -44,6 +44,7 @@ async function clickVisibleControl(control, target) {
   })
 }
 
+/** Verify stand-in workspace configuration and native source-work approval boundaries. */
 export function createDesktopScenario({
   workspacePath,
   homePath,

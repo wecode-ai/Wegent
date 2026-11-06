@@ -94,6 +94,7 @@ pub(super) fn default_stand_in_model<'a>(catalog: &'a Value, runtime: &str) -> O
     defaults.next().is_none().then_some(selected)
 }
 
+/// Resolve the explicit primary Codex model or the unique native default without consulting agents.
 pub(super) fn background_stand_in_model(
     config: &Value,
     catalog: &Value,

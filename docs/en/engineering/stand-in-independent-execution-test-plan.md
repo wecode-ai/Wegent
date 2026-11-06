@@ -26,7 +26,7 @@ Reuse the desktop checkpoint runner. Only model responses are synthetic; Electro
 | Configure model and workspace | Select a local model and code directory, then receive source work                                                 | Model/workspace configuration and existing source-read, network, approval, rejection and escalation assertions hold; `stand-in-workspace`                |
 | Recover from errors           | Change settings concurrently before saving; cancel or retry; disconnect the selected device                       | Conflicts never overwrite edits; drafts remain; an offline device does not silently switch execution; existing desktop flows and focused component tests |
 
-Existing core CI shards 3, 8 and 7 invoke these checkpoints; no new jobs are introduced. Preserve main’s default-cloud-device component coverage and `stand-in-cloud-device` checkpoint. Rust persistence contracts cover same-name projects across stores, exclusions, paused sources, personal/primary references, malformed references and atomic rejection.
+All three checkpoints are registered in the existing core CI inventory and distributed by the shared Linux shard planner. Use the actual CI plan and checkpoint logs to identify their executing shards; no new jobs are introduced. Preserve main’s default-cloud-device component coverage and `stand-in-cloud-device` checkpoint. Rust persistence contracts cover same-name projects across stores, exclusions, paused sources, personal/primary references, malformed references and atomic rejection.
 
 ## Execution and cleanup
 

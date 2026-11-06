@@ -8,6 +8,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { TagEditor } from '@wegent/collaboration'
 import { StandInProcessingSettings } from './StandInProcessingSettings'
 
+/** Edit project intake scope, exclusions and handling policies for an independent stand-in. */
 export function StandInConnections({
   role,
   projects,

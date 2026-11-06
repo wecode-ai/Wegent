@@ -77,6 +77,7 @@ interface StandInSettingsPageProps {
   onRequestCreate?(): void
 }
 
+/** Resolve the creation device before opening an editor and preserve the unsaved-edit guard. */
 export function StandInSettingsPage({ ref, ...props }: StandInSettingsPageProps) {
   const cloud = useContext(CloudConnectionContext)
   const cloudCreation =
@@ -124,6 +125,7 @@ export function StandInSettingsPage({ ref, ...props }: StandInSettingsPageProps)
   )
 }
 
+/** Edit one device-owned stand-in draft and persist it only after an explicit save. */
 function StandInSettingsEditor({
   projects,
   services,

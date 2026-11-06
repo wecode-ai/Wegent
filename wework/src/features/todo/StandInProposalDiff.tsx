@@ -6,6 +6,7 @@ import { StandInProposalSources } from './StandInProposalSources'
 
 type Identity = Partial<StandInIdentity & StandInRole>
 
+/** Show owner-reviewable changes to a proposed identity configuration without applying them. */
 export function StandInProposalDiff({
   name,
   identity,

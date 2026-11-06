@@ -70,6 +70,7 @@ async function waitForExecution(control, issueId, timeoutMs, roleIds = ['default
   assert.fail(`Stand-in tasks did not complete: ${JSON.stringify(latest)}`)
 }
 
+/** Verify independent stand-in creation, historical binding migration and real assignment execution. */
 export async function createDesktopScenario({
   executorHome,
   uiTimeoutMs,

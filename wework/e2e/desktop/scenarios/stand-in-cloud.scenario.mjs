@@ -37,6 +37,7 @@ async function until(load, accept, timeoutMs, message) {
   assert.fail(`${message}: ${JSON.stringify(latest)}`)
 }
 
+/** Verify independent cloud stand-ins execute on their authorized remote Executor without local leaks. */
 export function createDesktopScenario({
   uiTimeoutMs,
   modelResponseTimeoutMs,

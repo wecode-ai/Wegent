@@ -26,6 +26,7 @@ vi.mock('@/features/automations/AutomationsPage', () => ({
   AutomationsPage: () => <div data-testid="calendar-editor-fixture" />,
 }))
 
+/** Provide device-owned settings with versioned saves and traps for obsolete agent lookups. */
 function fixture(overrides: Partial<PersonalStandInSettings> = {}) {
   let settings: PersonalStandInSettings = {
     userId: 7,

@@ -8,6 +8,7 @@ fn implicit_primary() -> Value {
     json!({"enabled":true,"prompt":"","preferences":""})
 }
 
+/// Normalize legacy identities and connection policies, reporting whether persistence is needed.
 pub(super) fn migrate_personal_settings(value: &mut Value) -> Result<bool, TaskRuntimeError> {
     let mut changed = false;
     let immediate = value["processing"]["mode"] != "silent";
@@ -198,6 +199,7 @@ fn bind_personal_device(personal: &mut Value, device: &str) -> bool {
     changed
 }
 
+/// Read the account document or project-era rows and normalize their legacy configuration.
 pub(super) fn read_personal(
     connection: &Connection,
     user: i64,
@@ -260,6 +262,7 @@ pub(super) fn write_personal(
     Ok(())
 }
 
+/// Check effective project intake grants after legacy references have been normalized.
 pub fn role_project_matches(role: &Value, project: &str, store: &str) -> bool {
     let connection = &role["collaboration"];
     let matches = |row: &Value| row["id"] == project && row["store"] == store;
@@ -294,6 +297,7 @@ fn validate_projects(value: &Value) -> bool {
     })
 }
 
+/// Validate a normalized independent role and its execution and connection settings.
 pub(super) fn validate_role(role: &Value, device: &str) -> Result<(), TaskRuntimeError> {
     let id = role["id"].as_str().unwrap_or_default();
     if id.is_empty()
@@ -332,6 +336,7 @@ fn valid_collaboration(source: &Value) -> bool {
         })
 }
 
+/// Validate source identities, handling policies and project scopes before persistence.
 fn validate_connections(role: &Value) -> Result<(), TaskRuntimeError> {
     if role
         .get("calendar")
@@ -514,6 +519,7 @@ impl LocalTaskStore {
         Ok(())
     }
 
+    /// Transactionally migrate stored settings and bind them to their owning Executor identity.
     pub fn personal_stand_in(&self, user: i64, device: &str) -> Result<Value, TaskRuntimeError> {
         let mut guard = self.connection()?;
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -569,6 +575,7 @@ impl LocalTaskStore {
         result
     }
 
+    /// Normalize and atomically save an account draft with version, connection and intake checks.
     pub(super) fn save_personal_stand_in_on(
         &self,
         connection: &Connection,

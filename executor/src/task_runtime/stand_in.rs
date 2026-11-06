@@ -46,6 +46,7 @@ impl LocalTaskStore {
         Ok(project_role(&role, user_id, project_id, kind))
     }
 
+    /// Save a project-addressed view into its owning personal document without duplicate persistence.
     pub fn save_stand_in_settings(
         &self,
         project_id: &str,

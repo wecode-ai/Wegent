@@ -41,6 +41,7 @@ impl RuntimeWorkRpcHandler {
     }
 }
 
+/// Map persistence errors to stable settings failures while retaining version-conflict recovery.
 pub(super) fn settings_error(error: crate::task_runtime::TaskRuntimeError) -> AppIpcError {
     let code = match &error {
         crate::task_runtime::TaskRuntimeError::VersionConflict => "version_conflict",
@@ -780,6 +781,7 @@ impl RuntimeWorkRpcHandler {
         self.prepare_stand_in_execution(payload, config).await
     }
 
+    /// Prepare an independent stand-in profile using only its own explicit model selection.
     pub(super) async fn prepare_stand_in_execution(
         &self,
         payload: Value,
