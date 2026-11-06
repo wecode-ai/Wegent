@@ -196,7 +196,11 @@ export function createConversationSwitchingChecks({ uiTimeoutMs, resultDir }) {
         await control.command('startRuntimeStreamDiagnostics', 'body')
         stopCpuProfile = await startSwitchingCpuProfile(resultDir, uiTimeoutMs)
         await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
-        await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, { text: PREFIX })
+        // This final-answer prefix follows all 520 model progress messages.
+        await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+          text: PREFIX,
+          timeoutMs: longResponseTimeoutMs,
+        })
         await stopCpuProfile()
         stage = 'native-history'
         const debug = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
