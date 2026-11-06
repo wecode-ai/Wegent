@@ -186,20 +186,19 @@ def project_ids_for_workspace(db: Session, workspace_id: int) -> list[int]:
     return [int(project_id) for (project_id,) in rows]
 
 
-def active_project_ids_for_workspace(db: Session, workspace_id: int) -> list[int]:
+def active_project_ids_for_workspace(
+    db: Session, workspace_id: int, *, for_update: bool = False
+) -> list[int]:
     """Return workspace-bound projects that still block workspace archival."""
-    project_ids = project_ids_for_workspace(db, workspace_id)
-    if not project_ids:
-        return []
-    rows = (
-        db.query(CloudProject.id)
-        .filter(
-            CloudProject.id.in_(project_ids),
-            CloudProject.status == "active",
-        )
-        .all()
+    query = db.query(CloudProject.id).filter(
+        CloudProject.workspace_id == workspace_id,
+        CloudProject.status == "active",
     )
-    return [int(project_id) for (project_id,) in rows]
+    if for_update:
+        # Locking reads see commits made while waiting for the parent lock,
+        # instead of the authorization read's REPEATABLE READ snapshot.
+        query = query.with_for_update()
+    return [int(project_id) for (project_id,) in query.all()]
 
 
 def workspace_ids_for_resources(

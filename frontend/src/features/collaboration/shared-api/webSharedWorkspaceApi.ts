@@ -523,6 +523,7 @@ export function createWebSharedWorkspaceApi(
   const sharedHttpApi = createSharedWorkspaceHttpApi(client)
 
   return {
+    recycleBin: sharedHttpApi.recycleBin,
     workspaces: sharedHttpApi.workspaces,
     resources: sharedHttpApi.resources,
     gitRepositories: sharedHttpApi.gitRepositories,

@@ -34,6 +34,22 @@ export interface WorkspacePage<T> {
   nextCursor: string | null;
 }
 
+export interface WorkspaceRecycleBinItem {
+  id: string;
+  kind: "workspace" | "project";
+  name: string;
+  workspaceId: string | null;
+  workspaceName: string | null;
+  deletedAt: string;
+  version: number;
+  parentDeleted: boolean;
+}
+
+export interface WorkspaceRecycleBinApi {
+  list(): Promise<{ items: WorkspaceRecycleBinItem[]; errors: string[] }>;
+  restore(item: WorkspaceRecycleBinItem): Promise<void>;
+}
+
 export interface WorkspaceProjectCreateInput {
   workspaceId?: string;
   projectKey?: string;
@@ -976,6 +992,7 @@ export interface WorkspaceStandInSettings {
 
 export interface SharedWorkspaceApi {
   milestones?: import("../milestones/types").MilestonesApi;
+  recycleBin?: WorkspaceRecycleBinApi;
   standIn?: {
     run?(
       projectId: string,

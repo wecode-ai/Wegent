@@ -7,7 +7,25 @@ import type { CollaborationLocale } from "../i18n";
 export const platformMessages = {
   "zh-CN": {
     loading: "正在加载…",
-    archiveProject: "归档项目",
+    deleteProject: "删除项目",
+    deleteProjectTitle: "删除项目？",
+    deleteProjectHint:
+      "项目将移入回收站，可撤回或恢复，Issue 与历史记录保留，不会删除本地代码目录。请先停止正在运行的执行；恢复后自动化保持停用。",
+    deleteWorkspace: "删除空间",
+    deleteWorkspaceTitle: "删除空间？",
+    deleteWorkspaceHint:
+      "空间将移入回收站，可撤回或恢复。请先删除或移走空间内的所有项目；成员与配置保留，不会删除本地代码目录。",
+    recycleBin: "回收站",
+    refresh: "刷新",
+    close: "关闭",
+    recycleBinHint:
+      "已删除的空间与项目保留在此，可恢复到原位置。恢复不会自动启动执行或自动化。",
+    recycleBinEmpty: "回收站为空",
+    restore: "恢复",
+    restoring: "正在恢复…",
+    undoDelete: "撤回删除",
+    deletedToRecycleBin: "已移入回收站",
+    restoreParentFirst: "请先恢复所属空间",
     projectActions: "项目操作",
     allSpaces: "所有空间",
     home: "新建 Issue",
@@ -214,7 +232,25 @@ export const platformMessages = {
   },
   en: {
     loading: "Loading…",
-    archiveProject: "Archive project",
+    deleteProject: "Delete project",
+    deleteProjectTitle: "Delete project?",
+    deleteProjectHint:
+      "Move this project to the recycle bin. You can undo or restore it; Issues and history are retained. Local code directories will not be deleted. Stop active runs first. Automations remain disabled after restoration.",
+    deleteWorkspace: "Delete space",
+    deleteWorkspaceTitle: "Delete space?",
+    deleteWorkspaceHint:
+      "Move this space to the recycle bin. You can undo or restore it. Delete or move its projects first. Members, settings and local code are retained.",
+    recycleBin: "Recycle bin",
+    refresh: "Refresh",
+    close: "Close",
+    recycleBinHint:
+      "Deleted spaces and projects can be restored to their original location. Restoration does not start executions or automations.",
+    recycleBinEmpty: "The recycle bin is empty",
+    restore: "Restore",
+    restoring: "Restoring…",
+    undoDelete: "Undo deletion",
+    deletedToRecycleBin: "Moved to recycle bin",
+    restoreParentFirst: "Restore the parent space first",
     projectActions: "Project actions",
     allSpaces: "All spaces",
     home: "New Issue",

@@ -26,6 +26,7 @@ mod project_coordination;
 #[path = "project_coordination_commands.rs"]
 mod project_coordination_commands;
 mod project_coordinator;
+mod project_recycle_bin;
 #[path = "project_router_store.rs"]
 pub(crate) mod project_router_store;
 mod project_status;
@@ -454,22 +455,6 @@ impl LocalTaskStore {
         }
         drop(connection);
         self.get_project(project_id)
-    }
-
-    pub fn archive_project(&self, project_id: &str, version: i64) -> Result<(), TaskRuntimeError> {
-        let connection = self.connection()?;
-        let archived_at = now();
-        let updated = connection.execute(
-            "UPDATE loop_items
-             SET deleted_at = ?1, updated_at = ?1, version = version + 1
-             WHERE id = ?2 AND resource_type = 'project' AND version = ?3
-               AND deleted_at IS NULL",
-            params![archived_at, project_id, version],
-        )?;
-        if updated != 1 {
-            return Err(TaskRuntimeError::VersionConflict);
-        }
-        Ok(())
     }
 
     pub fn list_tasks(&self, project_id: &str) -> Result<Vec<LoopItem>, TaskRuntimeError> {
@@ -8695,7 +8680,7 @@ mod tests {
     }
 
     #[test]
-    fn claimed_execution_fails_when_project_was_archived() {
+    fn claimed_execution_fails_for_legacy_archived_project() {
         let (_directory, store, project) = chat_agent_store();
         let agent = make_local_agent(&store, &project.id, "auto");
         let task = store
@@ -8729,7 +8714,19 @@ mod tests {
             .list_executions(&project.id, None, None, false)
             .unwrap()
             .remove(0);
-        store.archive_project(&project.id, project.version).unwrap();
+        // Seed legacy data; the public delete path rejects unfinished executions.
+        assert_eq!(
+            store
+                .connection()
+                .unwrap()
+                .execute(
+                    "UPDATE loop_items SET deleted_at = ?1, updated_at = ?1, version = version + 1
+                     WHERE id = ?2 AND resource_type = 'project'",
+                    params![now(), project.id],
+                )
+                .unwrap(),
+            1
+        );
         assert!(store
             .claim_next_execution_for_runtime(Some("local-device"), "runtime-1", 300)
             .is_err());

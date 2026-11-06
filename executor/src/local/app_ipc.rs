@@ -1982,6 +1982,22 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                 .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
             serialize_task_value(runtime.create_project(input).map_err(task_runtime_error)?)
         }
+        "projects.deleted.list" => serialize_task_value(
+            runtime
+                .list_deleted_projects()
+                .map_err(task_runtime_error)?,
+        ),
+        "projects.restore" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let version = params
+                .get("version")
+                .and_then(Value::as_i64)
+                .ok_or_else(|| AppIpcError::new("bad_request", "version is required"))?;
+            runtime
+                .restore_project(project_id, version)
+                .map_err(task_runtime_error)?;
+            Ok(json!({}))
+        }
         "projects.import_code_project" => {
             let project_key = required_task_string(&params, "project_key")?;
             let name = required_task_string(&params, "name")?;

@@ -118,6 +118,16 @@ impl TaskRuntime {
         self.local_store.archive_project(project_id, version)
     }
 
+    pub fn list_deleted_projects(
+        &self,
+    ) -> Result<Vec<super::model::DeletedProject>, TaskRuntimeError> {
+        self.local_store.list_deleted_projects()
+    }
+
+    pub fn restore_project(&self, project_id: &str, version: i64) -> Result<(), TaskRuntimeError> {
+        self.local_store.restore_project(project_id, version)
+    }
+
     pub fn configure_external_project(
         &self,
         project: ProjectDescriptor,

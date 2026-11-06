@@ -29,6 +29,7 @@ import {
   Plus,
   Search,
   Settings,
+  Trash2,
   UserRound,
   UsersRound,
   X,
@@ -59,7 +60,8 @@ import { ProjectCreationAction } from "./ProjectCreationAction";
 import { IssueExecutionEnvironmentNotice } from "../execution-environment/IssueExecutionEnvironmentNotice";
 import { useProjectExecutionEnvironmentReadiness } from "../execution-environment/issueEnvironmentReadiness";
 import { canAccessCollaborationProjectView } from "../permissions";
-import { ProjectArchiveDialog } from "./ProjectArchiveDialog";
+import { ResourceDeleteDialog } from "./ResourceDeleteDialog";
+import { DeletedResourceNotice, RecycleBinPage } from "./RecycleBinPage";
 import { WorkspaceCreateDialog } from "./WorkspaceCreateDialog";
 import { Tooltip } from "../issue-detail/Tooltip";
 import { truncateRuntimeTaskTitle } from "@wegent/chat-core/runtime-task-title";
@@ -74,6 +76,7 @@ import type {
   SharedWorkspaceApi,
   WorkspaceMyWorkItem,
   WorkspaceProjectAgent,
+  WorkspaceRecycleBinItem,
 } from "../ports/SharedWorkspaceApi";
 import {
   createResourceAgentBindingInput,
@@ -227,6 +230,8 @@ function CollaborationPlatformNavigation({
   onCreateProject,
   onNewConversation,
   onArchiveProject,
+  onDeleteWorkspace,
+  onOpenRecycleBin,
   footer,
 }: {
   domain: CollaborationDomain;
@@ -245,6 +250,8 @@ function CollaborationPlatformNavigation({
   ): void;
   onNewConversation(projectId: string): void;
   onArchiveProject(project: CollaborationProject): void;
+  onDeleteWorkspace(workspace: CollaborationWorkspace): void;
+  onOpenRecycleBin?: () => void;
   footer?: React.ReactNode;
 }) {
   const { workspaces: navigationWorkspaces, projectsByWorkspace } = useMemo(
@@ -532,8 +539,21 @@ function CollaborationPlatformNavigation({
             <ChevronRight aria-hidden="true" />
           </button>
         )}
-        {canCreateWorkspace ? (
-          <div className="collaboration-workspace-section-actions">
+        <div className="collaboration-workspace-section-actions">
+          {onOpenRecycleBin && (
+            <Tooltip label={messages.recycleBin}>
+              <button
+                type="button"
+                className="collaboration-workspace-section-create"
+                aria-label={messages.recycleBin}
+                data-testid="collaboration-recycle-bin-open"
+                onClick={onOpenRecycleBin}
+              >
+                <Trash2 aria-hidden="true" />
+              </button>
+            </Tooltip>
+          )}
+          {canCreateWorkspace ? (
             <button
               type="button"
               className="collaboration-workspace-section-create"
@@ -546,8 +566,8 @@ function CollaborationPlatformNavigation({
                 <FolderPlus aria-hidden="true" />
               </span>
             </button>
-          </div>
-        ) : null}
+          ) : null}
+        </div>
       </div>
       {navigationIncomplete ? (
         <div
@@ -716,6 +736,21 @@ function CollaborationPlatformNavigation({
                               });
                             },
                           },
+                          ...(candidate.location === "cloud" &&
+                          candidate.access_role === "Owner"
+                            ? [
+                                {
+                                  label: messages.deleteWorkspace,
+                                  icon: Trash2,
+                                  danger: true,
+                                  testId: `collaboration-workspace-delete-${candidate.id}`,
+                                  onSelect: () =>
+                                    onDeleteWorkspace(
+                                      candidate as CollaborationWorkspace,
+                                    ),
+                                },
+                              ]
+                            : []),
                         ]}
                         placement="bottom-end"
                         showTriggerTooltip={false}
@@ -806,7 +841,9 @@ function CollaborationPlatformNavigation({
                               triggerClassName="collaboration-project-new-conversation"
                               items={[
                                 {
-                                  label: messages.archiveProject,
+                                  label: messages.deleteProject,
+                                  icon: Trash2,
+                                  danger: true,
                                   testId: `collaboration-project-archive-${project.id}`,
                                   onSelect: () => onArchiveProject(project),
                                 },
@@ -1960,6 +1997,13 @@ function CollaborationPlatformAppContent({
 }) {
   const messages = platformMessages[locale];
   const translate = createCollaborationTranslator(locale);
+  const currentLocationRef = useRef(host.location);
+  currentLocationRef.current = host.location;
+  const isRecycleBinPage =
+    host.location.rootView === "recycle-bin" &&
+    !host.location.workspaceId &&
+    !host.location.projectId &&
+    !!api.recycleBin;
   const isDevicePage =
     !host.location.projectId &&
     !host.location.workspaceId &&
@@ -1974,7 +2018,8 @@ function CollaborationPlatformAppContent({
     !host.location.workspaceId &&
     host.location.rootView === "templates" &&
     Boolean(host.templateStore);
-  const ownsPageRequests = isDevicePage || isStandInPage || isTemplatePage;
+  const ownsPageRequests =
+    isDevicePage || isStandInPage || isTemplatePage || isRecycleBinPage;
   const deviceCatalog = useDeviceCatalog(
     api,
     isDevicePage,
@@ -1991,6 +2036,31 @@ function CollaborationPlatformAppContent({
   const [workspaceDialogOpen, setWorkspaceDialogOpen] = useState(false);
   const [archiveProject, setArchiveProject] =
     useState<CollaborationProject | null>(null);
+  const [deleteWorkspace, setDeleteWorkspace] =
+    useState<CollaborationWorkspace | null>(null);
+  const [deletedResources, setDeletedResources] = useState<
+    WorkspaceRecycleBinItem[]
+  >([]);
+  useEffect(() => setDeletedResources([]), [api]);
+  const rememberDeletion = (item: WorkspaceRecycleBinItem) => {
+    if (!api.recycleBin) return;
+    setDeletedResources((current) => [
+      ...current.filter(
+        (entry) => entry.id !== item.id || entry.kind !== item.kind,
+      ),
+      item,
+    ]);
+  };
+  const restoreResource = async (item: WorkspaceRecycleBinItem) => {
+    if (!api.recycleBin) throw new Error("Recycle bin API is unavailable");
+    await api.recycleBin.restore(item);
+    setDeletedResources((current) =>
+      current.filter(
+        (entry) => entry.id !== item.id || entry.kind !== item.kind,
+      ),
+    );
+    await commands.reload();
+  };
   const [projectDialogOpen, setProjectDialogOpen] = useState(false);
   const [projectTemplate, setProjectTemplate] =
     useState<CollaborationTemplate | null>(null);
@@ -2632,6 +2702,7 @@ function CollaborationPlatformAppContent({
     !state.workspace ||
     isDevicePage ||
     isTemplatePage ||
+    isRecycleBinPage ||
     host.location.rootView === "stand-in"
   ) {
     const rootView = host.location.rootView ?? "home";
@@ -2640,7 +2711,13 @@ function CollaborationPlatformAppContent({
       return item.is_unread || operation === "failed" || operation === "review";
     });
     content =
-      rootView === "templates" && host.templateStore ? (
+      rootView === "recycle-bin" && api.recycleBin ? (
+        <RecycleBinPage
+          api={api.recycleBin}
+          locale={locale}
+          onRestore={restoreResource}
+        />
+      ) : rootView === "templates" && host.templateStore ? (
         <CollaborationTemplatePage
           key={host.templateStore.library.scope}
           store={host.templateStore}
@@ -3156,6 +3233,21 @@ function CollaborationPlatformAppContent({
       }}
       onCreateProject={openWorkspaceProjectCreator}
       onArchiveProject={setArchiveProject}
+      onDeleteWorkspace={setDeleteWorkspace}
+      onOpenRecycleBin={
+        api.recycleBin
+          ? () =>
+              host.navigate({
+                ...host.location,
+                rootView: "recycle-bin",
+                platformView: "spaces",
+                workspaceView: "home",
+                workspaceId: null,
+                projectId: null,
+                issueId: null,
+              })
+          : undefined
+      }
       onNewConversation={(projectId) => {
         setRootIssueProjectId(projectId);
         host.navigate({
@@ -3174,6 +3266,21 @@ function CollaborationPlatformAppContent({
   );
   const main = (
     <main className="collaboration-platform-main">
+      {deletedResources.map((item) => (
+        <DeletedResourceNotice
+          key={`${item.kind}-${item.id}`}
+          item={item}
+          locale={locale}
+          onRestore={restoreResource}
+          onDismiss={() =>
+            setDeletedResources((current) =>
+              current.filter(
+                (entry) => entry.id !== item.id || entry.kind !== item.kind,
+              ),
+            )
+          }
+        />
+      ))}
       {standInRetry && (
         <div
           role="alert"
@@ -3225,17 +3332,63 @@ function CollaborationPlatformAppContent({
       )}
       {content}
       {archiveProject && (
-        <ProjectArchiveDialog
-          project={archiveProject}
+        <ResourceDeleteDialog
+          name={archiveProject.name}
+          kind="project"
           locale={locale}
           onClose={() => setArchiveProject(null)}
-          onArchive={async () => {
+          onDelete={async () => {
             await commands.archiveProject(archiveProject);
-            if (host.location.projectId === archiveProject.id)
+            rememberDeletion({
+              id: archiveProject.id,
+              kind: "project",
+              name: archiveProject.name,
+              workspaceId: archiveProject.workspace_id ?? null,
+              workspaceName:
+                state.workspaces.find(
+                  (space) => space.id === archiveProject.workspace_id,
+                )?.name ?? null,
+              version: archiveProject.version + 1,
+              deletedAt: new Date().toISOString(),
+              parentDeleted: false,
+            });
+            if (currentLocationRef.current.projectId === archiveProject.id)
               host.navigate({
                 platformView: "spaces",
                 workspaceId: archiveProject.workspace_id ?? null,
                 workspaceView: "projects",
+                projectId: null,
+                projectView: "board",
+                issueId: null,
+              });
+          }}
+        />
+      )}
+      {deleteWorkspace && (
+        <ResourceDeleteDialog
+          name={deleteWorkspace.name}
+          kind="workspace"
+          locale={locale}
+          onClose={() => setDeleteWorkspace(null)}
+          onDelete={async () => {
+            await commands.deleteWorkspace(deleteWorkspace);
+            rememberDeletion({
+              id: deleteWorkspace.id,
+              kind: "workspace",
+              name: deleteWorkspace.name,
+              workspaceId: null,
+              workspaceName: null,
+              version: deleteWorkspace.version + 1,
+              deletedAt: new Date().toISOString(),
+              parentDeleted: false,
+            });
+            if (currentLocationRef.current.workspaceId === deleteWorkspace.id)
+              host.navigate({
+                platformView: "spaces",
+                collaborationDomain: host.location.collaborationDomain,
+                rootView: "home",
+                workspaceId: null,
+                workspaceView: "home",
                 projectId: null,
                 projectView: "board",
                 issueId: null,

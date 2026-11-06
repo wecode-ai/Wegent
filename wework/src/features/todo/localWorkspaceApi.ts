@@ -618,6 +618,33 @@ export function createLocalWorkspaceApi(
 
   return {
     ...(delivery as unknown as SharedWorkspaceApi),
+    ...(deliveryApi.listDeletedProjects && deliveryApi.restoreProject
+      ? {
+          recycleBin: {
+            async list() {
+              return {
+                errors: [],
+                items: (await deliveryApi.listDeletedProjects!()).map(project => ({
+                  id: project.id,
+                  kind: 'project' as const,
+                  name: project.name,
+                  workspaceId: LOCAL_WORKSPACE_ID,
+                  workspaceName: locale === 'zh-CN' ? '本地空间' : 'Local space',
+                  deletedAt: project.deleted_at,
+                  version: project.version,
+                  parentDeleted: false,
+                })),
+              }
+            },
+            restore(item: import('@wegent/collaboration').WorkspaceRecycleBinItem) {
+              if (item.kind !== 'project' || item.workspaceId !== LOCAL_WORKSPACE_ID) {
+                throw new Error('Invalid local recycle bin target')
+              }
+              return deliveryApi.restoreProject!(item.id, item.version)
+            },
+          },
+        }
+      : {}),
     automationExecutionCatalog: {
       async load() {
         const [devices, models, runtimeProfiles] = await Promise.all([

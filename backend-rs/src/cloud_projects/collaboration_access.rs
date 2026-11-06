@@ -26,8 +26,30 @@ pub(crate) fn access_sql(
     project_id: Option<i64>,
     workspace_id: Option<i64>,
 ) -> String {
+    lifecycle_access_sql(user_id, project_id, workspace_id, false)
+}
+
+pub(super) fn lifecycle_access_sql(
+    user_id: i32,
+    project_id: Option<i64>,
+    workspace_id: Option<i64>,
+    archived: bool,
+) -> String {
     let sql = include_str!("collaboration_access.sql")
         .replace("{columns}", LOOP_ITEMS_COLUMNS)
+        .replace("{user_id}", &user_id.to_string())
+        .replace(
+            "{project_status}",
+            if archived { "archived" } else { "active" },
+        )
+        .replace(
+            "{workspace_predicate}",
+            if archived {
+                "(kinds.is_active = true OR kinds.user_id = {user_id})"
+            } else {
+                "kinds.is_active = true"
+            },
+        )
         .replace("{user_id}", &user_id.to_string())
         .replace(
             "{project_filter}",
@@ -51,6 +73,7 @@ pub(super) struct AuthorizedProject {
     pub workspace_priority: Option<i64>,
     pub sources: Vec<Value>,
     pub public: bool,
+    pub workspace_active: bool,
 }
 
 impl AuthorizedProject {
@@ -87,9 +110,28 @@ pub(super) async fn authorized_projects<M: Mysql>(
     project_id: Option<i64>,
     workspace_id: Option<i64>,
 ) -> Result<Vec<AuthorizedProject>, brz_mysql::MysqlError> {
+    authorized_lifecycle_projects(mysql, user_id, project_id, workspace_id, false).await
+}
+
+pub(super) async fn authorized_lifecycle_projects<M: Mysql>(
+    mysql: &M,
+    user_id: i32,
+    project_id: Option<i64>,
+    workspace_id: Option<i64>,
+    archived: bool,
+) -> Result<Vec<AuthorizedProject>, brz_mysql::MysqlError> {
     let rows: Vec<MysqlRow> = mysql
-        .fetch_all(access_sql(user_id, project_id, workspace_id), ())
+        .fetch_all(
+            lifecycle_access_sql(user_id, project_id, workspace_id, archived),
+            (),
+        )
         .await?;
+    projects_from_rows(rows)
+}
+
+pub(super) fn projects_from_rows(
+    rows: Vec<MysqlRow>,
+) -> Result<Vec<AuthorizedProject>, brz_mysql::MysqlError> {
     rows.into_iter()
         .map(|row| {
             let workspace_id: i64 = row.get_required("workspace_id")?;
@@ -116,6 +158,7 @@ pub(super) async fn authorized_projects<M: Mysql>(
             }
             let priority = row.get_required("anon_1_priority")?;
             let workspace_priority = row.get("workspace_priority")?;
+            let workspace_active = row.get_required::<i8>("workspace_active")? != 0;
             Ok(AuthorizedProject {
                 project: ProjectListRow::from_mysql_row(row)?,
                 priority,
@@ -123,6 +166,7 @@ pub(super) async fn authorized_projects<M: Mysql>(
                 workspace_priority,
                 sources,
                 public: public.is_some(),
+                workspace_active,
             })
         })
         .collect()
@@ -197,6 +241,7 @@ mod tests {
             workspace_priority,
             sources,
             public: false,
+            workspace_active: true,
         }
     }
 

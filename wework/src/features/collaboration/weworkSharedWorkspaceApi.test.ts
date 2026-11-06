@@ -754,8 +754,19 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
         devices: {},
       },
     }
+    const deletedProject = {
+      id: 'project/1',
+      kind: 'project' as const,
+      name: 'Deleted project',
+      workspaceId: 'workspace-1',
+      workspaceName: 'Workspace',
+      deletedAt: '2026-11-06T00:00:00Z',
+      version: 2,
+      parentDeleted: false,
+    }
     const client = {
       get: vi.fn().mockImplementation(async (endpoint: string) => {
+        if (endpoint === '/v1/recycle-bin') return { items: [deletedProject] }
         if (endpoint === '/v1/workspaces') return { items: [workspace] }
         if (endpoint === '/v1/workspaces/workspace-1') return workspace
         if (endpoint === '/v1/workspaces/workspace-1/members') {
@@ -1005,6 +1016,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
     expect(Object.keys(api).sort()).toEqual(
       [
         'automationExecutionCatalog',
+        'recycleBin',
         'workspaces',
         'resources',
         'gitRepositories',
@@ -1030,6 +1042,15 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
     )
     expect(WEWORK_SHARED_WORKSPACE_MISSING_METHODS).toEqual([])
 
+    await expect(api.recycleBin?.list()).resolves.toEqual({
+      items: [deletedProject],
+      errors: [],
+    })
+    expect(client.get).toHaveBeenCalledWith('/v1/recycle-bin')
+    await api.recycleBin?.restore(deletedProject)
+    expect(client.post).toHaveBeenCalledWith('/v1/recycle-bin/project/project%2F1/restore', {
+      version: 2,
+    })
     await expect(api.workspaces?.list()).resolves.toEqual([mappedWorkspace])
     await expect(api.workspaces?.get('workspace-1')).resolves.toEqual(mappedWorkspace)
     await expect(

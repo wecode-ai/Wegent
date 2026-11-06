@@ -16,6 +16,32 @@ function createClient() {
 }
 
 describe('workspace resource configuration adapter', () => {
+  it('exposes the shared recycle bin and versioned restore endpoint', async () => {
+    const client = createClient()
+    const deleted = {
+      id: '17',
+      kind: 'project' as const,
+      name: 'Deleted project',
+      workspaceId: '42',
+      workspaceName: 'Parent',
+      version: 2,
+      deletedAt: '2026-11-06T00:00:00Z',
+      parentDeleted: false,
+    }
+    client.get.mockResolvedValue({ items: [deleted] })
+    client.post.mockResolvedValue({})
+    const api = createWebSharedWorkspaceApi(client, { getBlob: jest.fn() })
+    await expect(api.recycleBin!.list()).resolves.toEqual({
+      items: [deleted],
+      errors: [],
+    })
+    await api.recycleBin!.restore(deleted)
+    expect(client.get).toHaveBeenCalledWith('/v1/recycle-bin')
+    expect(client.post).toHaveBeenCalledWith('/v1/recycle-bin/project/17/restore', {
+      version: 2,
+    })
+  })
+
   it('preserves opaque view extensions and lane sort IDs in project updates', async () => {
     const client = createClient()
     client.patch.mockResolvedValue({})
