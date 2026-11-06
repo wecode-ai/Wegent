@@ -178,21 +178,14 @@ function showToast(message) {
   }, 2200)
 }
 
-async function copyStartupDiagnostics(button) {
+async function copyStartupDiagnostics() {
   const diagnostics = window.weworkStartupDiagnostics
   if (!diagnostics || typeof diagnostics.copy !== 'function') {
     showToast(isChinese ? '诊断信息暂不可用' : 'Diagnostics are unavailable')
     return
   }
-  const originalLabel = button?.textContent ?? ''
   try {
     await diagnostics.copy()
-    if (button) {
-      button.textContent = isChinese ? '已复制' : 'Copied'
-      window.setTimeout(() => {
-        button.textContent = originalLabel
-      }, 1600)
-    }
     showToast(
       isChinese
         ? '诊断信息已复制，可直接发给技术支持'
@@ -557,13 +550,13 @@ retryButton.addEventListener('click', () => {
 recoverButton.addEventListener('click', () => showConfirmation('recover'))
 resetOpenButton.addEventListener('click', () => showConfirmation('resetAppState'))
 copyDiagnosticsButton.addEventListener('click', () => {
-  void copyStartupDiagnostics(copyDiagnosticsButton)
+  void copyStartupDiagnostics()
 })
 openLogsButton.addEventListener('click', () => {
   void openStartupLogs()
 })
 timeoutCopyButton.addEventListener('click', () => {
-  void copyStartupDiagnostics(timeoutCopyButton)
+  void copyStartupDiagnostics()
 })
 timeoutOpenLogsButton.addEventListener('click', () => {
   void openStartupLogs()

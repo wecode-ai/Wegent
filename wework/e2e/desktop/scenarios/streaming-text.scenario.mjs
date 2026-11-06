@@ -671,7 +671,8 @@ export function createDesktopScenario({
 
       if (requestContainsTimerPrompt(body)) {
         if (timerStage === 'initial') {
-          const tool = selectShellTool(body, workspacePath, 'sleep 15', 20_000)
+          // Keep the tool active while checking its timer and switching conversations.
+          const tool = selectShellTool(body, workspacePath, 'sleep 10', 20_000)
           timerStage = 'awaiting-tool-output'
           response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
           response.end(

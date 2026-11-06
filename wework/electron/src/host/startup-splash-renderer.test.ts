@@ -816,13 +816,20 @@ describe('startup splash renderer', () => {
       },
     })
 
+    const recoveryCopyLabel = element('#startup-copy-diagnostics').textContent
+    const timeoutCopyLabel = element('#startup-timeout-copy').textContent
     element('#startup-copy-diagnostics').click()
     await vi.waitFor(() => expect(copy).toHaveBeenCalledOnce())
+    await setImmediate()
+    expect(element('#startup-copy-diagnostics').textContent).toBe(recoveryCopyLabel)
+    expect(element('#startup-toast').textContent).toContain('诊断信息已复制')
     element('#startup-open-logs').click()
     await vi.waitFor(() => expect(openLogs).toHaveBeenCalledOnce())
 
     element('#startup-timeout-copy').click()
     await vi.waitFor(() => expect(copy).toHaveBeenCalledTimes(2))
+    await setImmediate()
+    expect(element('#startup-timeout-copy').textContent).toBe(timeoutCopyLabel)
     element('#startup-timeout-open-logs').click()
     await vi.waitFor(() => expect(openLogs).toHaveBeenCalledTimes(2))
   })

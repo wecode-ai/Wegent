@@ -10,8 +10,9 @@ import { createServer, connect } from 'node:net'
 import { reservePort } from '../port-reservation.mjs'
 
 const run = promisify(execFile)
-const VERSION = '1.6.15'
-const SHA256 = 'e93dc3ed2db0175a4d6e168743bde3c8ac8a7435490bdab3f12da33d491ee24e'
+// GreenMail 2.1.15 fixes APPEND noon timestamps being parsed as midnight.
+const VERSION = '2.1.15'
+const SHA256 = '91d58798698cac357f015365240383b936ced2f2a1a9f7db37d9e3e1a31391b1'
 
 async function startImapProxy(port, targetPort) {
   let online = true

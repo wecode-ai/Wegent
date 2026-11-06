@@ -194,10 +194,18 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, modelRes
           'workspace-tab-select-fixed-board',
           'workspace-tab-select-fixed-task',
           'personal-stand-in-button',
-          'stand-in-settings-open',
-          'stand-in-primary-connections-open',
         ])
           await control.command('clickWhenEnabled', `[data-testid="${target}"]`)
+        // This protocol fixture installs its connection host on the local Executor.
+        await control.command('waitFor', '[data-testid="stand-in-workspace-location"]')
+        await control.command('select', '[data-testid="stand-in-workspace-location"]', {
+          value: deviceId,
+        })
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+        await control.command(
+          'clickWhenEnabled',
+          '[data-testid="stand-in-primary-connections-open"]'
+        )
         await openGit('github')
         const personalView = JSON.parse(await control.command('snapshot', 'body'))
         assert.match(personalView.text, /个人全部事件/)
