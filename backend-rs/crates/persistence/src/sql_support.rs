@@ -123,6 +123,11 @@ pub fn quote_sql_literal(value: &str) -> String {
     out
 }
 
+/// Expand `?, ?, ...` with `count` placeholders.
+pub fn placeholders(count: usize) -> String {
+    vec!["?"; count].join(", ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::{DecimalCount, parse_decimal_count};
@@ -155,9 +160,4 @@ mod tests {
         assert_eq!(DecimalCount::or_zero(None), 0);
         assert_eq!(DecimalCount::or_zero(Some(DecimalCount(7))), 7);
     }
-}
-
-/// Expand `?, ?, ...` with `count` placeholders.
-pub fn placeholders(count: usize) -> String {
-    vec!["?"; count].join(", ")
 }

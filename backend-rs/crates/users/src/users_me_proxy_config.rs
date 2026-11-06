@@ -191,17 +191,40 @@ fn decrypt_stored_proxy(encrypted_url: Option<&str>) -> Result<String, CryptoCon
     Ok(decrypted)
 }
 
+/// Failure to read or decrypt an execution account proxy.
+#[derive(Debug)]
+pub enum ExecutionProxyError {
+    Read,
+    Configuration,
+}
+
+impl std::fmt::Display for ExecutionProxyError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Read => "execution proxy lookup failed",
+            Self::Configuration => "execution proxy encryption configuration is invalid",
+        })
+    }
+}
+
+impl std::error::Error for ExecutionProxyError {}
+
 /// `UserRuntimeConfigService.get_proxy_url_for_execution`: the decrypted
 /// account proxy that cloud and remote runtimes apply to their model
 /// configuration.
 ///
 /// # Errors
 ///
-/// Returns the source's unswallowed `CryptoConfigurationError` (a missing or
-/// mis-sized `GIT_TOKEN_AES_IV`) and any failed `kinds` read.
-pub async fn execution_proxy_url<M: Mysql>(mysql: &M, user_id: i32) -> Result<String, ()> {
+/// Returns `ExecutionProxyError::Configuration` for the source's unswallowed
+/// encryption configuration failure and `ExecutionProxyError::Read` for a failed
+/// `kinds` read.
+pub async fn execution_proxy_url<M: Mysql>(
+    mysql: &M,
+    user_id: i32,
+) -> Result<String, ExecutionProxyError> {
     let row = proxy_kind(mysql, user_id).await.map_err(|error| {
         tracing::error!(%error, user_id, "user proxy-config read failed");
+        ExecutionProxyError::Read
     })?;
     let spec = row
         .and_then(|row| row.kinds_json.0.project::<ProxyDocument>())
@@ -209,7 +232,7 @@ pub async fn execution_proxy_url<M: Mysql>(mysql: &M, user_id: i32) -> Result<St
         .unwrap_or_default();
     let ProxySpec { proxy, .. } = spec;
     let ProxyCredential { encrypted_url, .. } = proxy.unwrap_or_default();
-    decrypt_stored_proxy(encrypted_url.as_deref()).map_err(|_| ())
+    decrypt_stored_proxy(encrypted_url.as_deref()).map_err(|_| ExecutionProxyError::Configuration)
 }
 
 /// `decrypt_sensitive_data` after key resolution: `""` and `"***"` pass

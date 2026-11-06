@@ -279,10 +279,10 @@ pub fn extract_authorization_token(authorization: Option<&str>) -> String {
 }
 
 /// `verify_token` with key rotation: try the active key, then legacy keys.
-pub fn verify_token(config: &AuthConfig, token: &str) -> Result<String, ()> {
+pub fn verify_token(config: &AuthConfig, token: &str) -> Result<String, AuthFailure> {
     decode_session_claims(config, token)
         .and_then(|claims| claims.username())
-        .ok_or(())
+        .ok_or(AuthFailure::InvalidCredentials)
 }
 
 /// Shared claim verification for standard and flexible session dependencies.
@@ -389,7 +389,7 @@ pub fn verify_session_token(
     let Some(token) = bearer_credential(authorization) else {
         return Err(AuthFailure::NotAuthenticated);
     };
-    verify_token(config, token).map_err(|_| AuthFailure::InvalidCredentials)
+    verify_token(config, token)
 }
 
 /// The lookup half of `get_current_user`, run on a writer transaction for
@@ -438,6 +438,7 @@ fn user_lookup_failure(error: brz_mysql::MysqlError) -> AuthFailure {
 }
 
 /// Authentication failure classification for source-compatible 401 mapping.
+#[derive(Debug)]
 pub enum AuthFailure {
     /// `401 {"detail": "Not authenticated"}`: the request carried no bearer
     /// credential, which the source scheme rejects before `get_current_user`.

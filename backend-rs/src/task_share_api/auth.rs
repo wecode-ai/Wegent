@@ -269,7 +269,7 @@ async fn verify_jwt_token_with_db<M: Mysql>(
     mysql: &M,
     token: &str,
 ) -> Result<ExecutorUser, ()> {
-    let user_name = verify_token(config, token)?;
+    let user_name = verify_token(config, token).map_err(|_| ())?;
     let user: Result<Option<MysqlRow>, ()> = mysql
         .fetch_optional(&user_by_name_sql(&user_name), ())
         .await

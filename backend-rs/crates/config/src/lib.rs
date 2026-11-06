@@ -617,6 +617,18 @@ impl DefaultTeamsConfig {
     }
 }
 
+pub fn resource_directory() -> std::path::PathBuf {
+    let configured = std::path::PathBuf::from(
+        crate::env_or_dotenv("INIT_DATA_DIR").unwrap_or("/app/init_data".into()),
+    );
+    let local = std::path::PathBuf::from("init_data");
+    if !configured.exists() && configured.is_absolute() && local.exists() {
+        local
+    } else {
+        configured
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -831,17 +843,5 @@ EMPTY=
     fn auth_config_splits_legacy_keys() {
         assert_eq!(parse_legacy_keys(" a , ,b, a "), ["a", "b", "a"]);
         assert_eq!(parse_legacy_keys(""), Vec::<String>::new());
-    }
-}
-
-pub fn resource_directory() -> std::path::PathBuf {
-    let configured = std::path::PathBuf::from(
-        crate::env_or_dotenv("INIT_DATA_DIR").unwrap_or("/app/init_data".into()),
-    );
-    let local = std::path::PathBuf::from("init_data");
-    if !configured.exists() && configured.is_absolute() && local.exists() {
-        local
-    } else {
-        configured
     }
 }
