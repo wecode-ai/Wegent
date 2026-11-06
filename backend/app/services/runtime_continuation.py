@@ -48,7 +48,7 @@ async def resolve_continuation_address(
     )
 
 
-def authorize_continuation_origin(
+def authorize_execution_origin(
     db: Session, user_id: int, origin: dict[str, Any] | None, project_id: str | None
 ) -> None:
     """Use the same current Issue and execute checks as project execution admission."""

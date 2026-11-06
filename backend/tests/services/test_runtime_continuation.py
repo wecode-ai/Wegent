@@ -283,8 +283,9 @@ async def test_continuation_denials_never_dispatch(
 
 
 @pytest.mark.parametrize("denial", [None, "viewer", "revoked", "hidden_issue"])
+@pytest.mark.parametrize("new_session", [True, False])
 def test_frontend_materialization_and_http_send_share_permission_check(
-    test_db, scope, monkeypatch, denial
+    test_db, scope, monkeypatch, denial, new_session
 ):
     user, grant, issue, origin = scope
     if denial == "viewer":
@@ -299,7 +300,7 @@ def test_frontend_materialization_and_http_send_share_permission_check(
         deviceId="original-device",
         workspacePath="/original/workspace",
         taskId="original-task",
-        newSession=False,
+        newSession=new_session,
         runtime="codex",
         message="Continue",
         origin=origin,
@@ -311,10 +312,44 @@ def test_frontend_materialization_and_http_send_share_permission_check(
             db=test_db, user_id=user.id, request=intent
         )
         assert compiled.payload["executionRequest"]["origin"] == origin
-        assert compiled.payload["executionRequest"]["new_session"] is False
+        assert compiled.payload["executionRequest"]["new_session"] is new_session
     else:
         with pytest.raises(HTTPException) as error:
             service.materialize_runtime_task_create(
                 db=test_db, user_id=user.id, request=intent
             )
         assert error.value.status_code == (403 if denial == "viewer" else 404)
+
+
+@pytest.mark.parametrize("new_session", [True, False])
+def test_project_only_materialization_denies_viewer_execution(
+    test_db, scope, monkeypatch, new_session
+):
+    user, grant, _, origin = scope
+    grant.role = "Viewer"
+    test_db.commit()
+    monkeypatch.setattr(service, "_ensure_owned_device", Mock())
+    compiler = Mock()
+    monkeypatch.setattr(
+        service, "_build_direct_wework_runtime_execution_request", compiler
+    )
+    with pytest.raises(HTTPException) as error:
+        service.materialize_runtime_task_create(
+            db=test_db,
+            user_id=user.id,
+            request=RuntimeTaskMaterializeRequest(
+                deviceId="original-device",
+                workspacePath="/original/workspace",
+                taskId="new-project-task",
+                runtime="codex",
+                message="Denied project execution",
+                newSession=new_session,
+                origin={
+                    "type": "project_task",
+                    "cloudProjectId": origin["cloudProjectId"],
+                },
+                cloudProjectId=origin["cloudProjectId"],
+            ),
+        )
+    assert error.value.status_code == 403
+    compiler.assert_not_called()

@@ -14,7 +14,7 @@ Updated again to `66e6e3e8a9fe94cf405960e12740cf56c1f9e704` on 2026-10-28, prese
 
 ## Implemented managed wework_control
 
-Local APP conversations bound to cloud projects are created and continued locally. Existing `/runtime-work/materialize` compiles `projectId`, uploaded `attachmentIds` and project execution permissions before existing local Runtime dispatch. Other devices retain Backend remote-control policy. Authorized IM continuation reuses its existing APP messaging grant to read original identity; ordinary HTTP callers gain no remote control. No HTTP API or RPC was added.
+Local APP conversations bound to cloud projects are created and continued locally. Existing `/runtime-work/materialize` compiles `projectId`, uploaded `attachmentIds` and project execution permissions before existing local Runtime dispatch. Both creation and continuation check current project/Issue visibility and execute authority, including Viewer denial for project-only bindings without an Issue. Other devices retain Backend remote-control policy. Authorized IM continuation reuses its existing APP messaging grant to read original identity; ordinary HTTP callers gain no remote control. No HTTP API or RPC was added.
 
 The Executor now exposes 30 application tools plus `list_capabilities`, `describe_capability` and `invoke_capability`. Personal Codex/Claude conversations and personal scheduled runs receive the managed MCP automatically, without a separate MCP setup or personal API key.
 

@@ -14,9 +14,7 @@ sidebar_position: 1
 
 ## 当前实现：受管 wework_control
 
-本机 APP 绑定云项目的会话仍在本机创建和续聊；`projectId`、已上传 `attachmentIds` 和云项目执行权限通过既有 `/runtime-work/materialize` 编译，再走现有本机 Runtime。其他设备沿用后端远控策略。已授权 IM 续聊沿用原有 APP 消息授权读取会话身份，不向普通 HTTP 请求开放远控。没有新增 HTTP API 或 RPC。
-
-本机 APP 绑定云项目的会话仍在本机创建和续聊；`projectId`、已上传 `attachmentIds` 和云项目执行权限通过既有 `/runtime-work/materialize` 编译，再走现有本机 Runtime。其他设备沿用后端远控策略。已授权 IM 续聊沿用原有 APP 消息授权读取会话身份，不向普通 HTTP 请求开放远控。没有新增 HTTP API 或 RPC。
+本机 APP 绑定云项目的会话仍在本机创建和续聊；`projectId`、已上传 `attachmentIds` 和云项目执行权限通过既有 `/runtime-work/materialize` 编译，再走现有本机 Runtime。创建和续聊均先校验当前项目/Issue 可见性与 execute 权限；只有项目绑定、没有 Issue 时也不能以 Viewer 身份执行。其他设备沿用后端远控策略。已授权 IM 续聊沿用原有 APP 消息授权读取会话身份，不向普通 HTTP 请求开放远控。没有新增 HTTP API 或 RPC。
 
 新增 30 个业务工具以及 `list_capabilities`、`describe_capability`、`invoke_capability` 三个发现/调用工具。工具目录来自同一份输入契约；普通 Codex、Claude 会话及个人安排自动接入，不需要用户另配 MCP 或个人 API Key。
 

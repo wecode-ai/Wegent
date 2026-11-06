@@ -109,7 +109,7 @@ from app.services.im.session_service import (
 )
 from app.services.object_storage import object_storage_presign_service
 from app.services.runtime_continuation import (
-    authorize_continuation_origin,
+    authorize_execution_origin,
     resolve_continuation_address,
 )
 from app.services.runtime_transcript_reader import (
@@ -4306,10 +4306,7 @@ def _build_runtime_execution_request(
     target: RuntimeTaskTarget,
 ):
     """Compile a Wework task intent without resolving Wegent CRDs."""
-    if not getattr(request, "new_session", True):
-        authorize_continuation_origin(
-            db, user_id, request.origin, request.cloud_project_id
-        )
+    authorize_execution_origin(db, user_id, request.origin, request.cloud_project_id)
     if request.wegent_team_id is not None:
         return _build_team_runtime_execution_request(
             db=db,

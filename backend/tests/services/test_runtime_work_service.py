@@ -4,6 +4,7 @@
 
 import asyncio
 import time
+import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock
 
@@ -12,9 +13,32 @@ from fastapi import HTTPException
 from redis.exceptions import ConnectionError as RedisConnectionError
 
 from app.core.constants import CLIENT_ORIGIN_WEWORK
+from app.models.delivery import CloudProject, LoopItem
 from app.models.kind import Kind
 from app.models.project import Project
 from app.models.task import TaskResource
+from tests.utils.collaboration import authorize_project
+
+
+@pytest.fixture
+def authorized_issue(test_db, test_user):
+    project = CloudProject(
+        public_id=str(uuid.uuid4()),
+        project_key="RUNTIME",
+        name="Runtime execution",
+        created_by_user_id=test_user.id,
+        metadata_json={},
+    )
+    authorize_project(test_db, project)
+    issue = LoopItem(
+        cloud_project_id=project.id,
+        title="Authorized runtime execution",
+        created_by_user_id=test_user.id,
+        metadata_json={"security_level": "open"},
+    )
+    test_db.add(issue)
+    test_db.commit()
+    return project, issue
 
 
 @pytest.fixture
@@ -2889,10 +2913,12 @@ def test_compile_explicit_bot_request_resolves_backend_project_workspace(
     test_db,
     test_user,
     monkeypatch,
+    authorized_issue,
 ):
     from app.schemas.runtime_work import RuntimeTaskCreateRequest
     from app.services import runtime_work_service
 
+    cloud_project, issue = authorized_issue
     project = _local_path_project(
         test_db,
         test_user.id,
@@ -2919,8 +2945,8 @@ def test_compile_explicit_bot_request_resolves_backend_project_workspace(
             bot=[{"id": "robot-1", "name": "Robot", "shell_type": "Codex"}],
             origin={
                 "type": "board_task",
-                "cloudProjectId": "9",
-                "loopItemId": "issue-1",
+                "cloudProjectId": str(cloud_project.id),
+                "loopItemId": str(issue.id),
             },
         ),
     )
@@ -6002,25 +6028,27 @@ def test_build_runtime_execution_request_resolves_crd_model_id(
 def test_build_runtime_execution_request_uses_managed_project_space_tools_for_issue(
     test_db,
     test_user,
+    authorized_issue,
 ) -> None:
     from app.schemas.runtime_work import RuntimeTaskCreateRequest
     from app.services import runtime_work_service
 
+    project, issue = authorized_issue
     request = RuntimeTaskCreateRequest(
         runtime="codex",
         message="处理当前 Issue",
         deviceId="device-1",
         workspacePath="/repo/Wegent",
-        cloudProjectId="project-1",
+        cloudProjectId=str(project.id),
         origin={
             "type": "board_task",
-            "cloudProjectId": "project-1",
-            "loopItemId": "ISSUE-1",
+            "cloudProjectId": str(project.id),
+            "loopItemId": str(issue.id),
         },
         additionalContext={
             "projectSpaceIssue": {
                 "kind": "application",
-                "value": "Current project project-1 and Issue ISSUE-1.",
+                "value": f"Current project {project.id} and Issue {issue.id}.",
             }
         },
     )
@@ -6045,26 +6073,28 @@ def test_build_runtime_execution_request_uses_managed_space_tools_for_dispatch_r
     test_db,
     test_user,
     dispatch_role,
+    authorized_issue,
 ) -> None:
     from app.schemas.runtime_work import RuntimeTaskCreateRequest
     from app.services import runtime_work_service
 
+    project, issue = authorized_issue
     request = RuntimeTaskCreateRequest(
         runtime="codex",
         message="处理当前 Issue",
         deviceId="device-1",
         workspacePath="/repo/Wegent",
-        cloudProjectId="project-1",
+        cloudProjectId=str(project.id),
         origin={
             "type": "board_task",
-            "cloudProjectId": "project-1",
-            "loopItemId": "ISSUE-1",
+            "cloudProjectId": str(project.id),
+            "loopItemId": str(issue.id),
             "dispatchRole": dispatch_role,
         },
         additionalContext={
             "projectSpaceIssue": {
                 "kind": "application",
-                "value": "Current project project-1 and Issue ISSUE-1.",
+                "value": f"Current project {project.id} and Issue {issue.id}.",
             }
         },
     )
