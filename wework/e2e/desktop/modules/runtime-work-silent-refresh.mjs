@@ -12,7 +12,6 @@ export async function verifyRuntimeWorkSilentRefresh(control, address) {
     id: gateId,
     kind: 'response',
     name: 'runtime.tasks.list',
-    holdFollowing: true,
   })
   try {
     await control.command('refreshRuntimeWork', 'body', { value: JSON.stringify(address) })
