@@ -918,7 +918,7 @@ function scheduleStreamingConversationNotification(key: string): void {
 
   const flush = () => {
     pendingStreamingNotifications.delete(key)
-    notifyRuntimeConversation(key)
+    notifyRuntimeConversation(key, undefined, true)
   }
   if (typeof requestAnimationFrame === 'function') {
     const frame = requestAnimationFrame(flush)
@@ -931,7 +931,12 @@ function scheduleStreamingConversationNotification(key: string): void {
 }
 
 function isStreamingConversationAction(action: RuntimePaneMessageAction): boolean {
-  return action.type === 'assistant_chunk' || action.type === 'block_updated'
+  return (
+    action.type === 'assistant_chunk' ||
+    action.type === 'block_updated' ||
+    (action.type === 'block_created' &&
+      (action.block.type === 'text' || action.block.type === 'thinking'))
+  )
 }
 
 function touchEntry<T>(entries: Map<string, T>, key: string): T | undefined {
