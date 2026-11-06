@@ -61,6 +61,7 @@ pub(crate) async fn resolve_shells<R: Redis>(
     Ok(resolved)
 }
 
+/// Retain requested identities that still need the next lookup precedence stage.
 fn missing_keys(resolved: &ResolvedShells, refs: &[ShellKey]) -> Vec<ShellKey> {
     refs.iter()
         .filter(|key| !resolved.contains_key(*key))
@@ -88,6 +89,7 @@ fn scoped_shells_statement(count: usize, owner_only: bool) -> String {
     )
 }
 
+/// Resolve direct Shells with SQL collation matching and first-row precedence.
 async fn scoped_shells(
     mysql: &MysqlService,
     refs: &[ShellKey],
@@ -158,6 +160,7 @@ async fn reference_namespace_targets(
     Ok(targets)
 }
 
+/// Attach approved personal/group references without replacing direct matches.
 async fn resolve_references(
     mysql: &MysqlService,
     refs: &[ShellKey],
@@ -218,6 +221,7 @@ async fn resolve_references(
     Ok(())
 }
 
+/// Authorize unresolved owners against one shared active-namespace snapshot.
 async fn resolve_groups<R: Redis>(
     mysql: &MysqlService,
     resolvers: &EntityResolvers<R>,
