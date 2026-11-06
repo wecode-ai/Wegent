@@ -45,13 +45,12 @@ export async function verifyProjectIntakeBoundary({
     },
   }
   settings = await save({ ...settings, roles: [role] })
-  const sourceBoundary = settings.roles[0].collaboration.projectBoundaries[0].enabledAfter
+  const sourceBoundary = settings.roles[0].projectBoundaries[0].enabledAfter
   const historical = await create('接入分身前已分配，不应自动处理')
   settings.roles[0].collaboration.projects.push(ref)
   settings = await save(settings)
   assert.equal(
-    settings.roles[0].collaboration.projectBoundaries.find(row => row.id === sourceProject.id)
-      .enabledAfter,
+    settings.roles[0].projectBoundaries.find(row => row.id === sourceProject.id).enabledAfter,
     sourceBoundary,
     'Connecting another project must preserve pending assignments in the existing project'
   )

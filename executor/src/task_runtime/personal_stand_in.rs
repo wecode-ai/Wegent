@@ -245,13 +245,10 @@ pub fn project_role(role: &Value, user: i64, project: &str, store: &str) -> Valu
     config["userId"] = json!(user);
     config["tags"] = role["collaboration"]["tags"].clone();
     config["handlingPolicy"] = project_policy(role, project, store);
-    if let Some(boundary) = role["collaboration"]["projectBoundaries"]
-        .as_array()
-        .and_then(|rows| {
-            rows.iter()
-                .find(|row| row["id"] == project && row["store"] == store)
-        })
-    {
+    if let Some(boundary) = role["projectBoundaries"].as_array().and_then(|rows| {
+        rows.iter()
+            .find(|row| row["id"] == project && row["store"] == store)
+    }) {
         config["enabledAfter"] = boundary["enabledAfter"].clone();
     }
     config
@@ -692,12 +689,12 @@ pub(super) fn stamp_project_enabled(identity: &mut Value, previous: &Value) {
     // Explicit projects keep their own boundary when the catch-all scope changes.
     let mut projects = Vec::new();
     for source in [identity as &Value, previous] {
-        for key in ["projects", "excludedProjects", "projectBoundaries"] {
-            for row in source["collaboration"][key]
-                .as_array()
-                .into_iter()
-                .flatten()
-            {
+        for rows in [
+            &source["collaboration"]["projects"],
+            &source["collaboration"]["excludedProjects"],
+            &source["projectBoundaries"],
+        ] {
+            for row in rows.as_array().into_iter().flatten() {
                 let project = json!({"id":row["id"],"store":row["store"]});
                 if !projects.contains(&project) {
                     projects.push(project);
@@ -735,9 +732,7 @@ pub(super) fn stamp_project_enabled(identity: &mut Value, previous: &Value) {
     } else {
         enabled_at
     };
-    if identity["collaboration"].is_object() {
-        identity["collaboration"]["projectBoundaries"] = json!(boundaries);
-    }
+    identity["projectBoundaries"] = json!(boundaries);
 }
 
 #[cfg(test)]

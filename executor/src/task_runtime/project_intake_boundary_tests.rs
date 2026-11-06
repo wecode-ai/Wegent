@@ -19,8 +19,7 @@ fn project_intake_new_connections_do_not_inherit_role_age_or_client_timestamps()
     next["collaboration"]["projects"] = json!([
         {"id":"existing","store":"local"}, {"id":"new","store":"local"},
         {"id":"new","store":"cloud"}]);
-    next["collaboration"]["projectBoundaries"] =
-        json!([{"id":"new","store":"local","enabledAfter":OLD}]);
+    next["projectBoundaries"] = json!([{"id":"new","store":"local","enabledAfter":OLD}]);
     stamp_project_enabled(&mut next, &previous);
     assert_eq!(boundary(&next, "existing", "local"), OLD);
     for store in ["local", "cloud"] {
@@ -30,6 +29,7 @@ fn project_intake_new_connections_do_not_inherit_role_age_or_client_timestamps()
     next["prompt"] = json!("Updated instructions");
     stamp_project_enabled(&mut next, &saved);
     assert_eq!(next["collaboration"], saved["collaboration"]);
+    assert_eq!(next["projectBoundaries"], saved["projectBoundaries"]);
 }
 
 #[test]
