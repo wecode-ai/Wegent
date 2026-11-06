@@ -295,7 +295,7 @@
     context.stroke()
   }
 
-  function paintBackdrop(context, canvas, time, logo, viewport, palette) {
+  function paintBackdrop(context, canvas, logo, viewport, palette) {
     const { width, height } = canvas
     context.setTransform(1, 0, 0, 1, 0, 0)
     context.clearRect(0, 0, width, height)
@@ -369,10 +369,8 @@
     gradient.addColorStop(0.72, `rgba(${palette.stream[1]}, ${fade * 0.72})`)
     gradient.addColorStop(1, `rgba(${palette.stream[2]}, ${fade * 0.92})`)
     context.save()
-    if (palette.headGlow) {
-      context.shadowColor = palette.headGlow.color
-      context.shadowBlur = palette.headGlow.blur
-    }
+    context.shadowColor = palette.headGlow.color
+    context.shadowBlur = palette.headGlow.blur
     stroke(context, points, gradient, index % 5 === 0 ? 1.8 : 1.15)
     if (palette.headGlow?.core) {
       context.globalAlpha *= fade
@@ -406,6 +404,30 @@
     context.restore()
   }
 
+  function updateLogoMask(canvas, logo, { fit, offsetX, offsetY }) {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${canvas.width}" height="${canvas.height}" viewBox="0 0 ${canvas.width} ${canvas.height}"><path fill="white" transform="translate(${offsetX} ${offsetY}) scale(${fit}) translate(${CENTER_X} ${CENTER_Y})" d="${logo.outline}"/></svg>`
+    canvas.parentElement.style.setProperty(
+      '--startup-logo-mask',
+      `url("data:image/svg+xml,${encodeURIComponent(svg)}")`
+    )
+    const style = window.getComputedStyle(canvas.parentElement)
+    const angle = (parseFloat(style.getPropertyValue('--startup-logo-angle')) * Math.PI) / 180
+    const highlight = parseFloat(style.getPropertyValue('--startup-logo-highlight')) / 100
+    const gradientLength =
+      2 * canvas.width * Math.sin(angle) + canvas.height * Math.abs(Math.cos(angle))
+    const peakOffset = ((highlight - 0.5) * gradientLength) / Math.sin(angle)
+    const halfWidth = logo.halfWidth * fit
+    const position = x => `${100 * (1 + (peakOffset - x) / canvas.width)}% 50%`
+    canvas.parentElement.style.setProperty(
+      '--startup-logo-sweep-start',
+      position(canvas.width / 2 - halfWidth)
+    )
+    canvas.parentElement.style.setProperty(
+      '--startup-logo-sweep-end',
+      position(canvas.width / 2 + halfWidth)
+    )
+  }
+
   function createRenderer(canvas, viewport) {
     const palette = PALETTES[document.documentElement.dataset.theme === 'light' ? 'light' : 'dark']
     const context = contextFor(canvas)
@@ -417,7 +439,7 @@
     let maskGeometry = ''
     let materialOpacity = ''
     return time => {
-      if (!paintBackdrop(context, canvas, time, logo, viewport, palette)) {
+      if (!paintBackdrop(context, canvas, logo, viewport, palette)) {
         canvas.parentElement.style.setProperty(
           '--startup-logo-mask',
           'linear-gradient(transparent, transparent)'
@@ -428,27 +450,7 @@
       const { fit, offsetX, offsetY } = viewport.transform
       const geometry = [canvas.width, canvas.height, fit, offsetX, offsetY].join(',')
       if (geometry !== maskGeometry) {
-        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${canvas.width}" height="${canvas.height}" viewBox="0 0 ${canvas.width} ${canvas.height}"><path fill="white" transform="translate(${offsetX} ${offsetY}) scale(${fit}) translate(${CENTER_X} ${CENTER_Y})" d="${logo.outline}"/></svg>`
-        canvas.parentElement.style.setProperty(
-          '--startup-logo-mask',
-          `url("data:image/svg+xml,${encodeURIComponent(svg)}")`
-        )
-        const style = window.getComputedStyle(canvas.parentElement)
-        const angle = (parseFloat(style.getPropertyValue('--startup-logo-angle')) * Math.PI) / 180
-        const highlight = parseFloat(style.getPropertyValue('--startup-logo-highlight')) / 100
-        const gradientLength =
-          2 * canvas.width * Math.sin(angle) + canvas.height * Math.abs(Math.cos(angle))
-        const peakOffset = ((highlight - 0.5) * gradientLength) / Math.sin(angle)
-        const halfWidth = logo.halfWidth * fit
-        const position = x => `${100 * (1 + (peakOffset - x) / canvas.width)}% 50%`
-        canvas.parentElement.style.setProperty(
-          '--startup-logo-sweep-start',
-          position(canvas.width / 2 - halfWidth)
-        )
-        canvas.parentElement.style.setProperty(
-          '--startup-logo-sweep-end',
-          position(canvas.width / 2 + halfWidth)
-        )
+        updateLogoMask(canvas, logo, viewport.transform)
         maskGeometry = geometry
       }
       const opacity = String(smooth(3.25, 4.7, time))
