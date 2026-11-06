@@ -46,7 +46,6 @@ export type CreatedKnowledgeBase = Pick<KnowledgeBase, 'id' | 'name' | 'namespac
 
 export interface UseKnowledgeBaseDialogsReturn {
   createdKb: CreatedKnowledgeBase | null
-  createdAtListRevision: number
   createRefreshError: string | null
   dismissCreatedKb: () => void
   retryCreatedList: () => Promise<void>
@@ -117,7 +116,6 @@ export function useKnowledgeBaseDialogs({
   const createdRef = useRef<CreatedKnowledgeBase | null>(null)
   const creatingRef = useRef(false)
   const [createdKb, setCreatedKb] = useState<CreatedKnowledgeBase | null>(null)
-  const [createdAtListRevision, setCreatedAtListRevision] = useState(0)
   const [createRefreshError, setCreateRefreshError] = useState<string | null>(null)
   const [defaultCreateGroupId, setDefaultCreateGroupId] = useState('personal')
 
@@ -212,7 +210,6 @@ export function useKnowledgeBaseDialogs({
         if (!current()) return
         createdRef.current = created
         setCreatedKb(created)
-        setCreatedAtListRevision(latest.current.sidebar.listRevision ?? 0)
         setShowCreateDialog(false)
         resetCreateDialogState()
         void retryCreatedList()
@@ -456,7 +453,6 @@ export function useKnowledgeBaseDialogs({
 
   return {
     createdKb,
-    createdAtListRevision,
     createRefreshError,
     dismissCreatedKb,
     retryCreatedList,

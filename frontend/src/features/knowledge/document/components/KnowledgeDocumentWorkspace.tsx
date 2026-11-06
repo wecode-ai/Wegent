@@ -355,34 +355,13 @@ function KnowledgeDocumentSession({
     void refreshAll()
   }, [refreshAll, permissionVersion, permissionCacheScope])
 
-  const { createdKb, createdAtListRevision, dismissCreatedKb } = dialogs
+  const { dismissCreatedKb } = dialogs
   useEffect(() => {
     if (sidebar.selectedKbId !== null) {
       dismissCreatedKb()
       setAccessKbId(null)
     }
   }, [sidebar.selectedKbId, dismissCreatedKb])
-  const createdRow = createdKb
-    ? sidebar.allKnowledgeBasesWithGroupInfo.find(kb => kb.id === createdKb.id)
-    : undefined
-  useEffect(() => {
-    if (
-      createdKb &&
-      sidebar.listRevision > createdAtListRevision &&
-      !sidebar.isGroupsLoading &&
-      !sidebar.loadError &&
-      !createdRow
-    )
-      dismissCreatedKb()
-  }, [
-    createdKb,
-    createdAtListRevision,
-    dismissCreatedKb,
-    sidebar.listRevision,
-    sidebar.isGroupsLoading,
-    sidebar.loadError,
-    createdRow,
-  ])
   const permissionKb = dialogs.createdKb ?? accessKb
 
   // Auto-collapse sidebar in Notebook view.

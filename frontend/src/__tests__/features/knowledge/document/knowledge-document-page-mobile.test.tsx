@@ -336,12 +336,11 @@ it('retains the created authorization session while the pre-creation list is all
   )
   await userEvent.setup().click(screen.getByTestId('create-kb-button'))
   await userEvent.setup().click(screen.getByTestId('submit-normal-kb'))
-  expect(await screen.findByTestId('created-knowledge-authorization')).toBeInTheDocument()
+  expect(await screen.findByTestId('permission-add-collaborator')).toBeInTheDocument()
   expect(screen.queryByTestId('kb-row-29')).not.toBeInTheDocument()
   await act(async () => finish(data))
-  await waitFor(() =>
-    expect(screen.queryByTestId('created-knowledge-authorization')).not.toBeInTheDocument()
-  )
+  expect(screen.getByTestId('permission-add-collaborator')).toBeEnabled()
+  expect(screen.getByTestId('finish-created-authorization')).toBeInTheDocument()
   expect(createKnowledgeBase).toHaveBeenCalledTimes(1)
 })
 
@@ -357,7 +356,7 @@ it('retries a failed list refresh for the already-created library without creati
   data.personal.created_by_me.push(row(created))
   await userEvent.setup().click(screen.getByTestId('retry-created-list'))
   await waitFor(() => expect(screen.queryByTestId('retry-created-list')).not.toBeInTheDocument())
-  expect(screen.getByTestId('created-knowledge-authorization')).toBeInTheDocument()
+  expect(screen.getByTestId('permission-add-collaborator')).toBeInTheDocument()
   expect(createKnowledgeBase).toHaveBeenCalledTimes(1)
 })
 
@@ -737,9 +736,16 @@ it.each([KnowledgeDocumentPageDesktop, KnowledgeDocumentPageMobile])(
   }
 )
 
-it.each(['child', 'manager', 'library', 'return', 'account', 'backend', 'unmount'])(
-  'delivers a late unified grant only to its surviving page session (%s)',
-  async mode => {
+it.each(
+  ['list', 'created'].flatMap(entry =>
+    ['child', 'manager', 'library', 'return', 'account', 'backend', 'unmount'].map(mode => [
+      entry,
+      mode,
+    ])
+  )
+)(
+  'delivers a late unified grant only to its surviving page session (%s, %s)',
+  async (entry, mode) => {
     const { registerAuthSection } =
       await import('@/features/knowledge/document/auth-section-registry')
     registerAuthSection({
@@ -773,8 +779,13 @@ it.each(['child', 'manager', 'library', 'return', 'account', 'backend', 'unmount
     )
     const { rerender, unmount } = render(<KnowledgeDocumentPageMobile />)
     const user = userEvent.setup()
-    await user.click(await screen.findByTestId('more-kb-7'))
-    await user.click(screen.getByTestId('permission-kb-7'))
+    if (entry === 'created') {
+      await user.click(await screen.findByTestId('create-kb-button'))
+      await user.click(screen.getByTestId('submit-normal-kb'))
+    } else {
+      await user.click(await screen.findByTestId('more-kb-7'))
+      await user.click(screen.getByTestId('permission-kb-7'))
+    }
     await user.click(await screen.findByTestId('permission-add-collaborator'))
     await user.click(screen.getByRole('button', { name: 'Select late target' }))
     await user.click(screen.getByTestId('submit-created-permissions'))

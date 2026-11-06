@@ -76,7 +76,8 @@ it('reuses registered selection, distinguishes equal ids, and retries only the f
     />
   )
   expect(screen.getByRole('heading')).toHaveTextContent('document.creation.created')
-  await userEvent.setup().click(await screen.findByTestId('select-test-a'))
+  await userEvent.setup().click(await screen.findByTestId('permission-add-collaborator'))
+  await userEvent.setup().click(screen.getByTestId('select-test-a'))
   await userEvent.setup().click(screen.getByTestId('select-test-b'))
   await userEvent.setup().click(screen.getByTestId('remove-auth-test-a-7'))
   expect(screen.getByTestId('remove-auth-test-b-7')).toBeInTheDocument()
@@ -99,6 +100,7 @@ it('reuses registered selection, distinguishes equal ids, and retries only the f
       },
     ],
   })
+  await userEvent.setup().keyboard('{Escape}')
   await userEvent.setup().click(screen.getByTestId('finish-created-authorization'))
   expect(close).toHaveBeenCalledTimes(1)
   await waitFor(() => expect(changed).toHaveBeenCalled())
@@ -157,7 +159,8 @@ it('rechecks access and leaves management after the first grant is authoritative
       onAccessLost={lost}
     />
   )
-  await userEvent.setup().click(await screen.findByTestId('select-forbidden-target'))
+  await userEvent.setup().click(await screen.findByTestId('permission-add-collaborator'))
+  await userEvent.setup().click(screen.getByTestId('select-forbidden-target'))
   await userEvent.setup().click(screen.getByTestId('submit-created-permissions'))
   await waitFor(() => expect(lost).toHaveBeenCalledTimes(1))
   expect(close).toHaveBeenCalledTimes(1)

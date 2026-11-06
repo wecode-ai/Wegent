@@ -18,7 +18,6 @@ import { useUser } from '@/features/common/UserContext'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isManager } from '@/types/base-role'
 import type { MyPermissionSourcesResponse } from '@/types/knowledge'
-import { KnowledgeGrantForm } from '../../permission/components/KnowledgeGrantForm'
 import { PermissionManagementTab } from '../../permission/components/PermissionManagementTab'
 
 interface KnowledgeAccessDialogProps {
@@ -70,7 +69,6 @@ function KnowledgeAccessSession(props: KnowledgeAccessDialogProps) {
   const [failed, setFailed] = useState(false)
   const [blocked, setBlocked] = useState(false)
   const [attempt, setAttempt] = useState(0)
-  const [membersRevision, setMembersRevision] = useState(0)
   useEffect(() => {
     let cancelled = false
     setFailed(false)
@@ -203,24 +201,9 @@ function KnowledgeAccessSession(props: KnowledgeAccessDialogProps) {
             </ul>
           </div>
         )}
-        {canManage && props.resourceCreated && (
-          <KnowledgeGrantForm
-            kbId={props.kbId}
-            kbNamespace={props.kbNamespace}
-            onAccessDenied={() => {
-              if (alive.current) setBlocked(true)
-              changed()
-            }}
-            onChanged={() => {
-              if (alive.current) setMembersRevision(value => value + 1)
-              changed()
-            }}
-          />
-        )}
         {canManage && (
           <PermissionManagementTab
             kbId={props.kbId}
-            refreshKey={membersRevision}
             kbNamespace={props.kbNamespace}
             onChanged={changed}
             onAccessDenied={() => {
