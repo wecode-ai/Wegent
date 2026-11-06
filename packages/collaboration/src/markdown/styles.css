@@ -89,7 +89,13 @@
   -webkit-user-select: text;
 }
 .composer-link-node {
+  min-width: 0;
   cursor: pointer;
+}
+.composer-link-node .composer-mention-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 .composer-mention-link {
   color: rgb(var(--color-focus));
