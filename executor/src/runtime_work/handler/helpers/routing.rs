@@ -194,6 +194,7 @@ fn log_runtime_project_filter_item(link: &RuntimeTaskLink, details: RuntimeProje
     );
 }
 
+/// Record the resolved task link and its allowlisted model identity for read and archive events.
 fn log_runtime_archive_link(event: &str, link: &RuntimeTaskLink, archived_query: bool) {
     let mut fields = vec![
         ("archived_query", archived_query.to_string()),

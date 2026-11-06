@@ -132,18 +132,26 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
     )
   }
 
+  /** Inspect the real feedback preview for the owning task's allowlisted model identities. */
   async function assertFeedbackModelSnapshot(control, identity, expectedModelName) {
-    await control.command('click', '[data-testid="task-feedback-button"]')
+    await control.command('clickWhenEnabled', '[data-testid="task-feedback-button"]')
     try {
+      await control.command('waitFor', '[data-testid="task-feedback-note"]', { visible: true })
       await control.command('fill', '[data-testid="task-feedback-note"]', {
         value: 'Inspect the saved and restored task model identities.',
       })
-      await control.command('click', '[data-testid="task-feedback-group-full-task-checkbox"]')
-      await control.command('click', '[data-testid="task-feedback-export-button"]')
-      await control.command('waitFor', '[data-testid="task-feedback-preview-list"]')
-      await control.command('click', '[data-testid="task-feedback-preview-category-task"]')
       await control.command(
-        'click',
+        'clickWhenEnabled',
+        '[data-testid="task-feedback-group-full-task-checkbox"]'
+      )
+      await control.command('clickWhenEnabled', '[data-testid="task-feedback-export-button"]')
+      await control.command('waitFor', '[data-testid="task-feedback-preview-list"]')
+      await control.command(
+        'clickWhenEnabled',
+        '[data-testid="task-feedback-preview-category-task"]'
+      )
+      await control.command(
+        'clickWhenEnabled',
         '[data-testid="task-feedback-preview-entry-context/task.json"]'
       )
       await control.command('waitFor', '[data-testid="task-feedback-preview-content"]')
@@ -161,7 +169,7 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
         assert.equal(Object.hasOwn(context.modelSelection[source], 'options'), false)
       }
     } finally {
-      await control.command('click', '[data-testid="task-feedback-close-button"]')
+      await control.command('clickWhenEnabled', '[data-testid="task-feedback-close-button"]')
       await control.command('waitFor', '[data-testid="task-feedback-dialog-overlay"]', {
         visible: false,
       })

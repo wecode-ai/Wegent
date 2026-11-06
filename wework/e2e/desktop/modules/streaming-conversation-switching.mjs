@@ -80,6 +80,7 @@ async function diagnoseSwitchingFailure(control, timeoutMs, stage) {
   }
 }
 
+/** Verify a held 520-item native stream across task switches, cold restoration and pagination. */
 export function createConversationSwitchingChecks({ uiTimeoutMs }) {
   const longResponseTimeoutMs = Math.max(uiTimeoutMs, LONG_RESPONSE_TIMEOUT_MS)
   let releaseTail
@@ -153,7 +154,11 @@ export function createConversationSwitchingChecks({ uiTimeoutMs }) {
         await control.command('fill', COMPOSER_SELECTOR, { value: PROMPT })
         await control.command('startRuntimeStreamDiagnostics', 'body')
         await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
-        await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, { text: PREFIX })
+        // The prefix follows 520 native progress items, so use this fixture's long-response budget.
+        await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+          text: PREFIX,
+          timeoutMs: longResponseTimeoutMs,
+        })
         stage = 'native-history'
         const debug = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
         const address = debug.workbench?.currentRuntimeTask

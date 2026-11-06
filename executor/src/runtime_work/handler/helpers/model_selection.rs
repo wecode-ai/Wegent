@@ -1,3 +1,4 @@
+/// Extract model identity for diagnostics without exposing execution options or credentials.
 fn model_selection_log_fields(runtime_handle: &Value) -> Vec<(&'static str, String)> {
     let selection = runtime_handle
         .get("modelSelection")
@@ -14,6 +15,8 @@ fn model_selection_log_fields(runtime_handle: &Value) -> Vec<(&'static str, Stri
     ]
 }
 
+/// Apply model metadata and log changed in-memory assignments when the payload identifies a task.
+/// This event does not confirm that the task has been persisted to disk.
 fn set_runtime_handle_model_selection(runtime_handle: &mut Value, payload: &Value) {
     let previous = runtime_handle
         .get("modelSelection")
@@ -33,6 +36,7 @@ fn set_runtime_handle_model_selection(runtime_handle: &mut Value, payload: &Valu
     }
 }
 
+/// Copy explicit model selection or construct it from the existing legacy model fields.
 fn apply_runtime_handle_model_selection(runtime_handle: &mut Value, payload: &Value) {
     if let Some(selection) = payload
         .get("modelSelection")

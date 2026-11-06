@@ -18,7 +18,7 @@ export interface ModelSelectionDiagnostics {
   selectionReady: boolean
 }
 
-// Correlate local diagnostic events without recording scope keys or configuration secrets.
+/** Correlate local diagnostic events without recording scope keys or configuration secrets. */
 export function modelSelectionScopeFingerprint(value: string): number {
   let hash = 2166136261
   for (let index = 0; index < value.length; index += 1) {
@@ -27,6 +27,7 @@ export function modelSelectionScopeFingerprint(value: string): number {
   return hash >>> 0
 }
 
+/** Extract only model identity fields; never retain arbitrary options or authentication data. */
 export function modelSelectionIdentityDiagnostics(
   selection?: ModelSelectionConfig | null
 ): ModelSelectionIdentityDiagnostics | null {

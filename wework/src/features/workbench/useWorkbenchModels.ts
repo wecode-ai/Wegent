@@ -83,6 +83,7 @@ function getSelectionKey(selectionConfig?: ModelSelectionConfig | null): string 
   return [selectionConfig?.modelType ?? '', selectionConfig?.modelName ?? '', optionsKey].join('::')
 }
 
+/** Restore and manage independent model choices for each conversation or new-chat scope. */
 export function useWorkbenchModels({
   api,
   locked,
