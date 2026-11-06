@@ -46,7 +46,9 @@ export function createDesktopScenario(options) {
         assert.equal(await accountPlugin(cloud, slug), undefined)
         await control.command('clickWhenEnabled', install)
         await control.command('waitFor', testId('plugin-install-unofficial-warning'))
-        await control.command('click', testId('install-plugin-dialog-confirm'))
+        await control.command('clickWhenEnabled', testId('install-plugin-dialog-confirm'), {
+          timeoutMs: options.workbenchReadyTimeoutMs,
+        })
         await control.command('waitFor', testId(`plugin-marketplace-actions-${release.pluginId}`), {
           timeoutMs: options.workbenchReadyTimeoutMs,
         })
