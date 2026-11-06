@@ -32,7 +32,14 @@ function fixture(t, options = {}) {
     name: 'codex',
     detail: '/isolated/codex app-server --listen stdio://',
   }
-  const state = { alive: true, reads: 0, waits: 0, signals: [], calls: [] }
+  const state = {
+    alive: options.serverPresent !== false,
+    reads: 0,
+    identityReads: {},
+    waits: 0,
+    signals: [],
+    calls: [],
+  }
   const snapshot = () => {
     now += 1
     const value = {
@@ -63,6 +70,13 @@ function fixture(t, options = {}) {
     },
   }
   const dependencies = {
+    async collectIdentity(pid) {
+      state.identityReads[pid] = (state.identityReads[pid] ?? 0) + 1
+      const identity = { pid, creationToken: `native:${pid}:original` }
+      return options.identity
+        ? options.identity(identity, state.identityReads[pid], state)
+        : identity
+    },
     signal(pid, signal) {
       state.signals.push({ pid, signal })
     },
@@ -86,7 +100,17 @@ test('stops only the verified idle Codex child and waits for exit before establi
   assert.equal(evidence.stopped[0].pid, 22)
   assert.ok(evidence.snapshotCapturedAt > evidence.stoppedAt)
   assert.equal(state.reads, 3)
-  await assertOfflinePluginCodexStayedStopped(control, evidence)
+  await assertOfflinePluginCodexStayedStopped(control, evidence, dependencies)
+})
+
+test('proves the Executor identity when idle admission has already stopped Codex', async t => {
+  const { control, dependencies, state } = fixture(t, { serverPresent: false })
+  const evidence = await stopCodexForOfflinePluginProbe(control, dependencies)
+  await assertOfflinePluginCodexStayedStopped(control, evidence, dependencies)
+  assert.deepEqual(evidence.stopped, [])
+  assert.deepEqual(state.signals, [])
+  assert.equal(state.identityReads[11], 3)
+  assert.equal(state.identityReads[22], undefined)
 })
 
 test('rejects active work before looking up or signalling a process', async t => {
@@ -98,7 +122,7 @@ test('rejects active work before looking up or signalling a process', async t =>
   assert.deepEqual(state.signals, [])
 })
 
-for (const change of ['owner', 'parent', 'creation', 'executor']) {
+for (const change of ['owner', 'parent']) {
   test(`refuses to signal after the ${change} identity changes`, async t => {
     const { control, dependencies, state } = fixture(t, {
       snapshot(value, read) {
@@ -106,8 +130,6 @@ for (const change of ['owner', 'parent', 'creation', 'executor']) {
         const processes = value.processes.map(record => structuredClone(record))
         if (change === 'owner') processes[1].owner.id = 'another-runtime'
         if (change === 'parent') processes[1].parentPid = 99
-        if (change === 'creation') processes[1].startedAt += 1
-        if (change === 'executor') processes[0].startedAt += 1
         return { ...value, processes }
       },
     })
@@ -115,6 +137,62 @@ for (const change of ['owner', 'parent', 'creation', 'executor']) {
     assert.deepEqual(state.signals, [])
   })
 }
+
+for (const pid of [11, 22]) {
+  test(`refuses to signal when PID ${pid} has a different native creation token`, async t => {
+    const { control, dependencies, state } = fixture(t, {
+      identity(value, read) {
+        return value.pid === pid && read === 2
+          ? { ...value, creationToken: `${value.creationToken}:replacement` }
+          : value
+      },
+    })
+    await assert.rejects(stopCodexForOfflinePluginProbe(control, dependencies))
+    assert.deepEqual(state.signals, [])
+  })
+}
+
+test('keeps exact native identity when display creation estimates and IDs drift between snapshots', async t => {
+  const { control, dependencies, state } = fixture(t, {
+    snapshot(value, read) {
+      return {
+        ...value,
+        processes: value.processes.map(record => ({
+          ...record,
+          startedAt: record.startedAt - read * 1000,
+          id: `${record.pid}:sample-${read}`,
+        })),
+      }
+    },
+  })
+  const evidence = await stopCodexForOfflinePluginProbe(control, dependencies)
+  await assertOfflinePluginCodexStayedStopped(control, evidence, dependencies)
+  assert.deepEqual(state.signals, [{ pid: 22, signal: 'SIGTERM' }])
+  assert.equal(evidence.executor.creationToken, 'native:11:original')
+})
+
+test('refuses to signal if the owned process disappears before native identity collection', async t => {
+  const { control, dependencies, state } = fixture(t, {
+    identity(value) {
+      return value.pid === 22 ? null : value
+    },
+  })
+  await assert.rejects(stopCodexForOfflinePluginProbe(control, dependencies), /exited before/)
+  assert.deepEqual(state.signals, [])
+})
+
+test('detects PID reuse while waiting for exit without signalling the replacement process', async t => {
+  const { control, dependencies, state } = fixture(t, {
+    exitAfterWaits: Infinity,
+    identity(value, read) {
+      return value.pid === 22 && read >= 3
+        ? { ...value, creationToken: 'native:22:replacement' }
+        : value
+    },
+  })
+  await assert.rejects(stopCodexForOfflinePluginProbe(control, dependencies), /PID was reused/)
+  assert.deepEqual(state.signals, [{ pid: 22, signal: 'SIGTERM' }])
+})
 
 test('requires a new process-table capture before revalidating a PID', async t => {
   let firstCapture
@@ -155,8 +233,23 @@ test('detects an app-server restarted by the measured local operations', async t
   const evidence = await stopCodexForOfflinePluginProbe(control, dependencies)
   state.alive = true
   await assert.rejects(
-    assertOfflinePluginCodexStayedStopped(control, evidence),
+    assertOfflinePluginCodexStayedStopped(control, evidence, dependencies),
     /Local plugin import or deletion started Codex/
+  )
+})
+
+test('rejects a replacement Executor after local operations using its native creation token', async t => {
+  const { control, dependencies } = fixture(t, {
+    identity(value, read) {
+      return value.pid === 11 && read >= 4
+        ? { ...value, creationToken: 'native:11:replacement' }
+        : value
+    },
+  })
+  const evidence = await stopCodexForOfflinePluginProbe(control, dependencies)
+  await assert.rejects(
+    assertOfflinePluginCodexStayedStopped(control, evidence, dependencies),
+    /isolated Executor changed/
   )
 })
 
