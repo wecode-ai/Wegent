@@ -278,14 +278,19 @@ test('stops ClaudeCode through a cross-namespace Shell reference after refresh',
       .toBe(true)
     // Executor names are saved by terminal callbacks for container reuse.
     // A task heartbeat identifies the live container while its model is held.
-    const heartbeat = await request.get(`${MANAGER}/tasks/${taskId}/heartbeat`)
-    expect(heartbeat.ok(), await heartbeat.text()).toBe(true)
-    const runtime = await heartbeat.json()
-    expect(runtime).toMatchObject({
-      task_id: String(taskId),
-      alive: true,
-      heartbeat_type: 'task',
-    })
+    let runtime: unknown
+    await expect
+      .poll(async () => {
+        const heartbeat = await request.get(`${MANAGER}/tasks/${taskId}/heartbeat`)
+        expect(heartbeat.ok(), await heartbeat.text()).toBe(true)
+        runtime = await heartbeat.json()
+        return runtime
+      })
+      .toMatchObject({
+        task_id: String(taskId),
+        alive: true,
+        heartbeat_type: 'task',
+      })
 
     traffic.joins.length = 0
     await page.reload({ waitUntil: 'domcontentloaded' })
