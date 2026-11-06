@@ -78,8 +78,7 @@ projectTest(
       },
     })
     await page.reload()
-    if (!(await page.getByTestId('cloud-todo-more-properties').isVisible()))
-      await page.getByTestId(`cloud-todo-card-${issueId}`).click()
+    await expect(page.getByTestId('collaboration-issue-detail')).toBeVisible()
     await page.getByTestId('cloud-todo-more-properties').click()
     await page.getByTestId('cloud-todo-assignment-chain-trigger').click()
     const actors = page
