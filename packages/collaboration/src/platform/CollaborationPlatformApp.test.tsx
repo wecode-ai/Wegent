@@ -960,6 +960,364 @@ afterEach(async () => {
 });
 
 describe("CollaborationPlatformApp real component flow", () => {
+  it.each(["zh-CN", "en"] as const)(
+    "offers localized space and project deletion (%s)",
+    async (locale) => {
+      const { api } = createApi();
+      await render(<PlatformHarness api={api} locale={locale} />);
+      await click(byTestId(`collaboration-project-menu-${project.id}`));
+      expect(
+        portalByTestId(`collaboration-project-archive-${project.id}`)
+          .textContent,
+      ).toContain(locale === "en" ? "Delete project" : "删除项目");
+      await click(
+        portalByTestId(`collaboration-project-archive-${project.id}`),
+      );
+      expect(
+        byTestId("collaboration-project-archive-dialog").textContent,
+      ).toContain(
+        locale === "en" ? "Local code directories" : "不会删除本地代码目录",
+      );
+      await click(byTestId("collaboration-project-archive-cancel"));
+      await click(byTestId(`collaboration-workspace-actions-${workspace.id}`));
+      expect(
+        portalByTestId(`collaboration-workspace-delete-${workspace.id}`)
+          .textContent,
+      ).toContain(locale === "en" ? "Delete space" : "删除空间");
+    },
+  );
+
+  it.each(["Maintainer", "Developer", "Viewer"] as const)(
+    "does not offer space deletion to a %s",
+    async (role) => {
+      const { api } = createApi({
+        initialWorkspaces: [{ ...workspace, access_role: role }],
+      });
+      await render(<PlatformHarness api={api} />);
+      if (role === "Maintainer")
+        await click(
+          byTestId(`collaboration-workspace-actions-${workspace.id}`),
+        );
+      expect(
+        document.body.querySelector(
+          `[data-testid="collaboration-workspace-delete-${workspace.id}"]`,
+        ),
+      ).toBeNull();
+      expect(api.workspaces!.archive).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps the built-in local space without a delete command", async () => {
+    const { api } = createApi({
+      initialWorkspaces: [localWorkspace],
+      initialProjects: [],
+    });
+    await render(<PlatformHarness api={api} />);
+    await click(
+      byTestId(`collaboration-workspace-actions-${localWorkspace.id}`),
+    );
+    expect(
+      document.body.querySelector(
+        `[data-testid="collaboration-workspace-delete-${localWorkspace.id}"]`,
+      ),
+    ).toBeNull();
+  });
+
+  it.each(["workspace", "project"] as const)(
+    "undoes a deleted %s and restores navigation",
+    async (kind) => {
+      const { api, workspaces, projects } = createApi({
+        initialProjects: kind === "workspace" ? [] : [project],
+      });
+      const deleted = {
+        id: kind === "workspace" ? workspace.id : project.id,
+        kind,
+        name: kind === "workspace" ? workspace.name : project.name,
+        workspaceId: kind === "project" ? workspace.id : null,
+        workspaceName: workspace.name,
+        version: 2,
+        deletedAt: "2026-11-06T00:00:00Z",
+        parentDeleted: false,
+      };
+      api.workspaces!.archive = vi.fn(async () => {
+        workspaces.splice(0, 1);
+      });
+      api.projects.archive = vi.fn(async () => {
+        projects.splice(0, 1);
+      });
+      api.recycleBin = {
+        list: vi.fn(async () => ({ items: [deleted], errors: [] })),
+        restore: vi.fn(async () => {
+          if (kind === "workspace")
+            workspaces.push({ ...workspace, version: 3 });
+          else projects.push({ ...project, version: 3 });
+        }),
+      };
+      await render(<PlatformHarness api={api} />);
+      if (kind === "workspace") {
+        await click(
+          byTestId(`collaboration-workspace-actions-${workspace.id}`),
+        );
+        await click(
+          portalByTestId(`collaboration-workspace-delete-${workspace.id}`),
+        );
+        await click(byTestId("collaboration-workspace-delete-confirm"));
+      } else {
+        await click(byTestId(`collaboration-project-menu-${project.id}`));
+        await click(
+          portalByTestId(`collaboration-project-archive-${project.id}`),
+        );
+        await click(byTestId("collaboration-project-archive-confirm"));
+      }
+      await click(byTestId(`collaboration-undo-delete-${kind}-${deleted.id}`));
+      expect(api.recycleBin.restore).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: deleted.id,
+          kind,
+          version: 2,
+        }),
+      );
+      expect(
+        byTestId(
+          kind === "workspace"
+            ? `collaboration-workspace-tree-${workspace.id}`
+            : `collaboration-workspace-project-${project.id}`,
+        ),
+      ).toBeTruthy();
+    },
+  );
+
+  it("opens the unified recycle bin and restores a retained project", async () => {
+    const { api, projects } = createApi({ initialProjects: [] });
+    const deleted = {
+      id: project.id,
+      kind: "project" as const,
+      name: project.name,
+      workspaceId: workspace.id,
+      workspaceName: workspace.name,
+      version: 2,
+      deletedAt: "2026-11-06T00:00:00Z",
+      parentDeleted: false,
+    };
+    let items = [deleted];
+    api.recycleBin = {
+      list: vi.fn(async () => ({ items, errors: [] })),
+      restore: vi.fn(async () => {
+        items = [];
+        projects.push({ ...project, version: 3 });
+      }),
+    };
+    await render(<PlatformHarness api={api} />);
+    await click(byTestId("collaboration-recycle-bin-open"));
+    expect(byTestId("collaboration-recycle-bin-page").textContent).toContain(
+      project.name,
+    );
+    await click(
+      byTestId(`collaboration-recycle-bin-restore-project-${project.id}`),
+    );
+    expect(api.recycleBin.restore).toHaveBeenCalledWith(deleted);
+    expect(
+      byTestId(`collaboration-workspace-project-${project.id}`),
+    ).toBeTruthy();
+    expect(byTestId("collaboration-recycle-bin-page").textContent).toContain(
+      "回收站为空",
+    );
+  });
+
+  it("keeps the recycle bin available when cloud navigation cannot load", async () => {
+    const { api } = createApi();
+    api.workspaces!.list = vi.fn(async () => {
+      throw new Error("Cloud offline");
+    });
+    api.projects.list = vi.fn(async () => {
+      throw new Error("Cloud offline");
+    });
+    api.recycleBin = {
+      list: vi.fn(async () => ({
+        items: [
+          {
+            id: "deleted-local",
+            kind: "project" as const,
+            name: "Recoverable local project",
+            workspaceId: localWorkspace.id,
+            workspaceName: localWorkspace.name,
+            version: 2,
+            deletedAt: "2026-11-06T00:00:00Z",
+            parentDeleted: false,
+          },
+        ],
+        errors: ["Cloud offline"],
+      })),
+      restore: vi.fn(async () => undefined),
+    };
+    await render(
+      <PlatformHarness
+        api={api}
+        start={{ ...initialLocation, rootView: "recycle-bin" }}
+      />,
+    );
+    expect(byTestId("collaboration-recycle-bin-page").textContent).toContain(
+      "Recoverable local project",
+    );
+    expect(
+      byTestId("collaboration-recycle-bin-restore-project-deleted-local"),
+    ).toBeTruthy();
+  });
+
+  it("confirms space deletion, preserves errors and exits the deleted space", async () => {
+    const { api, workspaces } = createApi({
+      initialProjects: [],
+      initialWorkspaces: [{ ...workspace, project_count: 0 }, groupWorkspace],
+    });
+    const pending = deferred<void>();
+    const remove = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Space changed"))
+      .mockImplementationOnce(async () => {
+        await pending.promise;
+        workspaces.splice(0, 1);
+      });
+    api.workspaces!.archive = remove;
+    await render(
+      <PlatformHarness
+        api={api}
+        start={{ ...initialLocation, workspaceId: workspace.id }}
+      />,
+    );
+    const openDelete = async () => {
+      await click(byTestId("collaboration-workspace-actions"));
+      await click(
+        portalByTestId(`collaboration-workspace-delete-${workspace.id}`),
+      );
+    };
+    await openDelete();
+    expect(
+      byTestId("collaboration-workspace-delete-dialog").textContent,
+    ).toContain(workspace.name);
+    await click(byTestId("collaboration-workspace-delete-cancel"));
+    expect(remove).not.toHaveBeenCalled();
+    await openDelete();
+    await click(byTestId("collaboration-workspace-delete-confirm"));
+    expect(
+      byTestId("collaboration-workspace-delete-dialog").querySelector(
+        '[role="alert"]',
+      )?.textContent,
+    ).toBe("Space changed");
+    expect(
+      byTestId(`collaboration-workspace-tree-${workspace.id}`),
+    ).toBeTruthy();
+    await click(byTestId("collaboration-workspace-delete-confirm"));
+    expect(
+      byTestId("collaboration-workspace-delete-confirm").hasAttribute(
+        "disabled",
+      ),
+    ).toBe(true);
+    await click(byTestId("collaboration-workspace-delete-confirm"));
+    expect(remove).toHaveBeenCalledTimes(2);
+    await act(async () => pending.resolve());
+    await flush();
+    expect(remove).toHaveBeenLastCalledWith(workspace.id, workspace.version);
+    expect(
+      container.querySelector(
+        `[data-testid="collaboration-workspace-tree-${workspace.id}"]`,
+      ),
+    ).toBeNull();
+    expect(
+      byTestId(`collaboration-workspace-tree-${groupWorkspace.id}`),
+    ).toBeTruthy();
+    expect(JSON.parse(byTestId("test-location").textContent!)).toMatchObject({
+      workspaceId: null,
+      projectId: null,
+      rootView: "home",
+    });
+    await click(byTestId(`collaboration-workspace-home-${groupWorkspace.id}`));
+    expect(
+      container.querySelector(
+        `[data-testid="collaboration-workspace-tree-${workspace.id}"]`,
+      ),
+    ).toBeNull();
+  });
+
+  it("leaves a nonempty space intact after the backend denies deletion", async () => {
+    const { api } = createApi();
+    api.workspaces!.archive = vi
+      .fn()
+      .mockRejectedValue(
+        new Error(
+          "Archive or move active Projects before archiving the Workspace",
+        ),
+      );
+    await render(<PlatformHarness api={api} />);
+    await click(byTestId(`collaboration-workspace-actions-${workspace.id}`));
+    await click(
+      portalByTestId(`collaboration-workspace-delete-${workspace.id}`),
+    );
+    await click(byTestId("collaboration-workspace-delete-confirm"));
+    expect(
+      byTestId("collaboration-workspace-delete-dialog").textContent,
+    ).toContain("Archive or move active Projects");
+    expect(
+      byTestId(`collaboration-workspace-project-${project.id}`),
+    ).toBeTruthy();
+    expect(api.projects.archive).not.toHaveBeenCalled();
+  });
+
+  it.each(["workspace", "project"] as const)(
+    "does not resurrect a deleted %s from a late catalog response",
+    async (kind) => {
+      const { api, workspaces, projects } = createApi();
+      const staleCatalog = deferred<CollaborationProject[]>();
+      api.projects.list = vi.fn(async () => staleCatalog.promise);
+      api.workspaces!.archive = vi.fn(async () => {
+        workspaces.splice(0, 1);
+      });
+      api.projects.archive = vi.fn(async () => {
+        projects.splice(0, 1);
+      });
+      // The tree becomes usable from the workspace catalog before the project list settles.
+      await render(<PlatformHarness api={api} />);
+      if (kind === "workspace") {
+        await click(
+          byTestId(`collaboration-workspace-actions-${workspace.id}`),
+        );
+        await click(
+          portalByTestId(`collaboration-workspace-delete-${workspace.id}`),
+        );
+        await click(byTestId("collaboration-workspace-delete-confirm"));
+      } else {
+        await act(async () => staleCatalog.resolve([project]));
+        await flush();
+        const staleResources = deferred<{
+          agents: CollaborationOwnedAgent[];
+          execution_environments: CollaborationExecutionEnvironment[];
+        }>();
+        api.resources!.list = vi.fn(async () => staleResources.promise);
+        await render(<PlatformHarness api={api} refreshKey="reload" />);
+        await click(byTestId(`collaboration-project-menu-${project.id}`));
+        await click(
+          portalByTestId(`collaboration-project-archive-${project.id}`),
+        );
+        await click(byTestId("collaboration-project-archive-confirm"));
+        await act(async () =>
+          staleResources.resolve({ agents: [], execution_environments: [] }),
+        );
+      }
+      await act(async () => staleCatalog.resolve([project]));
+      await flush();
+      expect(
+        container.querySelector(
+          `[data-testid="collaboration-workspace-project-${project.id}"]`,
+        ),
+      ).toBeNull();
+      if (kind === "workspace")
+        expect(
+          container.querySelector(
+            `[data-testid="collaboration-workspace-tree-${workspace.id}"]`,
+          ),
+        ).toBeNull();
+    },
+  );
+
   it.each(["local", "backend"] as const)(
     "returns to the space after archiving the open %s project",
     async (store) => {

@@ -3,39 +3,37 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useEffect, useRef, useState } from "react";
-import type { CollaborationProject } from "../types";
+import { platformMessages } from "./platformMessages";
 
-const copy = {
-  "zh-CN": {
-    title: "归档项目？",
-    hint: "归档后，项目将从协作列表中移除。此操作不会删除本地代码目录。",
-    cancel: "取消",
-    confirm: "归档项目",
-    pending: "正在归档…",
-    failed: "归档失败，请重试。",
-  },
-  en: {
-    title: "Archive project?",
-    hint: "The project will be removed from the collaboration list. Local code directories will not be deleted.",
-    cancel: "Cancel",
-    confirm: "Archive project",
-    pending: "Archiving…",
-    failed: "Could not archive the project. Please try again.",
-  },
-};
-
-export function ProjectArchiveDialog({
-  project,
+export function ResourceDeleteDialog({
+  name,
+  kind,
   locale,
-  onArchive,
+  onDelete,
   onClose,
 }: {
-  project: CollaborationProject;
+  name: string;
+  kind: "project" | "workspace";
   locale: "zh-CN" | "en";
-  onArchive(): Promise<void>;
+  onDelete(): Promise<void>;
   onClose(): void;
 }) {
-  const messages = copy[locale];
+  const messages = platformMessages[locale];
+  const title =
+    kind === "project"
+      ? messages.deleteProjectTitle
+      : messages.deleteWorkspaceTitle;
+  const hint =
+    kind === "project"
+      ? messages.deleteProjectHint
+      : messages.deleteWorkspaceHint;
+  const confirm =
+    kind === "project" ? messages.deleteProject : messages.deleteWorkspace;
+  // Keep the existing project selectors used by desktop regressions.
+  const testId =
+    kind === "project"
+      ? "collaboration-project-archive"
+      : "collaboration-workspace-delete";
   const dialog = useRef<HTMLDivElement>(null);
   const lock = useRef(false);
   const [pending, setPending] = useState(false);
@@ -48,16 +46,16 @@ export function ProjectArchiveDialog({
         previous.focus();
     };
   }, []);
-  const archive = async () => {
+  const remove = async () => {
     if (lock.current) return;
     lock.current = true;
     setPending(true);
     setError(null);
     try {
-      await onArchive();
+      await onDelete();
       onClose();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : messages.failed);
+      setError(cause instanceof Error ? cause.message : messages.deleteFailed);
     } finally {
       lock.current = false;
       setPending(false);
@@ -74,10 +72,10 @@ export function ProjectArchiveDialog({
         ref={dialog}
         role="dialog"
         aria-modal="true"
-        aria-label={messages.title}
+        aria-label={title}
         aria-busy={pending}
         tabIndex={-1}
-        data-testid="collaboration-project-archive-dialog"
+        data-testid={`${testId}-dialog`}
         className="w-full max-w-md rounded-2xl border border-border bg-background p-6 text-text-primary shadow-lg"
         onKeyDown={(event) => {
           if (event.key === "Escape") {
@@ -105,9 +103,9 @@ export function ProjectArchiveDialog({
           }
         }}
       >
-        <h2 className="text-lg font-medium">{messages.title}</h2>
-        <p className="mt-3 break-words font-medium">{project.name}</p>
-        <p className="mt-2 text-sm text-text-secondary">{messages.hint}</p>
+        <h2 className="text-lg font-medium">{title}</h2>
+        <p className="mt-3 break-words font-medium">{name}</p>
+        <p className="mt-2 text-sm text-text-secondary">{hint}</p>
         {error && (
           <p role="alert" className="mt-3 text-sm text-destructive">
             {error}
@@ -118,7 +116,7 @@ export function ProjectArchiveDialog({
             type="button"
             disabled={pending}
             className="min-h-11 rounded-lg px-4 text-sm hover:bg-muted disabled:opacity-50 md:min-h-8"
-            data-testid="collaboration-project-archive-cancel"
+            data-testid={`${testId}-cancel`}
             onClick={onClose}
           >
             {messages.cancel}
@@ -126,11 +124,11 @@ export function ProjectArchiveDialog({
           <button
             type="button"
             disabled={pending}
-            className="min-h-11 rounded-lg bg-text-primary px-4 text-sm text-background disabled:opacity-50 md:min-h-8"
-            data-testid="collaboration-project-archive-confirm"
-            onClick={() => void archive()}
+            className="min-h-11 rounded-lg bg-destructive px-4 text-sm text-white disabled:opacity-50 md:min-h-8"
+            data-testid={`${testId}-confirm`}
+            onClick={() => void remove()}
           >
-            {pending ? messages.pending : messages.confirm}
+            {pending ? messages.deleting : confirm}
           </button>
         </div>
       </div>

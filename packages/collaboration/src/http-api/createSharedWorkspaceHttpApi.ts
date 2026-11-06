@@ -24,6 +24,8 @@ import type {
   SharedWorkspaceGitRepositoriesApi,
   SharedWorkspaceProjectsApi,
   WorkspaceProjectAgent,
+  WorkspaceRecycleBinApi,
+  WorkspaceRecycleBinItem,
 } from "../ports/SharedWorkspaceApi";
 import type {
   CollaborationGroup,
@@ -41,6 +43,7 @@ export interface SharedWorkspaceHttpTransport {
 }
 
 export interface SharedWorkspaceHttpApi {
+  recycleBin: WorkspaceRecycleBinApi;
   workspaces: SharedCollaborationWorkspacesApi;
   resources: SharedCollaborationResourcesApi;
   gitRepositories: SharedWorkspaceGitRepositoriesApi;
@@ -235,6 +238,23 @@ export function createSharedWorkspaceHttpApi(
     cache.invalidate("/v1/resources");
   };
   return {
+    recycleBin: {
+      async list() {
+        const result = await transport.get<{
+          items: WorkspaceRecycleBinItem[];
+        }>("/v1/recycle-bin");
+        return { items: result.items, errors: [] };
+      },
+      async restore(item) {
+        await transport.post(
+          `/v1/recycle-bin/${item.kind}/${encoded(item.id)}/restore`,
+          {
+            version: item.version,
+          },
+        );
+        cache.invalidate("/v1/workspaces/");
+      },
+    },
     workspaces: {
       async transferOwnership(workspaceId, input) {
         return mapCollaborationWorkspaceDto(

@@ -872,8 +872,46 @@ export function useCollaborationPlatformController({
     state,
     commands: {
       reload: () => load(true),
+      async deleteWorkspace(workspace: CollaborationWorkspace) {
+        if (!api.workspaces) throw new Error("Workspace API is unavailable");
+        await api.workspaces.archive(workspace.id, workspace.version);
+        loadRevisionRef.current += 1;
+        navigationCacheRef.current = {
+          workspaces: navigationCacheRef.current.workspaces.filter(
+            (candidate) => candidate.id !== workspace.id,
+          ),
+          projects: navigationCacheRef.current.projects.filter(
+            (project) => project.workspace_id !== workspace.id,
+          ),
+        };
+        setState((current) => ({
+          ...current,
+          workspaces: current.workspaces.filter(
+            (candidate) => candidate.id !== workspace.id,
+          ),
+          projects: current.projects.filter(
+            (project) => project.workspace_id !== workspace.id,
+          ),
+          navigationProjects: current.navigationProjects.filter(
+            (project) => project.workspace_id !== workspace.id,
+          ),
+          ...(current.workspace?.id === workspace.id
+            ? {
+                workspace: null,
+                workspaceNavigationContext: null,
+                projectIssues: {},
+                members: [],
+                agents: [],
+                collaborationGroups: [],
+                executionEnvironments: [],
+              }
+            : {}),
+          loading: false,
+        }));
+      },
       async archiveProject(project: CollaborationProject) {
         await api.projects.archive(project.id, project.version);
+        loadRevisionRef.current += 1;
         navigationCacheRef.current = {
           workspaces: navigationCacheRef.current.workspaces.map((workspace) =>
             workspace.id === project.workspace_id
@@ -889,6 +927,15 @@ export function useCollaborationPlatformController({
         };
         setState((current) => ({
           ...current,
+          loading: false,
+          projectIssues: Object.fromEntries(
+            Object.entries(current.projectIssues).filter(
+              ([id]) => id !== project.id,
+            ),
+          ),
+          myWork: current.myWork.filter(
+            (item) => item.cloud_project_id !== project.id,
+          ),
           projects: current.projects.filter((item) => item.id !== project.id),
           navigationProjects: current.navigationProjects.filter(
             (item) => item.id !== project.id,

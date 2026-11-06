@@ -13,7 +13,7 @@ WITH parents AS (
     GROUP BY resource_type, resource_id
 ), access AS (
     SELECT loop_items.id AS project_id, parents.workspace_id,
-           kinds.name AS workspace_name,
+           kinds.name AS workspace_name, kinds.is_active AS workspace_active,
            CAST(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(kinds.json, '$.metadata.publicId')), 'null') AS CHAR CHARACTER SET utf8mb4) AS workspace_public_id,
            CASE WHEN kinds.user_id = {user_id} THEN 0 ELSE space_member.priority END AS workspace_priority,
            direct.priority AS direct_priority,
@@ -30,11 +30,11 @@ WITH parents AS (
            ) THEN 4 END AS public_priority
     FROM loop_items
     JOIN parents ON parents.project_id = CAST(loop_items.id AS SIGNED)
-    JOIN kinds ON kinds.id = parents.workspace_id AND kinds.kind = 'CollaborationWorkspace' AND kinds.is_active = true
+    JOIN kinds ON kinds.id = parents.workspace_id AND kinds.kind = 'CollaborationWorkspace' AND ({workspace_predicate})
     JOIN users AS caller ON caller.id = {user_id} AND caller.is_active = true
     LEFT JOIN memberships AS direct ON direct.resource_type = 'CloudProject' AND direct.resource_id = CAST(loop_items.id AS SIGNED)
     LEFT JOIN memberships AS space_member ON space_member.resource_type = 'Workspace' AND space_member.resource_id = kinds.id
-    WHERE loop_items.resource_type = 'project' AND loop_items.status = 'active'
+    WHERE loop_items.resource_type = 'project' AND loop_items.status = '{project_status}'
 ), resolved_access AS (
     SELECT access.*,
            CASE WHEN inherited_priority = 1 THEN 1
@@ -44,7 +44,8 @@ WITH parents AS (
 )
 SELECT {columns}, access.priority AS anon_1_priority,
        access.workspace_id, access.workspace_name, access.workspace_public_id,
-       access.workspace_priority, access.direct_priority, access.inherited_priority, access.public_priority
+       access.workspace_priority, access.direct_priority, access.inherited_priority, access.public_priority,
+       access.workspace_active
 FROM loop_items JOIN resolved_access AS access ON access.project_id = loop_items.id
 WHERE access.priority <= 4
 {project_filter} {workspace_filter}

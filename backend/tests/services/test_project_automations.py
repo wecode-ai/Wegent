@@ -101,6 +101,45 @@ def test_nullable_schema_uses_null_for_unset_due_at(test_db):
     assert loop_unset_datetime_for_connection(test_db.connection(), "due_at") is None
 
 
+def test_project_deletion_retains_disabled_automation_configuration(test_db, test_user):
+    from app.services.cloud_projects import cloud_project_service
+
+    project = CloudProject(
+        project_key="RECOVER",
+        name="Recoverable",
+        created_by_user_id=test_user.id,
+        storage_prefix="projects/recover",
+    )
+    test_db.add(project)
+    test_db.flush()
+    authorize_project(test_db, project)
+    rule = ProjectAutomationRule(
+        cloud_project_id=project.id,
+        title="Retained schedule",
+        status="enabled",
+        due_at=datetime(2026, 11, 7),
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "trigger_type": "schedule",
+            "cron_expression": "0 3 * * *",
+            "timezone": "UTC",
+        },
+    )
+    test_db.add(rule)
+    test_db.commit()
+    rule_version = rule.version
+    configuration = dict(rule.metadata_json)
+    cloud_project_service.archive(test_db, project.id, test_user.id, project.version)
+    test_db.refresh(project)
+    test_db.refresh(rule)
+    assert project.status == "archived"
+    assert rule.status == "disabled"
+    assert loop_datetime_value_is_unset(rule.deleted_at)
+    assert loop_datetime_value_is_unset(rule.due_at)
+    assert rule.metadata_json == configuration
+    assert rule.version == rule_version + 1
+
+
 def _legacy_workflow_migration(
     project: CloudProject,
     user_id: int,

@@ -872,6 +872,7 @@ export function createWeworkSharedWorkspaceApi<
 
   return {
     ...delivery,
+    recycleBin: sharedHttpApi.recycleBin,
     workspaces: sharedHttpApi.workspaces,
     resources: sharedHttpApi.resources,
     gitRepositories: sharedHttpApi.gitRepositories,

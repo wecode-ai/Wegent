@@ -473,8 +473,8 @@ describe('CollaborationPage platform routing', () => {
     )
   })
 
-  it.each(['agents', 'teams', 'devices'] as const)(
-    'round-trips the %s resource root without treating it as a legacy project',
+  it.each(['agents', 'teams', 'devices', 'recycle-bin'] as const)(
+    'round-trips the %s platform root without treating it as a legacy project',
     rootView => {
       mockPathname = `/collaboration/${rootView}`
 

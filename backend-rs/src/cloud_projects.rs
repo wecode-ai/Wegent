@@ -44,6 +44,7 @@ mod environment_authorization;
 /// `cloud_project_service.list_members` and the collaboration-permission
 /// reads shared by the project projections.
 pub(crate) mod members;
+mod recycle_bin;
 
 /// Resolve a point read with the same CP grants as the project catalog.
 pub(crate) async fn authorized_project<M: Mysql>(

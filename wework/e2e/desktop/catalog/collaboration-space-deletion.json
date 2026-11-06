@@ -1,0 +1,12 @@
+{
+  "order": 71500,
+  "scenario": "./scenarios/collaboration-space-deletion.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 16500,
+      "shard": 6,
+      "position": 10500
+    }
+  }
+}

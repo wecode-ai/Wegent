@@ -1,7 +1,6 @@
 # Requests matching an active rule are handled by Rust; all other requests
 # are forwarded to the Python backend. Knowledge APIs stay Python-owned;
 # their Rust handlers remain registered without active cutover rules.
-
 # Personal Git connections are Rust-owned, including public signature-verified ingress.
 [[routes]]
 methods = ["GET", "POST"]
@@ -21,6 +20,14 @@ path = "/api/v1/git-connections/subscriptions/:id/configuration"
 [[routes]]
 methods = ["POST"]
 path = "/api/v1/git-connections/hooks/:id"
+
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/recycle-bin"
+
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/recycle-bin/:kind/:resource_id/restore"
 
 #[[routes]]
 #methods = ["GET"]

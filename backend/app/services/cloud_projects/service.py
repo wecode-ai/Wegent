@@ -539,7 +539,7 @@ class CloudProjectService(CloudProjectMemberService):
         return project
 
     def archive(self, db: Session, project_id: int, user_id: int, version: int) -> None:
-        """Archive a project and remove every future automation trigger."""
+        """Archive a project and pause future automation without losing its rules."""
 
         project = require_cloud_project_role(
             db, project_id, user_id, BaseRole.Maintainer
@@ -585,16 +585,16 @@ class CloudProjectService(CloudProjectMemberService):
             raise HTTPException(status.HTTP_409_CONFLICT, "Cloud project changed")
         from app.services.project_automations import project_automation_service
 
-        deleted_rule_count = project_automation_service.delete_project_rules(
+        disabled_rule_count = project_automation_service.disable_project_rules(
             db,
             project_id=str(project.id),
             user_id=user_id,
         )
         db.commit()
         logger.info(
-            "Archived cloud project project=%s deleted_automation_rules=%s user=%s",
+            "Archived cloud project project=%s disabled_automation_rules=%s user=%s",
             project.id,
-            deleted_rule_count,
+            disabled_rule_count,
             user_id,
         )
 

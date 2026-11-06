@@ -28,6 +28,7 @@ export type CollaborationPlatformRootView =
   | "teams"
   | "devices"
   | "inbox"
+  | "recycle-bin"
   | "stand-in"
   | "templates";
 // Template discovery belongs to collaboration in Wework and to the marketplace in Wegent.

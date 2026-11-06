@@ -271,14 +271,25 @@ class WorkspaceLifecycleService:
         self, db: Session, workspace_id: int, user_id: int, version: int
     ) -> None:
         require_workspace_role(db, workspace_id, user_id, BaseRole.Owner)
-        if active_project_ids_for_workspace(db, workspace_id):
+        kind = (
+            db.query(Kind)
+            .filter(
+                Kind.id == workspace_id,
+                Kind.kind == COLLABORATION_WORKSPACE_KIND,
+                Kind.user_id == user_id,
+                Kind.is_active.is_(True),
+            )
+            .populate_existing()
+            .with_for_update()
+            .one_or_none()
+        )
+        if kind is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Workspace not found")
+        if active_project_ids_for_workspace(db, workspace_id, for_update=True):
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
                 "Archive or move active Projects before archiving the Workspace",
             )
-        kind = get_workspace_kind(db, workspace_id)
-        if kind is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Workspace not found")
         if workspace_from_kind(kind).version != version:
             raise HTTPException(status.HTTP_409_CONFLICT, "Workspace changed")
         self._set_kind_values(kind, is_default=False, state="archived")

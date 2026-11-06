@@ -28,6 +28,28 @@ const projectRecord = {
   completed_at: null,
 }
 
+test('local project recovery uses archived catalog and invalidates active project cache', async () => {
+  const deleted = {
+    id: projectRecord.id,
+    name: projectRecord.name,
+    version: 2,
+    deleted_at: '2026-11-06T00:00:00Z',
+  }
+  const request = vi.fn(async (method: string) => {
+    if (method === 'projects.deleted.list') return [deleted]
+    if (method === 'projects.restore') return {}
+    if (method === 'projects.list') return [projectRecord]
+    throw new Error(`Unexpected request: ${method}`)
+  })
+  const api = createLocalDeliveryApi(request)
+  expect(await api.listDeletedProjects!()).toEqual([deleted])
+  await api.listCloudProjects()
+  await api.restoreProject!(deleted.id, deleted.version)
+  await api.listCloudProjects()
+  expect(request).toHaveBeenCalledWith('projects.restore', { project_id: deleted.id, version: 2 })
+  expect(request.mock.calls.filter(([method]) => method === 'projects.list')).toHaveLength(2)
+})
+
 test('updates delivery content through one atomic IPC request', async () => {
   const request = vi.fn().mockResolvedValue({ id: 'delivery-1', version: 4 })
   const api = createLocalDeliveryApi(request)

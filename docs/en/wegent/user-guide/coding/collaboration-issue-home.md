@@ -22,6 +22,14 @@ When a project has no execution environment, the New Issue page and creation dia
 
 New local and cloud collaboration projects include only the current user by default. Agents are added only when you select them through the collaborator picker. You can also create the project first and add Agents from its settings. Importing a local code project does not automatically add the current-device Agent.
 
+## Delete and restore spaces and projects
+
+**Delete** in a space or project menu opens a confirmation naming the resource and its consequences. Cancelling leaves data unchanged. After confirmation, the resource leaves the sidebar; select **Undo deletion** immediately or restore it from the **Recycle bin** beside the collaboration-space heading. The bin combines deleted local and cloud resources and remains available after reload.
+
+Only the current space Owner can delete or restore a space. Projects require effective Maintainer permission or higher. Delete or move active projects before deleting their space, and restore the parent space before restoring a project. Built-in local spaces and the default project cannot be deleted. Stop unfinished local-project executions before deletion.
+
+Deletion retains identities, Issues, members, history, and code directories without deleting disk files. Automatic processing rules pause and stay paused after restoration until explicitly re-enabled. This bin is separate from Archived Issues and the runtime-session archive in Settings.
+
 ## Change an existing Issue's owner
 
 After selecting or clearing an owner in Issue details, select **Save assignment** beside the owner. The header does not show a duplicate save action. Saving also submits other pending detail edits. If saving fails, the draft and save action remain available for correction and resubmission.
@@ -100,6 +108,8 @@ These cases reuse the existing CI checkpoint, build, and services. Fixtures rema
 Cloud fixtures are archived by the checkpoint cleanup. Local fixtures live only in the test Executor home. Failures retain runner logs; tests do not skip or retry to hide failures.
 
 `pnpm --filter wework e2e:desktop --segment collaboration-issue-archive` uses a real local project to verify completed-Issue card shortcuts, single archive and restore, batch archive, and archive-drawer updates.
+
+The same CI shard also invokes `collaboration-space-deletion`, covering confirmation and cancellation, nonempty-space rejection, immediate undo, the persistent recycle bin, parent-first restoration, and retained local code directories and Issues. The new scenario was not run locally; its result must come from CI for the submitted commit.
 
 `pnpm --filter wework e2e:desktop --segment collaboration-human-round-resume` covers concurrent human and AI assignment, Delivery returning to the coordinator, replies to the current human assignment opening a new task without acknowledgement text in its prompt.
 

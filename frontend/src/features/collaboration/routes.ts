@@ -15,6 +15,7 @@ const ROOT_PATHS: Record<CollaborationPlatformRootView, string> = {
   teams: '/collaboration/teams',
   devices: '/collaboration/devices',
   inbox: '/collaboration/inbox',
+  'recycle-bin': '/collaboration/recycle-bin',
   // Stand-in management is provided only by the desktop host.
   'stand-in': '/collaboration',
 }

@@ -88,6 +88,28 @@ export function createWeworkPlatformApi(
 
   return withoutDefaultWorkItemProject({
     ...cloudApi,
+    recycleBin: {
+      async list() {
+        const results = await Promise.allSettled([
+          localApi.recycleBin?.list() ?? { items: [], errors: [] },
+          cloudApi.recycleBin?.list() ?? { items: [], errors: [] },
+        ])
+        const items = results.flatMap(result =>
+          result.status === 'fulfilled' ? result.value.items : []
+        )
+        const errors = results.flatMap(result =>
+          result.status === 'fulfilled'
+            ? result.value.errors
+            : [result.reason instanceof Error ? result.reason.message : String(result.reason)]
+        )
+        return { items: items.sort((a, b) => b.deletedAt.localeCompare(a.deletedAt)), errors }
+      },
+      restore(item) {
+        const target = isLocalWorkspace(item.workspaceId ?? undefined) ? localApi : cloudApi
+        if (!target.recycleBin) throw new Error('Recycle bin API is unavailable')
+        return target.recycleBin.restore(item)
+      },
+    },
     workspaces: {
       ...cloudApi.workspaces,
       async list() {

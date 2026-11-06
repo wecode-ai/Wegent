@@ -472,7 +472,7 @@ def test_cloud_project_generates_key_when_omitted(
     assert 2 <= len(created.json()["project_key"]) <= 16
 
 
-def test_archiving_cloud_project_deletes_all_automation_rules(
+def test_archiving_cloud_project_retains_disabled_automation_rules(
     test_client: TestClient,
     test_db: Session,
     test_user: User,
@@ -508,6 +508,9 @@ def test_archiving_cloud_project_deletes_all_automation_rules(
     test_db.add_all([scheduled_rule, event_rule])
     test_db.commit()
     rule_ids = [scheduled_rule.id, event_rule.id]
+    rule_metadata = {
+        rule.id: dict(rule.metadata_json) for rule in (scheduled_rule, event_rule)
+    }
 
     archived = test_client.delete(
         f"/api/v1/cloud-projects/{project['id']}",
@@ -528,10 +531,11 @@ def test_archiving_cloud_project_deletes_all_automation_rules(
     assert len(stored_rules) == 2
     for rule in stored_rules:
         assert rule.status == "disabled"
-        assert rule.deleted_at is not None
+        assert loop_datetime_value_is_unset(rule.deleted_at)
         assert loop_datetime_value_is_unset(rule.due_at)
         assert rule.updated_by_user_id == test_user.id
         assert rule.version == 2
+        assert rule.metadata_json == rule_metadata[rule.id]
 
 
 @pytest.mark.parametrize(

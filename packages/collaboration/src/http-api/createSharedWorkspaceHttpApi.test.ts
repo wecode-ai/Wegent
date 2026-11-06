@@ -31,12 +31,54 @@ function createTransport(): {
 }
 
 describe("createSharedWorkspaceHttpApi", () => {
-  it.each(['renamed', null])('serializes atomic tag change target %s without losing null', target => {
-    expect(workspaceHttpRequestBody({
-      version: 2,
-      tagChange: { source: 'old', target },
-    })).toEqual({ version: 2, tag_change: { source: 'old', target } })
-  })
+  it("lists deleted resources and restores the exact versioned identity", async () => {
+    const { transport, get, post } = createTransport();
+    const item = {
+      id: "space/1",
+      kind: "workspace" as const,
+      name: "Space",
+      workspaceId: null,
+      workspaceName: null,
+      deletedAt: "2026-11-06T00:00:00Z",
+      version: 5,
+      parentDeleted: false,
+    };
+    get.mockResolvedValue({ items: [item] });
+    post.mockRejectedValueOnce(new Error("Deleted resource changed"));
+    const api = createSharedWorkspaceHttpApi(transport);
+    expect(await api.recycleBin.list()).toEqual({ items: [item], errors: [] });
+    expect(get).toHaveBeenCalledWith("/v1/recycle-bin");
+    await expect(api.recycleBin.restore(item)).rejects.toThrow(
+      "Deleted resource changed",
+    );
+    expect(post).toHaveBeenCalledWith(
+      "/v1/recycle-bin/workspace/space%2F1/restore",
+      { version: 5 },
+    );
+  });
+  it("sends the space deletion version and propagates backend denials", async () => {
+    const { transport, remove } = createTransport();
+    const api = createSharedWorkspaceHttpApi(transport);
+    remove.mockRejectedValueOnce(new Error("Space is not empty"));
+    await expect(api.workspaces.archive("space/1", 4)).rejects.toThrow(
+      "Space is not empty",
+    );
+    expect(remove).toHaveBeenCalledWith("/v1/workspaces/space%2F1?version=4");
+    remove.mockResolvedValueOnce(undefined);
+    await expect(api.workspaces.archive("space/1", 4)).resolves.toBeUndefined();
+  });
+
+  it.each(["renamed", null])(
+    "serializes atomic tag change target %s without losing null",
+    (target) => {
+      expect(
+        workspaceHttpRequestBody({
+          version: 2,
+          tagChange: { source: "old", target },
+        }),
+      ).toEqual({ version: 2, tag_change: { source: "old", target } });
+    },
+  );
 
   it("loads devices without fetching the agent resource catalog", async () => {
     const { transport, get } = createTransport();

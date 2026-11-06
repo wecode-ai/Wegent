@@ -1101,6 +1101,15 @@ export function createLocalDeliveryApi(
       })
       invalidateProjectRecords()
     },
+    listDeletedProjects() {
+      return request<Array<{ id: string; name: string; version: number; deleted_at: string }>>(
+        'projects.deleted.list'
+      )
+    },
+    async restoreProject(projectId: string, version: number) {
+      await request('projects.restore', { project_id: projectId, version })
+      invalidateProjectRecords()
+    },
     async listMyWork() {
       return { items: [] }
     },

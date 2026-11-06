@@ -592,8 +592,8 @@ class ProjectAutomationService:
             or None,
         }
 
-    def delete_project_rules(self, db: Session, project_id: str, user_id: int) -> int:
-        """Delete every automation rule while its parent project is archived."""
+    def disable_project_rules(self, db: Session, project_id: str, user_id: int) -> int:
+        """Keep rules and history, requiring explicit re-enabling after recovery."""
 
         rows = (
             db.query(ProjectAutomationRule)
@@ -604,16 +604,13 @@ class ProjectAutomationService:
             .with_for_update()
             .all()
         )
-        deleted_at = utcnow()
         for row in rows:
-            self._mark_deleted(
-                db,
-                row,
-                user_id=user_id,
-                deleted_at=deleted_at,
-            )
+            row.status = "disabled"
+            row.due_at = loop_unset_datetime_for_connection(db.connection(), "due_at")
+            row.updated_by_user_id = user_id
+            row.version += 1
         logger.info(
-            "[ProjectAutomation] Deleted project rules project=%s count=%s user=%s",
+            "[ProjectAutomation] Disabled project rules project=%s count=%s user=%s",
             project_id,
             len(rows),
             user_id,

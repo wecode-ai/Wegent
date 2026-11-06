@@ -86,6 +86,10 @@ export interface WorkspaceSessionApi {
 export type ProjectSpaceLocation = 'local' | 'cloud'
 export type DeliveryApi = ReturnType<typeof createDeliveryApi>
 export type LocalProjectSpaceApi = DeliveryApi & {
+  listDeletedProjects?(): Promise<
+    Array<{ id: string; name: string; version: number; deleted_at: string }>
+  >
+  restoreProject?(projectId: string, version: number): Promise<void>
   importLocalCodeProject?(input: {
     runtimeProjectKey: string
     name: string

@@ -34,6 +34,14 @@ pub struct ProjectCreate {
     pub provider_config: Value,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct DeletedProject {
+    pub id: String,
+    pub name: String,
+    pub version: i64,
+    pub deleted_at: String,
+}
+
 fn default_task_provider() -> TaskProviderKind {
     TaskProviderKind::Local
 }
