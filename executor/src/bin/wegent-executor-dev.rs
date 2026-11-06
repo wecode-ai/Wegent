@@ -159,6 +159,21 @@ fn watch_executor_sources(
         &manifest_dir.join("Cargo.lock"),
         RecursiveMode::NonRecursive,
     )?;
+    let shared = manifest_dir.join("../shared/rust");
+    watch_path(
+        &mut watcher,
+        &shared.join("Cargo.toml"),
+        RecursiveMode::NonRecursive,
+    )?;
+    for name in ["protocol", "crypto"] {
+        let library = shared.join(name);
+        watch_path(&mut watcher, &library.join("src"), RecursiveMode::Recursive)?;
+        watch_path(
+            &mut watcher,
+            &library.join("Cargo.toml"),
+            RecursiveMode::NonRecursive,
+        )?;
+    }
     Ok(watcher)
 }
 
@@ -329,6 +344,32 @@ mod tests {
     use super::*;
     use std::ffi::OsString;
     use std::sync::{Mutex, OnceLock};
+
+    #[test]
+    fn source_watcher_observes_shared_library_edits() {
+        for relative in [
+            "protocol/src/lib.rs",
+            "crypto/src/lib.rs",
+            "crypto/Cargo.toml",
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let executor = root.path().join("executor");
+            std::fs::create_dir_all(executor.join("src")).unwrap();
+            let shared = root.path().join("shared/rust");
+            for name in ["protocol", "crypto"] {
+                std::fs::create_dir_all(shared.join(name).join("src")).unwrap();
+                std::fs::write(shared.join(name).join("Cargo.toml"), "original").unwrap();
+                std::fs::write(shared.join(name).join("src/lib.rs"), "original").unwrap();
+            }
+            let (tx, rx) = mpsc::channel();
+            let _watcher = watch_executor_sources(&executor, tx).unwrap();
+            std::fs::write(shared.join(relative), "changed").unwrap();
+            assert!(matches!(
+                rx.recv_timeout(Duration::from_secs(5)).unwrap(),
+                DevEvent::FileChanged
+            ));
+        }
+    }
 
     fn env_lock() -> std::sync::MutexGuard<'static, ()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();

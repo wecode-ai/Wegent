@@ -4379,9 +4379,59 @@ dependencies = [
  "turbojpeg",
  "unicode-normalization",
  "url",
+ "wegent-crypto",
+ "wegent-http-compat",
+ "wegent-protocol",
+ "wegent-python-compat",
+ "wegent-storage",
  "yaml-rust2",
  "zip",
  "zstd",
+]
+
+[[package]]
+name = "wegent-crypto"
+version = "0.1.0"
+dependencies = [
+ "aes",
+ "cbc",
+]
+
+[[package]]
+name = "wegent-http-compat"
+version = "0.1.0"
+dependencies = [
+ "brz-http-server",
+ "brz-json",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "wegent-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "wegent-python-compat"
+version = "0.1.0"
+dependencies = [
+ "brz-json",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "wegent-storage"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "hmac",
+ "sha2",
 ]
 
 [[package]]

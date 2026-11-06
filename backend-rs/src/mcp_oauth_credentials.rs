@@ -10,11 +10,6 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use serde_json::{Map, Value};
 
-use aes_gcm::aes::{Aes128, Aes192, Aes256};
-use cbc::Encryptor;
-use cbc::cipher::block_padding::Pkcs7;
-use cbc::cipher::{BlockEncryptMut, KeyIvInit};
-
 use crate::http_compat::FastApiError;
 use crate::json_compat::python_json_value;
 use crate::mcp_user_service::{
@@ -290,19 +285,10 @@ pub(crate) fn encrypt_sensitive_data(
 /// `AES(key)` + `CBC(iv)` + PKCS#7: the variant follows the configured key
 /// length, exactly as `cryptography`'s `algorithms.AES`.
 fn encrypt_cbc(key: &[u8], iv: &[u8], plain: &str) -> Result<Vec<u8>, CryptoError> {
-    let iv: [u8; BLOCK_SIZE] = iv.try_into().map_err(|_| CryptoError::InvalidIv)?;
-    match key.len() {
-        16 => Ok(Encryptor::<Aes128>::new_from_slices(key, &iv)
-            .map_err(|_| CryptoError::InvalidKey)?
-            .encrypt_padded_vec_mut::<Pkcs7>(plain.as_bytes())),
-        24 => Ok(Encryptor::<Aes192>::new_from_slices(key, &iv)
-            .map_err(|_| CryptoError::InvalidKey)?
-            .encrypt_padded_vec_mut::<Pkcs7>(plain.as_bytes())),
-        32 => Ok(Encryptor::<Aes256>::new_from_slices(key, &iv)
-            .map_err(|_| CryptoError::InvalidKey)?
-            .encrypt_padded_vec_mut::<Pkcs7>(plain.as_bytes())),
-        _ => Err(CryptoError::InvalidKey),
+    if iv.len() != BLOCK_SIZE {
+        return Err(CryptoError::InvalidIv);
     }
+    wegent_crypto::encrypt_cbc(key, iv, plain.as_bytes()).map_err(|_| CryptoError::InvalidKey)
 }
 
 #[cfg(test)]

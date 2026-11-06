@@ -16,8 +16,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use serde::Deserialize;
 
-use aes_gcm::aes::cipher::{Block, BlockDecrypt, KeyInit};
-use aes_gcm::aes::{Aes128, Aes192, Aes256};
+use wegent_crypto::decrypt_cbc;
 
 use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
 
@@ -229,59 +228,6 @@ fn decrypt_sensitive_data(key: &[u8], iv: &[u8], text: &str) -> String {
         .ok()
         .and_then(|plain| String::from_utf8(plain).ok())
         .unwrap_or_else(|| text.to_string())
-}
-
-/// `AES(key)` + `CBC(iv)`: the variant follows the configured key length.
-fn decrypt_cbc(key: &[u8], iv: &[u8], encrypted: &[u8]) -> Result<Vec<u8>, ()> {
-    let iv: [u8; BLOCK_SIZE] = iv.try_into().map_err(|_| ())?;
-    match key.len() {
-        16 => cbc_decrypt::<Aes128>(key, iv, encrypted),
-        24 => cbc_decrypt::<Aes192>(key, iv, encrypted),
-        32 => cbc_decrypt::<Aes256>(key, iv, encrypted),
-        _ => Err(()),
-    }
-}
-
-/// CBC decryption and PKCS#7 unpadding (`decryptor.update` + `finalize`, then
-/// `unpadder.update` + `finalize`).
-fn cbc_decrypt<C>(key: &[u8], iv: [u8; BLOCK_SIZE], encrypted: &[u8]) -> Result<Vec<u8>, ()>
-where
-    C: BlockDecrypt + KeyInit,
-{
-    let cipher = C::new_from_slice(key).map_err(|_| ())?;
-    if !encrypted.len().is_multiple_of(BLOCK_SIZE) {
-        return Err(());
-    }
-    let mut previous = iv;
-    let mut plain = Vec::with_capacity(encrypted.len());
-    for chunk in encrypted.as_chunks::<BLOCK_SIZE>().0 {
-        let mut block = Block::<C>::clone_from_slice(chunk);
-        cipher.decrypt_block(&mut block);
-        let mut decrypted = [0u8; BLOCK_SIZE];
-        for (target, (byte, mask)) in decrypted.iter_mut().zip(block.iter().zip(previous.iter())) {
-            *target = byte ^ mask;
-        }
-        plain.extend_from_slice(&decrypted);
-        previous.copy_from_slice(chunk);
-    }
-    unpad_pkcs7(plain)
-}
-
-/// `padding.PKCS7(128).unpadder().finalize()`.
-fn unpad_pkcs7(mut plain: Vec<u8>) -> Result<Vec<u8>, ()> {
-    let padding = usize::from(*plain.last().ok_or(())?);
-    if padding == 0 || padding > BLOCK_SIZE || padding > plain.len() {
-        return Err(());
-    }
-    let content = plain.len() - padding;
-    if plain[content..]
-        .iter()
-        .any(|byte| usize::from(*byte) != padding)
-    {
-        return Err(());
-    }
-    plain.truncate(content);
-    Ok(plain)
 }
 
 /// `_mask_proxy_url` (`app.services.user_runtime_config`): replace any

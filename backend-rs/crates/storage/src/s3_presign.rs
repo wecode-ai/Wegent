@@ -9,10 +9,7 @@
 //! `X-Amz-*` query parameters plus the `X-Amz-Signature` computed over the
 //! request with the `UNSIGNED-PAYLOAD` body hash. The archive service hands
 //! the resulting URL to the executor, which performs the object transfer.
-use hmac::{Hmac, Mac};
-use sha2::{Digest, Sha256};
-
-type HmacSha256 = Hmac<Sha256>;
+use crate::signing::{hex_bytes, hex_sha256, hmac_sha256, signing_key, uri_encode_bytes};
 
 /// The payload placeholder a presigned URL signs instead of a real body hash.
 const UNSIGNED_PAYLOAD: &str = "UNSIGNED-PAYLOAD";
@@ -65,53 +62,10 @@ pub fn presign(
     format!("{scheme}://{host}{uri}?{canonical_query}&X-Amz-Signature={signature}")
 }
 
-/// The SigV4 signing key derived from the secret key and the date/region scope.
-fn signing_key(secret_key: &str, date_stamp: &str, region: &str) -> [u8; 32] {
-    let date_key = hmac_sha256(
-        format!("AWS4{secret_key}").as_bytes(),
-        date_stamp.as_bytes(),
-    );
-    let region_key = hmac_sha256(&date_key, region.as_bytes());
-    let service_key = hmac_sha256(&region_key, b"s3");
-    hmac_sha256(&service_key, b"aws4_request")
-}
-
 /// RFC 3986 encoding, optionally preserving `/` (the object-path encoding the
 /// storage client uses).
 pub fn uri_encode(value: &str, encode_slash: bool) -> String {
-    const HEX: &[u8; 16] = b"0123456789ABCDEF";
-    let mut out = String::with_capacity(value.len());
-    for &byte in value.as_bytes() {
-        let unreserved = byte.is_ascii_alphanumeric()
-            || matches!(byte, b'-' | b'.' | b'_' | b'~')
-            || (!encode_slash && byte == b'/');
-        if unreserved {
-            out.push(byte as char);
-        } else {
-            out.push('%');
-            out.push(HEX[(byte >> 4) as usize] as char);
-            out.push(HEX[(byte & 0xF) as usize] as char);
-        }
-    }
-    out
-}
-
-fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
-    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts any key length");
-    mac.update(data);
-    mac.finalize().into_bytes().into()
-}
-
-fn hex_sha256(data: &[u8]) -> String {
-    hex_bytes(&Sha256::digest(data))
-}
-
-fn hex_bytes(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push_str(&format!("{byte:02x}"));
-    }
-    out
+    uri_encode_bytes(value.as_bytes(), encode_slash)
 }
 
 #[cfg(test)]

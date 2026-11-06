@@ -9,6 +9,8 @@
 //! platform `http-server` `ApiError` produces `{"error": ...}` instead, so
 //! business methods return [`FastApiError`] and map it through
 //! [`IntoHttpError`] to keep the recorded response bodies byte-compatible.
+#![deny(unsafe_code)]
+
 use brz_http_server::{EphemeralBytesArena, IntoHttpError, Response, StatusCode};
 
 /// A mapped FastAPI-style HTTP failure: status, JSON body, and extra headers.
@@ -37,7 +39,7 @@ struct UnhandledErrorBody {
 }
 
 impl FastApiError {
-    pub(crate) fn detail_message(&self) -> Option<&str> {
+    pub fn detail_message(&self) -> Option<&str> {
         match &self.body {
             ErrorBody::Detail { detail } => Some(detail),
             ErrorBody::Validation { .. } | ErrorBody::Custom(_) | ErrorBody::Unhandled(_) => None,
@@ -77,7 +79,6 @@ impl FastApiError {
     }
 
     /// `404 {"detail": <message>}`.
-    #[cfg(test)]
     #[must_use]
     pub fn not_found(message: impl Into<String>) -> Self {
         Self::detail(StatusCode::NOT_FOUND, message)
@@ -148,7 +149,6 @@ impl FastApiError {
     ///
     /// Endpoint error-mapping tests use this to assert the source's 401
     /// challenge without rendering a response.
-    #[cfg(test)]
     #[must_use]
     pub fn carries_challenge(&self) -> bool {
         self.headers
@@ -217,7 +217,8 @@ mod tests {
         let error = FastApiError::not_found("Skill not found");
         assert_eq!(error.status(), StatusCode::NOT_FOUND);
         assert_eq!(
-            crate::json_contract_tests::serialized(error.body).unwrap(),
+            serde_json::from_slice::<serde_json::Value>(&serde_json::to_vec(&error.body).unwrap())
+                .unwrap(),
             serde_json::json!({"detail": "Skill not found"})
         );
     }
@@ -227,7 +228,8 @@ mod tests {
         let error = FastApiError::unhandled();
         assert_eq!(error.status(), StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(
-            crate::json_contract_tests::serialized(error.body).unwrap(),
+            serde_json::from_slice::<serde_json::Value>(&serde_json::to_vec(&error.body).unwrap())
+                .unwrap(),
             serde_json::json!({"error_code": 500, "detail": "Internal server error"})
         );
     }
@@ -249,6 +251,10 @@ mod tests {
             "msg": "Field required", "input": serde_json::Value::Null
         }]));
         assert_eq!(error.status(), StatusCode::UNPROCESSABLE_ENTITY);
-        assert!(crate::json_contract_tests::serialized(error.body).unwrap()["detail"].is_array());
+        assert!(
+            serde_json::from_slice::<serde_json::Value>(&serde_json::to_vec(&error.body).unwrap())
+                .unwrap()["detail"]
+                .is_array()
+        );
     }
 }

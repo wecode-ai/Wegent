@@ -9,7 +9,7 @@ use serde_json::Value;
 /// Serialize an optional opaque value at a response boundary. Input null and
 /// a missing input key are both represented as `None`; the response model
 /// chooses either a concrete default, JSON null, or field omission.
-pub(crate) trait OptionalOpaqueJsonExt {
+pub trait OptionalOpaqueJsonExt {
     fn raw_or(&self, default: impl serde::Serialize) -> brz_json::RawJson;
     fn raw_option(&self) -> Option<brz_json::RawJson>;
     fn raw_with_object_null_default(&self, key: &str) -> brz_json::RawJson;

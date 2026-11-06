@@ -20,7 +20,6 @@
 //! Serving this route from Rust lets the hybrid gateway stop answering the
 //! recorded 502 `fallback upstream unavailable` for the Python fallback and
 //! return the source's runtime-user response instead.
-use aes::{Aes128, Aes192, Aes256};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use brz_http_server::{
@@ -28,9 +27,6 @@ use brz_http_server::{
     StatusCode,
 };
 use brz_mysql::Mysql;
-use cbc::Encryptor;
-use cbc::cipher::block_padding::Pkcs7;
-use cbc::cipher::{BlockEncryptMut, KeyIvInit};
 use serde::Serialize;
 
 use crate::auth::{AppAuthenticator, UserRow};
@@ -217,19 +213,7 @@ fn parse_aes_key(key: &str) -> Result<Vec<u8>, CryptoConfigError> {
 /// `AES(key)` + `CBC(iv)` + PKCS#7: the variant follows the configured key
 /// length, exactly as `cryptography`'s `algorithms.AES`.
 fn encrypt_cbc(key: &[u8], iv: &[u8], plain: &str) -> Result<Vec<u8>, CryptoConfigError> {
-    let iv: [u8; BLOCK_SIZE] = iv.try_into().map_err(|_| CryptoConfigError)?;
-    match key.len() {
-        16 => Ok(Encryptor::<Aes128>::new_from_slices(key, &iv)
-            .map_err(|_| CryptoConfigError)?
-            .encrypt_padded_vec_mut::<Pkcs7>(plain.as_bytes())),
-        24 => Ok(Encryptor::<Aes192>::new_from_slices(key, &iv)
-            .map_err(|_| CryptoConfigError)?
-            .encrypt_padded_vec_mut::<Pkcs7>(plain.as_bytes())),
-        32 => Ok(Encryptor::<Aes256>::new_from_slices(key, &iv)
-            .map_err(|_| CryptoConfigError)?
-            .encrypt_padded_vec_mut::<Pkcs7>(plain.as_bytes())),
-        _ => Err(CryptoConfigError),
-    }
+    wegent_crypto::encrypt_cbc(key, iv, plain.as_bytes()).map_err(|_| CryptoConfigError)
 }
 
 #[cfg(test)]
@@ -381,9 +365,10 @@ mod tests {
 
     /// Recovers the plaintext from `base64(iv + ciphertext)`.
     fn decrypt_embedded_iv(key: &[u8], encoded: &str) -> String {
+        use aes::Aes256;
         use cbc::Decryptor;
-        use cbc::cipher::BlockDecryptMut;
         use cbc::cipher::block_padding::Pkcs7;
+        use cbc::cipher::{BlockDecryptMut, KeyIvInit};
         let raw = STANDARD.decode(encoded).unwrap();
         assert!(raw.len() > BLOCK_SIZE && raw.len().is_multiple_of(BLOCK_SIZE));
         let (iv, ciphertext) = raw.split_at(BLOCK_SIZE);

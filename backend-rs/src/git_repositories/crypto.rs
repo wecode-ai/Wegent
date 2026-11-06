@@ -9,10 +9,9 @@
 //! a value that looks like base64 AES ciphertext (`is_data_encrypted`) is
 //! decrypted with `GIT_TOKEN_AES_KEY`/`GIT_TOKEN_AES_IV`; every other value
 //! (including the `***` placeholder) passes through unchanged.
-use aes_gcm::aes::cipher::{Block, BlockDecrypt, BlockEncrypt, KeyInit};
-use aes_gcm::aes::{Aes128, Aes192, Aes256};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
+use wegent_crypto::{decrypt_cbc, encrypt_cbc};
 
 /// `_get_encryption_key`'s `GIT_TOKEN_AES_KEY` default.
 const DEFAULT_AES_KEY: &str = "12345678901234567890123456789012";
@@ -60,44 +59,8 @@ fn encrypt_sensitive_data(
     iv: &[u8],
     plain: &str,
 ) -> Result<String, CryptoConfigurationError> {
-    let mut padded = plain.as_bytes().to_vec();
-    let padding = BLOCK_SIZE - (padded.len() % BLOCK_SIZE);
-    padded.extend(std::iter::repeat_n(padding as u8, padding));
-    let encrypted = encrypt_cbc(key, iv, &padded).map_err(|()| CryptoConfigurationError)?;
+    let encrypted = encrypt_cbc(key, iv, plain.as_bytes()).map_err(|_| CryptoConfigurationError)?;
     Ok(STANDARD.encode(encrypted))
-}
-
-/// `AES(key)` + `CBC(iv)`: the variant follows the configured key length.
-fn encrypt_cbc(key: &[u8], iv: &[u8], plain: &[u8]) -> Result<Vec<u8>, ()> {
-    let iv: [u8; BLOCK_SIZE] = iv.try_into().map_err(|_| ())?;
-    match key.len() {
-        16 => cbc_encrypt::<Aes128>(key, iv, plain),
-        24 => cbc_encrypt::<Aes192>(key, iv, plain),
-        32 => cbc_encrypt::<Aes256>(key, iv, plain),
-        _ => Err(()),
-    }
-}
-
-fn cbc_encrypt<C>(key: &[u8], iv: [u8; BLOCK_SIZE], plain: &[u8]) -> Result<Vec<u8>, ()>
-where
-    C: BlockEncrypt + KeyInit,
-{
-    let cipher = C::new_from_slice(key).map_err(|_| ())?;
-    if !plain.len().is_multiple_of(BLOCK_SIZE) {
-        return Err(());
-    }
-    let mut previous = iv;
-    let mut encrypted = Vec::with_capacity(plain.len());
-    for chunk in plain.as_chunks::<BLOCK_SIZE>().0 {
-        let mut block = Block::<C>::clone_from_slice(chunk);
-        for (byte, mask) in block.iter_mut().zip(previous.iter()) {
-            *byte ^= mask;
-        }
-        cipher.encrypt_block(&mut block);
-        encrypted.extend_from_slice(&block);
-        previous.copy_from_slice(&block);
-    }
-    Ok(encrypted)
 }
 
 /// `RepositoryProvider.decrypt_token`: a value that is not encrypted is
@@ -131,58 +94,6 @@ fn decrypt_sensitive_data(key: &[u8], iv: &[u8], text: &str) -> String {
         .ok()
         .and_then(|plain| String::from_utf8(plain).ok())
         .unwrap_or_else(|| text.to_string())
-}
-
-/// `AES(key)` + `CBC(iv)`: the variant follows the configured key length.
-fn decrypt_cbc(key: &[u8], iv: &[u8], encrypted: &[u8]) -> Result<Vec<u8>, ()> {
-    let iv: [u8; BLOCK_SIZE] = iv.try_into().map_err(|_| ())?;
-    match key.len() {
-        16 => cbc_decrypt::<Aes128>(key, iv, encrypted),
-        24 => cbc_decrypt::<Aes192>(key, iv, encrypted),
-        32 => cbc_decrypt::<Aes256>(key, iv, encrypted),
-        _ => Err(()),
-    }
-}
-
-/// CBC decryption and PKCS#7 unpadding (`decryptor.update` + `finalize`, then
-/// `unpadder.update` + `finalize`).
-fn cbc_decrypt<C>(key: &[u8], iv: [u8; BLOCK_SIZE], encrypted: &[u8]) -> Result<Vec<u8>, ()>
-where
-    C: BlockDecrypt + KeyInit,
-{
-    let cipher = C::new_from_slice(key).map_err(|_| ())?;
-    if !encrypted.len().is_multiple_of(BLOCK_SIZE) {
-        return Err(());
-    }
-    let mut previous = iv;
-    let mut plain = Vec::with_capacity(encrypted.len());
-    for chunk in encrypted.as_chunks::<BLOCK_SIZE>().0 {
-        let mut block = Block::<C>::clone_from_slice(chunk);
-        cipher.decrypt_block(&mut block);
-        let mut decrypted = [0u8; BLOCK_SIZE];
-        for (target, (byte, mask)) in decrypted.iter_mut().zip(block.iter().zip(previous.iter())) {
-            *target = byte ^ mask;
-        }
-        plain.extend_from_slice(&decrypted);
-        previous.copy_from_slice(chunk);
-    }
-    unpad_pkcs7(plain)
-}
-
-/// `padding.PKCS7(128).unpadder().finalize()`.
-fn unpad_pkcs7(mut plain: Vec<u8>) -> Result<Vec<u8>, ()> {
-    let padding = usize::from(*plain.last().ok_or(())?);
-    if padding == 0 || padding > BLOCK_SIZE || padding > plain.len() {
-        return Err(());
-    }
-    if !plain[plain.len() - padding..]
-        .iter()
-        .all(|byte| usize::from(*byte) == padding)
-    {
-        return Err(());
-    }
-    plain.truncate(plain.len() - padding);
-    Ok(plain)
 }
 
 #[cfg(test)]

@@ -13,6 +13,7 @@ const definitions = {
     inputs: [
       "executor/Cargo.toml",
       "executor/Cargo.lock",
+      "shared/rust",
       "executor/vendor",
       ".github/ci/rust-toolchain",
     ],
@@ -23,6 +24,8 @@ const definitions = {
     inputs: [
       "backend-rs/Cargo.toml",
       "backend-rs/Cargo.lock",
+      "backend-rs/crates",
+      "shared/rust",
       ".github/ci/rust-toolchain",
     ],
   },

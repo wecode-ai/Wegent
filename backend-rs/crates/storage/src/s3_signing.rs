@@ -7,10 +7,8 @@
 //! Mirrors what the `minio-py` client sends for unsigned-payload GET/HEAD
 //! requests (`x-amz-content-sha256` of the empty body, `x-amz-date`, and the
 //! `Authorization` header with the SigV4 credential scope and signature).
-use hmac::{Hmac, Mac};
-use sha2::{Digest, Sha256};
-
-type HmacSha256 = Hmac<Sha256>;
+pub use crate::signing::hex_sha256;
+use crate::signing::{hex_bytes, hmac_sha256, signing_key, uri_encode_bytes};
 
 /// Hex-encoded SHA-256 of the empty string (unsigned-payload body hash used
 /// by GET/HEAD requests).
@@ -108,13 +106,7 @@ pub fn sign_headers(
     );
 
     // Signing key: HMAC chain from the secret key.
-    let date_key = hmac_sha256(
-        format!("AWS4{secret_key}").as_bytes(),
-        date_stamp.as_bytes(),
-    );
-    let region_key = hmac_sha256(&date_key, region.as_bytes());
-    let service_key = hmac_sha256(&region_key, b"s3");
-    let signing_key = hmac_sha256(&service_key, b"aws4_request");
+    let signing_key = signing_key(secret_key, date_stamp, region);
     let signature = hex_bytes(&hmac_sha256(&signing_key, string_to_sign.as_bytes()));
 
     let authorization = format!(
@@ -151,9 +143,8 @@ fn canonical_query(query: &str) -> String {
 
 /// Decode form-style query escapes once, then S3-encode bytes without UTF-8 loss.
 fn canonical_query_component(value: &str) -> String {
-    const HEX: &[u8; 16] = b"0123456789ABCDEF";
     let bytes = value.as_bytes();
-    let mut out = String::with_capacity(bytes.len());
+    let mut decoded = Vec::with_capacity(bytes.len());
     let mut index = 0;
     while index < bytes.len() {
         let mut byte = match bytes[index] {
@@ -173,16 +164,10 @@ fn canonical_query_component(value: &str) -> String {
             byte = ((high << 4) | low) as u8;
             index += 2;
         }
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
-            out.push(char::from(byte));
-        } else {
-            out.push('%');
-            out.push(char::from(HEX[(byte >> 4) as usize]));
-            out.push(char::from(HEX[(byte & 0xF) as usize]));
-        }
+        decoded.push(byte);
         index += 1;
     }
-    out
+    uri_encode_bytes(&decoded, true)
 }
 
 /// minio-py `_MULTI_SPACE_REGEX.sub(" ", value).strip()`: collapse runs of
@@ -200,25 +185,6 @@ fn collapse_spaces(value: &str) -> String {
             }
             out.push(character);
         }
-    }
-    out
-}
-
-fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
-    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts any key length");
-    mac.update(data);
-    mac.finalize().into_bytes().into()
-}
-
-/// Lowercase hex SHA-256 digest of `data`.
-pub fn hex_sha256(data: &[u8]) -> String {
-    hex_bytes(&Sha256::digest(data))
-}
-
-fn hex_bytes(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push_str(&format!("{byte:02x}"));
     }
     out
 }

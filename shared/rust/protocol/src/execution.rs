@@ -132,7 +132,7 @@ impl Default for ExecutionRequest {
 }
 
 impl ExecutionRequest {
-    pub(crate) fn uses_ephemeral_codex_thread(&self) -> bool {
+    pub fn uses_ephemeral_codex_thread(&self) -> bool {
         self.ephemeral
             && self
                 .extra
@@ -141,12 +141,12 @@ impl ExecutionRequest {
                 != Some(true)
     }
 
-    pub(crate) fn persist_runtime_thread(&mut self) {
+    pub fn persist_runtime_thread(&mut self) {
         self.extra
             .insert("persist_runtime_thread".to_owned(), Value::Bool(true));
     }
 
-    pub(crate) fn use_ephemeral_codex_thread(&mut self) {
+    pub fn use_ephemeral_codex_thread(&mut self) {
         self.ephemeral = true;
         self.extra.remove("persist_runtime_thread");
     }

@@ -6,7 +6,17 @@ rust-version = "1.94"
 description = "Incremental Rust migration gateway for the Wegent backend"
 license = "Apache-2.0"
 
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+default-members = [".", "crates/*"]
+
 [dependencies]
+wegent-python-compat = { path = "crates/python-compat" }
+wegent-http-compat = { path = "crates/http-compat" }
+wegent-storage = { path = "crates/storage" }
+wegent-protocol = { path = "../shared/rust/protocol" }
+wegent-crypto = { path = "../shared/rust/crypto" }
 aes = "0.8"
 aes-gcm = "0.10"
 anyhow = "1"

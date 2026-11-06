@@ -189,3 +189,6 @@ assert_case "Wework transport retains E2E coverage" "$wework_e2e_expected" \
 assert_case "Wework E2E image changes run Wework E2E" "$wework_e2e_expected" \
   "docker/wework-e2e/desktop.Dockerfile"
 
+shared_rust_expected="${backend_rs_expected/executor=false/executor=true}"
+assert_case "shared Rust libraries run both consumers" "$shared_rust_expected" \
+  "shared/rust/crypto/src/lib.rs"

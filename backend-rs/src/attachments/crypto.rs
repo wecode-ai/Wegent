@@ -13,21 +13,12 @@
 //! the key length, so a 16-, 24-, or 32-byte configured key is AES-128,
 //! AES-192, or AES-256 respectively.
 //!
-//! The block cipher comes from the `aes` crate this repository already links
-//! through `aes-gcm` (the provider-credential payloads), so the CBC path adds
-//! no dependency to the migrated surface.
 use std::borrow::Cow;
-
-use aes_gcm::aes::cipher::{Block, BlockDecrypt, BlockEncrypt, KeyInit};
-use aes_gcm::aes::{Aes128, Aes192, Aes256};
 
 /// `_get_attachment_encryption_key`'s `ATTACHMENT_AES_KEY` default.
 const DEFAULT_AES_KEY: &str = "12345678901234567890123456789012";
 /// `_get_attachment_encryption_key`'s `ATTACHMENT_AES_IV` default.
 const DEFAULT_AES_IV: &str = "1234567890123456";
-/// `algorithms.AES.block_size`: the CBC block size and the PKCS#7 block size.
-const BLOCK_SIZE: usize = 16;
-
 /// The `cryptography` failure `decrypt_attachment` re-raises (an unsupported
 /// key or IV length, a non-block-aligned payload, or invalid padding). The
 /// endpoint renders it as its 500 `Failed to retrieve attachment data`.
@@ -74,63 +65,7 @@ pub(crate) fn decrypt_with_key(
     iv: &[u8],
     encrypted: &[u8],
 ) -> Result<Vec<u8>, AttachmentDecryptionError> {
-    // `modes.CBC(aes_iv)` requires exactly one block of IV.
-    let iv: [u8; BLOCK_SIZE] = iv.try_into().map_err(|_| AttachmentDecryptionError)?;
-    match key.len() {
-        16 => decrypt_cbc::<Aes128>(key, iv, encrypted),
-        24 => decrypt_cbc::<Aes192>(key, iv, encrypted),
-        32 => decrypt_cbc::<Aes256>(key, iv, encrypted),
-        // Every other key length is rejected by `algorithms.AES`.
-        _ => Err(AttachmentDecryptionError),
-    }
-}
-
-/// CBC decryption: `finalize()` rejects a payload that is not a whole number
-/// of blocks, and each plaintext block is the decrypted block XORed with the
-/// preceding ciphertext block (`decryptor.update` + `finalize`).
-fn decrypt_cbc<C>(
-    key: &[u8],
-    iv: [u8; BLOCK_SIZE],
-    encrypted: &[u8],
-) -> Result<Vec<u8>, AttachmentDecryptionError>
-where
-    C: BlockDecrypt + KeyInit,
-{
-    let cipher = C::new_from_slice(key).map_err(|_| AttachmentDecryptionError)?;
-    if !encrypted.len().is_multiple_of(BLOCK_SIZE) {
-        return Err(AttachmentDecryptionError);
-    }
-    let mut previous = iv;
-    let mut plain = Vec::with_capacity(encrypted.len());
-    for chunk in encrypted.as_chunks::<BLOCK_SIZE>().0 {
-        let mut block = Block::<C>::clone_from_slice(chunk);
-        cipher.decrypt_block(&mut block);
-        let mut decrypted = [0u8; BLOCK_SIZE];
-        for (target, (byte, mask)) in decrypted.iter_mut().zip(block.iter().zip(previous.iter())) {
-            *target = byte ^ mask;
-        }
-        plain.extend_from_slice(&decrypted);
-        previous.copy_from_slice(chunk);
-    }
-    unpad_pkcs7(plain)
-}
-
-/// `padding.PKCS7(128).unpadder()`: the trailing byte is the pad length and
-/// every padded byte repeats it.
-fn unpad_pkcs7(mut plain: Vec<u8>) -> Result<Vec<u8>, AttachmentDecryptionError> {
-    let padding = usize::from(*plain.last().ok_or(AttachmentDecryptionError)?);
-    if padding == 0 || padding > BLOCK_SIZE || padding > plain.len() {
-        return Err(AttachmentDecryptionError);
-    }
-    let content = plain.len() - padding;
-    if plain[content..]
-        .iter()
-        .any(|byte| usize::from(*byte) != padding)
-    {
-        return Err(AttachmentDecryptionError);
-    }
-    plain.truncate(content);
-    Ok(plain)
+    wegent_crypto::decrypt_cbc(key, iv, encrypted).map_err(|_| AttachmentDecryptionError)
 }
 
 /// The `cryptography` failure `encrypt_attachment` re-raises (an unsupported
@@ -161,50 +96,7 @@ fn encrypt_with_key(
     iv: &[u8],
     plain: &[u8],
 ) -> Result<Vec<u8>, AttachmentEncryptionError> {
-    let iv: [u8; BLOCK_SIZE] = iv.try_into().map_err(|_| AttachmentEncryptionError)?;
-    match key.len() {
-        16 => encrypt_cbc::<Aes128>(key, iv, plain),
-        24 => encrypt_cbc::<Aes192>(key, iv, plain),
-        32 => encrypt_cbc::<Aes256>(key, iv, plain),
-        _ => Err(AttachmentEncryptionError),
-    }
-}
-
-/// CBC encryption: PKCS#7-pad the plaintext to a whole number of blocks, then
-/// each ciphertext block is the encrypted plaintext block XORed with the
-/// preceding ciphertext block (`encryptor.update` + `finalize`).
-fn encrypt_cbc<C>(
-    key: &[u8],
-    iv: [u8; BLOCK_SIZE],
-    plain: &[u8],
-) -> Result<Vec<u8>, AttachmentEncryptionError>
-where
-    C: BlockEncrypt + KeyInit,
-{
-    let cipher = C::new_from_slice(key).map_err(|_| AttachmentEncryptionError)?;
-    let padded = pad_pkcs7(plain);
-    let mut previous = iv;
-    let mut encrypted = Vec::with_capacity(padded.len());
-    for chunk in padded.as_chunks::<BLOCK_SIZE>().0 {
-        let mut block = Block::<C>::clone_from_slice(chunk);
-        for (byte, mask) in block.iter_mut().zip(previous.iter()) {
-            *byte ^= mask;
-        }
-        cipher.encrypt_block(&mut block);
-        encrypted.extend_from_slice(&block);
-        previous.copy_from_slice(&block);
-    }
-    Ok(encrypted)
-}
-
-/// `padding.PKCS7(128).padder()`: append `1..=16` bytes whose value is the
-/// pad length (a whole extra block when the plaintext is already aligned).
-fn pad_pkcs7(plain: &[u8]) -> Vec<u8> {
-    let padding = BLOCK_SIZE - (plain.len() % BLOCK_SIZE);
-    let mut padded = Vec::with_capacity(plain.len() + padding);
-    padded.extend_from_slice(plain);
-    padded.extend(std::iter::repeat_n(padding as u8, padding));
-    padded
+    wegent_crypto::encrypt_cbc(key, iv, plain).map_err(|_| AttachmentEncryptionError)
 }
 
 #[cfg(test)]

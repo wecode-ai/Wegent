@@ -484,7 +484,7 @@ classify_path() {
       backend/tests/api/test_deliveries_api.py)
       select_target "core:collaboration-issue-attachment-preview"
       ;;
-    backend-rs/* | backend-rs/** | \
+    shared/rust/* | backend-rs/* | backend-rs/** | \
       wework/e2e/desktop/modules/cloud-environment.mjs | \
       wework/e2e/desktop/modules/task-flow-main.mjs | \
       wework/e2e/desktop/support/mysql-helper.py)

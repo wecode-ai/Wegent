@@ -9,7 +9,7 @@
 //! /api/internal/workspace-archives/{task_id}/restore-sandbox` restores a
 //! sandbox's workspace files from the task's latest stored archive.
 mod handler;
-pub(crate) mod s3_presign;
+pub(crate) use wegent_storage::s3_presign;
 pub(crate) mod save;
 mod service;
 mod storage;

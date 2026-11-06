@@ -32,7 +32,7 @@ pub mod process;
 pub mod process_environment;
 pub mod prompt_enrichment;
 mod prompt_mentions;
-pub mod protocol;
+pub use wegent_protocol as protocol;
 mod repository_identity;
 pub mod runner;
 pub mod runtime_work;

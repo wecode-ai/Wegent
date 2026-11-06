@@ -29,14 +29,14 @@ const PERTURB_SHIFT: u32 = 5;
 
 /// A CPython `set[int]` order emulator.
 #[derive(Default)]
-pub(crate) struct SetOrder {
+pub struct SetOrder {
     table: Vec<Option<i64>>,
     used: usize,
     fill: usize,
 }
 
 impl SetOrder {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             table: vec![None; MIN_SIZE],
             used: 0,
@@ -80,7 +80,7 @@ impl SetOrder {
     }
 
     /// `set.add(value)`; duplicates keep their first slot.
-    pub(crate) fn add(&mut self, value: i64) {
+    pub fn add(&mut self, value: i64) {
         let Some(index) = Self::find(&self.table, value) else {
             return;
         };
@@ -112,7 +112,7 @@ impl SetOrder {
     }
 
     /// `list(the_set)` — the slot-ascending iteration order.
-    pub(crate) fn order(&self) -> Vec<i64> {
+    pub fn order(&self) -> Vec<i64> {
         self.table.iter().flatten().copied().collect()
     }
 }

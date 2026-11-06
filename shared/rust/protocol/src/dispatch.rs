@@ -20,10 +20,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-pub(crate) use super::openai_client::{
-    OPENAI_ACCEPT, OPENAI_DUMMY_AUTHORIZATION, apply_openai_client_headers,
-};
-
 /// The `/v1/responses` request body. Keys serialize in this order, matching the
 /// recorded body.
 #[derive(Debug, Clone, Serialize, Deserialize)]

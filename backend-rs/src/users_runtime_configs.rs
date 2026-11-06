@@ -13,8 +13,6 @@
 //! `UserProxyConfig` kind documents, and renders `UserRuntimeConfigResponse`.
 use std::collections::BTreeMap;
 
-use aes_gcm::aes::cipher::{Block, BlockDecrypt, KeyInit};
-use aes_gcm::aes::{Aes128, Aes192, Aes256};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use brz_http_server::StatusCode;
@@ -427,58 +425,9 @@ fn decrypt_sensitive_data(text: &str) -> Result<String, FastApiError> {
 /// `AES(key)` + `CBC(iv)` + PKCS#7 unpadding; the variant follows the
 /// configured key length. Every decode/decrypt/unpad/UTF-8 failure is `None`.
 fn decrypt_cbc(key: &[u8], iv: &[u8], text: &str) -> Option<String> {
-    let iv: [u8; AES_BLOCK_SIZE] = iv.try_into().ok()?;
     let encrypted = STANDARD.decode(text.as_bytes()).ok()?;
-    let plain = match key.len() {
-        16 => cbc_decrypt::<Aes128>(key, iv, &encrypted),
-        24 => cbc_decrypt::<Aes192>(key, iv, &encrypted),
-        32 => cbc_decrypt::<Aes256>(key, iv, &encrypted),
-        _ => None,
-    }?;
+    let plain = wegent_crypto::decrypt_cbc(key, iv, &encrypted).ok()?;
     String::from_utf8(plain).ok()
-}
-
-/// CBC decryption of whole blocks, chaining each plaintext block with the
-/// preceding ciphertext block.
-fn cbc_decrypt<C>(key: &[u8], iv: [u8; AES_BLOCK_SIZE], encrypted: &[u8]) -> Option<Vec<u8>>
-where
-    C: BlockDecrypt + KeyInit,
-{
-    let cipher = C::new_from_slice(key).ok()?;
-    if encrypted.is_empty() || !encrypted.len().is_multiple_of(AES_BLOCK_SIZE) {
-        return None;
-    }
-    let mut previous = iv;
-    let mut plain = Vec::with_capacity(encrypted.len());
-    for chunk in encrypted.as_chunks::<AES_BLOCK_SIZE>().0 {
-        let mut block = Block::<C>::clone_from_slice(chunk);
-        cipher.decrypt_block(&mut block);
-        let mut decrypted = [0u8; AES_BLOCK_SIZE];
-        for (target, (byte, mask)) in decrypted.iter_mut().zip(block.iter().zip(previous.iter())) {
-            *target = byte ^ mask;
-        }
-        plain.extend_from_slice(&decrypted);
-        previous.copy_from_slice(chunk);
-    }
-    unpad_pkcs7(plain)
-}
-
-/// `padding.PKCS7(128).unpadder()`: the trailing byte is the pad length and
-/// every padded byte repeats it.
-fn unpad_pkcs7(mut plain: Vec<u8>) -> Option<Vec<u8>> {
-    let padding = usize::from(*plain.last()?);
-    if padding == 0 || padding > AES_BLOCK_SIZE || padding > plain.len() {
-        return None;
-    }
-    let content = plain.len() - padding;
-    if plain[content..]
-        .iter()
-        .any(|byte| usize::from(*byte) != padding)
-    {
-        return None;
-    }
-    plain.truncate(content);
-    Some(plain)
 }
 
 /// `_mask_proxy_url`: redact embedded credentials, leaving the host and port.

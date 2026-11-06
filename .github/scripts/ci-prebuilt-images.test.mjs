@@ -31,8 +31,10 @@ test("dependency keys follow build inputs and survive application-only changes",
       "executor/Cargo.toml",
       "executor/Cargo.lock",
       "executor/vendor",
+      "shared/rust",
       "backend-rs/Cargo.toml",
       "backend-rs/Cargo.lock",
+      "backend-rs/crates",
     ]) {
       mkdirSync(dirname(join(directory, input)), { recursive: true });
       cpSync(new URL(input, root), join(directory, input), { recursive: true });
@@ -47,6 +49,15 @@ test("dependency keys follow build inputs and survive application-only changes",
       "application changes",
     );
     assert.equal(key(), executor);
+    const sharedSource = join(directory, "shared/rust/crypto/src/lib.rs");
+    const originalSource = readFileSync(sharedSource, "utf8");
+    writeFileSync(
+      sharedSource,
+      `${originalSource}\n// Changed shared algorithm\n`,
+    );
+    assert.notEqual(key(), executor);
+    assert.notEqual(key("backend-rs-deps"), backend);
+    writeFileSync(sharedSource, originalSource);
     writeFileSync(
       join(directory, "executor/Cargo.lock"),
       "changed dependencies",

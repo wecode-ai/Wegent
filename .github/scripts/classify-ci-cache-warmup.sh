@@ -110,6 +110,12 @@ classify_path() {
       changed[backend_rs_rust]=true
       changed[wework_target]=true
       ;;
+    shared/rust/*)
+      changed[docker]=true
+      changed[executor_rust]=true
+      changed[backend_rs_rust]=true
+      changed[wework_target]=true
+      ;;
     .cargo/*)
       changed[executor_rust]=true
       changed[backend_rs_rust]=true

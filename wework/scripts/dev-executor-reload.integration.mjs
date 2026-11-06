@@ -60,7 +60,7 @@ async function waitForProcessExit(pid) {
   assert.fail(`Executor process ${pid} did not exit`)
 }
 
-async function run() {
+async function run(withSharedLibraries = false) {
   const directory = await mkdtemp(join(tmpdir(), 'wework-executor-reload-'))
   const executorDirectory = join(directory, 'executor')
   const sourceDirectory = join(executorDirectory, 'src')
@@ -78,6 +78,15 @@ async function run() {
     await writeFile(join(executorDirectory, 'Cargo.toml'), '[package]\nname = "fake"\n')
     await writeFile(join(executorDirectory, 'Cargo.lock'), '')
     await writeFile(sourcePath, 'fn main() {}\n')
+    if (withSharedLibraries) {
+      for (const name of ['protocol', 'crypto']) {
+        const library = join(directory, 'shared', 'rust', name)
+        await mkdir(join(library, 'src'), { recursive: true })
+        await writeFile(join(library, 'src', 'lib.rs'), 'pub fn original() {}\n')
+        await writeFile(join(library, 'Cargo.toml'), '[package]\nname = "shared"\n')
+      }
+      await writeFile(join(directory, 'shared', 'rust', 'Cargo.toml'), '[workspace]\n')
+    }
     await writeFile(
       executorTemplate,
       `#!/usr/bin/env node
@@ -132,10 +141,26 @@ chmodSync(output, 0o755)
     assert.notEqual(secondReady[1], firstReady[1])
     assert.equal((await readFile(buildLog, 'utf8')).trim().split('\n').length, 2)
 
+    let expectedBuilds = 2
+    if (withSharedLibraries) {
+      for (const name of ['protocol', 'crypto']) {
+        const ready = waitForOutput(watcher.stdout, /ready (\d+)\n/)
+        await writeFile(
+          join(directory, 'shared', 'rust', name, 'src', 'lib.rs'),
+          'pub fn changed() {}\n'
+        )
+        await ready
+        expectedBuilds += 1
+        assert.equal((await readFile(buildLog, 'utf8')).trim().split('\n').length, expectedBuilds)
+      }
+      // Cargo output under the shared workspace must not create a rebuild loop.
+      await mkdir(join(directory, 'shared', 'rust', 'target'), { recursive: true })
+      await writeFile(join(directory, 'shared', 'rust', 'target', 'output'), 'build output')
+    }
     const now = new Date()
     await utimes(sourcePath, now, now)
     await delay(700)
-    assert.equal((await readFile(buildLog, 'utf8')).trim().split('\n').length, 2)
+    assert.equal((await readFile(buildLog, 'utf8')).trim().split('\n').length, expectedBuilds)
 
     watcher.stdin.write('ping\n')
     await waitForOutput(watcher.stdout, /echo:ping\n/)
@@ -144,7 +169,7 @@ chmodSync(output, 0o755)
     watcher.stdin.write('crash\n')
     const thirdReady = await thirdReadyOutput
     assert.notEqual(thirdReady[1], secondReady[1])
-    assert.equal((await readFile(buildLog, 'utf8')).trim().split('\n').length, 2)
+    assert.equal((await readFile(buildLog, 'utf8')).trim().split('\n').length, expectedBuilds)
 
     await stopProcess(watcher)
     await waitForProcessExit(Number(thirdReady[1]))
@@ -156,4 +181,5 @@ chmodSync(output, 0o755)
 }
 
 await run()
+await run(true)
 process.stdout.write('dev executor reload integration test passed\n')

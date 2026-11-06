@@ -141,7 +141,6 @@ mod filters;
 mod git_repositories;
 mod groups;
 mod headers;
-pub mod http_compat;
 mod http_fallback;
 pub mod http_trust;
 mod hybrid;
@@ -153,7 +152,6 @@ mod internal_auth;
 mod internal_callback;
 mod internal_conversion_callback;
 mod internal_robot_queue;
-pub mod json_decode_error;
 mod jwt_compat;
 mod knowledge_artifacts;
 mod knowledge_base_detail;
@@ -219,7 +217,6 @@ mod plugins_installed;
 mod plugins_marketplace;
 mod projects;
 pub(crate) mod provider_guidance;
-mod py_set_order;
 mod quota;
 mod remote_workspace_status;
 mod remote_workspace_tree;
@@ -395,7 +392,7 @@ brz_http_server::registry!(
 #[cfg(test)]
 mod json_contract_tests;
 
-/// JSON input compatibility for legacy projections.
-pub mod json_compat;
-
 mod remote_workspace_payload;
+
+pub use wegent_http_compat as http_compat;
+pub use wegent_python_compat::{json_compat, json_decode_error, py_set_order};

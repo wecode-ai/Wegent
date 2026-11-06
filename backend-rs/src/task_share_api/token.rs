@@ -13,10 +13,6 @@
 //! environment, then the active dotenv file (`config::init_env` exports it),
 //! then the pydantic field default.
 
-use aes::Aes128;
-use aes::Aes192;
-use aes::Aes256;
-use aes::cipher::{BlockEncryptMut, KeyIvInit, block_padding::Pkcs7};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 
@@ -28,9 +24,6 @@ const DEFAULT_SHARE_TOKEN_AES_KEY: &str = "12345678901234567890123456789012";
 const DEFAULT_SHARE_TOKEN_AES_IV: &str = "1234567890123456";
 /// `settings.TASK_SHARE_BASE_URL` default (`app/core/config.py`).
 const DEFAULT_TASK_SHARE_BASE_URL: &str = "http://localhost:3000";
-
-/// The AES block size the source's CBC mode and PKCS#7 padding use.
-const BLOCK_SIZE: usize = 16;
 
 /// `generate_share_url(share_token)`: the public read-only share link.
 ///
@@ -76,31 +69,7 @@ fn encode_share_token(key: &[u8], iv: &[u8], user_id: i64, task_id: i64) -> Resu
 /// length (16/24/32 bytes -> AES-128/192/256), like the source's
 /// `algorithms.AES(key)`.
 fn encrypt_cbc(key: &[u8], iv: &[u8], plaintext: &[u8]) -> Option<Vec<u8>> {
-    let iv: [u8; BLOCK_SIZE] = iv.try_into().ok()?;
-    match key.len() {
-        16 => {
-            let key: [u8; 16] = key.try_into().ok()?;
-            Some(
-                cbc::Encryptor::<Aes128>::new(&key.into(), &iv.into())
-                    .encrypt_padded_vec_mut::<Pkcs7>(plaintext),
-            )
-        }
-        24 => {
-            let key: [u8; 24] = key.try_into().ok()?;
-            Some(
-                cbc::Encryptor::<Aes192>::new(&key.into(), &iv.into())
-                    .encrypt_padded_vec_mut::<Pkcs7>(plaintext),
-            )
-        }
-        32 => {
-            let key: [u8; 32] = key.try_into().ok()?;
-            Some(
-                cbc::Encryptor::<Aes256>::new(&key.into(), &iv.into())
-                    .encrypt_padded_vec_mut::<Pkcs7>(plaintext),
-            )
-        }
-        _ => None,
-    }
+    wegent_crypto::encrypt_cbc(key, iv, plaintext).ok()
 }
 
 /// `urllib.parse.quote(text, safe="/")`: keep the RFC 3986 unreserved set plus

@@ -14,12 +14,16 @@ WORKDIR /workspace/backend-rs
 
 FROM toolchain AS dependencies
 COPY backend-rs/Cargo.toml backend-rs/Cargo.lock ./
+COPY shared/rust /workspace/shared/rust
+COPY backend-rs/crates ./crates
 RUN mkdir -p src && printf 'pub fn placeholder() {}\n' > src/lib.rs \
     && printf 'fn main() {}\n' > src/main.rs \
     && cargo build --release --locked --bin wegent-backend-rs
 
 FROM ${DEPS_IMAGE} AS build
 COPY backend-rs/src ./src
+COPY shared/rust /workspace/shared/rust
+COPY backend-rs/crates ./crates
 COPY backend-rs/examples ./examples
 COPY backend-rs/migrations ./migrations
 RUN find src examples -type f -exec touch {} + \

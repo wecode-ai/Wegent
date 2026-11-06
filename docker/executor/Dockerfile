@@ -18,6 +18,7 @@ ENV PATH=/root/.cargo/bin:${PATH}
 FROM builder-base AS builder-deps
 
 COPY executor/Cargo.toml executor/Cargo.lock /app/executor/
+COPY shared/rust /app/shared/rust
 COPY executor/vendor /app/executor/vendor
 RUN mkdir -p /app/executor/src/bin \
     && printf 'pub fn placeholder() {}\n' > /app/executor/src/lib.rs \
@@ -30,6 +31,7 @@ FROM builder-deps AS builder
 ARG APP_VERSION=dev
 
 COPY executor/src /app/executor/src
+COPY shared/rust /app/shared/rust
 COPY sdk/plugin-auth /app/sdk/plugin-auth
 COPY sdk/plugin-creator /app/sdk/plugin-creator
 COPY shared/assets /app/shared/assets

@@ -41,6 +41,16 @@ describe('Wework desktop release planning', () => {
     ).toBe('full')
   })
 
+  test('requires a full release for each shared Rust library', () => {
+    for (const path of [
+      'shared/rust/protocol/src/execution.rs',
+      'shared/rust/crypto/src/lib.rs',
+      'shared/rust/protocol/Cargo.toml',
+    ]) {
+      expect(classifyDesktopChanges([path])).toBe('full')
+    }
+  })
+
   test('requires a full release for Electron host and unmanaged resource changes', () => {
     expect(classifyDesktopChanges(['wework/electron/src/main.ts'])).toBe('full')
     expect(classifyDesktopChanges(['wework/resources/icons/icon.icns'])).toBe('full')

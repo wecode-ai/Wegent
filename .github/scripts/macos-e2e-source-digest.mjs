@@ -15,6 +15,8 @@ const groups = [
   `${component}/Cargo.toml`,
   `${component}/Cargo.lock`,
   `${component}/src`,
+  "shared/rust",
+  ...(component === "backend-rs" ? ["backend-rs/crates"] : []),
   ...(component === "executor"
     ? [
         "executor/vendor",

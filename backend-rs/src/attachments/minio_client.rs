@@ -336,24 +336,7 @@ pub async fn delete_object(
     }
 }
 
-/// URL-encode an object key the way `minio-py` does for path-style requests:
-/// percent-encode every byte except unreserved characters and `/`.
-pub fn encode_object_path(key: &str) -> String {
-    const HEX: &[u8; 16] = b"0123456789ABCDEF";
-    let mut out = String::with_capacity(key.len());
-    for &byte in key.as_bytes() {
-        let unreserved =
-            byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~' | b'/');
-        if unreserved {
-            out.push(byte as char);
-        } else {
-            out.push('%');
-            out.push(HEX[(byte >> 4) as usize] as char);
-            out.push(HEX[(byte & 0xF) as usize] as char);
-        }
-    }
-    out
-}
+pub use wegent_storage::encode_object_path;
 
 /// Build the process-lifetime storage HTTP client (the source builds one
 /// `Minio` client per backend instance sharing urllib3 pools). This is also the
