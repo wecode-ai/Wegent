@@ -1,0 +1,28 @@
+[package]
+name = "wegent-onboarding"
+version = "0.1.0"
+edition = "2024"
+rust-version.workspace = true
+license = "Apache-2.0"
+description = "New-user default resource application with original transaction boundaries"
+
+[dependencies]
+brz-json = "=0.0.11"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+wegent-access = { path = "../access" }
+wegent-backend-config = { path = "../config" }
+wegent-backend-persistence = { path = "../persistence" }
+wegent-python-compat = { path = "../python-compat" }
+wegent-identity = { path = "../identity" }
+wegent-resource-store = { path = "../resource-store" }
+wegent-task-store = { path = "../task-store" }
+anyhow = "1"
+async-trait = "0.1"
+brz-mysql = { version = "=0.0.29", features = ["metrics", "slow-log"] }
+brz-redis = { version = "=0.0.18", features = ["metrics", "slow-log"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+tokio = { version = "1", features = ["rt", "sync"] }
+tracing = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

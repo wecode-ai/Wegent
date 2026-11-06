@@ -18,6 +18,8 @@ ENV PATH=/root/.cargo/bin:${PATH}
 # Cache dependency compilation independently of application source changes.
 FROM rust-builder-base AS rust-builder-deps
 COPY backend-rs/Cargo.toml backend-rs/Cargo.lock ./
+COPY backend-rs/crates ./crates
+COPY shared/rust /app/shared/rust
 RUN mkdir src \
     && printf 'pub fn placeholder() {}\n' > src/lib.rs \
     && printf 'fn main() {}\n' > src/main.rs \

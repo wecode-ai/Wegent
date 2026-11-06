@@ -29,9 +29,7 @@ use crate::task_skills::kinds::KindCacheStore;
 use crate::task_store_statements::StatementArg;
 use crate::teams::teams_repository::placeholders;
 
-mod kind_rows;
-
-pub(crate) use kind_rows::*;
+pub(crate) use wegent_resource_store::kind_rows::*;
 
 /// `KindReader.get_by_id(kind=Team)`: one Team row.
 pub async fn team_by_id<M: Mysql>(mysql: &M, team_id: i64) -> MysqlResult<Option<KindRow>> {
@@ -553,7 +551,7 @@ async fn find_model_with_namespace<R: Redis>(
         return Ok(Some(model));
     }
     let model_json = brz_json::OpaqueJson::from(model.json.0.clone());
-    if crate::teams::public_model_access::allowed_for_user_name(&model_json, user_name.as_deref()) {
+    if wegent_access::public_models::allowed_for_user_name(&model_json, user_name.as_deref()) {
         Ok(Some(model))
     } else {
         Ok(None)

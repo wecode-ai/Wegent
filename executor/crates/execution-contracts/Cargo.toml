@@ -1,0 +1,13 @@
+[package]
+name = "wegent-execution-contracts"
+version = "0.1.0"
+edition = "2021"
+rust-version.workspace = true
+license = "Apache-2.0"
+description = "Execution engine ports, outcomes, IPC contracts, and response events"
+
+[dependencies]
+tokio = { version = "1.48", features = ["sync"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+wegent-protocol = { path = "../../../shared/rust/protocol" }

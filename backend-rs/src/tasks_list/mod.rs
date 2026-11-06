@@ -30,8 +30,6 @@ use crate::tasks_db_projection::{
     TaskListResponse, TaskListRow, assemble_items, is_displayable, validate_page_limit,
 };
 
-pub mod statements;
-
 /// `get_tasks`'s `extra_limit` for the accessible-task page.
 const EXTRA_LIMIT: i64 = 50;
 

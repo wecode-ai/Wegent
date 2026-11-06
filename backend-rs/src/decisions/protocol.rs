@@ -8,28 +8,7 @@ use serde_json::{Map, Value, json};
 use super::schema::{DecisionRequest, Question, QuestionType};
 use crate::json_compat::python_json_value_no_ascii;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Protocol {
-    SystemOne,
-    OpenAi,
-}
-
-impl Protocol {
-    pub fn parse(value: &str) -> Result<Self, ()> {
-        match value {
-            "systemone" => Ok(Self::SystemOne),
-            "openai" => Ok(Self::OpenAi),
-            _ => Err(()),
-        }
-    }
-
-    pub fn endpoint(self) -> &'static str {
-        match self {
-            Self::SystemOne => "systemone",
-            Self::OpenAi => "decisions",
-        }
-    }
-}
+pub(super) use wegent_resource_store::decision_model::Protocol;
 
 fn text(value: &Value) -> String {
     value
