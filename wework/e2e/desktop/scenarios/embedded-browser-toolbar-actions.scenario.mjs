@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { promisify } from 'node:util'
+import { pathToFileURL } from 'node:url'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
@@ -56,6 +59,11 @@ const HANGING_FIXTURE_RELEASE_PATH = '/embedded-browser-toolbar-actions-fixture-
 const BRIDGE_RUNTIME_FILE = 'embedded-browser-bridge.json'
 const BROWSER_LABEL = 'workspace-browser'
 const FIXTURE_WORD = 'Fixture'
+const BROWSER_OPEN_EXTERNAL_SELECTOR =
+  ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-open-external-button"]'
+const BROWSER_ERROR_SELECTOR =
+  ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-error"]'
+const executeFile = promisify(execFile)
 
 function fixtureHtml(title, heading) {
   return [
@@ -189,6 +197,25 @@ async function waitForButtonDisabled(control, selector, disabled, timeoutMs, mes
   )
 }
 
+async function waitForSafariFrontUrl(expectedUrl, timeoutMs) {
+  const startedAt = Date.now()
+  let lastUrl = null
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      const { stdout } = await executeFile('/usr/bin/osascript', [
+        '-e',
+        'tell application "Safari" to get URL of front document',
+      ])
+      lastUrl = stdout.trim()
+      if (lastUrl === expectedUrl) return
+    } catch (error) {
+      lastUrl = String(error)
+    }
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(`Safari did not open ${expectedUrl}; last URL=${lastUrl}`)
+}
+
 function assertFramesEqual(before, after) {
   assert.equal(before.length, 4, 'Inspector verification returned an invalid before frame')
   assert.equal(after.length, 4, 'Inspector verification returned an invalid after frame')
@@ -267,7 +294,7 @@ async function waitForPositionOnlyBrowserFrameSync(control, before, timeoutMs) {
   )
 }
 
-export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
+export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) {
   // Loading starts before the HTTP request arrives; retain an early release.
   let releaseHangingFixture
   const hangingFixtureReleased = new Promise(resolve => {
@@ -571,6 +598,65 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
       await control.command('click', SETTINGS_ITEM_SELECTOR)
       await control.command('waitFor', BROWSER_SETTINGS_PAGE_SELECTOR, { timeoutMs: uiTimeoutMs })
       await control.command('navigate', 'body', { value: '/' })
+
+      // --- Real external browser file opening and error recovery ---
+      if (process.platform === 'darwin') {
+        const localFilePath = join(resultDir, 'external-browser-fixture.html')
+        const localDirectoryPath = join(resultDir, 'external-browser-directory')
+        await mkdir(localDirectoryPath, { recursive: true })
+        await writeFile(
+          localFilePath,
+          fixtureHtml('External Browser Fixture', 'External file loaded')
+        )
+        await writeFile(
+          join(localDirectoryPath, 'directory-entry.txt'),
+          'External directory loaded'
+        )
+
+        const localFileUrl = pathToFileURL(localFilePath).href
+        await callBridge(bridgeIdentity, { action: 'open', url: localFileUrl, timeoutMs: 8_000 })
+        await callBridge(bridgeIdentity, {
+          action: 'waitFor',
+          options: { condition: { textVisible: 'External file loaded' } },
+          timeoutMs: 5_000,
+        })
+        await unlink(localFilePath)
+        await control.command('click', BROWSER_OPEN_EXTERNAL_SELECTOR)
+        await control.command('waitFor', BROWSER_ERROR_SELECTOR, {
+          timeoutMs: uiTimeoutMs,
+        })
+        assert.match(
+          await control.command('getText', BROWSER_ERROR_SELECTOR),
+          /Unable to open in the external browser|无法在外部浏览器中打开/
+        )
+
+        await writeFile(
+          localFilePath,
+          fixtureHtml('External Browser Fixture', 'External file loaded')
+        )
+        await control.command('click', BROWSER_OPEN_EXTERNAL_SELECTOR)
+        await waitForElementGone(
+          control,
+          BROWSER_ERROR_SELECTOR,
+          uiTimeoutMs,
+          'Retrying external browser open did not clear its error'
+        )
+        await waitForSafariFrontUrl(localFileUrl, uiTimeoutMs)
+
+        const localDirectoryUrl = `${pathToFileURL(localDirectoryPath).href}/`
+        await callBridge(bridgeIdentity, {
+          action: 'open',
+          url: localDirectoryUrl,
+          timeoutMs: 8_000,
+        })
+        await callBridge(bridgeIdentity, {
+          action: 'waitFor',
+          options: { condition: { textVisible: 'directory-entry.txt' } },
+          timeoutMs: 5_000,
+        })
+        await control.command('click', BROWSER_OPEN_EXTERNAL_SELECTOR)
+        await waitForSafariFrontUrl(localDirectoryUrl, uiTimeoutMs)
+      }
     },
   }
 }
