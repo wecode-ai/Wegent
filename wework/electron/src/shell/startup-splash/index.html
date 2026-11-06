@@ -5,10 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
     <title>Wework</title>
-    <script>
-      const theme = new URLSearchParams(window.location.search).get('theme')
-      document.documentElement.dataset.theme = theme === 'dark' ? 'dark' : 'light'
-    </script>
+    <script src="./theme.js"></script>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
@@ -53,9 +50,9 @@
                   x2="1"
                   y2="4"
                 >
-                  <stop offset="0%" class="startup-progress-stop-start" />
-                  <stop offset="70%" class="startup-progress-stop-middle" />
-                  <stop offset="100%" class="startup-progress-stop-end" />
+                  <stop offset="0%" stop-color="var(--startup-progress-start)" />
+                  <stop offset="70%" stop-color="var(--startup-progress-middle)" />
+                  <stop offset="100%" stop-color="var(--startup-progress-end)" />
                 </linearGradient>
               </defs>
               <line

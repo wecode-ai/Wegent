@@ -50,7 +50,7 @@ class FakeResizeObserver {
 
 async function createRendererFixture(
   now: () => number = Date.now,
-  options: { reducedMotion?: boolean; language?: string } = {}
+  options: { reducedMotion?: boolean; language?: string; theme?: 'light' | 'dark' } = {}
 ) {
   const electronRoot =
     basename(process.cwd()) === 'electron' ? process.cwd() : join(process.cwd(), 'electron')
@@ -65,6 +65,8 @@ async function createRendererFixture(
   }
   element('#startup-brand-canvas').clientWidth = 1440
   element('#startup-brand-canvas').clientHeight = 960
+  const theme = options.theme ?? 'dark'
+  element('documentElement').dataset.theme = theme
   const brandAnimation = {
     setPaused: vi.fn(),
     complete: vi.fn(async () => undefined),
@@ -92,6 +94,10 @@ async function createRendererFixture(
     innerWidth: 1440,
     innerHeight: 960,
     createStartupBrandAnimation,
+    getComputedStyle: () => ({
+      colorScheme: theme,
+      backgroundColor: theme === 'dark' ? 'rgb(5, 7, 13)' : 'rgb(250, 250, 250)',
+    }),
     location: { search: '' },
     addEventListener: (event: string, listener: (event: unknown) => void) => {
       listeners.set(event, listener)
@@ -280,13 +286,15 @@ describe('startup splash renderer', () => {
     const rootStyles = styles.match(/:root\s*\{([^}]+)\}/)?.[1]
     const footerStyles = styles.match(/\.startup-status\s*\{([^}]+)\}/)?.[1]
     expect(html).toContain('name="color-scheme" content="light dark"')
+    expect(html.indexOf('src="./theme.js"')).toBeLessThan(html.indexOf('href="./styles.css"'))
     expect(rootStyles).toContain('color-scheme: dark')
     expect(rootStyles).toContain('--startup-brand-background: #05070d')
-    expect(rootStyles).toContain('--startup-status-background: transparent')
+    expect(rootStyles).toContain('--startup-status-background: var(--startup-brand-background)')
     expect(footerStyles).toContain('background: var(--startup-status-background)')
     expect(footerStyles).toContain('position: relative')
     expect(footerStyles).toContain('grid-row: 2')
     expect(styles).toContain(":root[data-theme='light']")
+    expect(styles).toContain('--startup-brand-background: #fafafa')
     expect(styles).toContain('@media (prefers-reduced-motion: reduce)')
     expect(script).toContain('stageTimeoutMs()')
     expect(script).toContain('weworkStartupProgress')
@@ -450,17 +458,28 @@ describe('startup splash renderer', () => {
       fillEnd: 999,
       trackEnd: 999,
       wordmarkVisible: false,
+      appearance: {
+        theme: 'dark',
+        colorScheme: 'dark',
+        background: 'rgb(5, 7, 13)',
+        footerBackground: 'rgb(5, 7, 13)',
+      },
       canvas: { x: 0, y: 0, width: 1440, height: 960 },
       viewport: { width: 1440, height: 960 },
     })
   })
 
   test.each([
-    { language: 'en-US', title: 'Ready', detail: 'Your workbench is ready.' },
-    { language: 'zh-CN', title: '准备完成', detail: '工作台已就绪' },
-  ])('completes terminal updates once with reduced motion in $language', async copy => {
+    {
+      language: 'en-US',
+      theme: 'light' as const,
+      title: 'Ready',
+      detail: 'Your workbench is ready.',
+    },
+    { language: 'zh-CN', theme: 'dark' as const, title: '准备完成', detail: '工作台已就绪' },
+  ])('completes terminal updates once with reduced motion in $language and $theme', async copy => {
     const { complete, progressListener, brandAnimation, element, frames, timers, step } =
-      await createRendererFixture(() => 10_000, { language: copy.language })
+      await createRendererFixture(() => 10_000, { language: copy.language, theme: copy.theme })
     await step(0)
     await step(0)
     progressListener?.(rendererUpdate(true))
@@ -479,6 +498,12 @@ describe('startup splash renderer', () => {
       progressNow: 100,
       fillEnd: 999,
       trackEnd: 999,
+      appearance: {
+        theme: copy.theme,
+        colorScheme: copy.theme,
+        background: copy.theme === 'dark' ? 'rgb(5, 7, 13)' : 'rgb(250, 250, 250)',
+        footerBackground: copy.theme === 'dark' ? 'rgb(5, 7, 13)' : 'rgb(250, 250, 250)',
+      },
     })
     progressListener?.(rendererUpdate(true))
     progressListener?.(rendererUpdate())
@@ -832,27 +857,5 @@ describe('startup splash renderer', () => {
     expect(element('#startup-timeout-copy').textContent).toBe(timeoutCopyLabel)
     element('#startup-timeout-open-logs').click()
     await vi.waitFor(() => expect(openLogs).toHaveBeenCalledTimes(2))
-  })
-})
-
-describe('startup splash initial theme', () => {
-  test.each([
-    ['light', 'light'],
-    ['dark', 'dark'],
-    ['', 'light'],
-  ])('applies %s before loading styles', async (requested, expected) => {
-    const electronRoot =
-      basename(process.cwd()) === 'electron' ? process.cwd() : join(process.cwd(), 'electron')
-    const html = await readFile(join(electronRoot, 'src/shell/startup-splash/index.html'), 'utf8')
-    const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1]
-    expect(script).toBeDefined()
-    expect(html.indexOf('<script>')).toBeLessThan(html.indexOf('<link rel="stylesheet"'))
-    const documentElement = { dataset: { theme: '' } }
-    runInNewContext(script!, {
-      URLSearchParams,
-      document: { documentElement },
-      window: { location: { search: '?theme=' + requested } },
-    })
-    expect(documentElement.dataset.theme).toBe(expected)
   })
 })

@@ -1,259 +1,8 @@
 import { readFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { basename, join } from 'node:path'
-import { runInNewContext } from 'node:vm'
 import { describe, expect, test, vi } from 'vitest'
-
-interface BrandAnimation {
-  setPaused: (paused: boolean) => void
-  complete: (durationMs?: number) => Promise<void>
-  destroy: () => void
-}
-
-class FakePath2D {
-  readonly points: Array<{ x: number; y: number }> = []
-  readonly curves: Array<{
-    start: { x: number; y: number }
-    controlA: { x: number; y: number }
-    controlB: { x: number; y: number }
-    end: { x: number; y: number }
-  }> = []
-  moveTo(x: number, y: number): void {
-    this.points.push({ x, y })
-  }
-  lineTo(x: number, y: number): void {
-    this.points.push({ x, y })
-  }
-  bezierCurveTo(ax: number, ay: number, bx: number, by: number, x: number, y: number): void {
-    this.curves.push({
-      start: this.points.at(-1)!,
-      controlA: { x: ax, y: ay },
-      controlB: { x: bx, y: by },
-      end: { x, y },
-    })
-    this.points.push({ x: ax, y: ay }, { x: bx, y: by }, { x, y })
-  }
-  closePath(): void {}
-  addPath(): void {}
-}
-
-function createContext() {
-  const pixels = new Uint8ClampedArray(600 * 600 * 4)
-  for (let index = 3; index < pixels.length; index += 4) pixels[index] = 255
-  const gradient = () => ({ addColorStop: vi.fn() })
-  const context = {
-    globalAlpha: 1,
-    logoOpacity: 0,
-    setTransform: vi.fn(),
-    resetTransform: vi.fn(),
-    clearRect: vi.fn(),
-    fillRect: vi.fn(),
-    save: vi.fn(),
-    restore: vi.fn(),
-    translate: vi.fn(),
-    scale: vi.fn(),
-    beginPath: vi.fn(),
-    moveTo: vi.fn(),
-    lineTo: vi.fn(),
-    arc: vi.fn(),
-    fill: vi.fn<(path: FakePath2D) => void>(),
-    stroke: vi.fn(),
-    clip: vi.fn(),
-    drawImage: vi.fn(),
-    setLineDash: vi.fn(),
-    createLinearGradient: vi.fn(gradient),
-    createRadialGradient: vi.fn(gradient),
-    getImageData: vi.fn(() => ({ data: pixels })),
-  }
-  const states: Array<Record<string, unknown>> = []
-  const properties = [
-    'globalAlpha',
-    'globalCompositeOperation',
-    'shadowColor',
-    'shadowBlur',
-    'filter',
-  ]
-  context.save.mockImplementation(() => {
-    states.push(Object.fromEntries(properties.map(key => [key, Reflect.get(context, key)])))
-  })
-  context.restore.mockImplementation(() => {
-    const saved = states.pop()
-    if (saved) for (const key of properties) Reflect.set(context, key, saved[key])
-  })
-  return context
-}
-
-function createClassList() {
-  const names = new Set<string>()
-  return {
-    add: (...values: string[]) => values.forEach(value => names.add(value)),
-    remove: (...values: string[]) => values.forEach(value => names.delete(value)),
-    contains: (value: string) => names.has(value),
-    toggle: (value: string, force = !names.has(value)) => {
-      if (force) names.add(value)
-      else names.delete(value)
-      return force
-    },
-  }
-}
-
-async function createAnimationFixture(
-  reducedMotion = false,
-  dimensions = { width: 1200, height: 680 },
-  options: { footerTop?: number; pixelRatio?: number; theme?: 'light' | 'dark' } = {}
-) {
-  const electronRoot =
-    basename(process.cwd()) === 'electron' ? process.cwd() : join(process.cwd(), 'electron')
-  const asset = (name: string) =>
-    readFile(join(electronRoot, 'src', 'shell', 'startup-splash', name), 'utf8')
-  const [markScript, animationScript] = await Promise.all([
-    asset('brand-mark.js'),
-    asset('brand-animation.js'),
-  ])
-  const brand = {
-    classList: createClassList(),
-    style: {
-      setProperty: vi.fn((name: string, value: string) => {
-        if (name === '--startup-logo-opacity') contexts[0].logoOpacity = Number(value)
-      }),
-    },
-    dataset: {},
-    getBoundingClientRect: () => ({ top: 0 }),
-  }
-  const contexts: ReturnType<typeof createContext>[] = []
-  const createCanvas = () => {
-    const context = createContext()
-    contexts.push(context)
-    return {
-      width: 1200,
-      height: 680,
-      clientWidth: dimensions.width,
-      clientHeight: dimensions.height,
-      style: { transform: '', filter: '' },
-      dataset: {},
-      parentElement: brand,
-      classList: createClassList(),
-      closest: () => brand,
-      getContext: () => context,
-      getBoundingClientRect: () => dimensions,
-    }
-  }
-  const canvas = createCanvas()
-  let footerTop = options.footerTop
-  const footer = { getBoundingClientRect: () => ({ top: footerTop ?? canvas.clientHeight }) }
-  let now = 0
-  let frameId = 0
-  const frames = new Map<number, FrameRequestCallback>()
-  const requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
-    frames.set(++frameId, callback)
-    return frameId
-  })
-  const cancelAnimationFrame = vi.fn((id: number) => frames.delete(id))
-  const mediaListeners = new Set<(event: { matches: boolean }) => void>()
-  const media = {
-    matches: reducedMotion,
-    addEventListener: vi.fn((_event: string, listener: (event: { matches: boolean }) => void) => {
-      mediaListeners.add(listener)
-    }),
-    removeEventListener: vi.fn(
-      (_event: string, listener: (event: { matches: boolean }) => void) => {
-        mediaListeners.delete(listener)
-      }
-    ),
-  }
-  const documentListeners = new Map<string, () => void>()
-  const document = {
-    hidden: false,
-    documentElement: { dataset: { theme: options.theme ?? 'dark' } },
-    createElement: createCanvas,
-    addEventListener: vi.fn((event: string, listener: () => void) => {
-      documentListeners.set(event, listener)
-    }),
-    removeEventListener: vi.fn((event: string) => documentListeners.delete(event)),
-  }
-  let resizeCallback = () => {}
-  const resizeObserver = { observe: vi.fn(), disconnect: vi.fn() }
-  const window = {
-    matchMedia: vi.fn(() => media),
-    requestAnimationFrame,
-    cancelAnimationFrame,
-    devicePixelRatio: options.pixelRatio ?? 1,
-    getComputedStyle: () => ({
-      backgroundPosition: '62% 50%',
-      getPropertyValue: (name: string) =>
-        name === '--startup-logo-angle' ? '110deg' : options.theme === 'light' ? '48%' : '47%',
-    }),
-    addEventListener: vi.fn(),
-    removeEventListener: vi.fn(),
-  } as {
-    createStartupBrandAnimation: (target: typeof canvas, status: typeof footer) => BrandAnimation
-    WEWORK_STARTUP_BRAND_CONTOURS: Array<{
-      name: string
-      hole: boolean
-      curves: Array<Array<[number, number]>>
-    }>
-  } & Record<string, unknown>
-  const environment = {
-    window,
-    document,
-    Path2D: FakePath2D,
-    devicePixelRatio: 1,
-    matchMedia: () => media,
-    performance: { now: () => now },
-    requestAnimationFrame,
-    cancelAnimationFrame,
-    ResizeObserver: class {
-      constructor(callback: () => void) {
-        resizeCallback = callback
-      }
-      observe = resizeObserver.observe
-      disconnect = resizeObserver.disconnect
-    },
-  }
-  runInNewContext(`${markScript}\n${animationScript}`, environment)
-  const animation = window.createStartupBrandAnimation(canvas, footer)
-  const step = (timestamp: number) => {
-    now = timestamp
-    const pending = [...frames.values()]
-    frames.clear()
-    pending.forEach(callback => callback(timestamp))
-  }
-  const setReducedMotion = (matches: boolean) => {
-    media.matches = matches
-    mediaListeners.forEach(listener => listener({ matches }))
-  }
-  const setHidden = (hidden: boolean) => {
-    document.hidden = hidden
-    documentListeners.get('visibilitychange')?.()
-  }
-  return {
-    animation,
-    brand,
-    canvas,
-    footer,
-    contours: window.WEWORK_STARTUP_BRAND_CONTOURS,
-    markScript,
-    contexts,
-    frames,
-    media,
-    resizeObserver,
-    document,
-    requestAnimationFrame,
-    cancelAnimationFrame,
-    step,
-    setReducedMotion,
-    setHidden,
-    resize: () => resizeCallback(),
-    setFooterTop: (top: number) => {
-      footerTop = top
-      resizeCallback()
-    },
-    setPixelRatio: (ratio: number) => {
-      window.devicePixelRatio = ratio
-      resizeCallback()
-    },
-  }
-}
+import { createAnimationFixture } from './startup-brand-animation.fixture'
 
 describe('startup brand animation lifecycle', () => {
   test.each([
@@ -264,15 +13,12 @@ describe('startup brand animation lifecycle', () => {
   ])(
     'fits the complete centered mark above its footer at $width × $height, DPR $pixelRatio',
     async options => {
-      const { animation, canvas, contexts, resizeObserver, footer } = await createAnimationFixture(
-        true,
-        options,
-        options
-      )
+      const { animation, canvas, contexts, paths, resizeObserver, footer } =
+        await createAnimationFixture(true, options, options)
       const [scale, , , scaleY, offsetX, offsetY] = contexts[0].setTransform.mock.calls.at(-1)!
       expect(scale).toBeGreaterThan(0)
       expect(scaleY).toBe(scale)
-      const logo = contexts[1].fill.mock.calls.at(-1)![0]
+      const logo = paths[0]
       const [x, y] = [600, 340]
       const points = logo.points.map(point => ({
         x: canvas.width / 2 + ((point.x + x) * scale + offsetX - canvas.width / 2) * 1.018,
@@ -321,7 +67,7 @@ describe('startup brand animation lifecycle', () => {
     expect(contexts[0].logoOpacity).toBe(resumed)
     expect(canvas.width).toBe(1800)
     expect(canvas.height).toBe(1200)
-    expect(contexts).toHaveLength(2)
+    expect(contexts).toHaveLength(1)
     expect(frames.size).toBe(1)
     step(5600)
     expect(brand.classList.contains('is-waiting-gradient')).toBe(true)
@@ -411,7 +157,7 @@ describe('startup brand animation lifecycle', () => {
     { width: 520, height: 840 },
     { width: 320, height: 300 },
   ])('keeps the complete waiting gradient mark visible at $width × $height', async dimensions => {
-    const { animation, canvas, contexts } = await createAnimationFixture(true, dimensions)
+    const { animation, canvas, contexts, paths } = await createAnimationFixture(true, dimensions)
     const transform = contexts[0].setTransform.mock.calls.at(-1)
     expect(transform).toHaveLength(6)
     const [scaleX, skewY, skewX, scaleY, offsetX, offsetY] = transform!
@@ -422,7 +168,7 @@ describe('startup brand animation lifecycle', () => {
 
     const originX = canvas.width * 0.5
     const originY = canvas.height * 0.5
-    const logo = contexts[1].fill.mock.calls.at(-1)![0]
+    const logo = paths[0]
     const [centerX, centerY] = [600, 340]
     const unscaled = logo.points.map(point => ({
       x: (point.x + centerX) * scaleX + offsetX,
@@ -448,7 +194,7 @@ describe('startup brand animation lifecycle', () => {
     animation.destroy()
   })
 
-  test('finishes weaving once and animates the gradient without scheduling more canvas frames', async () => {
+  test('finishes meteor formation once and animates the gradient without scheduling more canvas frames', async () => {
     const { animation, brand, frames, step } = await createAnimationFixture()
 
     expect(brand.classList.contains('is-waiting-gradient')).toBe(false)
@@ -467,7 +213,7 @@ describe('startup brand animation lifecycle', () => {
     animation.destroy()
   })
 
-  test('preserves the weaving phase across a long pause and resumes one frame loop', async () => {
+  test('preserves the formation phase across a long pause and resumes one frame loop', async () => {
     const { animation, brand, contexts, frames, step } = await createAnimationFixture()
     step(0)
     step(1_000)
@@ -518,7 +264,7 @@ describe('startup brand animation lifecycle', () => {
     animation.destroy()
   })
 
-  test('suspends hidden-window work and resumes from the visible weaving phase', async () => {
+  test('suspends hidden-window work and resumes from the visible formation phase', async () => {
     const { animation, brand, frames, setHidden, step } = await createAnimationFixture()
     step(0)
     step(1_000)
@@ -616,14 +362,14 @@ describe('startup brand animation lifecycle', () => {
     const rejection = expect(completion).rejects.toThrow('completion was interrupted')
     step(1_050)
     const pose = canvas.style.transform
-    const drawCount = contexts[0].drawImage.mock.calls.length
+    const drawCount = contexts[0].clearRect.mock.calls.length
 
     animation.setPaused(true)
     await rejection
     step(20_000)
 
     expect(frames.size).toBe(0)
-    expect(contexts[0].drawImage).toHaveBeenCalledTimes(drawCount)
+    expect(contexts[0].clearRect).toHaveBeenCalledTimes(drawCount)
     expect(canvas.style.transform).toBe(pose)
     animation.destroy()
   })
@@ -675,12 +421,12 @@ describe('startup brand animation lifecycle', () => {
     step(0)
     const completion = animation.complete()
     animation.destroy()
-    const drawCount = contexts[0].drawImage.mock.calls.length
+    const drawCount = contexts[0].clearRect.mock.calls.length
 
     await expect(completion).resolves.toBeUndefined()
     await expect(animation.complete()).resolves.toBeUndefined()
     step(1_000)
-    expect(contexts[0].drawImage).toHaveBeenCalledTimes(drawCount)
+    expect(contexts[0].clearRect).toHaveBeenCalledTimes(drawCount)
     expect(frames.size).toBe(0)
   })
 
@@ -701,7 +447,7 @@ describe('startup brand animation lifecycle', () => {
 
     animation.destroy()
     animation.destroy()
-    const drawCount = contexts[0].drawImage.mock.calls.length
+    const drawCount = contexts[0].clearRect.mock.calls.length
     expect(frames.size).toBe(0)
     expect(resizeObserver.disconnect).toHaveBeenCalledOnce()
     expect(media.removeEventListener).toHaveBeenCalledWith('change', expect.any(Function))
@@ -716,7 +462,7 @@ describe('startup brand animation lifecycle', () => {
     setHidden(false)
     step(20_000)
     expect(frames.size).toBe(0)
-    expect(contexts[0].drawImage).toHaveBeenCalledTimes(drawCount)
+    expect(contexts[0].clearRect).toHaveBeenCalledTimes(drawCount)
   })
 })
 
@@ -738,7 +484,7 @@ describe('startup brand theme contrast', () => {
       })
       return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722
     }
-    const background = luminance(theme === 'light' ? '#f3f3f3' : '#05070d')
+    const background = luminance(theme === 'light' ? '#fafafa' : '#05070d')
     for (const color of material) {
       const [red, green, blue] = color.match(/[a-f0-9]{2}/gi)!.map(channel => parseInt(channel, 16))
       expect(blue).toBeGreaterThan(green)
@@ -770,11 +516,14 @@ describe('startup aura viewport coverage', () => {
 })
 
 describe('startup mark outline smoothness', () => {
-  test('joins every curve with continuous tangent and curvature, including closures', async () => {
-    const { animation, contexts } = await createAnimationFixture(true)
-    const path = contexts[1].fill.mock.calls.at(-1)![0]
+  test('keeps continuous tangents and smooth curved glyph curvature, including closures', async () => {
+    const { animation, paths, contours } = await createAnimationFixture(true)
+    const path = paths[0]
+    const glyphSegments = contours
+      .filter(contour => contour.name !== 'underscore')
+      .reduce((count, contour) => count + contour.curves.length, 0)
     expect(path.curves.length).toBeGreaterThan(0)
-    for (const curve of path.curves) {
+    for (const [index, curve] of path.curves.entries()) {
       const next = path.curves.find(
         candidate => candidate.start.x === curve.end.x && candidate.start.y === curve.end.y
       )!
@@ -802,8 +551,23 @@ describe('startup mark outline smoothness', () => {
           Math.hypot(tangent.x, tangent.y) ** 3
         )
       }
-      expect(curvature(curve, true)).toBeCloseTo(curvature(next, false), 4)
+      if (index < glyphSegments) {
+        expect(curvature(curve, true)).toBeCloseTo(curvature(next, false), 4)
+      }
     }
+    animation.destroy()
+  })
+
+  test('keeps the terminal underscore horizontal with straight edges and round ends', async () => {
+    const { animation, contours } = await createAnimationFixture(true)
+    const underline = contours.find(contour => contour.name === 'underscore')!.curves
+    const straight = underline.filter(curve => curve.every(point => point[1] === curve[0][1]))
+    expect(straight).toHaveLength(2)
+    const [top, bottom] = straight.sort((a, b) => a[0][1] - b[0][1])
+    expect(top[0][0]).toBe(bottom[3][0])
+    expect(top[3][0]).toBe(bottom[0][0])
+    expect(top[3][0] - top[0][0]).toBeGreaterThan(2 * (bottom[0][1] - top[0][1]))
+    expect(underline).toHaveLength(6)
     animation.destroy()
   })
 })
@@ -836,9 +600,8 @@ describe('startup edge rendering', () => {
     step(2_400)
     expect(canvas.width).toBe(2880)
     expect(canvas.height).toBe(1920)
-    expect(contexts).toHaveLength(2)
+    expect(contexts).toHaveLength(1)
     expect(contexts[0].stroke).toHaveBeenCalled()
-    expect(contexts[1].stroke).not.toHaveBeenCalled()
     expect(contexts[0].drawImage).not.toHaveBeenCalled()
     animation.destroy()
   })
@@ -855,7 +618,7 @@ describe('startup edge rendering', () => {
     const svg = decodeURIComponent(mask.slice(mask.indexOf(',') + 1, -2))
     expect(svg).toContain(`width="${canvas.width}" height="${canvas.height}"`)
     step(0)
-    step(4_700)
+    step(4_900)
     expect(contexts[0].logoOpacity).toBe(1)
     step(5_600)
     resize()
@@ -877,7 +640,7 @@ describe('startup sweep onset', () => {
     step(0)
     step(4_699)
     expect(brand.classList.contains('is-waiting-gradient')).toBe(false)
-    step(4_700)
+    step(4_900)
     expect(contexts[0].logoOpacity).toBe(1)
     expect(brand.classList.contains('is-waiting-gradient')).toBe(true)
     expect(frames.size).toBe(1)

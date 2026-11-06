@@ -26,6 +26,36 @@ MINIMUM_COUNTER_RATIO = 0.001
 DESIGN_WIDTH = 512
 
 
+def straight_underscore(contour: np.ndarray) -> np.ndarray:
+    points = contour[:, 0, :].astype(float)
+    left, top = points.min(axis=0)
+    right, bottom = points.max(axis=0)
+    radius = (bottom - top) / 2
+    center_y = (top + bottom) / 2
+    arc = radius * 4 * (np.sqrt(2) - 1) / 3
+    a, b = left + radius, right - radius
+    return np.array(
+        [
+            [[left, center_y], [left, center_y - arc], [a - arc, top], [a, top]],
+            [[a, top], [a + (b - a) / 3, top], [b - (b - a) / 3, top], [b, top]],
+            [[b, top], [b + arc, top], [right, center_y - arc], [right, center_y]],
+            [
+                [right, center_y],
+                [right, center_y + arc],
+                [b + arc, bottom],
+                [b, bottom],
+            ],
+            [
+                [b, bottom],
+                [b - (b - a) / 3, bottom],
+                [a + (b - a) / 3, bottom],
+                [a, bottom],
+            ],
+            [[a, bottom], [a - arc, bottom], [left, center_y + arc], [left, center_y]],
+        ]
+    )
+
+
 def fit_closed_contour(contour: np.ndarray) -> np.ndarray:
     points = contour[:, 0, :].astype(float)
     closed = np.vstack((points, points[0]))
@@ -106,7 +136,11 @@ def extract_contours() -> tuple[list[dict], str]:
         ]
         for index in indices:
             contour = contours[index]
-            curves = fit_closed_contour(contour)
+            curves = (
+                straight_underscore(contour)
+                if name == "underscore"
+                else fit_closed_contour(contour)
+            )
             hole = index != parent
             records.append(
                 {
@@ -125,7 +159,7 @@ def generate() -> str:
         "// Generated from brand-source.png alpha, normalized to 512 px. Do not edit curves.",
         f"// Source SHA-256: {digest}",
         "// Rebuild: uv run wework/electron/scripts/generate-startup-brand.py",
-        "// Alpha >= 128; curve displacement <= 3 source px; counter/body area >= 0.1%.",
+        "// Alpha >= 128; curved contours <= 3 source px; straight capsule underscore.",
         "window.WEWORK_STARTUP_BRAND_CONTOURS = [",
     ]
     for record in records:
