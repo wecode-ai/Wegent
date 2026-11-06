@@ -338,7 +338,7 @@ jobs:
       - name: Resolve Executor E2E runtime
         id: runtime
         env:
-          SOURCE_DIGEST: ${{ hashFiles('frontend/e2e/fixtures/claudecode-executor/Dockerfile', 'executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**', 'executor/vendor/**', 'sdk/plugin-auth/**', 'sdk/plugin-creator/**', 'shared/assets/**', '.github/ci/rust-toolchain') }}
+          SOURCE_DIGEST: ${{ hashFiles('frontend/e2e/fixtures/claudecode-executor/Dockerfile', 'executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**', 'executor/vendor/**', 'sdk/plugin-auth/**', 'sdk/plugin-creator/**', 'shared/assets/**', 'shared/protocol/**', '.github/ci/rust-toolchain') }}
         run: .github/scripts/resolve-executor-e2e-runtime.sh
 
       - name: Check content-addressed Executor E2E image
@@ -502,25 +502,40 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Run 40558717377: provider shard 1 took 120s while shard 3 was empty.
-        # Exchange those logical shards without changing users or runner count.
+        # Each shard has its own services and consumes the same shared build artifacts.
         include:
           - shardIndex: 1
-            shardTotal: 4
+            shardTotal: 8
             dingtalkOAuth: false
             providerShardIndex: 3
           - shardIndex: 2
-            shardTotal: 4
+            shardTotal: 8
             dingtalkOAuth: true
             providerShardIndex: 2
           - shardIndex: 3
-            shardTotal: 4
+            shardTotal: 8
             dingtalkOAuth: false
             providerShardIndex: 1
           - shardIndex: 4
-            shardTotal: 4
+            shardTotal: 8
             dingtalkOAuth: false
             providerShardIndex: 4
+          - shardIndex: 5
+            shardTotal: 8
+            dingtalkOAuth: false
+            providerShardIndex: 5
+          - shardIndex: 6
+            shardTotal: 8
+            dingtalkOAuth: false
+            providerShardIndex: 6
+          - shardIndex: 7
+            shardTotal: 8
+            dingtalkOAuth: false
+            providerShardIndex: 7
+          - shardIndex: 8
+            shardTotal: 8
+            dingtalkOAuth: false
+            providerShardIndex: 8
 
     services:
       mysql:
@@ -826,7 +841,7 @@ jobs:
           DELIVERY_S3_BUCKET: wegent-deliveries
           WEGENT_RS_BINARY_PATH: ${{ github.workspace }}/.ci-artifacts/wegent-backend-rs
           WEGENT_HYBRID_STATE_FILE: ${{ github.workspace }}/backend/backend-hybrid.state
-          RUST_LOG: info,brz_http_gateway::proxy=debug
+          RUST_LOG: info,brz_http_gateway::proxy=debug,brz_http_server::hyper::runtime=debug
         run: |
           nohup backend-rs/scripts/start-hybrid-backend.sh \
             > backend/backend.log 2>&1 &
@@ -1297,6 +1312,7 @@ jobs:
           MOCK_MODEL_SERVER_URL: http://localhost:9999
           E2E_SHARD_INDEX: ${{ matrix.shardIndex }}
           E2E_USE_ISOLATED_USERS: "false"
+          PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/browser
           CI: true
           RUNNER_PROCESS_DIAGNOSTICS: "1"
           RUNNER_RESOURCE_LOG_PATH: ci-diagnostics/shard-${{ matrix.shardIndex }}.jsonl
@@ -1317,6 +1333,7 @@ jobs:
           E2E_QDRANT_URL: http://qdrant:6333
           E2E_KNOWLEDGE_RUNTIME_URL: http://localhost:8200
           E2E_USE_ISOLATED_USERS: "false"
+          PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/provider-native
           CI: true
         run: |
           node ./node_modules/@playwright/test/cli.js test \

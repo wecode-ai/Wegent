@@ -34,7 +34,39 @@ pub(super) async fn request(
     }
     let args = read_arguments(&declaration, &payload)?;
     let slug = target["connectorSlug"].as_str().ok_or_else(denied)?;
-    super::local_connector_auth::run_connection_tool(&root, key, slug, &args).await
+    super::local_connector_auth::run_connection_tool(&root, key, slug, &args)
+        .await
+        .map_err(collection_read_error)
+        .inspect_err(|error| {
+            if error.code == "connection_cli_response_invalid" {
+                crate::logging::log_executor_event(
+                    "Connection read output rejected",
+                    &[
+                        (
+                            "provider",
+                            payload["providerId"]
+                                .as_str()
+                                .unwrap_or_default()
+                                .to_owned(),
+                        ),
+                        (
+                            "operation",
+                            payload["tool"].as_str().unwrap_or_default().to_owned(),
+                        ),
+                    ],
+                );
+            }
+        })
+}
+
+pub(super) fn collection_read_error(error: AppIpcError) -> AppIpcError {
+    // This module only invokes host-declared reads. An absent process outcome is
+    // retryable during collection, never a permission or protocol decision.
+    if error.code == "connection_cli_failed" {
+        error.with_retry_after_ms(30_000)
+    } else {
+        error
+    }
 }
 
 fn denied() -> AppIpcError {
@@ -87,7 +119,11 @@ fn read_arguments(declaration: &Value, payload: &Value) -> Result<Vec<String>, A
     Ok(args)
 }
 
-fn dependency_root(plugin: &Value, source: &Value, home: &Path) -> Result<PathBuf, AppIpcError> {
+pub(super) fn dependency_root(
+    plugin: &Value,
+    source: &Value,
+    home: &Path,
+) -> Result<PathBuf, AppIpcError> {
     if let Some(version) = plugin["localVersion"].as_str() {
         let parts = [
             source["marketplaceId"].as_str(),

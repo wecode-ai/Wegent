@@ -30,14 +30,48 @@ impl RuntimeWorkRpcHandler {
         }));
     }
 
-    async fn stand_in_task_operation(
+    pub(super) async fn stand_in_task_operation(
         &self,
         identity: StandInMcpIdentity,
         name: &str,
         args: Value,
     ) -> Result<Value, AppIpcError> {
-        if name == "read_review_history" {
-            return self.read_stand_in_review_history(&identity, &args).await;
+        if name == "propose_profile" {
+            return self.propose_stand_in_profile(&identity, &args);
+        }
+        if name == "authorize_source_read" {
+            return self.authorize_work_source_read(&identity, &args);
+        }
+        if name == "delegated_read_sources" || name == "authorize_delegated_source_read" {
+            let sources = self.delegated_read_sources(&identity)?;
+            if name == "delegated_read_sources" {
+                return Ok(json!({"sources":sources}));
+            }
+            return sources
+                .into_iter()
+                .find(|source| super::stand_in_read_sources::same_source(source, &args))
+                .ok_or_else(|| {
+                    AppIpcError::new(
+                        "permission_denied",
+                        "This source is outside the delegated read snapshot",
+                    )
+                });
+        }
+        if name == "validate_git_binding" {
+            return self.bound_git_work_args(&identity, args).await;
+        }
+        if name == "prepare_git_workspace" {
+            return self.prepare_git_source_workspace(&identity, args).await;
+        }
+        if matches!(name, "configure_git_webhook" | "git_webhook_plan") {
+            return self
+                .configure_git_webhook(&identity, &args, name == "git_webhook_plan")
+                .await;
+        }
+        if matches!(name, "list_tasks" | "read_task") {
+            return self
+                .read_stand_in_conversations(&identity, name, &args)
+                .await;
         }
         if identity.device != self.device_id
             || identity.work.is_some()
@@ -98,11 +132,6 @@ impl RuntimeWorkRpcHandler {
                 .stand_in_schedule_operation(&identity, name, &args)
                 .await;
         }
-        if name == "list_tasks" {
-            return Ok(json!({"items": self.local_task_links(false).into_iter()
-                .filter(|link| owns_task(link, identity.user)).take(100)
-                .map(|link| json!({"taskId":link.local_task_id,"title":link.title,"status":link.status,"interactionStatus":link.interaction_status})).collect::<Vec<_>>()}));
-        }
         if name == "create_task" {
             return self.create_primary_task(&identity, &args).await;
         }
@@ -118,11 +147,6 @@ impl RuntimeWorkRpcHandler {
                     "Task does not belong to the current user",
                 )
             })?;
-        if name == "read_task" {
-            return self
-                .transcript(json!({"taskId":id,"limit":50,"includeFullContent":false}))
-                .await;
-        }
         if name != "continue_task" || link.status == "archived" || link.interaction_status.is_some()
         {
             return Err(AppIpcError::new(
@@ -138,6 +162,7 @@ impl RuntimeWorkRpcHandler {
         }
         self.validate_primary_task_followup(identity.user, &link)
             .await?;
+        self.validate_continued_read_sources(&identity, &link, &args)?;
         let message = required(&args, "message")?;
         let client = format!(
             "stand-in:{}:{}",
@@ -153,8 +178,7 @@ impl RuntimeWorkRpcHandler {
         let mut request = link.runtime_handle["executionRequest"].clone();
         request["prompt"] = json!(message);
         // Source-driven orchestration never elevates an existing conversation.
-        request["standInDelegation"] =
-            json!({"sourceTaskId":identity.task_id,"userId":identity.user,"askBeforeAct":true});
+        request["standInDelegation"] = json!({"sourceTaskId":identity.task_id,"userId":identity.user,"askBeforeAct":link.runtime_handle["origin"]["askBeforeAct"] == true || link.runtime_handle["executionRequest"]["standInDelegation"]["askBeforeAct"] == true});
         use sha2::{Digest, Sha256};
         let command = format!("stand-in-task:{:x}", Sha256::digest(client.as_bytes()));
         Box::pin(self.send_message(json!({"taskId":id,"message":message,"executionRequest":request,"clientUserMessageId":client,"commandId":command,"queueIfBusy":true,"automaticStandIn":true}))).await
@@ -166,6 +190,12 @@ impl RuntimeWorkRpcHandler {
         link: &RuntimeTaskLink,
     ) -> Result<(), AppIpcError> {
         let origin = &link.runtime_handle["origin"];
+        if !origin["deviceId"].is_null() && origin["deviceId"] != self.device_id {
+            return Err(AppIpcError::new(
+                "task_device_mismatch",
+                "This task belongs to another execution device. Continue it on its original device, or start a new task on this device using its existing evidence; the original task was not changed or started.",
+            ));
+        }
         if origin["initiatedBy"] != "stand_in"
             || !matches!(
                 origin["type"].as_str(),
@@ -220,9 +250,11 @@ impl RuntimeWorkRpcHandler {
             .map_err(super::stand_in::settings_error)?;
         let mut config = settings["primary"].clone();
         config["userId"] = json!(identity.user);
-        config["handlingPolicy"] = json!({"automatic":true,"askBeforeAct":true});
-        let origin = json!({"type":"stand_in_task","initiatedBy":"stand_in","standInId":"@primary","userId":identity.user,"deviceId":self.device_id,"sourceTaskId":identity.task_id,"askBeforeAct":true});
-        let payload = self.prepare_stand_in_execution(json!({"taskId":id,"title":required(args,"title")?,"message":required(args,"message")?,"origin":origin,"commandId":format!("{id}:create"),"automaticStandIn":true}), &config).await?;
+        config["handlingPolicy"] = json!({"automatic":true,"askBeforeAct":false});
+        let sources = self.capture_delegated_read_sources(identity, args)?;
+        let origin = json!({"type":"stand_in_task","initiatedBy":"stand_in","standInId":"@primary","userId":identity.user,"deviceId":self.device_id,"sourceTaskId":identity.task_id,"askBeforeAct":false});
+        let mut payload = self.prepare_stand_in_execution(json!({"taskId":id,"title":required(args,"title")?,"message":required(args,"message")?,"origin":origin,"commandId":format!("{id}:create"),"automaticStandIn":true}), &config).await?;
+        payload["executionRequest"]["standInDelegation"] = json!({"userId":identity.user,"sourceTaskId":identity.task_id,"askBeforeAct":false,"readSources":sources});
         Box::pin(self.create_task(payload)).await
     }
 }
@@ -262,6 +294,7 @@ mod operation_tests {
             work: None,
             project: None,
             review: false,
+            readonly_worker: false,
             ask_before_act: true,
             coordinator_batch: Some("batch".into()),
         };
@@ -296,7 +329,7 @@ mod operation_tests {
         let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
         handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
         handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
-        handler.upsert_local_task(RuntimeTaskLink { local_task_id: "primary".into(), runtime_handle: json!({"origin":{"type":"stand_in_identity","userId":7},"executionRequest":{"user_id":7}}), ..Default::default() });
+        handler.upsert_local_task(RuntimeTaskLink { local_task_id: "primary".into(), runtime_handle: json!({"origin":{"type":"stand_in_identity","userId":7,"deviceId":"mac"},"executionRequest":{"user_id":7}}), ..Default::default() });
         for (id, user, interaction) in [
             ("own", 7, None),
             ("foreign", 8, None),
@@ -318,6 +351,7 @@ mod operation_tests {
             work: None,
             project: None,
             review: false,
+            readonly_worker: false,
             ask_before_act: true,
             coordinator_batch: None,
         };
@@ -325,7 +359,15 @@ mod operation_tests {
             .stand_in_task_operation(identity.clone(), "list_tasks", json!({}))
             .await
             .unwrap();
-        assert_eq!(listed["items"].as_array().unwrap().len(), 3);
+        assert_eq!(listed["items"].as_array().unwrap().len(), 4);
+        let primary = listed["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["taskId"] == "primary")
+            .unwrap();
+        assert_eq!(primary["kind"], "identity");
+        assert_eq!(primary["canContinue"], false);
         assert!(!listed.to_string().contains("foreign"));
         for id in ["foreign", "waiting", "approval", "missing"] {
             let error = handler

@@ -319,6 +319,20 @@ describe('notification center', () => {
     expect(document.body).not.toHaveAttribute('data-wework-anchor-popover-open')
   })
 
+  it('lets a local user disable stand-in alerts independently of ordinary task notifications', async () => {
+    render(viewWithTask({ ...connection, token: null, apiBaseUrl: null }))
+    fireEvent.click(screen.getByTestId('wework-notifications-button'))
+    fireEvent.click(screen.getByTestId('wework-notifications-settings'))
+    const standIn = screen.getByTestId('wework-notifications-setting-stand_in-system')
+    expect(standIn).toBeEnabled()
+    expect(standIn).toHaveAttribute('aria-checked', 'true')
+    expect(readActiveNotificationPreferences().tasks.system).toBe(false)
+    fireEvent.click(standIn)
+    await waitFor(() => expect(readActiveNotificationPreferences().stand_in.system).toBe(false))
+    expect(readActiveNotificationPreferences().tasks.system).toBe(false)
+    expect(api.updatePreferences).not.toHaveBeenCalled()
+  })
+
   it('migrates the legacy task system setting for offline users', async () => {
     environment.electron = true
     desktopHost.invoke.mockResolvedValue({

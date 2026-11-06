@@ -226,3 +226,9 @@ only the target `users` row and plugin resources and dependencies remain healthy
 the plugin lifecycle should complete. Locks on plugin business rows still follow
 normal transaction rules. Evaluate extreme lease-expiration overlap during first
 policy creation within the limits described above.
+
+## Reinstall responses and concurrent cleanup acknowledgements
+
+An older uninstall cleanup can reload desired state after reinstall commits and send a newer install snapshot. The original reinstall RPC may succeed while its acknowledgement is fenced from persistence by that newer generation intent. Returning that acknowledgement as completed would expose both sync success and an `uninstalling` device row.
+
+Requesting-device synchronization now checks device convergence and the generation watermark after recording the acknowledgement. It redispatches current desired state only when the device has not converged and a newer generation has superseded the acknowledgement, using the existing three-attempt convergence budget. Actual device failures are not retried, and older-ACK fences remain intact. Continued supersession returns an auxiliary `plugin_sync_superseded` error while retaining the committed account install and reconciliation source. API regressions cover successful convergence and budget exhaustion; existing `plugin-write-coordination` E2E assertions remain unchanged.

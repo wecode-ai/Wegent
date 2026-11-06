@@ -28,6 +28,7 @@ import {
   openDirectProjectCreation,
   configureFirstProjectExecutionEnvironment,
   selectCollaborationDomain,
+  selectCollaborationProjectView,
 } from '../modules/workspace-flows.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -252,10 +253,7 @@ async function createIssue(
   title = ISSUE,
   { notifyAssignee = true, beforeSave } = {}
 ) {
-  await control.command('waitFor', scoped('[data-testid="collaboration-tab-board"]'), {
-    timeoutMs: uiTimeoutMs,
-  })
-  await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+  await selectCollaborationProjectView(control, CONTENT, 'board', uiTimeoutMs)
   await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-issue-create"]'))
   await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), { value: title })
   await control.command('fill', scoped('[data-testid="cloud-todo-detail-description"]'), {
@@ -366,7 +364,7 @@ async function verifyIssueTags(control, request, issue, uiTimeoutMs) {
   await assertDismissed()
   await control.command('click', trigger)
   await control.command('waitFor', chip, { visible: true, timeoutMs: uiTimeoutMs })
-  await control.command('pointerClick', scoped('[data-testid="cloud-todo-save"]'))
+  await control.command('pointerClick', scoped('[data-testid="cloud-todo-detail-title"]'))
   await assertDismissed()
   const updated = await waitForValue(
     () => request(`/api/v1/loop-items/${issue.id}`),
@@ -386,9 +384,6 @@ async function changeIssueStatus(control, request, issueId, status, uiTimeoutMs)
   await control.command('waitFor', statusSelect, { timeoutMs: uiTimeoutMs })
   await control.command('select', statusSelect, {
     value: status,
-  })
-  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
-    timeoutMs: uiTimeoutMs,
   })
   return waitForValue(
     () => request(`/api/v1/loop-items/${issueId}`),

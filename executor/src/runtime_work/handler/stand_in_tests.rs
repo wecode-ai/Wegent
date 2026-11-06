@@ -851,15 +851,11 @@ async fn personal_stand_in_checks_actor_without_project_device_setup() {
     };
     let mut config = json!({"id":"default","projectId":"project","userId":8});
     assert_eq!(
-        handler
-            .verify_stand_in_user(&config)
-            .await
-            .unwrap_err()
-            .code,
+        handler.verify_runtime_user(&config).await.unwrap_err().code,
         "permission_denied"
     );
     config["userId"] = json!(7);
-    handler.verify_stand_in_user(&config).await.unwrap();
+    handler.verify_runtime_user(&config).await.unwrap();
     server.abort();
 }
 

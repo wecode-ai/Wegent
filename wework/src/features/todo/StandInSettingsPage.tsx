@@ -692,6 +692,7 @@ export function StandInSettingsPage({
                   ref={connectionRef}
                   onNavigate={navigation.requestLeave}
                   role={role}
+                  savedConfiguration={saved?.roles.find(item => item.id === role.id)}
                   scheduling={{ userId, roleId: role.id }}
                   onScheduleDirtyChange={setScheduleDirty}
                   projects={projects}

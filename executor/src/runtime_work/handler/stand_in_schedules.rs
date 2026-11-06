@@ -172,7 +172,12 @@ impl RuntimeWorkRpcHandler {
         if args.get("taskId").is_some() {
             return Err(AppIpcError::new("bad_request", "Calendar events inherit connection settings and cannot select an execution conversation"));
         }
-        let request = json!({"schemaVersion":2,"runtime":"codex","deviceId":self.device_id,"message":required(args,"message")?,"title":required(args,"title")?,"standInOwner":{"userId":identity.user,"roleId":"@primary"},"standInCalendar":{}});
+        let calendar = match args["template"].as_str() {
+            None => json!({}),
+            Some("weekly_review") => json!({"template":"weekly_review"}),
+            Some(_) => return Err(AppIpcError::new("bad_request", "Unknown calendar template")),
+        };
+        let request = json!({"schemaVersion":2,"runtime":"codex","deviceId":self.device_id,"message":required(args,"message")?,"title":required(args,"title")?,"standInOwner":{"userId":identity.user,"roleId":"@primary"},"standInCalendar":calendar});
         self.create_automation(json!({"automation":{"id":id,"version":0,"name":required(args,"title")?,"prompt":required(args,"message")?,"schedule":schedule,"timezone":args["timezone"].as_str().unwrap_or("UTC"),"enabled":true,"conversationMode":"independent","notificationPolicy":"attention_only","taskRequest":request,"taskPayload":{"runtime":"codex"},"continuationPayload":null}})).await
     }
 
@@ -221,6 +226,7 @@ impl RuntimeWorkRpcHandler {
                 .await;
         }
         let mut payload = payload;
+        payload["title"] = json!(automation.name);
         payload["origin"] = json!({"type":"stand_in_schedule","initiatedBy":"stand_in","userId":user,"standInId":role_id,"automationId":automation.id,"deviceId":self.device_id,"askBeforeAct":true});
         let review = role_id == "@primary"
             && automation.task_request["standInCalendar"]["template"]
@@ -334,6 +340,7 @@ mod tests {
             coordinator_batch: None,
             project: None,
             review: false,
+            readonly_worker: false,
         };
         let args = json!({"requestId":"event","title":"Review","message":"Review outstanding items","at":"2099-01-01T00:00:00Z","timezone":"UTC"});
         let saved = handler
@@ -345,6 +352,17 @@ mod tests {
             json!({})
         );
         assert_eq!(saved["automation"]["conversationMode"], "independent");
+        let entry: Automation = serde_json::from_value(saved["automation"].clone()).unwrap();
+        let prepared = handler
+            .prepare_stand_in_schedule(&entry, json!({"message":entry.prompt}))
+            .await
+            .unwrap();
+        assert_eq!(prepared["title"], "Review");
+        assert_eq!(prepared["message"], "Review outstanding items");
+        assert_eq!(
+            prepared["executionRequest"]["prompt"],
+            "Review outstanding items"
+        );
         assert!(handler.local_task_links(true).is_empty());
         let mut conflicting = args;
         conflicting["requestId"] = json!("conflicting");

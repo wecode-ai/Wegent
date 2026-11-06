@@ -27,12 +27,52 @@ function classifiedCoreMatrix() {
   }
 }
 
-const original = classifiedCoreMatrix()
+const completeMatrix = classifiedCoreMatrix()
+// Improvement requires measured inputs. The full production matrix below also
+// verifies the separate contract that unknown checkpoints freeze their shard.
+const original = {
+  include: completeMatrix.include
+    .map(shard => ({
+      ...shard,
+      segments: shard.segments
+        .split(',')
+        .filter(segment => checkpointSeconds(segment) !== null)
+        .join(','),
+    }))
+    .filter(shard => shard.segments),
+}
 const segments = matrix => matrix.include.flatMap(shard => shard.segments.split(','))
 const checkpoints = matrix =>
   matrix.include.flatMap(shard => expandDesktopCheckpoints(shard.segments.split(',')))
 const measuredLoad = shard =>
   shard.segments.split(',').reduce((total, segment) => total + (checkpointSeconds(segment) ?? 0), 0)
+
+test('the measured fixture contains every real measured checkpoint exactly once', () => {
+  assert.deepEqual(
+    segments(original).sort(),
+    segments(completeMatrix)
+      .filter(segment => checkpointSeconds(segment) !== null)
+      .sort()
+  )
+  assert.equal(new Set(checkpoints(original)).size, checkpoints(original).length)
+})
+
+test('previously frozen Windows shards can use their successful checkpoint measurements', () => {
+  for (const segment of [
+    'follow-up-task-switch',
+    'stand-in-alternate-source',
+    'stand-in-email',
+    'stand-in-profile',
+    'collaboration-milestones',
+  ]) {
+    assert.notEqual(checkpointSeconds(segment), null, segment)
+  }
+  const balanced = balanceWindowsMatrix(original)
+  assert.notDeepEqual(
+    balanced.include.find(shard => shard.id === 'core-3'),
+    original.include.find(shard => shard.id === 'core-3')
+  )
+})
 
 test('measured Windows scheduling preserves every segment and expanded checkpoint exactly once', () => {
   const balanced = balanceWindowsMatrix(original)
@@ -56,10 +96,25 @@ test('measured Windows scheduling preserves every segment and expanded checkpoin
 })
 
 test('unmeasured checkpoints retain their original shard and partial selection never adds runners', () => {
-  for (const shard of original.include) {
+  const balanced = balanceWindowsMatrix(completeMatrix)
+  assert.deepEqual(segments(balanced).sort(), segments(completeMatrix).sort())
+  assert.deepEqual(checkpoints(balanced).sort(), checkpoints(completeMatrix).sort())
+  assert.equal(new Set(checkpoints(balanced)).size, checkpoints(completeMatrix).length)
+  assert.equal(balanced.include.length, completeMatrix.include.length)
+  const movable = matrix =>
+    matrix.include.filter(
+      shard =>
+        !['core-9', 'core-10'].includes(shard.id) &&
+        shard.segments.split(',').every(segment => checkpointSeconds(segment) !== null)
+    )
+  assert.ok(
+    Math.max(...movable(balanced).map(measuredLoad)) <=
+      Math.max(...movable(completeMatrix).map(measuredLoad))
+  )
+  for (const shard of completeMatrix.include) {
     for (const segment of shard.segments.split(',')) {
       if (checkpointSeconds(segment) !== null) continue
-      const result = balanceWindowsMatrix(original)
+      const result = balanced
       assert.deepEqual(
         result.include.find(entry => entry.id === shard.id),
         shard
@@ -99,20 +154,26 @@ test('balancing never multiplies expensive conditional preparation from the orig
     )
   )
   const balanced = balanceWindowsMatrix(original)
+  const completeBalanced = balanceWindowsMatrix(completeMatrix)
   const evidence = JSON.parse(
     readFileSync(new URL('../ci/wework-windows-checkpoint-durations.json', import.meta.url))
   )
   const preparationWeights = {
     'Install local harness CLIs': evidence.preparationSeconds['local-harness'],
     'Build real object storage': evidence.preparationSeconds['object-storage'],
+    'Prepare DingTalk protocol fixture for the standard account':
+      evidence.preparationSeconds['dingtalk-protocol-fixture'],
   }
   const preparationLoads = matrix => matrix.include.map(shard => measuredLoad(shard))
   const originalLoads = preparationLoads(original)
   const balancedLoads = preparationLoads(balanced)
+  const completeOriginalLoads = preparationLoads(completeMatrix)
+  const completeBalancedLoads = preparationLoads(completeBalanced)
   for (const name of [
     'Install local harness CLIs',
     'Build real object storage',
     'Install Electron for native startup and schema verification',
+    'Prepare DingTalk protocol fixture for the standard account',
   ]) {
     const step = steps.find(step => step.name === name)
     assert.ok(step, name)
@@ -123,6 +184,8 @@ test('balancing never multiplies expensive conditional preparation from the orig
     for (const [matrix, loads] of [
       [original, originalLoads],
       [balanced, balancedLoads],
+      [completeMatrix, completeOriginalLoads],
+      [completeBalanced, completeBalancedLoads],
     ]) {
       for (const [index, shard] of matrix.include.entries()) {
         if (triggers.some(segment => shard.segments.split(',').includes(segment))) {
@@ -134,12 +197,18 @@ test('balancing never multiplies expensive conditional preparation from the orig
       matrix.include.filter(shard => triggers.some(segment => shard.segments.includes(segment)))
         .length
     assert.equal(count(balanced), count(original), name)
+    assert.equal(count(completeBalanced), count(completeMatrix), name)
   }
   assert.equal(
     balancedLoads.reduce((a, b) => a + b),
     originalLoads.reduce((a, b) => a + b)
   )
   assert.ok(Math.max(...balancedLoads) < Math.max(...originalLoads))
+  assert.equal(
+    completeBalancedLoads.reduce((a, b) => a + b),
+    completeOriginalLoads.reduce((a, b) => a + b)
+  )
+  assert.ok(Math.max(...completeBalancedLoads) <= Math.max(...completeOriginalLoads))
 })
 
 test('timing evidence contains positive successful samples with source run links', () => {

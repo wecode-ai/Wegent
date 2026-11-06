@@ -96,6 +96,7 @@ struct ConnectedSocket {
 
 #[derive(Clone, Default)]
 pub struct SocketIoTransport {
+    namespace: Option<&'static str>,
     client: Arc<tokio::sync::Mutex<Option<ConnectedSocket>>>,
     generation: Arc<AtomicU64>,
     handlers: Arc<Mutex<Vec<(String, EventHandler)>>>,
@@ -150,110 +151,122 @@ impl SocketIoTransport {
     }
 }
 
+impl SocketIoTransport {
+    pub(crate) fn for_namespace(namespace: &'static str) -> Self {
+        Self {
+            namespace: Some(namespace),
+            ..Self::default()
+        }
+    }
+
+    pub(crate) async fn connect_authenticated(
+        &self,
+        socket_url: &str,
+        token: &str,
+    ) -> Result<(), String> {
+        let generation = self.generation.fetch_add(1, Ordering::AcqRel) + 1;
+        let previous = self.client.lock().await.take();
+        if let Some(previous) = previous {
+            let _ = previous.client.disconnect().await;
+        }
+        let handlers = self.handlers.lock().expect("handler lock").clone();
+        let socket_url = normalize_socket_url(socket_url);
+        let (connect_sender, connect_receiver) = oneshot::channel();
+        let connect_sender = Arc::new(Mutex::new(Some(connect_sender)));
+        let closed = Arc::new(AtomicBool::new(false));
+        let close_transport = self.clone();
+        let close_flag = Arc::clone(&closed);
+        let mut builder = ClientBuilder::new(socket_url)
+            .namespace(self.namespace.unwrap_or(NAMESPACE))
+            .auth(json!({ "token": token }))
+            .transport_type(TransportType::Websocket)
+            .reconnect(false)
+            .reconnect_on_disconnect(false)
+            .on(Event::Connect, move |_payload: Payload, _socket: Client| {
+                let connect_sender = Arc::clone(&connect_sender);
+                async move {
+                    if let Some(sender) = connect_sender.lock().expect("connect lock").take() {
+                        let _ = sender.send(());
+                    }
+                }
+                .boxed()
+            })
+            .on("error", |payload: Payload, _socket: Client| {
+                async move {
+                    eprintln!("local backend socket error: {payload:?}");
+                }
+                .boxed()
+            })
+            .on(Event::Close, move |_payload: Payload, _socket: Client| {
+                let close_transport = close_transport.clone();
+                let close_flag = Arc::clone(&close_flag);
+                async move {
+                    close_flag.store(true, Ordering::Release);
+                    close_transport.invalidate_generation(generation).await;
+                }
+                .boxed()
+            });
+
+        for (event, handler) in handlers {
+            let run_in_background = event == DEVICE_SYNC_CAPABILITIES_EVENT;
+            let handler_event = event.clone();
+            let ack_transport = self.clone();
+            builder = builder.on(event, move |payload: Payload, socket: Client| {
+                let handler = Arc::clone(&handler);
+                let handler_event = handler_event.clone();
+                let ack_transport = ack_transport.clone();
+                async move {
+                    dispatch_handler(run_in_background, async move {
+                        let ack_id = payload.ack_id();
+                        let value = payload_to_value(payload);
+                        let ack_payload = handler(value).await;
+                        if let (Some(ack_id), Some(ack_payload)) = (ack_id, ack_payload) {
+                            ack_transport
+                                .acknowledge(
+                                    generation,
+                                    &socket,
+                                    &handler_event,
+                                    ack_id,
+                                    ack_payload,
+                                )
+                                .await;
+                        }
+                    })
+                    .await;
+                }
+                .boxed()
+            });
+        }
+
+        let socket = builder
+            .connect()
+            .await
+            .map_err(|error| format_socket_error("connect", None, &error))?;
+        let namespace_result = tokio::time::timeout(NAMESPACE_CONNECT_TIMEOUT, connect_receiver)
+            .await
+            .map_err(|_| "Socket.IO namespace connection timed out".to_owned())?
+            .map_err(|_| "Socket.IO namespace connection signal was dropped".to_owned());
+        if let Err(error) = namespace_result {
+            let _ = socket.disconnect().await;
+            return Err(error);
+        }
+        let mut client_state = self.client.lock().await;
+        if closed.load(Ordering::Acquire) || self.generation.load(Ordering::Acquire) != generation {
+            drop(client_state);
+            let _ = socket.disconnect().await;
+            return Err("Socket.IO connection closed during namespace setup".to_owned());
+        }
+        *client_state = Some(ConnectedSocket {
+            generation,
+            client: socket,
+        });
+        Ok(())
+    }
+}
+
 impl LocalBackendTransport for SocketIoTransport {
     fn connect<'a>(&'a self, config: &'a LocalBackendConfig) -> TransportFuture<'a, ()> {
-        Box::pin(async move {
-            let generation = self.generation.fetch_add(1, Ordering::AcqRel) + 1;
-            let previous = self.client.lock().await.take();
-            if let Some(previous) = previous {
-                let _ = previous.client.disconnect().await;
-            }
-            let handlers = self.handlers.lock().expect("handler lock").clone();
-            let socket_url = normalize_socket_url(&config.socket_url);
-            let (connect_sender, connect_receiver) = oneshot::channel();
-            let connect_sender = Arc::new(Mutex::new(Some(connect_sender)));
-            let closed = Arc::new(AtomicBool::new(false));
-            let close_transport = self.clone();
-            let close_flag = Arc::clone(&closed);
-            let mut builder = ClientBuilder::new(socket_url)
-                .namespace(NAMESPACE)
-                .auth(json!({ "token": config.auth_token }))
-                .transport_type(TransportType::Websocket)
-                .reconnect(false)
-                .reconnect_on_disconnect(false)
-                .on(Event::Connect, move |_payload: Payload, _socket: Client| {
-                    let connect_sender = Arc::clone(&connect_sender);
-                    async move {
-                        if let Some(sender) = connect_sender.lock().expect("connect lock").take() {
-                            let _ = sender.send(());
-                        }
-                    }
-                    .boxed()
-                })
-                .on("error", |payload: Payload, _socket: Client| {
-                    async move {
-                        eprintln!("local backend socket error: {payload:?}");
-                    }
-                    .boxed()
-                })
-                .on(Event::Close, move |_payload: Payload, _socket: Client| {
-                    let close_transport = close_transport.clone();
-                    let close_flag = Arc::clone(&close_flag);
-                    async move {
-                        close_flag.store(true, Ordering::Release);
-                        close_transport.invalidate_generation(generation).await;
-                    }
-                    .boxed()
-                });
-
-            for (event, handler) in handlers {
-                let run_in_background = event == DEVICE_SYNC_CAPABILITIES_EVENT;
-                let handler_event = event.clone();
-                let ack_transport = self.clone();
-                builder = builder.on(event, move |payload: Payload, socket: Client| {
-                    let handler = Arc::clone(&handler);
-                    let handler_event = handler_event.clone();
-                    let ack_transport = ack_transport.clone();
-                    async move {
-                        dispatch_handler(run_in_background, async move {
-                            let ack_id = payload.ack_id();
-                            let value = payload_to_value(payload);
-                            let ack_payload = handler(value).await;
-                            if let (Some(ack_id), Some(ack_payload)) = (ack_id, ack_payload) {
-                                ack_transport
-                                    .acknowledge(
-                                        generation,
-                                        &socket,
-                                        &handler_event,
-                                        ack_id,
-                                        ack_payload,
-                                    )
-                                    .await;
-                            }
-                        })
-                        .await;
-                    }
-                    .boxed()
-                });
-            }
-
-            let socket = builder
-                .connect()
-                .await
-                .map_err(|error| format_socket_error("connect", None, &error))?;
-            let namespace_result =
-                tokio::time::timeout(NAMESPACE_CONNECT_TIMEOUT, connect_receiver)
-                    .await
-                    .map_err(|_| "Socket.IO namespace connection timed out".to_owned())?
-                    .map_err(|_| "Socket.IO namespace connection signal was dropped".to_owned());
-            if let Err(error) = namespace_result {
-                let _ = socket.disconnect().await;
-                return Err(error);
-            }
-            let mut client_state = self.client.lock().await;
-            if closed.load(Ordering::Acquire)
-                || self.generation.load(Ordering::Acquire) != generation
-            {
-                drop(client_state);
-                let _ = socket.disconnect().await;
-                return Err("Socket.IO connection closed during namespace setup".to_owned());
-            }
-            *client_state = Some(ConnectedSocket {
-                generation,
-                client: socket,
-            });
-            Ok(())
-        })
+        Box::pin(self.connect_authenticated(&config.socket_url, &config.auth_token))
     }
 
     fn disconnect<'a>(&'a self) -> TransportFuture<'a, ()> {

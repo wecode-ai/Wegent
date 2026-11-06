@@ -14,7 +14,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as tar from 'tar'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { materializeBundledRuntimes } from './bundled-runtime-materializer.js'
+import {
+  materializeBundledRuntimes,
+  type RuntimeMaterializationProgress,
+} from './bundled-runtime-materializer.js'
 import { resolveWorkbenchProjectPnpmCommand } from './workbench-dsh-runtime.js'
 
 vi.mock('../host/cloud-http.js', () => ({
@@ -25,6 +28,7 @@ const roots: string[] = []
 
 afterEach(async () => {
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
 
@@ -159,14 +163,16 @@ describe('materializeBundledRuntimes', () => {
       join(resources, 'runtimes.json'),
       JSON.stringify({ runtimes: [core, workbench] })
     )
+    const events: RuntimeMaterializationProgress[] = []
+    const options = { onProgress: (event: RuntimeMaterializationProgress) => events.push(event) }
 
-    await materializeBundledRuntimes(resources, cache, ['core'])
+    await materializeBundledRuntimes(resources, cache, ['core'], options)
     const identityPath = join(cache, core.sourceFingerprint, 'runtime.json')
     const original = await stat(identityPath)
     await rm(join(resources, core.assetName))
 
-    await materializeBundledRuntimes(resources, cache, ['workbench'])
-    await materializeBundledRuntimes(resources, cache)
+    await materializeBundledRuntimes(resources, cache, ['workbench'], options)
+    await materializeBundledRuntimes(resources, cache, ['core', 'workbench'], options)
 
     expect((await stat(identityPath)).ino).toBe(original.ino)
     expect(JSON.parse(await readFile(identityPath, 'utf8')).roles).toEqual(['core', 'workbench'])
@@ -174,6 +180,25 @@ describe('materializeBundledRuntimes', () => {
       core,
       workbench,
     ])
+    expect(
+      events
+        .filter(event => ['archive-resolve', 'archive-extract'].includes(event.stage))
+        .map(({ stage, phase }) => [stage, phase])
+    ).toEqual([
+      ['archive-resolve', 'started'],
+      ['archive-resolve', 'completed'],
+      ['archive-extract', 'started'],
+      ['archive-extract', 'completed'],
+    ])
+    for (const event of events) {
+      expect(event.elapsedMs).toBeGreaterThanOrEqual(0)
+      if (event.stage.startsWith('archive-')) {
+        expect(event.role).toBe('core')
+        expect(event.archiveBytes).toBe(core.archiveBytes)
+      }
+    }
+    expect(JSON.stringify(events)).not.toContain(root)
+    expect(JSON.stringify(events)).not.toContain(core.assetName)
   })
 
   test('rejects an archive that does not declare the requested role', async () => {

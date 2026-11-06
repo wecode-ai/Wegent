@@ -90,6 +90,7 @@ describe('managed executor runtime', () => {
 
     expect(environment.CODEX_HOME).toBe(managedCodexHome)
     expect(environment.WEGENT_CODEX_HOME).toBe(managedCodexHome)
+    expect(environment.WEGENT_NATIVE_CODEX_HOME).toBe(nativeCodexHome)
     expect(await readFile(join(managedCodexHome, 'auth.json'), 'utf8')).toBe('{"auth":"native"}\n')
     await directory.remove()
   })
@@ -105,15 +106,38 @@ describe('managed executor runtime', () => {
       dataDirectory: join(directory.path, 'data'),
       environment: {
         CODEX_HOME: launchingCodexHome,
+        WEGENT_NATIVE_CODEX_HOME: launchingCodexHome,
         VITE_WEWORK_E2E: 'true',
         WEGENT_CODEX_HOME: managedCodexHome,
       },
     })
 
     expect(environment.CODEX_HOME).toBe(managedCodexHome)
+    expect(environment.WEGENT_NATIVE_CODEX_HOME).toBeUndefined()
     await expect(readFile(join(managedCodexHome, 'auth.json'), 'utf8')).rejects.toMatchObject({
       code: 'ENOENT',
     })
+    await directory.remove()
+  })
+
+  test('retains the custom native auth source when preparing an existing managed environment', async () => {
+    const directory = await temporaryDirectory('managed-executor-native-source-')
+    const nativeCodexHome = join(directory.path, 'custom-native')
+    const managedCodexHome = join(directory.path, 'managed')
+    const options = {
+      dataDirectory: join(directory.path, 'data'),
+      environment: {
+        CODEX_HOME: nativeCodexHome,
+        WEGENT_CODEX_HOME: managedCodexHome,
+      },
+    }
+
+    const environment = prepareManagedExecutorEnvironment(options)
+    expect(environment.CODEX_HOME).toBe(managedCodexHome)
+    expect(environment.WEGENT_NATIVE_CODEX_HOME).toBe(nativeCodexHome)
+    expect(
+      prepareManagedExecutorEnvironment({ ...options, environment }).WEGENT_NATIVE_CODEX_HOME
+    ).toBe(nativeCodexHome)
     await directory.remove()
   })
 
