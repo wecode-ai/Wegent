@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { expect, it } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { deriveRuntimePaneStatus } from '@/features/workbench/runtimePaneStatus'
 import {
   compareMessageStyles,
@@ -16,6 +16,14 @@ import {
   recordRuntimePaneTransition,
   summarizeRuntimeDisplayItems,
 } from './runtimePaneDiagnostics'
+
+beforeEach(() => {
+  // Node 25 exposes an incomplete experimental Storage object without a backing file.
+  // These Node-only diagnostics tests exercise the default state without browser storage.
+  vi.stubGlobal('localStorage', undefined)
+})
+
+afterEach(() => vi.unstubAllGlobals())
 
 it('keeps bounded, deduplicated evidence from before a held model response is released', () => {
   clearRuntimePaneTransitions()

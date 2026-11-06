@@ -394,7 +394,6 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
               )}
             </header>
             <ScrollableMessageArea
-              workspacePath={workspaceTarget?.path}
               messages={paneMessages}
               loading={paneSession.transcriptLoading}
               isWaitingForAssistant={

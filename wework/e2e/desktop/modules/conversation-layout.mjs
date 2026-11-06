@@ -310,12 +310,12 @@ async function verifyShortConversationLayout({ composerSelector, control, restar
     text: FRESH_CHAT_COMPLETION_TEXT,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await verifyShortConversationTopAlignment(control, 'The four-message conversation after restart')
   await waitForComposerFocus(
     control,
     DEFAULT_STEP_TIMEOUT_MS,
     'Opening an existing conversation after app startup did not focus the composer'
   )
+  await verifyShortConversationTopAlignment(control, 'The four-message conversation after restart')
   await verifyConversationShortcuts(control, composerSelector, FRESH_CHAT_PROMPT)
   await control.command(
     'hover',

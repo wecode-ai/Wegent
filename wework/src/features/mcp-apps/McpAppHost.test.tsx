@@ -165,6 +165,30 @@ describe('MCP App discovery', () => {
     expect(screen.getByTestId('mcp-app-frame')).toHaveAttribute('data-ready', 'true')
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
+
+  it('shows confirmed app initialization failures as a borderless activity row with retry and close', async () => {
+    const requestMcpApp = vi
+      .fn()
+      .mockResolvedValueOnce(discovery)
+      .mockRejectedValue(new Error('Source MCP server is no longer available'))
+    await act(async () =>
+      render(<McpAppHost block={running} address={address} api={{ requestMcpApp }} />)
+    )
+
+    const host = screen.getByTestId('mcp-app')
+    expect(host).toHaveClass('font-normal', 'text-text-muted')
+    expect(host).not.toHaveClass('shadow-sm', 'outline-1', 'rounded-lg')
+    expect(screen.getByRole('alert')).toHaveTextContent('Source MCP server is no longer available')
+    expect(screen.getByTestId('mcp-app-retry')).toBeEnabled()
+    expect(screen.queryByTestId('mcp-app-expand')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('mcp-app-frame')).not.toBeInTheDocument()
+    await act(async () => fireEvent.click(screen.getByTestId('mcp-app-close')))
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('mcp-app-close')).not.toBeInTheDocument()
+    expect(screen.getByTestId('mcp-app-expand')).toBeEnabled()
+    expect(requestMcpApp).toHaveBeenCalledTimes(2)
+    expect(native.invoke).not.toHaveBeenCalledWith('mcpApps.createDocument', expect.anything())
+  })
 })
 
 describe('MCP App close completion', () => {
