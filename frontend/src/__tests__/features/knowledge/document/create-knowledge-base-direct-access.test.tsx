@@ -36,6 +36,7 @@ jest.mock('@/apis/knowledge', () => ({
 jest.mock('@/features/knowledge/document/components/KnowledgeBaseForm', () => ({
   KnowledgeBaseForm: ({
     advancedExtras,
+    typeSection,
     directAccessRequirement,
     onDirectAccessRequirementChange,
     onNameChange,
@@ -45,6 +46,7 @@ jest.mock('@/features/knowledge/document/components/KnowledgeBaseForm', () => ({
     onRetrievalConfigUserChange,
   }: {
     advancedExtras?: import('react').ReactNode
+    typeSection?: import('react').ReactNode
     directAccessRequirement: DirectAccessRequirement
     onDirectAccessRequirementChange: (value: DirectAccessRequirement) => void
     onNameChange: (value: string) => void
@@ -55,6 +57,7 @@ jest.mock('@/features/knowledge/document/components/KnowledgeBaseForm', () => ({
   }) => (
     <div>
       {advancedExtras}
+      {typeSection}
       <button type="button" onClick={() => onNameChange('Private docs')}>
         set name
       </button>
@@ -193,4 +196,68 @@ it('creates with automatic DingTalk updates enabled and resets it after success'
     )
   )
   await waitFor(() => expect(toggle).not.toBeChecked())
+})
+
+it('defaults to a filtered team and shows its space selector with inheritance stated', async () => {
+  const submit = jest.fn().mockResolvedValue(undefined)
+  render(
+    <CreateKnowledgeBaseDialog
+      open
+      onOpenChange={jest.fn()}
+      onSubmit={submit}
+      showGroupSelector
+      defaultGroupId="group-team"
+      availableGroups={[
+        {
+          id: 'personal',
+          name: 'personal',
+          displayName: 'Personal',
+          type: 'personal',
+          canCreate: true,
+        },
+        { id: 'group-team', name: 'team', displayName: 'Team', type: 'group', canCreate: true },
+      ]}
+    />
+  )
+  expect(screen.getByTestId('group-selector')).toHaveTextContent('Team')
+  expect(screen.getByText('knowledge:document.creation.inheritsTeam')).toBeInTheDocument()
+  fireEvent.click(screen.getByText('set name'))
+  fireEvent.click(screen.getByText('disable summary'))
+  fireEvent.click(screen.getByTestId('submit-create-kb'))
+  await waitFor(() =>
+    expect(submit).toHaveBeenCalledWith(expect.objectContaining({ selectedGroupId: 'group-team' }))
+  )
+})
+
+it('does not silently change an unavailable team to personal and requires explicit choice', async () => {
+  const submit = jest.fn().mockResolvedValue(undefined)
+  render(
+    <CreateKnowledgeBaseDialog
+      open
+      onOpenChange={jest.fn()}
+      onSubmit={submit}
+      showGroupSelector
+      defaultGroupId="group-team"
+      availableGroups={[
+        {
+          id: 'personal',
+          name: 'personal',
+          displayName: 'Personal',
+          type: 'personal',
+          canCreate: true,
+        },
+        { id: 'group-team', name: 'team', displayName: 'Team', type: 'group', canCreate: false },
+      ]}
+    />
+  )
+  expect(screen.getByTestId('submit-create-kb')).toBeDisabled()
+  expect(screen.getByText('knowledge:document.creation.spaceUnavailable')).toBeInTheDocument()
+  expect(submit).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByTestId('create-in-personal-space'))
+  fireEvent.click(screen.getByText('set name'))
+  fireEvent.click(screen.getByText('disable summary'))
+  fireEvent.click(screen.getByTestId('submit-create-kb'))
+  await waitFor(() =>
+    expect(submit).toHaveBeenCalledWith(expect.objectContaining({ selectedGroupId: 'personal' }))
+  )
 })

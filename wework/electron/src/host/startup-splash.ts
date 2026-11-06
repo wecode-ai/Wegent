@@ -86,6 +86,12 @@ export interface StartupSplashCompletion {
   fillEnd: number
   trackEnd: number
   wordmarkVisible: boolean
+  appearance: {
+    theme: StartupSplashTheme
+    colorScheme: string
+    background: string
+    footerBackground: string
+  }
   canvas: { x: number; y: number; width: number; height: number }
   viewport: { width: number; height: number }
 }

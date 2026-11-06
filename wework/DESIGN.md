@@ -580,6 +580,11 @@ recipe closely:
   surface before the editor, not in a separate bordered rail. Context-bearing
   composers remain expanded so context and model recovery stay reachable.
   Keep contextual actions and input-leading chips independent.
+- 目标与协作上下文同时出现时保持左右分栏，为右侧协作区域保留宽度；长目标在左侧截断，
+  不得把协作入口挤出输入框。
+  When goal and collaboration context are both present, keep them in separate
+  left and right columns with reserved width for collaboration. Truncate long
+  goals within the left column so collaboration controls remain inside the composer.
 - desktop project, quick-phrase, model, execution-mode, and branch selectors
   use the same `text-sm` role at regular weight; mobile variants may retain
   their larger touch-oriented typography;

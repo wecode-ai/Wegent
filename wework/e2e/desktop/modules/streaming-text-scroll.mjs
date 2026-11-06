@@ -301,11 +301,16 @@ export function createStreamingScrollChecks({
       PARTIAL_TEXT,
       'The runtime conversation cache lost or reordered streamed text before rendering'
     )
-    const immediatelyRenderedPartial = await control.command('getText', PROCESS_TEXT_SELECTOR)
+    // Cache publication precedes the pane's animation-frame commit.
+    await control.command('waitFor', PROCESS_TEXT_SELECTOR, {
+      text: PARTIAL_TEXT.slice(PARTIAL_TEXT.lastIndexOf('\n') + 1),
+      timeoutMs: uiTimeoutMs,
+    })
+    const renderedPartial = await control.command('getText', PROCESS_TEXT_SELECTOR)
     assert.equal(
-      immediatelyRenderedPartial.replace(/\s+/g, ''),
+      renderedPartial.replace(/\s+/g, ''),
       PARTIAL_TEXT.replace(/\s+/g, ''),
-      `The active conversation displayed only ${immediatelyRenderedPartial.length} of ${PARTIAL_TEXT.length} streamed characters`
+      `The active conversation displayed only ${renderedPartial.length} of ${PARTIAL_TEXT.length} streamed characters`
     )
     await control.command('waitFor', PROCESS_TEXT_SELECTOR, {
       text: MARKER,

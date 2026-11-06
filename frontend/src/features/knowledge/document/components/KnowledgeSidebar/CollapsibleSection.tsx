@@ -50,7 +50,7 @@ export function CollapsibleSection({
     <div className={cn('border-b border-border', className)} data-testid={testId}>
       {/* Header */}
       <div
-        className="w-full flex items-center gap-2 px-3 py-2 text-sm font-medium
+        className="w-full flex items-center gap-2 px-3 text-sm font-medium
                    text-text-secondary hover:bg-muted transition-colors"
         data-testid={testId ? `${testId}-header` : undefined}
       >
@@ -58,7 +58,7 @@ export function CollapsibleSection({
         <button
           type="button"
           onClick={onToggle}
-          className="flex-1 flex items-center gap-2 min-w-0 text-left"
+          className="flex-1 min-h-11 md:min-h-9 flex items-center gap-2 min-w-0 text-left"
           aria-expanded={isExpanded}
         >
           {/* Expand/collapse icon */}
@@ -87,7 +87,7 @@ export function CollapsibleSection({
       </div>
 
       {/* Content */}
-      {isExpanded && <div className="pb-2">{children}</div>}
+      {isExpanded && <div className="pb-1">{children}</div>}
     </div>
   )
 }

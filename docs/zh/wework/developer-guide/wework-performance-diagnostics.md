@@ -20,7 +20,7 @@ Wework 内置一个默认关闭的前端性能诊断开关，用于定位 releas
 
 初始窗口首选尺寸为 1440×960；任一维度占满或超出所在屏幕的可用区域时，启动页与主窗口都使用系统标准最大化，否则保持普通窗口。最大化交接直接继承最大化状态，避免将整屏尺寸往返换算为普通窗口边框尺寸。
 
-启动页的动画舞台支持原生窗口拖动，底部状态区域和恢复按钮保留交互。舞台始终使用深色品牌背景；亮暗主题设置决定交接后的主界面。
+启动页的动画舞台支持原生窗口拖动，底部状态区域和恢复按钮保留交互。舞台与主界面使用同一次启动解析的亮暗主题；采用密度 2.5、速度 1.0 的流星线条从四周勾勒标记，星头在首次接触字形前淡出，标记上只保留勾勒线条，长尾逐渐收细和淡出。浅色模式使用浅白背景与清晰蓝线，深色模式使用发光星头；成形后继续呼吸。底栏与舞台背景一致，主题在样式和动画首次绘制前确定，避免启动闪色。
 
 完整标记和光丝按窗口及底栏上沿等比缩放，呼吸效果也保留安全间距。若极短窗口的底栏已盖过全页中心，暂时不绘制装饰图标；空间恢复后继续同一条动画时间轴。
 
@@ -255,7 +255,7 @@ WEWORK_WEBVIEW_DEVTOOLS=1 /path/to/WeWork.app/Contents/MacOS/WeWork
 DevTools 打开后，在卡顿后执行：
 
 ```js
-window.__WEWORK_PERF__.snapshot()
+window.__WEWORK_PERF__.snapshot();
 ```
 
 返回值包含当前 URL、页面可见性、DOM 节点数、内存快照、导航时序、resource 数量、最近事件，以及 Wework 进程组快照。macOS 上 Chromium XPC 进程会被系统改挂到 PID 1；诊断会通过 LaunchServices 将当前 Wework 实例对应的 Web Content、GPU 和 Networking 进程重新关联进来。
@@ -278,7 +278,7 @@ Performance Diagnostics 有意保留独立的采集器：它仍通过 `wework/el
 也可以手动打点：
 
 ```js
-window.__WEWORK_PERF__.mark('before-open-task', { taskId: '...' })
+window.__WEWORK_PERF__.mark("before-open-task", { taskId: "..." });
 ```
 
 ## 关闭方式
@@ -286,8 +286,8 @@ window.__WEWORK_PERF__.mark('before-open-task', { taskId: '...' })
 再次按隐藏快捷键打开 Developer Commands 菜单，然后选择 **Disable Performance Diagnostics** 会关闭诊断并刷新应用。也可以在控制台执行：
 
 ```js
-localStorage.removeItem('wework:perf-debug')
-location.reload()
+localStorage.removeItem("wework:perf-debug");
+location.reload();
 ```
 
 关闭后 `window.__WEWORK_PERF__` 不再安装，React Profiler 也不会包裹应用根节点。

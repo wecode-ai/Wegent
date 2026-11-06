@@ -38,7 +38,7 @@ export function SearchTrigger({ onOpen }: SearchTriggerProps) {
   return (
     <button
       onClick={onOpen}
-      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-text-muted 
+      className="w-full min-h-11 md:min-h-9 min-w-11 flex items-center gap-2 px-3 py-2 md:py-1 text-sm text-text-muted
                  bg-surface rounded-md border border-border hover:border-primary/50
                  transition-colors"
       data-testid="knowledge-search-trigger"

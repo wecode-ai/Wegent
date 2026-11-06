@@ -1,4 +1,3 @@
-**/target
 **/.venv
 **/node_modules
 **/.next
@@ -6,6 +5,8 @@
 **/.pytest_cache
 **/.mypy_cache
 **/.ruff_cache
+**/target
+**/.env
 .git
 .live-architecture
 **/.live-architecture

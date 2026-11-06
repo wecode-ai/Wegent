@@ -64,7 +64,13 @@ export function DeleteKnowledgeBaseDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent>
+      <DialogContent
+        className="max-h-[90dvh] w-[calc(100%_-_1rem)] min-w-0 grid-cols-[minmax(0,1fr)] overflow-y-auto"
+        closeButtonProps={{
+          className: 'right-2 top-2 flex h-11 w-11 items-center justify-center',
+          'data-testid': 'close-delete-kb',
+        }}
+      >
         <DialogHeader>
           <DialogTitle>{t('knowledge:document.knowledgeBase.delete')}</DialogTitle>
           <DialogDescription>
@@ -77,7 +83,9 @@ export function DeleteKnowledgeBaseDialog({
         </DialogHeader>
         {knowledgeBase && (
           <div className="py-4">
-            <p className="text-text-primary font-medium">{knowledgeBase.name}</p>
+            <p className="break-words font-medium text-text-primary [overflow-wrap:anywhere]">
+              {knowledgeBase.name}
+            </p>
             {blocksDeletion && (
               <p className="text-sm text-error mt-2">
                 {t('knowledge:document.knowledgeBase.deleteWarning', {

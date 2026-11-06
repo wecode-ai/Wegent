@@ -97,7 +97,7 @@ function ScrollableMessagePaneContent({
     turnNavigationTargetMessageId,
     handleTurnNavigationScrollTargetChange,
     handleTurnNavigationLoadStateChange,
-    handleContentLayoutChange,
+    handleVirtualLayoutChange,
     handleScrollToBottom,
     preserveScrollPositionForNextLayout,
     prepareForHistoryPrepend,
@@ -281,7 +281,7 @@ function ScrollableMessagePaneContent({
                 messages={messages}
                 turns={turns}
                 onBeforeUserMessageToggle={preserveUserMessagePosition}
-                onVirtualLayoutChange={handleContentLayoutChange}
+                onVirtualLayoutChange={handleVirtualLayoutChange}
                 scrollElementRef={scrollRef}
                 initialDistanceFromBottomPx={initialDistanceFromBottomPx}
                 className={messageListClassName}
