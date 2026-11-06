@@ -66,6 +66,8 @@ export function createGoalConcurrencyVerification({ workspacePath, uiTimeoutMs }
             subtask_id: `${taskId}-${suffix}`,
             user_id: 9001,
             prompt,
+            // Distinct policy snapshots force the real cold-resume path on every platform.
+            system_prompt: `Goal concurrency fixture ${suffix}`,
             new_session: method === 'runtime.tasks.create',
             bot: [{ shell_type: 'Codex', name: 'Goal concurrency verification' }],
             model_config: {
@@ -101,6 +103,12 @@ export function createGoalConcurrencyVerification({ workspacePath, uiTimeoutMs }
         const continuing = await capacity()
         assert.deepEqual(continuing.categories.personal.active_task_ids, [taskIds[0]])
         assert.equal(continuing.categories.personal.queued, 1)
+        await waitForValue(
+          () => rpc(control, 'runtime.tasks.running_count', {}),
+          state => state.runningCount === 0,
+          'Native continuation must retain capacity independently of local request control',
+          uiTimeoutMs
+        )
         const completed = await rpc(control, 'runtime.tasks.goal.set', {
           taskId: taskIds[0],
           status: 'complete',
@@ -153,6 +161,12 @@ export function createGoalConcurrencyVerification({ workspacePath, uiTimeoutMs }
         })
         assert.equal(finished.success, true)
         releases[5]()
+        // Cold resume may run the Goal before the explicitly submitted input.
+        // Both native turns belong to this task and must retain its one slot.
+        await waitRequests(7)
+        assert.deepEqual(requests, [...expected, taskIds[0], taskIds[0]])
+        assert.deepEqual((await capacity()).categories.personal.active_task_ids, [taskIds[0]])
+        releases[6]()
         for (const taskId of taskIds)
           await waitForCompletedRuntimeTaskThread(control, taskId, uiTimeoutMs)
         await waitForValue(
