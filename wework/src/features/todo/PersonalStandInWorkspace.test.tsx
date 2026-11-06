@@ -25,26 +25,58 @@ vi.mock('./localWorkspaceApi', () => ({ createLocalWorkspaceApi: () => null }))
 vi.mock('./StandInOverviewPage', () => ({
   StandInOverviewPage: ({
     initialProfileId,
+    initialSelectedRoleId,
+    onSelectLocation,
     userId,
     initialDeviceId,
     ref,
   }: {
     initialProfileId: string
+    initialSelectedRoleId?: string
+    onSelectLocation: (deviceId: string, roleId?: string, openSettings?: boolean) => void
     userId: number
     initialDeviceId?: string
     ref: Ref<Pick<StandInSettingsHandle, 'requestLeave'>>
   }) => {
     useImperativeHandle(ref, () => ({ requestLeave: guard }))
     return (
-      <input
-        data-testid="retained-role-draft"
-        data-owner={userId}
-        data-device={initialDeviceId}
-        defaultValue={initialProfileId}
-      />
+      <>
+        <button
+          data-testid="save-role-on-cloud"
+          onClick={() => onSelectLocation('cloud-one', 'reviewer')}
+        >
+          Save
+        </button>
+        <input
+          data-testid="retained-role-draft"
+          data-owner={userId}
+          data-device={initialDeviceId}
+          data-role={initialSelectedRoleId}
+          defaultValue={initialProfileId}
+        />
+      </>
     )
   },
 }))
+
+it('retains the saved role when changing device without reopening its settings', async () => {
+  render(
+    <PersonalStandInWorkspace
+      services={{} as WorkbenchServices}
+      user={{ id: 7 } as User}
+      devices={[]}
+      active
+      contentRoute="/stand-in?profileId=reviewer&deviceId=mac"
+      onClose={vi.fn()}
+      onOpenTask={vi.fn()}
+    />
+  )
+  await userEvent.click(screen.getByTestId('save-role-on-cloud'))
+  const field = screen.getByTestId('retained-role-draft')
+  expect(field).toHaveAttribute('data-device', 'cloud-one')
+  expect(field).toHaveAttribute('data-role', 'reviewer')
+  expect(field).toHaveValue('')
+})
 
 it('keeps the owning tab identity and draft when another tab changes the browser query', async () => {
   const props = {
@@ -236,4 +268,33 @@ it('remembers the explicitly selected cloud profile without sharing it with anot
   view.unmount()
   render(<PersonalStandInWorkspace {...p} user={{ id: 8 } as User} />)
   expect(await screen.findByTestId('retained-role-draft')).toHaveAttribute('data-device', 'mac')
+})
+
+it('keeps a failed local profile discovery visible after project loading and retries that discovery', async () => {
+  let localReads = 0
+  const personalGet = vi.fn(async (userId: number) => {
+    if (userId === 0 && localReads++ === 0) throw new Error('Executor offline')
+    return { userId, executionDeviceId: 'mac', version: 0, roles: [] }
+  })
+  const services = {
+    getLocalRuntimeSidebarIdentity: async () => ({ deviceId: 'mac' }),
+    standInApi: { personalGet },
+  } as unknown as WorkbenchServices
+  render(
+    <PersonalStandInWorkspace
+      services={services}
+      user={{ id: 7 } as User}
+      devices={[]}
+      active
+      contentRoute="/stand-in"
+      onClose={vi.fn()}
+      onOpenTask={vi.fn()}
+    />
+  )
+  await screen.findByRole('alert')
+  expect(screen.queryByTestId('retained-role-draft')).toBeNull()
+  await userEvent.click(screen.getByTestId('stand-in-project-catalog-retry'))
+  expect(await screen.findByTestId('retained-role-draft')).toHaveAttribute('data-device', 'mac')
+  expect(localReads).toBe(2)
+  expect(screen.queryByRole('alert')).toBeNull()
 })

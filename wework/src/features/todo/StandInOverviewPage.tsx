@@ -65,6 +65,7 @@ export function StandInOverviewPage({
   active = true,
   ref,
   onSelectLocation,
+  initialSelectedRoleId,
   ...props
 }: Omit<SettingsProps, 'ref'> & {
   onOpenTask?(address: RuntimeTaskAddress): Promise<void> | void
@@ -73,7 +74,8 @@ export function StandInOverviewPage({
   settingsRequestKey?: string
   active?: boolean
   ref?: Ref<Pick<StandInSettingsHandle, 'requestLeave'>>
-  onSelectLocation?(deviceId: string, roleId?: string): void
+  onSelectLocation?(deviceId: string, roleId?: string, openSettings?: boolean): void
+  initialSelectedRoleId?: string
 }) {
   const { t } = useTranslation('common')
   const workbench = useContext(WorkbenchContext)
@@ -81,7 +83,9 @@ export function StandInOverviewPage({
   const state = usePersonalStandIn(props.services, props.userId, props.initialDeviceId, false)
   const { saved, setDraft, reload } = state
   const [roleId, setRoleId] = useState<string | undefined>(
-    props.initialProfileId === '@primary' ? undefined : props.initialProfileId
+    props.initialProfileId === '@primary'
+      ? undefined
+      : (props.initialProfileId ?? initialSelectedRoleId)
   )
   const [chatting, setChatting] = useState(false)
   const [calendarRequest, setCalendarRequest] = useState(initialWorkView === 'scheduled' ? 1 : 0)
@@ -434,7 +438,7 @@ export function StandInOverviewPage({
               targetUser={Number(cloud.user.id)}
               requestLeave={leavePanel}
               onMigrated={(device, role) => {
-                if (onSelectLocation) onSelectLocation(device, role)
+                if (onSelectLocation) onSelectLocation(device, role, true)
                 else {
                   reload()
                   state.setDeviceId(device)
@@ -674,7 +678,10 @@ export function StandInOverviewPage({
                     saving={state.saving || state.loading}
                     services={props.services}
                     devices={props.devices}
-                    onSelectDevice={state.setDeviceId}
+                    onSelectDevice={device => {
+                      if (onSelectLocation) onSelectLocation(device, '@primary', true)
+                      else state.setDeviceId(device)
+                    }}
                     onClose={() => {
                       setProfile(null)
                       if (initialPrimaryProfile) props.onCancel?.()
@@ -709,7 +716,7 @@ export function StandInOverviewPage({
                     onCancel={() => setProfile(null)}
                     onSaved={value => {
                       if (value.executionDeviceId && value.executionDeviceId !== deviceId) {
-                        if (onSelectLocation) onSelectLocation(value.executionDeviceId)
+                        if (onSelectLocation) onSelectLocation(value.executionDeviceId, value.id)
                         else state.setDeviceId(value.executionDeviceId)
                       } else reload()
                       setProfile(null)
@@ -755,7 +762,7 @@ export function StandInOverviewPage({
           setExampleDraft({ id: ++exampleSequence.current, text })
         })
       }
-      bypass={Boolean(props.initialProfileId || profile || chatting || (!deviceId && state.error))}
+      bypass={Boolean(props.initialProfileId || profile || chatting || (!saved && state.error))}
       onClose={props.onCancel}
     >
       {content}

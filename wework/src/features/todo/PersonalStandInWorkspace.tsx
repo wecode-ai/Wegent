@@ -54,15 +54,20 @@ export function PersonalStandInWorkspace({
   const preferenceKey = `wework.stand-in.cloud-device:${JSON.stringify([cloud?.apiBaseUrl ?? '', user.id])}`
   const [localDeviceId, setLocalDeviceId] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [locationError, setLocationError] = useState<string | null>(null)
   const [attempt, setAttempt] = useState(0)
   const [hasLocalProfile, setHasLocalProfile] = useState(false)
   const [initialLocation, setInitialLocation] = useState<{ deviceId: string; local: boolean }>()
-  const [location, setLocation] = useState<{
-    route: string
-    deviceId: string
-    local: boolean
-    profileId?: string
-  }>(() => {
+  const [location, setLocation] = useState<
+    | {
+        route: string
+        deviceId: string
+        local: boolean
+        profileId?: string
+        roleId?: string
+      }
+    | undefined
+  >(() => {
     if (routeDeviceId || profileId) return undefined
     try {
       const deviceId = localStorage.getItem(preferenceKey)
@@ -94,7 +99,7 @@ export function PersonalStandInWorkspace({
       const available = cloud?.isConnected ? availableStandInDevices(devices) : []
       const preferred = available.find(device => device.is_default) ?? available[0]
       setLocalDeviceId(identity.deviceId)
-      setError(null)
+      setLocationError(null)
       setHasLocalProfile(localExists)
       setInitialLocation(
         previous =>
@@ -107,20 +112,31 @@ export function PersonalStandInWorkspace({
           }
       )
     })().catch(cause => {
-      if (current) setError(getStandInErrorMessage(cause, 'load_settings_failed'))
+      if (current) setLocationError(getStandInErrorMessage(cause, 'load_settings_failed'))
     })
     return () => {
       current = false
     }
   }, [services, user.id, active, devices, cloud?.isConnected, profileId, attempt])
-  const rememberLocation = (target: string, local = false, profileId?: string) => {
+  const rememberLocation = (
+    target: string,
+    local = false,
+    roleId?: string,
+    openSettings = false
+  ) => {
     try {
       if (local || target === localDeviceId) localStorage.removeItem(preferenceKey)
       else localStorage.setItem(preferenceKey, target)
     } catch {
       console.warn('[Wework] Could not remember the stand-in device')
     }
-    setLocation({ route: contentRoute, deviceId: target, local, profileId })
+    setLocation({
+      route: contentRoute,
+      deviceId: target,
+      local,
+      roleId,
+      profileId: openSettings ? roleId : undefined,
+    })
   }
   const selectLocation = (target: string, local = false) => {
     const change = () => rememberLocation(target, local)
@@ -209,9 +225,9 @@ export function PersonalStandInWorkspace({
           </select>
         </label>
       )}
-      {error && (
+      {(error || locationError) && (
         <div role="alert" className="flex items-center gap-2 px-5 py-2 text-sm text-error">
-          <span>{error}</span>
+          <span>{locationError || error}</span>
           <button
             type="button"
             data-testid="stand-in-project-catalog-retry"
@@ -238,15 +254,20 @@ export function PersonalStandInWorkspace({
           </button>
         </div>
       )}
-      {services.getLocalRuntimeSidebarIdentity && !initialLocation && !routeDeviceId && !error ? (
-        <p role="status" className="p-5 text-sm">
-          {t('standIn.loading')}
-        </p>
+      {services.getLocalRuntimeSidebarIdentity && !initialLocation && !routeDeviceId ? (
+        locationError ? null : (
+          <p role="status" className="p-5 text-sm">
+            {t('standIn.loading')}
+          </p>
+        )
       ) : (
         <StandInOverviewPage
           key={`${ownerId}:${deviceId ?? 'default'}`}
           ref={overview}
-          onSelectLocation={(target, profileId) => rememberLocation(target, false, profileId)}
+          onSelectLocation={(target, roleId, openSettings) =>
+            rememberLocation(target, false, roleId, openSettings)
+          }
+          initialSelectedRoleId={selected?.roleId}
           initialProfileId={selected ? selected.profileId : profileId}
           initialDeviceId={deviceId}
           settingsRequestKey={selected ? undefined : (query.get('settingsRequest') ?? undefined)}
