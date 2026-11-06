@@ -5,6 +5,8 @@ import { StandInIcon } from '@wegent/collaboration'
 import { bindProjectStandInApi } from '@/api/standIn'
 import { WorkspaceRunnerRegistrationDialog } from '@/features/collaboration/WorkspaceRunnerRegistrationDialog'
 import { ProjectCoordinatorConversation } from './ProjectCoordinatorConversation'
+import { ProjectSpaceChatSidebar } from './ProjectSpaceChatSidebar'
+import { MessageSquare } from 'lucide-react'
 import { StandInPopover } from './StandInPopover'
 import { navigateTo } from '@/lib/navigation'
 import { createLocalWorkspaceApi, LOCAL_WORKSPACE_ID } from './localWorkspaceApi'
@@ -411,6 +413,7 @@ export function WeworkSharedProject({
   const { t } = useTranslation('common')
   const preferences = useAppPreferencesState()
   const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
+  const [projectChatOpen, setProjectChatOpen] = useState(false)
   const issueChangeRequestMonitor =
     services.deviceApi && (preferences?.preferences.changeRequestStatusEnabled ?? true)
       ? getChangeRequestMonitor(services.deviceApi)
@@ -536,46 +539,59 @@ export function WeworkSharedProject({
   )
   const projectHost = useMemo<CollaborationHostAdapter>(
     () => ({
-      renderProjectHeaderAction: currentProject =>
-        experimentalFeaturesEnabled ? (
-          <div className="flex items-center gap-2">
-            <ProjectCoordinatorConversation
-              key={`${currentProject.project_store}:${currentProject.id}:${userId}`}
-              api={scopedApi}
-              project={currentProject}
-              services={services}
-              userId={Number(userId)}
-              devices={devices ?? []}
-              onOpenTask={onOpenRuntimeTask}
-              onOpenIssue={issueId => {
-                setTaskComposer(null)
-                setLocation(current => ({ ...current, projectView: 'board', issueId }))
-                if (focusedItemId) onFocusedItemHandled?.()
-              }}
-              onOpenGroupSettings={() => {
-                setTaskComposer(null)
-                setLocation(current => ({
-                  ...current,
-                  projectView: 'manage',
-                  projectSettingsSection: 'groups',
-                  issueId: null,
-                }))
-                if (focusedItemId) onFocusedItemHandled?.()
-              }}
-            />
-            <StandInPopover
-              key={currentProject.id}
-              api={standInWorkspaceApi}
-              project={currentProject}
-              devices={devices}
-              readLocalIdentity={services.getLocalRuntimeSidebarIdentity}
-              services={services}
-              userId={Number(userId)}
-              onOpenPersonalSettings={onOpenStandInSettings}
-              initialDeviceId={standInDeviceId}
-            />
-          </div>
-        ) : null,
+      renderProjectHeaderAction: currentProject => (
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            data-testid="project-space-chat-open"
+            aria-expanded={projectChatOpen}
+            onClick={() => setProjectChatOpen(open => !open)}
+            className="inline-flex min-h-11 items-center gap-2 rounded-md px-2 text-sm hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
+          >
+            <MessageSquare className="h-4 w-4" aria-hidden="true" />
+            {t('workbench.project_space_chat.open')}
+          </button>
+          {experimentalFeaturesEnabled && (
+            <>
+              <ProjectCoordinatorConversation
+                key={`${currentProject.project_store}:${currentProject.id}:${userId}`}
+                api={scopedApi}
+                project={currentProject}
+                services={services}
+                userId={Number(userId)}
+                devices={devices ?? []}
+                onOpenTask={onOpenRuntimeTask}
+                onOpenIssue={issueId => {
+                  setTaskComposer(null)
+                  setLocation(current => ({ ...current, projectView: 'board', issueId }))
+                  if (focusedItemId) onFocusedItemHandled?.()
+                }}
+                onOpenGroupSettings={() => {
+                  setTaskComposer(null)
+                  setLocation(current => ({
+                    ...current,
+                    projectView: 'manage',
+                    projectSettingsSection: 'groups',
+                    issueId: null,
+                  }))
+                  if (focusedItemId) onFocusedItemHandled?.()
+                }}
+              />
+              <StandInPopover
+                key={currentProject.id}
+                api={standInWorkspaceApi}
+                project={currentProject}
+                devices={devices}
+                readLocalIdentity={services.getLocalRuntimeSidebarIdentity}
+                services={services}
+                userId={Number(userId)}
+                onOpenPersonalSettings={onOpenStandInSettings}
+                initialDeviceId={standInDeviceId}
+              />
+            </>
+          )}
+        </div>
+      ),
       capabilities: {
         automation: true,
         dingtalkAitable: true,
@@ -628,6 +644,8 @@ export function WeworkSharedProject({
       focusedItemId,
       devices,
       experimentalFeaturesEnabled,
+      projectChatOpen,
+      t,
       standInWorkspaceApi,
       scopedApi,
       onOpenRuntimeTask,
@@ -1112,7 +1130,7 @@ export function WeworkSharedProject({
 
   return (
     <div
-      className="issue-drawer-workspace flex h-full min-h-0 min-w-0"
+      className="issue-drawer-workspace relative flex h-full min-h-0 min-w-0"
       data-testid="issue-drawer-workspace"
     >
       <TransientNotice
@@ -1338,6 +1356,15 @@ export function WeworkSharedProject({
           }}
         />
       </div>
+      {projectChatOpen && (
+        <ProjectSpaceChatSidebar
+          key={`${project.project_store}:${project.id}`}
+          project={editorProject}
+          localProjects={localProjects}
+          localExecution
+          onClose={() => setProjectChatOpen(false)}
+        />
+      )}
     </div>
   )
 }

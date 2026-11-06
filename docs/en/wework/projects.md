@@ -258,7 +258,11 @@ The **Human processing** settings page only explains the direct-assignment and r
 
 ## Message AI
 
-Use **Message AI** in the project-space header for project exploration and temporary questions. It opens the project conversation sidebar, where you can start or switch conversations and select an execution project. For work that needs formal execution, create a board task and assign a robot so its owner, status, and deliverables remain trackable.
+Select **Conversations** in the collaboration project header to open its conversation sidebar. No collaboration group, AI leader, or experimental feature is required. Both local and cloud projects are supported. New conversations run on the current computer with the current project board as their default context, subject to the user's actual access and execution permissions.
+
+Send a message directly or select a local code project as the working directory first. Start new conversations, switch between existing conversations, or close and reopen the sidebar to continue the same conversation. Local and cloud project histories are kept separate. If the local execution environment is unavailable, the sidebar reports the error; send again after recovery.
+
+Opening a conversation does not enable background project coordination. For work that needs a tracked owner, status, and deliverables, create a board task and assign a member, robot, or collaboration group.
 
 ## Issue details and execution tasks
 

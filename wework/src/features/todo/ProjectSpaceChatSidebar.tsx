@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
+  type CSSProperties,
 } from 'react'
 
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
@@ -35,6 +36,7 @@ interface ProjectSpaceChatSidebarProps {
   project: CloudProject
   localProjects: ProjectWithTasks[]
   onClose: () => void
+  localExecution?: boolean
 }
 
 const PROJECT_CHAT_DEFAULT_WIDTH = 420
@@ -63,12 +65,14 @@ function taskTimestamp(task: RuntimeTaskSummary): number {
 
 function projectSpaceConversations(
   workspaces: RuntimeDeviceWorkspace[],
-  projectId: string
+  project: CloudProject
 ): ProjectSpaceConversation[] {
   return workspaces
     .flatMap(workspace =>
       workspace.tasks.flatMap(task => {
-        if (runtimeCloudProjectId(task) !== projectId) return []
+        if (runtimeCloudProjectId(task) !== String(project.id)) return []
+        const origin = task.runtimeHandle?.origin as { projectStore?: string } | undefined
+        if ((origin?.projectStore === 'local') !== (project.project_store === 'local')) return []
         const address: RuntimeTaskAddress = {
           deviceId: workspace.deviceId,
           taskId: task.taskId,
@@ -88,17 +92,18 @@ function projectSpaceConversations(
     .sort((left, right) => taskTimestamp(right.task) - taskTimestamp(left.task))
 }
 
-function lastConversationStorageKey(projectId: string): string {
-  return `wework-project-space-chat:${projectId}`
+function lastConversationStorageKey(project: CloudProject): string {
+  return `wework-project-space-chat:${project.project_store}:${project.id}`
 }
 
 export function ProjectSpaceChatSidebar({
   project,
   localProjects,
   onClose,
+  localExecution = false,
 }: ProjectSpaceChatSidebarProps) {
   const { t } = useTranslation('common')
-  const { state } = useWorkbenchPaneContext()
+  const { state, services } = useWorkbenchPaneContext()
   const conversations = useMemo(
     () =>
       projectSpaceConversations(
@@ -113,13 +118,15 @@ export function ProjectSpaceChatSidebar({
               ...state.runtimeWork.chats,
             ]
           : [],
-        String(project.id)
+        project
       ),
-    [project.id, state.runtimeWork]
+    [project, state.runtimeWork]
   )
-  const [localProjectId, setLocalProjectId] = useState<number | null>(localProjects[0]?.id ?? null)
+  const [localProjectId, setLocalProjectId] = useState<number | null>(
+    localExecution ? null : (localProjects[0]?.id ?? null)
+  )
   const [selectedConversationKey, setSelectedConversationKey] = useState<string | null>(() =>
-    window.localStorage.getItem(lastConversationStorageKey(String(project.id)))
+    window.localStorage.getItem(lastConversationStorageKey(project))
   )
   const [creatingNew, setCreatingNew] = useState(false)
   const [chatInstance, setChatInstance] = useState(0)
@@ -166,9 +173,9 @@ export function ProjectSpaceChatSidebar({
       setCreatingNew(false)
       setSelectedConversationKey(key)
       setChatInstance(current => current + 1)
-      window.localStorage.setItem(lastConversationStorageKey(String(project.id)), key)
+      window.localStorage.setItem(lastConversationStorageKey(project), key)
     },
-    [project.id]
+    [project]
   )
 
   const startNewConversation = useCallback(() => {
@@ -186,9 +193,9 @@ export function ProjectSpaceChatSidebar({
       const key = `${address.deviceId}:${address.taskId}`
       setCreatingNew(false)
       setSelectedConversationKey(key)
-      window.localStorage.setItem(lastConversationStorageKey(String(project.id)), key)
+      window.localStorage.setItem(lastConversationStorageKey(project), key)
     },
-    [project.id]
+    [project]
   )
 
   const runtimeContext = useMemo<
@@ -196,11 +203,22 @@ export function ProjectSpaceChatSidebar({
   >(
     () => ({
       cloudProjectId: String(project.id),
+      origin: {
+        type: 'project_chat',
+        cloudProjectId: String(project.id),
+        projectStore: project.project_store === 'local' ? 'local' : 'backend',
+      },
       additionalContext: projectSpaceChatRuntimeContext(project),
     }),
     [project]
   )
+  const resolveLocalDeviceId = useCallback(async () => {
+    const identity = await services.getLocalRuntimeSidebarIdentity?.()
+    if (!identity?.deviceId) throw new Error(t('standIn.errors.workspace_unavailable'))
+    return identity.deviceId
+  }, [services, t])
   const createConversation = useProjectRuntimeTaskComposer({
+    resolveDeviceId: localExecution ? resolveLocalDeviceId : undefined,
     project: selectedLocalProject,
     workspaceExecution: null,
     runtimeContext,
@@ -241,8 +259,8 @@ export function ProjectSpaceChatSidebar({
   return (
     <aside
       data-testid="project-space-chat-sidebar"
-      className="relative flex min-w-0 shrink-0 flex-col border-l border-border bg-background"
-      style={{ width }}
+      className="relative flex min-h-0 min-w-0 max-w-full shrink-0 flex-col border-l border-border bg-background max-md:absolute max-md:inset-0 max-md:z-20 max-md:w-full md:w-[var(--project-chat-width)]"
+      style={{ '--project-chat-width': `${width}px` } as CSSProperties}
     >
       <div
         data-testid="project-space-chat-resize-handle"
@@ -421,10 +439,10 @@ export function ProjectSpaceChatSidebar({
       </header>
 
       <TemporaryChatPanel
-        key={`${project.id}:${chatInstance}`}
+        key={`${project.project_store}:${project.id}:${chatInstance}`}
         currentProject={selectedLocalProject}
         source={null}
-        instanceId={`project-space:${project.id}:${selectedConversation?.key ?? 'new'}`}
+        instanceId={`project-space:${project.project_store}:${project.id}:${selectedConversation?.key ?? 'new'}`}
         testId="project-space-chat-panel"
         initialAddress={selectedConversation?.address ?? null}
         createTask={createConversation}
