@@ -80,7 +80,6 @@ async function diagnoseSwitchingFailure(control, timeoutMs, stage) {
   }
 }
 
-/** Verify a held 520-item native stream across task switches, cold restoration and pagination. */
 export function createConversationSwitchingChecks({ uiTimeoutMs }) {
   const longResponseTimeoutMs = Math.max(uiTimeoutMs, LONG_RESPONSE_TIMEOUT_MS)
   let releaseTail
@@ -154,7 +153,7 @@ export function createConversationSwitchingChecks({ uiTimeoutMs }) {
         await control.command('fill', COMPOSER_SELECTOR, { value: PROMPT })
         await control.command('startRuntimeStreamDiagnostics', 'body')
         await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
-        // The prefix follows 520 native progress items, so use this fixture's long-response budget.
+        // The prefix follows 520 progress items in this deliberately long response.
         await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
           text: PREFIX,
           timeoutMs: longResponseTimeoutMs,
