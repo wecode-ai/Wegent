@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { randomUUID } from 'node:crypto'
-import { test, expect, type Page, type BrowserContext } from '@playwright/test'
+import { test, expect, type Page, type BrowserContext, type Locator } from '@playwright/test'
 import { createApiClient, type ApiClient } from '../../utils/api-client'
 import { buildStorageState, getJwtExpiryMs } from '../../utils/auth-state'
 import { ADMIN_USER, REGULAR_USER } from '../../config/test-users'
@@ -454,5 +454,168 @@ creationTest(
     await expect(page.getByTestId('submit-created-permissions')).toBeVisible()
     await page.keyboard.press('Escape')
     await expect(page.getByTestId('permission-add-collaborator')).toBeFocused()
+  }
+)
+
+async function expectReachable(control: Locator) {
+  await control.scrollIntoViewIfNeeded()
+  await expect
+    .poll(() =>
+      control.evaluate(element => {
+        const rect = element.getBoundingClientRect()
+        const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)
+        return (
+          rect.left >= 0 &&
+          rect.top >= 0 &&
+          rect.right <= window.innerWidth &&
+          rect.bottom <= window.innerHeight &&
+          !!hit &&
+          element.contains(hit)
+        )
+      })
+    )
+    .toBe(true)
+  await control.click({ trial: true })
+}
+
+async function expectResultsBefore(results: Locator, following: Locator) {
+  // Visibility alone passes for clipped or overlapping absolute-positioned lists.
+  await expect(results).toBeVisible()
+  await expect
+    .poll(async () => {
+      const list = await results.boundingBox()
+      const next = await following.boundingBox()
+      return !!list && !!next && list.y + list.height <= next.y
+    })
+    .toBe(true)
+}
+
+async function expectResultsClearOfFooter(results: Locator, footer: Locator) {
+  await expect
+    .poll(async () => {
+      const visibleBottom = await results.evaluate(element => {
+        let bottom = element.getBoundingClientRect().bottom
+        for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+          if (['auto', 'scroll', 'hidden', 'clip'].includes(getComputedStyle(parent).overflowY)) {
+            bottom = Math.min(bottom, parent.getBoundingClientRect().bottom)
+          }
+        }
+        return bottom
+      })
+      const action = await footer.boundingBox()
+      return !!action && visibleBottom <= action.y
+    })
+    .toBe(true)
+}
+
+creationTest(
+  'keeps expanded grant results and actions reachable at every supported dialog size',
+  async ({ page, creation }) => {
+    const prefix = fixtureName('e2e-grant-layout')
+    const groupIds: number[] = []
+    for (let index = 0; index < 8; index++) {
+      const name = `${prefix}-${index}`
+      creation.groups.add(name)
+      const group = await creation.api.post<{ id: number }>('/api/groups', {
+        name,
+        display_name: name,
+      })
+      expect(group.status).toBe(201)
+      groupIds.push(group.data!.id)
+    }
+    for (const viewport of [
+      { width: 1280, height: 800 },
+      { width: 375, height: 812 },
+      { width: 320, height: 568 },
+      { width: 375, height: 480 },
+    ]) {
+      await page.setViewportSize(viewport)
+      await page.goto('/knowledge?type=document')
+      await page.getByTestId('create-kb-button').click()
+      const library = await createLibraryInDialog(page, creation)
+      for (const entry of ['created', 'management']) {
+        if (entry === 'management') {
+          await page.getByTestId('finish-created-authorization').click()
+          if (viewport.width < 768) await page.getByTestId(`more-kb-${library.id}`).click()
+          await page.getByTestId(`permission-kb-${library.id}`).click()
+        }
+        await page.getByTestId('permission-add-collaborator').click()
+        const search = page.getByTestId('knowledge-auth-user-search')
+        await search.fill(REGULAR_USER.username)
+        const person = page.getByRole('button', { name: REGULAR_USER.username, exact: false })
+        const userResults = person.locator('..')
+        await expectResultsBefore(userResults, page.getByTestId('add-namespace-group-search'))
+        await expectReachable(page.getByTestId('auth-role-user'))
+        await person.click()
+        await expect(search).toHaveValue(REGULAR_USER.username)
+        const groupSearch = page.getByTestId('add-namespace-group-search')
+        await groupSearch.fill(prefix)
+        const first = page.getByTestId(`auth-select-namespace-${groupIds[0]}`)
+        const last = page.getByTestId(`auth-select-namespace-${groupIds[7]}`)
+        const results = first.locator('..')
+        await expect(first).toBeVisible()
+        await first.scrollIntoViewIfNeeded()
+        await expectResultsClearOfFooter(results, page.getByTestId('submit-created-permissions'))
+        expect(await results.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(
+          true
+        )
+        await expectReachable(last)
+        await last.click()
+        await expect(groupSearch).toHaveValue(prefix)
+        await expect(last).toBeDisabled()
+        await expectReachable(first)
+        await first.click()
+        await expect(page.getByTestId(`remove-auth-namespace-${groupIds[0]}`)).toBeVisible()
+        await expectReachable(page.getByTestId('auth-role-namespace'))
+        await page.getByTestId('auth-role-namespace').click()
+        await page.getByRole('option', { name: /Developer|开发者/ }).click()
+        // Reopen the results before checking footer hit targets.
+        await groupSearch.click()
+        await expectReachable(page.getByTestId('submit-created-permissions'))
+        await expectReachable(page.getByTestId('cancel-created-permissions'))
+        await expectReachable(page.getByTestId('close-add-collaborator'))
+        await page.getByTestId('cancel-created-permissions').click()
+        await expect(page.getByTestId('permission-add-collaborator')).toBeFocused()
+        await page.getByTestId('permission-add-collaborator').click()
+        await page.getByTestId('close-add-collaborator').click()
+        await expect(page.getByTestId('permission-add-collaborator')).toBeFocused()
+      }
+    }
+  }
+)
+
+creationTest(
+  'submits on the first click while inline search results stay expanded',
+  async ({ page, creation }) => {
+    const name = fixtureName('e2e-grant-click')
+    creation.groups.add(name)
+    const group = await creation.api.post<{ id: number }>('/api/groups', {
+      name,
+      display_name: name,
+    })
+    expect(group.status).toBe(201)
+    await page.setViewportSize({ width: 1280, height: 800 })
+    await page.goto('/knowledge?type=document')
+    await page.getByTestId('create-kb-button').click()
+    const library = await createLibraryInDialog(page, creation)
+    await page.getByTestId('permission-add-collaborator').click()
+    await page.getByTestId('knowledge-auth-user-search').fill(REGULAR_USER.username)
+    await page.getByRole('button', { name: REGULAR_USER.username, exact: false }).click()
+    await page.getByTestId('add-namespace-group-search').fill(name)
+    await page.getByTestId(`auth-select-namespace-${group.data!.id}`).click()
+    await expect(page.getByTestId('knowledge-auth-user-search-results')).toBeVisible()
+    await expect(page.getByTestId('knowledge-auth-namespace-results')).toBeVisible()
+    const pending = page.waitForResponse(
+      response =>
+        new URL(response.url()).pathname ===
+          `/api/share/KnowledgeBase/${library.id}/members/batch` &&
+        response.request().method() === 'POST'
+    )
+    // A mousedown that collapses inline results can move the action before mouseup.
+    await page.getByTestId('submit-created-permissions').click()
+    const response = await pending
+    expect(response.status()).toBe(200)
+    expect(((await response.json()) as { failed: unknown[] }).failed).toEqual([])
+    await expect(page.getByTestId('knowledge-authorization-complete')).toBeVisible()
   }
 )

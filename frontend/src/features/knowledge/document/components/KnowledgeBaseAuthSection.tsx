@@ -141,10 +141,11 @@ export function KnowledgeBaseAuthSection({
                 </div>
               )}
               {/* Search box + Role selector inline */}
-              <div className="flex items-center gap-2">
+              <div className="flex items-start gap-2">
                 <div className="min-w-0 flex-1">
                   {section.renderSearch({
                     role,
+                    selectedEntries: entries,
                     onSelect: (entry: AuthEntry) => {
                       const exists = value.some(
                         e => e.entityType === entry.entityType && e.entityId === entry.entityId
@@ -221,9 +222,11 @@ export function KnowledgeBaseAuthSection({
 function UserAuthSearch({
   role,
   onSelect,
+  selectedEntries = [],
 }: {
   role: MemberRole
   onSelect: (entry: AuthEntry) => void
+  selectedEntries?: AuthEntry[]
 }) {
   const { t } = useTranslation('knowledge')
 
@@ -234,7 +237,10 @@ function UserAuthSearch({
 
   return (
     <UserSearchSelect
-      selectedUsers={[]}
+      selectedUsers={selectedEntries.map(entry => ({
+        id: Number(entry.entityId),
+        user_name: entry.label,
+      }))}
       onSelectedUsersChange={(users: SearchUser[]) => {
         if (users.length > 0) {
           const user = users[users.length - 1]
@@ -248,7 +254,8 @@ function UserAuthSearch({
         }
       }}
       placeholder={loc('document.permission.searchUserPlaceholder', '搜索用户...')}
-      multiple={false}
+      resultsLayout="inline"
+      clearSearchOnSelect={false}
       hideSelectedUsers
       inputTestId="knowledge-auth-user-search"
       className="[&_input]:min-h-11 [&_button]:min-h-11 [&_button]:min-w-11"
@@ -261,11 +268,13 @@ function NamespaceAuthSearch({
   onSelect,
   excludedEntityId,
   boundEntityIds,
+  selectedEntries = [],
 }: {
   role: MemberRole
   onSelect: (entry: AuthEntry) => void
   excludedEntityId?: string
   boundEntityIds?: string[]
+  selectedEntries?: AuthEntry[]
 }) {
   const { t } = useTranslation('knowledge')
   const { user: currentUser } = useUser()
@@ -280,8 +289,6 @@ function NamespaceAuthSearch({
   const searchRevision = useRef(0)
   const [searchQuery, setSearchQuery] = useState('')
   const [showDropdown, setShowDropdown] = useState(false)
-  const inputRef = useRef<HTMLInputElement>(null)
-  const dropdownRef = useRef<HTMLDivElement>(null)
 
   const performSearch = useCallback(async (query: string) => {
     const revision = ++searchRevision.current
@@ -312,21 +319,6 @@ function NamespaceAuthSearch({
     return () => clearTimeout(timer)
   }, [searchQuery, performSearch])
 
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (
-        dropdownRef.current &&
-        !dropdownRef.current.contains(event.target as Node) &&
-        inputRef.current &&
-        !inputRef.current.contains(event.target as Node)
-      ) {
-        setShowDropdown(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [])
-
   // Sort groups: owned by current user first, then by display_name
   const filteredGroups = [...groups].sort((a, b) => {
     const aOwned = currentUser ? a.owner_user_id === currentUser.id : false
@@ -344,8 +336,6 @@ function NamespaceAuthSearch({
       entityId: String(group.id),
       role,
     })
-    setSearchQuery('')
-    setShowDropdown(false)
   }
 
   return (
@@ -353,7 +343,6 @@ function NamespaceAuthSearch({
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-muted" />
         <Input
-          ref={inputRef}
           data-testid="add-namespace-group-search"
           value={searchQuery}
           onChange={e => {
@@ -370,8 +359,8 @@ function NamespaceAuthSearch({
       </div>
       {showDropdown && (
         <div
-          ref={dropdownRef}
-          className="absolute z-50 w-full mt-1 bg-base border border-border rounded-md shadow-lg max-h-48 overflow-y-auto"
+          data-testid="knowledge-auth-namespace-results"
+          className="w-full mt-1 bg-base border border-border rounded-md shadow-lg max-h-48 overflow-y-auto overscroll-contain"
         >
           {searching ? (
             <div className="flex items-center justify-center p-3">
@@ -400,15 +389,19 @@ function NamespaceAuthSearch({
             filteredGroups.map(group => {
               const isBound =
                 group.name === excludedEntityId || !!boundEntityIds?.includes(String(group.id))
+              const isSelected = selectedEntries.some(entry => entry.entityId === String(group.id))
               return (
                 <button
                   key={group.id}
                   data-testid={`auth-select-namespace-${group.id}`}
                   type="button"
-                  onClick={() => !isBound && handleSelect(group)}
-                  disabled={isBound}
+                  onClick={() => handleSelect(group)}
+                  disabled={isBound || isSelected}
+                  aria-pressed={isSelected}
                   className={`w-full min-h-11 flex items-center justify-between gap-3 p-3 text-left ${
-                    isBound ? 'opacity-50 cursor-not-allowed' : 'hover:bg-surface cursor-pointer'
+                    isBound || isSelected
+                      ? 'opacity-50 cursor-not-allowed'
+                      : 'hover:bg-surface cursor-pointer'
                   }`}
                 >
                   <span
@@ -442,18 +435,21 @@ function NamespaceAuthSearch({
 registerAuthSection({
   type: 'user',
   labelKey: 'document.permission.individual',
-  renderSearch: ({ role, onSelect }) => <UserAuthSearch role={role} onSelect={onSelect} />,
+  renderSearch: ({ role, onSelect, selectedEntries }) => (
+    <UserAuthSearch role={role} onSelect={onSelect} selectedEntries={selectedEntries} />
+  ),
 })
 
 registerAuthSection({
   type: 'namespace',
   labelKey: 'document.permission.namespace',
-  renderSearch: ({ role, onSelect, excludedEntityId, boundEntityIds }) => (
+  renderSearch: ({ role, onSelect, excludedEntityId, boundEntityIds, selectedEntries }) => (
     <NamespaceAuthSearch
       role={role}
       onSelect={onSelect}
       excludedEntityId={excludedEntityId}
       boundEntityIds={boundEntityIds}
+      selectedEntries={selectedEntries}
     />
   ),
 })

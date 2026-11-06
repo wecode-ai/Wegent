@@ -703,7 +703,7 @@ function PermissionManagementSession({
       {showAdd && (
         <Dialog open onOpenChange={setShowAdd}>
           <DialogContent
-            className="max-h-[90dvh] w-[calc(100%_-_1rem)] min-w-0 max-w-xl grid-cols-[minmax(0,1fr)] overflow-y-auto max-md:p-4"
+            className="max-h-[90dvh] w-[calc(100%_-_1rem)] min-w-0 max-w-xl flex flex-col overflow-hidden max-md:p-4"
             onCloseAutoFocus={event => {
               event.preventDefault()
               addTrigger.current?.focus()
@@ -713,10 +713,12 @@ function PermissionManagementSession({
               'data-testid': 'close-add-collaborator',
             }}
           >
-            <DialogHeader className="pr-10 text-left">
+            <DialogHeader className="shrink-0 pr-10 text-left">
               <DialogTitle>{t('document.permission.addCollaborator')}</DialogTitle>
             </DialogHeader>
-            <DialogDescription>{t('document.creation.selectTargets')}</DialogDescription>
+            <DialogDescription className="shrink-0">
+              {t('document.creation.selectTargets')}
+            </DialogDescription>
             <KnowledgeGrantForm
               kbId={kbId}
               kbNamespace={kbNamespace}
@@ -726,6 +728,7 @@ function PermissionManagementSession({
                 .flatMap(member => (member.entity_id ? [member.entity_id] : []))}
               onChanged={handleExternalChanged}
               onAccessDenied={onAccessDenied}
+              onCancel={() => setShowAdd(false)}
             />
           </DialogContent>
         </Dialog>

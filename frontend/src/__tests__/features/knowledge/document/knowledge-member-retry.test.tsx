@@ -5,6 +5,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { KnowledgeGrantForm } from '@/features/knowledge/permission/components/KnowledgeGrantForm'
 import { knowledgePermissionApi } from '@/apis/knowledge-permission'
+import { userApis } from '@/apis/user'
 const mockT = (key: string) => key
 jest.mock('@/hooks/useTranslation', () => ({ useTranslation: () => ({ t: mockT }) }))
 jest.mock('@/features/common/UserContext', () => ({ useUser: () => ({ user: { id: 1 } }) }))
@@ -57,7 +58,7 @@ it('keeps only failed people selected and retries without resending successful p
   expect(knowledgePermissionApi.batchAddPermission).not.toHaveBeenCalled()
   await user.click(screen.getByTestId('submit-created-permissions'))
   await screen.findByText(/retry Bob/)
-  expect(screen.queryByText('Alice')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('remove-auth-user-7')).not.toBeInTheDocument()
   await user.click(screen.getByTestId('submit-created-permissions'))
   await screen.findByTestId('knowledge-authorization-complete')
   expect(knowledgePermissionApi.batchAddPermission).toHaveBeenLastCalledWith(29, {
@@ -95,4 +96,34 @@ it('keeps failed teams available for retry through the same batch grant boundary
     members: [expect.objectContaining({ user_id: 0, entity_type: 'namespace', entity_id: '8' })],
   })
   expect(changed).toHaveBeenCalledTimes(2)
+})
+
+it('selects several people and teams from one search per type without conflating equal ids', async () => {
+  const user = userEvent.setup()
+  jest.mocked(userApis.searchUsers).mockClear()
+  render(<KnowledgeGrantForm kbId={29} onChanged={jest.fn()} />)
+  const peopleSearch = screen.getByTestId('knowledge-auth-user-search')
+  await user.type(peopleSearch, 'people')
+  await user.click(await screen.findByRole('button', { name: 'Alice' }))
+  expect(peopleSearch).toHaveValue('people')
+  expect(screen.getByRole('button', { name: 'Alice' })).toBeDisabled()
+  await user.click(screen.getByRole('button', { name: 'Bob' }))
+  expect(userApis.searchUsers).toHaveBeenCalledTimes(1)
+  expect(screen.getByTestId('remove-auth-user-7')).toBeInTheDocument()
+  expect(screen.getByTestId('remove-auth-user-8')).toBeInTheDocument()
+
+  const teamSearch = screen.getByTestId('add-namespace-group-search')
+  await user.type(teamSearch, 'team')
+  await user.click(await screen.findByTestId('auth-select-namespace-7'))
+  expect(teamSearch).toHaveValue('team')
+  expect(screen.getByTestId('auth-select-namespace-7')).toBeDisabled()
+  await user.click(screen.getByTestId('auth-select-namespace-8'))
+  expect(screen.getByTestId('remove-auth-namespace-7')).toBeInTheDocument()
+  expect(screen.getByTestId('remove-auth-namespace-8')).toBeInTheDocument()
+
+  await user.click(screen.getByTestId('remove-auth-namespace-7'))
+  expect(screen.getByTestId('auth-select-namespace-7')).toBeEnabled()
+  await user.click(teamSearch)
+  expect(screen.getByTestId('auth-select-namespace-7')).toBeEnabled()
+  expect(screen.getByTestId('remove-auth-user-7')).toBeInTheDocument()
 })
