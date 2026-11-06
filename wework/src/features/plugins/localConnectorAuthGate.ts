@@ -151,16 +151,18 @@ export interface ConnectorAuthHint {
 export function resolveConnectorAuthHint(
   text: string | null | undefined
 ): ConnectorAuthHint | null {
-  const local = resolveLocalConnectorAuthHint(text)
-  if (local) return local
   if (!text || !messageRequiresConnectorAuth(text)) return null
   const pluginKey = extractConnectorAuthPluginKey(text)
   const connectorSlug = extractConnectorAuthConnectorSlug(text)
-  // An invalid local identity must not be redirected to cloud authorization.
-  if (pluginKey || !connectorSlug) return null
+  if (!connectorSlug) return null
+  if (pluginKey === 'gitlab' && connectorSlug.startsWith('wework-gitlab-cli-')) {
+    return resolveLocalConnectorAuthHint(text)
+  }
+  const localHint = resolveLocalConnectorAuthHint(text)
   return {
-    pluginKey: null,
+    pluginKey,
     connectorSlug,
-    displayName: connectorSlug,
+    displayName: pluginKey ?? connectorSlug,
+    ...(localHint?.instance ? { instance: localHint.instance } : {}),
   }
 }
