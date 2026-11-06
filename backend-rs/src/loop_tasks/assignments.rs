@@ -41,6 +41,7 @@ const ASSIGNMENT_EVENT_TYPE: &str = "assignment";
 /// One `IssueAssignmentResponse` row.
 #[derive(Debug, Serialize)]
 pub(super) struct IssueAssignmentResponse {
+    automation: Option<serde_json::Value>,
     pub(super) id: String,
     issue_id: String,
     pub(super) target_type: String,
@@ -412,6 +413,7 @@ async fn assignment_response(
             .map(|user| user.user_name)
     };
     Ok(IssueAssignmentResponse {
+        automation: metadata.automation.clone(),
         id: comment.id.clone(),
         issue_id: comment.loop_item_id.clone().unwrap_or_default(),
         target_type: metadata.target_type.clone().unwrap_or_default(),
@@ -599,6 +601,7 @@ mod tests {
         let comments = vec![assign("101", "human", "7", "")];
         let event = active_events(&comments);
         let row = IssueAssignmentResponse {
+            automation: None,
             id: event[0].comment.id.clone(),
             issue_id: "EXAMPLE-5".to_string(),
             target_type: event[0].metadata.target_type.clone().unwrap_or_default(),
@@ -621,6 +624,7 @@ mod tests {
             value,
             serde_json::json!({
                 "id": "101",
+                "automation": null,
                 "issue_id": "EXAMPLE-5",
                 "target_type": "human",
                 "target_id": "7",
