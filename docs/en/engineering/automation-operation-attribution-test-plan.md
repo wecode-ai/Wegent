@@ -22,7 +22,7 @@ Prerequisites: isolated real Backend, MySQL, Redis and frontend services, a sign
 1. Another member creates an Issue; the author configures a status-triggered rule.
 2. Manually change the status and wait for the real automated assignment to persist.
 3. Verify the rule ID, name and run ID; the authorizing user ID remains the rule author.
-4. Open assignment history and verify that the operation displays the rule name.
+4. Open the Issue's “More properties” menu, expand assignment history, and verify that the operation displays the rule name.
 5. Rename and disable the rule, manually reassign the Issue, and reload.
 6. The historical automation keeps its original rule name. The new manual action shows its user's name without inherited automation attribution.
 
