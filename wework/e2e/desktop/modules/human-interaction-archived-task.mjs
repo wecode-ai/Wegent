@@ -70,7 +70,9 @@ export async function verifyArchivedTaskInteractionCleanup(control, timeoutMs) {
     timeoutMs,
   })
   await control.command('click', '[data-testid="workspace-tab-select-pending-interactions"]')
-  await control.command('click', `${PAGE} [data-testid="interactions-refresh"]`)
+  await control.command('clickWhenEnabled', `${PAGE} [data-testid="interactions-refresh"]`, {
+    timeoutMs,
+  })
   await control.command('waitFor', `${PAGE} [data-testid="interactions-empty"]`, {
     visible: true,
     timeoutMs,
