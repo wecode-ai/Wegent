@@ -1,9 +1,13 @@
-import type { GitCloneProjectOperation } from '@/types/api'
+export type GitCloneFailureReason =
+  | 'executor-offline'
+  | 'executor-not-found'
+  | 'clone-failed'
+  | 'open-failed'
 
 export function gitCloneFailureReason(
   error: unknown,
   stage: 'clone' | 'open'
-): NonNullable<GitCloneProjectOperation['failureReason']> {
+): GitCloneFailureReason {
   if (error instanceof Error && error.message.startsWith('executor-not-found:')) {
     return 'executor-not-found'
   }
@@ -13,7 +17,10 @@ export function gitCloneFailureReason(
   return stage === 'clone' ? 'clone-failed' : 'open-failed'
 }
 
-export function isGitCloneDeviceMissing(operation: GitCloneProjectOperation): boolean {
+export function isGitCloneDeviceMissing(operation: {
+  failureReason?: GitCloneFailureReason
+  error?: string
+}): boolean {
   return (
     operation.failureReason === 'executor-not-found' ||
     operation.error?.startsWith('executor-not-found:') === true

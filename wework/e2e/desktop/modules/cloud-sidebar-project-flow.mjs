@@ -45,7 +45,7 @@ export async function verifyCloudSidebarGitClone(control, workspacePath, homePat
   })
   await control.command('clickWhenEnabled', '[data-testid="remote-project-git-submit"]')
   await control.command('waitFor', '[data-testid="remote-project-git-error"]', {
-    text: 'invalid..branch',
+    text: '仓库访问检查通过，但克隆失败',
   })
   assert.equal(
     await control.command('getValue', '[data-testid="remote-project-git-url-input"]'),
@@ -108,8 +108,8 @@ export async function verifyGitCloneDeviceRecovery(control, workspacePath, cloud
     value: 'invalid..branch',
   })
   await control.command('clickWhenEnabled', '[data-testid="remote-project-git-submit"]')
-  await control.command('waitFor', '[data-testid="git-clone-project-operations"]', {
-    text: '克隆失败',
+  await control.command('waitFor', '[data-testid="remote-project-git-error"]', {
+    text: '仓库访问检查通过，但克隆失败',
   })
 
   // Remove the real device from discovery without spawning another Executor.
@@ -120,8 +120,18 @@ export async function verifyGitCloneDeviceRecovery(control, workspacePath, cloud
   )
   try {
     assert.equal(await cloud.device(CLOUD_DEVICE_ID), null)
-    await control.command('clickWhenEnabled', '[data-testid="projects-create-button"]')
-    await control.command('click', '[data-testid="project-create-remote-option"]')
+    await control.command('clickWhenEnabled', '[data-testid="remote-project-git-submit"]')
+    await control.command('waitFor', '[data-testid="remote-project-git-error"]', {
+      text: 'executor-not-found',
+    })
+    await control.command('click', '[data-testid="remote-project-git-reselect-device"]')
+    await control.command(
+      'waitFor',
+      `[data-testid="standalone-remote-device-option-${REMOTE_DOCKER_DEVICE_ID}"]`
+    )
+    await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
+      value: REMOTE_DOCKER_DEVICE_ID,
+    })
     await waitForControlValue(
       control,
       '[data-testid="standalone-remote-device-select"]',
@@ -135,13 +145,6 @@ export async function verifyGitCloneDeviceRecovery(control, workspacePath, cloud
       ),
       '0'
     )
-    await control.command('click', '[data-testid="close-standalone-folder-project-dialog"]')
-    const retry = 'button[data-testid^="retry-git-clone-project-"]'
-    await control.command('click', retry)
-    await control.command('waitFor', '[data-testid="git-clone-project-operations"]', {
-      text: '设备不可用',
-    })
-    await control.command('click', retry)
     await waitForControlValue(
       control,
       '[data-testid="remote-project-git-url-input"]',
@@ -160,9 +163,6 @@ export async function verifyGitCloneDeviceRecovery(control, workspacePath, cloud
       await control.command('getElementCount', '[data-testid="standalone-folder-project-dialog"]'),
       '1'
     )
-    await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
-      value: REMOTE_DOCKER_DEVICE_ID,
-    })
     await control.command('fill', '[data-testid="remote-project-git-parent-input"]', {
       value: newParent,
     })
@@ -170,7 +170,7 @@ export async function verifyGitCloneDeviceRecovery(control, workspacePath, cloud
       value: branch,
     })
     await control.command('clickWhenEnabled', '[data-testid="remote-project-git-submit"]')
-    await control.command('waitFor', '[data-testid="git-clone-project-operations"]', {
+    await control.command('waitFor', '[data-testid="standalone-folder-project-dialog"]', {
       visible: false,
     })
     await runChecked('git', ['rev-parse', '--is-inside-work-tree'], { cwd: expectedPath })

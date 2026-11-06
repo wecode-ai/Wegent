@@ -6,12 +6,13 @@
 
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createCollaborationTranslator, type CollaborationLocale } from '../i18n'
 import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
 import type { CollaborationExecutionEnvironment, CollaborationProject } from '../types'
 import { ProjectExecutionEnvironments } from './ProjectExecutionEnvironments'
+import { GitAccountConfigurationProvider } from '../controls/GitAccountConfiguration'
 
 const repositoryOptions = [
   {
@@ -78,6 +79,10 @@ function environment(
 
 let root: Root | null = null
 let container: HTMLDivElement | null = null
+
+beforeEach(() => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+})
 
 afterEach(() => {
   act(() => root?.unmount())
@@ -158,6 +163,7 @@ async function render({
   executionEnvironment,
   onManageDevices,
   onProjectChange,
+  gitAccountConfiguration,
 }: {
   assigned?: CollaborationExecutionEnvironment[]
   role?: CollaborationProject['access_role']
@@ -166,6 +172,7 @@ async function render({
   executionEnvironment?: CollaborationProject['execution_environment']
   onManageDevices?(): void
   onProjectChange?(project: CollaborationProject): void
+  gitAccountConfiguration?: { baseUrl: string; openUrl(url: string): void }
 } = {}) {
   const online = environment(21, 'Personal online', 'online')
   const offline = environment(22, 'Personal offline', 'offline')
@@ -261,17 +268,19 @@ async function render({
   root = createRoot(container)
   await act(async () => {
     root?.render(
-      <ProjectExecutionEnvironments
-        api={api}
-        onManageDevices={onManageDevices}
-        onProjectChange={onProjectChange}
-        project={{
-          ...project,
-          access_role: role,
-          ...(executionEnvironment ? { execution_environment: executionEnvironment } : {}),
-        }}
-        translate={createCollaborationTranslator(locale)}
-      />
+      <GitAccountConfigurationProvider value={gitAccountConfiguration ?? null}>
+        <ProjectExecutionEnvironments
+          api={api}
+          onManageDevices={onManageDevices}
+          onProjectChange={onProjectChange}
+          project={{
+            ...project,
+            access_role: role,
+            ...(executionEnvironment ? { execution_environment: executionEnvironment } : {}),
+          }}
+          translate={createCollaborationTranslator(locale)}
+        />
+      </GitAccountConfigurationProvider>
     )
   })
   return api
@@ -291,15 +300,17 @@ async function rerender(
 ) {
   await act(async () => {
     root?.render(
-      <ProjectExecutionEnvironments
-        api={api}
-        project={{
-          ...project,
-          version,
-          ...(executionEnvironment ? { execution_environment: executionEnvironment } : {}),
-        }}
-        translate={createCollaborationTranslator('zh-CN')}
-      />
+      <GitAccountConfigurationProvider value={null}>
+        <ProjectExecutionEnvironments
+          api={api}
+          project={{
+            ...project,
+            version,
+            ...(executionEnvironment ? { execution_environment: executionEnvironment } : {}),
+          }}
+          translate={createCollaborationTranslator('zh-CN')}
+        />
+      </GitAccountConfigurationProvider>
     )
   })
 }
@@ -558,6 +569,94 @@ describe('ProjectExecutionEnvironments', () => {
     expect(shown?.getAttribute('title')).toBe(rawError)
     expect(container?.querySelector(`[data-testid="${prefix}s-error"]`)).toBeNull()
   })
+
+  it('renders structured Git preflight failures with actionable domain guidance', async () => {
+    const api = await render({
+      assigned: [environment(21, 'Assigned online', 'online')],
+    })
+    const diagnostic =
+      'Failed to prepare project repositories: git-access:' +
+      JSON.stringify({
+        code: 'credentials-required',
+        domain: 'git.example:8443',
+        message: 'Configure Git',
+      })
+    api.projects.initializeExecutionEnvironment.mockImplementationOnce(async () => ({
+      ...project,
+      execution_environment: {
+        repositories: [],
+        setup_steps: [],
+        fingerprint: 'v1',
+        devices: {
+          'device-21': {
+            status: 'error' as const,
+            workspace_path: '',
+            prepared_at: null,
+            error: diagnostic,
+          },
+        },
+      },
+    }))
+    await act(async () => element<HTMLButtonElement>('-initialize-21').click())
+    expect(element('-environment-error').textContent).toContain('git.example:8443')
+    expect(element('-environment-error').textContent).toContain('Git 账户')
+    expect(element('-environment-error').textContent).not.toContain('git-access:')
+  })
+
+  it.each([
+    ['credentials-required', false, true],
+    ['authentication-failed', false, true],
+    ['network-error', false, false],
+    ['repository-inaccessible', false, false],
+    ['credentials-required', true, false],
+  ] as const)(
+    'offers Git settings for %s on current device=%s: %s',
+    async (code, current, visible) => {
+      const openUrl = vi.fn()
+      const api = await render({
+        assigned: [
+          {
+            ...environment(21, 'Target executor', 'online'),
+            is_current_device: current,
+          },
+        ],
+        gitAccountConfiguration: { baseUrl: 'https://cloud.example', openUrl },
+      })
+      api.projects.initializeExecutionEnvironment.mockImplementationOnce(async () => ({
+        ...project,
+        execution_environment: {
+          repositories: [],
+          setup_steps: [],
+          fingerprint: 'v1',
+          devices: {
+            'device-21': {
+              status: 'error' as const,
+              workspace_path: '',
+              prepared_at: null,
+              error: `git-access:${JSON.stringify({ code, domain: 'git.example:8443', message: 'Git failed' })}`,
+            },
+          },
+        },
+      }))
+      await act(async () => element<HTMLButtonElement>('-initialize-21').click())
+      const configure = container?.querySelector<HTMLButtonElement>(
+        `[data-testid="${prefix}-configure-git"]`
+      )
+      expect(Boolean(configure)).toBe(visible)
+      if (visible) {
+        await act(async () => configure!.click())
+        expect(openUrl).toHaveBeenCalledExactlyOnceWith(
+          'https://cloud.example/settings?tab=integrations&gitDomain=git.example%3A8443#git-accounts'
+        )
+        expect(element('-environment-error').textContent).not.toContain('git-access:')
+        await act(async () => element<HTMLButtonElement>('-initialize-21').click())
+        expect(api.projects.initializeExecutionEnvironment).toHaveBeenCalledTimes(2)
+        expect(container?.querySelector(`[data-testid="${prefix}-configure-git"]`)).toBeNull()
+      } else {
+        expect(openUrl).not.toHaveBeenCalled()
+      }
+    }
+  )
 
   it('explains that a legacy Executor cannot initialize a blank environment', async () => {
     const api = await render({

@@ -22,6 +22,7 @@ import {
 } from '@wegent/collaboration'
 import { toast } from 'sonner'
 import { CollaborationTheme, useDocumentTheme } from '@wegent/collaboration/theme'
+import { GitAccountConfigurationProvider } from '@wegent/collaboration/controls'
 
 import {
   createProjectChatClient,
@@ -473,12 +474,23 @@ export function CollaborationPage() {
 
   return (
     <CollaborationTheme mode={theme}>
-      <CollaborationPlatformApp
-        api={api}
-        host={platformHost}
-        locale={locale}
-        renderShell={({ main, sidebar }) => <CollaborationWebShell main={main} sidebar={sidebar} />}
-      />
+      <GitAccountConfigurationProvider
+        value={{
+          baseUrl: typeof window === 'undefined' ? undefined : window.location.origin,
+          openUrl: url => {
+            window.open(url, '_blank', 'noopener,noreferrer')
+          },
+        }}
+      >
+        <CollaborationPlatformApp
+          api={api}
+          host={platformHost}
+          locale={locale}
+          renderShell={({ main, sidebar }) => (
+            <CollaborationWebShell main={main} sidebar={sidebar} />
+          )}
+        />
+      </GitAccountConfigurationProvider>
     </CollaborationTheme>
   )
 }

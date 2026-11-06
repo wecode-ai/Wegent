@@ -4,7 +4,9 @@
 
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
+import { gitRepositoryDomain } from '@wegent/chat-core/git-access'
 import '@/features/common/scrollbar.css'
 import { Button } from '@/components/ui/button'
 import { Bars3Icon, PencilIcon, TrashIcon } from '@heroicons/react/24/outline'
@@ -137,6 +139,8 @@ export default function GitHubIntegration() {
   const [showModal, setShowModal] = useState(false)
   const [modalType, setModalType] = useState<'add' | 'edit'>('add')
   const [currentEditInfo, setCurrentEditInfo] = useState<GitInfo | null>(null)
+  const requestedDomain = useSearchParams().get('gitDomain') ?? ''
+  const handledDomain = useRef('')
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
@@ -167,6 +171,21 @@ export default function GitHubIntegration() {
   }, [user, toast, t])
 
   const platforms = gitInfo || []
+
+  useEffect(() => {
+    if (!user || isLoading || !requestedDomain || handledDomain.current === requestedDomain) return
+    handledDomain.current = requestedDomain
+    const account = gitInfo.find(info => {
+      const domain = info.git_domain.trim()
+      return (
+        gitRepositoryDomain(domain.includes('://') ? domain : `https://${domain}`) ===
+        requestedDomain.toLowerCase()
+      )
+    })
+    setModalType(account ? 'edit' : 'add')
+    setCurrentEditInfo(account ?? null)
+    setShowModal(true)
+  }, [gitInfo, isLoading, requestedDomain, user])
 
   const getItemKey = (info: GitInfo) => {
     if (info.id) return info.id
@@ -242,6 +261,7 @@ export default function GitHubIntegration() {
     <div
       className="space-y-3 rounded-md border border-border bg-base p-4"
       data-testid="git-tokens-section"
+      id="git-accounts"
     >
       <div className="space-y-1">
         <h3 className="text-base font-medium text-text-primary">
@@ -307,6 +327,7 @@ export default function GitHubIntegration() {
         onClose={() => setShowModal(false)}
         mode={modalType}
         editInfo={currentEditInfo}
+        initialDomain={requestedDomain}
       />
     </div>
   )

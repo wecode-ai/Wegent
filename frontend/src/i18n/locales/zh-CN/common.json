@@ -1,4 +1,13 @@
 {
+  "workbench": {
+    "git_access_credentials_required": "仓库 {{domain}} 需要目标设备上的 Git 凭据。请在设置 → 集成 → Git 账户中配置对应域后重新准备。",
+    "git_access_ssh_authentication_failed": "{{domain}} 的 SSH 认证被拒绝，请配置目标设备的 SSH 密钥后重试；云端 Git 令牌不能替代 SSH 密钥。",
+    "git_access_authentication_failed": "{{domain}} 的 Git 认证被拒绝。请检查设置 → 集成 → Git 账户中的令牌或目标设备的 SSH 密钥后重试。",
+    "git_access_repository_inaccessible": "请检查仓库地址和账户的仓库访问权限；不一定是登录问题。",
+    "git_access_network_error": "请检查目标设备网络、代理、TLS 证书和 SSH 主机信任。",
+    "git_access_git_unavailable": "目标设备无法启动 Git，请安装或修复 Git 后重试。",
+    "git_access_invalid_url": "请使用不含凭据或查询参数的合法仓库地址。"
+  },
   "extension": {
     "name": "Wegent AI 助手",
     "description": "浏览器中的完整 AI 团队。"

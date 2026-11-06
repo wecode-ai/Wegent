@@ -20,24 +20,32 @@ The project owns this policy, not a robot or model runtime profile. Changes affe
 ## Prerequisites
 
 - A local or cloud execution device is online.
-- A Git token with access to the target repository is configured in Settings.
-- The target repository and default branch are visible to the current account.
+- Public repositories do not require a cloud Git account; private repositories need working credentials on the target device.
+- Local devices use native Git, SSH, or credential managers. ClaudeCode cloud and remote devices can use accounts in **Settings → Integrations → Git accounts**.
+- The repository and selected branch are accessible to the Git identity in use.
 - The execution device can reach the Git service endpoint.
 
 ## Clone a Project from Git
 
 1. In the Wework sidebar, click the create button next to “Projects”.
-2. Select “Clone from Git”.
-3. Choose the execution device in the dialog.
-4. Select a Git repository.
-5. Select the default branch.
-6. Click “Create project”.
+2. Select the remote-project option and choose the target device.
+3. Select **Clone from Git repository** and enter the repository URL.
+4. Choose a parent directory on that device. Expand advanced options to specify a branch; leave it empty to use the repository default.
+5. Select **Clone and add**.
 
-The dialog opens immediately, then loads repositories and branches asynchronously. While repositories are loading, the repository selector shows “Loading repositories...”.
+Wework checks access on the target device before cloning and opening the project. Progress and errors remain in the dialog, without extra sidebar clone notices. Failures retain the URL, branch, and directory. If cloning succeeds but project registration fails, retry registers the existing checkout rather than cloning again.
+
+### Configuration and recovery
+
+The quiet **Configure Git account** action beside the URL label opens **Settings → Integrations → Git accounts** for the current cloud connection, targeting the repository domain, including its port. Execution environments and conversation error cards offer the same entry when credentials are needed.
+
+On authentication failure, ClaudeCode cloud or remote devices attempt to sync configured accounts and recheck once. When the matching account is missing, configure it and return to resume. Successful synchronization does not prove repository access: expired credentials still produce an error. An empty account list never clears device credentials; removing managed configuration requires separate confirmation.
+
+Local devices do not show an unusable cloud configuration action. Repair their native Git or SSH credentials, then recheck. Network, certificate, URL, and permission failures are not treated as expired login. Offline devices refresh before retry. If a device was removed, the dialog retains inputs and requires explicit replacement-device selection and confirmation of that device's destination directory.
 
 ## Directory Rules
 
-Git projects are cloned under the execution device project root:
+The URL-based clone flow uses the selected parent directory and creates `<parent>/<repository-name>`. Other Git project entries using a managed project root default to:
 
 ```bash
 ~/.wecode/wegent-executor/workspace/projects/<repoName>

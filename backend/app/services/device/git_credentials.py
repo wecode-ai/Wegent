@@ -60,6 +60,10 @@ class DeviceGitCredentialResolutionError(DeviceGitCredentialSyncError):
     """Raised before device mutation when any effective credential is unavailable."""
 
 
+class DeviceGitCredentialNoAccountsError(DeviceGitCredentialResolutionError):
+    """No accounts exist; public repositories and native device auth may still work."""
+
+
 class DeviceGitCredentialConflictError(DeviceGitCredentialSyncError):
     """Raised when another synchronization already owns the target lock."""
 
@@ -328,7 +332,7 @@ async def sync_git_accounts_to_device(
     await _require_eligible_device(db, user_id=user.id, device_id=device_id)
     accounts, duplicate_domains = _effective_accounts(user)
     if not accounts and not allow_empty:
-        raise DeviceGitCredentialResolutionError(
+        raise DeviceGitCredentialNoAccountsError(
             "No Git accounts are configured; confirm before clearing managed credentials"
         )
 
