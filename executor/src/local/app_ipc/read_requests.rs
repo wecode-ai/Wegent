@@ -8,9 +8,9 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use super::*;
 
-pub(super) const MAX_CONCURRENT_HISTORY_READS: usize = 2;
-const MAX_QUEUED_HISTORY_READS: usize = 8;
-const MAX_PENDING_HISTORY_READS: usize = MAX_CONCURRENT_HISTORY_READS + MAX_QUEUED_HISTORY_READS;
+use crate::runtime_work::transcript_work::{
+    MAX_CONCURRENT_HISTORY_READS, MAX_PENDING_HISTORY_READS,
+};
 
 pub(super) struct HistoryReadAdmission {
     active: Arc<Semaphore>,
