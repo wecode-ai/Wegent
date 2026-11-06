@@ -41,7 +41,13 @@ import { WorkspaceFilePreview } from './WorkspaceFilePreview'
 import { WorkspaceFileToolbar, WorkspaceFileRootSelector } from './WorkspaceFileToolbar'
 import { WorkspaceFileTree } from './WorkspaceFileTree'
 import { useWorkspaceFileReveal } from './useWorkspaceFileReveal'
-import { isLikelyTextContent, isMarkdownFile, workspaceFilePreviewKind } from './workspaceFileTypes'
+import { useWorkspaceFileNavigation } from './useWorkspaceFileNavigation'
+import {
+  isLikelyTextContent,
+  isMarkdownFile,
+  mimeTypeForFileName,
+  workspaceFilePreviewKind,
+} from './workspaceFileTypes'
 
 // Keep the retained preview observable across slower Windows IPC control round trips.
 const ELECTRON_E2E_FILE_TRANSITION_MS = 1_000
@@ -95,34 +101,15 @@ interface FilePreviewLoadingProgress {
   totalBytes: number | null
 }
 
+interface WorkspaceTextDocument {
+  file: WorkspaceTextFileResponse
+  content: string
+  loadVersion: number
+}
+
 function decodeBase64(value: string): Uint8Array {
   const decoded = atob(value)
   return Uint8Array.from(decoded, character => character.charCodeAt(0))
-}
-
-function mimeTypeForFileName(name: string): string {
-  const extension = name.split('.').pop()?.toLowerCase()
-  const types: Record<string, string> = {
-    csv: 'text/csv',
-    doc: 'application/msword',
-    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    gif: 'image/gif',
-    htm: 'text/html',
-    html: 'text/html',
-    jpeg: 'image/jpeg',
-    jpg: 'image/jpeg',
-    mp4: 'video/mp4',
-    ogv: 'video/ogg',
-    pdf: 'application/pdf',
-    png: 'image/png',
-    ppt: 'application/vnd.ms-powerpoint',
-    pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-    webp: 'image/webp',
-    webm: 'video/webm',
-    xls: 'application/vnd.ms-excel',
-    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  }
-  return types[extension ?? ''] ?? 'application/octet-stream'
 }
 
 function resolveWorkspaceFilePath(target: WorkspaceTarget, path: string): string | null {
@@ -213,7 +200,10 @@ export function FileWorkspacePanel({
   const [selectedPathIsDirectory, setSelectedPathIsDirectory] = useState(false)
   const [attachmentPreview, setAttachmentPreview] =
     useState<WorkspaceFileOpenRequest['attachment']>()
-  const [preview, setPreview] = useState<WorkspaceTextFileResponse | null>(null)
+  const [textDocument, setTextDocument] = useState<WorkspaceTextDocument | null>(null)
+  const preview = textDocument?.file ?? null
+  const editedContent = textDocument?.content ?? ''
+  const loadVersion = textDocument?.loadVersion
   const [binaryPreview, setBinaryPreview] = useState<WorkspaceBinaryPreview | null>(null)
   const [previewLineTarget, setPreviewLineTarget] = useState<PreviewLineTarget | null>(null)
   const [loadingPaths, setLoadingPaths] = useState<Set<string>>(new Set())
@@ -227,7 +217,6 @@ export function FileWorkspacePanel({
   const [previewError, setPreviewError] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
   const [markdownMode, setMarkdownMode] = useState<'preview' | 'source'>('preview')
-  const [editedContent, setEditedContent] = useState('')
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [directoryTreeVisible, setDirectoryTreeVisible] = useState(true)
@@ -375,8 +364,7 @@ export function FileWorkspacePanel({
           await preserveElectronE2EFileTransition()
           if (fileRequestSequence.current !== requestId) return
           setBinaryPreview(null)
-          setPreview(file)
-          setEditedContent(file.content)
+          setTextDocument({ file, content: file.content, loadVersion: requestId })
           const editable = Boolean(file.editable && writeWorkspaceTextFile)
           setEditing(editable)
           setMarkdownMode(editable && isMarkdownFile(file.name) ? 'source' : 'preview')
@@ -449,9 +437,8 @@ export function FileWorkspacePanel({
           fileSize: chunk.size,
           chunkCount: chunks.length,
         })
-        setPreview(null)
+        setTextDocument(null)
         setEditing(false)
-        setEditedContent('')
         setBinaryPreview({
           path: chunk.path,
           name: chunk.name,
@@ -468,9 +455,8 @@ export function FileWorkspacePanel({
           requestId,
           errorName: error instanceof Error ? error.name : 'UnknownError',
         })
-        setPreview(null)
+        setTextDocument(null)
         setEditing(false)
-        setEditedContent('')
         setSaveError(null)
         setBinaryPreview(null)
         setPreviewLineTarget(null)
@@ -523,13 +509,12 @@ export function FileWorkspacePanel({
         setSelectedPathIsDirectory(true)
         setActiveDirectoryPath(resolvedPath)
         setDirectoryTreeVisible(true)
-        setPreview(null)
+        setTextDocument(null)
         setBinaryPreview(null)
         setPreviewLineTarget(null)
         setPreviewError(null)
         setPreviewLoading(false)
         setEditing(false)
-        setEditedContent('')
         setSaveError(null)
         if (entries) {
           setEntriesByPath(previous => ({
@@ -632,8 +617,14 @@ export function FileWorkspacePanel({
         contentToSave,
         expectedRevision
       )
-      setPreview(current => (current?.path === filePath ? saved : current))
-      setEditedContent(current => (current === contentToSave ? saved.content : current))
+      setTextDocument(current => {
+        if (current?.file.path !== filePath || current.loadVersion !== loadVersion) return current
+        return {
+          ...current,
+          file: saved,
+          content: current.content === contentToSave ? saved.content : current.content,
+        }
+      })
       if (editedContentRef.current === contentToSave && pendingNavigationRef.current !== null) {
         const action = pendingNavigationRef.current
         pendingNavigationRef.current = null
@@ -651,7 +642,7 @@ export function FileWorkspacePanel({
       savingRef.current = false
       setSaving(false)
     }
-  }, [dirty, editedContent, preview, stableTarget, t, writeWorkspaceTextFile])
+  }, [dirty, editedContent, loadVersion, preview, stableTarget, t, writeWorkspaceTextFile])
 
   useEffect(() => {
     saveFileRef.current = saveFile
@@ -659,7 +650,7 @@ export function FileWorkspacePanel({
 
   const handleEditedContentChange = useCallback((content: string) => {
     editedContentRef.current = content
-    setEditedContent(content)
+    setTextDocument(current => (current ? { ...current, content } : current))
   }, [])
 
   useEffect(() => {
@@ -670,17 +661,12 @@ export function FileWorkspacePanel({
     return () => window.clearTimeout(timeoutId)
   }, [dirty, saveError, saveFile, saving])
 
-  const navigateWithDirtyGuard = useCallback(
-    (action: () => void) => {
-      if (dirty || savingRef.current) {
-        pendingNavigationRef.current = action
-        if (dirty && !savingRef.current) void saveFileRef.current()
-        return
-      }
-      action()
-    },
-    [dirty]
-  )
+  const navigateWithDirtyGuard = useWorkspaceFileNavigation({
+    dirty,
+    savingRef,
+    saveFileRef,
+    pendingNavigationRef,
+  })
 
   useImperativeHandle(ref, () => ({ navigate: navigateWithDirtyGuard }), [navigateWithDirtyGuard])
 
@@ -709,9 +695,8 @@ export function FileWorkspacePanel({
         setSelectedFilePath(null)
         setMarkdownMode('preview')
         setSelectedPathIsDirectory(false)
-        setPreview(null)
+        setTextDocument(null)
         setEditing(false)
-        setEditedContent('')
         setSaveError(null)
         setBinaryPreview(null)
         setPreviewLineTarget(null)
@@ -938,6 +923,7 @@ export function FileWorkspacePanel({
           onAddCodeComment={onAddCodeComment}
           editing={editing}
           editedContent={editedContent}
+          loadVersion={loadVersion}
           onEditedContentChange={handleEditedContentChange}
           onSave={() => void saveFile()}
           markdownMode={markdownMode}
@@ -983,7 +969,6 @@ export function FileWorkspacePanel({
               className="shrink-0 underline"
               onClick={() => {
                 setEditing(false)
-                setEditedContent('')
                 setSaveError(null)
                 openFilePath(selectedFilePath)
               }}

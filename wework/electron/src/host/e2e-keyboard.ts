@@ -100,6 +100,6 @@ export async function sendE2EText(
   requireE2EControl(environment)
   requireAvailableContents(contents)
   await focusInputContents(contents, focusWindow)
-  contents.insertText(text)
+  await contents.insertText(text)
   return { backend: 'electron-insert-text', textLength: text.length }
 }

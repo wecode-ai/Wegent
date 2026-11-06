@@ -1,7 +1,8 @@
 import { getWorkspaceCodeText, installPierreEditorTestPlatform } from '@/test/pierreCode'
 import { registerMcpAppPanel } from '@/features/mcp-apps/workspacePanels'
 import type { WorkspaceTarget } from '@/types/workspace-files'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { Editor } from '@pierre/diffs/edit'
 import type { ComponentProps } from 'react'
 import { beforeAll, describe, expect, test, vi } from 'vitest'
 import { FileWorkspacePanel } from './FileWorkspacePanel'
@@ -46,6 +47,108 @@ const browserState = {
   hasActiveDownload: false,
   openRequest: null,
 }
+
+test.each([false, true])(
+  'saves the reloaded document against its matching disk revision (older save pending: %s)',
+  async pendingSave => {
+    const edit = vi.spyOn(Editor.prototype, 'edit')
+    const target: WorkspaceTarget = { deviceId: 'fixture', path: '/repo', source: 'project' }
+    const initial = {
+      path: '/repo/file.ts',
+      name: 'file.ts',
+      content: 'const old = 1',
+      revision: 'revision-1',
+      editable: true,
+      truncated: false,
+      size: 13,
+    }
+    const external = { ...initial, content: 'const external = 2', revision: 'revision-2' }
+    let finishOlderSave!: (file: typeof initial) => void
+    const olderSave = new Promise<typeof initial>(resolve => {
+      finishOlderSave = resolve
+    })
+    const api = {
+      listWorkspaceEntries: vi.fn(async () => ({ path: target.path, entries: [] })),
+      readWorkspaceTextFile: vi.fn().mockResolvedValueOnce(initial).mockResolvedValueOnce(external),
+      writeWorkspaceTextFile: vi.fn(async (_device: string, _path: string, content: string) => ({
+        ...external,
+        content,
+        revision: 'revision-3',
+      })),
+    }
+    const panel = (id: number) => (
+      <FileWorkspacePanel
+        target={target}
+        workspaceFileApi={api}
+        openFileRequest={{ path: initial.path, id }}
+        onAddCodeComment={vi.fn()}
+      />
+    )
+    const attachedEditor = async () => {
+      await waitFor(() =>
+        expect(
+          document
+            .querySelector('diffs-container')
+            ?.shadowRoot?.querySelector('[data-testid="workspace-file-editor-content"]')
+        ).not.toBeNull()
+      )
+      return edit.mock.contexts.at(-1) as Editor
+    }
+    const insert = (editor: Editor, text: string) =>
+      act(() =>
+        editor.applyEdits([
+          {
+            range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+            newText: text,
+          },
+        ])
+      )
+    const save = () =>
+      fireEvent.keyDown(screen.getByTestId('workspace-file-editor'), { key: 's', ctrlKey: true })
+    try {
+      const { rerender } = render(panel(1))
+      await waitFor(() => expect(getWorkspaceCodeText()).toContain(initial.content))
+      if (pendingSave) {
+        api.writeWorkspaceTextFile.mockImplementationOnce(() => olderSave)
+        insert(await attachedEditor(), '// before reload\n')
+        save()
+        await waitFor(() => expect(api.writeWorkspaceTextFile).toHaveBeenCalledOnce())
+      }
+      rerender(panel(2))
+      if (pendingSave) {
+        expect(api.readWorkspaceTextFile).toHaveBeenCalledOnce()
+        await act(async () =>
+          finishOlderSave({
+            ...initial,
+            content: `// before reload\n${initial.content}`,
+            revision: 'older-save',
+          })
+        )
+        await waitFor(() =>
+          expect(screen.queryByTestId('workspace-file-saving-status')).not.toBeInTheDocument()
+        )
+      }
+      await waitFor(() => expect(getWorkspaceCodeText()).toContain(external.content))
+      const editor = await attachedEditor()
+      insert(editor, '// next\n')
+      save()
+      await waitFor(() =>
+        expect(api.writeWorkspaceTextFile).toHaveBeenLastCalledWith(
+          target.deviceId,
+          initial.path,
+          `// next\n${external.content}`,
+          external.revision
+        )
+      )
+      await waitFor(() =>
+        expect(screen.queryByTestId('workspace-file-saving-status')).not.toBeInTheDocument()
+      )
+      expect(api.readWorkspaceTextFile).toHaveBeenCalledTimes(2)
+    } finally {
+      edit.mockRestore()
+    }
+  }
+)
 
 function renderPanel(overrides: Partial<ComponentProps<typeof RightWorkspacePanel>> = {}) {
   const noop = vi.fn()

@@ -127,6 +127,7 @@ interface WorkspaceFilePreviewProps {
   onAddCodeComment?: (context: CodeCommentContext) => void
   editing?: boolean
   editedContent?: string
+  loadVersion?: number
   onEditedContentChange?: (content: string) => void
   onSave?: () => void
   markdownMode?: 'preview' | 'source'
@@ -311,6 +312,7 @@ interface WorkspaceFilePreviewContentProps {
   onAddCodeComment?: (context: CodeCommentContext) => void
   editing?: boolean
   editedContent?: string
+  loadVersion?: number
   onEditedContentChange?: (value: string) => void
   onSave?: () => void
 }
@@ -398,6 +400,7 @@ function WorkspaceFilePreviewContent({
   onAddCodeComment,
   editing = false,
   editedContent,
+  loadVersion = 0,
   onEditedContentChange,
   onSave,
 }: WorkspaceFilePreviewContentProps & { codeFontSize: number }) {
@@ -406,6 +409,7 @@ function WorkspaceFilePreviewContent({
   const codeViewHostRef = useRef<HTMLDivElement>(null)
   const editor = useWorkspaceCodeEditor(file.path, codeViewHostRef, targetLineStart, targetLineEnd)
   const currentPathRef = useRef(file.path)
+  const currentLoadVersion = useRef(loadVersion)
   const [selection, setSelection] = useState<SelectionState | null>(null)
   const [commentState, setCommentState] = useState<CommentState>({
     filePath: null,
@@ -426,10 +430,14 @@ function WorkspaceFilePreviewContent({
   // snapshot back over edits made while the write request was in flight.
   useLayoutEffect(() => {
     const view = codeViewRef.current
-    if (view && currentPathRef.current !== file.path) {
+    if (
+      view &&
+      (currentPathRef.current !== file.path || currentLoadVersion.current !== loadVersion)
+    ) {
       view.removeItem(currentPathRef.current)
       view.addItems([createWorkspaceCodeItem(file, editing, editedContent)])
       currentPathRef.current = file.path
+      currentLoadVersion.current = loadVersion
       return
     }
     const item = view?.getItem(file.path)
@@ -439,7 +447,7 @@ function WorkspaceFilePreviewContent({
     if (item.edit === editing && item.file.cacheKey === cacheKey) return
     const nextItem = createWorkspaceCodeItem(file, editing, editedContent, (item.version ?? 0) + 1)
     view.updateItem({ ...item, ...nextItem, file: item.edit ? item.file : nextItem.file })
-  }, [editedContent, editing, file])
+  }, [editedContent, editing, file, loadVersion])
   const activeSelection =
     selection?.filePath === file.path && selection.targetKey === targetLineKey ? selection : null
   const activeCommentSelection =
@@ -707,6 +715,7 @@ export function WorkspaceFilePreview({
   onAddCodeComment,
   editing = false,
   editedContent,
+  loadVersion,
   onEditedContentChange,
   onSave,
   markdownMode = 'preview',
@@ -789,6 +798,7 @@ export function WorkspaceFilePreview({
     <WorkspaceFilePreviewContent
       editing={editing}
       editedContent={editedContent}
+      loadVersion={loadVersion}
       onEditedContentChange={onEditedContentChange}
       onSave={onSave}
       file={file}

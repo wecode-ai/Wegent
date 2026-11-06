@@ -156,6 +156,34 @@ test('selects the requested line and publishes draggable text, clearing it on un
   window.removeEventListener(SELECTED_TEXT_CHANGED_EVENT, selection)
 })
 
+test('replaces the document on an accepted external reload of the same path', async () => {
+  const onChange = vi.fn()
+  const { rerender } = render(
+    <WorkspaceFilePreview {...props} editing loadVersion={1} onEditedContentChange={onChange} />
+  )
+  const view = screen.getByTestId('workspace-file-preview-code-view')
+  const original = await currentEditor()
+  replaceText(original, 'const local = 1')
+  const external = 'const external = 2'
+  rerender(
+    <WorkspaceFilePreview
+      {...props}
+      file={{ ...file, content: external, revision: 'external-revision' }}
+      editing
+      editedContent={external}
+      loadVersion={2}
+      onEditedContentChange={onChange}
+    />
+  )
+  await waitFor(() => expect((editSpy.mock.contexts.at(-1) as Editor).getText()).toBe(external))
+  const refreshed = await currentEditor()
+  expect(screen.getByTestId('workspace-file-preview-code-view')).toBe(view)
+  act(() => refreshed.undo())
+  expect(refreshed.getText()).toBe(external)
+  replaceText(refreshed, `${external}\nconst next = 3`)
+  expect(onChange).toHaveBeenLastCalledWith(`${external}\nconst next = 3`)
+})
+
 test('refreshes readonly content even when the new revision has the same length', async () => {
   const { rerender } = render(<WorkspaceFilePreview {...props} />)
   const view = screen.getByTestId('workspace-file-preview-code-view')

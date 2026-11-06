@@ -344,6 +344,28 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         4,
         'Selecting an already-open file must reuse its existing tab'
       )
+      const externallyChangedContent =
+        'export const authenticated = false\nexport const externalRevision = 1'
+      await writeFile(join(workspacePath, 'auth.ts'), externallyChangedContent)
+      await control.command('click', rootBreadcrumb)
+      await clickTreeItem(control, 'auth.ts', uiTimeoutMs, DIRECTORY_MENU_SELECTOR)
+      await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
+        text: 'export const externalRevision = 1',
+        timeoutMs: uiTimeoutMs,
+      })
+      const editedReloadedContent = `${externallyChangedContent}\n// local edit after reload`
+      await control.command('fill', '[data-testid="workspace-file-editor-content"]', {
+        value: editedReloadedContent,
+      })
+      await waitForFileContent(join(workspacePath, 'auth.ts'), editedReloadedContent, uiTimeoutMs)
+      await waitForMissing(control, '[data-testid="workspace-file-saving-status"]', uiTimeoutMs)
+      assert.equal(
+        Number(
+          await control.command('getElementCount', '[data-testid="workspace-file-save-error"]')
+        ),
+        0,
+        'Editing a reloaded file must preserve external content and use its new disk revision'
+      )
       await control.command('click', `${fileTabsSelector}[title$="first.ts"]`)
       await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
         text: 'export const first = 1',

@@ -8,9 +8,13 @@ use super::*;
 
 impl RuntimeWorkRpcHandler {
     pub(super) fn transcript_identity(&self, task_id: &str) -> Result<Value, AppIpcError> {
-        let link = self.store.get_task_summary(task_id).ok_or_else(|| {
-            AppIpcError::new("not_found", "Conversation no longer exists on this Runtime")
-        })?;
+        let link = self
+            .store
+            .get_task_summary(task_id)
+            .filter(|link| link.status != "archived" && !self.archived_link_is_deleted(link))
+            .ok_or_else(|| {
+                AppIpcError::new("not_found", "Conversation no longer exists on this Runtime")
+            })?;
         // Continuation reuses transcript authorization but needs no message
         // projection, provider I/O or admission to the history CPU workers.
         Ok(json!({

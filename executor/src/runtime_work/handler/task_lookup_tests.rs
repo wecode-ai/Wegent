@@ -4,6 +4,48 @@
 use super::*;
 
 #[tokio::test]
+async fn continuation_identity_rejects_archived_and_deleted_tasks() {
+    let (handler, root) = isolated_runtime_work_handler("identity-ineligible");
+    for (task, thread, archived, deleted) in [
+        ("archived", "archived-thread", true, None),
+        (
+            "deleted-local",
+            "local-thread",
+            false,
+            Some("deleted-local"),
+        ),
+        (
+            "deleted-thread",
+            "deleted-thread-id",
+            false,
+            Some("deleted-thread-id"),
+        ),
+    ] {
+        handler.upsert_local_task(RuntimeTaskLink {
+            local_task_id: task.into(),
+            thread_id: Some(thread.into()),
+            status: if archived { "archived" } else { "completed" }.into(),
+            ..RuntimeTaskLink::default()
+        });
+        if let Some(id) = deleted {
+            handler
+                .store
+                .mark_deleted_archived_task_ids(vec![id.to_owned()]);
+        }
+        let error = handler
+            .dispatch(
+                "runtime.tasks.transcript",
+                json!({"taskId": task, "identityOnly": true}),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "not_found", "{task}");
+    }
+    assert!(!root.join("requests.jsonl").exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn continuation_identity_uses_metadata_while_history_workers_are_saturated() {
     for runtime in ["codex", "claude_code"] {
         let (handler, root) = isolated_runtime_work_handler(&format!("identity-{runtime}"));
