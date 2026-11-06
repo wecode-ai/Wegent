@@ -87,7 +87,10 @@ export function createProjectVersionStory(options, providerId) {
             configurationSummary: 'PR #4335 only',
             policy: { automatic: true, askBeforeAct: false, immediate: true },
           },
-          ROLE
+          ROLE,
+          // A source without a fixed role instruction is semantically assessed immediately.
+          // This story covers automatic follow-up, not the separate silent aggregation window.
+          { rolePrompt: '' }
         )
         original = prepared.original
         await control.command('fill', `${STORY_CHAT} [data-testid="chat-message-input"]`, {

@@ -50,18 +50,33 @@ export function createSourceStoryModel({ marker, roleId, providerId, mode, expec
     proposalSubmitted: false,
   }
 
+  function trace(event, detail) {
+    console.log(
+      '[source-story-model]',
+      JSON.stringify({ marker, event, phase: state.phase, round: state.round, ...detail })
+    )
+  }
+
   function coordinator(body) {
     const prefix = `${marker}-intake-${state.round}`
     const read = `${prefix}-read`,
       action = `${prefix}-act`
     if (has(body, action)) {
-      assert.equal(storyToolOutput(body, action).status, 'pending')
+      const result = storyToolOutput(body, action)
+      trace('action-accepted', { callId: action, actionId: result.id, status: result.status })
+      assert.equal(result.status, 'pending')
       state.round++
       return [assistantMessage('已按当前来源和授权处理这批变化。')]
     }
     if (!has(body, read)) return call(body, read, 'read_intake', {})
     const snapshot = storyToolOutput(body, read).snapshot
     assert.ok(Array.isArray(snapshot.events))
+    trace('intake-read', {
+      callId: read,
+      eventIds: snapshot.events.map(item => item.id),
+      workTaskIds: snapshot.works?.map(item => item.taskId),
+      originalTaskId: state.taskId,
+    })
     const event = snapshot.events.find(
       item =>
         item.kind === 'connection' &&
@@ -92,12 +107,14 @@ export function createSourceStoryModel({ marker, roleId, providerId, mode, expec
         'Read the actual earlier outcome before continuing'
       )
       state.continuations.push({ taskId: state.taskId, eventId: event.id })
+      trace('continue-work', { callId: action, eventId: event.id, taskId: state.taskId })
       return call(body, action, 'continue_work', {
         eventIds: [event.id],
         taskId: state.taskId,
         message: `${marker}: 核实新变化，继续原来的跟进并把具体结论告诉我。`,
       })
     }
+    trace('create-work', { callId: action, eventId: event.id, roleId })
     return call(body, action, 'create_work', {
       eventIds: [event.id],
       roleId,
@@ -138,6 +155,12 @@ export function createSourceStoryModel({ marker, roleId, providerId, mode, expec
     if (!has(body, read)) return call(body, read, 'read_work', {})
     const work = storyToolOutput(body, read)
     assert.ok(work.work?.taskId, 'Worker must read its actual bound work')
+    trace('worker-bound', {
+      callId: read,
+      taskId: work.work.taskId,
+      originalTaskId: state.taskId,
+      continuationTaskIds: state.continuations.map(item => item.taskId),
+    })
     if (mode === 'project' && state.taskId) assert.equal(work.work.taskId, state.taskId)
     if (mode === 'project') state.taskId = work.work.taskId
     const message = work.messages.find(item => item.text === value.text)

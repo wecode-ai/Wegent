@@ -23,7 +23,15 @@ export async function openStoryPrimary(control) {
   await control.command('waitFor', STORY_CHAT)
 }
 
-export async function startSourceStory(control, rpc, options, modelState, source, roleId) {
+export async function startSourceStory(
+  control,
+  rpc,
+  options,
+  modelState,
+  source,
+  roleId,
+  { rolePrompt } = {}
+) {
   await control.command('ensureLocalModelCatalogReady', 'body', {
     timeoutMs: options.workbenchReadyTimeoutMs,
   })
@@ -66,7 +74,9 @@ export async function startSourceStory(control, rpc, options, modelState, source
           executionDeviceId: original.executionDeviceId,
           model,
           workspace,
-          prompt: `${modelState.marker ?? roleId}: handle only the connected source under its current grant.`,
+          prompt:
+            rolePrompt ??
+            `${modelState.marker ?? roleId}: handle only the connected source under its current grant.`,
           connections: [source],
           tags: [],
           collaboration: {
