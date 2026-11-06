@@ -10,9 +10,10 @@ import type { CollaborationTemplate } from './types'
 import { TemplateBindingsDialog, type TemplateParticipant } from './TemplateBindings'
 import { TemplateDialog } from './TemplateDialog'
 import { templateFailureMessage, templateMessages } from './messages'
-import { templateRoutingResolver } from './agents'
+import { templateAgentId, templateAgentReferences, templateRoutingResolver } from './agents'
 import { applyProjectTemplate } from './projectConfiguration'
 import { PartialTemplateApplyError, TemplateConfigurationError } from './apply'
+import { TemplateProjectEnvironment } from './TemplateProjectEnvironment'
 
 export function ProjectTemplateApplyDialog({
   api,
@@ -41,6 +42,7 @@ export function ProjectTemplateApplyDialog({
   } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [attempt, setAttempt] = useState(0)
+  const [environmentId, setEnvironmentId] = useState<string>()
   useEffect(() => {
     let active = true
     setContext(null)
@@ -115,7 +117,31 @@ export function ProjectTemplateApplyDialog({
       currentUserId={currentUserId}
       existingNames={context.names}
       onClose={onClose}
+      renderConfiguration={
+        agentConfiguration?.listTemplateAgentEnvironments &&
+        document.spec.resources.collaboration.agents?.length
+          ? disabled => (
+              <TemplateProjectEnvironment
+                host={agentConfiguration}
+                project={context.project}
+                locale={locale}
+                selected={environmentId}
+                disabled={disabled}
+                onChange={setEnvironmentId}
+              />
+            )
+          : undefined
+      }
       onApply={async (drafts, configured) => {
+        if (
+          agentConfiguration?.listTemplateAgentEnvironments &&
+          !environmentId &&
+          configured.spec.resources.collaboration.agents?.some(agent =>
+            templateAgentReferences(drafts).has(templateAgentId(agent.key))
+          )
+        ) {
+          throw new TemplateConfigurationError(m.chooseProjectEnvironment)
+        }
         await applyProjectTemplate(
           api,
           projectId,
@@ -127,7 +153,8 @@ export function ProjectTemplateApplyDialog({
             agentConfiguration,
             context.project.project_store === 'local' ? 'local' : 'cloud',
             projectId,
-            locale
+            locale,
+            environmentId
           )
         )
         try {

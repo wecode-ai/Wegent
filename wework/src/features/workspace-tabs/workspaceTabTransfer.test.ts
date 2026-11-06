@@ -49,4 +49,15 @@ describe('workspace tab transfer state', () => {
       expect(consumeWorkspaceTabTransfer('invalid')).toBeNull()
     }
   )
+
+  test.each([null, [], { task: 'true' }, { task: 1 }])(
+    'rejects invalid goal mode records without applying them',
+    goalDraftActiveByScope => {
+      localStorage.setItem(
+        'wework.workspaceTabTransfer.v1:invalid-goal',
+        JSON.stringify({ draftInputByScope: {}, goalDraftActiveByScope })
+      )
+      expect(consumeWorkspaceTabTransfer('invalid-goal')).toBeNull()
+    }
+  )
 })

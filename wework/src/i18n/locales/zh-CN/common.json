@@ -105,7 +105,6 @@
   "workbench": {
     "dismiss_attachment_error": "关闭附件错误",
     "reply_prediction_generating": "正在生成建议…",
-    "reply_prediction_failed": "回复建议生成失败，请检查当前模型的连接和认证设置。",
     "reply_prediction_accept": "接受建议",
     "reply_prediction_title": "自动回复建议",
     "reply_prediction_enable": "预测下一条回复",
@@ -859,7 +858,6 @@
     "remove_project": "移除",
     "no_chats": "暂无会话",
     "runtime_work_loading": "正在加载任务…",
-    "runtime_work_refreshing": "正在刷新任务…",
     "runtime_work_load_failed": "任务加载失败，请重试",
     "runtime_work_refresh_failed": "任务刷新失败，仍显示上次结果",
     "no_device_workspaces": "暂无工作区",
@@ -5708,8 +5706,8 @@
       "connection_projects_empty_selected": "暂无可选项目，创建或加入项目后可在这里选择。",
       "connection_receiving_paused": "未开启接收",
       "connection_authorize_on_device": "在执行设备上授权",
-      "connection_email_help": "从邮箱接收邮件，交给分身处理。",
-      "connection_catalog_help": "选择分身接收工作的来源",
+      "connection_email_help": "帮你留意重要来信和需要处理的邮件。",
+      "connection_catalog_help": "选择希望分身关注的应用",
       "connection_search": "搜索应用或已配置的范围",
       "connection_configured_count": "已配置 {{count}}",
       "connection_show_all": "全部来源",
@@ -5720,12 +5718,12 @@
       "connection_configured": "已配置接收范围",
       "connection_not_configured": "尚未配置接收范围",
       "connection_manage": "查看配置",
-      "connection_choose_scope": "选择接收范围",
+      "connection_choose_scope": "选择关注内容",
       "connection_needs_auth": "需要登录授权",
       "connection_authorize": "登录授权",
       "connection_view_details": "查看详情",
       "connection_unknown_source": "暂不可用的来源",
-      "connection_select_help": "连接账号并选择此分身要接收的工作。",
+      "connection_select_help": "连接账号，选择希望分身关注的内容。",
       "connection_scheduled_work": "定时交办",
       "connection_manage_schedule": "管理安排",
       "connection_pending": "接收范围或处理方式有修改，保存分身设置后生效。",
@@ -6043,7 +6041,20 @@
         }
       },
       "guide": "使用示例",
-      "examples_dialog_title": "分身使用示例"
+      "examples_dialog_title": "分身使用示例",
+      "connect_title": "让分身更了解你",
+      "steps_label": "开始使用分身",
+      "connect_step": "连接常用应用",
+      "confirm_step": "开始使用",
+      "connect_help": "连接常用应用，让分身帮你留意重要消息和项目进展。也可以以后再连接。",
+      "confirm_help": "分身会帮你留意重要变化、临近的期限和需要你决定的事情。",
+      "selected_apps": "关注哪些内容",
+      "no_apps": "还没有连接应用。可以先聊天，以后再添加连接。",
+      "attention_help": "开始使用后，分身会按你在连接中选择的方式关注新动态。有重要的事再提醒你；需要执行操作时，遵循你的授权设置。没有连接时，暂时没有应用动态可供分析。",
+      "continue": "继续",
+      "back_apps": "返回连接",
+      "excluded_projects": "不包括：{{names}}",
+      "project_tags": "仅关注标签：{{names}}"
     },
     "authorization": {
       "confirm_each": "发送前逐次确认",
@@ -6108,5 +6119,6 @@
     "title_with_count": "待你处理，{{count}} 项",
     "cached": "这是上次待处理的问题，正在同步最新状态；设备恢复连接后可以继续回应。",
     "entity_unavailable": "暂时无法显示此对象，请打开原位置查看。"
-  }
+  },
+  "beta": "Beta"
 }
