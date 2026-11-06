@@ -1,6 +1,9 @@
 // @vitest-environment node
 
 import assert from 'node:assert/strict'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import { test } from 'vitest'
 import { DesktopE2EServer } from '../e2e/desktop/modules/desktop-server.mjs'
@@ -283,11 +286,16 @@ test('keeps prediction image descriptions separate from conversation cache asser
   )
 })
 
-test('serves late prediction image descriptions without consuming the active protocol matrix', async () => {
+test('serves late prediction image descriptions without consuming the active protocol matrix', async ({
+  onTestFinished,
+}) => {
   const server = new DesktopE2EServer('/tmp/reply-prediction-late-vision-fixture')
   server.setMatrixCase(
     LOCAL_CUSTOM_MODEL_PROTOCOL_MATRIX_CASES.find(model => model.protocol === 'responses')
   )
+  const initialStage = server.matrixState.stage
+  server.matrixEvidenceDirectory = mkdtempSync(join(tmpdir(), 'late-vision-matrix-'))
+  onTestFinished(() => rmSync(server.matrixEvidenceDirectory, { recursive: true, force: true }))
   const request = Readable.from([JSON.stringify(visionBody(REPLY_PREDICTION_PROMPT))])
   request.headers = { authorization: `Bearer ${MODEL_API_KEY}` }
   let output
@@ -304,7 +312,7 @@ test('serves late prediction image descriptions without consuming the active pro
 
   assert.ok(output.choices[0].message.content)
   assert.equal(server.scenario, 'model_protocol_matrix')
-  assert.equal(server.matrixState.stage, 'text')
+  assert.equal(server.matrixState.stage, initialStage)
   assert.deepEqual(server.matrixState.requests, [])
   assert.deepEqual(
     server.visionSidecarRequests.map(row => row.kind),
@@ -312,8 +320,11 @@ test('serves late prediction image descriptions without consuming the active pro
   )
   const foreground = Readable.from([JSON.stringify(visionBody('Describe the attached image'))])
   foreground.headers = { authorization: `Bearer ${MODEL_API_KEY}` }
-  await assert.rejects(
-    server.handleModelResponse(foreground, response, 'chat'),
+  await server.handleModelResponse(foreground, { writeHead() {}, end() {} }, 'chat')
+  assert.equal(server.matrixState.failures.length, 1)
+  assert.match(
+    server.matrixState.failures[0].message,
     /local-local-responses reached the wrong endpoint/
   )
+  assert.equal(server.matrixReports[0].passed, false)
 })

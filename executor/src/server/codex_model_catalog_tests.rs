@@ -627,6 +627,22 @@ fn progressive_defaults_update_the_native_canonical_template_and_preserve_permis
 }
 
 #[test]
+fn legacy_default_identity_preserves_user_edits() {
+    let workflow = include_str!("../../../wework/resources/bundled-plugins/wework-personal/plugins/wework-runtime/skills/coding/workflow.md");
+    let legacy = workflow.replacen(
+        "You are Codex, a coding agent.",
+        "You are Codex, an agent based on GPT-5.",
+        1,
+    );
+    assert!(is_legacy_base_instructions(&legacy));
+    assert!(!is_legacy_base_instructions(&format!(
+        "{legacy}\nUser edit"
+    )));
+    assert!(!is_legacy_base_instructions(workflow));
+    assert!(!is_legacy_base_instructions(&default_base_instructions()));
+}
+
+#[test]
 fn legacy_instruction_edits_update_native_templates_without_dropping_other_messages() {
     let mut model = json!({"base_instructions":"default", "model_messages":{"instructions_template":"default", "permissions":{"read_only":"native permission text"}}});
     apply_override_fields(

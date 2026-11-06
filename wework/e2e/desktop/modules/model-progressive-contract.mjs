@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
-import { get_encoding } from 'tiktoken'
 import { mkdirSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { createRequire } from 'node:module'
+import { dirname, join, resolve } from 'node:path'
 import {
   assertCodeModeOutput,
   assertCodeModeRequest,
@@ -33,10 +33,14 @@ export const matrixSkillPath = workspace =>
   join(workspace, '.agents', 'skills', 'model-matrix', 'SKILL.md')
 
 let requestEncoding
+const require = createRequire(import.meta.url)
 
 export function countModelRequest(body) {
   const serialized = JSON.stringify(body)
-  requestEncoding ??= get_encoding('o200k_base')
+  const clientBundle = process.env.WEWORK_E2E_SOCKET_IO_CLIENT
+  requestEncoding ??= require(
+    clientBundle ? resolve(dirname(clientBundle), 'tiktoken.cjs') : 'tiktoken'
+  ).get_encoding('o200k_base')
   return {
     encoding: 'o200k_base',
     tokens: requestEncoding.encode(serialized, [], []).length,

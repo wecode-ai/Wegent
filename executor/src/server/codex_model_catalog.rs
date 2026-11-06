@@ -16,6 +16,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     env, fs,
@@ -57,7 +58,9 @@ const WEWORK_GPT_56_TERRA_MODEL: &str = "wework-gpt-5.6-terra";
 #[cfg(test)]
 const WEWORK_GPT_56_LUNA_MODEL: &str = "wework-gpt-5.6-luna";
 const UPSTREAM_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
-const LEGACY_BASE_INSTRUCTIONS: &str = include_str!("../../../wework/resources/bundled-plugins/wework-personal/plugins/wework-runtime/skills/coding/workflow.md");
+// Identify the exact retired shared default without embedding Wework plugin resources.
+const LEGACY_BASE_INSTRUCTIONS_SHA256: &str =
+    "81d7c736138e000597c4d01a3fa2a309671650d52679c1db1fb0d33331eb5321";
 const DEFAULT_BASE_INSTRUCTIONS: &str =
     include_str!("../../../shared/assets/codexProgressiveInstructions.md");
 const KIMI_CODEX_MODELS: &str = include_str!("../../../shared/assets/codex-models/kimi.json");
@@ -745,6 +748,10 @@ fn validate_catalog(catalog: &Value) -> Result<(), String> {
     Ok(())
 }
 
+fn is_legacy_base_instructions(instructions: &str) -> bool {
+    format!("{:x}", Sha256::digest(instructions.as_bytes())) == LEGACY_BASE_INSTRUCTIONS_SHA256
+}
+
 fn apply_progressive_base_instructions(catalog: &mut Value) {
     let custom_slugs: std::collections::HashSet<String> = read_custom_models()
         .iter()
@@ -756,7 +763,9 @@ fn apply_progressive_base_instructions(catalog: &mut Value) {
         .into_iter()
         .flatten()
     {
-        let legacy_default = model["base_instructions"].as_str() == Some(LEGACY_BASE_INSTRUCTIONS);
+        let legacy_default = model["base_instructions"]
+            .as_str()
+            .is_some_and(is_legacy_base_instructions);
         if legacy_default
             || !model["slug"]
                 .as_str()
