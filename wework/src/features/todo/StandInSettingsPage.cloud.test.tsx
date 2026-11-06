@@ -103,3 +103,52 @@ test('loads and saves a new role on the sole cloud Executor without touching the
     'cloud-one'
   )
 })
+
+test('keeps the cloud device and unsaved draft when the cloud connection drops', async () => {
+  const personalGet = vi.fn(async (_user, deviceId) => ({
+    userId: 7,
+    executionDeviceId: deviceId,
+    version: 0,
+    roles: [],
+  }))
+  const services = {
+    getLocalRuntimeSidebarIdentity: async () => ({ deviceId: 'mac' }),
+    standInApi: { personalGet, personalSave: vi.fn(), personalAgents: vi.fn(async () => []) },
+  } as unknown as WorkbenchServices
+  const form = (
+    <StandInSettingsPage
+      api={{} as SharedWorkspaceApi}
+      services={services}
+      userId={7}
+      projects={[]}
+      initialCreate
+      initialDeviceId="mac"
+      devices={[
+        {
+          id: 1,
+          device_id: 'cloud-one',
+          name: 'Cloud',
+          device_type: 'cloud',
+          status: 'online',
+        } as DeviceInfo,
+      ]}
+    />
+  )
+  const view = render(
+    <CloudConnectionContext.Provider value={{ isConnected: true } as CloudConnectionContextValue}>
+      {form}
+    </CloudConnectionContext.Provider>
+  )
+  fireEvent.change(await screen.findByTestId('stand-in-role-name'), {
+    target: { value: 'Unsaved cloud draft' },
+  })
+  view.rerender(
+    <CloudConnectionContext.Provider value={{ isConnected: false } as CloudConnectionContextValue}>
+      {form}
+    </CloudConnectionContext.Provider>
+  )
+  await waitFor(() =>
+    expect(screen.getByTestId('stand-in-role-name')).toHaveValue('Unsaved cloud draft')
+  )
+  expect(personalGet).not.toHaveBeenCalledWith(7, 'mac')
+})

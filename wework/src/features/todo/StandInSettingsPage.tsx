@@ -82,24 +82,27 @@ interface StandInSettingsPageProps {
 
 export function StandInSettingsPage({ ref, ...props }: StandInSettingsPageProps) {
   const cloud = useContext(CloudConnectionContext)
-  const [creating, setCreating] = useState(props.initialCreate ?? false)
+  const cloudCreation =
+    cloud?.isConnected === true && props.initialProject?.project_store !== 'local'
+  const [creation, setCreation] = useState(() => ({
+    active: props.initialCreate ?? false,
+    cloud: cloudCreation,
+  }))
   const editor = useRef<StandInSettingsHandle>(null)
   useImperativeHandle(ref, () => ({
     requestClose: () => (editor.current ? editor.current.requestClose() : props.onCancel?.()),
     requestLeave: action => (editor.current ? editor.current.requestLeave(action) : action()),
   }))
-  const cloudCreation =
-    cloud?.isConnected === true && props.initialProject?.project_store !== 'local'
   const renderEditor = (deviceId = props.initialDeviceId) => (
     <StandInSettingsEditor
       {...props}
       ref={editor}
       initialDeviceId={deviceId}
-      initialCreate={creating}
-      onRequestCreate={cloudCreation ? () => setCreating(true) : undefined}
+      initialCreate={creation.active}
+      onRequestCreate={cloudCreation ? () => setCreation({ active: true, cloud: true }) : undefined}
     />
   )
-  return creating && cloudCreation ? (
+  return creation.active && creation.cloud ? (
     <StandInCreationDevice devices={props.devices} onCancel={props.onCancel}>
       {renderEditor}
     </StandInCreationDevice>
