@@ -732,6 +732,7 @@ class ProjectAutomationExecution:
             workspace_binding = workflow_config.get("workspace_binding")
         context = {
             "rule_id": str(rule.id),
+            "rule_name": rule.title,
             "run_id": str(run.id),
             "execution_prompt": self._run_instruction(rule, run),
             "trigger": run_metadata.get("trigger") or run.source,

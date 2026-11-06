@@ -182,6 +182,10 @@ async function openUserPage(browser: Browser, token: string): Promise<Page> {
     storageState: buildStorageState(APP_BASE_URL, token, getJwtExpiryMs(token)),
     viewport: { width: 1280, height: 720 },
   })
+  // Permission tests start after onboarding, which otherwise takes keyboard focus.
+  await context.addInitScript(() => {
+    localStorage.setItem('user_onboarding_completed', 'true')
+  })
   return context.newPage()
 }
 
