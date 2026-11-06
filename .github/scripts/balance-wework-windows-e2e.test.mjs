@@ -62,6 +62,7 @@ test('previously frozen Windows shards can use their successful checkpoint measu
     'follow-up-task-switch',
     'stand-in-alternate-source',
     'stand-in-email',
+    'stand-in-git',
     'stand-in-profile',
     'collaboration-milestones',
   ]) {
@@ -71,6 +72,11 @@ test('previously frozen Windows shards can use their successful checkpoint measu
   assert.notDeepEqual(
     balanced.include.find(shard => shard.id === 'core-3'),
     original.include.find(shard => shard.id === 'core-3')
+  )
+  assert.notDeepEqual(
+    balanceWindowsMatrix(completeMatrix).include.find(shard => shard.id === 'core-3'),
+    completeMatrix.include.find(shard => shard.id === 'core-3'),
+    'The complete production shard must no longer be frozen by stand-in-git'
   )
 })
 
