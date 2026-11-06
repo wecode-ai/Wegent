@@ -177,18 +177,23 @@ export function templateRoutingResolver(
   host: import('../project-agent-config/types').ProjectAgentConfigurationHost | undefined,
   location: 'local' | 'cloud',
   projectId?: string,
-  locale: 'zh-CN' | 'en' = 'en'
+  locale: 'zh-CN' | 'en' = 'en',
+  environmentId?: string
 ): TemplateRoutingResolver {
   return async runtime => {
     try {
       if (!host?.resolveTemplateAgentRouting) throw new Error('template_model_default_unavailable')
-      return await host.resolveTemplateAgentRouting(runtime, location, projectId)
+      return await (environmentId === undefined
+        ? host.resolveTemplateAgentRouting(runtime, location, projectId)
+        : host.resolveTemplateAgentRouting(runtime, location, projectId, environmentId))
     } catch (cause) {
       if (
         cause instanceof Error &&
-        ['template_model_default_unavailable', 'template_environment_unavailable'].includes(
-          cause.message
-        )
+        [
+          'template_model_default_unavailable',
+          'template_environment_unavailable',
+          'template_environment_ambiguous',
+        ].includes(cause.message)
       )
         throw new TemplateConfigurationError(
           cause.message === 'template_environment_unavailable' && !projectId
