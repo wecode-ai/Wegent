@@ -24,7 +24,9 @@ test('resolves the follow-up delay from the environment with a safe default', ()
   assert.equal(failureFollowupDelayMs(undefined), 3_000)
   assert.equal(failureFollowupDelayMs(''), 3_000)
   assert.equal(failureFollowupDelayMs('0'), 0)
-  assert.equal(failureFollowupDelayMs('12000'), 12_000)
+  assert.equal(failureFollowupDelayMs('5000'), 5_000)
+  assert.equal(failureFollowupDelayMs('12000'), 5_000)
+  assert.equal(failureFollowupDelayMs('Infinity'), 3_000)
   assert.equal(failureFollowupDelayMs('not-a-number'), 3_000)
   assert.equal(failureFollowupDelayMs('-5'), 3_000)
 })
@@ -54,6 +56,24 @@ test('captures post-failure UI and workbench state with metadata', async () => {
     assert.ok(stored.capturedAt)
     assert.deepEqual(stored.uiSnapshot, captured.uiSnapshot)
   } finally {
+    await rm(resultDir, { recursive: true, force: true })
+  }
+})
+
+test('caps an explicitly supplied observation delay at five seconds', async t => {
+  const resultDir = await mkdtemp(join(tmpdir(), 'wework-failure-followup-'))
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  try {
+    const control = controlReturning({ testIds: [] }, { workbench: {} })
+    const pending = captureFailureFollowup(control, resultDir, 12_000)
+    t.mock.timers.tick(4_999)
+    assert.deepEqual(control.commands, [])
+    t.mock.timers.tick(1)
+    const captured = await pending
+    assert.equal(captured.delayMs, 5_000)
+    assert.equal(control.commands.length, 2)
+  } finally {
+    t.mock.timers.reset()
     await rm(resultDir, { recursive: true, force: true })
   }
 })

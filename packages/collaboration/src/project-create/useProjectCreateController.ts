@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import type { CollaborationExecutionEnvironment } from "../types";
 
@@ -66,6 +66,7 @@ export function projectCreateErrorMessage(
   );
 }
 
+/** Keep template submission and its default device selection on the same readiness boundary. */
 export function useProjectCreateController({
   targets,
   defaultLocation,
@@ -100,13 +101,13 @@ export function useProjectCreateController({
   const [memberUserIds, setMemberUserIds] = useState<number[]>([]);
   const [agentResourceIds, setAgentResourceIds] = useState<string[]>([]);
   const defaultAgentResourceIds = resourceSetup?.defaultAgentResourceIds ?? [];
-  const [executionEnvironmentDeviceIds, setExecutionEnvironmentDeviceIds] =
-    useState<number[]>(() =>
-      defaultExecutionEnvironmentDeviceIds(
-        resourceSetup?.executionEnvironments ?? [],
-      ),
+  const [selectedEnvironmentDeviceIds, setExecutionEnvironmentDeviceIds] =
+    useState<number[] | null>(null);
+  const executionEnvironmentDeviceIds =
+    selectedEnvironmentDeviceIds ??
+    defaultExecutionEnvironmentDeviceIds(
+      resourceSetup?.executionEnvironments ?? [],
     );
-  const executionEnvironmentSelectionChanged = useRef(false);
   const [collaborationGroupDrafts, setCollaborationGroupDrafts] = useState<
     import("./types").ProjectCreateCollaborationGroupDraft[]
   >([]);
@@ -141,19 +142,13 @@ export function useProjectCreateController({
       createdProject ||
       (name.trim() &&
         !templatePending &&
+        (!templateDocument ||
+          (!resourceSetup?.executionEnvironmentLoading &&
+            !resourceSetup?.executionEnvironmentError)) &&
         (!repositoryProvider || repositoryAddress.trim()) &&
         (!isAITableProvider || aitableLink) &&
         !saving),
     ) && !saving;
-
-  useEffect(() => {
-    if (executionEnvironmentSelectionChanged.current) return;
-    setExecutionEnvironmentDeviceIds(
-      defaultExecutionEnvironmentDeviceIds(
-        resourceSetup?.executionEnvironments ?? [],
-      ),
-    );
-  }, [resourceSetup?.executionEnvironments]);
 
   async function submit() {
     if (!canSubmit) return;
@@ -219,6 +214,17 @@ export function useProjectCreateController({
           );
           if (configuredProject) project = configuredProject;
         } catch (cause) {
+          console.warn("[collaboration] Project configuration failed", {
+            projectId: project.id,
+            executionEnvironmentDeviceIds,
+            environmentLoading: resourceSetup.executionEnvironmentLoading,
+            environmentLoadFailed: Boolean(
+              resourceSetup.executionEnvironmentError,
+            ),
+            currentDeviceIds: resourceSetup.executionEnvironments
+              ?.filter((environment) => environment.is_current_device)
+              .map((environment) => environment.device_id),
+          });
           createdProjectLocation.current = location;
           setCreatedProject(project);
           throw new Error(
@@ -277,10 +283,7 @@ export function useProjectCreateController({
       setAitableUrl,
       setMemberUserIds,
       setAgentResourceIds,
-      setExecutionEnvironmentDeviceIds: (deviceIds: number[]) => {
-        executionEnvironmentSelectionChanged.current = true;
-        setExecutionEnvironmentDeviceIds(deviceIds);
-      },
+      setExecutionEnvironmentDeviceIds,
       setCollaborationGroupDraft,
       setCollaborationGroupDrafts,
       setTemplatePending,

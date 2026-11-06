@@ -30,6 +30,7 @@ from app.services.cloud_projects.access import (
     require_cloud_project_role,
     require_issue_action,
 )
+from app.services.loop_item_history_actor import automation_history_actor
 from app.services.loop_items.access import can_view_item
 
 ASSIGNMENT_EVENT_TYPE = "assignment"
@@ -151,6 +152,7 @@ class IssueAssignmentService:
         comment_body: str | None = None,
         replace_root_assignments: bool = False,
         initial_assignment: bool = False,
+        automation_context: dict | None = None,
     ) -> tuple[AssignmentEvent, bool]:
         del workspace_id
         self._lock_issue(db, issue_id)
@@ -211,6 +213,7 @@ class IssueAssignmentService:
             "notify": bool(notify),
             "trigger": trigger,
             "receipt_tracking": True,
+            **automation_history_actor(automation_context),
         }
         comment = db.get(LoopItemComment, comment_id) if comment_id else None
         if comment is None:
@@ -384,6 +387,7 @@ class IssueAssignmentService:
             "comment_id": assignment.id,
             "created_by_user_id": assignment.assigned_by_user_id,
             "created_by_user_name": creator.user_name if creator is not None else None,
+            "automation": assignment.metadata.get("automation"),
             "status": "active",
             "created_at": database_datetime_as_utc(db, assignment.created_at),
             "updated_at": database_datetime_as_utc(db, assignment.updated_at),

@@ -102,6 +102,31 @@ function props(): ProjectBoardBodyProps<{ id: string }> {
 }
 
 describe('ProjectBoardBody', () => {
+  it('keeps fixed actions outside scrolling while sharing toolbar typography', () => {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    try {
+      act(() =>
+        root.render(
+          <ProjectBoardBody
+            {...props()}
+            toolbarAction={<button data-testid="fixed-action">Chat</button>}
+          />
+        )
+      )
+      const scrolling = container.querySelector('[data-testid="cloud-board-toolbar"]')!
+      const action = container.querySelector('[data-testid="fixed-action"]')!
+      expect(scrolling.contains(action)).toBe(false)
+      expect(action.closest('.project-board-toolbar')).toBe(
+        scrolling.closest('.project-board-toolbar')
+      )
+      expect(action.closest('.project-board-toolbar')).not.toBeNull()
+    } finally {
+      act(() => root.unmount())
+    }
+  })
+
   it('distinguishes parents from standalone issues instead of calling every row an Issue', () => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
     const container = document.createElement('div'),
@@ -324,11 +349,19 @@ it('keeps project filters beside group filtering and before search and view acti
   const container = document.createElement('div')
   const root = createRoot(container)
   try {
-    act(() => root.render(<ProjectBoardBody {...props()} filterAction={<select data-testid="milestone-filter" />} />))
+    act(() =>
+      root.render(
+        <ProjectBoardBody {...props()} filterAction={<select data-testid="milestone-filter" />} />
+      )
+    )
     const group = container.querySelector('[data-testid="cloud-board-group-filter"]')!
     const milestone = container.querySelector('[data-testid="milestone-filter"]')!
     const search = container.querySelector('[data-testid="cloud-board-search"]')!
     expect(group.compareDocumentPosition(milestone) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(milestone.compareDocumentPosition(search) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-  } finally { act(() => root.unmount()) }
+    expect(
+      milestone.compareDocumentPosition(search) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+  } finally {
+    act(() => root.unmount())
+  }
 })

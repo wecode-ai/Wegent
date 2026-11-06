@@ -9,6 +9,7 @@ import {
   join,
   resultDir,
   selectE2EModel,
+  sendPromptUntilScenarioRequest,
   writeFile,
 } from './shared.mjs'
 
@@ -179,10 +180,7 @@ async function verifyDraft(control, project, existingItem) {
   control.setScenario('checkpoint_task')
   const marker = existingItem ? 'LINK_EXISTING_DRAFT' : 'CREATE_NEW_DRAFT'
   const prompt = `${marker}: ${CHECKPOINT_TASK_PROMPT}`
-  await control.command('fill', composer, {
-    value: prompt,
-  })
-  await control.command('press', composer, { key: 'Enter' })
+  await sendPromptUntilScenarioRequest(control, composer, prompt, 'checkpoint_task')
   await control.command('waitFor', `${content} [data-testid="message-assistant"]`, {
     text: CHECKPOINT_TASK_COMPLETION_TEXT,
   })
