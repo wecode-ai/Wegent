@@ -1,6 +1,7 @@
 import { authorizeWegentConnector, listWegentConnectorApps } from '@/api/cloud/connectorApps'
 import * as fileHash from '@/api/fileHash'
 import * as codexPlugins from '@/api/local/codexPlugins'
+import { ExpiredPluginInventoryRequest } from '@/api/local/codexInstalledCatalog'
 import {
   clearLocalCodexPluginsReadStateCache,
   createLocalCodexPluginApi,
@@ -1773,6 +1774,44 @@ function holdNextCloudPluginRead(source: 'marketplace' | 'installed') {
     return response
   })
   return { release, reject, ready, returned, read }
+}
+
+function holdLocalCatalogReads(outcomes: Array<'partial' | 'reject' | 'expired'>) {
+  const localApi = createLocalCodexPluginApi()
+  const readState = localApi.readState.bind(localApi)
+  const requests = outcomes.map(outcome => {
+    let release!: () => void
+    const gate = new Promise<void>(resolve => {
+      release = resolve
+    })
+    return { outcome, gate, release, ready: vi.fn(), returned: vi.fn() }
+  })
+  let heldCount = 0
+  const read = vi.spyOn(localApi, 'readState').mockImplementation(async params => {
+    const state = await readState(params)
+    if (
+      heldCount === requests.length ||
+      !params?.refresh ||
+      !params?.reuseInstalledInventory ||
+      !params.marketplaceKinds?.includes('local')
+    )
+      return state
+    const held = requests[heldCount++]
+    held.ready()
+    await held.gate
+    held.returned()
+    if (held.outcome === 'expired') throw new ExpiredPluginInventoryRequest()
+    if (held.outcome === 'reject') throw new Error('Local catalog unavailable')
+    return { ...state, partial: true }
+  })
+  const createApi = vi.spyOn(codexPlugins, 'createLocalCodexPluginApi').mockReturnValue(localApi)
+  return {
+    requests,
+    restore: () => {
+      read.mockRestore()
+      createApi.mockRestore()
+    },
+  }
 }
 
 describe('PluginsWorkspace', () => {
@@ -9265,6 +9304,137 @@ describe('PluginsWorkspace', () => {
     expect(
       inventory.installedPlugins.map(plugin => String(plugin.metadata.labels?.id))
     ).not.toContain('101')
+  })
+
+  test.each(['partial', 'reject', 'expired'] as const)(
+    'preserves a confirmed uninstall after an older local catalog read returns %s',
+    async outcome => {
+      window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+      mockSystemSkillsFetch({
+        marketplaceInstalled: true,
+        marketplaceVisibility: 'personal',
+        marketplaceAccessRole: 'owner',
+      })
+      mockCodexAppServerInvoke({ deviceId: 'current-device' })
+      const {
+        requests: [held],
+        restore,
+      } = holdLocalCatalogReads([outcome])
+      try {
+        render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+        await userEvent.click(screen.getByTestId('plugins-distribution-tab-personal'))
+        await waitFor(() => expect(held.ready).toHaveBeenCalledOnce())
+        await userEvent.click(await screen.findByTestId('plugin-marketplace-row-101'))
+        await userEvent.click(screen.getByTestId('plugin-detail-actions-101'))
+        await userEvent.click(screen.getByTestId('plugin-detail-uninstall-101'))
+        await userEvent.click(screen.getByTestId('plugin-uninstall-confirm-button'))
+        const notice = await screen.findByTestId('plugin-operation-notice')
+        await waitFor(() => expect(notice).toHaveTextContent('已卸载'))
+        expect(notice).toHaveAttribute('data-notice-kind', 'success')
+        expectFetchRequest('/api/plugins/installed/101', 'DELETE')
+        const key = pluginMarketplaceCacheKey('/api', 'cloud-token')
+        expect(getPluginMarketplaceCache(key)?.installedPlugins).toEqual([])
+        await act(async () => held.release())
+        await waitFor(() => expect(held.returned).toHaveBeenCalledOnce())
+
+        expect(screen.getByTestId('plugin-operation-notice')).toHaveTextContent('已卸载')
+        expect(screen.getByTestId('plugin-operation-notice')).toHaveAttribute(
+          'data-notice-kind',
+          'success'
+        )
+        expect(getPluginMarketplaceCache(key)?.installedPlugins).toEqual([])
+        await userEvent.click(screen.getByTestId('plugin-detail-back-button'))
+        await waitFor(() => expect(screen.getByTestId('plugins-refresh-button')).not.toBeDisabled())
+      } finally {
+        held.release()
+        restore()
+      }
+    }
+  )
+
+  test.each(['partial', 'reject'] as const)(
+    'shows a current local catalog %s failure and recovers on refresh',
+    async outcome => {
+      window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+      mockSystemSkillsFetch({
+        marketplaceVisibility: 'personal',
+        marketplaceAccessRole: 'owner',
+      })
+      mockCodexAppServerInvoke({ deviceId: 'current-device' })
+      const {
+        requests: [held],
+        restore,
+      } = holdLocalCatalogReads([outcome])
+      try {
+        render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+        await userEvent.click(screen.getByTestId('plugins-distribution-tab-personal'))
+        await waitFor(() => expect(held.ready).toHaveBeenCalledOnce())
+        expect(screen.getByTestId('plugin-marketplace-row-101')).toBeInTheDocument()
+
+        await act(async () => held.release())
+        await waitFor(() => expect(held.returned).toHaveBeenCalledOnce())
+        expect(await screen.findByTestId('plugin-operation-notice')).toHaveTextContent(
+          '加载插件失败'
+        )
+        expect(screen.getByTestId('plugin-operation-notice')).toHaveAttribute(
+          'data-notice-kind',
+          'error'
+        )
+        const refresh = screen.getByTestId('plugins-refresh-button')
+        await waitFor(() => expect(refresh).not.toBeDisabled())
+        await userEvent.click(refresh)
+
+        await waitFor(() => expect(refresh).not.toBeDisabled())
+        await waitFor(() =>
+          expect(screen.queryByTestId('plugin-operation-notice')?.textContent ?? '').not.toContain(
+            '加载插件失败'
+          )
+        )
+        expect(screen.getByTestId('plugin-marketplace-row-101')).toBeInTheDocument()
+      } finally {
+        held.release()
+        restore()
+      }
+    }
+  )
+
+  test('keeps a newer local catalog refresh loading when an older request settles', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockSystemSkillsFetch({
+      marketplaceVisibility: 'personal',
+      marketplaceAccessRole: 'owner',
+    })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+    const {
+      requests: [older],
+      restore,
+    } = holdLocalCatalogReads(['expired'])
+    let newer: ReturnType<typeof holdNextCloudPluginRead> | undefined
+    try {
+      render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+      await userEvent.click(screen.getByTestId('plugins-distribution-tab-personal'))
+      await waitFor(() => expect(older.ready).toHaveBeenCalledOnce())
+
+      newer = holdNextCloudPluginRead('installed')
+      const currentRefresh = newer
+      act(() => window.dispatchEvent(new Event(PLUGIN_AUTO_UPDATE_COMPLETED_EVENT)))
+      await waitFor(() => expect(currentRefresh.ready).toHaveBeenCalledOnce())
+      expect(screen.getByTestId('plugins-refresh-button')).toBeDisabled()
+
+      await act(async () => older.release())
+      expect(older.returned).toHaveBeenCalledOnce()
+      expect(screen.getByTestId('plugins-refresh-button')).toBeDisabled()
+      expect(screen.queryByTestId('plugin-operation-notice')?.textContent ?? '').not.toContain(
+        '加载插件失败'
+      )
+
+      await act(async () => currentRefresh.release())
+      await waitFor(() => expect(screen.getByTestId('plugins-refresh-button')).not.toBeDisabled())
+    } finally {
+      older.release()
+      newer?.release()
+      restore()
+    }
   })
 
   test('opens installed marketplace plugin actions and uninstalls from the detail menu', async () => {
