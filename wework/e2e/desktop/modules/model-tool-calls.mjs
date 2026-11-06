@@ -1,3 +1,5 @@
+import { programmaticInput } from './model-tool-catalog.mjs'
+
 export function functionCall(callId, name, argumentsValue, outputIndex = 0) {
   const argumentsText = JSON.stringify(argumentsValue)
   const itemId = `fc_${callId}`
@@ -66,7 +68,20 @@ export function customToolCall(callId, name, input) {
 
 export function selectedToolCall(callId, selection, outputIndex = 0) {
   if (selection.codeMode) {
-    const event = customToolCall(callId, selection.codeMode.name, selection.codeMode.input)
+    const input = selection.codeMode.targetName
+      ? programmaticInput(selection.codeMode.targetName, selection.arguments)
+      : selection.codeMode.input
+    if (selection.codeMode.type === 'function')
+      return selectedToolCall(
+        callId,
+        {
+          name: selection.codeMode.name,
+          namespace: selection.codeMode.namespace,
+          arguments: { input },
+        },
+        outputIndex
+      )
+    const event = customToolCall(callId, selection.codeMode.name, input)
     event.output_index = outputIndex
     if (selection.codeMode.namespace) event.item.namespace = selection.codeMode.namespace
     return [event]

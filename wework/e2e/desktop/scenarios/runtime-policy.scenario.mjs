@@ -1,3 +1,4 @@
+import { modelRequestTexts as texts } from '../modules/model-tool-output.mjs'
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import assert from 'node:assert/strict'
 import { readFile, writeFile } from 'node:fs/promises'
@@ -28,17 +29,6 @@ const AFTER = `${PREFIX}_CURRENT_RULE`
 const SUMMARY = `${PREFIX}_SUMMARY`
 const BROWSER_DETAIL =
   'On a transient action error, inspect the existing page and retry that action once'
-
-function texts(body, role) {
-  return (body.input ?? [])
-    .filter(item => !role || item.role === role)
-    .flatMap(item =>
-      Array.isArray(item.content)
-        ? item.content.map(part => part.text ?? '')
-        : [item.content ?? item.output ?? '']
-    )
-    .join('\n')
-}
 
 function reply(response, id, events, tokens = 45_000) {
   const completed = responseCompleted(id)
@@ -103,6 +93,10 @@ export function createDesktopScenario(options) {
         reply(response, id, [assistantMessage(SUMMARY)], 1200)
         return true
       }
+      await writeFile(
+        join(options.resultDir, `runtime-policy-${phase}-${requests}.request.json`),
+        JSON.stringify(body, null, 2)
+      )
       const developer = texts(body, 'developer')
       const all = texts(body)
       assert.doesNotMatch(developer, /<wework\.host-policy\.part-/)

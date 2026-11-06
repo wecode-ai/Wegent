@@ -52,7 +52,16 @@ export function modelToolDefinitions(request: unknown): ModelToolDefinition[] {
       try {
         visit(JSON.parse(value))
       } catch {
-        // Ordinary message text does not define tools.
+        if (/^Script completed\nWall time [^\n]+\nOutput:\n/.test(value)) {
+          const output = value.slice(value.indexOf('\nOutput:\n') + '\nOutput:\n'.length)
+          for (const line of output.split('\n').filter(Boolean)) {
+            try {
+              visit(JSON.parse(line))
+            } catch {
+              /* Non-JSON result text is not a catalog. */
+            }
+          }
+        }
       }
     } else if (Array.isArray(value)) {
       value.forEach(visit)

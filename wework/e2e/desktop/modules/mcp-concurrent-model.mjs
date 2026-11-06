@@ -3,11 +3,11 @@ import { assert, MCP_ELICITATION_NAMESPACE, MCP_ELICITATION_TOOL_NAME } from './
 import {
   assistantMessage,
   functionCall,
-  customToolCall,
   requestContainsToolOutput,
   responseCompleted,
   responseCreated,
   selectMcpTool,
+  selectProgrammaticExec,
   selectTool,
   selectToolSearch,
   toolSearchResponseEvents,
@@ -49,21 +49,17 @@ export async function respondToConcurrentMcpInput(
     const mcp = selectMcpTool(body, MCP_ELICITATION_NAMESPACE, MCP_ELICITATION_TOOL_NAME, {
       scenario,
     })
-    const exec = (body.tools ?? []).find(tool => tool.name === 'exec')
-    assert.ok(
-      exec,
-      `Code Mode exec unavailable: ${JSON.stringify((body.tools ?? []).map(tool => [tool.name, tool.type]))}`
-    )
-    const toolName = `${mcp.namespace}__${mcp.name}`.replace(/[^a-zA-Z0-9_$]/g, '_')
+    const toolName = mcp.codeMode?.targetName ?? `${mcp.namespace}__${mcp.name}`
     // The real MCP call stays open behind a fixture gate while the native cell
     // yields. A subsequent step can then ask an ordinary blocking question.
     control.writeSse(response, [
       responseCreated(responseId),
-      customToolCall(
-        mcpId,
-        'exec',
-        `// @exec: {"yield_time_ms": 1}\ntext(await tools.${toolName}(${JSON.stringify(mcp.arguments)}))`
-      ),
+      ...selectedToolCall(mcpId, {
+        codeMode: selectProgrammaticExec(
+          body,
+          `// @exec: {"yield_time_ms": 1}\ntext(await tools[${JSON.stringify(toolName)}](${JSON.stringify(mcp.arguments)}))`
+        ),
+      }),
       responseCompleted(responseId),
     ])
     return

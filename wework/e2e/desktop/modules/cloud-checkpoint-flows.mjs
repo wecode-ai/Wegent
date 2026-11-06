@@ -69,6 +69,7 @@ import {
   SELECTED_DESKTOP_SEGMENT,
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
+  createSingleRootLocalProject,
   fetchJson,
   join,
   mkdir,
@@ -831,6 +832,14 @@ async function verifyCloudCheckpoint({
     })
   }
 
+  if (checkpoint === 'embedded-browser') {
+    assert.ok(desktopScenario, 'embedded-browser requires its desktop scenario module')
+    setPhase('cloud-connected-local-browser')
+    await createSingleRootLocalProject(control, workspacePath, 'embedded-browser-local-executor')
+    await desktopScenario.verify(control)
+    return
+  }
+
   const { composerSelector, projectRowSelector, projectUiId } = await createCloudProjectFixture(
     control,
     workspacePath
@@ -1008,7 +1017,6 @@ async function verifyCloudCheckpoint({
       await verifyStandaloneViewImageTask({ composerSelector, control, projectRowSelector })
       return
     case 'browser-multi-tabs':
-    case 'embedded-browser':
       assert.ok(desktopScenario, `${checkpoint} requires its desktop scenario module`)
       setPhase(`cloud-${checkpoint}`)
       await desktopScenario.verify(control)

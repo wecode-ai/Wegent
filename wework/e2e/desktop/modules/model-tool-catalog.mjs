@@ -3,15 +3,22 @@ import { wireDeclarations } from './model-wire-contract.mjs'
 
 export function programmaticExecTools(request) {
   return wireDeclarations(request, 'responses').filter(
-    tool => tool.type === 'custom' && tool.name === 'exec'
+    tool =>
+      ['exec', 'functions__exec'].includes(tool.name) &&
+      (tool.type === 'custom' ||
+        (tool.type === 'function' && tool.parameters?.properties?.input?.type === 'string'))
   )
 }
 
 export function programmaticSelection(request, name, args) {
   const entries = programmaticExecTools(request)
   assert.equal(entries.length, 1, 'Expected exactly one native Code Mode exec declaration')
+  return { name, arguments: args, codeMode: { ...entries[0], targetName: name } }
+}
+
+export function programmaticInput(name, args) {
   const shell = ['exec_command', 'write_stdin'].includes(name)
-  const input = [
+  return [
     `const requested = ${JSON.stringify(name)}`,
     'const matches = ALL_TOOLS.filter(tool => tool.name === requested || tool.name.endsWith("__" + requested))',
     `if (matches.length !== 1) throw new Error('Native capability is missing or ambiguous: ' + ${JSON.stringify(name)})`,
@@ -25,7 +32,6 @@ export function programmaticSelection(request, name, args) {
           'if (Array.isArray(result?.content)) { for (const part of result.content) { if (part.type === "text") text(part.text); else if (part.type === "image") image(part) } } else text(result)',
         ]),
   ].join('\n')
-  return { name, arguments: args, codeMode: { ...entries[0], input } }
 }
 
 export function discoverySelection(request, query) {

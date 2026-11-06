@@ -585,6 +585,7 @@ function selectProgrammaticExec(request, input) {
   return {
     name: tools[0].name,
     input,
+    ...(tools[0].type === 'function' ? { type: 'function' } : {}),
     ...(tools[0].namespace ? { namespace: tools[0].namespace } : {}),
   }
 }
@@ -807,7 +808,7 @@ function requestToolSearchResults(request) {
     }
     if (typeof value === 'string') {
       try {
-        visit(JSON.parse(value))
+        visit(JSON.parse(modelToolOutputText(value)))
       } catch {
         // Non-JSON strings cannot contain tool search results.
       }

@@ -83,8 +83,7 @@ export function createDesktopScenario({
             body,
             `text(await tools.exec_command(${JSON.stringify({ cmd: command, workdir: workspacePath, yield_time_ms: 10000 })}))`
           )
-          const event = customToolCall(CALL, tool.name, tool.input)
-          if (tool.namespace) event.item.namespace = tool.namespace
+          const event = selectedToolCall(CALL, { codeMode: tool }).at(-1)
           events = [event]
         } else {
           const tool = selectShellToolCommand(body, command, workspacePath, { yieldTimeMs: 10000 })

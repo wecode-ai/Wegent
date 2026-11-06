@@ -27,9 +27,12 @@ describe('mock model deferred tool discovery', () => {
       `return (async () => { ${call.arguments.input} })()`
     )(catalog, tools, (value: unknown) => output.push(value))
     expect(tools[catalog[0].name]).toHaveBeenCalledWith({})
-    expect(
-      modelToolDefinitions({ input: JSON.stringify(output) }).map(tool => tool.name)
-    ).toContain('collaboration__spawn_agent')
+    const nativeOutput =
+      'Script completed\nWall time 0.0 seconds\nOutput:\n\n' +
+      output.map(value => JSON.stringify(value)).join('\n')
+    expect(modelToolDefinitions({ input: nativeOutput }).map(tool => tool.name)).toContain(
+      'collaboration__spawn_agent'
+    )
     expect(output.at(-1)).toEqual({ projectId: 'p1' })
     await expect(
       new Function(

@@ -120,8 +120,7 @@ export function followUpAgentHistory(options, activeSelector, heldExecutionProgr
           body,
           heldExecutionProgram(options.workspacePath, startedFile, releaseFile, FOLLOW_UP)
         )
-        const call = customToolCall('history-held-command', tool.name, tool.input)
-        if (tool.namespace) call.item.namespace = tool.namespace
+        const call = selectedToolCall('history-held-command', { codeMode: tool }).at(-1)
         reply(response, 'history-live', [call])
       } else {
         assert.ok(

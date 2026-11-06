@@ -3353,9 +3353,10 @@ class DesktopE2EServer {
         'The real cloud Codex request did not report its tool output to the model service'
       )
       const identityToolOutput = toolOutputText(body, CLOUD_RUNTIME_IDENTITY_TOOL_CALL_ID) ?? ''
+      assert.match(identityToolOutput, /Process exited with code 0\b/)
       assert.equal(
-        identityToolOutput.trim().endsWith(`Output:\n${CLOUD_AUTHENTICATED_USER_NAME}`),
-        true,
+        identityToolOutput.trim().split('\n').at(-1),
+        CLOUD_AUTHENTICATED_USER_NAME,
         'The real cloud executor did not expose the authenticated Wework user identity'
       )
       const stream = streamingTextEvents(responseId, CLOUD_COMPLETION_TEXT)

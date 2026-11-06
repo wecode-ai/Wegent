@@ -23,9 +23,7 @@ function programmaticCommand(request, callId, method, args) {
     'text(result.output)',
   ].join('\n')
   const exec = selectProgrammaticExec(request, program)
-  const event = customToolCall(callId, exec.name, exec.input)
-  if (exec.namespace) event.item.namespace = exec.namespace
-  return [event]
+  return selectedToolCall(callId, { codeMode: exec })
 }
 
 export function shellCommandResponse(request, callId, command, workspacePath, options = {}) {

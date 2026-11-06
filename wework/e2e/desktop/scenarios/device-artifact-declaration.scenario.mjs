@@ -67,8 +67,7 @@ export function createDesktopScenario({ captureScreenshot, workbenchReadyTimeout
             body,
             `text(await tools.exec_command(${JSON.stringify({ cmd: command, workdir: cloud.runtimeWorkspaceRoot, yield_time_ms: 10000 })}))`
           )
-          const event = customToolCall('desktop-artifact-generate', tool.name, tool.input)
-          if (tool.namespace) event.item.namespace = tool.namespace
+          const event = selectedToolCall('desktop-artifact-generate', { codeMode: tool }).at(-1)
           events = [event]
         } else {
           const tool = selectShellToolCommand(body, command, cloud.runtimeWorkspaceRoot, {
