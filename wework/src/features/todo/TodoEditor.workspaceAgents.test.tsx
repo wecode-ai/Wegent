@@ -377,6 +377,7 @@ describe('workspace Agent selection from the Issue assignee picker', () => {
     await waitFor(() => expect(screen.queryByText('a.png')).not.toBeInTheDocument())
     const documentRow = screen.getByText('b.txt').closest('button')?.parentElement
     expect(documentRow).not.toBeNull()
+    expect(documentRow?.querySelector('.issue-detail-attachment-fallback')).not.toBeNull()
     expect(
       within(documentRow as HTMLElement).queryByTestId(/^issue-detail-attachment-thumbnail-/)
     ).not.toBeInTheDocument()
