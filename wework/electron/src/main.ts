@@ -95,8 +95,8 @@ import { detectCoreDshStartupPluginFailure } from './host/core-dsh-startup-failu
 import { materializeBundledRuntimes } from './runtime/bundled-runtime-materializer.js'
 import { waitForRendererSelector } from './host/renderer-readiness.js'
 import { captureProcessExplorerWindowSnapshot } from './host/process-explorer-window-snapshot.js'
-import { desktopWindowFrameOptions } from './host/window-layout.js'
-import { prepareStartupMainWindow } from './host/startup-window-handoff.js'
+import { desktopWindowFrameOptions, startupWindowLayout } from './host/window-layout.js'
+import { maximizeStartupWindow, prepareStartupMainWindow } from './host/startup-window-handoff.js'
 import {
   POPOUT_WINDOW_SIZES,
   popoutWindowBounds,
@@ -1423,7 +1423,9 @@ async function updateDesktopPreferences(
 }
 
 async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
-  logStartupStep('windows-create', 'started', { theme: startupTheme })
+  const startupDisplay = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+  const startupLayout = startupWindowLayout(startupDisplay.workArea)
+  logStartupStep('windows-create', 'started', { theme: startupTheme, layout: startupLayout })
   const developmentTitle = process.env.WEWORK_PLUGIN_DEVELOPMENT_TITLE?.trim()
   const windowTitle =
     pluginDevelopmentInstance && developmentTitle
@@ -1431,8 +1433,7 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
       : (developmentDockIdentity?.displayName ?? 'Wework')
   mainWindow = new BrowserWindow({
     ...desktopWindowFrameOptions(),
-    width: 1440,
-    height: 960,
+    ...startupLayout.bounds,
     title: windowTitle,
     backgroundColor: startupTheme === 'dark' ? '#181818' : '#fafafa',
     show: false,
@@ -1448,8 +1449,7 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
   installE2ERendererCpuProfiling(mainWindow.webContents)
   startupSplashWindow = new BrowserWindow({
     ...desktopWindowFrameOptions(),
-    width: 1440,
-    height: 960,
+    ...startupLayout.bounds,
     title: windowTitle,
     backgroundColor: '#05070d',
     show: false,
@@ -1468,8 +1468,12 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
       isVisible: () => startupSplashWindow?.isVisible() ?? false,
       on: (_event, listener) => startupSplashWindow?.on('close', listener),
       once: (_event, listener) => startupSplashWindow?.once('closed', listener),
-      show: () => {
-        if (!keepE2EWindowInBackground) startupSplashWindow?.show()
+      show: async () => {
+        if (keepE2EWindowInBackground) return
+        const target = startupSplashWindow
+        if (!target) throw new Error('Startup splash window is unavailable')
+        if (startupLayout.maximized) await maximizeStartupWindow(target, startupDisplay.workArea)
+        else target.show()
       },
       setOpacity: opacity => startupSplashWindow?.setOpacity(opacity),
       webContents: {
@@ -1653,6 +1657,10 @@ const rendererStartupReady = createStartupReadyHandler(async (source: string) =>
           target,
           splashWindow,
           !keepE2EWindowInBackground,
+          {
+            main: screen.getDisplayMatching(target.getBounds()).id,
+            splash: screen.getDisplayMatching(splashWindow.getBounds()).id,
+          },
           event => {
             const geometry = event.splash ?? event.main
             const display = geometry ? screen.getDisplayMatching(geometry.bounds) : null

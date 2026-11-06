@@ -162,6 +162,73 @@ describe('StartupSplash', () => {
     expect(snapshot.theme).toBe('dark')
   })
 
+  test('waits for native presentation before marking the splash visible', async () => {
+    const { show, splash, target } = createFixture()
+    let finishPresentation!: () => void
+    const presentation = new Promise<void>(resolve => {
+      finishPresentation = resolve
+    })
+    let presentationStarted!: () => void
+    const started = new Promise<void>(resolve => {
+      presentationStarted = resolve
+    })
+    const originalShow = target.show.getMockImplementation()!
+    target.show.mockImplementationOnce(async () => {
+      originalShow()
+      presentationStarted()
+      await presentation
+    })
+    const showing = show()
+    await started
+    expect(splash.snapshot().state).toBe('loading')
+    expect(splash.snapshot().events.map(event => event.name)).toEqual([
+      'created',
+      'animation-ready',
+    ])
+    finishPresentation()
+    expect((await showing).state).toBe('visible')
+    expect(splash.snapshot().events.at(-1)?.name).toBe('shown')
+  })
+
+  test('propagates native presentation failure without reporting a shown splash', async () => {
+    const { show, splash, target } = createFixture()
+    const error = new Error('Native maximize failed')
+    target.show.mockImplementationOnce(async () => {
+      throw error
+    })
+    await expect(show()).rejects.toBe(error)
+    expect(splash.snapshot().events.map(event => event.name)).toEqual([
+      'created',
+      'animation-ready',
+    ])
+  })
+
+  test('keeps a closed splash closed when pending native presentation finishes', async () => {
+    const { show, splash, target } = createFixture()
+    let finishPresentation!: () => void
+    const presentation = new Promise<void>(resolve => {
+      finishPresentation = resolve
+    })
+    let presentationStarted!: () => void
+    const started = new Promise<void>(resolve => {
+      presentationStarted = resolve
+    })
+    target.show.mockImplementationOnce(async () => {
+      presentationStarted()
+      await presentation
+    })
+    const showing = show()
+    await started
+    await splash.close()
+    finishPresentation()
+    expect((await showing).state).toBe('closed')
+    expect(splash.snapshot().events.map(event => event.name)).toEqual([
+      'created',
+      'animation-ready',
+      'closed',
+    ])
+  })
+
   test('replays the latest startup stage once the splash is visible', async () => {
     const { show, splash, target } = createFixture()
     const update = {

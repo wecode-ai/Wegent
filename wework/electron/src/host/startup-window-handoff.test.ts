@@ -2,16 +2,19 @@ import type { BrowserWindow } from 'electron'
 import { EventEmitter } from 'node:events'
 import { describe, expect, test, vi } from 'vitest'
 import {
+  maximizeStartupWindow,
   prepareStartupMainWindow,
+  type StartupWindowDisplays,
   type StartupWindowHandoffTrace,
 } from './startup-window-handoff.js'
 
-function fixture(normalizeOnShow = false) {
+function fixture() {
   const calls: string[] = []
   const bounds = { x: 120, y: 80, width: 1200, height: 800 }
   const nativeEvents = new EventEmitter()
   let mainBounds = { ...bounds }
   let visible = false
+  let maximized = false
   const main = {
     getBounds: () => ({ ...mainBounds }),
     getContentBounds: () => ({ ...mainBounds }),
@@ -24,10 +27,15 @@ function fixture(normalizeOnShow = false) {
     }),
     isDestroyed: () => false,
     isFocused: () => false,
-    isMaximized: () => false,
+    isMaximized: () => maximized,
     isMinimized: () => false,
     isVisible: () => visible,
-    maximize: vi.fn(() => calls.push('maximize')),
+    maximize: vi.fn(() => {
+      calls.push('maximize')
+      visible = true
+      maximized = true
+      nativeEvents.emit('maximize')
+    }),
     on: nativeEvents.on.bind(nativeEvents),
     removeListener: nativeEvents.removeListener.bind(nativeEvents),
     setBounds: vi.fn((value: typeof bounds) => {
@@ -38,13 +46,6 @@ function fixture(normalizeOnShow = false) {
     showInactive: vi.fn(() => {
       calls.push('show-inactive')
       visible = true
-      if (normalizeOnShow) {
-        mainBounds = {
-          ...mainBounds,
-          width: mainBounds.width - 1,
-          height: mainBounds.height - 1,
-        }
-      }
     }),
     webContents: {
       getZoomFactor: () => 1.25,
@@ -71,11 +72,16 @@ function fixture(normalizeOnShow = false) {
     moveAbove: vi.fn(() => calls.push('splash-above')),
     webContents: { getZoomFactor: () => 1, isDestroyed: () => false },
   }
-  const prepare = (show = true, onTrace?: (event: StartupWindowHandoffTrace) => void) =>
+  const prepare = (
+    show = true,
+    onTrace?: (event: StartupWindowHandoffTrace) => void,
+    displays: StartupWindowDisplays = { main: 1, splash: 1 }
+  ) =>
     prepareStartupMainWindow(
       main as unknown as BrowserWindow,
       splash as unknown as BrowserWindow,
       show,
+      displays,
       onTrace
     )
   return {
@@ -87,6 +93,9 @@ function fixture(normalizeOnShow = false) {
     nativeEvents,
     setMainBounds: (value: typeof bounds) => {
       mainBounds = { ...value }
+    },
+    setMaximized: (value: boolean) => {
+      maximized = value
     },
   }
 }
@@ -108,8 +117,9 @@ describe('preparing the native startup destination', () => {
     expect(main.maximize).not.toHaveBeenCalled()
   })
 
-  test('aligns the mapped main window after native first-show geometry normalization', async () => {
-    const { prepare, main, calls, bounds } = fixture(true)
+  test('aligns a normal destination that starts at different native bounds', async () => {
+    const { prepare, main, calls, bounds, setMainBounds } = fixture()
+    setMainBounds({ x: 0, y: 0, width: 1280, height: 720 })
     expect(await prepare()).toEqual({ main: bounds, splash: bounds })
     expect(main.setBounds).toHaveBeenCalledOnce()
     expect(calls.indexOf('show-inactive')).toBeLessThan(calls.indexOf('bounds'))
@@ -118,9 +128,11 @@ describe('preparing the native startup destination', () => {
 
   test('keeps controlled background startup hidden while still waiting for a painted frame', async () => {
     const { prepare, main, splash, calls } = fixture()
+    splash.isMaximized = () => true
     await prepare(false)
     expect(main.showInactive).not.toHaveBeenCalled()
     expect(splash.moveAbove).not.toHaveBeenCalled()
+    expect(main.maximize).not.toHaveBeenCalled()
     expect(calls).toEqual(['opacity:0', 'bounds', 'painted', 'opacity:1'])
   })
 
@@ -130,15 +142,185 @@ describe('preparing the native startup destination', () => {
     await prepare()
     expect(main.maximize).toHaveBeenCalledOnce()
     expect(main.showInactive).toHaveBeenCalledOnce()
+    expect(main.setBounds).not.toHaveBeenCalled()
     expect(calls).toEqual([
       'opacity:0',
       'show-inactive',
-      'bounds',
       'maximize',
       'splash-above',
       'painted',
       'opacity:1',
     ])
+  })
+
+  test.each(['state-first', 'geometry-first'])(
+    'waits for both native maximization and exact geometry before capture: %s',
+    async order => {
+      const { prepare, main, splash, bounds, nativeEvents, setMainBounds, setMaximized } = fixture()
+      splash.isMaximized = () => true
+      setMainBounds({ x: 0, y: 0, width: 1280, height: 720 })
+      main.maximize.mockImplementationOnce(() => {})
+      const preparing = prepare()
+      expect(main.webContents.capturePage).not.toHaveBeenCalled()
+      if (order === 'state-first') {
+        setMaximized(true)
+        nativeEvents.emit('maximize')
+      } else {
+        setMainBounds(bounds)
+        nativeEvents.emit('resize')
+      }
+      expect(main.webContents.capturePage).not.toHaveBeenCalled()
+      setMainBounds(bounds)
+      setMaximized(true)
+      nativeEvents.emit(order === 'state-first' ? 'resize' : 'maximize')
+
+      expect(await preparing).toEqual({ main: bounds, splash: bounds })
+      expect(main.setBounds).not.toHaveBeenCalled()
+      for (const event of ['maximize', 'resize', 'move', 'closed']) {
+        expect(nativeEvents.listenerCount(event)).toBe(0)
+      }
+    }
+  )
+
+  test('preserves already maximized geometry when native presentation emits no new event', async () => {
+    const { prepare, main, splash, bounds, setMaximized } = fixture()
+    splash.isMaximized = () => true
+    setMaximized(true)
+    main.maximize.mockImplementationOnce(() => {})
+
+    expect(await prepare()).toEqual({ main: bounds, splash: bounds })
+    expect(main.maximize).toHaveBeenCalledOnce()
+    expect(main.setBounds).not.toHaveBeenCalled()
+  })
+
+  test('requests native presentation even when a hidden maximized window already matches', async () => {
+    const { main, bounds, setMaximized, nativeEvents } = fixture()
+    setMaximized(true)
+    expect(main.isVisible()).toBe(false)
+    main.maximize.mockImplementationOnce(() => {
+      main.showInactive()
+    })
+
+    await maximizeStartupWindow(main as unknown as BrowserWindow, bounds)
+    expect(main.maximize).toHaveBeenCalledOnce()
+    expect(main.isVisible()).toBe(true)
+    for (const event of ['maximize', 'resize', 'move', 'closed']) {
+      expect(nativeEvents.listenerCount(event)).toBe(0)
+    }
+  })
+
+  test('keeps full-display maximized geometry out of the normal X11 bounds setter', async () => {
+    const { prepare, main, splash, nativeEvents, setMainBounds, setMaximized } = fixture()
+    const bounds = { x: 0, y: 0, width: 1280, height: 720 }
+    splash.isMaximized = () => true
+    splash.getBounds = () => bounds
+    main.setBounds.mockImplementation(value => {
+      setMainBounds({ ...value, width: value.width - 1, height: value.height - 1 })
+    })
+    main.maximize.mockImplementationOnce(() => {
+      setMainBounds(bounds)
+      setMaximized(true)
+      nativeEvents.emit('maximize')
+    })
+
+    expect(await prepare()).toEqual({ main: bounds, splash: bounds })
+    expect(main.setBounds).not.toHaveBeenCalled()
+  })
+
+  test('fits the source restore size onto its current display instead of its previous display', async () => {
+    const { prepare, main, splash, calls, nativeEvents, setMainBounds, setMaximized } = fixture()
+    const maximized = { x: -1920, y: 0, width: 1920, height: 1080 }
+    const restored = { x: 240, y: 60, width: 1440, height: 960 }
+    splash.isMaximized = () => true
+    splash.getBounds = () => maximized
+    splash.getNormalBounds = () => restored
+    main.maximize.mockImplementationOnce(() => {
+      calls.push('maximize')
+      setMainBounds(maximized)
+      setMaximized(true)
+      nativeEvents.emit('maximize')
+    })
+
+    expect(await prepare(true, undefined, { main: 1, splash: 2 })).toEqual({
+      main: maximized,
+      splash: maximized,
+    })
+    expect(main.setBounds).toHaveBeenCalledExactlyOnceWith({
+      x: -1680,
+      y: 60,
+      width: 1440,
+      height: 960,
+    })
+    expect(calls.indexOf('bounds')).toBeLessThan(calls.indexOf('maximize'))
+  })
+
+  test('fits a larger restore size onto a smaller target display before native maximization', async () => {
+    const { prepare, main, splash, nativeEvents, setMainBounds, setMaximized } = fixture()
+    const target = { x: -640, y: -480, width: 640, height: 480 }
+    splash.isMaximized = () => true
+    splash.getBounds = () => target
+    splash.getNormalBounds = () => ({ x: 240, y: 60, width: 1440, height: 960 })
+    main.setBounds.mockImplementationOnce(value => {
+      setMainBounds({ ...value, width: value.width - 1, height: value.height - 1 })
+    })
+    main.maximize.mockImplementationOnce(() => {
+      setMainBounds(target)
+      setMaximized(true)
+      nativeEvents.emit('maximize')
+    })
+
+    expect(await prepare(true, undefined, { main: 1, splash: 2 })).toEqual({
+      main: target,
+      splash: target,
+    })
+    expect(main.setBounds).toHaveBeenCalledExactlyOnceWith(target)
+  })
+
+  test('rejects a refused maximize request within a bounded deadline and removes listeners', async () => {
+    vi.useFakeTimers()
+    try {
+      const { prepare, main, splash, nativeEvents } = fixture()
+      splash.isMaximized = () => true
+      main.maximize.mockImplementationOnce(() => {})
+      const failure = expect(prepare()).rejects.toThrow('did not maximize to the splash bounds')
+      await vi.runAllTimersAsync()
+      await failure
+      expect(main.hide).toHaveBeenCalledOnce()
+      expect(main.webContents.capturePage).not.toHaveBeenCalled()
+      for (const event of ['maximize', 'resize', 'move', 'closed']) {
+        expect(nativeEvents.listenerCount(event)).toBe(0)
+      }
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test('settles a destroyed destination while its native maximize request is pending', async () => {
+    const { prepare, main, splash, nativeEvents } = fixture()
+    splash.isMaximized = () => true
+    main.maximize.mockImplementationOnce(() => {})
+    const failure = expect(prepare()).rejects.toThrow('closed before maximizing')
+    main.isDestroyed = () => true
+    nativeEvents.emit('closed')
+    await failure
+    expect(main.webContents.capturePage).not.toHaveBeenCalled()
+    for (const event of ['maximize', 'resize', 'move', 'closed']) {
+      expect(nativeEvents.listenerCount(event)).toBe(0)
+    }
+  })
+
+  test('preserves a synchronous maximize failure and removes its native listeners', async () => {
+    const { prepare, main, splash, nativeEvents } = fixture()
+    splash.isMaximized = () => true
+    const error = new Error('Native maximize failed')
+    main.maximize.mockImplementationOnce(() => {
+      throw error
+    })
+    await expect(prepare()).rejects.toBe(error)
+    expect(main.hide).toHaveBeenCalledOnce()
+    for (const event of ['maximize', 'resize', 'move', 'closed']) {
+      expect(nativeEvents.listenerCount(event)).toBe(0)
+    }
   })
 
   test('hides a failed destination and restores its opacity before propagating failure', async () => {

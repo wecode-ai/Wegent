@@ -1,4 +1,5 @@
 import type { BrowserWindow, NativeImage, Rectangle } from 'electron'
+import { centeredWindowBounds } from './window-layout.js'
 
 type GeometryWindow = Pick<
   BrowserWindow,
@@ -34,6 +35,11 @@ export interface StartupWindowBounds {
   main: Rectangle
 }
 
+export interface StartupWindowDisplays {
+  main: number
+  splash: number
+}
+
 export interface StartupWindowGeometry {
   bounds: Rectangle
   contentBounds: Rectangle
@@ -56,6 +62,8 @@ export interface StartupWindowHandoffTrace {
     | 'after-set-bounds'
     | 'before-maximize'
     | 'after-maximize'
+    | 'before-relocation'
+    | 'after-relocation'
     | 'before-stack'
     | 'after-stack'
     | 'before-capture'
@@ -147,11 +155,66 @@ function createGeometryTracer(
   }
 }
 
+function maximizedAtBounds(main: MainWindow, bounds: Rectangle): boolean {
+  const actual = main.getBounds()
+  return (
+    main.isMaximized() &&
+    actual.x === bounds.x &&
+    actual.y === bounds.y &&
+    actual.width === bounds.width &&
+    actual.height === bounds.height
+  )
+}
+
+export async function maximizeStartupWindow(main: MainWindow, bounds: Rectangle): Promise<void> {
+  if (main.isDestroyed()) throw new Error('The startup destination closed before maximizing')
+  await new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      clearTimeout(timeout)
+      main.removeListener('maximize', changed)
+      main.removeListener('resize', changed)
+      main.removeListener('move', changed)
+      main.removeListener('closed', closed)
+    }
+    const changed = () => {
+      if (main.isDestroyed()) return closed()
+      if (!maximizedAtBounds(main, bounds)) return
+      cleanup()
+      resolve()
+    }
+    const closed = () => {
+      cleanup()
+      reject(new Error('The startup destination closed before maximizing'))
+    }
+    const timeout = setTimeout(() => {
+      cleanup()
+      reject(
+        new Error('The startup destination did not maximize to the splash bounds within 5000ms')
+      )
+    }, 5000)
+    main.on('maximize', changed)
+    main.on('resize', changed)
+    main.on('move', changed)
+    main.on('closed', closed)
+    try {
+      if (main.isDestroyed()) closed()
+      else {
+        main.maximize()
+        changed()
+      }
+    } catch (error) {
+      cleanup()
+      reject(error)
+    }
+  })
+}
+
 /** Presents a painted main window beneath the still-opaque splash without stealing focus. */
 export async function prepareStartupMainWindow(
   main: MainWindow,
   splash: SplashWindow,
   show: boolean,
+  displays: StartupWindowDisplays,
   onTrace?: (event: StartupWindowHandoffTrace) => void
 ): Promise<StartupWindowBounds> {
   const bounds = splash.getBounds()
@@ -166,14 +229,19 @@ export async function prepareStartupMainWindow(
         main.showInactive()
         trace.record('after-show')
       }
-      // Initial native mapping may normalize hidden-window bounds, so align after showing.
-      trace.record('before-set-bounds')
-      main.setBounds(bounds)
-      trace.record('after-set-bounds')
       if (show && splash.isMaximized()) {
+        if (displays.main !== displays.splash) {
+          trace.record('before-relocation')
+          main.setBounds(centeredWindowBounds(splash.getNormalBounds(), bounds))
+          trace.record('after-relocation')
+        }
         trace.record('before-maximize')
-        main.maximize()
+        await maximizeStartupWindow(main, bounds)
         trace.record('after-maximize')
+      } else {
+        trace.record('before-set-bounds')
+        main.setBounds(bounds)
+        trace.record('after-set-bounds')
       }
       if (show) {
         trace.record('before-stack')

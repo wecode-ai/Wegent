@@ -55,7 +55,7 @@ export interface StartupSplashWindow {
   isVisible: () => boolean
   on: (event: 'close', listener: (event: StartupSplashCloseEvent) => void) => void
   once: (event: 'closed', listener: () => void) => void
-  show: () => void
+  show: () => void | Promise<void>
   setOpacity: (opacity: number) => void
   webContents: SplashWebContents
 }
@@ -388,7 +388,8 @@ export class StartupSplash {
       this.record('animation-ready')
     }
     if (!target.isDestroyed()) {
-      target.show()
+      await target.show()
+      if (target.isDestroyed()) return this.snapshot()
       this.state = 'visible'
       this.record('shown')
       if (this.latestProgress && !target.webContents.isDestroyed()) {
