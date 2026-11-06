@@ -93,11 +93,18 @@ class NotificationPreferences(BaseModel):
             im=True,
         )
     )
+    stand_in: NotificationChannelPreference = Field(
+        default_factory=lambda: NotificationChannelPreference(
+            in_app=True,
+            system=True,
+            im=None,
+        )
+    )
 
 
 class NotificationPreferencesUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    category: Literal["tasks", "collaboration", "general"]
+    category: Literal["tasks", "collaboration", "general", "stand_in"]
     channel: Literal["in_app", "system", "im"]
     enabled: bool

@@ -3,7 +3,7 @@
 
 'use client'
 
-import { useMemo } from 'react'
+import { useEffect, useState } from 'react'
 import apiClient from '@/apis/client'
 import { useUser } from '@/features/common/UserContext'
 import { getApiBaseUrl } from '@/lib/runtime-config'
@@ -20,9 +20,13 @@ export function useCollaborationTemplates() {
   const ownerId = user?.id
   const backend = getApiBaseUrl()
   const authScope = apiClient.getCacheScope()
-  return useMemo(() => {
-    if (!ownerId) return null
-    const scope = `${backend}:${ownerId}`
+  const scope = `${backend}:${ownerId ?? 'anonymous'}`
+  const [store, setStore] = useState<CollaborationTemplateStore | null>(null)
+  useEffect(() => {
+    if (!ownerId) {
+      setStore(null)
+      return
+    }
     const key = `${scope}:${authScope}`
     let scoped = stores.get(key)
     if (!scoped) {
@@ -52,6 +56,7 @@ export function useCollaborationTemplates() {
       })
       stores.set(key, scoped)
     }
-    return scoped
-  }, [ownerId, backend, authScope])
+    setStore(scoped)
+  }, [scope, ownerId, backend, authScope])
+  return store?.library.scope === scope ? store : null
 }

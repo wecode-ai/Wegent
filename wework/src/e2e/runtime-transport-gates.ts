@@ -5,7 +5,7 @@ interface Match {
 
 export interface RuntimeTransportGateRule {
   id: string
-  kind: 'response' | 'event'
+  kind: 'request' | 'response' | 'event'
   name: string
   where?: Match[]
   hold?: boolean

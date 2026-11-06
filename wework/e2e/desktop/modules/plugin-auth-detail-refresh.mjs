@@ -8,6 +8,8 @@ export async function verifyPluginAuthDetailRefresh({
   slug,
   homePath,
   captureScreenshot,
+  waitForValue,
+  uiTimeoutMs,
 }) {
   const approval = join(homePath, 'conversation-qr-approved')
   const failure = join(homePath, 'conversation-qr-health-fail')
@@ -65,7 +67,13 @@ export async function verifyPluginAuthDetailRefresh({
       await rm(failure)
       // Repeated logout emits a fresh event after the real provider recovers.
       assert.equal((await auth('logout')).status, 'ok')
-      await control.command('waitFor', manage, { text: '登录' })
+      // Substring matching also accepts the previous label "退出登录".
+      await waitForValue(
+        () => control.command('getText', manage),
+        text => text.trim() === '登录',
+        uiTimeoutMs,
+        'Connector did not return to the logged-out state'
+      )
       assert.equal((await control.command('getText', manage)).trim(), '登录')
       await control.command('waitFor', '[data-testid="plugin-detail-action-error"]', {
         visible: false,

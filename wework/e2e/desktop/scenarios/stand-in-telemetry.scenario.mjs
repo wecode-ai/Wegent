@@ -37,65 +37,90 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
     async verify(control) {
       const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
       await ensureExperimentalFeaturesEnabled(control)
-      // An unobserved account models an Executor whose desktop consumer is disconnected.
-      await rpc('runtime.stand_in.telemetry.configure', { userId: OFFLINE_USER, enabled: true })
-      const offline = await rpc('runtime.stand_in.personal.get', { userId: OFFLINE_USER })
-      offline.roles[0].prompt = MARKER
-      await rpc('runtime.stand_in.personal.save', { userId: OFFLINE_USER, settings: offline })
       const catalog = await rpc('runtime.runner.catalog', {})
       const model = catalog.models.find(model => model.runtime === 'codex' && model.is_default)
       assert.ok(model, 'The real Executor must expose the seeded Codex model')
-      await rpc('runtime.stand_in.conversation', {
-        userId: OFFLINE_USER,
-        message: MARKER,
-        options: {
-          modelId: model.local_model_id,
-          modelType: 'runtime',
-          modelOptions: { codexProviderId: model.provider },
-        },
-      })
-      await waitForBoardValue(
-        async () => {
-          const { items } = await rpc('runtime.stand_in.telemetry.list', {
-            userId: OFFLINE_USER,
-          })
-          return items.some(item => item.name === 'stand_in_execution_completed')
-        },
-        true,
-        'Executor must persist the unobserved conversation completion',
-        modelResponseTimeoutMs
-      )
-      const before = await rpc('runtime.stand_in.telemetry.list', { userId: OFFLINE_USER })
-      for (const name of [
-        'stand_in_configuration_succeeded',
-        'stand_in_conversation_succeeded',
-        'stand_in_execution_started',
-        'stand_in_execution_completed',
-      ]) {
-        assert.equal(before.items.filter(item => item.name === name).length, 1, name)
+      const originalBackend = await rpc('executor.backend.status', {})
+      assert.equal(originalBackend.configured, true)
+      try {
+        // The unobserved local profile executes with its Backend genuinely disconnected.
+        const disconnected = JSON.parse(
+          await control.command('disconnectLocalExecutorCloud', 'body')
+        )
+        assert.deepEqual(disconnected, { configured: false, connected: false })
+        await rpc('runtime.stand_in.telemetry.configure', { userId: OFFLINE_USER, enabled: true })
+        const offline = await rpc('runtime.stand_in.personal.get', { userId: OFFLINE_USER })
+        offline.roles[0].prompt = MARKER
+        await rpc('runtime.stand_in.personal.save', { userId: OFFLINE_USER, settings: offline })
+        await rpc('runtime.stand_in.conversation', {
+          userId: OFFLINE_USER,
+          message: MARKER,
+          options: {
+            modelId: model.local_model_id,
+            modelType: 'runtime',
+            modelOptions: { codexProviderId: model.provider },
+          },
+        })
+        await waitForBoardValue(
+          async () => {
+            const { items } = await rpc('runtime.stand_in.telemetry.list', {
+              userId: OFFLINE_USER,
+            })
+            return items.some(item => item.name === 'stand_in_execution_completed')
+          },
+          true,
+          'Executor must persist the unobserved conversation completion',
+          modelResponseTimeoutMs
+        )
+        const before = await rpc('runtime.stand_in.telemetry.list', { userId: OFFLINE_USER })
+        for (const name of [
+          'stand_in_configuration_succeeded',
+          'stand_in_conversation_succeeded',
+          'stand_in_execution_started',
+          'stand_in_execution_completed',
+        ]) {
+          assert.equal(before.items.filter(item => item.name === name).length, 1, name)
+        }
+        assert.equal(
+          before.items.find(item => item.name === 'stand_in_execution_completed').properties.result,
+          'success'
+        )
+        assert.ok(!JSON.stringify(before).includes(MARKER))
+        const readyCountBeforeReload = control.readyCount
+        await control.command('reloadMainWindow', 'body')
+        await control.awaitReadyAfter(readyCountBeforeReload)
+        await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]')
+        assert.deepEqual(
+          await rpc('runtime.stand_in.telemetry.list', { userId: OFFLINE_USER }),
+          before
+        )
+        const ids = before.items.map(item => item.id)
+        await rpc('runtime.stand_in.telemetry.ack', { userId: OFFLINE_USER, ids })
+        await rpc('runtime.stand_in.telemetry.ack', { userId: OFFLINE_USER, ids })
+        assert.deepEqual(
+          (await rpc('runtime.stand_in.telemetry.list', { userId: OFFLINE_USER })).items,
+          []
+        )
+        await rpc('runtime.stand_in.telemetry.configure', { userId: OFFLINE_USER, enabled: false })
+        console.log(
+          '[stand-in-telemetry] Background execution, reload persistence and ACK verified'
+        )
+      } finally {
+        const restored = JSON.parse(await control.command('reconnectLocalExecutorCloud', 'body'))
+        assert.equal(restored.configured, originalBackend.configured)
+        const backend = await rpc('executor.backend.status', {})
+        assert.equal(backend.configured, originalBackend.configured)
+        assert.equal(backend.backend_url, originalBackend.backend_url)
+        assert.equal(backend.socket_url, originalBackend.socket_url)
+        if (originalBackend.connected) {
+          await waitForBoardValue(
+            async () => (await rpc('executor.backend.status', {})).connected,
+            true,
+            'The previously online Executor cloud connection must be restored',
+            uiTimeoutMs
+          )
+        }
       }
-      assert.equal(
-        before.items.find(item => item.name === 'stand_in_execution_completed').properties.result,
-        'success'
-      )
-      assert.ok(!JSON.stringify(before).includes(MARKER))
-      const readyCountBeforeReload = control.readyCount
-      await control.command('reloadMainWindow', 'body')
-      await control.awaitReadyAfter(readyCountBeforeReload)
-      await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]')
-      assert.deepEqual(
-        await rpc('runtime.stand_in.telemetry.list', { userId: OFFLINE_USER }),
-        before
-      )
-      const ids = before.items.map(item => item.id)
-      await rpc('runtime.stand_in.telemetry.ack', { userId: OFFLINE_USER, ids })
-      await rpc('runtime.stand_in.telemetry.ack', { userId: OFFLINE_USER, ids })
-      assert.deepEqual(
-        (await rpc('runtime.stand_in.telemetry.list', { userId: OFFLINE_USER })).items,
-        []
-      )
-      await rpc('runtime.stand_in.telemetry.configure', { userId: OFFLINE_USER, enabled: false })
-      console.log('[stand-in-telemetry] Background execution, reload persistence and ACK verified')
 
       // Standalone checkpoints decline initial consent; opt in through the real preference.
       const toggle = '[data-testid="general-telemetry-toggle"]'

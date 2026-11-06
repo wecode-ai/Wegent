@@ -230,8 +230,13 @@ test.describe('Collaboration agent execution', () => {
     await expect(page.getByTestId('collaboration-issue-detail')).toBeVisible()
     await capture(page, testInfo, 'wegent-02-issue-created')
     await page.getByTestId('cloud-todo-detail-assignee').click()
+    const assignmentSaved = page.waitForResponse(
+      response =>
+        response.request().method() === 'POST' &&
+        new URL(response.url()).pathname.endsWith(`/loop-items/${issue.id}/assign`)
+    )
     await page.getByTestId(`cloud-todo-detail-assignee-option-agent:${agentCase.agent.id}`).click()
-    await page.getByTestId('cloud-todo-save').click()
+    expect((await assignmentSaved).ok()).toBe(true)
     await expect(page.getByTestId('cloud-todo-save')).toHaveCount(0)
     await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute(
       'data-value',

@@ -43,11 +43,13 @@ mod codex_mcp;
 #[path = "runtime_capabilities/execution_snapshot.rs"]
 mod execution_snapshot;
 mod home_skills;
+mod json_file;
 mod skill_archive;
 pub use codex::prepare_codex_runtime;
 pub(crate) use codex::prepare_codex_runtime_locked;
 pub(super) use execution_snapshot::publish_agent_skills;
 use home_skills::HomeSkillsStage;
+pub(super) use json_file::write_json_file;
 pub(crate) mod mcp_environment;
 #[cfg(test)]
 use crate::services::workbench::archive_hash;
@@ -442,6 +444,16 @@ fn inject_managed_wework_mcps(
     request: &ExecutionRequest,
     mcp_servers: &mut BTreeMap<String, Value>,
 ) -> Result<(), String> {
+    mcp_servers.remove(crate::workbench_control::SERVER_NAME);
+    if let Some(config) = crate::task_runtime::mcp::control_mcp_client_config(request)? {
+        mcp_servers.insert(
+            crate::workbench_control::SERVER_NAME.to_owned(),
+            json!({
+                "type": "http", "url": config.url, "headers": config.headers,
+                "timeout": crate::workbench_control::read_budget::TOOL_TIMEOUT_SECONDS * 1000,
+            }),
+        );
+    }
     if let Some(config) = crate::task_runtime::mcp::stand_in_mcp_client_config(request)? {
         mcp_servers.insert(
             crate::task_runtime::mcp::STAND_IN_MCP_SERVER_NAME.into(),
@@ -1363,23 +1375,7 @@ fn write_skill_manifest(
     skills_dir: &Path,
     manifest: &BTreeMap<String, InstalledSkillRecord>,
 ) -> Result<(), String> {
-    let path = skill_manifest_path(skills_dir);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
-    }
-    let content = serde_json::to_string_pretty(manifest)
-        .map_err(|error| format!("failed to serialize skill manifest: {error}"))?;
-    use std::io::Write;
-    let mut staging = tempfile::NamedTempFile::new_in(skills_dir)
-        .map_err(|error| format!("failed to stage skill manifest: {error}"))?;
-    staging
-        .write_all(content.as_bytes())
-        .map_err(|error| format!("failed to write skill manifest: {error}"))?;
-    staging
-        .persist(&path)
-        .map_err(|error| format!("failed to publish {}: {error}", path.display()))?;
-    Ok(())
+    write_json_file(&skill_manifest_path(skills_dir), manifest)
 }
 
 #[cfg(test)]
@@ -2251,6 +2247,7 @@ fn ensure_object<'a>(object: &'a mut Map<String, Value>, key: &str) -> &'a mut M
 fn collect_request_mcp_servers(request: &ExecutionRequest) -> BTreeMap<String, Value> {
     let mut servers = extract_claude_options(request, &BTreeMap::new()).mcp_servers;
     preserve_explicit_mcp_approval_modes(request, &mut servers);
+    servers.remove(crate::workbench_control::SERVER_NAME);
     servers
 }
 
@@ -2491,7 +2488,7 @@ fn request_api_base_url(_request: &ExecutionRequest) -> String {
     request_backend_url_or_default(_request)
 }
 
-fn api_url(backend_url: &str, path: &str) -> Result<String, String> {
+pub(crate) fn api_url(backend_url: &str, path: &str) -> Result<String, String> {
     let mut backend =
         url::Url::parse(backend_url.trim()).map_err(|_| "invalid backend API URL".to_owned())?;
     let base_path = backend.path().trim_end_matches('/');
@@ -2502,27 +2499,6 @@ fn api_url(backend_url: &str, path: &str) -> Result<String, String> {
         .join(path.trim_start_matches('/'))
         .map(Into::into)
         .map_err(|_| "invalid backend API path".to_owned())
-}
-
-pub(super) fn write_json_file(path: &Path, value: &Value) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
-    }
-    let content = serde_json::to_string_pretty(value)
-        .map_err(|error| format!("failed to serialize JSON: {error}"))?;
-    let parent = path.parent().ok_or("JSON file has no parent")?;
-    let mut file = tempfile::NamedTempFile::new_in(parent)
-        .map_err(|error| format!("failed to stage JSON: {error}"))?;
-    use std::io::Write;
-    file.write_all(content.as_bytes())
-        .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
-    file.as_file()
-        .sync_all()
-        .map_err(|error| error.to_string())?;
-    file.persist(path)
-        .map_err(|error| format!("failed to publish JSON: {}", error.error))?;
-    Ok(())
 }
 
 fn primary_bot(request: &ExecutionRequest) -> Option<&Value> {
@@ -2642,6 +2618,8 @@ fn toml_json_value(value: &Value) -> String {
 #[cfg(test)]
 mod tests {
     mod codex;
+    #[path = "workbench_control.rs"]
+    mod workbench_control;
 
     use super::*;
     use std::io::{Cursor, Write};

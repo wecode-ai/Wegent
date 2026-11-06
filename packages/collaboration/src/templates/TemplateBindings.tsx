@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { X } from 'lucide-react'
 import type { CollaborationGroupMember } from '../types'
 import type { CollaborationLocale } from '../i18n'
 import type { ProjectCreateCollaborationGroupDraft } from '../project-create/types'
@@ -51,6 +52,7 @@ export function TemplateBindings({
     )
   )
   const [names, setNames] = useState<Record<string, string>>({})
+  const [removed, setRemoved] = useState<Record<string, string[]>>({})
   const configured = useMemo(
     () => ({
       ...document,
@@ -62,12 +64,16 @@ export function TemplateBindings({
             groups: document.spec.resources.collaboration.groups.map(group => ({
               ...group,
               name: names[group.key] ?? group.name,
+              roles: group.roles.filter(role => !removed[group.key]?.includes(role.key)),
+              stages: group.stages.filter(
+                stage => !stage.ownerRole || !removed[group.key]?.includes(stage.ownerRole)
+              ),
             })),
           },
         },
       },
     }),
-    [document, names]
+    [document, names, removed]
   )
   const changed = useRef(onChange)
   useEffect(() => {
@@ -102,6 +108,29 @@ export function TemplateBindings({
   useEffect(() => {
     changed.current(validation.drafts, configured)
   }, [validation, configured])
+  const removeButton = (groupKey: string, roleKey: string, name: string, leader: boolean) => (
+    <button
+      type="button"
+      className="collaboration-template-choice collaboration-template-icon-button"
+      data-testid={`template-remove-role-${groupKey}-${roleKey}`}
+      disabled={disabled || leader}
+      aria-label={leader ? m.keepLeader : m.removeRole.replace('{name}', name)}
+      title={leader ? m.keepLeader : m.removeRole.replace('{name}', name)}
+      onClick={() => {
+        setRemoved(current => ({
+          ...current,
+          [groupKey]: [...(current[groupKey] ?? []), roleKey],
+        }))
+        setBindings(current => {
+          const roles = { ...current[groupKey] }
+          delete roles[roleKey]
+          return { ...current, [groupKey]: roles }
+        })
+      }}
+    >
+      <X size={16} aria-hidden="true" />
+    </button>
+  )
   return (
     <div className="collaboration-template-bindings" data-testid="template-bindings">
       {!!document.spec.resources.collaboration.agents?.length && (
@@ -143,7 +172,10 @@ export function TemplateBindings({
             >
               {group.roles.map(role => (
                 <li key={role.key}>
-                  <strong>{role.name}</strong>
+                  <div className="collaboration-template-role-heading">
+                    <strong>{role.name}</strong>
+                    {removeButton(group.key, role.key, role.name, role.key === group.leaderRole)}
+                  </div>
                   <span>
                     {bindings[group.key]?.[role.key]?.name !== role.name
                       ? `${bindings[group.key]?.[role.key]?.name ?? m.choose} · `
@@ -159,7 +191,11 @@ export function TemplateBindings({
             {group.roles.map(role => (
               <div className="collaboration-template-binding" key={role.key}>
                 <div>
-                  <strong>{role.name}</strong>
+                  <div className="collaboration-template-role-heading">
+                    <strong>{role.name}</strong>
+                    {!group.roles.every(role => !!role.agentKey) &&
+                      removeButton(group.key, role.key, role.name, role.key === group.leaderRole)}
+                  </div>
                   <p>{role.responsibility}</p>
                 </div>
                 <label className="collaboration-template-field">

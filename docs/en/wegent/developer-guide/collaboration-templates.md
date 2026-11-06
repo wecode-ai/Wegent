@@ -75,7 +75,13 @@ or workspace and replaces coordinator, member and stage references with new IDs.
 The coordinator cannot also execute member roles.
 
 Built-ins include all Agent definitions. The default form shows a compact roster;
-"Customize members (optional)" allows existing members to replace them. Legacy
+"Customize members (optional)" allows existing members to replace them.
+Templates allow removing unwanted roles with the adjacent “×” before
+creating a group or project. Removing a role also removes all workflow stages owned
+by that role. The coordinator is required and cannot be removed. Unassigned stages
+and stages owned by retained roles stay unchanged. These changes affect only this
+creation, preserving the source template. Agents referenced exclusively by removed
+roles are not created; definitions still referenced by retained roles remain in use. Legacy
 templates without definitions still allow manual assignment. Saving YAML into the
 template library alone does not create project Agents; applying it does.
 
@@ -135,3 +141,22 @@ Roles may set `defaultKind`; built-in coordinators default to an agent and canno
 The CI-registered `collaboration-template-lifecycle` desktop checkpoint covers import, automatic group assignment, six workflow rounds, tag columns, shell deliverables and human acceptance. Electron, Executor, MCP and persistence are real; only the model service uses deterministic responses.
 
 The CI-registered `collaboration-template-agents` checkpoint covers cross-account application, prompt preservation, role and stage bindings, saving and reuse, and zero project creation when a default model is missing followed by recovery with a configured template. Shared tests additionally cover device preflight and partial persistence. Executor tests verify the actual initial and resumed execution requests contain both the leader prompt and manager constraints.
+
+### Role removal user story and cases
+
+As a user creating a collaboration group from a template, I want to remove unwanted
+roles and their stages while retaining the coordinator, so the group fits my work.
+
+| Preconditions | Action | Expected result | Automated coverage |
+| --- | --- | --- | --- |
+| A built-in template is selected | Remove one executor role | Remove the role and all its stages; preserve other stages and the source | `TemplateBindings.test.tsx` |
+| A legacy template has an unbound role | Remove that role | The removed unbound role no longer blocks creation | `TemplateBindings.test.tsx` |
+| Saving or configuration is disabled | Attempt removal | Roles and stages remain unchanged | `TemplateBindings.test.tsx` |
+| A template includes coordinator and executor roles | Remove every executor role and create a project | Coordinator removal stays disabled; persist only the coordinator; create no removed Agents or stages | `collaboration-template-agents` |
+| Creating a project from a template | Remove a role | Both the template and group drafts passed to creation contain the reduced roles and stages | `TemplateBindings.test.tsx` |
+| Roles were removed before selecting a template again | Reselect the source or another template with the same name and version | Reset role configuration without retaining the previous selection's removed roles | `TemplateBindings.test.tsx`, `collaboration-template-agents` |
+
+The desktop case reuses the checkpoint's isolated accounts, local projects, real
+Electron, Executor and persistence. Only the model service uses deterministic responses.
+Run `pnpm --filter wework e2e:desktop --segment collaboration-template-agents`;
+the shared runner cleans up the isolated environment.

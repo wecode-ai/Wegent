@@ -1070,7 +1070,14 @@ impl RecordingTransport {
             }
         })
         .await
-        .unwrap()
+        .unwrap_or_else(|error| {
+            let observed = self
+                .emits()
+                .into_iter()
+                .map(|emit| emit.event)
+                .collect::<Vec<_>>();
+            panic!("Timed out waiting for {event}: {error:?}; observed events: {observed:?}")
+        })
     }
 
     async fn wait_for_emit_count(&self, event: &str, count: usize) -> Vec<RecordedCall> {

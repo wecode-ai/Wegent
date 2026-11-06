@@ -75,7 +75,7 @@ pub(super) fn apply_round_assignee(
         .metadata
         .get("collaboration_group")
         .map_or(true, Value::is_null);
-    if assignee_matches && group_cleared {
+    if assignee_matches && group_cleared && to_type != "user" {
         return Ok(());
     }
     let mut metadata = current.metadata;
@@ -106,6 +106,15 @@ pub(super) fn apply_round_assignee(
             now(),
             item_id,
         ],
+    )?;
+    assignment_receipts::sync_assignment_receipt(
+        connection,
+        current
+            .cloud_project_id
+            .as_deref()
+            .ok_or(TaskRuntimeError::TaskNotFound)?,
+        item_id,
+        &metadata,
     )?;
     Ok(())
 }

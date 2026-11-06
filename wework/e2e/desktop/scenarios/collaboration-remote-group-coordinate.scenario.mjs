@@ -17,6 +17,7 @@ import {
   openProjectAgentCreator,
   configureFirstProjectExecutionEnvironment,
   selectCollaborationDomain,
+  selectCollaborationProjectView,
   selectCloudAgentModel,
   waitForTestIdByText,
 } from '../modules/workspace-flows.mjs'
@@ -340,7 +341,7 @@ async function createCoordinateGroup(control, request, projectId, timeoutMs) {
 }
 
 async function createIssue(control, request, projectId, timeoutMs) {
-  await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+  await selectCollaborationProjectView(control, CONTENT, 'board')
   await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-issue-create"]'))
   await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), {
     value: ISSUE,
@@ -369,9 +370,6 @@ async function assignGroup(control, groupId, timeoutMs) {
     'click',
     `[data-testid="cloud-todo-detail-assignee-option-group:${groupId}"]`
   )
-  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
-    timeoutMs,
-  })
   await control.command('waitFor', scoped('[data-testid="cloud-todo-state-assignee"]'), {
     text: GROUP,
     timeoutMs,
@@ -756,7 +754,11 @@ export async function createDesktopScenario({
       await waitForIssueStatus(control, 'in_progress', modelResponseTimeoutMs)
       await waitForActivityText(control, FIRST_TASK, modelResponseTimeoutMs)
       await waitForActivityText(control, SECOND_TASK, modelResponseTimeoutMs)
-      await waitForActivityText(control, `${LEADER} 负责人 · 分配任务：`, modelResponseTimeoutMs)
+      await waitForActivityText(
+        control,
+        `${LEADER} 将「${FIRST_TASK}」分配给${COLLECTOR}`,
+        modelResponseTimeoutMs
+      )
       assert.equal(
         await control.command('getValue', scoped('[data-testid="cloud-todo-detail-status"]')),
         'in_progress',

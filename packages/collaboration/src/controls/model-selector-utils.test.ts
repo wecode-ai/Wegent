@@ -7,7 +7,29 @@ import {
 } from "./model-selector-utils";
 
 describe("configured model power presets", () => {
-  it("keeps model-only steps and validates explicitly requested efforts", () => {
+  it("keeps built-in recommended efforts when the Catalog enables only high", () => {
+    const model: UnifiedModel = {
+      name: "gpt-6.1-sol",
+      type: "runtime",
+      provider: "local",
+      config: {
+        weworkModelKind: "codex-official",
+        codexIsDefault: true,
+        ui: { reasoningEfforts: ["high"] },
+      },
+    };
+
+    const [preset] = getModelPowerPresets([model]);
+
+    expect(preset.settings.map((setting) => setting.reasoningEffort)).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+  });
+
+  it("keeps model-only steps and explicit preset efforts independently of Catalog", () => {
     const glm: UnifiedModel = {
       name: "cloud-glm",
       type: "public",
@@ -45,6 +67,8 @@ describe("configured model power presets", () => {
       "cloud-glm",
       "cloud-gpt:high",
       "cloud-gpt",
+      "cloud-glm:medium",
+      "cloud-gpt:medium",
     ]);
     expect(isSelectedPowerSetting(settings[0], glm)).toBe(true);
     expect(isSelectedPowerSetting(settings[2], gpt, "high")).toBe(true);
