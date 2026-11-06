@@ -36,6 +36,14 @@ Run the real desktop task-flow E2E:
 pnpm --filter wework e2e:desktop
 ```
 
+Run only the Codex cloud-config recovery regression:
+
+```bash
+pnpm --filter wework e2e:desktop -- --segment codex-cloud-config-recovery
+```
+
+This checkpoint uses real Electron, executor, and Codex processes, with an isolated model subscription service simulating enterprise cloud-config bundle failures. It covers existing-thread continuation, new threads, configuration and model reads, Goal recovery after restart, official subscription authentication recovery, and concurrent authentication protection while a cloud-model turn runs. Assertions include the final reply, native transcripts, and task state after reload. The fixture creates its own account and directories. Existing desktop CI Core shards run this checkpoint.
+
 Run only the cloud-project desktop E2E:
 
 ```bash

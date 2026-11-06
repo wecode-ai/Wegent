@@ -66,6 +66,7 @@ pub(crate) mod test_env {
         "WEGENT_BUNDLED_PLUGIN_MARKETPLACE_DIR",
         "WEGENT_MANAGED_HOOKS_DIR",
         "WEGENT_EXECUTOR_HOME",
+        "WEGENT_NATIVE_CODEX_HOME",
     ];
 
     #[used]
