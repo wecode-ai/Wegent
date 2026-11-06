@@ -294,7 +294,9 @@ export function IssueActivityPanel({
                 entry.kind === 'comment'
                   ? entry.comment.author
                   : entry.kind === 'assignment'
-                    ? entry.assignment.created_by_user_name || translate('todo.someone', '项目成员')
+                    ? entry.assignment.automation?.rule_name ||
+                      entry.assignment.created_by_user_name ||
+                      translate('todo.someone', '项目成员')
                     : translate('todo.execution_run', '执行任务')
               const content =
                 entry.kind === 'comment'

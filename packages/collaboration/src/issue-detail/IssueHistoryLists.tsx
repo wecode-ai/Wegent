@@ -5,24 +5,13 @@
 import { ArrowRight } from "lucide-react";
 import { formatIssueTimestamp } from "./issueTimestamp";
 
-export interface IssueAssignmentHistoryEntry {
-  by_user_id: number;
-  to_type: "user" | "agent" | "team" | "group" | null;
-  to_id: string | null;
-  to_name?: string | null;
-  action: "assign" | "reassign" | "unassign";
-  at: string;
-}
+import type {
+  SharedIssueAssignmentHistoryEntry,
+  SharedIssueStatusHistoryEntry,
+} from "../types";
 
-export interface IssueStatusHistoryEntry {
-  from_status: string;
-  from_status_name?: string | null;
-  to_status: string;
-  to_status_name?: string | null;
-  trigger: string;
-  by_user_id: number | null;
-  at: string;
-}
+export type IssueAssignmentHistoryEntry = SharedIssueAssignmentHistoryEntry;
+export type IssueStatusHistoryEntry = SharedIssueStatusHistoryEntry;
 
 export function IssueAssignmentHistoryList({
   entries,
@@ -41,7 +30,10 @@ export function IssueAssignmentHistoryList({
   };
 }) {
   return entries.map((entry, index) => {
-    const byName = memberName(entry.by_user_id) ?? (entry.by_user_id === 0 ? labels.system : null);
+    const byName =
+      entry.automation?.rule_name ??
+      memberName(entry.by_user_id) ??
+      (entry.by_user_id === 0 ? labels.system : null);
     const isUnassign = entry.action === "unassign";
     const toName = isUnassign
       ? labels.unassigned
@@ -92,7 +84,10 @@ export function IssueStatusHistoryList({
   };
 }) {
   return entries.map((entry, index) => {
-    const actor = memberName(entry.by_user_id) ?? labels.system;
+    const actor =
+      entry.automation?.rule_name ??
+      memberName(entry.by_user_id) ??
+      labels.system;
     const toName = entry.to_status_name || labels.unset;
     const isCreate = entry.trigger === "create";
     const isAccept =
