@@ -275,7 +275,7 @@ function QuestionDiscussionDialog({
                 conclusions: { ...current!.conclusions, [questionId]: text },
               }))
             }}
-            className="max-h-32 min-h-16 resize-y rounded-lg border border-border bg-background p-2 text-sm focus:ring-2 focus:ring-focus"
+            className="max-h-32 min-h-16 resize-y rounded-lg border border-border bg-background p-2 text-sm keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus"
           />
           {error && (
             <p role="alert" className="text-sm text-status-error">
