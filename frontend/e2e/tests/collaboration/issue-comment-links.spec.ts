@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createServer } from 'node:http'
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 import { webApi, writeSharedComposer } from '../../utils/collaboration-test-support'
 
 const GITHUB_URL = 'https://github.com/wecode-ai/Wegent/pull/3966'
@@ -19,6 +19,24 @@ interface Resource {
 async function archiveResource(page: Page, path: string): Promise<void> {
   const resource = await webApi<Resource>(page, path)
   await webApi(page, `${path}?version=${resource.version}`, { method: 'DELETE' })
+}
+
+async function pasteSharedComposer(composer: Locator, text: string) {
+  await expect
+    .poll(() => composer.evaluate((element: HTMLElement) => element.isContentEditable))
+    .toBe(true)
+  await composer.click()
+  await composer.evaluate((element: HTMLElement, value: string) => {
+    const clipboardData = new DataTransfer()
+    clipboardData.setData('text/plain', value)
+    element.dispatchEvent(
+      new ClipboardEvent('paste', {
+        clipboardData,
+        bubbles: true,
+        cancelable: true,
+      })
+    )
+  }, text)
 }
 
 async function longLinkLayout(
@@ -236,7 +254,7 @@ commentTest(
 
       const composer = page.getByTestId('collaboration-issue-comment')
       const commentMarker = `Long persisted comment link ${suffix}`
-      await writeSharedComposer(
+      await pasteSharedComposer(
         composer,
         [commentMarker, `[${LONG_GITHUB_LABEL}](${LONG_GITHUB_URL})`].join('\n')
       )
