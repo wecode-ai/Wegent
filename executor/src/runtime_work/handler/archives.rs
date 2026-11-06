@@ -4,6 +4,13 @@
 
 use super::*;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ArchivedDeleteOutcome {
+    Completed,
+    Deferred,
+    Failed,
+}
+
 pub(super) async fn run_worktree_restore_blocking<F>(restore: F) -> Result<bool, String>
 where
     F: FnOnce() -> Result<bool, String> + Send + 'static,
@@ -450,6 +457,7 @@ impl RuntimeWorkRpcHandler {
                 if handler
                     .delete_archived_link_background(link.clone(), true)
                     .await
+                    == ArchivedDeleteOutcome::Deferred
                 {
                     deferred.push_back((link, 1_usize));
                 }
@@ -469,11 +477,21 @@ impl RuntimeWorkRpcHandler {
                     continue;
                 };
                 let allow_retry = attempt < ARCHIVED_BACKGROUND_FORK_RETRY_LIMIT;
-                if handler
+                match handler
                     .delete_archived_link_background(link.clone(), allow_retry)
                     .await
                 {
-                    deferred.push_back((link, attempt + 1));
+                    ArchivedDeleteOutcome::Deferred => {
+                        deferred.push_back((link, attempt + 1));
+                    }
+                    ArchivedDeleteOutcome::Completed => {
+                        // A deletion can release parents that were originally
+                        // queued first. Reset their retry budgets so dependency
+                        // chains of any depth converge instead of exhausting a
+                        // fixed number of attempts while children are removed.
+                        reset_deferred_fork_retry_attempts(&mut deferred);
+                    }
+                    ArchivedDeleteOutcome::Failed => {}
                 }
                 sleep(ARCHIVED_BACKGROUND_DELETE_INTERVAL).await;
             }
@@ -487,7 +505,7 @@ impl RuntimeWorkRpcHandler {
         &self,
         link: RuntimeTaskLink,
         allow_fork_reference_retry: bool,
-    ) -> bool {
+    ) -> ArchivedDeleteOutcome {
         let mut errors = Vec::new();
 
         let has_other_link = self.store.list_task_summaries(true).iter().any(|task| {
@@ -576,7 +594,7 @@ impl RuntimeWorkRpcHandler {
                             ("error", error),
                         ],
                     );
-                    return true;
+                    return ArchivedDeleteOutcome::Deferred;
                 }
                 Err(error) => {
                     errors.push(error.clone());
@@ -647,7 +665,11 @@ impl RuntimeWorkRpcHandler {
                 },
             }));
         }
-        false
+        if errors.is_empty() {
+            ArchivedDeleteOutcome::Completed
+        } else {
+            ArchivedDeleteOutcome::Failed
+        }
     }
 
     pub(super) async fn delete_archived_tasks_bulk(
@@ -734,6 +756,12 @@ fn codex_thread_has_fork_history_reference(error: &str) -> bool {
     error.contains("forked history still references it")
 }
 
+fn reset_deferred_fork_retry_attempts(deferred: &mut VecDeque<(RuntimeTaskLink, usize)>) {
+    for (_, attempt) in deferred {
+        *attempt = 0;
+    }
+}
+
 fn cleanup_join_error_response(link: &RuntimeTaskLink, error: tokio::task::JoinError) -> Value {
     json!({
         "taskId": link.local_task_id,
@@ -746,4 +774,30 @@ fn cleanup_join_error_response(link: &RuntimeTaskLink, error: tokio::task::JoinE
         "items": [],
         "error": error.to_string(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn completed_fork_leaf_resets_retry_budgets_for_queued_parents() {
+        let mut deferred = ["a", "b", "c", "d"]
+            .into_iter()
+            .map(|id| {
+                (
+                    RuntimeTaskLink::new_pending(
+                        id.to_owned(),
+                        format!("/tmp/{id}"),
+                        id.to_owned(),
+                    ),
+                    ARCHIVED_BACKGROUND_FORK_RETRY_LIMIT,
+                )
+            })
+            .collect::<VecDeque<_>>();
+
+        reset_deferred_fork_retry_attempts(&mut deferred);
+
+        assert!(deferred.iter().all(|(_, attempt)| *attempt == 0));
+    }
 }

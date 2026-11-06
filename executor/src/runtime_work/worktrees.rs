@@ -669,8 +669,12 @@ impl WorktreeManager {
             .unwrap_or(Path::new("."))
             .to_path_buf();
         self.delete_with_operation(path, preserve_snapshot, |record| {
-            let orphaned_path = is_orphaned_worktree_residue(path);
-            if path.exists() && preserve_snapshot && !orphaned_path {
+            // Snapshot-preserving deletion must never bypass snapshot capture.
+            // A recreated directory without Git metadata is indistinguishable
+            // from unsaved user content and must be kept when it cannot be
+            // snapshotted.
+            let orphaned_path = !preserve_snapshot && is_orphaned_worktree_residue(path);
+            if path.exists() && preserve_snapshot {
                 let snapshot = snapshot_worktree(path, &snapshot_dir)?;
                 record.snapshot_ref = Some(snapshot.reference);
                 record.snapshot_commit = Some(snapshot.commit);
@@ -739,7 +743,11 @@ impl WorktreeManager {
                 .cloned()
                 .ok_or_else(|| "Managed worktree was not found".to_owned())?;
             if path.exists() {
-                validate_deletable_worktree_identity(&record, path)?;
+                if preserve_snapshot {
+                    validate_record_worktree_identity(&record, path)?;
+                } else {
+                    validate_deletable_worktree_identity(&record, path)?;
+                }
             }
             record
         };
