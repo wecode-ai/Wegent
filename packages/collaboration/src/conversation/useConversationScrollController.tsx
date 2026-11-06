@@ -282,10 +282,14 @@ export function useConversationScrollController({
     },
     [cancelMotion, save, writeOffset]
   )
-  const handleContentLayoutChange = useCallback(() => {
+  const measureFooter = useCallback(() => {
     setScrollTailHeight(
       (contentFooterRef.current?.offsetHeight ?? 0) + (stickyFooterRef.current?.offsetHeight ?? 0)
     )
+  }, [])
+  // Footer props can mount or replace a footer without changing the messages.
+  useLayoutEffect(measureFooter)
+  const handleContentLayoutChange = useCallback(() => {
     if (initializedKeyRef.current !== currentScrollKey) return
     if (
       latestRef.current.autoScrollSuspended ||
@@ -485,15 +489,21 @@ export function useConversationScrollController({
     const viewport = scrollRef.current
     const content = contentRef.current
     if (!viewport || !content) return
-    const observer = new ResizeObserver(handleContentLayoutChange)
+    // Virtual rows report layout individually. Read shared footer geometry once
+    // per controller commit or observed resize, not after every row commit.
+    const observer = new ResizeObserver(() => {
+      measureFooter()
+      handleContentLayoutChange()
+    })
     observer.observe(viewport)
     observer.observe(content)
     if (stickyFooterRef.current) observer.observe(stickyFooterRef.current)
     if (contentFooterRef.current) observer.observe(contentFooterRef.current)
     // External host refs are attached after the child's layout effects.
+    measureFooter()
     handleContentLayoutChange()
     return () => observer.disconnect()
-  }, [handleContentLayoutChange, scrollRef])
+  }, [handleContentLayoutChange, measureFooter, scrollRef])
 
   useEffect(() => {
     const viewport = scrollRef.current

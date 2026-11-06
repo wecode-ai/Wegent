@@ -781,3 +781,14 @@ mode. Both plugin scenarios therefore reuse `selectCollaborationProjectView`
 instead of assuming an inline Manage tab. Healthy baselines, persistent plugin
 bindings, fault injection, permission and recovery assertions remain intact;
 timeouts and scenario coverage are unchanged.
+
+Long-conversation switching retains its original assertions and wait budgets.
+[CI 42199573796](https://github.com/wecode-ai/Wegent/actions/runs/42199573796/job/127832839476)
+timed out before the initial body following 520 progress messages. The executor
+history already contained that body. Mapping `conversation-switching-initial.cpuprofile`
+through the matching build's source maps identified repeated shared-footer height
+reads from `MessageList` layout callbacks, accounting for about 1.9 seconds of
+synchronous layout. Footer measurement now runs on controller commits and observed
+resizes; virtual rows retain their existing positioning logic. Component coverage
+checks that 520 row updates do not remeasure the footer, while size changes,
+unmounting and remounting still update its height.

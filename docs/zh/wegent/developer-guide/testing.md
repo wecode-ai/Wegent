@@ -725,3 +725,10 @@ Windows 桌面运行器在创建普通测试账户前准备 1920×1080 显示模
 `collaboration-project-view-select`，因此两处固定页签点击改为复用
 `selectCollaborationProjectView`，兼容两种真实导航形态。故障前健康基线、插件绑定
 持久化、故障注入、权限和恢复断言全部保留，不扩大超时或跳过场景。
+
+长对话切换的原断言和等待窗口保持不变。[CI 42199573796](https://github.com/wecode-ai/Wegent/actions/runs/42199573796/job/127832839476)
+在 520 条进度消息的初始正文处超时；执行器历史已包含正文，渲染器的 CPU 采样
+`conversation-switching-initial.cpuprofile` 经对应构建的 source map 定位到
+`MessageList` 布局回调反复读取共享页脚高度，累计约 1.9 秒同步布局开销。
+页脚测量改为由滚动控制器提交和尺寸观察触发，虚拟行更新继续执行原定位逻辑。
+组件回归验证 520 次行更新不会重复测量页脚，同时保留尺寸变化和页脚移除、重新挂载时的高度更新。
