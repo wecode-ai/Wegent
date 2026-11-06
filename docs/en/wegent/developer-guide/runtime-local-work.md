@@ -137,6 +137,8 @@ To diagnose a reply whose text is complete while the sidebar and composer still 
 
 ### Frontend lifecycle projection
 
+The sidebar also identifies each unique task by `deviceId + taskId`. When creation moves a task from its project root to a managed worktree, move the optimistic entry instead of retaining it in both workspaces. If the executor list arrives before the create response, the late optimistic projection must preserve the confirmed executor grouping and state. `e2e:desktop --segment sidebar-task-identity` delays a real create response to cover this ordering and verifies one sidebar row after submission and subsequent refresh.
+
 Wework maintains one shared runtime task lifecycle state for each `deviceId + taskId`. The visible pane owns write access for stream events. A hidden Provider that remains mounted for layout preservation and fast switching may keep subscribing and reading, but it cannot write `turnStarted`, `turnSettled`, goal status, or executor snapshots. The sidebar, composer, and task execution overlay all read the same immutable store snapshot; they must not derive another running state from Provider-private state or a cached work list.
 
 Task summaries from `runtime.tasks.list`, task creation responses, stream events, and local caches pass through the same projection rules before entering the store:
