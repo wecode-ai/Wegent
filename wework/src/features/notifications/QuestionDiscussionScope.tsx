@@ -38,6 +38,12 @@ export function QuestionDiscussionScope({ children }: { children: ReactNode }) {
   )
   const [selected, setSelected] = useState<string | null>(null)
   const [opened, setOpened] = useState<string[]>([])
+  const [scopeAccount, setScopeAccount] = useState(store?.accountKey)
+  if (scopeAccount !== store?.accountKey) {
+    setScopeAccount(store?.accountKey)
+    setSelected(null)
+    setOpened([])
+  }
   const open = useCallback(
     (source: RuntimeTaskAddress, payload: RequestUserInputPayload) => {
       if (!store || !canDiscussQuestion(payload)) return
@@ -50,7 +56,7 @@ export function QuestionDiscussionScope({ children }: { children: ReactNode }) {
         answers: current?.answers ?? {},
         conclusions: current?.conclusions ?? {},
       }))
-      setSelected(key)
+      setSelected(JSON.stringify([store.accountKey, key]))
       setOpened(current => (current.includes(key) ? current : [...current, key]))
     },
     [store]
@@ -65,11 +71,15 @@ export function QuestionDiscussionScope({ children }: { children: ReactNode }) {
         key =>
           store?.sessions[key] && (
             <QuestionDiscussionDialog
-              key={key}
+              key={`${store.accountKey}:${key}`}
               sessionKey={key}
               session={store.sessions[key]}
-              open={selected === key}
-              onClose={() => setSelected(null)}
+              open={selected === JSON.stringify([store.accountKey, key])}
+              onClose={() =>
+                setSelected(current =>
+                  current === JSON.stringify([store.accountKey, key]) ? null : current
+                )
+              }
             />
           )
       )}

@@ -6,38 +6,59 @@ import {
 } from './questionDiscussion'
 
 /** Keep answer drafts shared when the same request appears in different task tabs. */
-export function QuestionDiscussionProvider({ children }: { children: ReactNode }) {
-  const [sessions, setSessions] = useState<Record<string, QuestionDiscussionSession>>({})
+export function QuestionDiscussionProvider({
+  children,
+  accountKey = 'local',
+}: {
+  children: ReactNode
+  accountKey?: string
+}) {
+  const [accounts, setAccounts] = useState<
+    Record<string, Record<string, QuestionDiscussionSession>>
+  >({})
+  const sessions = accounts[accountKey] ?? EMPTY_SESSIONS
   const creating = useRef(new Map<string, Promise<RuntimeTaskAddress | false>>())
   const update = useCallback(
     (
       key: string,
       apply: (session: QuestionDiscussionSession | undefined) => QuestionDiscussionSession
     ) => {
-      setSessions(current => ({ ...current, [key]: apply(current[key]) }))
+      setAccounts(current => ({
+        ...current,
+        [accountKey]: {
+          ...current[accountKey],
+          [key]: apply(current[accountKey]?.[key]),
+        },
+      }))
     },
-    []
+    [accountKey]
   )
   const create = useCallback(
     async (key: string, start: () => Promise<RuntimeTaskAddress | false>) => {
-      const existing = creating.current.get(key)
+      const creationKey = JSON.stringify([accountKey, key])
+      const existing = creating.current.get(creationKey)
       if (existing) return existing
       const promise = start()
-      creating.current.set(key, promise)
+      creating.current.set(creationKey, promise)
       try {
         const address = await promise
         if (address) update(key, current => ({ ...current!, address }))
         return address
       } finally {
-        creating.current.delete(key)
+        creating.current.delete(creationKey)
       }
     },
-    [update]
+    [accountKey, update]
   )
-  const value = useMemo(() => ({ sessions, update, create }), [sessions, update, create])
+  const value = useMemo(
+    () => ({ accountKey, sessions, update, create }),
+    [accountKey, sessions, update, create]
+  )
   return (
     <QuestionDiscussionStoreContext.Provider value={value}>
       {children}
     </QuestionDiscussionStoreContext.Provider>
   )
 }
+
+const EMPTY_SESSIONS: Record<string, QuestionDiscussionSession> = {}

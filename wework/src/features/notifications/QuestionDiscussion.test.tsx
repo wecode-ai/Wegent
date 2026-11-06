@@ -1,6 +1,6 @@
 import '@/i18n'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { useEffect, useRef, useState } from 'react'
+import { useContext, useEffect, useRef, useState } from 'react'
 import { beforeEach, expect, test, vi } from 'vitest'
 import { QuestionDiscussionProvider } from './QuestionDiscussionProvider'
 import { QuestionDiscussionScope } from './QuestionDiscussionScope'
@@ -8,6 +8,8 @@ import {
   canDiscussQuestion,
   questionDiscussionDrafts,
   questionDiscussionKey,
+  QuestionDiscussionStoreContext,
+  type QuestionDiscussionStore,
 } from './questionDiscussion'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { WorkbenchPaneContext } from '@/features/workbench/workbenchContexts'
@@ -424,4 +426,121 @@ test('a shared creation failure is visible in the currently open entry surface',
     expect(within(dialog()).getByRole('alert')).toHaveTextContent('讨论暂时未能开始')
   )
   expect(mock.create).toHaveBeenCalledTimes(1)
+})
+
+test('account switches isolate discussion drafts and late creation without remounting unrelated input', async () => {
+  let store!: QuestionDiscussionStore
+  function Probe() {
+    store = useContext(QuestionDiscussionStoreContext)!
+    return <input aria-label="Keep connection input" defaultValue="" />
+  }
+  const tree = (accountKey: string) => (
+    <QuestionDiscussionProvider accountKey={accountKey}>
+      <Probe />
+    </QuestionDiscussionProvider>
+  )
+  const rendered = render(tree('account-a'))
+  const key = questionDiscussionKey(source, payload)
+  fireEvent.change(screen.getByRole('textbox', { name: 'Keep connection input' }), {
+    target: { value: 'connection draft' },
+  })
+  act(() =>
+    store.update(key, () => ({
+      source,
+      payload,
+      address: null,
+      answers: { audience: 'private answer' },
+      conclusions: {},
+    }))
+  )
+  const oldStore = store
+  let resolve!: (value: typeof side) => void
+  let pending!: Promise<unknown>
+  act(() => {
+    pending = oldStore.create(
+      key,
+      () =>
+        new Promise(value => {
+          resolve = value
+        })
+    )
+  })
+  rendered.rerender(tree('account-b'))
+  expect(store.sessions).toEqual({})
+  const otherSide = { ...side, taskId: 'account-b-side' }
+  await act(async () => {
+    store.update(key, () => ({
+      source,
+      payload,
+      address: null,
+      answers: { audience: 'account-b answer' },
+      conclusions: {},
+    }))
+    await store.create(key, async () => otherSide)
+  })
+  act(() =>
+    oldStore.update(key, current => ({
+      ...current!,
+      conclusions: { audience: 'late private conclusion' },
+    }))
+  )
+  await act(async () => {
+    resolve(side)
+    await pending
+  })
+  expect(store.sessions[key]).toMatchObject({
+    address: otherSide,
+    answers: { audience: 'account-b answer' },
+    conclusions: {},
+  })
+  expect(screen.getByRole('textbox', { name: 'Keep connection input' })).toHaveValue(
+    'connection draft'
+  )
+  rendered.rerender(tree('account-a'))
+  expect(store.sessions[key]).toMatchObject({
+    address: side,
+    answers: { audience: 'private answer' },
+    conclusions: { audience: 'late private conclusion' },
+  })
+})
+
+test('a late answer check cannot close a newer discussion', async () => {
+  let resolve!: (page: object) => void
+  mock.load.mockReturnValue(
+    new Promise(value => {
+      resolve = value
+    })
+  )
+  const other = {
+    ...payload,
+    requestId: 99,
+    questions: [{ id: 'format', question: '输出什么格式？' }],
+  }
+  render(
+    <QuestionDiscussionProvider>
+      <WorkbenchPaneContext.Provider
+        value={
+          {
+            createTemporaryRuntimeTask: mock.create,
+            loadRuntimeTranscriptForPane: mock.load,
+          } as unknown as WorkbenchPaneContextValue
+        }
+      >
+        <QuestionDiscussionScope>
+          <RequestUserInputCard payload={payload} source={source} onSubmit={submit} />
+          <RequestUserInputCard payload={other} source={source} onSubmit={submit} />
+        </QuestionDiscussionScope>
+      </WorkbenchPaneContext.Provider>
+    </QuestionDiscussionProvider>
+  )
+  fireEvent.click(screen.getAllByTestId('request-user-input-discuss')[0])
+  changeConclusion()
+  apply()
+  fireEvent.click(within(dialog()).getByTestId('question-discussion-close'))
+  fireEvent.click(screen.getAllByTestId('request-user-input-discuss')[1])
+  await act(async () => {
+    resolve({ messages: [originalMessage()], turns: [] })
+  })
+  expect(dialog()).toHaveTextContent('输出什么格式？')
+  expect(submit).not.toHaveBeenCalled()
 })

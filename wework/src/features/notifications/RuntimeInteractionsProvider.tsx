@@ -116,7 +116,7 @@ export function RuntimeInteractionsProvider({
         publish={publish}
         setDraft={setDraft}
       />
-      <QuestionDiscussionProvider key={accountKey}>{children}</QuestionDiscussionProvider>
+      <QuestionDiscussionProvider accountKey={accountKey}>{children}</QuestionDiscussionProvider>
     </RuntimeInteractionsContext.Provider>
   )
 }

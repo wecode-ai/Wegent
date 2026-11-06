@@ -78,6 +78,7 @@ export function questionDiscussionDrafts(
 }
 
 export interface QuestionDiscussionStore {
+  accountKey: string
   sessions: Record<string, QuestionDiscussionSession>
   update(
     key: string,
