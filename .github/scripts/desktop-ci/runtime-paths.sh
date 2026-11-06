@@ -330,7 +330,7 @@ classify_path() {
       select_target "core:transcript-sync"
       select_target "core:environment-panel-scroll"
       ;;
-    backend/alembic/versions/*wework_transcript* | \
+    backend-rs/migrations/reference/versions/*wework_transcript* | \
       backend/app/api/endpoints/wework_transcripts.py | \
       backend/app/core/wework_transcript_encryption.py | \
       backend/app/models/wework_transcript.py | \
@@ -384,7 +384,7 @@ classify_path() {
     wework/e2e/desktop/scenarios/collaboration-templates.scenario.mjs | \
       packages/collaboration/src/templates/* | \
       backend-rs/src/collaboration_templates/* | \
-      backend/init_data/04-collaboration-templates.yaml | \
+      backend-rs/init_data/04-collaboration-templates.yaml | \
       shared/data/collaboration-templates.json)
       select_target "core:collaboration-templates"
       select_target "core:collaboration-template-lifecycle"
@@ -496,6 +496,7 @@ classify_path() {
       .github/actions/setup-minio-e2e/* | \
       .github/ci/wework-linux-checkpoint-durations.json | \
       .github/scripts/order-wework-linux-e2e.* | \
+      .github/scripts/core-runner-slots.* | \
       docker/wework-e2e/* | \
       .github/scripts/download-actions-artifact.sh | \
       .github/scripts/restore-actions-runtime.sh | \

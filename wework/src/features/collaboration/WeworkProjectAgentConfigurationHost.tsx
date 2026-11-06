@@ -44,6 +44,7 @@ export function createWeworkProjectAgentConfigurationHost(
               )
               const authorized = (await agentResourceApi.listEnvironments(projectId)).filter(
                 environment =>
+                  environment.status === 'online' &&
                   currentDeviceKeys.some(
                     key => environment.device_key === key || environment.app_device_id === key
                   ) &&

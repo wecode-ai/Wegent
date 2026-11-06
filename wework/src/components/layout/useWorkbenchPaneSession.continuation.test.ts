@@ -21,8 +21,14 @@ import {
 import { useScopedDraftInput } from '@/features/workbench/useScopedDraftInput'
 import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
 import { getPlatform } from '@/lib/platform'
+import { createConversationMentionReference } from '@/lib/conversation-mentions'
 import type { RuntimeGoal, RuntimeTaskAddress } from '@/types/api'
-import type { RuntimeConversationTurn, WorkbenchMessage } from '@/types/workbench'
+import type {
+  RuntimeConversationTurn,
+  RuntimePaneTranscript,
+  RuntimeTranscriptLoader,
+  WorkbenchMessage,
+} from '@/types/workbench'
 import { act, cleanup, fireEvent, renderHook, waitFor } from '@testing-library/react'
 import { createElement, StrictMode, type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -149,6 +155,186 @@ function expectDraftPreserved(session: ReturnType<typeof useWorkbenchPaneSession
   expect(mocks.setInput).not.toHaveBeenCalled()
   expect(mocks.resetAttachments).not.toHaveBeenCalled()
 }
+
+describe('pane transcript reload ownership', () => {
+  test('keeps an explicit send independent of a reading scope replaced during dispatch', async () => {
+    const { result, rerender } = await renderSession()
+    act(() => result.current.clearCodeComments())
+    let request!: Promise<boolean>
+    act(() => {
+      request = result.current.send('Explicit message without conversation references')
+      rerender({ currentRuntimeTask: { ...address, threadId: 'resolved-thread' } })
+    })
+    await act(async () => expect(await request).toBe(true))
+    expect(mocks.send).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        address,
+        message: 'Explicit message without conversation references',
+      }),
+      expect.any(Object)
+    )
+  })
+
+  test.each(['rejected', 'transport'] as const)(
+    'rolls back a failed %s edit after its reading pane leaves',
+    async outcome => {
+      let resolveEdit!: (value: boolean) => void
+      let rejectEdit!: (reason: Error) => void
+      const edit = vi.fn(
+        () =>
+          new Promise<boolean>((resolve, reject) => {
+            resolveEdit = resolve
+            rejectEdit = reject
+          })
+      )
+      mocks.context.editLastUserMessage = edit
+      const { result, unmount } = await renderSession()
+      const originalMessage: WorkbenchMessage & { role: 'user' } = {
+        id: 'original-user',
+        role: 'user',
+        content: 'Original question',
+        status: 'done',
+        createdAt: '2026-10-15T00:00:00Z',
+      }
+      act(() =>
+        replaceRuntimeConversationSnapshot(address, [
+          {
+            id: 'original-turn',
+            status: 'done',
+            items: [
+              { id: originalMessage.id, type: 'user_message', message: originalMessage },
+              { id: 'original-answer', type: 'assistant_text', content: 'Original answer' },
+            ],
+          },
+        ])
+      )
+      let request!: Promise<boolean>
+      act(() => {
+        request = result.current.editLastUserMessage(originalMessage, 'Edited question')
+      })
+      expect(edit).toHaveBeenCalledOnce()
+      expect(getRuntimeConversationMessages(address)[0].content).toBe('Edited question')
+      unmount()
+      await act(async () => {
+        if (outcome === 'rejected') resolveEdit(false)
+        else rejectEdit(new Error('Edit transport failed'))
+        expect(await request).toBe(false)
+      })
+      expect(getRuntimeConversationMessages(address)).toMatchObject([
+        { id: originalMessage.id, content: 'Original question' },
+        { content: 'Original answer' },
+      ])
+      expect(mocks.setError).not.toHaveBeenCalled()
+    }
+  )
+
+  test.each([address, null])(
+    'preserves conversation mentions when sending from pane %s',
+    async currentRuntimeTask => {
+      const reference = { deviceId: address.deviceId, taskId: 'referenced-task' }
+      const sendCurrentInput = vi.fn().mockResolvedValue(address)
+      mocks.context.sendCurrentInput = sendCurrentInput
+      const { result, rerender } = await renderSession(currentRuntimeTask)
+      act(() => result.current.clearCodeComments())
+      const load = vi.fn<RuntimeTranscriptLoader>().mockResolvedValue({
+        messages: [
+          {
+            id: 'referenced-message',
+            role: 'user',
+            content: 'Referenced conversation content',
+            status: 'done',
+            createdAt: '2026-10-15T00:00:00Z',
+          },
+        ],
+        turns: [],
+      })
+      mocks.context.loadRuntimeTranscriptForPane = load
+      rerender({ currentRuntimeTask })
+      const input = createConversationMentionReference('Other conversation', reference)
+      await act(async () => expect(await result.current.send(input)).toBe(true))
+      expect(load).toHaveBeenCalledWith(
+        expect.objectContaining(reference),
+        expect.objectContaining({
+          includeFullContent: true,
+          conversationContextOnly: true,
+          refresh: true,
+          signal: expect.any(AbortSignal),
+        })
+      )
+      const additionalContext = currentRuntimeTask
+        ? mocks.send.mock.calls[0][0].additionalContext
+        : sendCurrentInput.mock.calls[0][1].additionalContext
+      expect(additionalContext.referencedConversations.value).toContain(
+        'Referenced conversation content'
+      )
+    }
+  )
+
+  test('cancels older history without publishing its error or completion into the new scope', async () => {
+    const page: RuntimePaneTranscript = {
+      messages: [],
+      turns: [],
+      hasMoreBefore: true,
+      beforeCursor: 'older',
+    }
+    let resolveOld!: (value: RuntimePaneTranscript) => void
+    let resolveReload!: (value: RuntimePaneTranscript) => void
+    let resolveNext!: (value: RuntimePaneTranscript) => void
+    const oldRead = new Promise<RuntimePaneTranscript>(resolve => {
+      resolveOld = resolve
+    })
+    const reloadRead = new Promise<RuntimePaneTranscript>(resolve => {
+      resolveReload = resolve
+    })
+    const nextRead = new Promise<RuntimePaneTranscript>(resolve => {
+      resolveNext = resolve
+    })
+    const load = vi.fn<RuntimeTranscriptLoader>().mockResolvedValue(page)
+    mocks.context.loadRuntimeTranscriptForPane = load
+    const { result } = await renderSession()
+    expect(result.current.transcriptBeforeCursor).toBe('older')
+    load.mockImplementation((_address, options) => (options?.beforeCursor ? oldRead : reloadRead))
+    const staleLoadMore = result.current.loadMoreTranscriptBefore
+    let oldRequest!: Promise<void>
+    act(() => {
+      oldRequest = result.current.loadMoreTranscriptBefore()
+    })
+    const oldSignal = load.mock.calls.at(-1)?.[1]?.signal
+    expect(result.current.transcriptLoadingMoreBefore).toBe(true)
+    act(() => result.current.reloadRuntimeTranscript())
+    await act(async () => {
+      await oldRequest
+    })
+    expect(oldSignal?.aborted).toBe(true)
+    expect(result.current.transcriptError).toBeNull()
+    expect(result.current.transcriptLoading).toBe(true)
+    expect(result.current.transcriptLoadingMoreBefore).toBe(false)
+
+    await act(async () => resolveReload(page))
+    expect(result.current.transcriptError).toBeNull()
+    expect(result.current.transcriptLoading).toBe(false)
+    const readsAfterReload = load.mock.calls.length
+    await act(async () => staleLoadMore())
+    expect(load).toHaveBeenCalledTimes(readsAfterReload)
+    expect(result.current.transcriptLoadingMoreBefore).toBe(false)
+
+    load.mockReturnValueOnce(nextRead)
+    let nextRequest!: Promise<void>
+    act(() => {
+      nextRequest = result.current.loadMoreTranscriptBefore()
+    })
+    await act(async () => resolveOld({ ...page, beforeCursor: 'stale' }))
+    expect(result.current.transcriptLoadingMoreBefore).toBe(true)
+    expect(result.current.transcriptError).toBeNull()
+    await act(async () => {
+      resolveNext({ ...page, hasMoreBefore: false, beforeCursor: null })
+      await nextRequest
+    })
+    expect(result.current.transcriptLoadingMoreBefore).toBe(false)
+    expect(result.current.transcriptHasMoreBefore).toBe(false)
+    expect(result.current.transcriptBeforeCursor).toBeNull()
+  })
+})
 
 describe('explicit composer draft replacement', () => {
   test('marks repeated same-value replacements without marking ordinary publications', async () => {

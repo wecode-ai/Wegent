@@ -547,6 +547,10 @@ classify_workbench_path() {
       wework/src/components/chat/AttachmentImagePreview* | \
       wework/src/extensions/desktop* | \
       wework/e2e/desktop/scenarios/*)
+      if [[ "$path" == wework/e2e/desktop/scenarios/* ]] && \
+        select_catalog_path_targets "$path"; then
+        return
+      fi
       select_rendering_checkpoints
       return
       ;;

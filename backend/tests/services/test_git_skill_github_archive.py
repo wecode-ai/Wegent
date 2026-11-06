@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import io
+import logging
 import zipfile
 
 import httpx
@@ -16,6 +17,20 @@ from app.services.git_skill.utils import (
     extract_zip_safely,
     scan_skills_in_directory,
 )
+
+
+def test_github_request_logging_never_exposes_token_prefix(caplog):
+    provider = GitHubProvider()
+    token = "synthetic-secret-github-token"
+    auth = RepoAuthInfo(password=token, auth_source="platform_integration")
+
+    with caplog.at_level(logging.INFO):
+        provider._log_api_request(provider.get_api_url("owner", "skills"), auth, {})
+
+    assert "auth_source=platform_integration" in caplog.text
+    assert token not in caplog.text
+    assert token[:8] not in caplog.text
+    assert "token_preview" not in caplog.text
 
 
 @pytest.mark.parametrize("token", [None, "test-github-token"])

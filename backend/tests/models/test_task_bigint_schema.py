@@ -55,8 +55,10 @@ def test_single_table_primary_ids_keep_autoincrement(model) -> None:
 
 def test_task_bigint_migration_targets_expected_columns() -> None:
     migration_path = (
-        Path(__file__).resolve().parents[2]
-        / "alembic"
+        Path(__file__).resolve().parents[2].parent
+        / "backend-rs"
+        / "migrations"
+        / "reference"
         / "versions"
         / "20260612_d5e6f7a8b9c0_add_task_subtask_bigint_ids.py"
     )

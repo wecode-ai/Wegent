@@ -85,6 +85,12 @@ the project creation you started earlier.
 
 The storage location cannot be changed after the project is created. The task source (built-in tasks, GitHub, or GitLab) controls where task data is read from; it does not change whether the project is stored locally or in the cloud.
 
+### Create a cloud collaboration project from a template
+
+Choose a template through **Discover templates** when creating a project. Bundled Agents use the current device and its default model. The device must be online and accessible to the signed-in account; importing into an existing project also requires a device grant for that project. Historical offline records for the same desktop neither block creation nor become execution targets.
+
+If the current execution device is unavailable, check its cloud connection and use permissions. If multiple online records match the same desktop, resolve the execution-device ambiguity before continuing.
+
 ### Configure local project collaborators
 
 Wework automatically maintains a **Current device agent** in the local space, so users do not need to create an agent first. A new local project includes **Me** and the **Current device agent** by default. You can remove the agent before creation or add it again through **Add collaborator**. Creating a project does not automatically create a collaboration group.
@@ -198,6 +204,25 @@ Renaming or deleting a tag in a native project saves the catalog, tags on undele
 An Issue can appear in both its matching status and tag lanes. After a cross-type drag, the destination card is highlighted and feedback describes the actual change. Dragging into a tag lane never reopens a completed Issue. Custom views with In progress or In review lanes also support Focus view to expand execution progress.
 
 Existing projects keep the base board without converting historical Issue statuses or tags. Concurrent configuration changes produce a conflict message and refresh the latest configuration. Older clients cannot edit unknown view formats created by newer versions.
+
+## Quick tag filters
+
+Choose **All tags** in the board toolbar, type to find tags, and select one or more.
+An Issue matches if it contains any selected tag. The filter preserves lane grouping
+and combines with board search and saved-view conditions. Clear the selection to show
+all tags; switching projects or views resets it. Filtering does not change shared views.
+
+## Edit Issue properties
+
+Tags, status, priority, assignee, parent, date range, and milestone save immediately
+for existing Issues. Press Enter or leave the title field to save a title change.
+Type in the milestone picker to search; choose **Not set** to remove its association.
+New Issue properties are still submitted together when creating the Issue.
+
+Only the description requires **Save**. Saving properties never submits an unsaved
+description, and cancelling description editing does not revert saved properties.
+Failures display an error and a retry action. Consecutive changes are saved in order;
+submitted changes continue to finish after leaving the detail view.
 
 ## Sub-issue progress on cards
 
@@ -337,3 +362,9 @@ Open a delivery from its Issue and select **Edit** to change its title, notes, f
 Local projects support offline editing. Cloud projects require access to the Issue and a Developer or higher project role. The Files tab shows the saved attachments.
 
 Desktop regression: `pnpm --filter wework e2e:desktop --segment collaboration-delivery-editing`. This independent Core CI checkpoint creates its own project and delivery and checks editing, cancellation, version conflicts, and persistence after reloading.
+
+## Copy an Issue web link
+
+Open an Issue in a cloud project space and click **Copy web link** in its detail header to copy its address on the connected Wegent website. The button confirms success with **Copied**; if copying fails, click again to retry. Recipients still need to sign in and have access to the project.
+
+Local project space Issues have no corresponding Wegent webpage, so this action is hidden. It is also hidden until the cloud website address is available.

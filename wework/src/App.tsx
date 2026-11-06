@@ -26,6 +26,7 @@ import { Check, Copy, Info, Minimize2, PlugZap } from 'lucide-react'
 import { AuthProvider } from '@/features/auth/AuthProvider'
 import { useAuth } from '@/features/auth/useAuth'
 import { WorkbenchProvider } from '@/features/workbench/WorkbenchProvider'
+import { resolveWorkbenchOwnership } from '@/features/workbench/workbenchOwnership'
 import {
   registerRuntimeTaskLifecycleAutomation,
   RuntimeTaskLifecycleStore,
@@ -568,10 +569,12 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
       ) ?? []
     ),
   }))
-  const lifecycleStore = useMemo(() => new RuntimeTaskLifecycleStore(user?.id), [user?.id])
+  const { user: workbenchIdentity, key: ownershipKey } = resolveWorkbenchOwnership(
+    cloudConnection,
+    user
+  )
+  const lifecycleStore = useMemo(() => new RuntimeTaskLifecycleStore(ownershipKey), [ownershipKey])
   useEffect(() => registerRuntimeTaskLifecycleAutomation(lifecycleStore), [lifecycleStore])
-  const usesFallbackCloudConnection = cloudConnection.serviceKey.startsWith('fallback:')
-  const workbenchIdentity = usesFallbackCloudConnection ? user : (cloudConnection.user ?? user)
   const workbenchIdentityId = workbenchIdentity?.id
   const workbenchIdentityName = workbenchIdentity?.user_name
   const workbenchIdentityEmail = workbenchIdentity?.email
@@ -935,6 +938,7 @@ function AppShell() {
   const { pathname: path, search } = useCurrentLocation()
   const { user, isLoading } = useAuth()
   const cloudConnection = useCloudConnection()
+  const { key: ownershipKey } = resolveWorkbenchOwnership(cloudConnection, user)
   const initialCloudConnection = {
     apiBaseUrl: cloudConnection.apiBaseUrl,
     backendUrl: cloudConnection.backendUrl,
@@ -969,7 +973,7 @@ function AppShell() {
   const workspaceTabLabels = useMemo(
     () => ({
       task: t('workbench.workspace_tab_task', '任务'),
-      board: t('workbench.workspace_tab_board', '协作 (Beta)'),
+      board: t('workbench.workspace_tab_board', '协作'),
       agent: t('workbench.workspace_tab_agent', '智能体'),
       auxiliary: t('workbench.workspace_tab_auxiliary', '工作区'),
       auxiliaryRoutes: {
@@ -1285,7 +1289,7 @@ function AppShell() {
   }
 
   const shell = (
-    <NotificationTaskSourceProvider key={user.id}>
+    <NotificationTaskSourceProvider key={ownershipKey}>
       <WorkspaceTabsProvider
         pathname={path}
         search={search}
@@ -1295,9 +1299,7 @@ function AppShell() {
         startupTabId={startupWorkspaceTabId}
         restoreSessionTabs={!isMainWindow}
       >
-        <RuntimeInteractionsProvider
-          accountKey={`${cloudConnection.apiBaseUrl ?? 'local'}:${user.id}`}
-        >
+        <RuntimeInteractionsProvider accountKey={ownershipKey}>
           <ElectronWorkbenchTabBridge />
           <WeworkSchemeBridge />
           {isElectron && !isPopoutWindow ? (

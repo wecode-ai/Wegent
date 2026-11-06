@@ -73,8 +73,10 @@ The checkpoint belongs to the shared desktop runner and Core CI. Screenshots, lo
 
 ### Parent issues and parallel board work
 
-Wework adds a personal **By parent** layout to the existing board toolbar, preserving columns and
-saved views. The ordinary board keeps its current-level projection. Parent rows show direct children,
+Web collaboration and Wework offer the same personal **By parent** layout in the existing board
+toolbar, preserving columns and saved views. Web platform component tests cover the visible toggle,
+grouping child issues by parent, and returning to the ordinary board when toggled off.
+The ordinary board keeps its current-level projection. Parent rows show direct children,
 standalone issues, and navigation to deeper levels. Completion and parallel counts include only
 readable direct children, deduplicated by issue ID. Search and column filters affect card projections
 without changing overall parent counts. Details expose parent links, children, and child creation.

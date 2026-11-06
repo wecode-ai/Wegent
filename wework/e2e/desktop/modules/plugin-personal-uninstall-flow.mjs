@@ -302,6 +302,7 @@ export async function verifyAuthorSourceUninstall({
       { pluginId: Number(plugin.id) },
       'The disconnected author must still pass the real HTTP ownership check'
     )
+    await control.command('clickIfPresent', testId('plugin-operation-notice-dismiss'))
     await control.command('clickWhenEnabled', testId(`plugin-marketplace-install-${plugin.id}`))
     await control.command('waitFor', testId('install-plugin-dialog-confirm'))
     await control.command('clickWhenEnabled', testId('install-plugin-dialog-confirm'))
@@ -313,6 +314,10 @@ export async function verifyAuthorSourceUninstall({
     await control.command(
       'waitFor',
       `${testId('plugin-operation-notice')}[data-notice-kind="success"]`
+    )
+    assert.match(
+      await control.command('getText', testId('plugin-operation-notice')),
+      /已安装|installed/i
     )
     await assertPersonalSourceUnchanged(source)
     await assertSharedRelease(cloudEnvironment, plugin, access)
