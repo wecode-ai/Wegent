@@ -3,11 +3,24 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { waitForUpdatePreparation } from './update-preparation-progress.mjs'
 import { verifyCrossSlotProfile } from './cross-slot-profile.mjs'
+import { processIsAlive } from '../process-lifecycle.mjs'
 
 const UPDATE_BUTTON = '[data-testid="about-check-update-button"]'
 const RETRY_DIALOG = '[data-testid="app-update-retry-dialog"]'
 const RETRY_CONFIRM = '[data-testid="app-update-retry-confirm"]'
 const RETRY_CANCEL = '[data-testid="app-update-retry-cancel"]'
+
+export async function quitActiveRelease(control, root) {
+  const pid = Number(await readFile(join(root, 'active-pid'), 'utf8'))
+  assert.ok(Number.isSafeInteger(pid) && pid > 0, 'The active release must identify its process')
+  const snapshot = JSON.parse(await control.command('getOwnedProcessSnapshot', 'body'))
+  assert.equal(snapshot.applicationPid, pid, 'The controller is connected to another release')
+  await control.command('quitApp', 'body')
+  const deadline = Date.now() + 10_000
+  while (processIsAlive(pid) && Date.now() < deadline)
+    await new Promise(accept => setTimeout(accept, 25))
+  assert.equal(processIsAlive(pid), false, 'The recovered release did not exit before restart')
+}
 
 export async function readRollbackHistory(root, target, reason) {
   let history
@@ -69,6 +82,9 @@ export async function finishFailedUpgradeRetry(control, options) {
       .fromVersion,
     pair.from.version
   )
+  // The native launcher replaced the driver's initial child during recovery.
+  // Quit the connected source before mutating its profile or starting another host.
+  await quitActiveRelease(control, root)
   await restartDesktopApp({
     afterStop: () => verifyCrossSlotProfile(root, resultDir, homePath),
     appEnvironmentOverrides: { WEWORK_E2E_RELEASE_FAILURE_VERSION: '' },
