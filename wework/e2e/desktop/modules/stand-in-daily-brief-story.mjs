@@ -148,12 +148,9 @@ export function createDailyBriefStory(options) {
       const source = original.primary.connections.find(item => item.providerId === PROVIDER)
       assert.ok(source)
       const now = Date.now()
-      // Keep the upstream fixture's repeatable UTC day boundaries.
+      // Keep repeatable UTC day boundaries for the source story.
       const receivedAt = new Date(now)
       receivedAt.setUTCHours(0, 0, 0, 0)
-      const pendingMailDate = new Date(receivedAt.getTime() - 2 * DAY)
-      // Exercise RFC 3501's noon hour regardless of the CI runner's current time.
-      pendingMailDate.setUTCHours(12, 33, 30, 0)
       state.since = new Date(now - 3 * DAY).toISOString()
       const fixtures = [
         {
@@ -182,7 +179,7 @@ export function createDailyBriefStory(options) {
             `${MARKER} ${details.status}`,
             JSON.stringify(details),
             `<daily-${details.status}@example.com>`,
-            details.status === 'pending' ? pendingMailDate : new Date(receivedAt.getTime() - age)
+            new Date(receivedAt.getTime() - age)
           )
         }
         await control.command('setMainWindowSize', 'body', {
