@@ -40,6 +40,23 @@ async function respond(input, tools = [], requestKind, extra = {}) {
 }
 
 describe('stand-in custom interface model fixture', () => {
+  test('uses the native direct MCP name for a primary model-interface request', async () => {
+    const output = await respond(
+      [
+        {
+          role: 'developer',
+          content: 'Attempt missing data-source connections with connect_source',
+        },
+        { role: 'user', content: 'STAND_IN_MODEL_INTERFACE_CHAT' },
+      ],
+      [{ type: 'function', name: 'wework_stand_in__list_tasks' }]
+    )
+    expect(output).toContain('wework_stand_in__list_tasks')
+    expect(output).toContain('interface-list')
+    expect(output).not.toContain('interface-list-search')
+    expect(output).not.toContain('tool_search_call')
+  })
+
   test('uses the native approval model protocol for a guardian quoting worker history', async () => {
     const output = await respond(
       [{ role: 'user', content: 'STAND_IN_MODEL_INTERFACE_WORK' }],

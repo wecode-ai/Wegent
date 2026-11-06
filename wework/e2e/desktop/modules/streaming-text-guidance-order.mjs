@@ -178,21 +178,21 @@ export function createStreamingGuidanceOrderChecks({ resultDir, uiTimeoutMs }) {
           'The answer did not preempt the streaming reply and start new progress',
           uiTimeoutMs
         )
-        await readAndAssertOrder(control, address, 'running')
         await control.command(
           'waitFor',
           `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="process-text-block"]`,
           { text: PROGRESS, visible: true }
         )
+        await readAndAssertOrder(control, address, 'running')
         const readyCount = control.readyCount
         await control.command('reloadMainWindow', 'body')
         await control.awaitReadyAfter(readyCount)
-        await readAndAssertOrder(control, address, 'restored')
         await control.command(
           'waitFor',
           `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="process-text-block"]`,
           { text: PROGRESS, visible: true }
         )
+        await readAndAssertOrder(control, address, 'restored')
         releaseCompletion()
         await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, { text: COMPLETE })
         await waitForRuntimePaneReadyToSend(control, uiTimeoutMs)
