@@ -506,6 +506,13 @@ The active-conversation capture is also normative:
 - User messages are right-aligned compact neutral bubbles. Assistant content is
   left-aligned prose, not wrapped in a card. Turn metadata and feedback actions
   are quiet and subordinate.
+- Conversation prose and tool-process rows use regular `400` weight; chat
+  headings, strong text, and table headings use `500`. Keep document-preview
+  typography separate. Tool summaries use tertiary text and expandable details,
+  without a full-width divider. Optional MCP App discovery failures do not
+  create app UI. Confirmed app initialization failures use a borderless error
+  row with retry and close; only loaded applications need an app container and
+  display-mode controls.
 - The compact turn-navigation rail reflects every conversation turn intersecting
   the viewport. A turn includes its user messages and assistant responses, so
   assistant-only viewport content still activates the corresponding marker and
@@ -569,6 +576,10 @@ recipe closely:
 - attachment inset is `8px`, with the nested radius derived from the outer
   composer radius rather than chosen independently;
 - footer controls use compact `4px–8px` gaps and `28px` actions;
+- In an active thread, work-item and goal context belongs inside the input
+  surface before the editor, not in a separate bordered rail. Context-bearing
+  composers remain expanded so context and model recovery stay reachable.
+  Keep contextual actions and input-leading chips independent.
 - desktop project, quick-phrase, model, execution-mode, and branch selectors
   use the same `text-sm` role at regular weight; mobile variants may retain
   their larger touch-oriented typography;
