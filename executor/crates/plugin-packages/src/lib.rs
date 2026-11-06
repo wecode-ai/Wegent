@@ -27,3 +27,5 @@ impl SkillConfigurationReloader for NoRunningSessions {
         Box::pin(async { Ok(0) })
     }
 }
+
+pub mod skill_selection;

@@ -308,7 +308,11 @@ async fn assert_configured_process_outcome(raw: String, expected: ExecutionOutco
     );
     assert_eq!(collect_claude_stream_summary(&output).outcome, expected);
     let sink = RecordingSink::default();
-    let engine = StreamProcessEngine::new(CommandSpec::new("cat").stdin(output), 30);
+    let engine = StreamProcessEngine::new(
+        CommandSpec::new("cat").stdin(output),
+        30,
+        std::sync::Arc::new(wegent_executor::process_environment::CredentialEnvironment),
+    );
     let outcome = tokio::time::timeout(
         Duration::from_secs(10),
         engine.run_with_events(
@@ -377,7 +381,11 @@ async fn process_continues_to_final_answer_after_oversized_task_output() {
         json!({"type": "result", "subtype": "success", "is_error": false, "stop_reason": "end_turn"})
     );
     let sink = RecordingSink::default();
-    let engine = StreamProcessEngine::new(CommandSpec::new("cat").stdin(output), 30);
+    let engine = StreamProcessEngine::new(
+        CommandSpec::new("cat").stdin(output),
+        30,
+        std::sync::Arc::new(wegent_executor::process_environment::CredentialEnvironment),
+    );
 
     let outcome = tokio::time::timeout(
         Duration::from_secs(10),

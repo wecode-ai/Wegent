@@ -34,6 +34,10 @@ default-members = [".", "crates/*"]
 exclude = ["vendor/tf-rust-socketio"]
 
 [dependencies]
+wegent-claude-harness = { path = "crates/claude-harness" }
+wegent-mcp-runtime = { path = "crates/mcp-runtime" }
+wegent-native-home = { path = "crates/native-home" }
+wegent-multimodal = { path = "crates/multimodal" }
 wegent-execution-stream = { path = "crates/execution-stream" }
 wegent-plugin-packages = { path = "crates/plugin-packages" }
 wegent-model-proxy = { path = "crates/model-proxy" }

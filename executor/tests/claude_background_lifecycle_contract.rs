@@ -202,6 +202,7 @@ mod process {
                 .arg("-c")
                 .arg(format!("cat <<'NDJSON'\n{transcript}NDJSON\n")),
             60,
+            std::sync::Arc::new(wegent_executor::process_environment::CredentialEnvironment),
         )
     }
 

@@ -8,9 +8,9 @@ use serde_json::Value;
 
 mod agno;
 pub(crate) mod backend_url;
-mod cargo_cache;
+use wegent_workspace::cargo_cache;
 mod claude_code;
-mod claude_options;
+use wegent_claude_harness::claude_options;
 mod codex;
 #[cfg(test)]
 pub(crate) use codex::turn_context_for_test;
@@ -19,14 +19,14 @@ mod completed_file_changes;
 pub(crate) use codex::LaunchEnvironment as CodexLaunchEnvironment;
 mod codex_log_db;
 mod dify;
-pub(crate) mod environment_setup;
+pub(crate) use wegent_workspace::environment_setup;
 pub(crate) mod git_auth;
 pub(crate) mod git_workspace;
 mod image_validator;
-mod instance_home;
-pub(crate) use instance_home::{agent_homes, claude_session_transcript, validate_session};
-pub mod interactive_mcp;
-mod pnpm_worktree;
+pub(crate) use instance_home::{agent_homes, validate_session};
+pub use wegent_mcp_runtime::interactive_mcp;
+pub(crate) use wegent_native_home::instance_home;
+use wegent_workspace::pnpm_worktree;
 pub(crate) mod runtime_capabilities;
 mod skill_download;
 mod task_identity;
@@ -156,7 +156,11 @@ fn stream_process_engine_for(agent_kind: &AgentKind, spec: CommandSpec) -> Strea
                     timeout_seconds.saturating_mul(1000).to_string(),
                 )
                 .env("CLAUDE_CODE_BG_TASKS_REPORT_RUNNING", "1");
-            StreamProcessEngine::new(spec, timeout_seconds)
+            StreamProcessEngine::new(
+                spec,
+                timeout_seconds,
+                std::sync::Arc::new(crate::process_environment::CredentialEnvironment),
+            )
         }
         agent_kind => unreachable!("unsupported process agent kind: {agent_kind:?}"),
     }
@@ -666,3 +670,6 @@ impl wegent_plugin_packages::SkillConfigurationReloader for CodexSkillConfigurat
         Box::pin(reload_skill_configuration(home))
     }
 }
+
+#[cfg(all(test, unix))]
+mod pipeline_session_archive_tests;

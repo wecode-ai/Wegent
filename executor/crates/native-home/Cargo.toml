@@ -1,0 +1,21 @@
+[package]
+name = "wegent-native-home"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Native agent Home ownership, snapshots, sessions, and leases"
+
+[dependencies]
+url = "2"
+wegent-runtime-config = { path = "../config" }
+wegent-runtime-logging = { path = "../logging" }
+wegent-filesystem = { path = "../../../shared/rust/filesystem" }
+wegent-protocol = { path = "../../../shared/rust/protocol" }
+wegent-subprocess = { path = "../subprocess" }
+wegent-plugin-packages = { path = "../plugin-packages" }
+dirs = "5"
+fs2 = "0.4"
+serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.10"
+tempfile = "3.23"
+tokio = { version = "1.48", features = ["rt", "sync"] }

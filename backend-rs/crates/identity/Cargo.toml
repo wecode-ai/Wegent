@@ -9,6 +9,7 @@ description = "Session and service authentication with explicit identity depende
 test-support = []
 
 [dependencies]
+getrandom = "0.2"
 anyhow = "1"
 regex = "1"
 base64 = "0.23.1"

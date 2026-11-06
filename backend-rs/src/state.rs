@@ -76,7 +76,7 @@ pub struct AppState {
     /// handlers that perform an interactive `sio.call` round trip.
     pub socketio_rpc: Option<std::sync::Arc<crate::socketio_rpc::SocketIoRpc>>,
     pub oidc_config: OidcConfig,
-    pub oidc: OidcService,
+    pub oidc: Arc<OidcService>,
     /// Callback selected by the application before route construction.
     pub oidc_callback: std::sync::Arc<dyn OidcCallbackHandler + Send + Sync>,
     pub(crate) shutdown: std::sync::Arc<ShutdownState>,

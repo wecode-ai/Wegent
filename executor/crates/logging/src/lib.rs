@@ -362,3 +362,5 @@ pub fn truncate_log_value(value: &str, max_chars: usize) -> String {
     let truncated = value.chars().take(max_chars).collect::<String>();
     format!("{truncated}...")
 }
+
+pub mod native_stdout;

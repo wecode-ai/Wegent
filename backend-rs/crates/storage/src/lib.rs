@@ -1,4 +1,4 @@
-//! S3 signing primitives without configuration, transport, or authorization policy.
+//! S3 signing, object-key encoding, and the shared configured object client.
 
 #![forbid(unsafe_code)]
 
@@ -10,3 +10,5 @@ mod signing;
 pub fn encode_object_path(key: &str) -> String {
     signing::uri_encode_bytes(key.as_bytes(), false)
 }
+
+pub mod minio_client;

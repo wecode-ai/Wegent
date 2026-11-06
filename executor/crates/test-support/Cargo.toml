@@ -6,3 +6,4 @@ license = "Apache-2.0"
 description = "Test process environment isolation for Executor libraries"
 
 [dependencies]
+zip = { version = "0.6", default-features = false, features = ["deflate"] }

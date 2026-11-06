@@ -164,3 +164,5 @@ pub mod process_service;
 
 mod command_spec;
 pub use command_spec::{CommandOutcome, CommandSpec};
+
+pub mod environment;

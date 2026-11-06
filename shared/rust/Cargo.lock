@@ -337,6 +337,8 @@ name = "wegent-filesystem"
 version = "0.1.0"
 dependencies = [
  "fs2",
+ "serde",
+ "serde_json",
  "tempfile",
  "windows-sys",
 ]

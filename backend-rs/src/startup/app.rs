@@ -48,7 +48,7 @@ pub async fn build_with_clients(
     crate::device_commands::init_from_env().context("failed to load LOCAL_DEVICE_COMMANDS")?;
 
     let config = OidcConfig::from_env();
-    let oidc = OidcService::new(&config).context("failed to build OIDC provider client")?;
+    let oidc = Arc::new(OidcService::new(&config).context("failed to build OIDC provider client")?);
 
     // Applications may replace the default callback before routes are assembled.
     let oidc_callback: Arc<dyn oidc_callback::OidcCallbackHandler + Send + Sync> =

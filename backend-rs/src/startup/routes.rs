@@ -62,6 +62,36 @@ pub async fn build(app: Arc<AppState>) -> Result<brz_http_server::Router<AppAuth
         erp: Arc::clone(&app.erp),
         entity_resolvers: app.entity_resolvers.clone(),
     });
+    let users = Arc::new(wegent_backend_users::state::AppState {
+        mysql: app.mysql.clone(),
+        auth: app.auth.clone(),
+        user_profile: Arc::clone(&app.user_profile),
+        user_git_info: Arc::clone(&app.user_git_info),
+        user_git_info_mask: Arc::clone(&app.user_git_info_mask),
+        user_reader: Arc::clone(&app.user_reader),
+        git_http: app.git_repositories.client(),
+    });
+    let authentication = Arc::new(wegent_authentication::state::AppState {
+        mysql: app.mysql.clone(),
+        redis: app.redis.clone(),
+        auth: app.auth.clone(),
+        frontend_url: app.oidc_config.frontend_url.clone(),
+    });
+    let oidc = Arc::new(wegent_oidc::state::AppState {
+        mysql: app.mysql.clone(),
+        redis: app.redis.clone(),
+        auth: app.auth.clone(),
+        oidc_config: app.oidc_config.clone(),
+        oidc: Arc::clone(&app.oidc),
+        oidc_callback: Arc::clone(&app.oidc_callback),
+        seed_tasks: Arc::clone(&app.seed_tasks),
+        onboarding: Arc::new(wegent_onboarding::state::AppState {
+            mysql: app.mysql.clone(),
+            redis: app.redis.clone(),
+            entity_resolvers: app.entity_resolvers.clone(),
+            task_store: Arc::clone(&app.task_store),
+        }),
+    });
     let handler = brz_http_server::handlers!(state = app)
         .map_err(|error| anyhow::anyhow!("API route registration failed: {error}"))?
         .merge(
@@ -80,6 +110,12 @@ pub async fn build(app: Arc<AppState>) -> Result<brz_http_server::Router<AppAuth
             wegent_capabilities::routes(capabilities)
                 .context("failed to register capability routes")?,
         )
+        .merge(wegent_backend_users::routes(users).context("failed to register user routes")?)
+        .merge(
+            wegent_authentication::routes(authentication)
+                .context("failed to register authentication routes")?,
+        )
+        .merge(wegent_oidc::routes(oidc).context("failed to register OIDC routes")?)
         .merge(llm_responses_proxy)
         .merge(wegent_git_repositories::routes(git).context("failed to register Git routes")?)
         .merge(wegent_sites::routes(sites).context("failed to register Sites routes")?);

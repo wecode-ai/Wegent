@@ -31,3 +31,9 @@ pub struct AuthServices {
 pub use wegent_backend_test_support as sql_test_support;
 
 pub mod repository_credentials;
+
+pub mod wework_auth_tokens;
+
+pub mod task_token;
+
+pub mod access_token;

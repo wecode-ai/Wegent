@@ -1103,6 +1103,7 @@ async fn managed_local_task_runner_tracks_running_tasks_and_cancel_aborts_child_
         StreamProcessEngine::new(
             CommandSpec::new(script.display().to_string()),
             TEST_PROCESS_TIMEOUT_SECONDS,
+            std::sync::Arc::new(wegent_executor::process_environment::CredentialEnvironment),
         ),
         sink.clone(),
         tracker.clone(),

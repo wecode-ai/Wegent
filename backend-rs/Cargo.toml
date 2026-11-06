@@ -12,6 +12,10 @@ members = ["crates/*"]
 default-members = [".", "crates/*"]
 
 [dependencies]
+wegent-oidc = { path = "crates/oidc" }
+wegent-onboarding = { path = "crates/onboarding" }
+wegent-authentication = { path = "crates/authentication" }
+wegent-backend-users = { path = "crates/users" }
 wegent-remote-workspace = { path = "crates/remote-workspace" }
 wegent-executor-manager = { path = "crates/executor-manager" }
 wegent-media = { path = "crates/media" }

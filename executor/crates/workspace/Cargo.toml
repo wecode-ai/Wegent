@@ -6,6 +6,8 @@ license = "Apache-2.0"
 description = "Workspace file operations, native Git, and change tracking"
 
 [dependencies]
+dirs = "6"
+wegent-protocol = { path = "../../../shared/rust/protocol" }
 wegent-execution-contracts = { path = "../execution-contracts" }
 wegent-subprocess = { path = "../subprocess" }
 wegent-runtime-logging = { path = "../logging" }

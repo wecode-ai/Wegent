@@ -9,3 +9,5 @@ pub mod file_lease;
 pub mod path_compat;
 
 pub mod atomic_file;
+
+pub mod json_file;

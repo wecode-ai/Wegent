@@ -197,3 +197,5 @@ pub fn assert_fixture(name: &str, actual: impl serde::Serialize) {
     // Whole-object equality distinguishes absent keys from explicit null.
     assert_eq!(actual, expected, "JSON contract changed: {name}");
 }
+
+pub mod object_store;

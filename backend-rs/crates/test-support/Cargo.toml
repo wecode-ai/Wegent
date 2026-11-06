@@ -6,6 +6,7 @@ license = "Apache-2.0"
 description = "Shared SQL protocol fixtures and query capture for Backend libraries"
 
 [dependencies]
+brz-metrics = { version = "=0.0.13", features = ["tokio"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }

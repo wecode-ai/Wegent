@@ -13,3 +13,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "serd
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 wegent-backend-persistence = { path = "../persistence" }
+
+[dev-dependencies]
+wegent-backend-test-support = { path = "../test-support" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

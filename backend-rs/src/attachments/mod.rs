@@ -55,7 +55,7 @@ pub mod download_token;
 pub mod executor_download;
 pub mod external_media;
 pub mod handler;
-pub mod minio_client;
+pub use wegent_storage::minio_client;
 pub mod playback;
 pub mod public_link;
 pub use wegent_storage::s3_signing;

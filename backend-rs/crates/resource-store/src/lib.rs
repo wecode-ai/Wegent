@@ -11,3 +11,8 @@ pub mod kind_rows;
 pub mod resource_refs;
 
 pub mod decision_model;
+
+pub mod owned_kind;
+pub mod shell_resolution;
+#[cfg(test)]
+use wegent_backend_test_support as sql_test_support;

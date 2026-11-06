@@ -43,3 +43,16 @@ pub fn lock() -> MutexGuard<'static, ()> {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
+
+/// Create a deterministic ZIP archive for package protocol fixtures.
+pub fn zip_entries(entries: &[(&str, &str)]) -> Vec<u8> {
+    use std::io::Write;
+    let cursor = std::io::Cursor::new(Vec::new());
+    let mut writer = zip::ZipWriter::new(cursor);
+    let options = zip::write::FileOptions::default();
+    for (path, content) in entries {
+        writer.start_file(*path, options).unwrap();
+        writer.write_all(content.as_bytes()).unwrap();
+    }
+    writer.finish().unwrap().into_inner()
+}

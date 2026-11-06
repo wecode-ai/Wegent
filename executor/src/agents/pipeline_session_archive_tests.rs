@@ -5,7 +5,7 @@ use std::{future::Future, os::unix::fs::PermissionsExt, pin::Pin, time::Duration
 
 use tokio::sync::mpsc;
 
-use super::*;
+use crate::protocol::ExecutionRequest;
 use crate::{
     agents::build_claude_command,
     emitter::{EventEnvelope, ResponsesEventBuilder},
@@ -19,6 +19,11 @@ use crate::{
     process::StreamProcessEngine,
     runner::{AgentEngine, BackgroundTaskRunner, EventSink, ExecutionOutcome},
     server::TaskRunner,
+};
+use serde_json::json;
+use std::{
+    fs,
+    path::{Path, PathBuf},
 };
 
 struct TestEnvironment(Vec<(&'static str, Option<std::ffi::OsString>)>);
@@ -69,7 +74,6 @@ impl EventSink for RecordingSink {
 // without starting unrelated capability services or accessing authentication.
 #[derive(Clone)]
 struct TestClaudeEngine {
-    workbench: PathBuf,
     binary: PathBuf,
     pause: bool,
     require_resume: bool,
@@ -93,8 +97,9 @@ impl AgentEngine for TestClaudeEngine {
     {
         let engine = self.clone();
         Box::pin(async move {
-            let home = named_home_at(&engine.workbench, &request).unwrap();
-            let _lease = acquire_at(&request, &engine.workbench, &home).unwrap();
+            let _lease = wegent_native_home::instance_home::acquire(&request)
+                .unwrap()
+                .expect("pipeline request must acquire its native Home");
             let spec = build_claude_command(&request, engine.binary.to_str().unwrap())
                 .env(
                     "TEST_SESSION_ID",
@@ -102,9 +107,13 @@ impl AgentEngine for TestClaudeEngine {
                 )
                 .env("TEST_PAUSE", engine.pause.to_string())
                 .env("TEST_REQUIRE_RESUME", engine.require_resume.to_string());
-            StreamProcessEngine::new(spec, 30)
-                .run_with_events(request, sink, builder)
-                .await
+            StreamProcessEngine::new(
+                spec,
+                30,
+                std::sync::Arc::new(crate::process_environment::CredentialEnvironment),
+            )
+            .run_with_events(request, sink, builder)
+            .await
         })
     }
 }
@@ -184,7 +193,6 @@ async fn roundtrip(cancel_last: bool) {
     let binary = source.path().join("fake-claude");
     write_fake_claude(&binary);
     let engine = TestClaudeEngine {
-        workbench: roots.workbench.clone(),
         binary,
         pause: false,
         require_resume: false,
@@ -266,7 +274,6 @@ async fn roundtrip(cancel_last: bool) {
             .extra
             .insert("legacy_session_bindings".into(), json!([]));
         let restored_engine = TestClaudeEngine {
-            workbench: restored_roots.workbench.clone(),
             pause: false,
             require_resume: true,
             ..engine.clone()

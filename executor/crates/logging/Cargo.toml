@@ -6,6 +6,7 @@ license = "Apache-2.0"
 description = "Executor event logging and rolling log lifecycle"
 
 [dependencies]
+serde_json = { version = "1", features = ["preserve_order"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 wegent-runtime-config = { path = "../config" }
 

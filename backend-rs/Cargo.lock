@@ -4338,6 +4338,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "wegent-authentication"
+version = "0.1.0"
+dependencies = [
+ "aes",
+ "anyhow",
+ "base64 0.23.1",
+ "bcrypt",
+ "brz-http",
+ "brz-http-server",
+ "brz-json",
+ "brz-mysql",
+ "brz-redis 0.0.18",
+ "cbc",
+ "chrono",
+ "erased-serde",
+ "getrandom 0.2.17",
+ "jsonwebtoken",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tracing",
+ "url",
+ "wegent-backend-config",
+ "wegent-backend-test-support",
+ "wegent-http-compat",
+ "wegent-identity",
+]
+
+[[package]]
 name = "wegent-backend-config"
 version = "0.1.0"
 dependencies = [
@@ -4415,9 +4445,11 @@ dependencies = [
  "unicode-normalization",
  "url",
  "wegent-access",
+ "wegent-authentication",
  "wegent-backend-config",
  "wegent-backend-persistence",
  "wegent-backend-test-support",
+ "wegent-backend-users",
  "wegent-capabilities",
  "wegent-celery",
  "wegent-crypto",
@@ -4430,6 +4462,8 @@ dependencies = [
  "wegent-media",
  "wegent-models",
  "wegent-network-policy",
+ "wegent-oidc",
+ "wegent-onboarding",
  "wegent-protocol",
  "wegent-python-compat",
  "wegent-remote-workspace",
@@ -4448,11 +4482,43 @@ dependencies = [
 name = "wegent-backend-test-support"
 version = "0.1.0"
 dependencies = [
+ "brz-metrics",
  "brz-mysql",
  "futures-util",
  "serde",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "wegent-backend-users"
+version = "0.1.0"
+dependencies = [
+ "aes",
+ "anyhow",
+ "async-trait",
+ "base64 0.23.1",
+ "bcrypt",
+ "brz-http",
+ "brz-http-server",
+ "brz-json",
+ "brz-mysql",
+ "cbc",
+ "chrono",
+ "erased-serde",
+ "getrandom 0.2.17",
+ "jsonwebtoken",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "url",
+ "wegent-backend-config",
+ "wegent-backend-test-support",
+ "wegent-crypto",
+ "wegent-http-compat",
+ "wegent-identity",
+ "wegent-python-compat",
 ]
 
 [[package]]
@@ -4560,6 +4626,7 @@ dependencies = [
  "brz-json",
  "serde",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -4573,6 +4640,7 @@ dependencies = [
  "brz-json",
  "brz-mysql",
  "chrono",
+ "getrandom 0.2.17",
  "jsonwebtoken",
  "regex",
  "serde",
@@ -4647,6 +4715,62 @@ dependencies = [
 ]
 
 [[package]]
+name = "wegent-oidc"
+version = "0.1.0"
+dependencies = [
+ "aes",
+ "anyhow",
+ "async-trait",
+ "base64 0.23.1",
+ "bcrypt",
+ "brz-http",
+ "brz-http-server",
+ "brz-json",
+ "brz-mysql",
+ "brz-redis 0.0.18",
+ "cbc",
+ "chrono",
+ "erased-serde",
+ "getrandom 0.2.17",
+ "jsonwebtoken",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "url",
+ "wegent-backend-config",
+ "wegent-backend-persistence",
+ "wegent-backend-test-support",
+ "wegent-http-compat",
+ "wegent-identity",
+ "wegent-network-policy",
+ "wegent-onboarding",
+ "wegent-python-compat",
+]
+
+[[package]]
+name = "wegent-onboarding"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "brz-json",
+ "brz-mysql",
+ "brz-redis 0.0.18",
+ "chrono",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "wegent-access",
+ "wegent-backend-config",
+ "wegent-backend-persistence",
+ "wegent-identity",
+ "wegent-python-compat",
+ "wegent-resource-store",
+ "wegent-task-store",
+]
+
+[[package]]
 name = "wegent-protocol"
 version = "0.1.0"
 dependencies = [
@@ -4659,9 +4783,13 @@ dependencies = [
 name = "wegent-python-compat"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "brz-json",
+ "chrono",
+ "regex",
  "serde",
  "serde_json",
+ "yaml-rust2",
 ]
 
 [[package]]
@@ -4705,8 +4833,10 @@ dependencies = [
  "chrono",
  "serde",
  "serde_json",
+ "tokio",
  "url",
  "wegent-backend-persistence",
+ "wegent-backend-test-support",
 ]
 
 [[package]]
@@ -4765,9 +4895,16 @@ dependencies = [
 name = "wegent-storage"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "brz-http",
+ "brz-metrics",
  "chrono",
  "hmac",
  "sha2",
+ "tokio",
+ "wegent-backend-config",
+ "wegent-backend-test-support",
+ "wegent-network-policy",
 ]
 
 [[package]]
