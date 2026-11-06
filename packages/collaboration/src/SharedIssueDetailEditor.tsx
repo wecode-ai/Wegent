@@ -3277,7 +3277,10 @@ export function TodoEditor(props: TodoEditorProps) {
                         onPaste={(event) => {
                           if (!editable) return;
                           const files = Array.from(event.clipboardData.files);
-                          if (files.length > 0) pasteAttachments(files);
+                          if (files.length === 0) return;
+                          // macOS file pastes also carry a text/plain file URL.
+                          event.preventDefault();
+                          void pasteAttachments(files);
                         }}
                         className={cn(
                           "min-h-[240px] w-full resize-y rounded-lg border border-border bg-transparent p-3 text-sm text-text-primary outline-none focus:border-text-muted",
