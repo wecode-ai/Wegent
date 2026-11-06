@@ -63,7 +63,7 @@ export function StandInOverviewPage({
 }) {
   const { t } = useTranslation('common')
   const workbench = useContext(WorkbenchContext)
-  const state = usePersonalStandIn(props.services, props.userId, props.initialDeviceId, false)
+  const state = usePersonalStandIn(props.services, props.userId, props.initialDeviceId)
   const { saved, setDraft, reload } = state
   const [roleId, setRoleId] = useState<string | undefined>(
     props.initialProfileId === '@primary' ? undefined : props.initialProfileId

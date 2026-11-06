@@ -8,7 +8,7 @@ fn implicit_primary() -> Value {
     json!({"enabled":true,"prompt":"","preferences":""})
 }
 
-pub(super) fn migrate_connections(value: &mut Value) -> Result<bool, TaskRuntimeError> {
+pub(super) fn migrate_personal_settings(value: &mut Value) -> Result<bool, TaskRuntimeError> {
     let mut changed = false;
     let immediate = value["processing"]["mode"] != "silent";
     for identity in value
@@ -17,16 +17,52 @@ pub(super) fn migrate_connections(value: &mut Value) -> Result<bool, TaskRuntime
         .into_iter()
         .flatten()
     {
+        changed |= migrate_agent_binding(identity)?;
         changed |= migrate_identity_connections(identity)?;
         changed |= migrate_connection_timing(identity, immediate);
     }
     if value["primary"].is_object() {
+        changed |= migrate_agent_binding(&mut value["primary"])?;
         changed |= migrate_identity_connections(&mut value["primary"])?;
         changed |= migrate_connection_timing(&mut value["primary"], immediate);
     }
     changed |= value
         .as_object_mut()
         .is_some_and(|fields| fields.remove("processing").is_some());
+    Ok(changed)
+}
+
+/// Convert inherited project boundaries to explicit grants before removing old references.
+pub(super) fn migrate_agent_binding(identity: &mut Value) -> Result<bool, TaskRuntimeError> {
+    if let Some(project) = identity
+        .get("agentProject")
+        .filter(|project| !project.is_null())
+    {
+        if !validate_projects(&json!([project])) || !identity["collaboration"].is_object() {
+            return Err(TaskRuntimeError::Invalid(
+                "invalid stand-in agent project".into(),
+            ));
+        }
+        let project = project.clone();
+        let source = &mut identity["collaboration"];
+        let selected = source["allProjects"] == true
+            || source["projects"].as_array().is_some_and(|rows| {
+                rows.iter()
+                    .any(|row| row["id"] == project["id"] && row["store"] == project["store"])
+            });
+        source["allProjects"] = json!(false);
+        source["projects"] = if selected {
+            json!([project])
+        } else {
+            json!([])
+        };
+    }
+    let mut changed = false;
+    if let Some(fields) = identity.as_object_mut() {
+        for key in ["agentId", "agentResourceId", "agentProject"] {
+            changed |= fields.remove(key).is_some();
+        }
+    }
     Ok(changed)
 }
 
@@ -173,7 +209,7 @@ pub(super) fn read_personal(
             fields.remove("autoSelect");
             fields.remove("selectionErrors");
         }
-        migrate_connections(&mut settings)?;
+        migrate_personal_settings(&mut settings)?;
         return Ok(settings);
     }
     let mut personal = empty_personal(user, device);
@@ -207,7 +243,7 @@ pub(super) fn read_personal(
         personal["executionDeviceId"] = roles[0]["executionDeviceId"].clone();
         personal["roles"] = json!(roles);
     }
-    migrate_connections(&mut personal)?;
+    migrate_personal_settings(&mut personal)?;
     Ok(personal)
 }
 
@@ -235,7 +271,6 @@ pub fn role_project_matches(role: &Value, project: &str, store: &str) -> bool {
             || connection["projects"]
                 .as_array()
                 .is_some_and(|rows| rows.iter().any(matches)))
-        && (!role["agentProject"].is_object() || matches(&role["agentProject"]))
 }
 
 pub fn project_role(role: &Value, user: i64, project: &str, store: &str) -> Value {
@@ -271,16 +306,6 @@ pub(super) fn validate_role(role: &Value, device: &str) -> Result<(), TaskRuntim
         || role["enabled"].as_bool().is_none()
         || role["executionDeviceId"] != device
         || !valid_collaboration(&role["collaboration"])
-        || role
-            .get("agentId")
-            .is_some_and(|id| !id.is_null() && !id.is_string())
-        || (role["agentResourceId"].is_number() && role["agentId"].is_string())
-        || role
-            .get("agentProject")
-            .is_some_and(|project| !project.is_null() && !validate_projects(&json!([project])))
-        || role
-            .get("agentResourceId")
-            .is_some_and(|id| !id.is_null() && !id.as_i64().is_some_and(|id| id > 0))
     {
         return Err(TaskRuntimeError::Invalid(
             "invalid personal stand-in role".into(),
@@ -312,19 +337,14 @@ fn validate_connections(role: &Value) -> Result<(), TaskRuntimeError> {
         .get("calendar")
         .is_some_and(|calendar| !validate_policy(&calendar["policy"]))
     {
-        return Err(TaskRuntimeError::StandInProjectConnections);
+        return Err(TaskRuntimeError::Invalid(
+            "invalid stand-in calendar policy".into(),
+        ));
     }
     if role.get("dingtalk").is_some() {
         return Err(TaskRuntimeError::Invalid(
             "conflicting connection formats".into(),
         ));
-    }
-    if role["agentProject"].is_object()
-        && role["connections"]
-            .as_array()
-            .is_some_and(|rows| !rows.is_empty())
-    {
-        return Err(TaskRuntimeError::StandInProjectConnections);
     }
     let source = &role["collaboration"];
     let valid = role.get("collaboration").map_or(true, valid_collaboration)
@@ -500,7 +520,7 @@ impl LocalTaskStore {
         if let Some(row) = get_item_from(&connection, &personal_key(user), "personal_stand_in")? {
             let mut personal = row.metadata;
             // Device-owned settings follow their Executor, not a stale desktop identity.
-            let migrated = migrate_connections(&mut personal)?;
+            let migrated = migrate_personal_settings(&mut personal)?;
             if bind_personal_device(&mut personal, device) || migrated {
                 write_personal(&connection, &personal)?;
             }
@@ -556,20 +576,10 @@ impl LocalTaskStore {
         device: &str,
         mut value: Value,
     ) -> Result<Value, TaskRuntimeError> {
-        migrate_connections(&mut value)?;
+        migrate_personal_settings(&mut value)?;
         if let Some(object) = value.as_object_mut() {
             object.remove("selectionErrors");
             object.remove("autoSelect");
-        }
-        for role in value["roles"].as_array_mut().into_iter().flatten() {
-            if role["agentId"].is_string()
-                && role["agentProject"].is_object()
-                && role["collaboration"].is_object()
-            {
-                role["collaboration"]["allProjects"] = json!(false);
-                role["collaboration"]["projects"] = json!([role["agentProject"]]);
-                role["collaboration"]["excludedProjects"] = json!([]);
-            }
         }
         let roles = value["roles"]
             .as_array()

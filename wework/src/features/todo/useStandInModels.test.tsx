@@ -4,7 +4,6 @@ import {
   cloudRunnerModelIdentity,
   runnerModelKey,
   type RunnerModel,
-  type WorkspaceProjectAgent,
   type WorkspaceStandInSettings,
 } from '@wegent/collaboration'
 import type { UnifiedModel } from '@/types/api'
@@ -130,11 +129,12 @@ describe('stand-in shared model catalog', () => {
   it('changes execution runtime without converting or replacing cloud display metadata', async () => {
     const { services } = fixture()
     const { result, rerender } = renderHook(
-      ({ agent }: { agent?: WorkspaceProjectAgent }) => useStandInModels(services, settings, agent),
-      { initialProps: { agent: undefined } }
+      ({ model }: { model?: WorkspaceStandInSettings['model'] }) =>
+        useStandInModels(services, { ...settings, model }),
+      { initialProps: { model: undefined } }
     )
     await waitFor(() => expect(result.current.loading).toBe(false))
-    rerender({ agent: { id: 'claude', name: 'Claude', runtime: 'claude_code' } })
+    rerender({ model: cloudRunnerModelIdentity(cloud, 'claude_code') })
     await waitFor(() => expect(result.current.loading).toBe(false))
     expect(result.current.models).toEqual([cloud])
     expect(result.current.models[0]).toBe(cloud)

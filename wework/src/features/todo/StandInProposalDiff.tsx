@@ -73,10 +73,6 @@ export function StandInProposalDiff({
       {!dequal(identity.modelOptions, previous?.modelOptions) && (
         <p className="text-sm">{t('standIn.workspace.model_options_changed')}</p>
       )}
-      {(identity.agentId !== previous?.agentId ||
-        identity.agentResourceId !== previous?.agentResourceId) && (
-        <p className="text-sm">{t('standIn.workspace.agent_changed')}</p>
-      )}
     </div>
   )
 }

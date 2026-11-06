@@ -351,8 +351,6 @@ pub(super) fn configuration_changes(
                 "workspace",
                 "collaboration",
                 "connections",
-                "agentId",
-                "agentProject",
             ]
             .iter()
             .any(|key| previous[*key] != role[*key])

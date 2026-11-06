@@ -246,7 +246,6 @@ export function StandInPrimaryProfile({
           <StandInComposer
             draft={role}
             showPrompt={false}
-            controls={null}
             onChange={update => {
               setDraft(current => {
                 const next = typeof update === 'function' ? update({ ...role, ...current }) : update

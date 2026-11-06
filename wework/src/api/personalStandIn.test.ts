@@ -34,11 +34,9 @@ describe('project-only stand-in disabling', () => {
     }
   )
 
-  it('disables the collaboration source of a project-bound agent without turning off its global switch', () => {
+  it('disconnects a selected project without changing the stand-in or source switches', () => {
     const role = newStandInRole('mac', 'project-agent')
     role.enabled = true
-    role.agentId = 'reviewer'
-    role.agentProject = project
     role.collaboration = {
       ...role.collaboration,
       enabled: true,
@@ -47,8 +45,7 @@ describe('project-only stand-in disabling', () => {
     }
     const result = disconnectStandInProject(role, project)
     expect(result.enabled).toBe(true)
-    expect(result.collaboration.enabled).toBe(false)
-    expect(result.agentId).toBe('reviewer')
+    expect(result.collaboration.enabled).toBe(true)
     expect(roleIncludesProject(result, project)).toBe(false)
     expect(roleIncludesProject(role, project)).toBe(true)
   })
@@ -70,7 +67,5 @@ it.each([true, false])(
     role.collaboration.enabled = true
     expect(roleIncludesProject(role, project)).toBe(true)
     expect(roleSelectsProject(role, sameIdInCloud)).toBe(allProjects)
-    role.agentProject = project
-    expect(roleSelectsProject(role, sameIdInCloud)).toBe(false)
   }
 )

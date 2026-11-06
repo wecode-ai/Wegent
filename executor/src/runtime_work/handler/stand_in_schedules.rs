@@ -213,16 +213,12 @@ impl RuntimeWorkRpcHandler {
                 )
             })?;
         config["handlingPolicy"] = json!({"automatic":true,"askBeforeAct":true});
-        if config["agentProject"].is_object() {
-            config["projectId"] = config["agentProject"]["id"].clone();
-            config["projectStore"] = config["agentProject"]["store"].clone();
-        }
         if matches!(
             automation.conversation_mode,
             ConversationMode::ContinueThread
         ) {
             return self
-                .prepare_scheduled_continuation(payload, user, role_id, &config)
+                .prepare_scheduled_continuation(payload, user, role_id)
                 .await;
         }
         let mut payload = payload;
@@ -263,7 +259,6 @@ impl RuntimeWorkRpcHandler {
         mut payload: Value,
         user: i64,
         role_id: &str,
-        config: &Value,
     ) -> Result<Value, AppIpcError> {
         let id = payload["taskId"].as_str().unwrap_or_default();
         let link = self.local_task_link(id).ok_or_else(|| {
@@ -310,8 +305,6 @@ impl RuntimeWorkRpcHandler {
             ));
         }
         self.validate_primary_task_followup(user, &link).await?;
-        // Re-resolve the current agent and its execution policy before continuing.
-        self.stand_in_agent(config).await?;
         let mut request = link.runtime_handle["executionRequest"].clone();
         request["prompt"] = payload["message"].clone();
         request["standInDelegation"] =
@@ -454,7 +447,6 @@ mod tests {
                     json!({"taskId":"work","message":"Follow progress"}),
                     7,
                     "@primary",
-                    &json!({}),
                 )
                 .await
                 .unwrap_err();

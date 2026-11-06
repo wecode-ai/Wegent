@@ -93,7 +93,6 @@ export interface StandInProcessingStatus {
 }
 import {
   publishPersonalStandIn,
-  type PersonalStandInAgent,
   type PersonalStandInSettings,
   type StandInSourceConnection,
 } from './personalStandIn'
@@ -310,7 +309,6 @@ export interface StandInExecutorApi {
     userId: number,
     deviceId: string
   ): Promise<void>
-  personalAgents(userId: number, deviceId: string): Promise<PersonalStandInAgent[]>
   personalGet(userId: number, deviceId: string): Promise<PersonalStandInSettings>
   personalSave(
     userId: number,
@@ -530,14 +528,6 @@ export function createStandInExecutorApi(
         deviceId
       )
     },
-    personalAgents: async (userId, deviceId) =>
-      (
-        await request<{ items: PersonalStandInAgent[] }>(
-          'runtime.stand_in.personal.agents',
-          { userId },
-          deviceId
-        )
-      ).items,
     personalGet: (userId, deviceId) =>
       request('runtime.stand_in.personal.get', { userId }, deviceId),
     personalSave: async (userId, settings, deviceId) => {

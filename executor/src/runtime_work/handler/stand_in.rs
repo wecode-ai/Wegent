@@ -44,9 +44,6 @@ impl RuntimeWorkRpcHandler {
 pub(super) fn settings_error(error: crate::task_runtime::TaskRuntimeError) -> AppIpcError {
     let code = match &error {
         crate::task_runtime::TaskRuntimeError::VersionConflict => "version_conflict",
-        crate::task_runtime::TaskRuntimeError::StandInProjectConnections => {
-            "stand_in_project_connections"
-        }
         _ => "stand_in_settings",
     };
     AppIpcError::new(code, error.to_string())
@@ -788,13 +785,13 @@ impl RuntimeWorkRpcHandler {
         payload: Value,
         config: &Value,
     ) -> Result<Value, AppIpcError> {
-        let agent = self.stand_in_agent(config).await?.or_else(|| {
+        let agent = {
             config["model"].is_object().then(|| json!({
                 "id":"stand-in", "name":"Stand-in", "runtime":config["model"]["runtime"],
                 "execution_policy":{"mode":"fixed","environment_id":self.device_id},
                 "model_policy":{"mode":"user_select"}, "system_prompt":"", "additional_skills":[], "plugins":[], "mcp_servers":{}
             }))
-        });
+        };
         self.prepare_stand_in_execution_with_agent(payload, config, agent)
             .await
     }
@@ -838,7 +835,7 @@ impl RuntimeWorkRpcHandler {
         if payload["modelId"].is_string() {
             payload["modelSelection"] = json!({"modelName":payload["modelId"],"modelType":payload["modelType"],"options":payload["modelOptions"]});
         }
-        // Project agents are direct Wework profiles, not backend Teams.
+        // Stand-ins and direct Wework profiles do not execute as Backend Teams.
         payload["executionRequest"]["team_id"] = json!(0);
         payload["executionRequest"]["user_id"] = config["userId"].clone();
         if matches!(

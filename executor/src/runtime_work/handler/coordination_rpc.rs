@@ -597,19 +597,13 @@ impl RuntimeWorkRpcHandler {
             ));
         }
         let mut config = settings["primary"].clone();
-        let (agent, catalog) = if config["model"].is_null() {
-            (
-                self.stand_in_agent(&config).await?,
-                self.runner_catalog().await?,
-            )
+        let catalog = if config["model"].is_null() {
+            self.runner_catalog().await?
         } else {
-            (None, Value::Null)
+            Value::Null
         };
-        config["model"] = super::super::stand_in_agent::background_stand_in_model(
-            &config,
-            agent.as_ref(),
-            &catalog,
-        )?;
+        config["model"] =
+            super::super::stand_in_agent::background_stand_in_model(&config, &catalog)?;
         config["userId"] = json!(user);
         config["handlingPolicy"] = json!({"automatic":true,"askBeforeAct":false});
         let origin = json!({"runtimeTaskId":id,"type":"stand_in_coordinator","initiatedBy":"stand_in_coordinator","userId":user,"deviceId":self.device_id,"batchId":action["batchId"]});

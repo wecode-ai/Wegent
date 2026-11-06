@@ -23,7 +23,7 @@ impl LocalTaskStore {
                 .filter(|value| value["status"] == "pending")
                 .unwrap_or(Value::Null);
         if proposal.is_object() {
-            super::personal_stand_in::migrate_connections(&mut proposal["settings"])?;
+            super::personal_stand_in::migrate_personal_settings(&mut proposal["settings"])?;
         }
         Ok(proposal)
     }
@@ -63,7 +63,7 @@ impl LocalTaskStore {
                 "Invalid proposal owner request".into(),
             ));
         }
-        super::personal_stand_in::migrate_connections(&mut settings)?;
+        super::personal_stand_in::migrate_personal_settings(&mut settings)?;
         if summary.trim().is_empty() || summary.len() > 4000 {
             return Err(TaskRuntimeError::Invalid(
                 "proposal summary is required".into(),

@@ -53,9 +53,6 @@ impl RuntimeWorkRpcHandler {
                     move || async move { self.stand_in_onboarding_rpc(method, payload).await },
                 )
             }
-            "runtime.stand_in.personal.agents" => {
-                boxed_rpc(move || async move { self.personal_stand_in_agents(payload).await })
-            }
             "runtime.stand_in.personal.save" => {
                 boxed_rpc(
                     move || async move { self.personal_stand_in_settings(payload, true).await },
