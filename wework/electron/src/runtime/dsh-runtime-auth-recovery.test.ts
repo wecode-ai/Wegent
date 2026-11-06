@@ -2,6 +2,7 @@ import type { Cookie, Session } from 'electron'
 import { afterEach, expect, test, vi } from 'vitest'
 import { copyDshBrowserAuthentication, dshBrowserRequestHeaders } from './dsh-browser-auth.js'
 import { DshRuntime } from './dsh-runtime.js'
+import { RuntimeSupervisor } from './runtime-supervisor.js'
 
 const electron = vi.hoisted(() => ({
   cookies: new Map<string, Cookie>(),
@@ -77,6 +78,52 @@ test('reclaims a cookie accepted before the authentication redirect fails', asyn
   await runtime.stop()
   expect(electron.cookies.size).toBe(0)
 })
+
+test.each(['stop', 'cleanup', 'both'] as const)(
+  'reclaims authentication and preserves error precedence when %s fails',
+  async failure => {
+    const runtime = managedRuntime('1')
+    const target = browserSession()
+    await runtime.start()
+    const source = (await import('electron')).session.defaultSession
+    await copyDshBrowserAuthentication(source, target.session, runtime.url())
+    expect(electron.cookies.size).toBe(1)
+    expect(target.cookies.size).toBe(1)
+    const stopError = new Error('runtime log flush failed')
+    const cleanupError = new Error('cookie removal failed')
+    const stop = RuntimeSupervisor.prototype.stop
+    const stopping = vi
+      .spyOn(RuntimeSupervisor.prototype, 'stop')
+      .mockImplementation(async function () {
+        await stop.call(this)
+        if (failure !== 'cleanup') throw stopError
+      })
+    const removing = vi.spyOn(source.cookies, 'remove')
+    if (failure !== 'stop') removing.mockRejectedValueOnce(cleanupError)
+    const logging = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      const stopped = runtime.stop()
+      if (failure === 'cleanup') {
+        await expect(stopped).rejects.toMatchObject({
+          message: 'DSH cookie cleanup failed',
+          errors: [cleanupError],
+        })
+      } else {
+        await expect(stopped).rejects.toBe(stopError)
+      }
+      expect(removing).toHaveBeenCalledTimes(1)
+      expect(electron.cookies.size).toBe(failure === 'stop' ? 0 : 1)
+      expect(target.cookies.size).toBe(0)
+      expect(logging).toHaveBeenCalledTimes(failure === 'both' ? 1 : 0)
+    } finally {
+      stopping.mockRestore()
+      removing.mockRestore()
+      logging.mockRestore()
+      await runtime.stop()
+    }
+    expect(electron.cookies.size).toBe(0)
+  }
+)
 
 test('waits for an aborted authentication attempt before reclaiming its cookies', async () => {
   const runtime = managedRuntime('1')

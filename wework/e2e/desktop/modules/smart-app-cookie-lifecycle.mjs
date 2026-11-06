@@ -94,6 +94,7 @@ export async function prepareSmartAppCookieRegression(control, resultDir, instal
       200,
       'Unknown stored cookies must not overflow a managed DSH request'
     )
+    assert.deepEqual(await names(main), [...mainBefore, ...stale.map(cookie => cookie.name)].sort())
     assert.deepEqual(
       await names(browser),
       [...browserBefore, ...stale.map(cookie => cookie.name)].sort()

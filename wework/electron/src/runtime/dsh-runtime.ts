@@ -133,8 +133,18 @@ export class DshRuntime {
 
   async stop(): Promise<void> {
     if (this.child) this.options.hostPipe?.detachChild(this.child)
-    await this.process?.stop()
-    await this.disposeBrowserAuthentication()
+    let stopFailed = false
+    try {
+      await this.process?.stop()
+    } catch (error) {
+      stopFailed = true
+      throw error
+    } finally {
+      await this.disposeBrowserAuthentication().catch(error => {
+        if (!stopFailed) throw error
+        console.error('[dsh-browser-auth] Failed to reclaim stopped runtime cookies')
+      })
+    }
   }
 
   private async authenticateBrowser(
