@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { ComponentProps } from 'react'
 import { GitAccountConfigurationButton } from '@wegent/collaboration/controls'
 import { createCollaborationTranslator } from '@wegent/collaboration'
-import { WorkbenchContext } from '@/features/workbench/useWorkbench'
+import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import { DesktopGitAccountConfigurationProvider } from './DesktopGitAccountConfigurationProvider'
 
 const cloud = vi.hoisted(() => ({
@@ -16,6 +16,7 @@ vi.mock('@/features/cloud-connection/useCloudConnection', () => ({
   useOptionalCloudConnection: () => cloud,
 }))
 vi.mock('@/lib/external-links', () => ({ openExternalUrl }))
+vi.mock('@/features/workbench/useWorkbench', () => ({ useWorkbench: vi.fn() }))
 
 function mount(
   deviceType: string,
@@ -61,6 +62,23 @@ function mount(
 }
 
 describe('desktop Git account configuration routing', () => {
+  it('keeps a conversation without a workbench context usable', () => {
+    render(
+      <DesktopGitAccountConfigurationProvider conversation>
+        <GitAccountConfigurationButton
+          failure={{
+            code: 'credentials-required',
+            domain: 'git.example:8443',
+            message: 'Git failed',
+          }}
+          translate={createCollaborationTranslator('zh-CN')}
+          testId="configure"
+        />
+      </DesktopGitAccountConfigurationProvider>
+    )
+    expect(screen.queryByTestId('configure')).toBeNull()
+  })
+
   it.each(['cloud', 'remote'])('uses cloud web settings for a managed %s executor', async type => {
     openExternalUrl.mockClear()
     mount(type)

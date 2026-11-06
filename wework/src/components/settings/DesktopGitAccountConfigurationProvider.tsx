@@ -1,7 +1,7 @@
 import { useContext, type ReactNode } from 'react'
 import { GitAccountConfigurationProvider } from '@wegent/collaboration/controls'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
-import { WorkbenchContext } from '@/features/workbench/useWorkbench'
+import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import { openExternalUrl } from '@/lib/external-links'
 import { findWorkbenchDevice } from '@/lib/workbench-device'
 
