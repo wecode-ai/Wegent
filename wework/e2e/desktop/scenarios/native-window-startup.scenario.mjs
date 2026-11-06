@@ -12,6 +12,10 @@ import {
 import { waitForClosedStartupSplash } from '../modules/native-window-state.mjs'
 import { verifyFirstUsePageLoading } from '../modules/first-use-page-loading.mjs'
 import { packagedResourcesRoot } from '../modules/workbench-schema-compatibility.mjs'
+import {
+  STARTUP_SPLASH_HANDOFF_EVENTS,
+  verifyStartupSplashHandoff,
+} from '../modules/startup-splash-handoff.mjs'
 
 const SPLASH_CLOSE_TIMEOUT_MS = 10_000
 const SPLASH_CLOSE_POLL_INTERVAL_MS = 50
@@ -59,9 +63,10 @@ export async function createDesktopScenario({ resultDir }) {
       const snapshot = await waitForClosedStartupSplash(control)
       assert.deepEqual(
         snapshot.events.map(event => event.name),
-        ['created', 'animation-ready', 'shown', 'closed'],
+        STARTUP_SPLASH_HANDOFF_EVENTS,
         'The Electron startup splash did not complete its animated lifecycle'
       )
+      await verifyStartupSplashHandoff({ snapshot, resultDir })
       assert.ok(
         snapshot.theme === 'light' || snapshot.theme === 'dark',
         `The Electron startup splash did not resolve a valid theme: ${snapshot.theme}`
@@ -156,7 +161,12 @@ export async function createDesktopScenario({ resultDir }) {
           WEWORK_E2E_STARTUP_STAGE_TIMEOUT_MS: '',
         },
       })
-      await waitForClosedStartupSplash(control)
+      const recoveredSplash = await waitForClosedStartupSplash(control)
+      await verifyStartupSplashHandoff({
+        snapshot: recoveredSplash,
+        resultDir,
+        name: 'startup-recovered-handoff',
+      })
       await waitForStartupProgressEvidence({
         userDataDirectory,
         resultDir,
@@ -169,6 +179,9 @@ export async function createDesktopScenario({ resultDir }) {
         '[data-testid="chat-message-input"][contenteditable="true"]:focus'
       )
       const focusSnapshot = JSON.parse(await control.command('getComposerFocusSnapshot', 'body'))
+      const nativeWindow = JSON.parse(await control.command('getNativeWindowState', 'body'))
+      assert.equal(nativeWindow.visible, true, 'The workbench was hidden after the startup fade')
+      assert.equal(nativeWindow.focused, true, 'The startup handoff did not focus the workbench')
       await writeFile(
         join(resultDir, 'startup-composer-focus.json'),
         `${JSON.stringify(focusSnapshot, null, 2)}\n`
