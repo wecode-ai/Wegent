@@ -1,7 +1,7 @@
 ---
 description: "Provides read_file/write_file/exec/list_files/read_file/write_file for running process and managing filesystems in the sandbox. Ideal for code testing, file management, and command execution. The sub_claude_agent tool is available for advanced use cases. You MUST load this skill BEFORE use sandbox tools."
 displayName: "沙箱环境"
-version: "2.1.2"
+version: "2.1.3"
 author: "Wegent Team"
 tags: ["sandbox", "code-execution", "filesystem", "automation"]
 bindShells: ["Chat"]
@@ -233,6 +233,14 @@ Upload a file from sandbox to Wegent and get a download URL for users.
 - Share files created in the sandbox with users
 - Export results from sandbox to Wegent storage
 - User can not access file directly, you MUST use upload_attachment tool for sending file to user.
+
+**HTML Deliverable Standards** (apply before uploading any `.html` file):
+
+- Prefer build-time rendering. If JavaScript is required, keep data injection and rendering in the same script, for example `const DATA = JSON.parse(document.getElementById('library-data').textContent)`.
+- Do not use `localStorage`, `sessionStorage`, or `document.cookie`. The Wegent preview iframe has an opaque origin, so these throw `SecurityError` and leave the page blank.
+- Use in-page `#anchor` links for navigation inside the document, and absolute `https://` URLs for external references. Relative file names do not exist after upload.
+- Verify the page with headless Chromium before uploading: it must render, key content containers must be non-empty, and the console must contain no `error` messages or uncaught exceptions. A screenshot alone is not sufficient.
+- For pages with more than about 1,000 elements, prefer pre-rendered static HTML or pagination so the preview stays responsive.
 
 **Parameters:**
 - `file_path` (required): Path to the file in sandbox to upload

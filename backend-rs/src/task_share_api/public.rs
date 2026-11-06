@@ -459,11 +459,14 @@ fn public_subtask(
 
     let clean_prompt = crate::attachment_block::parse_prompt_blocks(&prompt.unwrap_or_default()).0;
 
-    let result = if show_final_answer_only == Some(true) && role != "USER" {
-        result.map(|json| OpaqueJson::from(redact_final_answer_only(json.to_value())))
-    } else {
-        result
-    };
+    let result = result.map(|json| {
+        let value = if show_final_answer_only == Some(true) && role != "USER" {
+            redact_final_answer_only(json.to_value())
+        } else {
+            json.to_value()
+        };
+        OpaqueJson::from(public_result(value))
+    });
 
     let sender_user_name = sender_user_id.filter(|id| *id > 0).and_then(|id| {
         user_names
@@ -537,6 +540,22 @@ fn redact_final_answer_only(value: Value) -> Value {
                 .into_iter()
                 .filter(|(key, _)| !HIDDEN.contains(&key.as_str()))
                 .map(|(key, item)| (key, redact_final_answer_only(item)))
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
+/// The read-only share page renders `value` and `blocks`; every other result
+/// field is executor context for continuing the task. `messages_chain` in
+/// particular is the model-facing transcript and routinely exceeds a megabyte.
+fn public_result(value: Value) -> Value {
+    const PUBLIC_FIELDS: [&str; 4] = ["value", "blocks", "stop_reason", "termination_reason"];
+    match value {
+        Value::Object(fields) => Value::Object(
+            fields
+                .into_iter()
+                .filter(|(key, _)| PUBLIC_FIELDS.contains(&key.as_str()))
                 .collect(),
         ),
         other => other,
@@ -848,6 +867,30 @@ mod tests {
         assert_eq!(
             redact_tool_details(value),
             serde_json::json!({"content": [{"type": "tool_use", "name": "search", "extra": 1}]})
+        );
+    }
+
+    /// The share page keeps only the fields its read-only renderer consumes;
+    /// the model transcript and other executor state stay private.
+    #[test]
+    fn public_results_drop_executor_context() {
+        let value = serde_json::json!({
+            "value": "final answer",
+            "blocks": [{"type": "text", "content": "answer"}],
+            "stop_reason": "end_turn",
+            "termination_reason": "normal_completion",
+            "messages_chain": [{"role": "assistant"}],
+            "reasoning_content": "internal reasoning",
+            "context_metrics": {"used_input_tokens": 1},
+        });
+        assert_eq!(
+            public_result(value),
+            serde_json::json!({
+                "value": "final answer",
+                "blocks": [{"type": "text", "content": "answer"}],
+                "stop_reason": "end_turn",
+                "termination_reason": "normal_completion",
+            })
         );
     }
 }
