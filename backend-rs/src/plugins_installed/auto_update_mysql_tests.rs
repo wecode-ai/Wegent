@@ -5,12 +5,17 @@
 //! Explicit integration proof with disposable loopback MySQL 8 and Redis.
 //! Set WEGENT_TEST_MYSQL_ADDRESS and WEGENT_TEST_REDIS_ADDRESS to
 //! 127.0.0.1:PORT, then run cargo test auto_update_mysql_tests -- --ignored.
+//! The replica checks also require WEGENT_TEST_REDIS_REPLICA_ADDRESS and
+//! WEGENT_TEST_REDIS_REPLICA_PRIMARY (the primary as reached by the replica).
 
 use super::*;
 use brz_mysql::{MysqlError, MysqlService, MysqlTransaction};
 use brz_redis::RedisService;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::oneshot;
+
+#[path = "auto_update_replica_mysql_tests.rs"]
+mod replica;
 
 const SCHEMA: &[&str] = &[
     r#"CREATE TABLE kinds (`id` BIGINT NOT NULL AUTO_INCREMENT, `user_id` BIGINT NOT NULL DEFAULT 0, `kind` VARCHAR(1000) NOT NULL DEFAULT '', `name` VARCHAR(1000) NOT NULL DEFAULT '', `namespace` VARCHAR(1000) NOT NULL DEFAULT '', `json` JSON NOT NULL DEFAULT (JSON_OBJECT()), `is_active` BOOLEAN NOT NULL DEFAULT 0, `created_at` DATETIME NOT NULL DEFAULT '2026-01-01 00:00:00', `updated_at` DATETIME NOT NULL DEFAULT '2026-01-01 00:00:00', PRIMARY KEY (`id`)) ENGINE=InnoDB"#,
@@ -107,7 +112,8 @@ async fn writer_batch_preserves_rollback_and_rejects_stale_updates() {
         );
         verify_rollback(&mysql, &redis, &resolvers).await?;
         verify_stale_batch(&mysql, &redis).await?;
-        Ok::<_, MysqlError>(())
+        replica::verify(&mysql, &redis).await?;
+        Ok::<_, anyhow::Error>(())
     }
     .await;
     mysql.close().await;
