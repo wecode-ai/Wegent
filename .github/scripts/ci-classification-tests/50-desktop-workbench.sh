@@ -194,8 +194,8 @@ wework_desktop_core_e2e=true
 wework_desktop_core_e2e_matrix={"include":[{"id":"core-6","name":"Core / shard 6","segments":"codex-native-catalog"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
-  "executor/src/server/codex_model_catalog.rs" \
-  "executor/src/server/codex_model_catalog_tests.rs" \
+  "executor/crates/model-proxy/src/codex_model_catalog.rs" \
+  "executor/crates/model-proxy/src/codex_model_catalog_tests.rs" \
   "wework/e2e/desktop/scenarios/codex-native-catalog.scenario.mjs" \
   "wework/e2e/desktop/scenarios/codex-catalog-context.mjs" \
   "wework/e2e/desktop/scenarios/codex-catalog-reasoning.mjs"

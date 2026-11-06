@@ -24,7 +24,7 @@ pub(super) struct AdapterResult {
 
 struct AdapterChild {
     child: Child,
-    tree: crate::process::ProcessTreeGuard,
+    tree: wegent_subprocess::ProcessTreeGuard,
     #[cfg(unix)]
     group_id: Option<u32>,
 }
@@ -130,7 +130,7 @@ pub(super) async fn invoke(
         .spawn()
         .map_err(|_| AuthError("plugin_auth_launch_failed"))?;
     let mut child = AdapterChild {
-        tree: crate::process::ProcessTreeGuard::new(spawned.id()),
+        tree: wegent_subprocess::ProcessTreeGuard::new(spawned.id()),
         #[cfg(unix)]
         group_id: spawned.id(),
         child: spawned,

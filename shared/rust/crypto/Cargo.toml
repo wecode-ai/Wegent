@@ -1,0 +1,11 @@
+[package]
+name = "wegent-crypto"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.77"
+license = "Apache-2.0"
+description = "Explicit-key AES-CBC primitives for Wegent services"
+
+[dependencies]
+aes = "0.8"
+cbc = { version = "0.1", features = ["alloc", "block-padding"] }

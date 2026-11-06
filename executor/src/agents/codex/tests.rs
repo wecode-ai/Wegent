@@ -2397,7 +2397,7 @@ fn kimi_k3_profile_uses_the_built_in_catalog_entry() {
         model_config: json!({
             "model_id": "kimi-k3",
             "tool_profile": "function",
-            "codex_catalog_model_id": codex_model_catalog::KIMI_K3_MODEL,
+            "codex_catalog_model_id": "wework-kimi-k3",
             "codex_responses_compat_proxy": true
         }),
         ..ExecutionRequest::default()
@@ -2405,7 +2405,7 @@ fn kimi_k3_profile_uses_the_built_in_catalog_entry() {
 
     assert_eq!(
         codex_request_model(&request).as_deref(),
-        Some(codex_model_catalog::KIMI_K3_MODEL)
+        Some("wework-kimi-k3")
     );
 }
 
